@@ -1,0 +1,46 @@
+import type { BranchState, Role } from '../types'
+import type { CanopyConfig } from '../config'
+
+export interface RequestUser {
+  userId: string
+  groups?: string[]
+  role?: Role
+}
+
+export interface ApiContext {
+  // TODO DRY this services entry up by using a Partial<CanopyServices> or similar
+  services: {
+    config: CanopyConfig
+    checkBranchAccess: (state: BranchState, user: RequestUser) => { allowed: boolean; reason: string }
+    checkContentAccess: (
+      branchState: BranchState,
+      relativePath: string,
+      user: RequestUser
+    ) => { allowed: boolean; branch: any; path: any }
+    createGitManagerFor?: (repoPath: string, opts?: { baseBranch?: string; remote?: string }) => any
+  }
+  // TODO DRY this definition up in terms of AssetStore interface
+  assetStore?: {
+    list(prefix?: string): Promise<{ key: string; url?: string }[]>
+    upload(key: string, data: Buffer | Uint8Array, contentType?: string): Promise<{ key: string; url?: string }>
+    delete(key: string): Promise<void>
+  }
+  /**
+   * Load a branch state for the requested branch name.
+   * Can be backed by BranchRegistry + BranchMetadata.
+   */
+  getBranchState: (branchName: string) => Promise<BranchState | null>
+}
+
+export interface ApiRequest<TBody = unknown> {
+  branch?: string
+  body?: TBody
+  user: RequestUser
+}
+
+export interface ApiResponse<TData = unknown> {
+  ok: boolean
+  status: number
+  data?: TData
+  error?: string
+}
