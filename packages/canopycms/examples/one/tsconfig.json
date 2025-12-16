@@ -1,0 +1,27 @@
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "esnext",
+    "jsx": "preserve",
+    "allowJs": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "incremental": true,
+    "types": ["@types/node", "@types/react", "@types/react-dom"],
+    "paths": {
+      "canopycms": ["../../src/index.ts"],
+      "canopycms/*": ["../../src/*"]
+    },
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "isolatedModules": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", "**/*.css"],
+  "exclude": ["node_modules"]
+}

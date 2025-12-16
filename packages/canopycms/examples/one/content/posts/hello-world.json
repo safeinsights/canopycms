@@ -1,0 +1,24 @@
+{
+  "slug": "hello-world",
+  "title": "Hello World 2",
+  "author": "Alice",
+  "tags": ["typed", "fast"],
+  "published": false,
+  "body": "Some **MDX** content that mirrors the another example.",
+  "blocks": [
+    {
+      "template": "hero",
+      "value": {
+        "headline": "Hero block",
+        "body": "Hero copy"
+      }
+    },
+    {
+      "template": "cta",
+      "value": {
+        "title": "Try CanopyCMS",
+        "ctaText": "Click me"
+      }
+    }
+  ]
+}

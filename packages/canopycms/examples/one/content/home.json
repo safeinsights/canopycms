@@ -1,0 +1,24 @@
+{
+  "hero": {
+    "title": "CanopyCMS Demo",
+    "body": "Schema-driven content with live preview."
+  },
+  "features": [
+    {
+      "title": "Typed",
+      "description": "End-to-end types for content and forms."
+    },
+    {
+      "title": "Branch-aware",
+      "description": "Edit safely on feature branches."
+    },
+    {
+      "title": "Preview",
+      "description": "See the real page update as you edit."
+    }
+  ],
+  "cta": {
+    "text": "Get Started",
+    "link": "/posts/hello-world"
+  }
+}
