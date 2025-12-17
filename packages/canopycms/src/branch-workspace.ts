@@ -46,9 +46,14 @@ export class BranchWorkspaceManager {
     mode: BranchMode
     remoteUrl?: string
   }) {
-    const remoteUrl =
-      options.remoteUrl ?? this.config.defaultRemoteUrl ?? process.env.CANOPYCMS_REMOTE_URL
     const baseBranch = this.config.defaultBaseBranch ?? 'main'
+    const remoteUrl = await GitManager.resolveRemoteUrl({
+      mode: options.mode,
+      remoteUrl: options.remoteUrl,
+      defaultRemoteUrl: this.config.defaultRemoteUrl,
+      baseBranch,
+      sourceRoot: this.config.sourceRoot,
+    })
     const remoteName = this.config.defaultRemoteName ?? 'origin'
     const authorName = this.config.gitBotAuthorName
     const authorEmail = this.config.gitBotAuthorEmail

@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import {
@@ -7,6 +8,8 @@ import {
   type SimpleGitOptions,
   type StatusResult,
 } from 'simple-git'
+
+import type { BranchMode } from './paths'
 
 export interface GitManagerOptions {
   repoPath: string
@@ -18,6 +21,14 @@ export interface GitStatus extends Pick<
   StatusResult,
   'files' | 'ahead' | 'behind' | 'current' | 'tracking'
 > {}
+
+export interface ResolveRemoteUrlOptions {
+  mode: BranchMode
+  remoteUrl?: string
+  defaultRemoteUrl?: string
+  baseBranch: string
+  sourceRoot?: string
+}
 
 export class GitManager {
   private readonly git: SimpleGit
@@ -39,6 +50,182 @@ export class GitManager {
   ): Promise<void> {
     const git = simpleGit()
     await git.clone(remoteUrl, targetPath, ['--branch', baseBranch, '--single-branch'])
+  }
+
+  /**
+   * Initializes a local bare git repository to simulate a remote for local-prod-sim mode.
+   *
+   * This is idempotent - if the remote already exists, it will not be recreated.
+   *
+   * The remote is seeded with the current state of the baseBranch (e.g., 'main').
+   * If you need to change the baseBranch or reset the simulation, delete
+   * `.canopycms/remote.git` and `.canopycms/branches` and restart.
+   *
+   * @throws Error if not a git repo, no commits, or baseBranch doesn't exist
+   */
+  static async ensureLocalSimulatedRemote(options: {
+    remotePath: string
+    sourcePath: string
+    baseBranch: string
+    subdirectory?: string
+  }): Promise<void> {
+    // Check if already exists (idempotent)
+    try {
+      const stat = await fs.stat(options.remotePath)
+      if (stat.isDirectory()) return
+    } catch (err: any) {
+      if (err?.code !== 'ENOENT') throw err
+    }
+
+    // Find the actual git root directory
+    // git subtree requires being run from the toplevel of the working tree
+    let gitRoot = options.sourcePath
+    try {
+      const sourceGit = simpleGit({ baseDir: options.sourcePath })
+      const result = await sourceGit.raw(['rev-parse', '--show-toplevel'])
+      gitRoot = result.trim()
+    } catch {
+      // If we can't find git root, fall back to sourcePath
+      gitRoot = options.sourcePath
+    }
+
+    const sourceGit = simpleGit({ baseDir: gitRoot })
+
+    // Verify it's a git repo
+    try {
+      await sourceGit.status()
+    } catch {
+      throw new Error(
+        'Cannot initialize local simulated remote: current directory is not a git repository. ' +
+          'Please initialize git or provide an explicit remoteUrl.',
+      )
+    }
+
+    // Verify it has commits
+    let hasCommits = false
+    try {
+      const log = await sourceGit.log(['-1'])
+      hasCommits = log.total > 0
+    } catch {
+      // Log command fails if no commits exist
+      hasCommits = false
+    }
+
+    if (!hasCommits) {
+      throw new Error(
+        'Cannot initialize local simulated remote: repository has no commits. ' +
+          'Please make an initial commit or provide an explicit remoteUrl.',
+      )
+    }
+
+    // Verify baseBranch exists
+    const branches = await sourceGit.branchLocal()
+    if (!branches.all.includes(options.baseBranch)) {
+      throw new Error(
+        `Cannot initialize local simulated remote: base branch '${options.baseBranch}' does not exist locally. ` +
+          `Please checkout '${options.baseBranch}' first or provide an explicit remoteUrl.`,
+      )
+    }
+
+    // Create bare remote
+    await fs.mkdir(path.dirname(options.remotePath), { recursive: true })
+    await simpleGit().raw(['init', '--bare', options.remotePath])
+
+    // Push baseBranch to remote (not current HEAD)
+    const tempRemoteName = `__canopycms_init_${Date.now()}__`
+    try {
+      await sourceGit.addRemote(tempRemoteName, options.remotePath)
+
+      if (options.subdirectory) {
+        // For subdirectory pushes, use git subtree split
+        // This creates a synthetic history with only the subdirectory content
+        const splitBranch = `__canopycms_split_${Date.now()}__`
+        try {
+          await sourceGit.raw([
+            'subtree',
+            'split',
+            '--prefix',
+            options.subdirectory,
+            '-b',
+            splitBranch,
+          ])
+          await sourceGit.push(tempRemoteName, `${splitBranch}:${options.baseBranch}`)
+          await sourceGit.raw(['branch', '-D', splitBranch])
+        } catch (err) {
+          // Clean up split branch if it exists
+          try {
+            await sourceGit.raw(['branch', '-D', splitBranch])
+          } catch {
+            // ignore
+          }
+          throw err
+        }
+      } else {
+        // Normal push of entire repo
+        await sourceGit.push(tempRemoteName, `${options.baseBranch}:${options.baseBranch}`)
+      }
+    } finally {
+      try {
+        await sourceGit.removeRemote(tempRemoteName)
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+  }
+
+  /**
+   * Resolves the remote URL for git operations following the priority:
+   * 1. Explicit remoteUrl parameter
+   * 2. Config defaultRemoteUrl
+   * 3. Environment variable CANOPYCMS_REMOTE_URL
+   * 4. Auto-initialized local remote for local-prod-sim mode
+   * 5. undefined (for local-simple mode)
+   *
+   * @param options.sourceRoot - Optional source directory for monorepos. When provided,
+   *   this directory (relative to git root) is used as the source for the simulated remote.
+   *   Defaults to process.cwd().
+   *
+   * @returns Remote URL or undefined if no remote is needed
+   */
+  static async resolveRemoteUrl(options: ResolveRemoteUrlOptions): Promise<string | undefined> {
+    // 1. Explicit remoteUrl
+    if (options.remoteUrl) return options.remoteUrl
+
+    // 2. Config default
+    if (options.defaultRemoteUrl) return options.defaultRemoteUrl
+
+    // 3. Environment variable
+    if (process.env.CANOPYCMS_REMOTE_URL) return process.env.CANOPYCMS_REMOTE_URL
+
+    // 4. For local-prod-sim, auto-init local remote
+    if (options.mode === 'local-prod-sim') {
+      // Find the actual git root directory
+      let gitRoot = process.cwd()
+      try {
+        const git = simpleGit({ baseDir: process.cwd() })
+        const result = await git.raw(['rev-parse', '--show-toplevel'])
+        gitRoot = result.trim()
+      } catch {
+        // If we can't find git root, use cwd
+        gitRoot = process.cwd()
+      }
+
+      const sourceRoot = options.sourceRoot
+      const sourcePath = sourceRoot ? path.resolve(gitRoot, sourceRoot) : gitRoot
+
+      const localRemotePath = path.join(sourcePath, '.canopycms/remote.git')
+
+      await GitManager.ensureLocalSimulatedRemote({
+        remotePath: localRemotePath,
+        sourcePath: gitRoot, // Always use git root for operations
+        baseBranch: options.baseBranch,
+        subdirectory: sourceRoot, // If set, extract only this subdirectory
+      })
+      return localRemotePath
+    }
+
+    // 5. No remote needed for local-simple
+    return undefined
   }
 
   async status(): Promise<GitStatus> {

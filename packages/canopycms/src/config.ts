@@ -163,6 +163,7 @@ const gitBotAuthorNameSchema = z.string().min(1)
 const gitBotAuthorEmailSchema = z.string().email()
 const branchModeSchema = z.enum(['prod', 'local-prod-sim', 'local-simple']).default('local-simple')
 const contentRootSchema = relativePathSchema.default('content')
+const sourceRootSchema = z.string().min(1).optional()
 
 const schemaBase = z.object({
   name: z.string().min(1),
@@ -206,6 +207,7 @@ export const CanopyConfigSchema = z
     gitBotAuthorEmail: gitBotAuthorEmailSchema,
     mode: branchModeSchema.optional(),
     contentRoot: contentRootSchema.default('content'),
+    sourceRoot: sourceRootSchema.optional(),
     editor: editorConfigSchema.optional(),
   })
   .superRefine((data, ctx) => {
@@ -242,6 +244,7 @@ export type GitBotAuthorName = z.infer<typeof gitBotAuthorNameSchema>
 export type GitBotAuthorEmail = z.infer<typeof gitBotAuthorEmailSchema>
 export type CanopyBranchMode = BranchMode
 export type ContentRoot = z.infer<typeof contentRootSchema>
+export type SourceRoot = z.infer<typeof sourceRootSchema>
 
 export type CanopyConfigFragment = Partial<CanopyConfigInput>
 
@@ -402,6 +405,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
   let pathPermissions: PathPermission[] | undefined
   let media: MediaConfig | undefined
   let contentRoot: ContentRoot | undefined
+  let sourceRoot: SourceRoot | undefined
   let defaultBranchAccess: DefaultBranchAccess | undefined
   let defaultBaseBranch: DefaultBaseBranch | undefined
   let defaultRemoteName: DefaultRemoteName | undefined
@@ -422,6 +426,9 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     }
     if (fragment.contentRoot) {
       contentRoot = fragment.contentRoot
+    }
+    if (fragment.sourceRoot) {
+      sourceRoot = fragment.sourceRoot
     }
     if (fragment.defaultBranchAccess) {
       defaultBranchAccess = fragment.defaultBranchAccess
@@ -453,6 +460,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     ...(pathPermissions ? { pathPermissions } : {}),
     ...(media ? { media } : {}),
     ...(contentRoot ? { contentRoot } : {}),
+    ...(sourceRoot ? { sourceRoot } : {}),
     ...(defaultBranchAccess ? { defaultBranchAccess } : {}),
     ...(defaultBaseBranch ? { defaultBaseBranch } : {}),
     ...(defaultRemoteName ? { defaultRemoteName } : {}),
