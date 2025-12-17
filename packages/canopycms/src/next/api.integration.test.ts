@@ -183,4 +183,105 @@ describe('canopycms catch-all integration', () => {
     expect(remoteHome.hero.headline).toBe('Hello World')
     expect(remotePost.title).toBe('Hello World')
   })
+
+  it('auto-initializes and uses local simulated remote without explicit remoteUrl', async () => {
+    const branchName = 'feature-auto-init'
+    const branchMode = 'local-prod-sim' as const
+
+    // Setup: create git repo in tmpRoot with main branch and initial commit
+    const git = simpleGit({ baseDir: tmpRoot })
+    await git.init()
+    await git.raw(['branch', '-M', 'main'])
+    await fs.mkdir(path.join(tmpRoot, 'content'), { recursive: true })
+    await fs.writeFile(path.join(tmpRoot, 'README.md'), '# auto-init test\n', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial commit on main')
+
+    // Create a feature branch (to verify we push main, not current branch)
+    await git.checkoutLocalBranch('temp-feature')
+    await fs.writeFile(path.join(tmpRoot, 'feature.txt'), 'feature content', 'utf8')
+    await git.add(['.'])
+    await git.commit('feature commit')
+
+    // Config WITHOUT defaultRemoteUrl
+    const config = defineCanopyTestConfig({
+      mode: branchMode,
+      defaultBranchAccess: 'allow',
+      defaultBaseBranch: 'main',
+      defaultRemoteName: 'origin',
+      // NOTE: No defaultRemoteUrl specified!
+      gitBotAuthorName: 'Test Bot',
+      gitBotAuthorEmail: 'bot@example.com',
+      schema: [
+        {
+          type: 'collection',
+          name: 'posts',
+          path: 'posts',
+          format: 'json',
+          fields: [{ name: 'title', type: 'string' }],
+        },
+      ],
+    })
+    expect(config.mode).toBe('local-prod-sim')
+    expect(config.defaultRemoteUrl).toBeUndefined()
+
+    const handler = createCanopyCatchAllHandler({
+      config,
+      getUser: async () => ({ userId: 'tester' }),
+    })
+
+    const call = async (method: string, segments: string[], body?: unknown) => {
+      const url = 'http://localhost/api'
+      return handler({ method, json: async () => body, url } as any, { params: { canopycms: segments } })
+    }
+
+    // Create branch via API (this should trigger auto-init)
+    const createBranch = await call('POST', ['branches'], { branch: branchName, title: 'Auto Init Test' })
+    expect(createBranch.ok).toBe(true)
+
+    // Verify .canopycms/remote.git was created
+    const remotePath = path.join(tmpRoot, '.canopycms/remote.git')
+    const remoteStat = await fs.stat(remotePath)
+    expect(remoteStat.isDirectory()).toBe(true)
+
+    // Verify remote contains main branch (not the temp-feature branch we were on)
+    const remoteGit = simpleGit({ baseDir: remotePath })
+    const branches = await remoteGit.branch()
+    expect(branches.all).toContain('main')
+    expect(branches.all).not.toContain('temp-feature')
+
+    // Verify branch workspace was created
+    const state = await loadBranchState({ branchName, mode: branchMode })
+    expect(state?.workspaceRoot).toBeTruthy()
+    await expect(fs.stat(path.join(state!.workspaceRoot!, '.git'))).resolves.toBeTruthy()
+
+    // Write content
+    const postsCollectionId = 'content/posts'
+    const writePost = await call('PUT', [branchName, 'content', encodeId(postsCollectionId), 'test-post'], {
+      collection: postsCollectionId,
+      slug: 'test-post',
+      format: 'json',
+      data: { title: 'Test Auto Init' },
+    })
+    expect(writePost.ok).toBe(true)
+
+    // Submit and verify changes are pushed to local remote
+    const submit = await call('POST', [branchName, 'submit'], {})
+    expect(submit.ok).toBe(true)
+
+    // Verify content in local remote by cloning it
+    const verifyPath = path.join(tmpRoot, 'verify-auto-init')
+    await simpleGit().clone(remotePath, verifyPath, ['--branch', branchName])
+    const remotePost = JSON.parse(
+      await fs.readFile(path.join(verifyPath, 'content/posts/test-post.json'), 'utf8')
+    )
+    expect(remotePost.title).toBe('Test Auto Init')
+
+    // Verify main branch content in remote (should have README from initial commit, not feature.txt)
+    const mainVerifyPath = path.join(tmpRoot, 'verify-main')
+    await simpleGit().clone(remotePath, mainVerifyPath, ['--branch', 'main'])
+    const mainFiles = await fs.readdir(mainVerifyPath)
+    expect(mainFiles).toContain('README.md')
+    expect(mainFiles).not.toContain('feature.txt')
+  })
 })
