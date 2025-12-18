@@ -33,6 +33,8 @@ import type { BranchMode } from '../paths'
 import { EditorPanes, type PaneLayout } from './EditorPanes'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
 import { BranchManager } from './BranchManager'
+import { CommentsPanel } from './CommentsPanel'
+import type { CommentThread } from '../comment-store'
 import {
   buildEntriesFromListResponse,
   buildPreviewSrc,
@@ -112,6 +114,8 @@ export const Editor: React.FC<EditorProps> = ({
   const [highlightEnabled, setHighlightEnabled] = useState(false)
   const [navigatorOpen, setNavigatorOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
+  const [commentsPanelOpen, setCommentsPanelOpen] = useState(false)
+  const [comments, setComments] = useState<CommentThread[]>([])
   const [layout, setLayout] = useState<PaneLayout>('side')
   const headerRef = useRef<HTMLDivElement | null>(null)
   const [headerHeight, setHeaderHeight] = useState<number>(80)
@@ -308,6 +312,22 @@ export const Editor: React.FC<EditorProps> = ({
     }
   }
 
+  const loadComments = async (branch: string) => {
+    if (!branch) return
+    try {
+      const res = await fetch(`/api/canopycms/${branch}/comments`)
+      if (!res.ok) {
+        console.error('Failed to load comments:', res.status)
+        return
+      }
+      const payload = (await res.json()) as ApiResponse<{ threads: CommentThread[] }>
+      const threads = payload.data?.threads ?? []
+      setComments(threads)
+    } catch (err) {
+      console.error('Failed to load comments:', err)
+    }
+  }
+
   const handleBranchChange = async (next: string | null) => {
     if (!next || next === branchNameState) return
     setBranchNameState(next)
@@ -318,6 +338,7 @@ export const Editor: React.FC<EditorProps> = ({
     try {
       setBusy(true)
       await refreshEntries(next)
+      await loadComments(next)
       if (typeof window !== 'undefined') {
         const url = new URL(window.location.href)
         url.searchParams.set('branch', next)
@@ -335,6 +356,11 @@ export const Editor: React.FC<EditorProps> = ({
     loadBranches({ refreshEntries: Boolean(branchNameState) }).catch((err) => {
       console.error(err)
     })
+    if (branchNameState) {
+      loadComments(branchNameState).catch((err) => {
+        console.error(err)
+      })
+    }
   }, [branchNameState, entries.length])
 
   useEffect(() => {
@@ -540,10 +566,91 @@ export const Editor: React.FC<EditorProps> = ({
     </Paper>
   )
 
-  const handleSubmit = () =>
-    notifications.show({ message: 'Submit flow not wired yet', color: 'blue' })
-  const handleRequestChanges = () =>
-    notifications.show({ message: 'Request changes flow not wired yet', color: 'blue' })
+  const handleSubmit = async (branchName: string) => {
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/canopycms/${branchName}/submit`, { method: 'POST' })
+      if (!res.ok) {
+        const payload = await res.json()
+        throw new Error(payload.error || 'Failed to submit branch')
+      }
+      notifications.show({ message: 'Branch submitted for review', color: 'green' })
+      await loadBranches({ refreshEntries: false })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to submit branch'
+      notifications.show({ message, color: 'red' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleWithdraw = async (branchName: string) => {
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/canopycms/${branchName}/withdraw`, { method: 'POST' })
+      if (!res.ok) {
+        const payload = await res.json()
+        throw new Error(payload.error || 'Failed to withdraw branch')
+      }
+      notifications.show({ message: 'Branch withdrawn', color: 'blue' })
+      await loadBranches({ refreshEntries: false })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to withdraw branch'
+      notifications.show({ message, color: 'red' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleRequestChanges = async (branchName: string) => {
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/canopycms/${branchName}/request-changes`, { method: 'POST' })
+      if (!res.ok) {
+        const payload = await res.json()
+        throw new Error(payload.error || 'Failed to request changes')
+      }
+      notifications.show({ message: 'Changes requested', color: 'orange' })
+      await loadBranches({ refreshEntries: false })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to request changes'
+      notifications.show({ message, color: 'red' })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleAddComment = async (text: string, threadId?: string) => {
+    if (!branchNameState) return
+    try {
+      const res = await fetch(`/api/canopycms/${branchNameState}/comments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, threadId }),
+      })
+      if (!res.ok) throw new Error('Failed to add comment')
+      await loadComments(branchNameState)
+      await loadBranches({ refreshEntries: false })
+      notifications.show({ message: 'Comment added', color: 'green' })
+    } catch (err) {
+      notifications.show({ message: 'Failed to add comment', color: 'red' })
+    }
+  }
+
+  const handleResolveThread = async (threadId: string) => {
+    if (!branchNameState) return
+    try {
+      const res = await fetch(`/api/canopycms/${branchNameState}/comments/${threadId}/resolve`, {
+        method: 'POST',
+      })
+      if (!res.ok) throw new Error('Failed to resolve thread')
+      await loadComments(branchNameState)
+      await loadBranches({ refreshEntries: false })
+      notifications.show({ message: 'Thread resolved', color: 'green' })
+    } catch (err) {
+      notifications.show({ message: 'Failed to resolve thread', color: 'red' })
+    }
+  }
 
   const sidebarWidth = 64
   const footerHeight = 40
@@ -713,6 +820,39 @@ export const Editor: React.FC<EditorProps> = ({
                       <Menu.Item disabled>{'TODO: replace with real modified file list'}</Menu.Item>
                     </Menu.Dropdown>
                   </Menu>
+
+                  {branchMode !== 'local-simple' && branchNameState && (
+                    <Button
+                      variant="outline"
+                      color="gray"
+                      size="xs"
+                      onClick={() => setCommentsPanelOpen(true)}
+                      style={{ position: 'relative' }}
+                    >
+                      Comments
+                      {comments.filter((t) => !t.resolved).length > 0 && (
+                        <span
+                          style={{
+                            position: 'absolute',
+                            top: -6,
+                            right: -6,
+                            background: 'var(--mantine-color-grape-6)',
+                            color: 'white',
+                            borderRadius: '50%',
+                            width: 18,
+                            height: 18,
+                            fontSize: 10,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontWeight: 600,
+                          }}
+                        >
+                          {comments.filter((t) => !t.resolved).length}
+                        </span>
+                      )}
+                    </Button>
+                  )}
                 </Group>
               </Stack>
               <Group gap="xs" wrap="nowrap">
@@ -727,7 +867,7 @@ export const Editor: React.FC<EditorProps> = ({
                 <Button
                   size="sm"
                   color="brand"
-                  onClick={handleSubmit}
+                  onClick={() => branchNameState && handleSubmit(branchNameState)}
                   disabled={!branchNameState || busy}
                 >
                   Publish Branch
@@ -885,24 +1025,50 @@ export const Editor: React.FC<EditorProps> = ({
           overlayProps={{ blur: 2 }}
         >
           <BranchManager
-            branches={branches.map((b) => ({
-              name: b.branch.name,
-              status: b.branch.status,
-              createdBy: b.branch.createdBy,
-              updatedAt: b.branch.updatedAt,
-              access: {
-                users: b.branch.access.allowedUsers,
-                groups: b.branch.access.allowedGroups,
-              },
-            }))}
+            branches={branches.map((b) => {
+              const branchComments = b.branch.name === branchNameState ? comments : []
+              const unresolvedCount = branchComments.filter((t) => !t.resolved).length
+              return {
+                name: b.branch.name,
+                status: b.branch.status,
+                createdBy: b.branch.createdBy,
+                updatedAt: b.branch.updatedAt,
+                access: {
+                  users: b.branch.access.allowedUsers,
+                  groups: b.branch.access.allowedGroups,
+                },
+                pullRequestUrl: b.pullRequestUrl,
+                pullRequestNumber: b.pullRequestNumber,
+                commentCount: unresolvedCount,
+              }
+            })}
             mode={branchMode}
             onSelect={(name) => {
               handleBranchChange(name).catch((err) => console.error(err))
               setBranchManagerOpen(false)
             }}
+            onSubmit={(name) => {
+              handleSubmit(name).catch((err) => console.error(err))
+            }}
+            onWithdraw={(name) => {
+              handleWithdraw(name).catch((err) => console.error(err))
+            }}
+            onRequestChanges={(name) => {
+              handleRequestChanges(name).catch((err) => console.error(err))
+            }}
             onClose={() => setBranchManagerOpen(false)}
           />
         </Drawer>
+        {commentsPanelOpen && branchNameState && (
+          <CommentsPanel
+            branchName={branchNameState}
+            comments={comments}
+            canResolve={true}
+            onAddComment={handleAddComment}
+            onResolveThread={handleResolveThread}
+            onClose={() => setCommentsPanelOpen(false)}
+          />
+        )}
       </Box>
     </CanopyCMSProvider>
   )

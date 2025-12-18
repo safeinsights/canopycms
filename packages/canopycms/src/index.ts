@@ -6,6 +6,7 @@ export {
   type BranchMetadataFile,
   type BranchMetadataUpdate,
 } from './branch-metadata'
+export { CommentStore, type Comment, type CommentThread, type CommentsFile } from './comment-store'
 export * from './paths'
 export * from './path-permissions'
 export * from './authz'
@@ -13,10 +14,18 @@ export * from './services'
 export * from './branch-workspace'
 export * from './asset-store'
 export * from './content-access'
+export {
+  GitHubService,
+  createGitHubService,
+  type GitHubServiceOptions,
+  type PullRequestOptions,
+  type PullRequestDetails,
+} from './github-service'
 export * from './editor/EditorPanes'
 export * from './editor/EntryNavigator'
 export * from './editor/Editor'
 export * from './editor/CanopyEditorPage'
+export * from './editor/CommentsPanel'
 export * from './editor/preview-bridge'
 export * from './editor/canopy-path'
 export * from './editor/theme'

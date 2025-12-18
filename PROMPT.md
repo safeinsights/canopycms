@@ -31,7 +31,9 @@ Read packages/canopycms/README.md to understand what we are building from an end
    - Bot-driven commit/push + PR creation; update branch metadata/registry status.
    - Reviewer flow: request changes/unlock, lock on submit, include PR URL/number.
    - Decide worker vs in-request for git/PR; keep abstraction so either works.
+   - We are only targeting GitHub to start.
    - PR submission uses Octokit with bot PAT; creates branch commits, pushes, and opens/updates PRs; submission locks editing until withdrawn (draft PR), reviewer requests changes, or after rejection/merge.
+   - Consider https://www.npmjs.com/package/@simulacrum/github-api-simulator to help test interactions with GitHub.
    - Comment threads stored as `.canopycms/comments.json` inside the branch clone (non-committed by default; pluggable storage if persistence beyond the clone is needed). Bot can mirror to PR comments if desired.
    - Post-merge: close/delete remote branch, mark branch clone read-only or archived; keep minimal metadata for history.
    - Show GitHub diff link to reviewers; basic status polling.

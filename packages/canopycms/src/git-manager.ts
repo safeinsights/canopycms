@@ -312,4 +312,38 @@ export class GitManager {
       await this.git.remote(['set-url', this.remote, remoteUrl])
     }
   }
+
+  /**
+   * Check if working directory has uncommitted changes
+   */
+  async hasUncommittedChanges(): Promise<boolean> {
+    const status = await this.status()
+    return status.files.length > 0
+  }
+
+  /**
+   * Get list of uncommitted file paths
+   */
+  async getUncommittedFiles(): Promise<string[]> {
+    const status = await this.status()
+    return status.files.map((f) => f.path)
+  }
+
+  /**
+   * Force push (use with caution - for PR updates only)
+   * Uses --force-with-lease for safer force pushes
+   */
+  async forcePush(branch?: string): Promise<void> {
+    const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
+    await this.git.push(this.remote, target, ['--force-with-lease'])
+  }
+
+  /**
+   * Get remote URL for current repo
+   */
+  async getRemoteUrl(): Promise<string | undefined> {
+    const remotes = await this.git.getRemotes(true)
+    const remote = remotes.find((r) => r.name === this.remote)
+    return remote?.refs.push || remote?.refs.fetch
+  }
 }
