@@ -149,6 +149,7 @@ const defaultRemoteNameSchema = z.string().default('origin')
 const defaultRemoteUrlSchema = z.string().min(1)
 const gitBotAuthorNameSchema = z.string().min(1)
 const gitBotAuthorEmailSchema = z.string().email()
+const githubTokenEnvVarSchema = z.string().default('GITHUB_BOT_TOKEN')
 const branchModeSchema = z.enum(['prod', 'local-prod-sim', 'local-simple']).default('local-simple')
 const contentRootSchema = relativePathSchema.default('content')
 const sourceRootSchema = z.string().min(1).optional()
@@ -193,6 +194,7 @@ export const CanopyConfigSchema = z
     defaultRemoteUrl: defaultRemoteUrlSchema.optional(),
     gitBotAuthorName: gitBotAuthorNameSchema,
     gitBotAuthorEmail: gitBotAuthorEmailSchema,
+    githubTokenEnvVar: githubTokenEnvVarSchema.optional(),
     mode: branchModeSchema.optional(),
     contentRoot: contentRootSchema.default('content'),
     sourceRoot: sourceRootSchema.optional(),
@@ -230,6 +232,7 @@ export type DefaultRemoteName = z.infer<typeof defaultRemoteNameSchema>
 export type DefaultRemoteUrl = z.infer<typeof defaultRemoteUrlSchema>
 export type GitBotAuthorName = z.infer<typeof gitBotAuthorNameSchema>
 export type GitBotAuthorEmail = z.infer<typeof gitBotAuthorEmailSchema>
+export type GithubTokenEnvVar = z.infer<typeof githubTokenEnvVarSchema>
 export type CanopyBranchMode = BranchMode
 export type ContentRoot = z.infer<typeof contentRootSchema>
 export type SourceRoot = z.infer<typeof sourceRootSchema>

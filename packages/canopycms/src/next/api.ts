@@ -7,9 +7,12 @@ import { BranchRegistry } from '../branch-registry'
 import type { ApiContext } from '../api/types'
 import { createBranch, listBranches } from '../api/branch'
 import { getBranchStatus, submitBranchForMerge } from '../api/branch-status'
+import { withdrawBranch } from '../api/branch-withdraw'
+import { requestChanges, approveBranch } from '../api/branch-review'
 import { readContent, writeContent } from '../api/content'
 import { deleteAsset, listAssets, uploadAsset } from '../api/assets'
 import { listEntries } from '../api/entries'
+import { listComments, addComment, resolveComment } from '../api/comments'
 import type { BranchState } from '../types'
 import { getDefaultBranchBase } from '../paths'
 import { loadBranchState } from '../branch-workspace'
@@ -19,12 +22,18 @@ export type CanopyNextHandler =
   | typeof listBranches
   | typeof getBranchStatus
   | typeof submitBranchForMerge
+  | typeof withdrawBranch
+  | typeof requestChanges
+  | typeof approveBranch
   | typeof readContent
   | typeof writeContent
   | typeof listAssets
   | typeof uploadAsset
   | typeof deleteAsset
   | typeof listEntries
+  | typeof listComments
+  | typeof addComment
+  | typeof resolveComment
 
 export interface CanopyNextOptions {
   services?: CanopyServices
@@ -92,6 +101,13 @@ const buildRouteMap = (options: CanopyNextOptions): Record<string, CanopyRouteHa
     [routeKey('POST', ['branches'])]: withOptions(createBranch),
     [routeKey('GET', [':branch', 'status'])]: withOptions(getBranchStatus),
     [routeKey('POST', [':branch', 'submit'])]: withOptions(submitBranchForMerge),
+    [routeKey('POST', [':branch', 'withdraw'])]: withOptions(withdrawBranch),
+    [routeKey('POST', [':branch', 'request-changes'])]: withOptions(requestChanges),
+    [routeKey('POST', [':branch', 'approve'])]: withOptions(approveBranch),
+
+    [routeKey('GET', [':branch', 'comments'])]: withOptions(listComments),
+    [routeKey('POST', [':branch', 'comments'])]: withOptions(addComment),
+    [routeKey('POST', [':branch', 'comments', ':threadId', 'resolve'])]: withOptions(resolveComment),
 
     [routeKey('GET', [':branch', 'content', ':collection', '...slug'])]: withOptions(readContent),
     [routeKey('PUT', [':branch', 'content', ':collection', '...slug'])]: withOptions(writeContent),

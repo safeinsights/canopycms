@@ -1,5 +1,6 @@
 import type { BranchState, Role } from '../types'
 import type { CanopyConfig } from '../config'
+import type { GitHubService } from '../github-service'
 
 export interface RequestUser {
   userId: string
@@ -18,6 +19,7 @@ export interface ApiContext {
       user: RequestUser
     ) => { allowed: boolean; branch: any; path: any }
     createGitManagerFor?: (repoPath: string, opts?: { baseBranch?: string; remote?: string }) => any
+    githubService?: GitHubService
   }
   // TODO DRY this definition up in terms of AssetStore interface
   assetStore?: {

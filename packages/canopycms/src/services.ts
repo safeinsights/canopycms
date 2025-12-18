@@ -7,6 +7,7 @@ import { createCheckContentAccess } from './content-access'
 import { GitManager } from './git-manager'
 import { BranchRegistry } from './branch-registry'
 import { getDefaultBranchBase } from './paths'
+import { createGitHubService, type GitHubService } from './github-service'
 
 export interface CanopyServices {
   config: CanopyConfig
@@ -16,6 +17,7 @@ export interface CanopyServices {
   pathPermissions: ReturnType<typeof buildPathPermissions>
   createGitManagerFor: (repoPath: string, opts?: { baseBranch?: string; remote?: string }) => GitManager
   registry: BranchRegistry
+  githubService?: GitHubService
 }
 
 /**
@@ -44,6 +46,24 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   const branchMode = config.mode ?? 'local-simple'
   const registry = new BranchRegistry(getDefaultBranchBase(branchMode))
 
+  // Create GitHub service if applicable (only for prod/local-prod-sim modes)
+  let githubService: GitHubService | undefined
+  const mode = config.mode ?? 'local-simple'
+  if (mode !== 'local-simple') {
+    const remoteUrl = config.defaultRemoteUrl
+    if (remoteUrl) {
+      try {
+        const service = createGitHubService(config, remoteUrl)
+        if (service) {
+          githubService = service
+        }
+      } catch (err) {
+        console.warn('CanopyCMS: Failed to initialize GitHub service:', err)
+        // Continue without GitHub integration
+      }
+    }
+  }
+
   return {
     config,
     checkBranchAccess,
@@ -52,5 +72,6 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
     pathPermissions,
     createGitManagerFor,
     registry,
+    githubService,
   }
 }

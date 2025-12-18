@@ -37,6 +37,7 @@ export const submitBranchForMerge = async (
     return { ok: false, status: 500, error: 'Git manager unavailable' }
   }
 
+  // Commit and push changes
   try {
     const git = gitFactory(branchPaths.branchRoot)
     await git.checkoutBranch(state.branch.name)
@@ -55,9 +56,56 @@ export const submitBranchForMerge = async (
     }
   }
 
+  // Create or update PR if GitHub service is available
+  const githubService = ctx.services.githubService
+  let prUrl = state.pullRequestUrl
+  let prNumber = state.pullRequestNumber
+
+  if (githubService && branchMode !== 'local-simple') {
+    try {
+      const baseBranch = ctx.services.config.defaultBaseBranch ?? 'main'
+      const prTitle = state.branch.title || `Submit ${state.branch.name}`
+      const prBody = state.branch.description || ''
+
+      if (state.pullRequestNumber) {
+        // Update existing PR
+        await githubService.updatePullRequest(state.pullRequestNumber, {
+          title: prTitle,
+          body: prBody,
+        })
+        // Convert to ready if it was draft
+        const pr = await githubService.getPullRequest(state.pullRequestNumber)
+        if (pr.draft) {
+          await githubService.convertToReady(state.pullRequestNumber)
+        }
+        // Keep existing URL and number
+        prUrl = state.pullRequestUrl
+        prNumber = state.pullRequestNumber
+      } else {
+        // Create new PR
+        const result = await githubService.createPullRequest({
+          branchName: state.branch.name,
+          title: prTitle,
+          body: prBody,
+          draft: false,
+        })
+        prUrl = result.url
+        prNumber = result.number
+      }
+    } catch (err) {
+      // Log error but don't fail submission - code is already pushed
+      const message = err instanceof Error ? err.message : 'Unknown error'
+      console.error(`CanopyCMS: Failed to create/update PR for ${state.branch.name}:`, message)
+    }
+  }
+
+  // Update metadata with status and PR info
   await meta.update({
     branch: { name: state.branch.name, status: 'submitted' },
+    pullRequestUrl: prUrl,
+    pullRequestNumber: prNumber,
   })
+
   const updated = await ctx.getBranchState(params.branch)
   if (!updated) {
     return { ok: false, status: 500, error: 'Failed to update branch' }
