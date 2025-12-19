@@ -17,6 +17,8 @@ import { ReferenceField } from './fields/ReferenceField'
 import { CodeField } from './fields/CodeField'
 import { ObjectField } from './fields/ObjectField'
 import { formatCanopyPath, normalizeCanopyPath } from './canopy-path'
+import { FieldWrapper } from './comments/FieldWrapper'
+import type { CommentThread } from '../comment-store'
 
 export type FormValue = Record<string, unknown>
 
@@ -47,6 +49,13 @@ export interface FormRendererProps {
   value: FormValue
   onChange: (next: FormValue) => void
   customRenderers?: CustomFieldRenderers
+  // Comment integration
+  comments?: CommentThread[]
+  currentEntryId?: string
+  focusedFieldPath?: string
+  onOpenThreadPanel?: (canopyPath: string) => void
+  unresolvedColor?: string
+  resolvedColor?: string
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -54,6 +63,12 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   value,
   onChange,
   customRenderers,
+  comments = [],
+  currentEntryId,
+  focusedFieldPath,
+  onOpenThreadPanel,
+  unresolvedColor,
+  resolvedColor,
 }) => {
   const renderField = useCallback(
     (
@@ -63,10 +78,22 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       path: Array<string | number>,
     ) => {
       const fieldId = `field-${fieldKey(path).replace(/[^a-zA-Z0-9_-]/g, '-')}`
+      const canopyPath = normalizeCanopyPath(path)
+
+      // Filter comments for this specific field
+      const fieldThreads =
+        currentEntryId && onOpenThreadPanel
+          ? comments.filter(
+              (thread) =>
+                thread.type === 'field' &&
+                thread.entryId === currentEntryId &&
+                thread.canopyPath === canopyPath,
+            )
+          : []
 
       const custom = customRenderers?.[field.type]
       if (custom) {
-        return (
+        const renderedField = (
           <div key={fieldKey(path)}>
             {custom({
               field,
@@ -77,13 +104,51 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             })}
           </div>
         )
+
+        // Wrap custom fields with FieldWrapper if comments enabled
+        if (currentEntryId && onOpenThreadPanel) {
+          return (
+            <FieldWrapper
+              key={fieldKey(path)}
+              canopyPath={canopyPath}
+              threads={fieldThreads}
+              autoFocus={focusedFieldPath === canopyPath}
+              onOpenThreadPanel={onOpenThreadPanel}
+              unresolvedColor={unresolvedColor}
+              resolvedColor={resolvedColor}
+            >
+              {renderedField}
+            </FieldWrapper>
+          )
+        }
+
+        return renderedField
       }
 
       const label = field.label ?? field.name
 
+      // Helper to wrap field with FieldWrapper if comments enabled
+      const wrapWithComments = (renderedField: React.ReactNode) => {
+        if (currentEntryId && onOpenThreadPanel && fieldThreads.length > 0) {
+          return (
+            <FieldWrapper
+              canopyPath={canopyPath}
+              threads={fieldThreads}
+              autoFocus={focusedFieldPath === canopyPath}
+              onOpenThreadPanel={onOpenThreadPanel}
+              unresolvedColor={unresolvedColor}
+              resolvedColor={resolvedColor}
+            >
+              {renderedField}
+            </FieldWrapper>
+          )
+        }
+        return renderedField
+      }
+
       switch (field.type) {
         case 'string':
-          return (
+          return wrapWithComments(
             <TextField
               key={fieldKey(path)}
               id={fieldId}
@@ -91,10 +156,10 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               value={(currentValue as string) ?? ''}
               onChange={update}
               dataCanopyField={normalizeCanopyPath(path)}
-            />
+            />,
           )
         case 'boolean':
-          return (
+          return wrapWithComments(
             <ToggleField
               key={fieldKey(path)}
               id={fieldId}
@@ -102,11 +167,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               value={Boolean(currentValue)}
               onChange={(v) => update(Boolean(v))}
               dataCanopyField={normalizeCanopyPath(path)}
-            />
+            />,
           )
         case 'markdown':
         case 'mdx':
-          return (
+          return wrapWithComments(
             <MarkdownField
               key={fieldKey(path)}
               id={fieldId}
@@ -114,13 +179,13 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               value={(currentValue as string) ?? ''}
               onChange={(v) => update(v)}
               dataCanopyField={normalizeCanopyPath(path)}
-            />
+            />,
           )
         case 'select': {
           const selectField = field as SelectFieldConfig
           const options = normalizeOptions(selectField.options)
           const isMulti = Boolean(selectField.list)
-          return (
+          return wrapWithComments(
             <SelectField
               key={fieldKey(path)}
               id={fieldId}
@@ -136,14 +201,14 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               multiple={isMulti}
               onChange={(next) => update(next)}
               dataCanopyField={normalizeCanopyPath(path)}
-            />
+            />,
           )
         }
         case 'reference': {
           const referenceField = field as ReferenceFieldConfig
           const options = normalizeOptions(referenceField.options)
           const isMulti = Boolean(referenceField.list)
-          return (
+          return wrapWithComments(
             <ReferenceField
               key={fieldKey(path)}
               id={fieldId}
@@ -162,11 +227,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               multiple={isMulti}
               onChange={(next) => update(next)}
               dataCanopyField={normalizeCanopyPath(path)}
-            />
+            />,
           )
         }
         case 'block':
-          return (
+          return wrapWithComments(
             <BlockField
               key={fieldKey(path)}
               label={label}
@@ -176,7 +241,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               renderField={renderField}
               path={path}
               dataCanopyField={normalizeCanopyPath(path)}
-            />
+            />,
           )
         case 'object': {
           const objectField = field as ObjectFieldConfig
@@ -263,7 +328,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           )
         }
         case 'code':
-          return (
+          return wrapWithComments(
             <CodeField
               key={fieldKey(path)}
               id={fieldId}
@@ -271,7 +336,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               value={typeof currentValue === 'string' ? currentValue : ''}
               onChange={(v) => update(v)}
               dataCanopyField={normalizeCanopyPath(path)}
-            />
+            />,
           )
         default:
           return (
@@ -281,7 +346,15 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           )
       }
     },
-    [customRenderers],
+    [
+      customRenderers,
+      comments,
+      currentEntryId,
+      focusedFieldPath,
+      onOpenThreadPanel,
+      unresolvedColor,
+      resolvedColor,
+    ],
   )
 
   return (
