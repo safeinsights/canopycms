@@ -1,14 +1,14 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import type { CommentThread } from '../comment-store'
+import type { CommentThread, CommentType } from '../comment-store'
 import { CommentStore } from '../comment-store'
 import { resolveBranchWorkspace } from '../paths'
 
 interface AddCommentRequest {
   text: string
   threadId?: string
-  filePath?: string
-  lineNumber?: number
-  type?: 'review' | 'discussion'
+  type: CommentType
+  entryId?: string
+  canopyPath?: string
 }
 
 interface ListCommentsResponse {
@@ -64,6 +64,19 @@ export const addComment = async (
     return { ok: false, status: 400, error: 'Comment text is required' }
   }
 
+  if (!req.body?.type) {
+    return { ok: false, status: 400, error: 'Comment type is required' }
+  }
+
+  // Validate required fields based on type
+  if (req.body.type === 'field' && !req.body.canopyPath) {
+    return { ok: false, status: 400, error: 'canopyPath required for field comments' }
+  }
+
+  if ((req.body.type === 'field' || req.body.type === 'entry') && !req.body.entryId) {
+    return { ok: false, status: 400, error: 'entryId required for field/entry comments' }
+  }
+
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchWorkspace(state, branchMode)
   const commentStore = new CommentStore(branchPaths.metadataRoot)
@@ -72,16 +85,17 @@ export const addComment = async (
     userId: req.user.userId,
     text: req.body.text,
     threadId: req.body.threadId,
-    filePath: req.body.filePath,
-    lineNumber: req.body.lineNumber,
-    type: req.body.type || 'discussion',
+    type: req.body.type,
+    entryId: req.body.entryId,
+    canopyPath: req.body.canopyPath,
   })
 
   return { ok: true, status: 200, data: result }
 }
 
 /**
- * Resolve a comment thread (manager/admin only)
+ * Resolve a comment thread
+ * Can be resolved by: thread author, reviewer, or admin
  */
 export const resolveComment = async (
   ctx: ApiContext,
@@ -93,20 +107,29 @@ export const resolveComment = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  // Check user has manager/admin role
-  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
-    return {
-      ok: false,
-      status: 403,
-      error: 'Only admins and managers can resolve comments',
-    }
-  }
-
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchWorkspace(state, branchMode)
   const commentStore = new CommentStore(branchPaths.metadataRoot)
 
-  const resolved = await commentStore.resolveThread(params.threadId)
+  // Get the thread to check permissions
+  const thread = await commentStore.getThread(params.threadId)
+  if (!thread) {
+    return { ok: false, status: 404, error: 'Thread not found' }
+  }
+
+  // Check permissions: thread author, reviewer, or admin
+  const isAuthor = thread.authorId === req.user.userId
+  const isReviewer = req.user.role === 'manager' || req.user.role === 'admin'
+
+  if (!isAuthor && !isReviewer) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'Only thread author, reviewers, or admins can resolve comments',
+    }
+  }
+
+  const resolved = await commentStore.resolveThread(params.threadId, req.user.userId)
   if (!resolved) {
     return { ok: false, status: 404, error: 'Thread not found' }
   }
