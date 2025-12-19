@@ -149,10 +149,27 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                   <Stack gap="xs">
                     <Group justify="space-between" align="flex-start">
                       <Group gap="xs">
-                        {thread.filePath && (
-                          <Badge size="xs" variant="outline">
-                            {thread.filePath}
-                            {thread.lineRange && `:${thread.lineRange.start}`}
+                        <Badge
+                          size="xs"
+                          variant="outline"
+                          color={
+                            thread.type === 'field'
+                              ? 'blue'
+                              : thread.type === 'entry'
+                                ? 'grape'
+                                : 'gray'
+                          }
+                        >
+                          {thread.type}
+                        </Badge>
+                        {thread.entryId && (
+                          <Badge size="xs" variant="light">
+                            {thread.entryId}
+                          </Badge>
+                        )}
+                        {thread.canopyPath && (
+                          <Badge size="xs" variant="dot">
+                            {thread.canopyPath}
                           </Badge>
                         )}
                         {thread.resolved && (
@@ -192,11 +209,6 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                             <Text size="xs" c="dimmed">
                               {formatTimestamp(comment.timestamp)}
                             </Text>
-                            {comment.type === 'review' && (
-                              <Badge size="xs" variant="dot">
-                                Review
-                              </Badge>
-                            )}
                           </Group>
                           <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
                             {comment.text}

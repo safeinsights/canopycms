@@ -16,9 +16,12 @@ type Story = StoryObj<typeof CommentsPanel>
 const sampleThreads: CommentThread[] = [
   {
     id: 'thread-1',
+    type: 'field',
+    entryId: 'blog/intro',
+    canopyPath: 'title',
+    authorId: 'alice',
     resolved: false,
-    filePath: 'content/blog/intro.md',
-    lineRange: { start: 15, end: 15 },
+    createdAt: new Date(Date.now() - 3600000).toISOString(),
     comments: [
       {
         id: 'comment-1',
@@ -26,10 +29,6 @@ const sampleThreads: CommentThread[] = [
         userId: 'alice',
         timestamp: new Date(Date.now() - 3600000).toISOString(),
         text: 'This heading should be more descriptive. What about "Getting Started with Our Platform"?',
-        resolved: false,
-        type: 'review',
-        lineNumber: 15,
-        filePath: 'content/blog/intro.md',
       },
       {
         id: 'comment-2',
@@ -37,14 +36,16 @@ const sampleThreads: CommentThread[] = [
         userId: 'bob',
         timestamp: new Date(Date.now() - 1800000).toISOString(),
         text: "Good suggestion! I'll update it.",
-        resolved: false,
-        type: 'discussion',
       },
     ],
   },
   {
     id: 'thread-2',
+    type: 'entry',
+    entryId: 'blog/intro',
+    authorId: 'charlie',
     resolved: false,
+    createdAt: new Date(Date.now() - 7200000).toISOString(),
     comments: [
       {
         id: 'comment-3',
@@ -52,15 +53,19 @@ const sampleThreads: CommentThread[] = [
         userId: 'charlie',
         timestamp: new Date(Date.now() - 7200000).toISOString(),
         text: 'Please add alt text to all images before submitting.',
-        resolved: false,
-        type: 'discussion',
       },
     ],
   },
   {
     id: 'thread-3',
+    type: 'field',
+    entryId: 'pages/about',
+    canopyPath: 'hero.image',
+    authorId: 'alice',
     resolved: true,
-    filePath: 'content/pages/about.md',
+    createdAt: new Date(Date.now() - 86400000).toISOString(),
+    resolvedBy: 'bob',
+    resolvedAt: new Date(Date.now() - 43200000).toISOString(),
     comments: [
       {
         id: 'comment-4',
@@ -68,9 +73,6 @@ const sampleThreads: CommentThread[] = [
         userId: 'alice',
         timestamp: new Date(Date.now() - 86400000).toISOString(),
         text: 'Can we add a team photo here?',
-        resolved: true,
-        type: 'review',
-        filePath: 'content/pages/about.md',
       },
       {
         id: 'comment-5',
@@ -78,8 +80,6 @@ const sampleThreads: CommentThread[] = [
         userId: 'bob',
         timestamp: new Date(Date.now() - 43200000).toISOString(),
         text: 'Done! Added the photo from our last retreat.',
-        resolved: true,
-        type: 'discussion',
       },
     ],
   },
@@ -139,7 +139,10 @@ export const ManyComments: Story = {
       ...sampleThreads,
       {
         id: 'thread-4',
+        type: 'branch',
+        authorId: 'dan',
         resolved: false,
+        createdAt: new Date(Date.now() - 600000).toISOString(),
         comments: [
           {
             id: 'comment-6',
@@ -147,16 +150,17 @@ export const ManyComments: Story = {
             userId: 'dan',
             timestamp: new Date(Date.now() - 600000).toISOString(),
             text: 'What about adding a call-to-action button at the end?',
-            resolved: false,
-            type: 'discussion',
           },
         ],
       },
       {
         id: 'thread-5',
+        type: 'field',
+        entryId: 'products/widget',
+        canopyPath: 'pricing.monthly',
+        authorId: 'eve',
         resolved: false,
-        filePath: 'content/products/widget.md',
-        lineRange: { start: 42, end: 45 },
+        createdAt: new Date(Date.now() - 300000).toISOString(),
         comments: [
           {
             id: 'comment-7',
@@ -164,10 +168,6 @@ export const ManyComments: Story = {
             userId: 'eve',
             timestamp: new Date(Date.now() - 300000).toISOString(),
             text: 'The pricing information here is outdated.',
-            resolved: false,
-            type: 'review',
-            filePath: 'content/products/widget.md',
-            lineNumber: 42,
           },
         ],
       },

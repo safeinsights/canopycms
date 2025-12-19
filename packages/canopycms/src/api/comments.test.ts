@@ -8,11 +8,34 @@ vi.mock('../comment-store', () => {
       listThreads: vi.fn().mockResolvedValue([
         {
           id: 'thread1',
-          comments: [{ id: 'c1', text: 'Test comment', userId: 'u1' }],
+          comments: [
+            {
+              id: 'c1',
+              text: 'Test comment',
+              userId: 'u1',
+              threadId: 'thread1',
+              timestamp: '2024-01-01',
+            },
+          ],
           resolved: false,
+          type: 'field',
+          entryId: 'posts/hello',
+          canopyPath: 'title',
+          authorId: 'u1',
+          createdAt: '2024-01-01',
         },
       ]),
       addComment: vi.fn().mockResolvedValue({ threadId: 'thread1', commentId: 'c1' }),
+      getThread: vi.fn().mockResolvedValue({
+        id: 'thread1',
+        comments: [],
+        resolved: false,
+        type: 'field',
+        entryId: 'posts/hello',
+        canopyPath: 'title',
+        authorId: 'u1',
+        createdAt: '2024-01-01',
+      }),
       resolveThread: vi.fn().mockResolvedValue(true),
     })),
   }
@@ -68,7 +91,10 @@ describe('comments api - addComment', () => {
     ctx.getBranchState = vi.fn().mockResolvedValue(null)
     const res = await addComment(
       ctx,
-      { user: { userId: 'u1' }, body: { text: 'test' } },
+      {
+        user: { userId: 'u1' },
+        body: { text: 'test', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
+      },
       { branch: 'missing' },
     )
     expect(res.status).toBe(404)
@@ -77,7 +103,10 @@ describe('comments api - addComment', () => {
   it('returns 403 if access forbidden', async () => {
     const res = await addComment(
       makeCtx(false),
-      { user: { userId: 'u1' }, body: { text: 'test' } },
+      {
+        user: { userId: 'u1' },
+        body: { text: 'test', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
+      },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(403)
@@ -86,17 +115,63 @@ describe('comments api - addComment', () => {
   it('returns 400 if text is missing', async () => {
     const res = await addComment(
       makeCtx(),
-      { user: { userId: 'u1' }, body: {} as any },
+      { user: { userId: 'u1' }, body: { type: 'field' } as any },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(400)
     expect(res.error).toContain('text is required')
   })
 
-  it('adds comment when allowed', async () => {
+  it('returns 400 if type is missing', async () => {
     const res = await addComment(
       makeCtx(),
-      { user: { userId: 'u1' }, body: { text: 'Great work!' } },
+      { user: { userId: 'u1' }, body: { text: 'test' } as any },
+      { branch: 'feature/x' },
+    )
+    expect(res.status).toBe(400)
+    expect(res.error).toContain('type is required')
+  })
+
+  it('returns 400 if canopyPath missing for field comment', async () => {
+    const res = await addComment(
+      makeCtx(),
+      {
+        user: { userId: 'u1' },
+        body: { text: 'test', type: 'field', entryId: 'posts/hello' } as any,
+      },
+      { branch: 'feature/x' },
+    )
+    expect(res.status).toBe(400)
+    expect(res.error).toContain('canopyPath required')
+  })
+
+  it('returns 400 if entryId missing for field comment', async () => {
+    const res = await addComment(
+      makeCtx(),
+      { user: { userId: 'u1' }, body: { text: 'test', type: 'field', canopyPath: 'title' } as any },
+      { branch: 'feature/x' },
+    )
+    expect(res.status).toBe(400)
+    expect(res.error).toContain('entryId required')
+  })
+
+  it('returns 400 if entryId missing for entry comment', async () => {
+    const res = await addComment(
+      makeCtx(),
+      { user: { userId: 'u1' }, body: { text: 'test', type: 'entry' } as any },
+      { branch: 'feature/x' },
+    )
+    expect(res.status).toBe(400)
+    expect(res.error).toContain('entryId required')
+  })
+
+  it('adds field comment when allowed', async () => {
+    const res = await addComment(
+      makeCtx(),
+      {
+        user: { userId: 'u1' },
+        body: { text: 'Great work!', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
+      },
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)
@@ -104,17 +179,41 @@ describe('comments api - addComment', () => {
     expect(res.data?.commentId).toBe('c1')
   })
 
-  it('accepts optional metadata', async () => {
+  it('adds entry comment when allowed', async () => {
+    const res = await addComment(
+      makeCtx(),
+      {
+        user: { userId: 'u1' },
+        body: { text: 'Entry feedback', type: 'entry', entryId: 'posts/hello' },
+      },
+      { branch: 'feature/x' },
+    )
+    expect(res.ok).toBe(true)
+  })
+
+  it('adds branch comment when allowed', async () => {
+    const res = await addComment(
+      makeCtx(),
+      {
+        user: { userId: 'u1' },
+        body: { text: 'Branch discussion', type: 'branch' },
+      },
+      { branch: 'feature/x' },
+    )
+    expect(res.ok).toBe(true)
+  })
+
+  it('accepts optional threadId for replies', async () => {
     const res = await addComment(
       makeCtx(),
       {
         user: { userId: 'u1' },
         body: {
-          text: 'Line comment',
+          text: 'Reply comment',
           threadId: 'existing-thread',
-          filePath: 'src/test.ts',
-          lineNumber: 42,
-          type: 'review' as const,
+          type: 'field',
+          entryId: 'posts/hello',
+          canopyPath: 'title',
         },
       },
       { branch: 'feature/x' },
@@ -135,30 +234,39 @@ describe('comments api - resolveComment', () => {
     expect(res.status).toBe(404)
   })
 
-  it('returns 403 if user not admin/manager', async () => {
+  it('returns 403 if user is not author, reviewer, or admin', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { userId: 'u1', role: 'editor' } },
+      { user: { userId: 'u2', role: 'editor' } },
       { branch: 'feature/x', threadId: 'thread1' },
     )
     expect(res.status).toBe(403)
-    expect(res.error).toContain('Only admins and managers')
+    expect(res.error).toContain('thread author, reviewers, or admins')
   })
 
-  it('resolves thread when allowed (admin)', async () => {
+  it('allows thread author to resolve', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { userId: 'u1', role: 'admin' } },
+      { user: { userId: 'u1', role: 'editor' } },
       { branch: 'feature/x', threadId: 'thread1' },
     )
     expect(res.ok).toBe(true)
     expect(res.data?.resolved).toBe(true)
   })
 
-  it('resolves thread when allowed (manager)', async () => {
+  it('allows admin to resolve', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { userId: 'u1', role: 'manager' } },
+      { user: { userId: 'u2', role: 'admin' } },
+      { branch: 'feature/x', threadId: 'thread1' },
+    )
+    expect(res.ok).toBe(true)
+  })
+
+  it('allows manager to resolve', async () => {
+    const res = await resolveComment(
+      makeCtx(),
+      { user: { userId: 'u2', role: 'manager' } },
       { branch: 'feature/x', threadId: 'thread1' },
     )
     expect(res.ok).toBe(true)

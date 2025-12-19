@@ -2,24 +2,30 @@ import fs from 'fs/promises'
 import path from 'path'
 import { randomUUID } from 'crypto'
 
+export type CommentType = 'field' | 'entry' | 'branch'
+
 export interface Comment {
   id: string
   threadId: string
   userId: string
-  timestamp: string
+  timestamp: string // ISO string for individual comment
   text: string
-  resolved: boolean
-  filePath?: string
-  lineNumber?: number
-  type: 'review' | 'discussion'
+  // Note: No resolved flag on individual comments
 }
 
 export interface CommentThread {
   id: string
-  comments: Comment[]
-  resolved: boolean
-  filePath?: string
-  lineRange?: { start: number; end: number }
+  comments: Comment[] // Sorted by timestamp (oldest first)
+  resolved: boolean // Applies to entire thread
+  createdAt: string // ISO string, timestamp of first comment (for sorting)
+  resolvedBy?: string // userId who resolved (for audit trail)
+  resolvedAt?: string // ISO string
+  type: CommentType
+  authorId: string // userId of thread creator (for resolve permission)
+
+  // Addressing (all optional based on type)
+  entryId?: string // Required for field/entry, undefined for branch
+  canopyPath?: string // Required for field, undefined for entry/branch
 }
 
 export interface CommentsFile {
@@ -61,25 +67,22 @@ export class CommentStore {
     userId: string
     text: string
     threadId?: string
-    filePath?: string
-    lineNumber?: number
-    type?: 'review' | 'discussion'
+    type: CommentType
+    entryId?: string
+    canopyPath?: string
   }): Promise<{ threadId: string; commentId: string }> {
     const data = await this.load()
 
     const threadId = options.threadId || randomUUID()
     const commentId = randomUUID()
+    const timestamp = new Date().toISOString()
 
     const comment: Comment = {
       id: commentId,
       threadId,
       userId: options.userId,
-      timestamp: new Date().toISOString(),
+      timestamp,
       text: options.text,
-      resolved: false,
-      filePath: options.filePath,
-      lineNumber: options.lineNumber,
-      type: options.type || 'discussion',
     }
 
     if (!data.threads[threadId]) {
@@ -88,10 +91,11 @@ export class CommentStore {
         id: threadId,
         comments: [comment],
         resolved: false,
-        filePath: options.filePath,
-        lineRange: options.lineNumber
-          ? { start: options.lineNumber, end: options.lineNumber }
-          : undefined,
+        createdAt: timestamp,
+        type: options.type,
+        authorId: options.userId,
+        entryId: options.entryId,
+        canopyPath: options.canopyPath,
       }
     } else {
       // Add to existing thread
@@ -102,7 +106,7 @@ export class CommentStore {
     return { threadId, commentId }
   }
 
-  async resolveThread(threadId: string): Promise<boolean> {
+  async resolveThread(threadId: string, userId: string): Promise<boolean> {
     const data = await this.load()
 
     if (!data.threads[threadId]) {
@@ -110,10 +114,8 @@ export class CommentStore {
     }
 
     data.threads[threadId].resolved = true
-    // Mark all comments in thread as resolved
-    data.threads[threadId].comments.forEach((c) => {
-      c.resolved = true
-    })
+    data.threads[threadId].resolvedBy = userId
+    data.threads[threadId].resolvedAt = new Date().toISOString()
 
     await this.save(data)
     return true
@@ -145,5 +147,35 @@ export class CommentStore {
     delete data.threads[threadId]
     await this.save(data)
     return true
+  }
+
+  /**
+   * Get all threads for a specific field
+   */
+  async getThreadsForField(entryId: string, canopyPath: string): Promise<CommentThread[]> {
+    const data = await this.load()
+    return Object.values(data.threads)
+      .filter((t) => t.type === 'field' && t.entryId === entryId && t.canopyPath === canopyPath)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }
+
+  /**
+   * Get all threads for a specific entry (not field-specific)
+   */
+  async getThreadsForEntry(entryId: string): Promise<CommentThread[]> {
+    const data = await this.load()
+    return Object.values(data.threads)
+      .filter((t) => t.type === 'entry' && t.entryId === entryId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }
+
+  /**
+   * Get all branch-level threads
+   */
+  async getBranchThreads(): Promise<CommentThread[]> {
+    const data = await this.load()
+    return Object.values(data.threads)
+      .filter((t) => t.type === 'branch')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   }
 }
