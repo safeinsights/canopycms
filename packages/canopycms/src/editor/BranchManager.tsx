@@ -4,6 +4,8 @@ import React, { useState } from 'react'
 
 import { Badge, Button, Group, Paper, ScrollArea, Stack, Text, Title, TextInput, Textarea, Collapse } from '@mantine/core'
 import type { BranchMode } from '../paths'
+import type { CommentThread } from '../comment-store'
+import { BranchComments } from './comments/BranchComments'
 
 export interface BranchSummary {
   name: string
@@ -35,6 +37,13 @@ export interface BranchManagerProps {
   onWithdraw?: (name: string) => void
   onRequestChanges?: (name: string) => void
   onClose?: () => void
+  // Branch comments
+  comments?: CommentThread[]
+  currentUserId?: string
+  canResolve?: boolean
+  onAddComment?: (text: string, type: 'field' | 'entry' | 'branch', entryId?: string, canopyPath?: string, threadId?: string) => Promise<void>
+  onResolveThread?: (threadId: string) => Promise<void>
+  highlightThreadId?: string
 }
 
 export const BranchManager: React.FC<BranchManagerProps> = ({
@@ -47,6 +56,12 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   onWithdraw,
   onRequestChanges,
   onClose,
+  comments = [],
+  currentUserId,
+  canResolve = false,
+  onAddComment,
+  onResolveThread,
+  highlightThreadId,
 }) => {
   const isLocalSimple = mode === 'local-simple'
   const [showCreateForm, setShowCreateForm] = useState(false)
@@ -80,6 +95,20 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
           Close
         </Button>
       </Group>
+
+      {/* Branch-level comments */}
+      {currentUserId && onAddComment && onResolveThread && (
+        <Stack px="md" pt="sm">
+          <BranchComments
+            comments={comments}
+            currentUserId={currentUserId}
+            canResolve={canResolve}
+            onAddComment={onAddComment}
+            onResolveThread={onResolveThread}
+            highlightThreadId={highlightThreadId}
+          />
+        </Stack>
+      )}
 
       {!isLocalSimple && (
         <Stack gap="sm" px="md" pt="sm">

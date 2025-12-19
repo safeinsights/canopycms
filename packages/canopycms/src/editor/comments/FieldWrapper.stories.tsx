@@ -91,9 +91,19 @@ export const WithUnresolvedComments: Story = {
   args: {
     children: <TextInput label="Title" placeholder="Enter title..." />,
     canopyPath: 'title',
+    entryId: 'posts/hello',
     threads: sampleThreads,
     autoFocus: false,
-    onOpenThreadPanel: (canopyPath: string) => console.log('Open panel for:', canopyPath),
+    currentUserId: 'alice',
+    canResolve: true,
+    onAddComment: async (text: string, type: string, entryId?: string, canopyPath?: string, threadId?: string) => {
+      console.log('Add comment:', { text, type, entryId, canopyPath, threadId })
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    },
+    onResolveThread: async (threadId: string) => {
+      console.log('Resolve thread:', threadId)
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    },
   },
 }
 
@@ -101,9 +111,17 @@ export const WithResolvedComments: Story = {
   args: {
     children: <TextInput label="Title" placeholder="Enter title..." />,
     canopyPath: 'title',
+    entryId: 'posts/hello',
     threads: resolvedThreads,
     autoFocus: false,
-    onOpenThreadPanel: (canopyPath: string) => console.log('Open panel for:', canopyPath),
+    currentUserId: 'alice',
+    canResolve: true,
+    onAddComment: async (text: string, type: string, entryId?: string, canopyPath?: string, threadId?: string) => {
+      console.log('Add comment:', { text, type, entryId, canopyPath, threadId })
+    },
+    onResolveThread: async (threadId: string) => {
+      console.log('Resolve thread:', threadId)
+    },
   },
 }
 
@@ -111,9 +129,17 @@ export const NoComments: Story = {
   args: {
     children: <TextInput label="Description" placeholder="Enter description..." />,
     canopyPath: 'description',
+    entryId: 'posts/hello',
     threads: [],
     autoFocus: false,
-    onOpenThreadPanel: (canopyPath: string) => console.log('Open panel for:', canopyPath),
+    currentUserId: 'alice',
+    canResolve: true,
+    onAddComment: async (text: string, type: string, entryId?: string, canopyPath?: string, threadId?: string) => {
+      console.log('Add comment:', { text, type, entryId, canopyPath, threadId })
+    },
+    onResolveThread: async (threadId: string) => {
+      console.log('Resolve thread:', threadId)
+    },
   },
 }
 
@@ -121,20 +147,16 @@ export const AutoFocused: Story = {
   args: {
     children: <TextInput label="Title" placeholder="Enter title..." />,
     canopyPath: 'title',
+    entryId: 'posts/hello',
     threads: sampleThreads,
     autoFocus: true,
-    onOpenThreadPanel: (canopyPath: string) => console.log('Auto-opened panel for:', canopyPath),
-  },
-}
-
-export const CustomColors: Story = {
-  args: {
-    children: <TextInput label="Title" placeholder="Enter title..." />,
-    canopyPath: 'title',
-    threads: sampleThreads,
-    autoFocus: false,
-    unresolvedColor: 'blue',
-    resolvedColor: 'green',
-    onOpenThreadPanel: (canopyPath: string) => console.log('Open panel for:', canopyPath),
+    currentUserId: 'alice',
+    canResolve: true,
+    onAddComment: async (text: string, type: string, entryId?: string, canopyPath?: string, threadId?: string) => {
+      console.log('Add comment:', { text, type, entryId, canopyPath, threadId })
+    },
+    onResolveThread: async (threadId: string) => {
+      console.log('Resolve thread:', threadId)
+    },
   },
 }
