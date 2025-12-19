@@ -38,6 +38,8 @@ Read packages/canopycms/README.md to understand what we are building from an end
    - Post-merge: close/delete remote branch, mark branch clone read-only or archived; keep minimal metadata for history.
    - Show GitHub diff link to reviewers; basic status polling.
    - Submission locks branches; withdraw or reviewer “request changes” re-opens (draft PR) to prevent reviewers seeing moving targets.
+1. **Comment Context**
+   - Have PR comments be linked to the part of the JSON, allowing a user to click on a link from the comment to take them to the form field
 1. **Auth**
    - Wire `canopycms/next` handlers to external pluggable auth, provide plugin for Clerk (see `reference/prototype`); enforce admin/manager/editor roles on branch + path access; middleware examples for Next.
    - Add guarded-route examples/snippets; ensure errors surface useful permission info.

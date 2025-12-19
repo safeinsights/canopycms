@@ -1,6 +1,20 @@
-import React from 'react'
+'use client'
 
-import { Badge, Button, Group, Paper, ScrollArea, Stack, Text, Title } from '@mantine/core'
+import React, { useState } from 'react'
+
+import {
+  Badge,
+  Button,
+  Group,
+  Paper,
+  ScrollArea,
+  Stack,
+  Text,
+  Title,
+  TextInput,
+  Textarea,
+  Collapse,
+} from '@mantine/core'
 import type { BranchMode } from '../paths'
 
 export interface BranchSummary {
@@ -27,6 +41,7 @@ export interface BranchManagerProps {
   branches: BranchSummary[]
   mode?: BranchMode
   onSelect?: (name: string) => void
+  onCreate?: (branch: { name: string; title?: string; description?: string }) => void
   onDelete?: (name: string) => void
   onSubmit?: (name: string) => void
   onWithdraw?: (name: string) => void
@@ -38,6 +53,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   branches,
   mode,
   onSelect,
+  onCreate,
   onDelete,
   onSubmit,
   onWithdraw,
@@ -45,6 +61,24 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   onClose,
 }) => {
   const isLocalSimple = mode === 'local-simple'
+  const [showCreateForm, setShowCreateForm] = useState(false)
+  const [newBranchName, setNewBranchName] = useState('')
+  const [newBranchTitle, setNewBranchTitle] = useState('')
+  const [newBranchDescription, setNewBranchDescription] = useState('')
+
+  const handleCreate = () => {
+    if (!newBranchName.trim()) return
+    onCreate?.({
+      name: newBranchName.trim(),
+      title: newBranchTitle.trim() || undefined,
+      description: newBranchDescription.trim() || undefined,
+    })
+    setNewBranchName('')
+    setNewBranchTitle('')
+    setNewBranchDescription('')
+    setShowCreateForm(false)
+  }
+
   return (
     <Paper
       withBorder
@@ -64,6 +98,50 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
           Close
         </Button>
       </Group>
+
+      {!isLocalSimple && (
+        <Stack gap="sm" px="md" pt="sm">
+          <Button
+            variant="light"
+            size="sm"
+            fullWidth
+            onClick={() => setShowCreateForm(!showCreateForm)}
+          >
+            {showCreateForm ? 'Cancel' : 'Create New Branch'}
+          </Button>
+
+          <Collapse in={showCreateForm}>
+            <Paper withBorder p="md" radius="md">
+              <Stack gap="sm">
+                <TextInput
+                  label="Branch Name"
+                  placeholder="feature/my-branch"
+                  value={newBranchName}
+                  onChange={(e) => setNewBranchName(e.target.value)}
+                  required
+                />
+                <TextInput
+                  label="Title (optional)"
+                  placeholder="Brief description"
+                  value={newBranchTitle}
+                  onChange={(e) => setNewBranchTitle(e.target.value)}
+                />
+                <Textarea
+                  label="Description (optional)"
+                  placeholder="Detailed description of the changes"
+                  value={newBranchDescription}
+                  onChange={(e) => setNewBranchDescription(e.target.value)}
+                  minRows={2}
+                />
+                <Button onClick={handleCreate} disabled={!newBranchName.trim()} fullWidth>
+                  Create Branch
+                </Button>
+              </Stack>
+            </Paper>
+          </Collapse>
+        </Stack>
+      )}
+
       <ScrollArea style={{ flex: 1 }} px="md" pb="md">
         {branches.length === 0 ? (
           <Text size="sm" c="dimmed" py="md">
