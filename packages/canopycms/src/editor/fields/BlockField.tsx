@@ -72,7 +72,7 @@ const SortableBlock: React.FC<{
         >
           ⇅
         </ActionIcon>
-        <div style={{ flex: 1 }}>{children}</div>
+        <div style={{ flex: 1, minWidth: 0, width: '100%' }}>{children}</div>
       </Group>
     </Paper>
   )

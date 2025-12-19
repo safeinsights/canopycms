@@ -81,6 +81,8 @@ export interface EditorProps {
   onCreateEntry?: (collectionId: string) => Promise<void> | void
   themeOptions?: CanopyThemeOptions
   previewBaseByCollection?: Record<string, string>
+  currentUser?: string
+  canResolveComments?: boolean
 }
 
 /**
@@ -102,6 +104,8 @@ export const Editor: React.FC<EditorProps> = ({
   themeOptions,
   branchMode = 'local-simple',
   previewBaseByCollection,
+  currentUser = 'current-user',
+  canResolveComments = true,
 }) => {
   const [branchNameState, setBranchNameState] = useState<string>(branchName)
   const [branches, setBranches] = useState<BranchState[]>([])
@@ -117,6 +121,13 @@ export const Editor: React.FC<EditorProps> = ({
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
   const [commentsPanelOpen, setCommentsPanelOpen] = useState(false)
   const [comments, setComments] = useState<CommentThread[]>([])
+  const [focusedFieldPath, setFocusedFieldPath] = useState<string | undefined>(undefined)
+  const [highlightThreadId, setHighlightThreadId] = useState<string | undefined>(undefined)
+  const [commentThreadPanelOpen, setCommentThreadPanelOpen] = useState(false)
+  const [activeCommentContext, setActiveCommentContext] = useState<{
+    type: 'field' | 'entry' | 'branch'
+    canopyPath?: string
+  } | null>(null)
   const [layout, setLayout] = useState<PaneLayout>('side')
   const headerRef = useRef<HTMLDivElement | null>(null)
   const [headerHeight, setHeaderHeight] = useState<number>(80)
@@ -204,6 +215,40 @@ export const Editor: React.FC<EditorProps> = ({
       })
       .filter(Boolean) as { id: string; label: string }[]
   }, [drafts, entriesState])
+
+  // Compute active comment threads for the thread panel
+  const activeThreads = useMemo(() => {
+    if (!activeCommentContext) return []
+
+    if (activeCommentContext.type === 'field' && activeCommentContext.canopyPath) {
+      return comments.filter(
+        (t) =>
+          t.type === 'field' &&
+          t.entryId === selectedId &&
+          t.canopyPath === activeCommentContext.canopyPath,
+      )
+    } else if (activeCommentContext.type === 'entry') {
+      return comments.filter((t) => t.type === 'entry' && t.entryId === selectedId)
+    } else if (activeCommentContext.type === 'branch') {
+      return comments.filter((t) => t.type === 'branch')
+    }
+
+    return []
+  }, [activeCommentContext, comments, selectedId])
+
+  const activeContextLabel = useMemo(() => {
+    if (!activeCommentContext) return ''
+
+    if (activeCommentContext.type === 'field' && activeCommentContext.canopyPath) {
+      return activeCommentContext.canopyPath
+    } else if (activeCommentContext.type === 'entry') {
+      return selectedId
+    } else if (activeCommentContext.type === 'branch') {
+      return branchNameState
+    }
+
+    return ''
+  }, [activeCommentContext, selectedId, branchNameState])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -448,6 +493,15 @@ export const Editor: React.FC<EditorProps> = ({
         window.setTimeout(() => {
           target.style.boxShadow = previous
         }, 1200)
+
+        // Set focused field path to trigger FieldWrapper auto-focus
+        if (normalizedPath) {
+          setFocusedFieldPath(normalizedPath)
+          // Clear after brief delay to allow FieldWrapper to detect the change
+          window.setTimeout(() => {
+            setFocusedFieldPath(undefined)
+          }, 100)
+        }
       }
     }
     window.addEventListener('message', handleFocus)
@@ -657,13 +711,31 @@ export const Editor: React.FC<EditorProps> = ({
     }
   }
 
-  const handleAddComment = async (text: string, threadId?: string) => {
+  const handleAddComment = async (
+    text: string,
+    type: 'field' | 'entry' | 'branch',
+    entryId?: string,
+    canopyPath?: string,
+    threadId?: string,
+  ) => {
     if (!branchNameState) return
     try {
+      const body: any = { text, threadId, type }
+
+      // Add entryId for field/entry comments
+      if (entryId && (type === 'field' || type === 'entry')) {
+        body.entryId = entryId
+      }
+
+      // Add canopyPath for field comments
+      if (canopyPath && type === 'field') {
+        body.canopyPath = canopyPath
+      }
+
       const res = await fetch(`/api/canopycms/${branchNameState}/comments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, threadId }),
+        body: JSON.stringify(body),
       })
       if (!res.ok) throw new Error('Failed to add comment')
       await loadComments(branchNameState)
@@ -978,6 +1050,14 @@ export const Editor: React.FC<EditorProps> = ({
                       fields={schema}
                       value={effectiveValue ?? {}}
                       onChange={(next) => setDrafts((prev) => ({ ...prev, [selectedId]: next }))}
+                      comments={comments}
+                      currentEntryId={selectedId}
+                      currentUserId={currentUser}
+                      canResolve={canResolveComments}
+                      focusedFieldPath={focusedFieldPath}
+                      highlightThreadId={highlightThreadId}
+                      onAddComment={handleAddComment}
+                      onResolveThread={handleResolveThread}
                     />
                   ) : (
                     <Text size="sm" c="dimmed">
@@ -1135,6 +1215,12 @@ export const Editor: React.FC<EditorProps> = ({
               handleRequestChanges(name).catch((err) => console.error(err))
             }}
             onClose={() => setBranchManagerOpen(false)}
+            comments={comments}
+            currentUserId={currentUser}
+            canResolve={canResolveComments}
+            onAddComment={handleAddComment}
+            onResolveThread={handleResolveThread}
+            highlightThreadId={highlightThreadId}
           />
         </Drawer>
         {commentsPanelOpen && branchNameState && (
@@ -1145,6 +1231,62 @@ export const Editor: React.FC<EditorProps> = ({
             onAddComment={handleAddComment}
             onResolveThread={handleResolveThread}
             onClose={() => setCommentsPanelOpen(false)}
+            onJumpToField={(entryId, canopyPath, threadId) => {
+              // Switch to the correct entry if needed
+              if (entryId !== selectedId) {
+                setSelectedId(entryId)
+              }
+
+              // Wait for entry to load, then scroll and highlight
+              window.setTimeout(
+                () => {
+                  // Find and scroll to the field element
+                  const fieldElement = document.querySelector(`[data-canopy-field="${canopyPath}"]`)
+                  if (fieldElement) {
+                    fieldElement.scrollIntoView({ behavior: 'smooth', block: 'center' })
+                  }
+                  // Set focused field path and highlight thread
+                  setFocusedFieldPath(canopyPath)
+                  setHighlightThreadId(threadId)
+                  window.setTimeout(() => {
+                    setFocusedFieldPath(undefined)
+                    setHighlightThreadId(undefined)
+                  }, 2100) // Clear after highlight animation completes
+                },
+                entryId !== selectedId ? 300 : 0,
+              ) // Delay if switching entries
+            }}
+            onJumpToEntry={(entryId, threadId) => {
+              // Switch to the correct entry if needed
+              if (entryId !== selectedId) {
+                setSelectedId(entryId)
+              }
+
+              // Wait for entry to load, then scroll and highlight
+              window.setTimeout(
+                () => {
+                  // Scroll to top of form (where EntryComments renders)
+                  const formElement = document.querySelector('[data-form-renderer]')
+                  if (formElement) {
+                    formElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                  }
+                  // Set highlight thread
+                  setHighlightThreadId(threadId)
+                  window.setTimeout(() => {
+                    setHighlightThreadId(undefined)
+                  }, 2100) // Clear after highlight animation completes
+                },
+                entryId !== selectedId ? 300 : 0,
+              ) // Delay if switching entries
+            }}
+            onJumpToBranch={(threadId) => {
+              // Open branch manager and highlight thread
+              setBranchManagerOpen(true)
+              setHighlightThreadId(threadId)
+              window.setTimeout(() => {
+                setHighlightThreadId(undefined)
+              }, 2100) // Clear after highlight animation completes
+            }}
           />
         )}
       </Box>

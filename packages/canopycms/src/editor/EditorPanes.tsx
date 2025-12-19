@@ -70,7 +70,8 @@ export const EditorPanes: React.FC<EditorPanesProps> = ({
       nextLayout === 'side'
         ? (splitContainerRef.current?.clientWidth ?? 0)
         : (splitContainerRef.current?.clientHeight ?? 0)
-    if (!total || nextPixels <= 0) return
+    // Guard: ensure valid dimensions before calculating
+    if (!total || total <= 0 || nextPixels <= 0) return
     const percent = Math.min(85, Math.max(15, (nextPixels / total) * 100))
     if (nextLayout === 'side') {
       setSidePrimarySize(percent)
@@ -94,7 +95,10 @@ export const EditorPanes: React.FC<EditorPanesProps> = ({
           width: '100%',
         }}
       >
-        <Box ref={splitContainerRef} style={{ display: 'flex', flex: 1, minHeight: 0 }}>
+        <Box
+          ref={splitContainerRef}
+          style={{ display: 'flex', flex: 1, minHeight: 0, width: '100%' }}
+        >
           <TypedSplitPane
             split={direction}
             minSize={120}

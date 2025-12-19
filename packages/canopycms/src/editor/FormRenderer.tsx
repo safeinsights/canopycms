@@ -18,6 +18,7 @@ import { CodeField } from './fields/CodeField'
 import { ObjectField } from './fields/ObjectField'
 import { formatCanopyPath, normalizeCanopyPath } from './canopy-path'
 import { FieldWrapper } from './comments/FieldWrapper'
+import { EntryComments } from './comments/EntryComments'
 import type { CommentThread } from '../comment-store'
 
 export type FormValue = Record<string, unknown>
@@ -52,10 +53,18 @@ export interface FormRendererProps {
   // Comment integration
   comments?: CommentThread[]
   currentEntryId?: string
+  currentUserId?: string
+  canResolve?: boolean
   focusedFieldPath?: string
-  onOpenThreadPanel?: (canopyPath: string) => void
-  unresolvedColor?: string
-  resolvedColor?: string
+  highlightThreadId?: string
+  onAddComment?: (
+    text: string,
+    type: 'field' | 'entry' | 'branch',
+    entryId?: string,
+    canopyPath?: string,
+    threadId?: string,
+  ) => Promise<void>
+  onResolveThread?: (threadId: string) => Promise<void>
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -65,10 +74,12 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   customRenderers,
   comments = [],
   currentEntryId,
+  currentUserId,
+  canResolve = false,
   focusedFieldPath,
-  onOpenThreadPanel,
-  unresolvedColor,
-  resolvedColor,
+  highlightThreadId,
+  onAddComment,
+  onResolveThread,
 }) => {
   const renderField = useCallback(
     (
@@ -82,7 +93,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
       // Filter comments for this specific field
       const fieldThreads =
-        currentEntryId && onOpenThreadPanel
+        currentEntryId && onAddComment
           ? comments.filter(
               (thread) =>
                 thread.type === 'field' &&
@@ -106,16 +117,19 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         )
 
         // Wrap custom fields with FieldWrapper if comments enabled
-        if (currentEntryId && onOpenThreadPanel) {
+        if (currentEntryId && currentUserId && onAddComment && onResolveThread) {
           return (
             <FieldWrapper
               key={fieldKey(path)}
               canopyPath={canopyPath}
+              entryId={currentEntryId}
               threads={fieldThreads}
               autoFocus={focusedFieldPath === canopyPath}
-              onOpenThreadPanel={onOpenThreadPanel}
-              unresolvedColor={unresolvedColor}
-              resolvedColor={resolvedColor}
+              currentUserId={currentUserId}
+              canResolve={canResolve}
+              onAddComment={onAddComment}
+              onResolveThread={onResolveThread}
+              highlightThreadId={highlightThreadId}
             >
               {renderedField}
             </FieldWrapper>
@@ -129,15 +143,18 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
       // Helper to wrap field with FieldWrapper if comments enabled
       const wrapWithComments = (renderedField: React.ReactNode) => {
-        if (currentEntryId && onOpenThreadPanel && fieldThreads.length > 0) {
+        if (currentEntryId && currentUserId && onAddComment && onResolveThread) {
           return (
             <FieldWrapper
               canopyPath={canopyPath}
+              entryId={currentEntryId}
               threads={fieldThreads}
               autoFocus={focusedFieldPath === canopyPath}
-              onOpenThreadPanel={onOpenThreadPanel}
-              unresolvedColor={unresolvedColor}
-              resolvedColor={resolvedColor}
+              currentUserId={currentUserId}
+              canResolve={canResolve}
+              onAddComment={onAddComment}
+              onResolveThread={onResolveThread}
+              highlightThreadId={highlightThreadId}
             >
               {renderedField}
             </FieldWrapper>
@@ -350,15 +367,30 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       customRenderers,
       comments,
       currentEntryId,
+      currentUserId,
+      canResolve,
       focusedFieldPath,
-      onOpenThreadPanel,
-      unresolvedColor,
-      resolvedColor,
+      highlightThreadId,
+      onAddComment,
+      onResolveThread,
     ],
   )
 
   return (
-    <Stack gap="md">
+    <Stack gap="md" data-form-renderer>
+      {/* Entry-level comments at top of form */}
+      {currentEntryId && currentUserId && onAddComment && onResolveThread && (
+        <EntryComments
+          comments={comments}
+          entryId={currentEntryId}
+          currentUserId={currentUserId}
+          canResolve={canResolve}
+          onAddComment={onAddComment}
+          onResolveThread={onResolveThread}
+          highlightThreadId={highlightThreadId}
+        />
+      )}
+
       {fields.map((field) => {
         const val = value[field.name]
         const path = [field.name]

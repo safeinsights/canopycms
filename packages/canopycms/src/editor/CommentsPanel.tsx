@@ -20,9 +20,21 @@ export interface CommentsPanelProps {
   branchName: string
   comments: CommentThread[]
   canResolve: boolean
-  onAddComment: (text: string, threadId?: string) => Promise<void>
+  onAddComment: (
+    text: string,
+    type: 'field' | 'entry' | 'branch',
+    entryId?: string,
+    canopyPath?: string,
+    threadId?: string,
+  ) => Promise<void>
   onResolveThread: (threadId: string) => Promise<void>
   onClose: () => void
+  /** Jump to field and auto-expand inline comments */
+  onJumpToField?: (entryId: string, canopyPath: string, threadId: string) => void
+  /** Jump to entry comments (top of form) */
+  onJumpToEntry?: (entryId: string, threadId: string) => void
+  /** Open branch manager */
+  onJumpToBranch?: (threadId: string) => void
 }
 
 export const CommentsPanel: React.FC<CommentsPanelProps> = ({
@@ -32,6 +44,9 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   onAddComment,
   onResolveThread,
   onClose,
+  onJumpToField,
+  onJumpToEntry,
+  onJumpToBranch,
 }) => {
   const [newCommentText, setNewCommentText] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
@@ -45,7 +60,22 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
 
     setIsSubmitting(true)
     try {
-      await onAddComment(newCommentText, replyTo || undefined)
+      if (replyTo) {
+        // Reply to existing thread - get context from the thread
+        const thread = comments.find((t) => t.id === replyTo)
+        if (thread) {
+          await onAddComment(
+            newCommentText,
+            thread.type,
+            thread.entryId,
+            thread.canopyPath,
+            replyTo,
+          )
+        }
+      } else {
+        // New branch-level comment (default for panel)
+        await onAddComment(newCommentText, 'branch', undefined, undefined, undefined)
+      }
       setNewCommentText('')
       setReplyTo(null)
     } finally {
@@ -178,15 +208,60 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                           </Badge>
                         )}
                       </Group>
-                      {canResolve && !thread.resolved && (
+                      <Group gap="xs">
+                        {canResolve && !thread.resolved && (
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            color="green"
+                            onClick={() => handleResolve(thread.id)}
+                            loading={isSubmitting}
+                          >
+                            Resolve
+                          </Button>
+                        )}
+                      </Group>
+                    </Group>
+
+                    {/* Jump to navigation buttons */}
+                    <Group gap="xs">
+                      {thread.type === 'field' &&
+                        thread.entryId &&
+                        thread.canopyPath &&
+                        onJumpToField && (
+                          <Button
+                            size="xs"
+                            variant="light"
+                            onClick={() => {
+                              onJumpToField(thread.entryId!, thread.canopyPath!, thread.id)
+                              onClose()
+                            }}
+                          >
+                            Jump to field
+                          </Button>
+                        )}
+                      {thread.type === 'entry' && thread.entryId && onJumpToEntry && (
                         <Button
                           size="xs"
-                          variant="subtle"
-                          color="green"
-                          onClick={() => handleResolve(thread.id)}
-                          loading={isSubmitting}
+                          variant="light"
+                          onClick={() => {
+                            onJumpToEntry(thread.entryId!, thread.id)
+                            onClose()
+                          }}
                         >
-                          Resolve
+                          Jump to entry
+                        </Button>
+                      )}
+                      {thread.type === 'branch' && onJumpToBranch && (
+                        <Button
+                          size="xs"
+                          variant="light"
+                          onClick={() => {
+                            onJumpToBranch(thread.id)
+                            onClose()
+                          }}
+                        >
+                          Go to branch
                         </Button>
                       )}
                     </Group>
