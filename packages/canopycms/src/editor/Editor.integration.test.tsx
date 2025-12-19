@@ -7,6 +7,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
 
+// Mock @mantine/modals
+vi.mock('@mantine/modals', () => ({
+  ModalsProvider: ({ children }: { children: React.ReactNode }) => children,
+  modals: {
+    openConfirmModal: vi.fn(),
+  },
+}))
+
 const originalMatchMedia = window.matchMedia
 const originalResizeObserver = window.ResizeObserver
 
@@ -128,4 +136,5 @@ describe('Editor integration', () => {
       data: { title: 'Loaded title' },
     })
   })
+
 })

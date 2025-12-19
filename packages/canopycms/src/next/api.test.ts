@@ -88,4 +88,66 @@ describe('Next API adapter', () => {
     )
     expect(res.status).toBe(200)
   })
+
+  it('handles POST requests with empty body gracefully', async () => {
+    const services: any = {
+      config: { schema: [], contentRoot: 'content' },
+      checkBranchAccess: vi.fn(),
+      checkPathAccess: vi.fn(),
+      checkContentAccess: vi.fn(),
+      pathPermissions: [],
+      createGitManagerFor: vi.fn(),
+      registry: {
+        get: vi.fn().mockResolvedValue(null),
+        list: vi.fn().mockResolvedValue([]),
+      },
+    }
+
+    const handler = createCanopyCatchAllHandler({
+      services,
+      getBranchState: async () => ({
+        branch: { name: 'test', status: 'editing', createdBy: 'user1', updatedAt: new Date().toISOString() },
+      } as any)
+    })
+
+    // POST with no body (should throw on req.json())
+    const res: any = await handler(
+      {
+        method: 'POST',
+        json: async () => {
+          throw new SyntaxError('Unexpected end of JSON input')
+        }
+      } as any,
+      { params: { canopycms: ['test', 'submit'] } }
+    )
+
+    // Should not crash, should handle gracefully
+    expect(res).toBeDefined()
+  })
+
+  it('handles POST requests with valid body', async () => {
+    const services: any = {
+      config: { schema: [], contentRoot: 'content' },
+      checkBranchAccess: vi.fn(),
+      checkPathAccess: vi.fn(),
+      checkContentAccess: vi.fn(),
+      pathPermissions: [],
+      createGitManagerFor: vi.fn(),
+      registry: {
+        get: vi.fn().mockResolvedValue(null),
+        list: vi.fn().mockResolvedValue([]),
+      },
+    }
+
+    const handler = canopyHandlers.createBranch({ services })
+    const res: any = await handler(
+      {
+        method: 'POST',
+        json: async () => ({ branch: 'new-branch', title: 'Test Branch' })
+      } as any,
+      {}
+    )
+
+    expect(res.status).toBe(200)
+  })
 })

@@ -11,6 +11,7 @@ import {
   createTheme,
 } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
+import { ModalsProvider } from '@mantine/modals'
 import { generateColors } from '@mantine/colors-generator'
 
 import '@mantine/core/styles.css'
@@ -106,8 +107,10 @@ export const CanopyCMSProvider: React.FC<CanopyCMSProviderProps> = ({
 
   return (
     <MantineProvider theme={theme} defaultColorScheme={colorScheme}>
-      {withNotifications ? <Notifications position="top-right" /> : null}
-      {children}
+      <ModalsProvider>
+        {withNotifications ? <Notifications position="top-right" /> : null}
+        {children}
+      </ModalsProvider>
     </MantineProvider>
   )
 }

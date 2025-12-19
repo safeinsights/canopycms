@@ -9,6 +9,7 @@ import { createBranch, listBranches } from '../api/branch'
 import { getBranchStatus, submitBranchForMerge } from '../api/branch-status'
 import { withdrawBranch } from '../api/branch-withdraw'
 import { requestChanges, approveBranch } from '../api/branch-review'
+import { markAsMerged } from '../api/branch-merge'
 import { readContent, writeContent } from '../api/content'
 import { deleteAsset, listAssets, uploadAsset } from '../api/assets'
 import { listEntries } from '../api/entries'
@@ -25,6 +26,7 @@ export type CanopyNextHandler =
   | typeof withdrawBranch
   | typeof requestChanges
   | typeof approveBranch
+  | typeof markAsMerged
   | typeof readContent
   | typeof writeContent
   | typeof listAssets
@@ -77,7 +79,15 @@ export const adaptCanopyHandler = (handler: CanopyNextHandler, options: CanopyNe
       (req.url ? new URL(req.url, 'http://localhost').searchParams : undefined)
     const queryParams = searchParams ? Object.fromEntries(searchParams.entries()) : undefined
     const mergedParams = { ...(queryParams ?? {}), ...(params ?? {}) }
-    const body = req.method === 'GET' ? undefined : await req.json()
+    let body: any
+    if (req.method !== 'GET') {
+      try {
+        body = await req.json()
+      } catch {
+        // No body or invalid JSON, treat as undefined
+        body = undefined
+      }
+    }
     const branch = (mergedParams as any)?.branch ?? (body as any)?.branch
     const apiReq = { user: toRequestUser(userRaw), body, branch }
     const result = await handler(ctx as any, apiReq as any, mergedParams as any)
@@ -104,6 +114,7 @@ const buildRouteMap = (options: CanopyNextOptions): Record<string, CanopyRouteHa
     [routeKey('POST', [':branch', 'withdraw'])]: withOptions(withdrawBranch),
     [routeKey('POST', [':branch', 'request-changes'])]: withOptions(requestChanges),
     [routeKey('POST', [':branch', 'approve'])]: withOptions(approveBranch),
+    [routeKey('POST', [':branch', 'mark-merged'])]: withOptions(markAsMerged),
 
     [routeKey('GET', [':branch', 'comments'])]: withOptions(listComments),
     [routeKey('POST', [':branch', 'comments'])]: withOptions(addComment),

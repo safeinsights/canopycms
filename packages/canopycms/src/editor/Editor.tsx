@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { ActionIcon, Box, Button, Drawer, Group, Menu, Paper, Stack, Text, Title } from '@mantine/core'
+import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
 import { MdFolderOpen, MdAccountCircle, MdLogout, MdKeyboardArrowDown } from 'react-icons/md'
 import { GoGitBranch } from 'react-icons/go'
@@ -310,6 +311,39 @@ export const Editor: React.FC<EditorProps> = ({
 
   const handleBranchChange = async (next: string | null) => {
     if (!next || next === branchNameState) return
+
+    // Check for unsaved changes in the current entry
+    if (selectedId && drafts[selectedId]) {
+      // Consider it dirty if there's no loaded value (never saved) OR if draft differs from loaded
+      const isDirty = !loadedValues[selectedId] ||
+        JSON.stringify(drafts[selectedId]) !== JSON.stringify(loadedValues[selectedId])
+
+      if (isDirty) {
+        // Show confirmation modal
+        return new Promise<void>((resolve, reject) => {
+          modals.openConfirmModal({
+            title: 'Unsaved Changes',
+            children: (
+              <Text size="sm">
+                You have unsaved changes in the current entry. If you switch branches, your changes will be preserved on this browser, but won't be saved to the branch unless you explicitly click save.
+              </Text>
+            ),
+            labels: { confirm: 'Switch Anyway', cancel: 'Stay' },
+            confirmProps: { color: 'red' },
+            onCancel: () => reject(new Error('User cancelled branch switch')),
+            onConfirm: async () => {
+              await performBranchSwitch(next)
+              resolve()
+            },
+          })
+        })
+      }
+    }
+
+    await performBranchSwitch(next)
+  }
+
+  const performBranchSwitch = async (next: string) => {
     setBranchNameState(next)
     setDrafts({})
     setLoadedValues({})
@@ -630,6 +664,31 @@ export const Editor: React.FC<EditorProps> = ({
       notifications.show({ message: 'Thread resolved', color: 'green' })
     } catch (err) {
       notifications.show({ message: 'Failed to resolve thread', color: 'red' })
+    }
+  }
+
+  const handleCreateBranch = async (branch: { name: string; title?: string; description?: string }) => {
+    setBusy(true)
+    try {
+      const res = await fetch('/api/canopycms/branches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ branch: branch.name, title: branch.title, description: branch.description }),
+      })
+      if (!res.ok) {
+        const payload = await res.json()
+        throw new Error(payload.error || 'Failed to create branch')
+      }
+      notifications.show({ message: `Branch "${branch.name}" created`, color: 'green' })
+      await loadBranches({ refreshEntries: false })
+      // Switch to the newly created branch
+      await handleBranchChange(branch.name)
+      setBranchManagerOpen(false)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to create branch'
+      notifications.show({ message, color: 'red' })
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -1005,9 +1064,17 @@ export const Editor: React.FC<EditorProps> = ({
               }
             })}
             mode={branchMode}
-            onSelect={(name) => {
-              handleBranchChange(name).catch((err) => console.error(err))
-              setBranchManagerOpen(false)
+            onSelect={async (name) => {
+              try {
+                await handleBranchChange(name)
+                setBranchManagerOpen(false)
+              } catch (err) {
+                console.error('Branch change failed or was cancelled:', err)
+                // Don't close branch manager if there was an error or user cancelled
+              }
+            }}
+            onCreate={(branch) => {
+              handleCreateBranch(branch).catch((err) => console.error(err))
             }}
             onSubmit={(name) => {
               handleSubmit(name).catch((err) => console.error(err))
