@@ -4,6 +4,7 @@ import { z } from 'zod'
 
 import type { CanopyGroupId, CanopyUserId } from './types'
 import type { BranchMode } from './paths'
+import type { AuthPlugin } from './auth/plugin'
 
 export const primitiveFieldTypes = [
   'string',
@@ -199,6 +200,7 @@ export const CanopyConfigSchema = z
     contentRoot: contentRootSchema.default('content'),
     sourceRoot: sourceRootSchema.optional(),
     editor: editorConfigSchema.optional(),
+    authPlugin: z.custom<AuthPlugin>().optional(),
   })
   .superRefine((data, ctx) => {
     if (!data.schema?.length) {
@@ -206,6 +208,14 @@ export const CanopyConfigSchema = z
         code: z.ZodIssueCode.custom,
         message: 'At least one collection or singleton is required',
       })
+    }
+    // Show deprecation warning for config-based pathPermissions
+    if (data.pathPermissions && data.pathPermissions.length > 0) {
+      console.warn(
+        'DEPRECATION WARNING: config.pathPermissions is deprecated. ' +
+        'Use .canopycms/permissions.json instead. ' +
+        'Permissions from config will be used as fallback if .canopycms/permissions.json does not exist.'
+      )
     }
   })
 

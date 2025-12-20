@@ -14,6 +14,7 @@ import { readContent, writeContent } from '../api/content'
 import { deleteAsset, listAssets, uploadAsset } from '../api/assets'
 import { listEntries } from '../api/entries'
 import { listComments, addComment, resolveComment } from '../api/comments'
+import { getPermissions, updatePermissions, searchUsers, listGroups } from '../api/permissions'
 import type { BranchState } from '../types'
 import { getDefaultBranchBase } from '../paths'
 import { loadBranchState } from '../branch-workspace'
@@ -36,6 +37,10 @@ export type CanopyNextHandler =
   | typeof listComments
   | typeof addComment
   | typeof resolveComment
+  | typeof getPermissions
+  | typeof updatePermissions
+  | typeof searchUsers
+  | typeof listGroups
 
 export interface CanopyNextOptions {
   services?: CanopyServices
@@ -128,6 +133,11 @@ const buildRouteMap = (options: CanopyNextOptions): Record<string, CanopyRouteHa
     [routeKey('DELETE', ['assets'])]: withOptions(deleteAsset),
 
     [routeKey('GET', [':branch', 'entries'])]: withOptions(listEntries),
+
+    [routeKey('GET', ['permissions'])]: withOptions(getPermissions),
+    [routeKey('PUT', ['permissions'])]: withOptions(updatePermissions),
+    [routeKey('GET', ['users', 'search'])]: withOptions(searchUsers),
+    [routeKey('GET', ['groups'])]: withOptions(listGroups),
   }
 }
 
