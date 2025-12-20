@@ -1,8 +1,8 @@
 'use client'
 
 import React, { useState, useMemo, useEffect, useRef } from 'react'
-import { ActionIcon, Button, Group, Paper, Stack, Text, Textarea } from '@mantine/core'
-import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react'
+import { ActionIcon, Alert, Button, Group, Paper, Stack, Text, Textarea } from '@mantine/core'
+import { IconChevronLeft, IconChevronRight, IconAlertCircle } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 import { InlineCommentThread } from './InlineCommentThread'
 
@@ -129,6 +129,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   const [carouselHeight, setCarouselHeight] = useState(400)
   const [isResizing, setIsResizing] = useState(false)
   const [highlightedThreadId, setHighlightedThreadId] = useState<string | undefined>(undefined)
+  const [error, setError] = useState<string | null>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const resizeStartY = useRef<number>(0)
   const resizeStartHeight = useRef<number>(0)
@@ -251,17 +252,26 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   }
 
   const handleAddReply = async (threadId: string, text: string) => {
-    await onAddComment(text, threadId)
+    try {
+      setError(null)
+      await onAddComment(text, threadId)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add reply')
+      throw err // Re-throw so InlineCommentThread can handle it
+    }
   }
 
   const handleCreateNewThread = async () => {
     if (!newThreadText.trim()) return
 
     setIsSubmitting(true)
+    setError(null)
     try {
       await onAddComment(newThreadText)
       setNewThreadText('')
       setShowNewThreadBox(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create comment')
     } finally {
       setIsSubmitting(false)
     }
@@ -323,6 +333,19 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
             </Button>
           </Group>
         </Group>
+
+        {/* Error display */}
+        {error && (
+          <Alert
+            icon={<IconAlertCircle size={16} />}
+            color="red"
+            variant="light"
+            onClose={() => setError(null)}
+            withCloseButton
+          >
+            {error}
+          </Alert>
+        )}
 
         {/* New thread box */}
         {showNewThreadBox && (
