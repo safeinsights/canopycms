@@ -1,7 +1,8 @@
 'use client'
 
 import React, { useState } from 'react'
-import { Badge, Button, Group, Paper, Stack, Text, Textarea } from '@mantine/core'
+import { Alert, Badge, Button, Group, Paper, Stack, Text, Textarea } from '@mantine/core'
+import { IconAlertCircle } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
 
 export interface InlineCommentThreadProps {
@@ -30,14 +31,18 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
 }) => {
   const [replyText, setReplyText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleReply = async () => {
     if (!replyText.trim()) return
 
     setIsSubmitting(true)
+    setError(null)
     try {
       await onAddReply(replyText)
       setReplyText('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add reply')
     } finally {
       setIsSubmitting(false)
     }
@@ -45,8 +50,11 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
 
   const handleResolve = async () => {
     setIsSubmitting(true)
+    setError(null)
     try {
       await onResolve()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resolve thread')
     } finally {
       setIsSubmitting(false)
     }
@@ -127,6 +135,13 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
             </div>
           ))}
         </Stack>
+
+        {/* Error display */}
+        {error && (
+          <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light" onClose={() => setError(null)} withCloseButton>
+            {error}
+          </Alert>
+        )}
 
         {/* Reply box (only if not resolved) */}
         {!thread.resolved && (
