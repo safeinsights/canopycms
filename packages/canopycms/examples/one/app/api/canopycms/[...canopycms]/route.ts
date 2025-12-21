@@ -1,6 +1,7 @@
 import config from '../../../../canopycms.config'
-import { BranchWorkspaceManager, loadBranchState } from 'canopycms'
+import { BranchWorkspaceManager, loadBranchState, loadClerkAuthPlugin } from 'canopycms'
 import { createCanopyHandler } from 'canopycms/next'
+import type { NextRequest } from 'next/server'
 
 const branchMode = config.mode ?? 'local-simple'
 const defaultBranch = config.defaultBaseBranch ?? 'main'
@@ -19,9 +20,38 @@ const ensureBranchState = async (branch: string) => {
 
 await ensureBranchState(defaultBranch)
 
+// Initialize Clerk auth plugin
+const { createClerkAuthPlugin } = await loadClerkAuthPlugin()
+const authPlugin = createClerkAuthPlugin({
+  secretKey: process.env.CLERK_SECRET_KEY,
+  roleMetadataKey: 'canopyRole',
+  useOrganizationsAsGroups: true,
+})
+
+// Add auth to config
+config.authPlugin = authPlugin
+
+const getUser = async (req: NextRequest) => {
+  try {
+    const result = await authPlugin.verifyToken(req)
+    if (!result.valid || !result.user) {
+      // Fallback for development
+      return { userId: 'demo-editor', role: 'admin' }
+    }
+    return {
+      userId: result.user.userId,
+      role: result.user.role ?? 'editor',
+      groups: result.user.groups,
+    }
+  } catch (err) {
+    console.error('Auth failed, using demo user:', err)
+    return { userId: 'demo-editor', role: 'admin' }
+  }
+}
+
 const handler = createCanopyHandler({
   config,
-  getUser: async () => ({ userId: 'demo-editor', role: 'admin' }),
+  getUser,
   getBranchState: ensureBranchState,
 })
 

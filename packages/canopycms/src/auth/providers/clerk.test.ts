@@ -2,28 +2,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { NextRequest } from 'next/server'
 
 // Mock @clerk/nextjs/server - must be hoisted before imports
-vi.mock('@clerk/nextjs/server', () => ({
-  clerkClient: {
-    sessions: {
-      verifySession: vi.fn(),
-    },
-    users: {
-      getUser: vi.fn(),
-      getUserList: vi.fn(),
-      getOrganizationMembershipList: vi.fn(),
-    },
-    organizations: {
-      getOrganization: vi.fn(),
-      getOrganizationList: vi.fn(),
-    },
+const mockClerkClient = {
+  sessions: {
+    verifySession: vi.fn(),
   },
+  users: {
+    getUser: vi.fn(),
+    getUserList: vi.fn(),
+    getOrganizationMembershipList: vi.fn(),
+  },
+  organizations: {
+    getOrganization: vi.fn(),
+    getOrganizationList: vi.fn(),
+  },
+}
+
+vi.mock('@clerk/nextjs/server', () => ({
+  clerkClient: mockClerkClient,
 }))
 
 import { ClerkAuthPlugin } from './clerk'
-import { clerkClient } from '@clerk/nextjs/server'
-
-// Create typed reference to mocked client
-const mockClerkClient = clerkClient as any
 
 describe('ClerkAuthPlugin', () => {
   beforeEach(() => {

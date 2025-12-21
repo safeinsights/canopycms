@@ -1,8 +1,25 @@
-import { clerkClient } from '@clerk/nextjs/server'
 import type { NextRequest } from 'next/server'
 import type { AuthPlugin, AuthPluginFactory } from '../plugin'
 import type { AuthUser, UserSearchResult, GroupMetadata, TokenVerificationResult } from '../types'
 import type { Role } from '../../types'
+
+// Lazy load Clerk client - only imported when plugin is actually used
+let clerkClientPromise: Promise<any> | null = null
+
+function getClerkClient() {
+  if (!clerkClientPromise) {
+    // Use dynamic string concatenation to prevent Next.js from resolving this at build time
+    const clerkPackage = ['@clerk/nextjs', 'server'].join('/')
+    clerkClientPromise = import(/* webpackIgnore: true */ clerkPackage)
+      .then((mod: any) => mod.clerkClient)
+      .catch(() => {
+        throw new Error(
+          'ClerkAuthPlugin requires @clerk/nextjs to be installed. Install it with: npm install @clerk/nextjs',
+        )
+      })
+  }
+  return clerkClientPromise
+}
 
 export interface ClerkAuthConfig {
   /**
@@ -58,6 +75,8 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
   async verifyToken(req: NextRequest): Promise<TokenVerificationResult> {
     try {
+      const client = await getClerkClient()
+
       // Extract session token from cookies
       const sessionToken = req.cookies.get('__session')?.value
       if (!sessionToken) {
@@ -65,21 +84,21 @@ export class ClerkAuthPlugin implements AuthPlugin {
       }
 
       // Verify with Clerk
-      const session = await clerkClient.sessions.verifySession(sessionToken)
+      const session = await client.sessions.verifySession(sessionToken)
       if (!session) {
         return { valid: false, error: 'Invalid session' }
       }
 
       // Get user details
-      const clerkUser = await clerkClient.users.getUser(session.userId)
+      const clerkUser = await client.users.getUser(session.userId)
 
       // Get organizations if enabled
       let organizationIds: string[] | undefined
       if (this.config.useOrganizationsAsGroups) {
-        const orgs = await clerkClient.users.getOrganizationMembershipList({
+        const orgs = await client.users.getOrganizationMembershipList({
           userId: clerkUser.id,
         })
-        organizationIds = orgs.map((m) => m.organization.id)
+        organizationIds = orgs.map((m: any) => m.organization.id)
       }
 
       const user = mapClerkUser(clerkUser, this.config.roleMetadataKey, organizationIds)
@@ -95,12 +114,13 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
   async searchUsers(query: string, limit = 10): Promise<UserSearchResult[]> {
     try {
-      const users = await clerkClient.users.getUserList({
+      const client = await getClerkClient()
+      const users = await client.users.getUserList({
         query,
         limit,
       })
 
-      return users.map((u) => ({
+      return users.map((u: any) => ({
         id: u.id,
         name: u.fullName ?? u.username ?? u.id,
         email: u.primaryEmailAddress?.emailAddress ?? '',
@@ -114,7 +134,8 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
   async getUserMetadata(userId: string): Promise<UserSearchResult | null> {
     try {
-      const user = await clerkClient.users.getUser(userId)
+      const client = await getClerkClient()
+      const user = await client.users.getUser(userId)
       return {
         id: user.id,
         name: user.fullName ?? user.username ?? user.id,
@@ -133,7 +154,8 @@ export class ClerkAuthPlugin implements AuthPlugin {
     }
 
     try {
-      const org = await clerkClient.organizations.getOrganization({
+      const client = await getClerkClient()
+      const org = await client.organizations.getOrganization({
         organizationId: groupId,
       })
 
@@ -154,8 +176,9 @@ export class ClerkAuthPlugin implements AuthPlugin {
     }
 
     try {
-      const orgs = await clerkClient.organizations.getOrganizationList({ limit })
-      return orgs.map((o) => ({
+      const client = await getClerkClient()
+      const orgs = await client.organizations.getOrganizationList({ limit })
+      return orgs.map((o: any) => ({
         id: o.id,
         name: o.name,
         memberCount: o.membersCount,

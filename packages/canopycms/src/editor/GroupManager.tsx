@@ -1,3 +1,5 @@
+'use client'
+
 import React, { useState, useEffect } from 'react'
 import {
   ActionIcon,
@@ -29,18 +31,8 @@ import {
 } from '@tabler/icons-react'
 import type { GroupMetadata, UserSearchResult } from '../auth/types'
 import type { CanopyGroupId, CanopyUserId } from '../types'
-
-export interface InternalGroup {
-  id: CanopyGroupId
-  name: string
-  description?: string
-  members: CanopyUserId[]
-}
-
-export interface ExternalGroup {
-  id: CanopyGroupId
-  name: string
-}
+import type { InternalGroup } from '../groups-file'
+import type { ExternalGroup } from '../api/groups'
 
 export interface GroupManagerProps {
   internalGroups: InternalGroup[]
