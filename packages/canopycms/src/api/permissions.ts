@@ -77,12 +77,14 @@ export const updatePermissions = async (
     await savePathPermissions(branchPaths.branchRoot, req.body.permissions, req.user.userId)
 
     // Commit the change
-    const git = ctx.services.createGitManagerFor(branchPaths.branchRoot)
-    await git.add('.canopycms/permissions.json')
-    await git.commit('Update permissions', {
-      name: ctx.services.config.gitBotAuthorName,
-      email: ctx.services.config.gitBotAuthorEmail,
-    })
+    if (ctx.services.createGitManagerFor) {
+      const git = ctx.services.createGitManagerFor(branchPaths.branchRoot)
+      await git.add('.canopycms/permissions.json')
+      await git.commit('Update permissions', {
+        name: ctx.services.config.gitBotAuthorName,
+        email: ctx.services.config.gitBotAuthorEmail,
+      })
+    }
 
     return { ok: true, status: 200 }
   } catch (error) {

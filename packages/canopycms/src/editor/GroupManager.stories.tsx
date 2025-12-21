@@ -1,5 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
-import { GroupManager, type InternalGroup, type ExternalGroup } from './GroupManager'
+import { GroupManager } from './GroupManager'
+import type { InternalGroup } from '../groups-file'
+import type { ExternalGroup } from '../api/groups'
 import type { UserSearchResult } from '../auth/types'
 
 const meta: Meta<typeof GroupManager> = {

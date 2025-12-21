@@ -15,6 +15,7 @@ import { deleteAsset, listAssets, uploadAsset } from '../api/assets'
 import { listEntries } from '../api/entries'
 import { listComments, addComment, resolveComment } from '../api/comments'
 import { getPermissions, updatePermissions, searchUsers, listGroups } from '../api/permissions'
+import { getInternalGroups, updateInternalGroups, searchExternalGroups } from '../api/groups'
 import type { BranchState } from '../types'
 import { getDefaultBranchBase } from '../paths'
 import { loadBranchState } from '../branch-workspace'
@@ -41,6 +42,9 @@ export type CanopyNextHandler =
   | typeof updatePermissions
   | typeof searchUsers
   | typeof listGroups
+  | typeof getInternalGroups
+  | typeof updateInternalGroups
+  | typeof searchExternalGroups
 
 export interface CanopyNextOptions {
   services?: CanopyServices
@@ -138,6 +142,9 @@ const buildRouteMap = (options: CanopyNextOptions): Record<string, CanopyRouteHa
     [routeKey('PUT', ['permissions'])]: withOptions(updatePermissions),
     [routeKey('GET', ['users', 'search'])]: withOptions(searchUsers),
     [routeKey('GET', ['groups'])]: withOptions(listGroups),
+    [routeKey('GET', ['groups', 'internal'])]: withOptions(getInternalGroups),
+    [routeKey('PUT', ['groups', 'internal'])]: withOptions(updateInternalGroups),
+    [routeKey('GET', ['groups', 'search'])]: withOptions(searchExternalGroups),
   }
 }
 

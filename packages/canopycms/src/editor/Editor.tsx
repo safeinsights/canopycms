@@ -5,14 +5,15 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionIcon, Box, Button, Drawer, Group, Menu, Paper, Stack, Text, Title } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
-import { MdFolderOpen, MdAccountCircle, MdLogout, MdKeyboardArrowDown } from 'react-icons/md'
+import { MdFolderOpen, MdAccountCircle, MdLogout, MdKeyboardArrowDown, MdSettings } from 'react-icons/md'
 import { GoGitBranch } from 'react-icons/go'
 import { PiColumnsDuotone, PiRowsDuotone } from 'react-icons/pi'
 import { LuSquareDashed } from 'react-icons/lu'
 
-import type { ContentFormat, FieldConfig } from '../config'
+import type { ContentFormat, FieldConfig, PathPermission } from '../config'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { FormValue } from './FormRenderer'
+import type { InternalGroup } from '../groups-file'
 import { FormRenderer } from './FormRenderer'
 import { PreviewFrame } from './preview-bridge'
 import { normalizeCanopyPath } from './canopy-path'
@@ -24,6 +25,8 @@ import { EditorPanes, type PaneLayout } from './EditorPanes'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
 import { BranchManager } from './BranchManager'
 import { CommentsPanel } from './CommentsPanel'
+import { GroupManager } from './GroupManager'
+import { PermissionManager } from './PermissionManager'
 import type { CommentThread } from '../comment-store'
 import {
   buildEntriesFromListResponse,
@@ -116,6 +119,12 @@ export const Editor: React.FC<EditorProps> = ({
     canopyPath?: string
   } | null>(null)
   const [layout, setLayout] = useState<PaneLayout>('side')
+  const [groupManagerOpen, setGroupManagerOpen] = useState(false)
+  const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
+  const [groupsData, setGroupsData] = useState<InternalGroup[]>([])
+  const [permissionsData, setPermissionsData] = useState<PathPermission[]>([])
+  const [groupsLoading, setGroupsLoading] = useState(false)
+  const [permissionsLoading, setPermissionsLoading] = useState(false)
   const headerRef = useRef<HTMLDivElement | null>(null)
   const [headerHeight, setHeaderHeight] = useState<number>(80)
 
@@ -433,6 +442,18 @@ export const Editor: React.FC<EditorProps> = ({
   }, [])
 
   useEffect(() => {
+    if (groupManagerOpen) {
+      loadGroups()
+    }
+  }, [groupManagerOpen])
+
+  useEffect(() => {
+    if (permissionManagerOpen) {
+      loadPermissions()
+    }
+  }, [permissionManagerOpen])
+
+  useEffect(() => {
     const load = async () => {
       if (!currentEntry || drafts[selectedId]) return
       setBusy(true)
@@ -554,6 +575,122 @@ export const Editor: React.FC<EditorProps> = ({
 
   const handleReloadBranchData = async () => {
     await loadBranches({ refreshEntries: true })
+  }
+
+  const loadGroups = async () => {
+    setGroupsLoading(true)
+    try {
+      const res = await fetch('/api/canopycms/groups/internal')
+      if (!res.ok) throw new Error('Failed to load groups')
+      const data = await res.json()
+      setGroupsData(data.data?.groups ?? [])
+    } catch (err) {
+      console.error('Failed to load groups:', err)
+      notifications.show({ message: 'Failed to load groups', color: 'red' })
+    } finally {
+      setGroupsLoading(false)
+    }
+  }
+
+  const loadPermissions = async () => {
+    setPermissionsLoading(true)
+    try {
+      const res = await fetch('/api/canopycms/permissions')
+      if (!res.ok) throw new Error('Failed to load permissions')
+      const data = await res.json()
+      setPermissionsData(data.data?.permissions ?? [])
+    } catch (err) {
+      console.error('Failed to load permissions:', err)
+      notifications.show({ message: 'Failed to load permissions', color: 'red' })
+    } finally {
+      setPermissionsLoading(false)
+    }
+  }
+
+  const handleSaveGroups = async (groups: InternalGroup[]) => {
+    try {
+      const res = await fetch('/api/canopycms/groups/internal', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ groups }),
+      })
+      if (!res.ok) {
+        const payload = await res.json()
+        throw new Error(payload.error || 'Failed to save groups')
+      }
+      notifications.show({
+        title: 'Groups Saved',
+        message: 'Internal groups have been updated',
+        color: 'green',
+      })
+      await loadGroups()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save groups'
+      notifications.show({ message, color: 'red' })
+      throw err
+    }
+  }
+
+  const handleSearchUsers = async (query: string, limit?: number) => {
+    try {
+      const params = new URLSearchParams({ query, limit: String(limit ?? 10) })
+      const res = await fetch(`/api/canopycms/users/search?${params}`)
+      if (!res.ok) return []
+      const data = await res.json()
+      return data.data?.users ?? []
+    } catch (err) {
+      console.error('User search failed:', err)
+      return []
+    }
+  }
+
+  const handleSearchExternalGroups = async (query: string) => {
+    try {
+      const params = new URLSearchParams({ query })
+      const res = await fetch(`/api/canopycms/groups/search?${params}`)
+      if (!res.ok) return []
+      const data = await res.json()
+      return data.data?.groups ?? []
+    } catch (err) {
+      console.error('External group search failed:', err)
+      return []
+    }
+  }
+
+  const handleSavePermissions = async (permissions: PathPermission[]) => {
+    try {
+      const res = await fetch('/api/canopycms/permissions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permissions }),
+      })
+      if (!res.ok) {
+        const payload = await res.json()
+        throw new Error(payload.error || 'Failed to save permissions')
+      }
+      notifications.show({
+        title: 'Permissions Saved',
+        message: 'Permissions have been updated',
+        color: 'green',
+      })
+      await loadPermissions()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save permissions'
+      notifications.show({ message, color: 'red' })
+      throw err
+    }
+  }
+
+  const handleListGroups = async () => {
+    try {
+      const res = await fetch('/api/canopycms/groups')
+      if (!res.ok) return []
+      const data = await res.json()
+      return data.data?.groups ?? []
+    } catch (err) {
+      console.error('Group list failed:', err)
+      return []
+    }
   }
 
   const handleCreateEntry = async (collectionId: string) => {
@@ -1061,6 +1198,22 @@ export const Editor: React.FC<EditorProps> = ({
                 </ActionIcon>
               </Stack>
               <Stack gap="xs" align="center">
+                <Menu shadow="md" width={200} position="left">
+                  <Menu.Target>
+                    <ActionIcon variant="subtle" size="lg" radius="md" aria-label="Settings">
+                      <MdSettings size={18} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Label>Settings</Menu.Label>
+                    <Menu.Item onClick={() => setPermissionManagerOpen(true)}>
+                      Manage Permissions
+                    </Menu.Item>
+                    <Menu.Item onClick={() => setGroupManagerOpen(true)}>
+                      Manage Groups
+                    </Menu.Item>
+                  </Menu.Dropdown>
+                </Menu>
                 <ActionIcon variant="subtle" size="lg" radius="md" aria-label="Account">
                   <MdAccountCircle size={18} />
                 </ActionIcon>
@@ -1233,6 +1386,38 @@ export const Editor: React.FC<EditorProps> = ({
                 setHighlightThreadId(undefined)
               }, 2100) // Clear after highlight animation completes
             }}
+          />
+        )}
+
+        {/* Group Manager Modal */}
+        {groupManagerOpen && (
+          <GroupManager
+            internalGroups={groupsData}
+            canEdit={true}
+            onSave={handleSaveGroups}
+            onSearchUsers={handleSearchUsers}
+            onSearchExternalGroups={handleSearchExternalGroups}
+            onClose={() => setGroupManagerOpen(false)}
+          />
+        )}
+
+        {/* Permission Manager Modal */}
+        {permissionManagerOpen && (
+          <PermissionManager
+            schema={collections?.map(c => ({
+              type: c.type,
+              name: c.name,
+              label: c.label,
+              path: c.id,
+              format: c.format,
+              fields: [],
+            })) ?? []}
+            permissions={permissionsData}
+            canEdit={true}
+            onSave={handleSavePermissions}
+            onSearchUsers={handleSearchUsers}
+            onListGroups={handleListGroups}
+            onClose={() => setPermissionManagerOpen(false)}
           />
         )}
       </Box>

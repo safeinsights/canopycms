@@ -33,6 +33,13 @@ export interface AuthPlugin {
    * List all groups (for permission UI dropdowns)
    */
   listGroups(limit?: number): Promise<GroupMetadata[]>
+
+  /**
+   * Search for external groups/organizations (for group management UI)
+   * Optional - only needed if auth provider supports external groups
+   * @param query - Search string (name, ID, etc.)
+   */
+  searchExternalGroups?(query: string): Promise<Array<{ id: CanopyGroupId; name: string }>>
 }
 
 /**

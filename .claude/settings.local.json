@@ -9,7 +9,11 @@
       "Bash(npm run test:*)",
       "Bash(wc:*)",
       "Bash(npm search:*)",
-      "Bash(npm view:*)"
+      "Bash(npm view:*)",
+      "Bash(npx tsc:*)",
+      "Bash(pkill:*)",
+      "Bash(ls:*)",
+      "Bash(npm ls:*)"
     ]
   }
 }
