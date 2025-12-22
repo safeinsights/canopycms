@@ -34,7 +34,7 @@ import {
   buildWritePayload,
   normalizeContentPayload,
 } from './editor-utils'
-import { useEditorLayout, useGroupManager } from './hooks'
+import { useEditorLayout, useGroupManager, usePermissionManager } from './hooks'
 
 export interface EditorEntry {
   id: string
@@ -120,10 +120,8 @@ export const Editor: React.FC<EditorProps> = ({
   } | null>(null)
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
-  const [permissionsData, setPermissionsData] = useState<PathPermission[]>([])
-  const [permissionsLoading, setPermissionsLoading] = useState(false)
 
-  // Use custom hooks for layout and group management
+  // Use custom hooks for layout, group management, and permission management
   const { layout, setLayout, highlightEnabled, setHighlightEnabled, headerRef, headerHeight } = useEditorLayout()
   const {
     groupsData,
@@ -132,6 +130,9 @@ export const Editor: React.FC<EditorProps> = ({
     handleSearchUsers,
     handleSearchExternalGroups,
   } = useGroupManager({ isOpen: groupManagerOpen })
+  const { permissionsData, permissionsLoading, handleSavePermissions, handleListGroups } = usePermissionManager({
+    isOpen: permissionManagerOpen,
+  })
 
   const storageKey = useMemo(() => `canopycms:drafts:${branchNameState}`, [branchNameState])
 
@@ -437,12 +438,6 @@ export const Editor: React.FC<EditorProps> = ({
   }, [branchNameState, entries.length])
 
   useEffect(() => {
-    if (permissionManagerOpen) {
-      loadPermissions()
-    }
-  }, [permissionManagerOpen])
-
-  useEffect(() => {
     const load = async () => {
       if (!currentEntry || drafts[selectedId]) return
       setBusy(true)
@@ -564,57 +559,6 @@ export const Editor: React.FC<EditorProps> = ({
 
   const handleReloadBranchData = async () => {
     await loadBranches({ refreshEntries: true })
-  }
-
-  const loadPermissions = async () => {
-    setPermissionsLoading(true)
-    try {
-      const res = await fetch('/api/canopycms/permissions')
-      if (!res.ok) throw new Error('Failed to load permissions')
-      const data = await res.json()
-      setPermissionsData(data.data?.permissions ?? [])
-    } catch (err) {
-      console.error('Failed to load permissions:', err)
-      notifications.show({ message: 'Failed to load permissions', color: 'red' })
-    } finally {
-      setPermissionsLoading(false)
-    }
-  }
-
-  const handleSavePermissions = async (permissions: PathPermission[]) => {
-    try {
-      const res = await fetch('/api/canopycms/permissions', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permissions }),
-      })
-      if (!res.ok) {
-        const payload = await res.json()
-        throw new Error(payload.error || 'Failed to save permissions')
-      }
-      notifications.show({
-        title: 'Permissions Saved',
-        message: 'Permissions have been updated',
-        color: 'green',
-      })
-      await loadPermissions()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save permissions'
-      notifications.show({ message, color: 'red' })
-      throw err
-    }
-  }
-
-  const handleListGroups = async () => {
-    try {
-      const res = await fetch('/api/canopycms/groups')
-      if (!res.ok) return []
-      const data = await res.json()
-      return data.data?.groups ?? []
-    } catch (err) {
-      console.error('Group list failed:', err)
-      return []
-    }
   }
 
   const handleCreateEntry = async (collectionId: string) => {
