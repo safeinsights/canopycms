@@ -1448,19 +1448,36 @@ export const Editor: React.FC<EditorProps> = ({
         )}
 
         {/* Group Manager Modal */}
-        {groupManagerOpen && (
+        <Drawer
+          opened={groupManagerOpen}
+          onClose={() => setGroupManagerOpen(false)}
+          position="right"
+          title="Manage Groups"
+          padding="md"
+          size={600}
+          overlayProps={{ blur: 2 }}
+        >
           <GroupManager
             internalGroups={groupsData}
+            loading={groupsLoading}
             canEdit={true}
             onSave={handleSaveGroups}
             onSearchUsers={handleSearchUsers}
             onSearchExternalGroups={handleSearchExternalGroups}
             onClose={() => setGroupManagerOpen(false)}
           />
-        )}
+        </Drawer>
 
         {/* Permission Manager Modal */}
-        {permissionManagerOpen && (
+        <Drawer
+          opened={permissionManagerOpen}
+          onClose={() => setPermissionManagerOpen(false)}
+          position="right"
+          title="Manage Permissions"
+          padding="md"
+          size={700}
+          overlayProps={{ blur: 2 }}
+        >
           <PermissionManager
             schema={
               collections?.map((c) => ({
@@ -1473,13 +1490,14 @@ export const Editor: React.FC<EditorProps> = ({
               })) ?? []
             }
             permissions={permissionsData}
+            loading={permissionsLoading}
             canEdit={true}
             onSave={handleSavePermissions}
             onSearchUsers={handleSearchUsers}
             onListGroups={handleListGroups}
             onClose={() => setPermissionManagerOpen(false)}
           />
-        )}
+        </Drawer>
       </Box>
     </CanopyCMSProvider>
   )

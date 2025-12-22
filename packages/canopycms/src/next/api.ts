@@ -19,6 +19,7 @@ import { getInternalGroups, updateInternalGroups, searchExternalGroups } from '.
 import type { BranchState } from '../types'
 import { getDefaultBranchBase } from '../paths'
 import { loadBranchState } from '../branch-workspace'
+import { AuthPlugin } from '../auth'
 
 export type CanopyNextHandler =
   | typeof createBranch
@@ -52,6 +53,7 @@ export interface CanopyNextOptions {
   getUser?: (req: NextRequest) => Promise<{ userId: string; groups?: string[]; role?: string }>
   assetStore?: ApiContext['assetStore']
   getBranchState?: (branch: string) => Promise<BranchState | null>
+  authPlugin?: AuthPlugin
 }
 
 const defaultGetUser = async (_req: NextRequest) => ({ id: 'anonymous' })
@@ -82,6 +84,7 @@ const buildContext = async (options: CanopyNextOptions): Promise<ApiContext> => 
     services,
     assetStore: options.assetStore,
     getBranchState,
+    authPlugin: options.authPlugin,
   }
 }
 

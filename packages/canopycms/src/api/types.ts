@@ -39,6 +39,10 @@ export interface ApiContext {
    * Can be backed by BranchRegistry + BranchMetadata.
    */
   getBranchState: (branchName: string) => Promise<BranchState | null>
+  /**
+   * Auth plugin for user/group search (optional)
+   */
+  authPlugin?: any
 }
 
 export interface ApiRequest<TBody = unknown> {
