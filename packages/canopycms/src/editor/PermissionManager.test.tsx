@@ -103,10 +103,10 @@ describe('PermissionManager', () => {
     { id: 'bob', name: 'Bob Smith', email: 'bob@example.com' },
   ]
 
-  let mockOnSave: ReturnType<typeof vi.fn>
-  let mockOnSearchUsers: ReturnType<typeof vi.fn>
-  let mockOnListGroups: ReturnType<typeof vi.fn>
-  let mockOnClose: ReturnType<typeof vi.fn>
+  let mockOnSave: (permissions: PathPermission[]) => Promise<void>
+  let mockOnSearchUsers: (query: string, limit?: number) => Promise<UserSearchResult[]>
+  let mockOnListGroups: () => Promise<GroupMetadata[]>
+  let mockOnClose: () => void
 
   beforeEach(() => {
     mockOnSave = vi.fn().mockResolvedValue(undefined)

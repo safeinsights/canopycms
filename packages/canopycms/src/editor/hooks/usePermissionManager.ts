@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { notifications } from '@mantine/notifications'
-import type { PathPermission } from '../../permissions-file'
+import type { PathPermission } from '../../config'
 
 export interface UsePermissionManagerOptions {
   /**

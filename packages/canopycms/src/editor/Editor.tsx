@@ -18,7 +18,6 @@ import { FormRenderer } from './FormRenderer'
 import { PreviewFrame } from './preview-bridge'
 import { normalizeCanopyPath } from './canopy-path'
 import type { ApiResponse } from '../api/types'
-import type { ListEntriesResponse } from '../api/entries'
 import type { BranchState } from '../types'
 import type { BranchMode } from '../paths'
 import { EditorPanes, type PaneLayout } from './EditorPanes'
@@ -28,13 +27,8 @@ import { CommentsPanel } from './CommentsPanel'
 import { GroupManager } from './GroupManager'
 import { PermissionManager } from './PermissionManager'
 import type { CommentThread } from '../comment-store'
-import {
-  buildEntriesFromListResponse,
-  buildPreviewSrc,
-  buildWritePayload,
-  normalizeContentPayload,
-} from './editor-utils'
-import { useEditorLayout, useGroupManager, usePermissionManager } from './hooks'
+import { buildPreviewSrc } from './editor-utils'
+import { useEditorLayout, useEntryManager, useGroupManager, usePermissionManager } from './hooks'
 
 export interface EditorEntry {
   id: string
@@ -102,12 +96,9 @@ export const Editor: React.FC<EditorProps> = ({
 }) => {
   const [branchNameState, setBranchNameState] = useState<string>(branchName)
   const [branches, setBranches] = useState<BranchState[]>([])
-  const [entriesState, setEntriesState] = useState<EditorEntry[]>(entries)
-  const [selectedId, setSelectedId] = useState<string>(initialSelectedId ?? entriesState[0]?.id ?? '')
   const [drafts, setDrafts] = useState<Record<string, FormValue>>(() => initialValues ?? {})
   const [loadedValues, setLoadedValues] = useState<Record<string, FormValue>>({})
   const [busy, setBusy] = useState(false)
-  const [navigatorOpen, setNavigatorOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
   const [commentsPanelOpen, setCommentsPanelOpen] = useState(false)
   const [comments, setComments] = useState<CommentThread[]>([])
@@ -121,8 +112,35 @@ export const Editor: React.FC<EditorProps> = ({
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
 
-  // Use custom hooks for layout, group management, and permission management
+  // Use custom hooks for layout, entry, group, and permission management
   const { layout, setLayout, highlightEnabled, setHighlightEnabled, headerRef, headerHeight } = useEditorLayout()
+  const resolvePreviewSrc = useCallback(
+    (entry: { collectionId?: string; collectionName?: string; slug?: string; type?: string; previewSrc?: string }) =>
+      buildPreviewSrc(entry, { branchName: branchNameState, previewBaseByCollection }),
+    [branchNameState, previewBaseByCollection]
+  )
+  const {
+    selectedId,
+    setSelectedId,
+    entries: entriesState,
+    setEntries: setEntriesState,
+    currentEntry,
+    navigatorOpen,
+    setNavigatorOpen,
+    refreshEntries,
+    handleCreateEntry,
+    loadEntry,
+    saveEntry,
+    collectionById,
+  } = useEntryManager({
+    initialEntries: entries,
+    initialSelectedId,
+    branchName: branchNameState,
+    collections,
+    previewBaseByCollection,
+    resolvePreviewSrc,
+    setBusy,
+  })
   const {
     groupsData,
     groupsLoading,
@@ -136,24 +154,6 @@ export const Editor: React.FC<EditorProps> = ({
 
   const storageKey = useMemo(() => `canopycms:drafts:${branchNameState}`, [branchNameState])
 
-  const resolvePreviewSrc = useCallback(
-    (entry: { collectionId?: string; collectionName?: string; slug?: string; type?: string; previewSrc?: string }) =>
-      buildPreviewSrc(entry, { branchName: branchNameState, previewBaseByCollection }),
-    [branchNameState, previewBaseByCollection]
-  )
-
-  useEffect(() => {
-    const normalizedEntries =
-      entries?.map((entry) => (entry.previewSrc ? entry : { ...entry, previewSrc: resolvePreviewSrc(entry) })) ?? []
-    setEntriesState(normalizedEntries)
-  }, [entries, resolvePreviewSrc])
-
-  useEffect(() => {
-    if (!entriesState.find((e) => e.id === selectedId)) {
-      setSelectedId(entriesState[0]?.id ?? '')
-    }
-  }, [entriesState, selectedId])
-
   useEffect(() => {
     if (typeof window === 'undefined') return
     if (!branchNameState) return
@@ -165,10 +165,6 @@ export const Editor: React.FC<EditorProps> = ({
     }
   }, [branchNameState])
 
-  const currentEntry = useMemo(
-    () => entriesState.find((e) => e.id === selectedId),
-    [entriesState, selectedId]
-  )
   const selectedValue = drafts[selectedId]
   const loadedValue = loadedValues[selectedId]
   const effectiveValue = selectedValue ?? loadedValue
@@ -188,11 +184,6 @@ export const Editor: React.FC<EditorProps> = ({
   const collectionLabels = useMemo(() => {
     const map = new Map<string, string>()
     flattenedCollections.forEach((c) => map.set(c.id, c.label ?? c.name))
-    return map
-  }, [flattenedCollections])
-  const collectionById = useMemo(() => {
-    const map = new Map<string, EditorCollection>()
-    flattenedCollections.forEach((c) => map.set(c.id, c))
     return map
   }, [flattenedCollections])
   const currentBranch = branches.find((b) => b.branch.name === branchNameState)
@@ -266,67 +257,6 @@ export const Editor: React.FC<EditorProps> = ({
       console.warn('Failed to persist drafts', err)
     }
   }, [drafts, storageKey])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const params = new URLSearchParams(window.location.search)
-    const entryParam = params.get('entry')
-    if (entryParam && entriesState.find((e) => e.id === entryParam)) {
-      setSelectedId(entryParam)
-    }
-  }, [entriesState])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const url = new URL(window.location.href)
-    if (selectedId) {
-      url.searchParams.set('entry', selectedId)
-    } else {
-      url.searchParams.delete('entry')
-    }
-    window.history.replaceState({}, '', url.toString())
-  }, [selectedId])
-
-  const loadEntry = async (entry: EditorEntry) => {
-    const res = await fetch(entry.apiPath)
-    if (!res.ok) throw new Error(`Load failed: ${res.status}`)
-    const payload = (await res.json()) as ApiResponse
-    const content = 'data' in payload ? (payload as ApiResponse).data : payload
-    return normalizeContentPayload(content)
-  }
-
-  const saveEntry = async (entry: EditorEntry, value: FormValue) => {
-    const res = await fetch(entry.apiPath, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildWritePayload(entry, value)),
-    })
-    if (!res.ok) throw new Error(`Save failed: ${res.status}`)
-    const payload = (await res.json()) as ApiResponse
-    const content = 'data' in payload ? (payload as ApiResponse).data : payload
-    return normalizeContentPayload(content)
-  }
-
-  const refreshEntries = async (branch: string = branchNameState) => {
-    if (!branch) return
-    const res = await fetch(`/api/canopycms/${branch}/entries`)
-    if (!res.ok) throw new Error(`Refresh failed: ${res.status}`)
-    const payload = (await res.json()) as ApiResponse<ListEntriesResponse>
-    const data = ('data' in payload ? payload.data : payload) as ListEntriesResponse
-    const refreshed = buildEntriesFromListResponse({
-      response: data,
-      branchName: branch,
-      resolvePreviewSrc,
-      existingEntries: entriesState,
-      currentEntry,
-      initialEntries: entries,
-    })
-    setEntriesState(refreshed)
-    const newlyCreated = refreshed.find((e) => !entriesState.find((old) => old.id === e.id))
-    if (newlyCreated) {
-      setSelectedId(newlyCreated.id)
-    }
-  }
 
   const loadBranches = async (options?: { refreshEntries?: boolean }) => {
     setBusy(true)
@@ -559,36 +489,6 @@ export const Editor: React.FC<EditorProps> = ({
 
   const handleReloadBranchData = async () => {
     await loadBranches({ refreshEntries: true })
-  }
-
-  const handleCreateEntry = async (collectionId: string) => {
-    const col = collectionById.get(collectionId)
-    if (!col || col.type === 'singleton') return
-    const slug = window.prompt(`New ${col.label ?? col.name} slug?`, 'untitled')
-    if (!slug) return
-    setBusy(true)
-    try {
-      const payload =
-        col.format === 'json'
-          ? { collection: collectionId, slug, format: 'json' as const, data: {} }
-          : { collection: collectionId, slug, format: col.format, data: {}, body: '' }
-      const res = await fetch(
-        `/api/canopycms/${branchNameState}/content/${encodeURIComponent(collectionId)}/${encodeURIComponent(slug)}`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        }
-      )
-      if (!res.ok) throw new Error(`Create failed: ${res.status}`)
-      await refreshEntries()
-      notifications.show({ message: 'Created new entry', color: 'green' })
-    } catch (err) {
-      console.error(err)
-      notifications.show({ message: 'Create failed', color: 'red' })
-    } finally {
-      setBusy(false)
-    }
   }
 
   const navCollections = useMemo<EntryNavCollection[] | undefined>(() => {

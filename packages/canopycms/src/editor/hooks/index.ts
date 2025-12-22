@@ -3,7 +3,7 @@
 
 export * from './useEditorLayout'
 // export * from './useBranchManager'
-// export * from './useEntryManager'
+export * from './useEntryManager'
 // export * from './useDraftManager'
 // export * from './useCommentSystem'
 export * from './useGroupManager'

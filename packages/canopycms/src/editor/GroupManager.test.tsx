@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
-import { GroupManager, type InternalGroup, type ExternalGroup } from './GroupManager'
+import { GroupManager } from './GroupManager'
+import type { InternalGroup } from '../groups-file'
+import type { ExternalGroup } from '../api/groups'
 import type { UserSearchResult } from '../auth/types'
 
 const originalMatchMedia = window.matchMedia
@@ -73,10 +75,10 @@ describe('GroupManager', () => {
     { id: 'user-5', name: 'Bob Smith', email: 'bob@example.com' },
   ]
 
-  let mockOnSave: ReturnType<typeof vi.fn>
-  let mockOnSearchUsers: ReturnType<typeof vi.fn>
-  let mockOnSearchExternalGroups: ReturnType<typeof vi.fn>
-  let mockOnClose: ReturnType<typeof vi.fn>
+  let mockOnSave: (groups: InternalGroup[]) => Promise<void>
+  let mockOnSearchUsers: (query: string, limit?: number) => Promise<UserSearchResult[]>
+  let mockOnSearchExternalGroups: (query: string) => Promise<ExternalGroup[]>
+  let mockOnClose: () => void
 
   beforeEach(() => {
     mockOnSave = vi.fn().mockResolvedValue(undefined)
