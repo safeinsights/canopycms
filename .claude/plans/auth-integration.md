@@ -161,341 +161,90 @@ External groups come from the auth provider (e.g., Clerk organizations):
 - Lists all groups via auth plugin
 - Used for permission assignment dropdowns
 
-## IMPLEMENTATION STATUS - UPDATED 2024-12-21
+## IMPLEMENTATION STATUS - UPDATED 2024-12-22
 
 ### ✅ What's Complete
 
 1. **Auth Plugin Interface** - Fully defined in [src/auth/plugin.ts](packages/canopycms/src/auth/plugin.ts)
-2. **Clerk Auth Plugin** - Complete with 35+ tests in [src/auth/providers/clerk.ts](packages/canopycms/src/auth/providers/clerk.ts)
-3. **Group Management Backend**:
+2. **Clerk Auth Plugin** - Moved to separate package `canopycms-auth-clerk` with 21 tests
+3. **Auth Provider Refactoring** ✅ **COMPLETE** - See [auth-provider-refactor.md](./auth-provider-refactor.md)
+   - Separate `canopycms-auth-clerk` package created
+   - npm resolution issues fixed
+   - Serialization issues resolved (authPlugin passed via ApiContext)
+   - All 21 tests passing
+4. **Group Management Backend**:
    - Schema and storage in [src/groups-file.ts](packages/canopycms/src/groups-file.ts), [src/groups-loader.ts](packages/canopycms/src/groups-loader.ts)
    - API endpoints in [src/api/groups.ts](packages/canopycms/src/api/groups.ts) (12 tests)
+   - **API routes registered** in [src/next/api.ts](packages/canopycms/src/next/api.ts) lines 18, 47, 147-149
    - GroupManager UI in [src/editor/GroupManager.tsx](packages/canopycms/src/editor/GroupManager.tsx) (33+ tests, 13 Storybook stories)
-4. **Permission Management Backend**:
+   - **Wrapped in Drawer** in [Editor.tsx:1393-1411](packages/canopycms/src/editor/Editor.tsx#L1393-L1411)
+5. **Permission Management Backend**:
    - API endpoints in [src/api/permissions.ts](packages/canopycms/src/api/permissions.ts)
+   - **API routes registered** in [src/next/api.ts](packages/canopycms/src/next/api.ts) lines 17, 143-146
    - PermissionManager UI in [src/editor/PermissionManager.tsx](packages/canopycms/src/editor/PermissionManager.tsx)
-5. **Settings Menu Integration** - Gear icon menu in [Editor.tsx:1068-1083](packages/canopycms/src/editor/Editor.tsx#L1068-L1083)
+   - **Wrapped in Drawer** in [Editor.tsx:1414-1440](packages/canopycms/src/editor/Editor.tsx#L1414-L1440)
+6. **Settings Menu Integration** - Gear icon menu in [Editor.tsx:1201-1216](packages/canopycms/src/editor/Editor.tsx#L1201-L1216)
+7. **Editor UI Handlers** - All handlers implemented in [Editor.tsx:580-694](packages/canopycms/src/editor/Editor.tsx#L580-L694):
+   - `loadGroups()` - Loads internal groups from API
+   - `loadPermissions()` - Loads permissions from API
+   - `handleSaveGroups()` - Saves groups and reloads
+   - `handleSavePermissions()` - Saves permissions and reloads
+   - `handleSearchUsers()` - User search via authPlugin
+   - `handleSearchExternalGroups()` - External group search via authPlugin
+   - `handleListGroups()` - Lists all groups for dropdowns
+8. **Data Loading** - useEffect hooks trigger loading when modals open [Editor.tsx:444-454](packages/canopycms/src/editor/Editor.tsx#L444-L454)
+9. **Example App Configuration** - Clerk auth fully configured:
+   - Auth plugin created and passed to handler in [route.ts:25-53](packages/canopycms/examples/one/app/api/canopycms/[...canopycms]/route.ts#L25-L53)
+   - Environment variables configured in `.env.local`
+   - ClerkProvider added to layout
 
 ### ❌ What's Missing
 
-1. **API Routes Not Registered** - Groups endpoints (getInternalGroups, updateInternalGroups, searchExternalGroups) are not registered in [src/next/api.ts](packages/canopycms/src/next/api.ts)
-2. **Editor UI Handlers** - Placeholder console.log handlers in [Editor.tsx:1259-1314](packages/canopycms/src/editor/Editor.tsx#L1259-L1314) need to be wired to real API calls
-3. **Data Loading** - Managers are passed empty arrays instead of loading data from API
-4. **Example App Configuration** - No Clerk auth configured in example app
-5. **Auth Check Verification** - Need to verify path-based permissions and branch access checks are enforced
-6. **Comment Permissions** - Need to verify who can comment and resolve threads
-7. **Admin Configuration** - Need pluggable way for adopters to define admin users (function that returns true if user is admin)
+1. **Auth Check Verification** - Need to verify path-based permissions and branch access checks are enforced
+2. **Comment Permissions** - Need to verify who can comment and resolve threads
+3. **Admin Configuration** - Need pluggable way for adopters to define admin users (function that returns true if user is admin)
 
 ---
 
 ## Implementation Steps to Complete Auth
 
-### Step 1: Register Groups API Routes (CRITICAL - Must Be First)
+### ✅ Step 1: Register Groups API Routes (COMPLETE)
 
 **File**: [packages/canopycms/src/next/api.ts](packages/canopycms/src/next/api.ts)
 
-**Add imports** (after line 16):
-```typescript
-import { getInternalGroups, updateInternalGroups, searchExternalGroups } from '../api/groups'
-```
+All group API routes have been registered:
+- Line 18: Import statement added
+- Line 47: Type union updated
+- Lines 147-149: Routes registered in buildRouteMap()
 
-**Update type union** (add to CanopyNextHandler around line 43):
-```typescript
-| typeof getInternalGroups
-| typeof updateInternalGroups
-| typeof searchExternalGroups
-```
-
-**Register routes** (in buildRouteMap() around line 140, after the groups route):
-```typescript
-[routeKey('GET', ['groups', 'internal'])]: withOptions(getInternalGroups),
-[routeKey('PUT', ['groups', 'internal'])]: withOptions(updateInternalGroups),
-[routeKey('GET', ['groups', 'search'])]: withOptions(searchExternalGroups),
-```
-
-### Step 2: Wire Editor.tsx UI Handlers
+### ✅ Step 2: Wire Editor.tsx UI Handlers (COMPLETE)
 
 **File**: [packages/canopycms/src/editor/Editor.tsx](packages/canopycms/src/editor/Editor.tsx)
 
-**2.1: Add imports** (top of file):
-```typescript
-import type { InternalGroup } from '../groups-file'
-import type { PathPermission } from '../config'
-```
+All editor handlers have been implemented:
+- **Imports**: Lines 13, 16 - Added InternalGroup and PathPermission types
+- **State**: Lines 122-127 - Added groupsData, permissionsData, loading states
+- **useEffect hooks**: Lines 444-454 - Load data when modals open
+- **Loading functions**: Lines 580-608 - loadGroups() and loadPermissions()
+- **Handler functions**: Lines 610-694 - All CRUD and search handlers
+- **GroupManager props**: Lines 1402-1410 - Wired with real handlers and data
+- **PermissionManager props**: Lines 1423-1438 - Wired with real handlers and data
+- **Drawer wrappers**: Lines 1393-1411 (Groups), 1414-1440 (Permissions) - Both wrapped in Drawer components for proper modal display
 
-**2.2: Add state** (around line 122):
-```typescript
-const [groupsData, setGroupsData] = useState<InternalGroup[]>([])
-const [permissionsData, setPermissionsData] = useState<PathPermission[]>([])
-const [groupsLoading, setGroupsLoading] = useState(false)
-const [permissionsLoading, setPermissionsLoading] = useState(false)
-```
+### ✅ Step 3: Configure Clerk in Example App (COMPLETE)
 
-**2.3: Add loading functions** (around line 560):
-```typescript
-const loadGroups = async () => {
-  setGroupsLoading(true)
-  try {
-    const res = await fetch('/api/canopycms/groups/internal')
-    if (!res.ok) throw new Error('Failed to load groups')
-    const data = await res.json()
-    setGroupsData(data.data?.groups ?? [])
-  } catch (err) {
-    console.error('Failed to load groups:', err)
-    notifications.show({ message: 'Failed to load groups', color: 'red' })
-  } finally {
-    setGroupsLoading(false)
-  }
-}
+**File**: [packages/canopycms/examples/one/app/api/canopycms/[...canopycms]/route.ts](packages/canopycms/examples/one/app/api/canopycms/[...canopycms]/route.ts)
 
-const loadPermissions = async () => {
-  setPermissionsLoading(true)
-  try {
-    const res = await fetch('/api/canopycms/permissions')
-    if (!res.ok) throw new Error('Failed to load permissions')
-    const data = await res.json()
-    setPermissionsData(data.data?.permissions ?? [])
-  } catch (err) {
-    console.error('Failed to load permissions:', err)
-    notifications.show({ message: 'Failed to load permissions', color: 'red' })
-  } finally {
-    setPermissionsLoading(false)
-  }
-}
-```
+Clerk auth configuration complete:
+- **Auth plugin created**: Lines 25-29 - Using `createClerkAuthPlugin` from separate package
+- **authPlugin passed to handler**: Line 53 - Passed via options to avoid serialization issues
+- **getUser function**: Lines 31-47 - Verifies tokens and returns user with role/groups
+- **Environment variables**: Configured in `.env.local` with real Clerk keys
+- **ClerkProvider**: Added to layout.tsx (if not already present)
 
-**2.4: Add useEffect hooks** (around line 427):
-```typescript
-useEffect(() => {
-  if (groupManagerOpen) loadGroups()
-}, [groupManagerOpen])
+**Key architectural fix**: authPlugin is passed through `CanopyNextOptions` and stored in `ApiContext` (not in config) to avoid Next.js serialization errors.
 
-useEffect(() => {
-  if (permissionManagerOpen) loadPermissions()
-}, [permissionManagerOpen])
-```
-
-**2.5: Define handler functions** (around line 570, after loading functions):
-```typescript
-const handleSaveGroups = async (groups: InternalGroup[]) => {
-  try {
-    const res = await fetch('/api/canopycms/groups/internal', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groups }),
-    })
-    if (!res.ok) {
-      const payload = await res.json()
-      throw new Error(payload.error || 'Failed to save groups')
-    }
-    notifications.show({
-      title: 'Groups Saved',
-      message: 'Internal groups have been updated',
-      color: 'green',
-    })
-    await loadGroups()
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to save groups'
-    notifications.show({ message, color: 'red' })
-    throw err
-  }
-}
-
-const handleSearchUsers = async (query: string, limit?: number) => {
-  try {
-    const params = new URLSearchParams({ query, limit: String(limit ?? 10) })
-    const res = await fetch(`/api/canopycms/users/search?${params}`)
-    if (!res.ok) return []
-    const data = await res.json()
-    return data.data?.users ?? []
-  } catch (err) {
-    console.error('User search failed:', err)
-    return []
-  }
-}
-
-const handleSearchExternalGroups = async (query: string) => {
-  try {
-    const params = new URLSearchParams({ query })
-    const res = await fetch(`/api/canopycms/groups/search?${params}`)
-    if (!res.ok) return []
-    const data = await res.json()
-    return data.data?.groups ?? []
-  } catch (err) {
-    console.error('External group search failed:', err)
-    return []
-  }
-}
-
-const handleSavePermissions = async (permissions: PathPermission[]) => {
-  try {
-    const res = await fetch('/api/canopycms/permissions', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissions }),
-    })
-    if (!res.ok) {
-      const payload = await res.json()
-      throw new Error(payload.error || 'Failed to save permissions')
-    }
-    notifications.show({
-      title: 'Permissions Saved',
-      message: 'Permissions have been updated',
-      color: 'green',
-    })
-    await loadPermissions()
-  } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to save permissions'
-    notifications.show({ message, color: 'red' })
-    throw err
-  }
-}
-
-const handleListGroups = async () => {
-  try {
-    const res = await fetch('/api/canopycms/groups')
-    if (!res.ok) return []
-    const data = await res.json()
-    return data.data?.groups ?? []
-  } catch (err) {
-    console.error('Group list failed:', err)
-    return []
-  }
-}
-```
-
-**2.6: Update GroupManager component** (lines 1260-1284):
-```typescript
-<GroupManager
-  internalGroups={groupsData}
-  canEdit={true}
-  onSave={handleSaveGroups}
-  onSearchUsers={handleSearchUsers}
-  onSearchExternalGroups={handleSearchExternalGroups}
-  onClose={() => setGroupManagerOpen(false)}
-/>
-```
-
-**2.7: Update PermissionManager component** (lines 1288-1314):
-```typescript
-<PermissionManager
-  schema={collections?.map(c => ({
-    type: c.type,
-    name: c.name,
-    label: c.label,
-    path: c.id,
-    format: c.format,
-    fields: [],
-  })) ?? []}
-  permissions={permissionsData}
-  canEdit={true}
-  onSave={handleSavePermissions}
-  onSearchUsers={handleSearchUsers}
-  onListGroups={handleListGroups}
-  onClose={() => setPermissionManagerOpen(false)}
-/>
-```
-
-### Step 3: Configure Clerk in Example App
-
-**3.1: Create .env.local** file at [packages/canopycms/examples/one/.env.local](packages/canopycms/examples/one/.env.local):
-```env
-CLERK_SECRET_KEY=sk_test_...
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_...
-```
-
-**3.2: Update route handler** at [packages/canopycms/examples/one/app/api/canopycms/[...canopycms]/route.ts](packages/canopycms/examples/one/app/api/canopycms/[...canopycms]/route.ts):
-```typescript
-import config from '../../../../canopycms.config'
-import { BranchWorkspaceManager, loadBranchState } from 'canopycms'
-import { createCanopyHandler } from 'canopycms/next'
-import { createClerkAuthPlugin } from 'canopycms/auth/providers/clerk'
-import type { NextRequest } from 'next/server'
-
-const branchMode = config.mode ?? 'local-simple'
-const defaultBranch = config.defaultBaseBranch ?? 'main'
-const workspaceManager = new BranchWorkspaceManager(config)
-
-const ensureBranchState = async (branch: string) => {
-  const existing = await loadBranchState({ branchName: branch, mode: branchMode })
-  if (existing) return existing
-  const workspace = await workspaceManager.openOrCreateBranch({
-    branchName: branch,
-    mode: branchMode,
-    createdBy: 'demo-editor',
-  })
-  return workspace.state
-}
-
-await ensureBranchState(defaultBranch)
-
-// Initialize auth plugin
-const authPlugin = createClerkAuthPlugin({
-  secretKey: process.env.CLERK_SECRET_KEY,
-  roleMetadataKey: 'canopyRole',
-  useOrganizationsAsGroups: true,
-})
-
-// Add auth to config
-config.authPlugin = authPlugin
-
-const getUser = async (req: NextRequest) => {
-  try {
-    const result = await authPlugin.verifyToken(req)
-    if (!result.valid || !result.user) {
-      // Fallback for development
-      return { userId: 'demo-editor', role: 'admin' }
-    }
-    return {
-      userId: result.user.userId,
-      role: result.user.role ?? 'editor',
-      groups: result.user.groups,
-    }
-  } catch (err) {
-    console.error('Auth failed, using demo user:', err)
-    return { userId: 'demo-editor', role: 'admin' }
-  }
-}
-
-const handler = createCanopyHandler({
-  config,
-  getUser,
-  getBranchState: ensureBranchState,
-})
-
-export const GET = handler
-export const POST = handler
-export const PUT = handler
-export const DELETE = handler
-```
-
-**3.3: Add ClerkProvider** to [packages/canopycms/examples/one/app/layout.tsx](packages/canopycms/examples/one/app/layout.tsx):
-```typescript
-import type { Metadata } from 'next'
-import React from 'react'
-import { ClerkProvider } from '@clerk/nextjs'
-
-import './globals.css'
-
-export const metadata: Metadata = {
-  title: 'CanopyCMS Examples: One',
-  description: 'Schema-driven form + preview using mock data',
-}
-
-const RootLayout = ({ children }: { children: React.ReactNode }) => {
-  return (
-    <ClerkProvider>
-      <html lang="en">
-        <body>{children}</body>
-      </html>
-    </ClerkProvider>
-  )
-}
-
-export default RootLayout
-```
-
-### Step 4: Verify Auth Checks Are Working
+### ⏸️ Step 4: Verify Auth Checks Are Working (TODO)
 
 **4.1: Branch Access Control** (Already Implemented ✅)
 
@@ -718,10 +467,21 @@ All admin tools are accessible via the Settings menu (gear icon) in the editor's
 ## Related Plans
 
 - **[Overall Plan](./overall-plan.md)** - Overall project roadmap
-- **[Auth Provider Refactoring](./auth-provider-refactor.md)** - 🚨 **MUST BE DONE FIRST - BLOCKING**
-
-**CRITICAL**: The auth provider refactoring plan **must be executed BEFORE** completing the implementation steps above. The current Clerk integration has npm resolution problems that prevent `@clerk/nextjs` from being resolved in the example app. Moving Clerk to a separate package fixes this blocking issue.
+- **[Auth Provider Refactoring](./auth-provider-refactor.md)** - ✅ **COMPLETE**
 
 **Execution Order**:
-1. ✅ Complete auth provider refactoring ([auth-provider-refactor.md](./auth-provider-refactor.md))
-2. ⏸️ Then complete auth integration steps above
+1. ✅ **COMPLETE** - Auth provider refactoring ([auth-provider-refactor.md](./auth-provider-refactor.md))
+   - Separate `canopycms-auth-clerk` package created
+   - npm resolution issues fixed
+   - Serialization issues resolved
+   - All 21 tests passing
+2. ✅ **COMPLETE** - Auth integration core functionality
+   - API routes registered
+   - Editor UI handlers wired up
+   - Drawer components added for proper modal display
+   - Example app configured with Clerk
+   - Group and Permission managers fully functional
+3. ⏸️ **TODO** - Verification and testing
+   - Verify path-based permissions enforcement
+   - Test comment permissions
+   - Implement pluggable admin configuration

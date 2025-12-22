@@ -119,7 +119,7 @@ export const searchExternalGroups = async (
     return { ok: false, status: 403, error: 'Admin access required' }
   }
 
-  const authPlugin = ctx.services.config.authPlugin
+  const authPlugin = ctx.authPlugin
   if (!authPlugin || !authPlugin.searchExternalGroups) {
     return { ok: false, status: 501, error: 'External group search not configured' }
   }

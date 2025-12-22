@@ -50,6 +50,7 @@ const handler = createCanopyHandler({
   config,
   getUser,
   getBranchState: ensureBranchState,
+  authPlugin,
 })
 
 export const GET = handler

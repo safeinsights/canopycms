@@ -114,7 +114,7 @@ export const searchUsers = async (
     return { ok: false, status: 403, error: 'Admin or manager access required' }
   }
 
-  const authPlugin = ctx.services.config.authPlugin
+  const authPlugin = ctx.authPlugin
   if (!authPlugin) {
     return { ok: false, status: 501, error: 'Auth plugin not configured' }
   }
@@ -143,7 +143,7 @@ export const listGroups = async (
     return { ok: false, status: 403, error: 'Admin or manager access required' }
   }
 
-  const authPlugin = ctx.services.config.authPlugin
+  const authPlugin = ctx.authPlugin
   if (!authPlugin) {
     return { ok: false, status: 501, error: 'Auth plugin not configured' }
   }
