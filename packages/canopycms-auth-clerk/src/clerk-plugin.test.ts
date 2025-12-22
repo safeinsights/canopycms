@@ -2,26 +2,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { NextRequest } from 'next/server'
 
 // Mock @clerk/nextjs/server - must be hoisted before imports
-const mockClerkClient = {
-  sessions: {
-    verifySession: vi.fn(),
-  },
-  users: {
-    getUser: vi.fn(),
-    getUserList: vi.fn(),
-    getOrganizationMembershipList: vi.fn(),
-  },
-  organizations: {
-    getOrganization: vi.fn(),
-    getOrganizationList: vi.fn(),
-  },
-}
-
 vi.mock('@clerk/nextjs/server', () => ({
-  clerkClient: mockClerkClient,
+  clerkClient: {
+    sessions: {
+      verifySession: vi.fn(),
+    },
+    users: {
+      getUser: vi.fn(),
+      getUserList: vi.fn(),
+      getOrganizationMembershipList: vi.fn(),
+    },
+    organizations: {
+      getOrganization: vi.fn(),
+      getOrganizationList: vi.fn(),
+    },
+  },
 }))
 
-import { ClerkAuthPlugin } from './clerk'
+import { ClerkAuthPlugin } from './clerk-plugin'
+import { clerkClient } from '@clerk/nextjs/server'
+
+const mockClerkClient = clerkClient as any
 
 describe('ClerkAuthPlugin', () => {
   beforeEach(() => {
@@ -356,7 +357,7 @@ describe('ClerkAuthPlugin', () => {
 
   describe('createClerkAuthPlugin factory', () => {
     it('creates plugin instance', async () => {
-      const { createClerkAuthPlugin } = await import('./clerk')
+      const { createClerkAuthPlugin } = await import('./clerk-plugin')
       const plugin = createClerkAuthPlugin({ secretKey: 'sk_test' })
 
       expect(plugin).toBeInstanceOf(ClerkAuthPlugin)

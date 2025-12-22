@@ -1,24 +1,19 @@
+import { clerkClient } from '@clerk/nextjs/server'
 import type { NextRequest } from 'next/server'
-import type { AuthPlugin, AuthPluginFactory } from '../plugin'
-import type { AuthUser, UserSearchResult, GroupMetadata, TokenVerificationResult } from '../types'
-import type { Role } from '../../types'
+import type { AuthPlugin, AuthPluginFactory } from 'canopycms/auth'
+import type {
+  AuthUser,
+  UserSearchResult,
+  GroupMetadata,
+  TokenVerificationResult,
+} from 'canopycms/auth'
+import type { Role } from 'canopycms'
 
-// Lazy load Clerk client - only imported when plugin is actually used
-let clerkClientPromise: Promise<any> | null = null
-
-function getClerkClient() {
-  if (!clerkClientPromise) {
-    // Use dynamic string concatenation to prevent Next.js from resolving this at build time
-    const clerkPackage = ['@clerk/nextjs', 'server'].join('/')
-    clerkClientPromise = import(/* webpackIgnore: true */ clerkPackage)
-      .then((mod: any) => mod.clerkClient)
-      .catch(() => {
-        throw new Error(
-          'ClerkAuthPlugin requires @clerk/nextjs to be installed. Install it with: npm install @clerk/nextjs',
-        )
-      })
-  }
-  return clerkClientPromise
+/**
+ * Get Clerk client - handles both v5 (direct object) and v6 (async function)
+ */
+async function getClient() {
+  return typeof clerkClient === 'function' ? await clerkClient() : clerkClient
 }
 
 export interface ClerkAuthConfig {
@@ -56,7 +51,7 @@ const mapClerkUser = (clerkUser: any, roleKey: string, organizationIds?: string[
 }
 
 /**
- * Clerk authentication plugin implementation
+ * Clerk authentication plugin implementation for CanopyCMS
  */
 export class ClerkAuthPlugin implements AuthPlugin {
   private config: Required<ClerkAuthConfig>
@@ -75,7 +70,7 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
   async verifyToken(req: NextRequest): Promise<TokenVerificationResult> {
     try {
-      const client = await getClerkClient()
+      const client = await getClient()
 
       // Extract session token from cookies
       const sessionToken = req.cookies.get('__session')?.value
@@ -84,7 +79,7 @@ export class ClerkAuthPlugin implements AuthPlugin {
       }
 
       // Verify with Clerk
-      const session = await client.sessions.verifySession(sessionToken)
+      const session = await client.sessions.verifySession(sessionToken, sessionToken)
       if (!session) {
         return { valid: false, error: 'Invalid session' }
       }
@@ -98,7 +93,8 @@ export class ClerkAuthPlugin implements AuthPlugin {
         const orgs = await client.users.getOrganizationMembershipList({
           userId: clerkUser.id,
         })
-        organizationIds = orgs.map((m: any) => m.organization.id)
+        const orgList = Array.isArray(orgs) ? orgs : orgs.data
+        organizationIds = orgList.map((m: any) => m.organization.id)
       }
 
       const user = mapClerkUser(clerkUser, this.config.roleMetadataKey, organizationIds)
@@ -114,12 +110,13 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
   async searchUsers(query: string, limit = 10): Promise<UserSearchResult[]> {
     try {
-      const client = await getClerkClient()
-      const users = await client.users.getUserList({
+      const client = await getClient()
+      const response = await client.users.getUserList({
         query,
         limit,
       })
 
+      const users = Array.isArray(response) ? response : response.data
       return users.map((u: any) => ({
         id: u.id,
         name: u.fullName ?? u.username ?? u.id,
@@ -134,7 +131,7 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
   async getUserMetadata(userId: string): Promise<UserSearchResult | null> {
     try {
-      const client = await getClerkClient()
+      const client = await getClient()
       const user = await client.users.getUser(userId)
       return {
         id: user.id,
@@ -154,7 +151,7 @@ export class ClerkAuthPlugin implements AuthPlugin {
     }
 
     try {
-      const client = await getClerkClient()
+      const client = await getClient()
       const org = await client.organizations.getOrganization({
         organizationId: groupId,
       })
@@ -176,8 +173,9 @@ export class ClerkAuthPlugin implements AuthPlugin {
     }
 
     try {
-      const client = await getClerkClient()
-      const orgs = await client.organizations.getOrganizationList({ limit })
+      const client = await getClient()
+      const response = await client.organizations.getOrganizationList({ limit })
+      const orgs = Array.isArray(response) ? response : response.data
       return orgs.map((o: any) => ({
         id: o.id,
         name: o.name,
@@ -191,7 +189,7 @@ export class ClerkAuthPlugin implements AuthPlugin {
 }
 
 /**
- * Factory for Clerk auth plugin
+ * Factory function to create a Clerk auth plugin instance
  */
 export const createClerkAuthPlugin: AuthPluginFactory<ClerkAuthConfig> = (config) => {
   return new ClerkAuthPlugin(config)
