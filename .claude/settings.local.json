@@ -15,5 +15,6 @@
       "Bash(ls:*)",
       "Bash(npm ls:*)"
     ]
-  }
+  },
+  "includeCoAuthoredBy": false
 }

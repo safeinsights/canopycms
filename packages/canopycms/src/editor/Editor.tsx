@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { ActionIcon, Box, Button, Drawer, Group, Menu, Paper, Stack, Text, Title } from '@mantine/core'
 import { modals } from '@mantine/modals'
@@ -34,6 +34,7 @@ import {
   buildWritePayload,
   normalizeContentPayload,
 } from './editor-utils'
+import { useEditorLayout } from './hooks'
 
 export interface EditorEntry {
   id: string
@@ -106,7 +107,6 @@ export const Editor: React.FC<EditorProps> = ({
   const [drafts, setDrafts] = useState<Record<string, FormValue>>(() => initialValues ?? {})
   const [loadedValues, setLoadedValues] = useState<Record<string, FormValue>>({})
   const [busy, setBusy] = useState(false)
-  const [highlightEnabled, setHighlightEnabled] = useState(false)
   const [navigatorOpen, setNavigatorOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
   const [commentsPanelOpen, setCommentsPanelOpen] = useState(false)
@@ -118,15 +118,15 @@ export const Editor: React.FC<EditorProps> = ({
     type: 'field' | 'entry' | 'branch'
     canopyPath?: string
   } | null>(null)
-  const [layout, setLayout] = useState<PaneLayout>('side')
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [groupsData, setGroupsData] = useState<InternalGroup[]>([])
   const [permissionsData, setPermissionsData] = useState<PathPermission[]>([])
   const [groupsLoading, setGroupsLoading] = useState(false)
   const [permissionsLoading, setPermissionsLoading] = useState(false)
-  const headerRef = useRef<HTMLDivElement | null>(null)
-  const [headerHeight, setHeaderHeight] = useState<number>(80)
+
+  // Use custom hook for layout state
+  const { layout, setLayout, highlightEnabled, setHighlightEnabled, headerRef, headerHeight } = useEditorLayout()
 
   const storageKey = useMemo(() => `canopycms:drafts:${branchNameState}`, [branchNameState])
 
@@ -430,16 +430,6 @@ export const Editor: React.FC<EditorProps> = ({
       })
     }
   }, [branchNameState, entries.length])
-
-  useEffect(() => {
-    if (!headerRef.current) return
-    const node = headerRef.current
-    const updateHeight = () => setHeaderHeight(node.getBoundingClientRect().height || 80)
-    updateHeight()
-    const observer = new ResizeObserver(updateHeight)
-    observer.observe(node)
-    return () => observer.disconnect()
-  }, [])
 
   useEffect(() => {
     if (groupManagerOpen) {
@@ -1180,7 +1170,7 @@ export const Editor: React.FC<EditorProps> = ({
                   size="lg"
                   radius="md"
                   aria-label="Toggle layout"
-                  onClick={() => setLayout((prev) => (prev === 'side' ? 'stacked' : 'side'))}
+                  onClick={() => setLayout(layout === 'side' ? 'stacked' : 'side')}
                 >
                   {layout === 'side' ? <PiRowsDuotone size={18} /> : <PiColumnsDuotone size={18} />}
                 </ActionIcon>
@@ -1192,7 +1182,7 @@ export const Editor: React.FC<EditorProps> = ({
                   radius="md"
                   aria-pressed={highlightEnabled}
                   aria-label="Toggle highlights"
-                  onClick={() => setHighlightEnabled((prev) => !prev)}
+                  onClick={() => setHighlightEnabled(!highlightEnabled)}
                 >
                   <LuSquareDashed size={18} />
                 </ActionIcon>
