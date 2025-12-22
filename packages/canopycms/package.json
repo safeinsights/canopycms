@@ -10,7 +10,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
-    "./next": "./src/next/api.ts"
+    "./next": "./src/next/api.ts",
+    "./auth": "./src/auth/index.ts"
   },
   "files": [
     "dist"
@@ -63,13 +64,5 @@
     "autoprefixer": "^10.4.20",
     "jsdom": "^24.1.3",
     "postcss": "^8.4.47"
-  },
-  "peerDependencies": {
-    "@clerk/nextjs": "^5.0.0"
-  },
-  "peerDependenciesMeta": {
-    "@clerk/nextjs": {
-      "optional": true
-    }
   }
 }

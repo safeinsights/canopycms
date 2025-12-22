@@ -1,6 +1,7 @@
 import config from '../../../../canopycms.config'
-import { BranchWorkspaceManager, loadBranchState, loadClerkAuthPlugin } from 'canopycms'
+import { BranchWorkspaceManager, loadBranchState } from 'canopycms'
 import { createCanopyHandler } from 'canopycms/next'
+import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import type { NextRequest } from 'next/server'
 
 const branchMode = config.mode ?? 'local-simple'
@@ -21,15 +22,11 @@ const ensureBranchState = async (branch: string) => {
 await ensureBranchState(defaultBranch)
 
 // Initialize Clerk auth plugin
-const { createClerkAuthPlugin } = await loadClerkAuthPlugin()
 const authPlugin = createClerkAuthPlugin({
   secretKey: process.env.CLERK_SECRET_KEY,
   roleMetadataKey: 'canopyRole',
   useOrganizationsAsGroups: true,
 })
-
-// Add auth to config
-config.authPlugin = authPlugin
 
 const getUser = async (req: NextRequest) => {
   try {
