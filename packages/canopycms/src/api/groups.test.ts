@@ -247,7 +247,7 @@ describe('groups API', () => {
         { id: 'org_456' as CanopyGroupId, name: 'Partner Organization' },
       ]
 
-      mockContext.services.config.authPlugin = {
+      mockContext.authPlugin = {
         searchExternalGroups: vi.fn(async () => mockGroups),
       } as any
 
@@ -267,7 +267,7 @@ describe('groups API', () => {
     })
 
     it('should return 500 on auth plugin error', async () => {
-      mockContext.services.config.authPlugin = {
+      mockContext.authPlugin = {
         searchExternalGroups: vi.fn(async () => {
           throw new Error('Search failed')
         }),

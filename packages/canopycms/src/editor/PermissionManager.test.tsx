@@ -240,6 +240,15 @@ describe('PermissionManager', () => {
         { wrapper },
       )
 
+      // First expand all to ensure nodes are visible
+      const expandAllButton = screen.getByText('Expand All')
+      fireEvent.click(expandAllButton)
+
+      await waitFor(() => {
+        expect(screen.getByText('posts')).toBeTruthy()
+      })
+
+      // Then collapse all
       const collapseAllButton = screen.getByText('Collapse All')
       fireEvent.click(collapseAllButton)
 
@@ -263,6 +272,12 @@ describe('PermissionManager', () => {
         />,
         { wrapper },
       )
+
+      // Expand tree first to make nodes visible
+      const expandAllButton = screen.getByText('Expand All')
+      fireEvent.click(expandAllButton)
+
+      await waitFor(() => screen.getByText('posts'))
 
       const postsNode = screen.getByText('posts')
       fireEvent.click(postsNode)
@@ -289,6 +304,10 @@ describe('PermissionManager', () => {
         { wrapper },
       )
 
+      // Expand tree to see badges
+      const expandAllButton = screen.getByText('Expand All')
+      fireEvent.click(expandAllButton)
+
       await waitFor(() => {
         expect(screen.getByText('Editors')).toBeTruthy()
       })
@@ -306,6 +325,10 @@ describe('PermissionManager', () => {
         />,
         { wrapper },
       )
+
+      // Expand tree to see badges
+      const expandAllButton = screen.getByText('Expand All')
+      fireEvent.click(expandAllButton)
 
       await waitFor(() => {
         expect(screen.getByText('alice')).toBeTruthy()
@@ -348,6 +371,7 @@ describe('PermissionManager', () => {
     })
 
     it('shows error when group loading fails', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const mockError = vi.fn().mockRejectedValue(new Error('Network error'))
 
       render(
@@ -365,6 +389,8 @@ describe('PermissionManager', () => {
       await waitFor(() => {
         expect(screen.getByText(/Failed to load groups/i)).toBeTruthy()
       })
+
+      consoleErrorSpy.mockRestore()
     })
   })
 
@@ -381,6 +407,12 @@ describe('PermissionManager', () => {
         />,
         { wrapper },
       )
+
+      // Expand tree first
+      const expandAllButton = screen.getByText('Expand All')
+      fireEvent.click(expandAllButton)
+
+      await waitFor(() => screen.getByText('posts'))
 
       // Click posts node to select it
       const postsNode = screen.getByText('posts')
@@ -411,6 +443,12 @@ describe('PermissionManager', () => {
         />,
         { wrapper },
       )
+
+      // Expand tree first
+      const expandAllButton = screen.getByText('Expand All')
+      fireEvent.click(expandAllButton)
+
+      await waitFor(() => screen.getByText('posts'))
 
       // Open group search
       fireEvent.click(screen.getByText('posts'))
@@ -443,6 +481,12 @@ describe('PermissionManager', () => {
         { wrapper },
       )
 
+      // Expand tree first
+      const expandAllButton = screen.getByText('Expand All')
+      fireEvent.click(expandAllButton)
+
+      await waitFor(() => screen.getByText('posts'))
+
       fireEvent.click(screen.getByText('posts'))
       await waitFor(() => screen.getByText('Add Groups'))
 
@@ -472,6 +516,12 @@ describe('PermissionManager', () => {
         { wrapper },
       )
 
+      // Expand tree first
+      const expandAllButton = screen.getByText('Expand All')
+      fireEvent.click(expandAllButton)
+
+      await waitFor(() => screen.getByText('posts'))
+
       fireEvent.click(screen.getByText('posts'))
       await waitFor(() => screen.getByText('Add User'))
 
@@ -497,6 +547,14 @@ describe('PermissionManager', () => {
           />,
           { wrapper },
         )
+
+        // Expand tree first
+        vi.useRealTimers()
+        const expandAllButton = screen.getByText('Expand All')
+        fireEvent.click(expandAllButton)
+
+        await waitFor(() => screen.getByText('posts'))
+        vi.useFakeTimers()
 
         // Open user search
         fireEvent.click(screen.getByText('posts'))
@@ -527,6 +585,7 @@ describe('PermissionManager', () => {
     })
 
     it('shows error when user search fails', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const mockError = vi.fn().mockRejectedValue(new Error('Search failed'))
 
       render(
@@ -540,6 +599,12 @@ describe('PermissionManager', () => {
         />,
         { wrapper },
       )
+
+      // Expand tree first
+      const expandAllButton = screen.getByText('Expand All')
+      fireEvent.click(expandAllButton)
+
+      await waitFor(() => screen.getByText('posts'))
 
       fireEvent.click(screen.getByText('posts'))
       await waitFor(() => screen.getByText('Add User'))
@@ -556,6 +621,8 @@ describe('PermissionManager', () => {
         },
         { timeout: 2000 },
       )
+
+      consoleErrorSpy.mockRestore()
     })
   })
 
@@ -572,6 +639,12 @@ describe('PermissionManager', () => {
         />,
         { wrapper },
       )
+
+      // Expand tree first
+      const expandAllButton = screen.getByText('Expand All')
+      fireEvent.click(expandAllButton)
+
+      await waitFor(() => screen.getByText('posts'))
 
       // Open posts node and add a user
       fireEvent.click(screen.getByText('posts'))
@@ -622,6 +695,12 @@ describe('PermissionManager', () => {
         />,
         { wrapper },
       )
+
+      // Expand tree first
+      const expandAllButton = screen.getByText('Expand All')
+      fireEvent.click(expandAllButton)
+
+      await waitFor(() => screen.getByText('posts'))
 
       // Make a change by adding a user
       fireEvent.click(screen.getByText('posts'))

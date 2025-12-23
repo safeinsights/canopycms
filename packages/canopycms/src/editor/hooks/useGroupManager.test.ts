@@ -50,6 +50,7 @@ describe('useGroupManager', () => {
   })
 
   it('handles load groups error', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     ;(global.fetch as any).mockResolvedValueOnce({
       ok: false,
     })
@@ -61,6 +62,7 @@ describe('useGroupManager', () => {
     })
 
     expect(result.current.groupsData).toEqual([])
+    consoleErrorSpy.mockRestore()
   })
 
   it('saves groups successfully', async () => {
