@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useBranchManager } from './useBranchManager'
+import { useBranchManager, UseBranchManagerOptions } from './useBranchManager'
 import type { BranchState } from '../../types'
 
 // Mock notifications
@@ -51,9 +51,9 @@ describe('useBranchManager', () => {
   const mockSetSelectedId = vi.fn()
   const mockSetEntries = vi.fn()
 
-  const defaultOptions = {
+  const defaultOptions: UseBranchManagerOptions = {
     initialBranch: 'main',
-    branchMode: 'collaboration' as const,
+    branchMode: 'local-simple' as const,
     selectedId: 'entry1',
     drafts: {},
     loadedValues: {},
@@ -239,7 +239,20 @@ describe('useBranchManager', () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ data: { branches: [...mockBranches, { branch: { name: 'new-branch' } }] } }),
+        json: async () => ({
+          data: {
+            branches: [
+              ...mockBranches,
+              {
+                branch: {
+                  name: 'new-branch',
+                  status: 'editing',
+                  access: { allowedUsers: [], allowedGroups: [] },
+                }
+              }
+            ]
+          }
+        }),
       })
       .mockResolvedValueOnce({
         ok: true,
