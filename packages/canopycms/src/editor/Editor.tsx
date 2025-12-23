@@ -1,18 +1,15 @@
 'use client'
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Box, Drawer, Paper, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 
-import type { ContentFormat, FieldConfig, PathPermission } from '../config'
+import type { ContentFormat, FieldConfig } from '../config'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { FormValue } from './FormRenderer'
-import type { InternalGroup } from '../groups-file'
 import { FormRenderer } from './FormRenderer'
 import { PreviewFrame } from './preview-bridge'
-import type { ApiResponse } from '../api/types'
-import type { BranchState } from '../types'
 import type { BranchMode } from '../paths'
 import { EditorPanes } from './EditorPanes'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
@@ -119,7 +116,6 @@ export const Editor: React.FC<EditorProps> = ({
     handleCreateEntry,
     loadEntry,
     saveEntry,
-    collectionById,
   } = useEntryManager({
     initialEntries: entries,
     initialSelectedId,
@@ -130,14 +126,12 @@ export const Editor: React.FC<EditorProps> = ({
     setBusy,
   })
 
-  // Draft manager hook (temporarily using branchName prop, will fix with useBranchManager)
+  // Draft manager hook
   const {
     drafts,
     setDrafts,
     loadedValues,
     setLoadedValues,
-    selectedValue,
-    loadedValue,
     effectiveValue,
     modifiedCount,
     editedFiles,

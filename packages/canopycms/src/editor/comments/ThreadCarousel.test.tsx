@@ -30,7 +30,7 @@ beforeAll(() => {
   }
 
   // Mock scrollTo for carousel
-  Element.prototype.scrollTo = vi.fn()
+  Element.prototype.scrollTo = vi.fn() as any
 })
 
 const Wrapper = ({ children }: { children: React.ReactNode }) => (

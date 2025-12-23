@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ApiContext, ApiRequest } from './types'
-import type { PathPermission } from '../config'
+import type { PathPermission, CanopyConfig } from '../config'
 import type { AuthPlugin } from '../auth/plugin'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
 
@@ -26,17 +26,23 @@ describe('permissions API', () => {
       listGroups: vi.fn(),
     }
 
+    const mockConfig: Partial<CanopyConfig> = {
+      defaultBaseBranch: 'main',
+      mode: 'local-simple',
+      gitBotAuthorName: 'Test Bot',
+      gitBotAuthorEmail: 'bot@test.com',
+    }
+
     mockContext = {
       services: {
-        config: {
-          defaultBaseBranch: 'main',
-          mode: 'local-simple',
-        } as any,
+        config: mockConfig as CanopyConfig,
+        checkBranchAccess: vi.fn(),
+        checkContentAccess: vi.fn(),
         createGitManagerFor: vi.fn(() => ({
           add: vi.fn(),
           commit: vi.fn(),
-        })) as any,
-      } as any,
+        })),
+      },
       authPlugin: mockAuthPlugin,
       getBranchState: vi.fn(),
     }
@@ -49,10 +55,18 @@ describe('permissions API', () => {
         { path: 'content/public/**', allowedUsers: ['user-1'] },
       ]
 
-      mockContext.getBranchState = vi.fn().mockResolvedValue({
-        branch: { name: 'main' },
-        branchRoot: '/test/repo',
+      const mockGetBranchState = vi.fn().mockResolvedValue({
+        branch: {
+          name: 'main',
+          status: 'editing' as const,
+          access: { allowedUsers: [], allowedGroups: [] },
+          createdBy: 'admin-1',
+          createdAt: '2024-01-01T00:00:00Z',
+          updatedAt: '2024-01-01T00:00:00Z',
+        },
+        workspaceRoot: '/test/repo',
       })
+      mockContext.getBranchState = mockGetBranchState
 
       vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue(mockPermissions)
 
@@ -80,10 +94,18 @@ describe('permissions API', () => {
     })
 
     it('allows manager access', async () => {
-      mockContext.getBranchState = vi.fn().mockResolvedValue({
-        branch: { name: 'main' },
-        branchRoot: '/test/repo',
+      const mockGetBranchState = vi.fn().mockResolvedValue({
+        branch: {
+          name: 'main',
+          status: 'editing' as const,
+          access: { allowedUsers: [], allowedGroups: [] },
+          createdBy: 'manager-1',
+          createdAt: '2024-01-01T00:00:00Z',
+          updatedAt: '2024-01-01T00:00:00Z',
+        },
+        workspaceRoot: '/test/repo',
       })
+      mockContext.getBranchState = mockGetBranchState
 
       const req: ApiRequest<undefined> = {
         user: { userId: 'manager-1', role: 'admin' }, // admin includes managers
@@ -96,7 +118,8 @@ describe('permissions API', () => {
     })
 
     it('returns error when main branch not found', async () => {
-      mockContext.getBranchState = vi.fn().mockResolvedValue(null)
+      const mockGetBranchState = vi.fn().mockResolvedValue(null)
+      mockContext.getBranchState = mockGetBranchState
 
       const req: ApiRequest<undefined> = {
         user: { userId: 'admin-1', role: 'admin' },
@@ -116,10 +139,18 @@ describe('permissions API', () => {
         { path: 'content/updated/**', allowedGroups: ['new-group'] },
       ]
 
-      mockContext.getBranchState = vi.fn().mockResolvedValue({
-        branch: { name: 'main' },
-        branchRoot: '/test/repo',
+      const mockGetBranchState = vi.fn().mockResolvedValue({
+        branch: {
+          name: 'main',
+          status: 'editing' as const,
+          access: { allowedUsers: [], allowedGroups: [] },
+          createdBy: 'admin-1',
+          createdAt: '2024-01-01T00:00:00Z',
+          updatedAt: '2024-01-01T00:00:00Z',
+        },
+        workspaceRoot: '/test/repo',
       })
+      mockContext.getBranchState = mockGetBranchState
 
       const mockGit = {
         add: vi.fn(),
@@ -137,7 +168,13 @@ describe('permissions API', () => {
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
       expect(mockGit.add).toHaveBeenCalledWith('.canopycms/permissions.json')
-      expect(mockGit.commit).toHaveBeenCalledWith('Update permissions', expect.any(Object))
+      expect(mockGit.commit).toHaveBeenCalledWith(
+        'Update permissions',
+        expect.objectContaining({
+          name: 'Test Bot',
+          email: 'bot@test.com',
+        }),
+      )
     })
 
     it('denies access for non-admin users', async () => {
@@ -154,12 +191,16 @@ describe('permissions API', () => {
     })
 
     it('requires permissions array in body', async () => {
-      const req: ApiRequest<any> = {
+      // Type as Partial to test runtime validation
+      const req = {
         user: { userId: 'admin-1', role: 'admin' },
         body: {},
-      }
+      } as ApiRequest<Partial<{ permissions: PathPermission[] }>>
 
-      const result = await updatePermissions(mockContext, req)
+      const result = await updatePermissions(
+        mockContext,
+        req as ApiRequest<{ permissions: PathPermission[] }>,
+      )
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(400)
@@ -167,7 +208,8 @@ describe('permissions API', () => {
     })
 
     it('returns error when main branch not found', async () => {
-      mockContext.getBranchState = vi.fn().mockResolvedValue(null)
+      const mockGetBranchState = vi.fn().mockResolvedValue(null)
+      mockContext.getBranchState = mockGetBranchState
 
       const req: ApiRequest<{ permissions: PathPermission[] }> = {
         user: { userId: 'admin-1', role: 'admin' },
@@ -199,7 +241,9 @@ describe('permissions API', () => {
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-      expect(result.data?.users).toEqual(mockUsers)
+      if (result.ok && result.data) {
+        expect((result.data as { users: UserSearchResult[] }).users).toEqual(mockUsers)
+      }
       expect(mockAuthPlugin.searchUsers).toHaveBeenCalledWith('alice', undefined)
     })
 
@@ -276,7 +320,9 @@ describe('permissions API', () => {
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-      expect(result.data?.groups).toEqual(mockGroups)
+      if (result.ok && result.data) {
+        expect((result.data as { groups: GroupMetadata[] }).groups).toEqual(mockGroups)
+      }
       expect(mockAuthPlugin.listGroups).toHaveBeenCalled()
     })
 
