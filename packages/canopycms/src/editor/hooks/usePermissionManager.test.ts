@@ -50,6 +50,7 @@ describe('usePermissionManager', () => {
   })
 
   it('handles load permissions error', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     ;(global.fetch as any).mockResolvedValueOnce({
       ok: false,
     })
@@ -61,6 +62,7 @@ describe('usePermissionManager', () => {
     })
 
     expect(result.current.permissionsData).toEqual([])
+    consoleErrorSpy.mockRestore()
   })
 
   it('saves permissions successfully', async () => {

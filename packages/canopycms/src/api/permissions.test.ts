@@ -31,13 +31,13 @@ describe('permissions API', () => {
         config: {
           defaultBaseBranch: 'main',
           mode: 'local-simple',
-          authPlugin: mockAuthPlugin,
         } as any,
         createGitManagerFor: vi.fn(() => ({
           add: vi.fn(),
           commit: vi.fn(),
         })) as any,
       } as any,
+      authPlugin: mockAuthPlugin,
       getBranchState: vi.fn(),
     }
   })
@@ -231,7 +231,7 @@ describe('permissions API', () => {
     })
 
     it('returns error when auth plugin not configured', async () => {
-      mockContext.services.config.authPlugin = undefined
+      mockContext.authPlugin = undefined
 
       const req: ApiRequest<undefined> = {
         user: { userId: 'admin-1', role: 'admin' },
@@ -307,7 +307,7 @@ describe('permissions API', () => {
     })
 
     it('returns error when auth plugin not configured', async () => {
-      mockContext.services.config.authPlugin = undefined
+      mockContext.authPlugin = undefined
 
       const req: ApiRequest<undefined> = {
         user: { userId: 'admin-1', role: 'admin' },
