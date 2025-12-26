@@ -106,10 +106,15 @@ The `schema` array is ordered and can mix collections and singletons. Collection
 // app/api/canopycms/[...canopycms]/route.ts
 import config from '../../../canopycms.config' // adjust path as needed
 import { createCanopyHandler } from 'canopycms/next'
+import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 
 const handler = createCanopyHandler({
   config,
-  getUser: async () => ({ userId: 'demo', role: 'admin' }), // replace with real auth
+  authPlugin: createClerkAuthPlugin({
+    secretKey: process.env.CLERK_SECRET_KEY,
+    roleMetadataKey: 'canopyRole',
+    useOrganizationsAsGroups: true,
+  }),
 })
 
 export const GET = handler
@@ -118,25 +123,9 @@ export const PUT = handler
 export const DELETE = handler
 ```
 
+The `authPlugin` is required and handles authentication for all API requests. See [canopycms-auth-clerk](../canopycms-auth-clerk) for Clerk integration or create your own plugin implementing the `AuthPlugin` interface.
+
 The `[collection]` segment should receive the collection `path` (the id). If your ids include `/`, encode them (`encodeURIComponent`) when building URLs to keep them as a single path segment.
-
-In local dev you can pre-provision a default branch so `/branches` always returns something:
-
-```ts
-import { BranchWorkspaceManager, loadBranchState } from 'canopycms'
-
-const branchMode = config.mode ?? 'local-simple'
-const defaultBranch = config.defaultBaseBranch ?? 'main'
-const workspaceManager = new BranchWorkspaceManager(config)
-
-const ensureBranchState = async (branch: string) =>
-  (await loadBranchState({ branchName: branch, mode: branchMode })) ??
-  (await workspaceManager.openOrCreateBranch({ branchName: branch, mode: branchMode, createdBy: 'demo' })).state
-
-await ensureBranchState(defaultBranch)
-
-const handler = createCanopyHandler({ config, getUser, getBranchState: ensureBranchState })
-```
 
 Host styling is framework-agnostic: your public app can use Tailwind (the included example does) or anything else; Mantine is only required inside the CanopyCMS editor UI.
 

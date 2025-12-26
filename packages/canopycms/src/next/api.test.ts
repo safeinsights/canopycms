@@ -9,6 +9,7 @@ vi.mock('next/server', () => {
 })
 
 import { createCanopyCatchAllHandler, createCanopyHandler, canopyHandlers } from './api'
+import { createMockAuthPlugin } from './test-utils'
 
 vi.mock('../api/branch', () => ({
   createBranch: vi.fn().mockResolvedValue({ ok: true, status: 200, data: { branch: { branch: { name: 'x' } } } }),
@@ -29,39 +30,32 @@ vi.mock('../api/assets', () => ({
 }))
 
 describe('Next API adapter', () => {
+  const mockAuthPlugin = createMockAuthPlugin({ userId: 'test-user', role: 'admin' })
+
+  const createMockServices = () => ({
+    config: { schema: [], contentRoot: 'content' },
+    checkBranchAccess: vi.fn(),
+    checkPathAccess: vi.fn(),
+    checkContentAccess: vi.fn(),
+    pathPermissions: [],
+    createGitManagerFor: vi.fn(),
+    registry: {
+      get: vi.fn().mockResolvedValue(null),
+      list: vi.fn().mockResolvedValue([]),
+    },
+  })
+
   it('wraps handler and returns NextResponse', async () => {
-    const services: any = {
-      config: { schema: [], contentRoot: 'content' },
-      checkBranchAccess: vi.fn(),
-      checkPathAccess: vi.fn(),
-      checkContentAccess: vi.fn(),
-      pathPermissions: [],
-      createGitManagerFor: vi.fn(),
-      registry: {
-        get: vi.fn().mockResolvedValue(null),
-        list: vi.fn().mockResolvedValue([]),
-      },
-    }
-    const handler = canopyHandlers.listBranches({ services })
+    const services: any = createMockServices()
+    const handler = canopyHandlers.listBranches({ services, authPlugin: mockAuthPlugin })
     const res: any = await handler({ method: 'GET', json: async () => ({}) } as any, {})
     expect(res.status).toBe(200)
   })
 
   it('routes catch-all requests to handlers', async () => {
-    const services: any = {
-      config: { schema: [], contentRoot: 'content' },
-      checkBranchAccess: vi.fn(),
-      checkPathAccess: vi.fn(),
-      checkContentAccess: vi.fn(),
-      pathPermissions: [],
-      createGitManagerFor: vi.fn(),
-      registry: {
-        get: vi.fn().mockResolvedValue(null),
-        list: vi.fn().mockResolvedValue([]),
-      },
-    }
+    const services: any = createMockServices()
 
-    const handler = createCanopyCatchAllHandler({ services })
+    const handler = createCanopyCatchAllHandler({ services, authPlugin: mockAuthPlugin })
     const res: any = await handler(
       { method: 'GET', json: async () => ({}) } as any,
       { params: { canopycms: ['branches'] } }
@@ -79,7 +73,7 @@ describe('Next API adapter', () => {
         gitBotAuthorName: 'Test Bot',
         gitBotAuthorEmail: 'bot@example.com',
       },
-      getUser: async () => ({ userId: 'u', role: 'admin' }),
+      authPlugin: mockAuthPlugin,
       getBranchState: async () => null,
     } as any)
     const res: any = await handler(
@@ -90,21 +84,11 @@ describe('Next API adapter', () => {
   })
 
   it('handles POST requests with empty body gracefully', async () => {
-    const services: any = {
-      config: { schema: [], contentRoot: 'content' },
-      checkBranchAccess: vi.fn(),
-      checkPathAccess: vi.fn(),
-      checkContentAccess: vi.fn(),
-      pathPermissions: [],
-      createGitManagerFor: vi.fn(),
-      registry: {
-        get: vi.fn().mockResolvedValue(null),
-        list: vi.fn().mockResolvedValue([]),
-      },
-    }
+    const services: any = createMockServices()
 
     const handler = createCanopyCatchAllHandler({
       services,
+      authPlugin: mockAuthPlugin,
       getBranchState: async () => ({
         branch: { name: 'test', status: 'editing', createdBy: 'user1', updatedAt: new Date().toISOString() },
       } as any)
@@ -126,20 +110,9 @@ describe('Next API adapter', () => {
   })
 
   it('handles POST requests with valid body', async () => {
-    const services: any = {
-      config: { schema: [], contentRoot: 'content' },
-      checkBranchAccess: vi.fn(),
-      checkPathAccess: vi.fn(),
-      checkContentAccess: vi.fn(),
-      pathPermissions: [],
-      createGitManagerFor: vi.fn(),
-      registry: {
-        get: vi.fn().mockResolvedValue(null),
-        list: vi.fn().mockResolvedValue([]),
-      },
-    }
+    const services: any = createMockServices()
 
-    const handler = canopyHandlers.createBranch({ services })
+    const handler = canopyHandlers.createBranch({ services, authPlugin: mockAuthPlugin })
     const res: any = await handler(
       {
         method: 'POST',

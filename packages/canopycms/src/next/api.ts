@@ -50,18 +50,10 @@ export type CanopyNextHandler =
 export interface CanopyNextOptions {
   services?: CanopyServices
   config?: CanopyConfig
-  getUser?: (req: NextRequest) => Promise<{ userId: string; groups?: string[]; role?: string }>
   assetStore?: ApiContext['assetStore']
   getBranchState?: (branch: string) => Promise<BranchState | null>
-  authPlugin?: AuthPlugin
+  authPlugin: AuthPlugin
 }
-
-const defaultGetUser = async (_req: NextRequest) => ({ id: 'anonymous' })
-const toRequestUser = (user: { userId?: string; id?: string; groups?: string[]; role?: string }) => ({
-  userId: user.userId ?? user.id ?? 'anonymous',
-  groups: user.groups,
-  role: user.role,
-})
 
 const buildContext = async (options: CanopyNextOptions): Promise<ApiContext> => {
   const services =
@@ -82,10 +74,19 @@ const buildContext = async (options: CanopyNextOptions): Promise<ApiContext> => 
   }
 }
 
-export const adaptCanopyHandler = (handler: CanopyNextHandler, options: CanopyNextOptions = {}) => {
+export const adaptCanopyHandler = (handler: CanopyNextHandler, options: CanopyNextOptions) => {
   return async (req: NextRequest, params?: Record<string, string>) => {
     const ctx = await buildContext(options)
-    const userRaw = options.getUser ? await options.getUser(req) : await defaultGetUser(req)
+
+    // Authenticate via authPlugin
+    const authResult = await options.authPlugin.verifyToken(req)
+    if (!authResult.valid || !authResult.user) {
+      return NextResponse.json(
+        { ok: false, status: 401, error: authResult.error ?? 'Unauthorized' },
+        { status: 401 }
+      )
+    }
+
     const searchParams =
       (req as any)?.nextUrl?.searchParams ??
       (req.url ? new URL(req.url, 'http://localhost').searchParams : undefined)
@@ -101,7 +102,7 @@ export const adaptCanopyHandler = (handler: CanopyNextHandler, options: CanopyNe
       }
     }
     const branch = (mergedParams as any)?.branch ?? (body as any)?.branch
-    const apiReq = { user: toRequestUser(userRaw), body, branch }
+    const apiReq = { user: authResult.user, body, branch }
     const result = await handler(ctx as any, apiReq as any, mergedParams as any)
     return NextResponse.json(result, { status: result.status })
   }
@@ -195,7 +196,7 @@ const findRoute = (
  * Catch-all Next.js handler for a single API route (e.g., /api/canopycms/[...canopycms]).
  * It maps to the built-in handlers and uses host-provided config/services.
  */
-export const createCanopyCatchAllHandler = (options: CanopyNextOptions = {}) => {
+export const createCanopyCatchAllHandler = (options: CanopyNextOptions) => {
   const routes = buildRouteMap(options)
   return async (req: NextRequest, ctx?: { params?: { canopycms?: string[]; [key: string]: any } }) => {
     const segments = (ctx?.params?.canopycms ?? []).filter(Boolean)
@@ -216,16 +217,16 @@ export const createCanopyHandler = (
 ) => createCanopyCatchAllHandler({ ...options, services: createCanopyServices(options.config) })
 
 export const canopyHandlers = {
-  createBranch: (options?: CanopyNextOptions) => adaptCanopyHandler(createBranch, options),
-  listBranches: (options?: CanopyNextOptions) => adaptCanopyHandler(listBranches, options),
-  getBranchStatus: (options?: CanopyNextOptions) => adaptCanopyHandler(getBranchStatus, options),
-  submitBranchForMerge: (options?: CanopyNextOptions) => adaptCanopyHandler(submitBranchForMerge, options),
-  readContent: (options?: CanopyNextOptions) => adaptCanopyHandler(readContent, options),
-  writeContent: (options?: CanopyNextOptions) => adaptCanopyHandler(writeContent, options),
-  listAssets: (options?: CanopyNextOptions) => adaptCanopyHandler(listAssets, options),
-  uploadAsset: (options?: CanopyNextOptions) => adaptCanopyHandler(uploadAsset, options),
-  deleteAsset: (options?: CanopyNextOptions) => adaptCanopyHandler(deleteAsset, options),
-  listEntries: (options?: CanopyNextOptions) => adaptCanopyHandler(listEntries, options),
+  createBranch: (options: CanopyNextOptions) => adaptCanopyHandler(createBranch, options),
+  listBranches: (options: CanopyNextOptions) => adaptCanopyHandler(listBranches, options),
+  getBranchStatus: (options: CanopyNextOptions) => adaptCanopyHandler(getBranchStatus, options),
+  submitBranchForMerge: (options: CanopyNextOptions) => adaptCanopyHandler(submitBranchForMerge, options),
+  readContent: (options: CanopyNextOptions) => adaptCanopyHandler(readContent, options),
+  writeContent: (options: CanopyNextOptions) => adaptCanopyHandler(writeContent, options),
+  listAssets: (options: CanopyNextOptions) => adaptCanopyHandler(listAssets, options),
+  uploadAsset: (options: CanopyNextOptions) => adaptCanopyHandler(uploadAsset, options),
+  deleteAsset: (options: CanopyNextOptions) => adaptCanopyHandler(deleteAsset, options),
+  listEntries: (options: CanopyNextOptions) => adaptCanopyHandler(listEntries, options),
 }
 
 export {
