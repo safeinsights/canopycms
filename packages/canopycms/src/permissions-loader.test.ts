@@ -30,7 +30,7 @@ describe('permissions loader', () => {
         ],
         gitBotAuthorName: 'Bot',
         gitBotAuthorEmail: 'bot@example.com',
-      })
+      }).server
 
       // Create permissions file
       const canopyDir = path.join(testRoot, '.canopycms')
@@ -69,7 +69,7 @@ describe('permissions loader', () => {
     })
 
     it('falls back to config when file does not exist', async () => {
-      const config = defineCanopyConfig({
+      const configBundle = defineCanopyConfig({
         schema: [
           {
             type: 'collection',
@@ -89,7 +89,7 @@ describe('permissions loader', () => {
         gitBotAuthorEmail: 'bot@example.com',
       })
 
-      const permissions = await loadPathPermissions(testRoot, config)
+      const permissions = await loadPathPermissions(testRoot, configBundle.server)
 
       expect(permissions).toHaveLength(1)
       expect(permissions[0]).toEqual({
@@ -111,7 +111,7 @@ describe('permissions loader', () => {
         ],
         gitBotAuthorName: 'Bot',
         gitBotAuthorEmail: 'bot@example.com',
-      })
+      }).server
 
       const permissions = await loadPathPermissions(testRoot, config)
 
@@ -131,7 +131,7 @@ describe('permissions loader', () => {
         ],
         gitBotAuthorName: 'Bot',
         gitBotAuthorEmail: 'bot@example.com',
-      })
+      }).server
 
       // Create invalid permissions file
       const canopyDir = path.join(testRoot, '.canopycms')
@@ -154,7 +154,7 @@ describe('permissions loader', () => {
         ],
         gitBotAuthorName: 'Bot',
         gitBotAuthorEmail: 'bot@example.com',
-      })
+      }).server
 
       // Create file with wrong version
       const canopyDir = path.join(testRoot, '.canopycms')
@@ -243,7 +243,7 @@ describe('permissions loader', () => {
         ],
         gitBotAuthorName: 'Bot',
         gitBotAuthorEmail: 'bot@example.com',
-      })
+      }).server
       const loaded = await loadPathPermissions(testRoot, config)
 
       expect(loaded).toHaveLength(1)
@@ -282,7 +282,7 @@ describe('permissions loader', () => {
         ],
         gitBotAuthorName: 'Bot',
         gitBotAuthorEmail: 'bot@example.com',
-      })
+      }).server
       const loaded = await loadPathPermissions(testRoot, config)
 
       // Original permissions should still be there

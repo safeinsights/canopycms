@@ -180,6 +180,11 @@ const editorConfigSchema = z.object({
   subtitle: z.string().optional(),
   theme: z.unknown().optional(),
   previewBase: z.record(z.string()).optional(),
+  // UI handler functions (runtime only, don't serialize)
+  onAccountClick: z.function().returns(z.void()).optional(),
+  onLogoutClick: z.function().returns(z.void()).optional(),
+  // Optional: custom account component (e.g., Clerk's UserButton)
+  AccountComponent: z.custom<React.ComponentType>().optional(),
 })
 
 schemaItemSchema = z.discriminatedUnion('type', [collectionSchema, singletonSchema])
@@ -236,6 +241,27 @@ export type MediaConfig = z.infer<typeof mediaSchema>
 export type CanopyConfig = z.infer<typeof CanopyConfigSchema>
 export type CanopyConfigInput = z.input<typeof CanopyConfigSchema>
 export type CanopyEditorConfig = z.infer<typeof editorConfigSchema>
+
+// Client config - subset safe for browser (DRY - derived from CanopyConfig)
+export type CanopyClientConfig = Pick<
+  CanopyConfig,
+  'schema' | 'defaultBaseBranch' | 'contentRoot' | 'editor' | 'mode'
+>
+
+// Client-only fields that can be provided as overrides (e.g., from auth providers)
+export interface ClientOnlyFields {
+  editor?: {
+    onAccountClick?: () => void
+    onLogoutClick?: () => void | Promise<void>
+    AccountComponent?: React.ComponentType
+  }
+}
+
+// Helper to extract client config from server config (deprecated - use config.client() instead)
+export function extractClientConfig(serverConfig: CanopyConfig): CanopyClientConfig {
+  const { schema, defaultBaseBranch, contentRoot, editor, mode } = serverConfig
+  return { schema, defaultBaseBranch, contentRoot, editor, mode }
+}
 export type DefaultBranchAccess = z.infer<typeof defaultBranchAccessSchema>
 export type DefaultBaseBranch = z.infer<typeof defaultBaseBranchSchema>
 export type DefaultRemoteName = z.infer<typeof defaultRemoteNameSchema>
@@ -372,6 +398,7 @@ export const validateCanopyConfig = (config: unknown): CanopyConfig => {
 /**
  * Helper for authoring typed config files (canopycms.config.ts).
  * Performs runtime validation using the CanopyConfig schema.
+ * Returns a bundle with `server` (full config) and `client(overrides)` (safe subset).
  */
 type DeepReadonly<T> = T extends (infer U)[]
   ? ReadonlyArray<DeepReadonly<U>>
@@ -384,10 +411,35 @@ export type CanopyConfigAuthoring = Omit<CanopyConfigInput, 'schema' | 'pathPerm
   pathPermissions?: DeepReadonly<CanopyConfigInput['pathPermissions']>
 }
 
-export function defineCanopyConfig(config: CanopyConfigInput): CanopyConfig
-export function defineCanopyConfig(config: CanopyConfigAuthoring): CanopyConfig
-export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAuthoring): CanopyConfig {
-  return validateCanopyConfig(config as CanopyConfigInput)
+export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAuthoring) {
+  const validated = validateCanopyConfig(config as CanopyConfigInput)
+
+  return {
+    // Full server config - all fields including sensitive data
+    server: validated,
+
+    // Client config helper - extracts safe subset and merges overrides
+    client: (clientOverrides?: ClientOnlyFields): CanopyClientConfig => {
+      const { schema, defaultBaseBranch, contentRoot, editor, mode } = validated
+      const clientConfig: CanopyClientConfig = {
+        schema,
+        defaultBaseBranch,
+        contentRoot,
+        editor,
+        mode,
+      }
+
+      // Merge client overrides (e.g., auth handlers from useClerkAuthConfig)
+      if (clientOverrides?.editor) {
+        clientConfig.editor = {
+          ...clientConfig.editor,
+          ...clientOverrides.editor,
+        }
+      }
+
+      return clientConfig
+    },
+  }
 }
 
 /**

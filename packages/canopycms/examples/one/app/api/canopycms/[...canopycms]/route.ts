@@ -1,9 +1,10 @@
-import config from '../../../../canopycms.config'
-import { BranchWorkspaceManager, loadBranchState } from 'canopycms'
+import configBundle from '../../../../canopycms.config'
+import { BranchWorkspaceManager, loadBranchState } from 'canopycms/server'
 import { createCanopyHandler } from 'canopycms/next'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import type { NextRequest } from 'next/server'
 
+const config = configBundle.server
 const branchMode = config.mode ?? 'local-simple'
 const defaultBranch = config.defaultBaseBranch ?? 'main'
 const workspaceManager = new BranchWorkspaceManager(config)

@@ -62,6 +62,10 @@ export interface EditorProps {
   previewBaseByCollection?: Record<string, string>
   currentUser?: string
   canResolveComments?: boolean
+  // Auth UI handlers from config
+  AccountComponent?: React.ComponentType
+  onAccountClick?: () => void
+  onLogoutClick?: () => void
 }
 
 /**
@@ -85,6 +89,9 @@ export const Editor: React.FC<EditorProps> = ({
   previewBaseByCollection,
   currentUser = 'current-user',
   canResolveComments = true,
+  AccountComponent,
+  onAccountClick,
+  onLogoutClick,
 }) => {
   const [busy, setBusy] = useState(false)
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
@@ -406,6 +413,9 @@ export const Editor: React.FC<EditorProps> = ({
               onHighlightToggle={() => setHighlightEnabled(!highlightEnabled)}
               onPermissionManagerOpen={() => setPermissionManagerOpen(true)}
               onGroupManagerOpen={() => setGroupManagerOpen(true)}
+              AccountComponent={AccountComponent}
+              onAccountClick={onAccountClick}
+              onLogoutClick={onLogoutClick}
             />
           </Box>
         </Box>

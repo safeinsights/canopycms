@@ -2,10 +2,10 @@ import React from 'react'
 
 import PostView from '../../components/PostView'
 import type { PostContent } from '../../schemas'
-import { createContentReader } from 'canopycms'
+import { createContentReader } from 'canopycms/server'
 import config from '../../../canopycms.config'
 
-const contentReader = createContentReader({ config })
+const contentReader = createContentReader({ config: config.server })
 
 interface Params {
   slug: string

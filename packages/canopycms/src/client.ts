@@ -1,5 +1,6 @@
 'use client'
 
+export type { CanopyClientConfig } from './config'
 export * from './editor/EditorPanes'
 export * from './editor/EntryNavigator'
 export * from './editor/Editor'

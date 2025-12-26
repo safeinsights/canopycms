@@ -18,4 +18,4 @@ export const defineCanopyTestConfig = (config: TestConfigInput, overrides?: Part
     ...FALLBACK_AUTHOR,
     ...config,
     ...(overrides ?? {}),
-  })
+  }).server

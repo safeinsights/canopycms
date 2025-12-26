@@ -52,6 +52,22 @@ export interface EditorSidebarProps {
    * Callback when group manager should be opened.
    */
   onGroupManagerOpen: () => void
+
+  /**
+   * Custom account component to render (e.g., Clerk's UserButton).
+   * If provided, replaces the default account button.
+   */
+  AccountComponent?: React.ComponentType
+
+  /**
+   * Callback when account button is clicked (if no AccountComponent provided).
+   */
+  onAccountClick?: () => void
+
+  /**
+   * Callback when logout button is clicked.
+   */
+  onLogoutClick?: () => void
 }
 
 /**
@@ -83,6 +99,9 @@ export function EditorSidebar({
   onHighlightToggle,
   onPermissionManagerOpen,
   onGroupManagerOpen,
+  AccountComponent,
+  onAccountClick,
+  onLogoutClick,
 }: EditorSidebarProps) {
   return (
     <Paper
@@ -139,12 +158,23 @@ export function EditorSidebar({
             <Menu.Item onClick={onGroupManagerOpen}>Manage Groups</Menu.Item>
           </Menu.Dropdown>
         </Menu>
-        <ActionIcon variant="subtle" size="lg" radius="md" aria-label="Account">
-          <MdAccountCircle size={18} />
-        </ActionIcon>
-        <ActionIcon variant="subtle" size="lg" radius="md" aria-label="Sign out">
-          <MdLogout size={18} />
-        </ActionIcon>
+        {/* Account section - use custom component or default buttons */}
+        {AccountComponent ? (
+          <AccountComponent />
+        ) : (
+          <>
+            {onAccountClick && (
+              <ActionIcon variant="subtle" size="lg" radius="md" aria-label="Account" onClick={onAccountClick}>
+                <MdAccountCircle size={18} />
+              </ActionIcon>
+            )}
+            {onLogoutClick && (
+              <ActionIcon variant="subtle" size="lg" radius="md" aria-label="Sign out" onClick={onLogoutClick}>
+                <MdLogout size={18} />
+              </ActionIcon>
+            )}
+          </>
+        )}
       </Stack>
     </Paper>
   )

@@ -2,7 +2,7 @@
 
 import React, { useMemo } from 'react'
 
-import type { CanopyConfig } from '../config'
+import type { CanopyClientConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import type { EditorProps } from './Editor'
 import { Editor } from './Editor'
@@ -13,7 +13,7 @@ export interface CanopyEditorProps
     EditorProps,
     'collections' | 'previewBaseByCollection' | 'title' | 'subtitle' | 'themeOptions' | 'entries'
   > {
-  config: CanopyConfig
+  config: CanopyClientConfig
   entries?: EditorProps['entries']
 }
 
@@ -55,6 +55,9 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
       collections={collections}
       previewBaseByCollection={previewBase}
       themeOptions={resolvedTheme}
+      AccountComponent={config.editor?.AccountComponent}
+      onAccountClick={config.editor?.onAccountClick}
+      onLogoutClick={config.editor?.onLogoutClick}
     />
   )
 }

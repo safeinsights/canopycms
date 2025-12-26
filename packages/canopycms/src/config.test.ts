@@ -7,7 +7,7 @@ const gitAuthor = { gitBotAuthorName: 'Test Bot', gitBotAuthorEmail: 'bot@exampl
 
 describe('config validation', () => {
   it('accepts a valid config with mdx collection and blocks', () => {
-    const config = defineCanopyConfig({
+    const configBundle = defineCanopyConfig({
       ...gitAuthor,
       schema: [
         {
@@ -49,8 +49,8 @@ describe('config validation', () => {
       media: { adapter: 's3', bucket: 'my-bucket', region: 'us-east-1' },
     })
 
-    expect(config.schema[0].type).toBe('collection')
-    expect(config.schema[0].children?.[0].type).toBe('singleton')
+    expect(configBundle.server.schema[0].type).toBe('collection')
+    expect(configBundle.server.schema[0].children?.[0].type).toBe('singleton')
   })
 
   it('rejects select fields without options', () => {
@@ -116,7 +116,7 @@ describe('config validation', () => {
   })
 
   it('resolves nested paths relative to parents', () => {
-    const cfg = defineCanopyConfig({
+    const configBundle = defineCanopyConfig({
       ...gitAuthor,
       schema: [
         {
@@ -137,6 +137,7 @@ describe('config validation', () => {
         },
       ],
     })
+    const cfg = configBundle.server
     const resolved = resolveSchema(cfg.schema, cfg.contentRoot)
     expect(resolved[0].fullPath).toBe('content')
     expect(resolved[0].children?.[0].fullPath).toBe('content/pages')

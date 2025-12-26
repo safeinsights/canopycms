@@ -23,6 +23,8 @@ Read packages/canopycms/README.md to understand what we are building from an end
  - Minimized adopter work (specify config, make a catch all API route that defers to Canopy, make an Edit page that defers to Canopy's editor page, load data in views using Canopy helpers)
  - content write/save/load works end to end
 
+- SOME OF THIS ISN'T DONE, VERIFY: Auth system with pluggable providers (Clerk implementation in `canopycms-auth-clerk` package), role-based access control (admin/manager/editor), group management (internal + external), permission management (path-based), API endpoints, admin UI components, and example app with Clerk sign-in/sign-up pages, middleware route protection, and sidebar auth integration.
+
 ## Prioritized Backlog
 1) **Submission/review workflow**
    - Bot-driven commit/push + PR creation; update branch metadata/registry status.
@@ -34,16 +36,9 @@ Read packages/canopycms/README.md to understand what we are building from an end
    - Comment threads stored as `.canopycms/comments.json` inside the branch clone (non-committed by default; pluggable storage if persistence beyond the clone is needed). Bot can mirror to PR comments if desired.
    - Post-merge: close/delete remote branch, mark branch clone read-only or archived; keep minimal metadata for history.
    - Show GitHub diff link to reviewers; basic status polling.
-   - Submission locks branches; withdraw or reviewer “request changes” re-opens (draft PR) to prevent reviewers seeing moving targets.
+   - Submission locks branches; withdraw or reviewer "request changes" re-opens (draft PR) to prevent reviewers seeing moving targets.
 1) **Comment Context**
    - Have PR comments be linked to the part of the JSON, allowing a user to click on a link from the comment to take them to the form field
-1) **Auth**
-   - Wire `canopycms/next` handlers to external pluggable auth, provide plugin for Clerk (see `reference/prototype`); enforce admin/manager/editor roles on branch + path access; middleware examples for Next.
-   - Add guarded-route examples/snippets; ensure errors surface useful permission info.
-   - Access rules per path tree (`content/access.json` generated from config) enforced during read/write.
-   - Branch metadata carries authorized users/groups; admins override. Path permissions come from config -> generated access manifest and are not editor-editable (admin-only if edits are allowed).
-   - User/group/org name mapping hooks for host app to refresh display names.
-   - Permission checks for branch access and per-path rules; consistent error responses; admin bypass and admin-only editing of access manifest.
 1) **Schema Updates**
    - Provide utilities to let statically generated public site create tables of contents / trees from this ordering.
 1) **Asset adapters**
