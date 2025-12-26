@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { listComments, addComment, resolveComment } from './comments'
 import type { ApiContext } from './types'
+import { RESERVED_GROUPS } from '../reserved-groups'
 
 vi.mock('../comment-store', () => {
   return {
@@ -203,7 +204,7 @@ describe('comments api - resolveComment', () => {
     ctx.getBranchState = vi.fn().mockResolvedValue(null)
     const res = await resolveComment(
       ctx,
-      { user: { userId: 'u1', role: 'admin' } },
+      { user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'missing', threadId: 'thread1' }
     )
     expect(res.status).toBe(404)
@@ -212,17 +213,17 @@ describe('comments api - resolveComment', () => {
   it('returns 403 if user is not author, reviewer, or admin', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { userId: 'u2', role: 'editor' } },
+      { user: { userId: 'u2', groups: [] } },
       { branch: 'feature/x', threadId: 'thread1' }
     )
     expect(res.status).toBe(403)
-    expect(res.error).toContain('thread author, reviewers, or admins')
+    expect(res.error).toContain('thread author, Reviewers, or Admins')
   })
 
   it('allows thread author to resolve', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { userId: 'u1', role: 'editor' } },
+      { user: { userId: 'u1', groups: [] } },
       { branch: 'feature/x', threadId: 'thread1' }
     )
     expect(res.ok).toBe(true)
@@ -232,16 +233,16 @@ describe('comments api - resolveComment', () => {
   it('allows admin to resolve', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { userId: 'u2', role: 'admin' } },
+      { user: { userId: 'u2', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'feature/x', threadId: 'thread1' }
     )
     expect(res.ok).toBe(true)
   })
 
-  it('allows manager to resolve', async () => {
+  it('allows reviewer to resolve', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { userId: 'u2', role: 'manager' } },
+      { user: { userId: 'u2', groups: [RESERVED_GROUPS.REVIEWERS] } },
       { branch: 'feature/x', threadId: 'thread1' }
     )
     expect(res.ok).toBe(true)

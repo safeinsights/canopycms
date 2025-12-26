@@ -3,10 +3,8 @@ import type { NextRequest } from 'next/server'
 
 // Mock @clerk/nextjs/server - must be hoisted before imports
 vi.mock('@clerk/nextjs/server', () => ({
+  auth: vi.fn(),
   clerkClient: {
-    sessions: {
-      verifySession: vi.fn(),
-    },
     users: {
       getUser: vi.fn(),
       getUserList: vi.fn(),
@@ -20,9 +18,10 @@ vi.mock('@clerk/nextjs/server', () => ({
 }))
 
 import { ClerkAuthPlugin } from './clerk-plugin'
-import { clerkClient } from '@clerk/nextjs/server'
+import { clerkClient, auth } from '@clerk/nextjs/server'
 
 const mockClerkClient = clerkClient as any
+const mockAuth = auth as any
 
 describe('ClerkAuthPlugin', () => {
   beforeEach(() => {
@@ -34,17 +33,11 @@ describe('ClerkAuthPlugin', () => {
   describe('constructor', () => {
     it('throws error if CLERK_SECRET_KEY not provided', () => {
       delete process.env.CLERK_SECRET_KEY
-      expect(() => new ClerkAuthPlugin()).toThrow('CLERK_SECRET_KEY is required')
+      expect(() => new ClerkAuthPlugin()).toThrow('CLERK_SECRET_KEY')
     })
 
     it('uses env var for secret key by default', () => {
       const plugin = new ClerkAuthPlugin()
-      expect(plugin).toBeDefined()
-    })
-
-    it('accepts explicit secret key config', () => {
-      delete process.env.CLERK_SECRET_KEY
-      const plugin = new ClerkAuthPlugin({ secretKey: 'sk_explicit' })
       expect(plugin).toBeDefined()
     })
 
@@ -56,53 +49,31 @@ describe('ClerkAuthPlugin', () => {
   })
 
   describe('verifyToken', () => {
-    it('returns invalid if no session token in request', async () => {
+    it('returns invalid if no authenticated session', async () => {
       const plugin = new ClerkAuthPlugin()
-      const req = {
-        cookies: {
-          get: vi.fn().mockReturnValue(undefined),
-        },
-      } as unknown as NextRequest
+      const req = {} as unknown as NextRequest
+
+      mockAuth.mockResolvedValue({ userId: null, sessionId: null })
 
       const result = await plugin.verifyToken(req)
 
       expect(result.valid).toBe(false)
-      expect(result.error).toBe('No session token')
+      expect(result.error).toBe('No authenticated session')
     })
 
-    it('returns invalid if session verification fails', async () => {
+    it('verifies valid session and returns user', async () => {
       const plugin = new ClerkAuthPlugin()
-      const req = {
-        cookies: {
-          get: vi.fn().mockReturnValue({ value: 'session_token' }),
-        },
-      } as unknown as NextRequest
+      const req = {} as unknown as NextRequest
 
-      mockClerkClient.sessions.verifySession.mockResolvedValue(null)
-
-      const result = await plugin.verifyToken(req)
-
-      expect(result.valid).toBe(false)
-      expect(result.error).toBe('Invalid session')
-    })
-
-    it('verifies valid token and returns user', async () => {
-      const plugin = new ClerkAuthPlugin()
-      const req = {
-        cookies: {
-          get: vi.fn().mockReturnValue({ value: 'session_token' }),
-        },
-      } as unknown as NextRequest
-
-      mockClerkClient.sessions.verifySession.mockResolvedValue({
+      mockAuth.mockResolvedValue({
         userId: 'user_123',
+        sessionId: 'sess_123',
       })
 
       mockClerkClient.users.getUser.mockResolvedValue({
         id: 'user_123',
         fullName: 'John Doe',
         primaryEmailAddress: { emailAddress: 'john@example.com' },
-        publicMetadata: { canopyRole: 'admin' },
       })
 
       mockClerkClient.users.getOrganizationMembershipList.mockResolvedValue([
@@ -117,74 +88,37 @@ describe('ClerkAuthPlugin', () => {
         userId: 'user_123',
         name: 'John Doe',
         email: 'john@example.com',
-        role: 'admin',
         groups: ['org_1', 'org_2'],
       })
     })
 
-    it('defaults to editor role if not in metadata', async () => {
-      const plugin = new ClerkAuthPlugin()
-      const req = {
-        cookies: {
-          get: vi.fn().mockReturnValue({ value: 'session_token' }),
-        },
-      } as unknown as NextRequest
+    it('returns user without groups if organizations disabled', async () => {
+      const plugin = new ClerkAuthPlugin({ useOrganizationsAsGroups: false })
+      const req = {} as unknown as NextRequest
 
-      mockClerkClient.sessions.verifySession.mockResolvedValue({
+      mockAuth.mockResolvedValue({
         userId: 'user_123',
+        sessionId: 'sess_123',
       })
 
       mockClerkClient.users.getUser.mockResolvedValue({
         id: 'user_123',
         fullName: 'Jane Doe',
         primaryEmailAddress: { emailAddress: 'jane@example.com' },
-        publicMetadata: {}, // No role
       })
-
-      mockClerkClient.users.getOrganizationMembershipList.mockResolvedValue([])
 
       const result = await plugin.verifyToken(req)
 
       expect(result.valid).toBe(true)
-      expect(result.user?.role).toBe('editor')
-    })
-
-    it('uses custom role metadata key', async () => {
-      const plugin = new ClerkAuthPlugin({ roleMetadataKey: 'customRole' })
-      const req = {
-        cookies: {
-          get: vi.fn().mockReturnValue({ value: 'session_token' }),
-        },
-      } as unknown as NextRequest
-
-      mockClerkClient.sessions.verifySession.mockResolvedValue({
-        userId: 'user_123',
-      })
-
-      mockClerkClient.users.getUser.mockResolvedValue({
-        id: 'user_123',
-        fullName: 'Admin User',
-        primaryEmailAddress: { emailAddress: 'admin@example.com' },
-        publicMetadata: { customRole: 'manager' },
-      })
-
-      mockClerkClient.users.getOrganizationMembershipList.mockResolvedValue([])
-
-      const result = await plugin.verifyToken(req)
-
-      expect(result.valid).toBe(true)
-      expect(result.user?.role).toBe('manager')
+      expect(result.user?.groups).toBeUndefined()
+      expect(mockClerkClient.users.getOrganizationMembershipList).not.toHaveBeenCalled()
     })
 
     it('handles errors gracefully', async () => {
       const plugin = new ClerkAuthPlugin()
-      const req = {
-        cookies: {
-          get: vi.fn().mockReturnValue({ value: 'session_token' }),
-        },
-      } as unknown as NextRequest
+      const req = {} as unknown as NextRequest
 
-      mockClerkClient.sessions.verifySession.mockRejectedValue(new Error('Network error'))
+      mockAuth.mockRejectedValue(new Error('Network error'))
 
       const result = await plugin.verifyToken(req)
 
@@ -358,7 +292,7 @@ describe('ClerkAuthPlugin', () => {
   describe('createClerkAuthPlugin factory', () => {
     it('creates plugin instance', async () => {
       const { createClerkAuthPlugin } = await import('./clerk-plugin')
-      const plugin = createClerkAuthPlugin({ secretKey: 'sk_test' })
+      const plugin = createClerkAuthPlugin({})
 
       expect(plugin).toBeInstanceOf(ClerkAuthPlugin)
     })

@@ -2,6 +2,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { PathPermission } from '../config'
 import { loadPathPermissions, savePathPermissions } from '../permissions-loader'
 import { resolveBranchWorkspace } from '../paths'
+import { isAdmin, isReviewer } from '../reserved-groups'
 
 /**
  * Get current permissions (admin only)
@@ -11,7 +12,7 @@ export const getPermissions = async (
   req: ApiRequest<undefined>
 ): Promise<ApiResponse<{ permissions: PathPermission[] }>> => {
   // Check admin permission
-  if (req.user.role !== 'admin') {
+  if (!isAdmin(req.user.groups)) {
     return { ok: false, status: 403, error: 'Admin access required' }
   }
 
@@ -54,7 +55,7 @@ export const updatePermissions = async (
   req: ApiRequest<UpdatePermissionsBody>
 ): Promise<ApiResponse> => {
   // Check admin permission
-  if (req.user.role !== 'admin') {
+  if (!isAdmin(req.user.groups)) {
     return { ok: false, status: 403, error: 'Admin access required' }
   }
 
@@ -109,9 +110,9 @@ export const searchUsers = async (
   req: ApiRequest<undefined>,
   params: SearchUsersParams
 ): Promise<ApiResponse> => {
-  // Require admin/manager for user search
-  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
-    return { ok: false, status: 403, error: 'Admin or manager access required' }
+  // Require admin or reviewer for user search
+  if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
+    return { ok: false, status: 403, error: 'Admin or Reviewer access required' }
   }
 
   const authPlugin = ctx.authPlugin
@@ -138,9 +139,9 @@ export const listGroups = async (
   ctx: ApiContext,
   req: ApiRequest<undefined>
 ): Promise<ApiResponse> => {
-  // Require admin/manager for group list
-  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
-    return { ok: false, status: 403, error: 'Admin or manager access required' }
+  // Require admin or reviewer for group list
+  if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
+    return { ok: false, status: 403, error: 'Admin or Reviewer access required' }
   }
 
   const authPlugin = ctx.authPlugin

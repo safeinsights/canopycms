@@ -1,12 +1,15 @@
-import type { CanopyUserId, CanopyGroupId, Role } from '../types'
+import type { CanopyUserId, CanopyGroupId } from '../types'
 
 /**
- * User context returned by auth plugins
+ * User context returned by auth plugins.
+ *
+ * Note: The `groups` array should contain group IDs from both the auth provider
+ * (e.g., Clerk organizations) and internal CanopyCMS groups. The reserved groups
+ * "Admins" and "Reviewers" have special meaning - see reserved-groups.ts.
  */
 export interface AuthUser {
   userId: CanopyUserId
   groups?: CanopyGroupId[]
-  role?: Role
   email?: string
   name?: string
 }

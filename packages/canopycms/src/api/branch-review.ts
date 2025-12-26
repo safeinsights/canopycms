@@ -2,6 +2,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchState } from '../types'
 import { BranchMetadata } from '../branch-metadata'
 import { resolveBranchWorkspace } from '../paths'
+import { isReviewer } from '../reserved-groups'
 
 /**
  * Request changes on a submitted branch (reviewer action)
@@ -17,12 +18,12 @@ export const requestChanges = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  // Check user has manager/admin role
-  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+  // Check user is a Reviewer (or Admin)
+  if (!isReviewer(req.user.groups)) {
     return {
       ok: false,
       status: 403,
-      error: 'Only admins and managers can request changes',
+      error: 'Only Admins and Reviewers can request changes',
     }
   }
 
@@ -80,12 +81,12 @@ export const approveBranch = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  // Check user has manager/admin role
-  if (req.user.role !== 'admin' && req.user.role !== 'manager') {
+  // Check user is a Reviewer (or Admin)
+  if (!isReviewer(req.user.groups)) {
     return {
       ok: false,
       status: 403,
-      error: 'Only admins and managers can approve branches',
+      error: 'Only Admins and Reviewers can approve branches',
     }
   }
 

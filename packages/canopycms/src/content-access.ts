@@ -1,4 +1,4 @@
-import type { BranchState, Role } from './types'
+import type { BranchState } from './types'
 import type { UserContext, BranchAccessResult } from './authz'
 import type { PathPermissionResult } from './path-permissions'
 
@@ -14,7 +14,6 @@ export interface ContentAccessDeps {
     relativePath: string
     userId: string
     groupIds?: string[]
-    role?: Role
   }) => PathPermissionResult
 }
 
@@ -29,7 +28,6 @@ export const checkContentAccess = (
     relativePath,
     userId: user.userId,
     groupIds: user.groups,
-    role: user.role,
   })
 
   return {

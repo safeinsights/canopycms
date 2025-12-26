@@ -8,6 +8,37 @@ import { GitManager } from './git-manager'
 import { BranchRegistry } from './branch-registry'
 import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
+import { RESERVED_GROUPS } from './reserved-groups'
+
+/**
+ * Parse bootstrap admin IDs from environment variable.
+ * These users are always treated as Admins regardless of group membership.
+ */
+export const getBootstrapAdminIds = (): Set<string> => {
+  const envVar = process.env.CANOPY_BOOTSTRAP_ADMIN_IDS
+  if (!envVar) return new Set()
+  return new Set(
+    envVar
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+  )
+}
+
+/**
+ * Get effective groups for a user, adding Admins group if they're a bootstrap admin.
+ */
+export const getEffectiveGroups = (
+  userId: string,
+  groups: string[] | undefined,
+  bootstrapAdminIds: Set<string>
+): string[] => {
+  const effectiveGroups = groups ? [...groups] : []
+  if (bootstrapAdminIds.has(userId) && !effectiveGroups.includes(RESERVED_GROUPS.ADMINS)) {
+    effectiveGroups.push(RESERVED_GROUPS.ADMINS)
+  }
+  return effectiveGroups
+}
 
 export interface CanopyServices {
   config: CanopyConfig
@@ -18,6 +49,8 @@ export interface CanopyServices {
   createGitManagerFor: (repoPath: string, opts?: { baseBranch?: string; remote?: string }) => GitManager
   registry: BranchRegistry
   githubService?: GitHubService
+  /** Bootstrap admin user IDs that are always treated as Admins */
+  bootstrapAdminIds: Set<string>
 }
 
 /**
@@ -29,6 +62,10 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   if (!config.gitBotAuthorName || !config.gitBotAuthorEmail) {
     throw new Error('CanopyCMS: gitBotAuthorName and gitBotAuthorEmail are required')
   }
+
+  // Load bootstrap admin IDs from environment
+  const bootstrapAdminIds = getBootstrapAdminIds()
+
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
   const pathPermissions = buildPathPermissions(config)
   const checkPathAccess = createCheckPathAccess(pathPermissions)
@@ -73,5 +110,6 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
     createGitManagerFor,
     registry,
     githubService,
+    bootstrapAdminIds,
   }
 }

@@ -11,6 +11,7 @@ import { defineCanopyTestConfig } from '../config-test'
 import { loadBranchState } from '../branch-workspace'
 import { resolveBranchPath } from '../paths'
 import { createMockAuthPlugin } from './test-utils'
+import { RESERVED_GROUPS } from '../reserved-groups'
 
 vi.mock('next/server', () => {
   const mod = {
@@ -87,7 +88,7 @@ describe('canopycms catch-all integration', () => {
 
     const handler = createCanopyCatchAllHandler({
       config,
-      authPlugin: createMockAuthPlugin({ userId: 'tester', role: 'admin' }),
+      authPlugin: createMockAuthPlugin({ userId: 'tester', groups: [RESERVED_GROUPS.ADMINS] }),
     })
 
     const call = async (method: string, segments: string[], body?: unknown, query?: Record<string, string>) => {
@@ -228,7 +229,7 @@ describe('canopycms catch-all integration', () => {
 
     const handler = createCanopyCatchAllHandler({
       config,
-      authPlugin: createMockAuthPlugin({ userId: 'tester', role: 'admin' }),
+      authPlugin: createMockAuthPlugin({ userId: 'tester', groups: [RESERVED_GROUPS.ADMINS] }),
     })
 
     const call = async (method: string, segments: string[], body?: unknown) => {

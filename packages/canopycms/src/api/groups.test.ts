@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { ApiContext, ApiRequest } from './types'
 import type { InternalGroup } from '../groups-file'
 import type { CanopyGroupId, CanopyUserId } from '../types'
+import { RESERVED_GROUPS } from '../reserved-groups'
 
 // Mock groups loader
 vi.mock('../groups-loader', () => ({
@@ -58,7 +59,7 @@ describe('groups API', () => {
   describe('getInternalGroups', () => {
     it('should return 403 for non-admin users', async () => {
       const req: ApiRequest<undefined> = {
-        user: { userId: 'user-1' as CanopyUserId, role: 'editor' },
+        user: { userId: 'user-1' as CanopyUserId, groups: [] },
       }
 
       const result = await getInternalGroups(mockContext, req)
@@ -74,7 +75,7 @@ describe('groups API', () => {
       mockContext.getBranchState = vi.fn(async () => null)
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1' as CanopyUserId, role: 'admin' },
+        user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const result = await getInternalGroups(mockContext, req)
@@ -90,7 +91,7 @@ describe('groups API', () => {
       vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1' as CanopyUserId, role: 'admin' },
+        user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const result = await getInternalGroups(mockContext, req)
@@ -106,7 +107,7 @@ describe('groups API', () => {
   describe('updateInternalGroups', () => {
     it('should return 403 for non-admin users', async () => {
       const req: ApiRequest<UpdateInternalGroupsBody> = {
-        user: { userId: 'user-1' as CanopyUserId, role: 'editor' },
+        user: { userId: 'user-1' as CanopyUserId, groups: [] },
         body: { groups: [] },
       }
 
@@ -121,7 +122,7 @@ describe('groups API', () => {
 
     it('should return 400 if groups not provided', async () => {
       const req: ApiRequest<UpdateInternalGroupsBody> = {
-        user: { userId: 'admin-1' as CanopyUserId, role: 'admin' },
+        user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
         body: {} as UpdateInternalGroupsBody,
       }
 
@@ -138,7 +139,7 @@ describe('groups API', () => {
       mockContext.getBranchState = vi.fn(async () => null)
 
       const req: ApiRequest<UpdateInternalGroupsBody> = {
-        user: { userId: 'admin-1' as CanopyUserId, role: 'admin' },
+        user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
         body: { groups: [] },
       }
 
@@ -164,7 +165,7 @@ describe('groups API', () => {
       ]
 
       const req: ApiRequest<UpdateInternalGroupsBody> = {
-        user: { userId: 'admin-1' as CanopyUserId, role: 'admin' },
+        user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
         body: { groups },
       }
 
@@ -192,7 +193,7 @@ describe('groups API', () => {
   describe('searchExternalGroups', () => {
     it('should return 403 for non-admin users', async () => {
       const req: ApiRequest<undefined> = {
-        user: { userId: 'user-1' as CanopyUserId, role: 'editor' },
+        user: { userId: 'user-1' as CanopyUserId, groups: [] },
       }
 
       const params: SearchExternalGroupsParams = { query: 'test' }
@@ -210,7 +211,7 @@ describe('groups API', () => {
       mockContext.services.config.authPlugin = undefined
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1' as CanopyUserId, role: 'admin' },
+        user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const params: SearchExternalGroupsParams = { query: 'test' }
@@ -231,7 +232,7 @@ describe('groups API', () => {
       } as any
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1' as CanopyUserId, role: 'admin' },
+        user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const params: SearchExternalGroupsParams = { query: 'test' }
@@ -256,7 +257,7 @@ describe('groups API', () => {
       } as any
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1' as CanopyUserId, role: 'admin' },
+        user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const params: SearchExternalGroupsParams = { query: 'test' }
@@ -278,7 +279,7 @@ describe('groups API', () => {
       } as any
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1' as CanopyUserId, role: 'admin' },
+        user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const params: SearchExternalGroupsParams = { query: 'test' }
