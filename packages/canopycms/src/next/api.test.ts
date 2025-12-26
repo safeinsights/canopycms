@@ -35,8 +35,13 @@ vi.mock('../api/assets', () => ({
   deleteAsset: vi.fn().mockResolvedValue({ ok: true, status: 200 }),
 }))
 
+import { RESERVED_GROUPS } from '../reserved-groups'
+
 describe('Next API adapter', () => {
-  const mockAuthPlugin = createMockAuthPlugin({ userId: 'test-user', role: 'admin' })
+  const mockAuthPlugin = createMockAuthPlugin({
+    userId: 'test-user',
+    groups: [RESERVED_GROUPS.ADMINS],
+  })
 
   const createMockServices = () => ({
     config: { schema: [], contentRoot: 'content' },
@@ -49,6 +54,7 @@ describe('Next API adapter', () => {
       get: vi.fn().mockResolvedValue(null),
       list: vi.fn().mockResolvedValue([]),
     },
+    bootstrapAdminIds: new Set<string>(),
   })
 
   it('wraps handler and returns NextResponse', async () => {

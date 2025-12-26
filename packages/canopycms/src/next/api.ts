@@ -1,7 +1,7 @@
 import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 
-import { createCanopyServices, type CanopyServices } from '../services'
+import { createCanopyServices, getEffectiveGroups, type CanopyServices } from '../services'
 import type { CanopyConfig } from '../config'
 import { BranchRegistry } from '../branch-registry'
 import type { ApiContext } from '../api/types'
@@ -88,6 +88,16 @@ export const adaptCanopyHandler = (handler: CanopyNextHandler, options: CanopyNe
       )
     }
 
+    // Apply bootstrap admin groups
+    const user = {
+      ...authResult.user,
+      groups: getEffectiveGroups(
+        authResult.user.userId,
+        authResult.user.groups,
+        ctx.services.bootstrapAdminIds,
+      ),
+    }
+
     const searchParams =
       (req as any)?.nextUrl?.searchParams ??
       (req.url ? new URL(req.url, 'http://localhost').searchParams : undefined)
@@ -103,7 +113,7 @@ export const adaptCanopyHandler = (handler: CanopyNextHandler, options: CanopyNe
       }
     }
     const branch = (mergedParams as any)?.branch ?? (body as any)?.branch
-    const apiReq = { user: authResult.user, body, branch }
+    const apiReq = { user, body, branch }
     const result = await handler(ctx as any, apiReq as any, mergedParams as any)
     return NextResponse.json(result, { status: result.status })
   }

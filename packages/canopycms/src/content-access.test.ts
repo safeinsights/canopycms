@@ -5,6 +5,7 @@ import { createCheckPathAccess } from './path-permissions'
 import { buildPathPermissions } from './path-permissions'
 import { defineCanopyTestConfig } from './config-test'
 import { createCheckContentAccess } from './content-access'
+import { RESERVED_GROUPS } from './reserved-groups'
 
 const branchState = {
   branch: {
@@ -41,22 +42,22 @@ const checkContent = createCheckContentAccess({
 
 describe('checkContentAccess', () => {
   it('denies when branch ACL defaults to deny and no allowlist', () => {
-    const res = checkContent(branchState, 'content/pages/foo.md', { userId: 'u1', role: 'editor' })
+    const res = checkContent(branchState, 'content/pages/foo.md', { userId: 'u1', groups: [] })
     expect(res.allowed).toBe(false)
     expect(res.branch.reason).toBe('no_acl')
   })
 
-  it('allows manager override even if branch default deny', () => {
-    const res = checkContent(branchState, 'content/pages/foo.md', { userId: 'u1', role: 'manager' })
+  it('allows Reviewer override even if branch default deny', () => {
+    const res = checkContent(branchState, 'content/pages/foo.md', {
+      userId: 'u1',
+      groups: [RESERVED_GROUPS.REVIEWERS],
+    })
     expect(res.allowed).toBe(true)
-    expect(res.branch.reason).toBe('admin_or_manager')
+    expect(res.branch.reason).toBe('privileged')
   })
 
-  it('denies path access for editors hitting admin paths', () => {
-    const res = checkContent(branchState, 'content/admin/secret.md', {
-      userId: 'u1',
-      role: 'editor',
-    })
+  it('denies path access for regular users hitting admin paths', () => {
+    const res = checkContent(branchState, 'content/admin/secret.md', { userId: 'u1', groups: [] })
     expect(res.allowed).toBe(false)
     expect(res.path.allowed).toBe(false)
   })

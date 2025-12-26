@@ -17,12 +17,6 @@ async function getClient() {
 
 export interface ClerkAuthConfig {
   /**
-   * Field in public metadata for role mapping
-   * @default 'canopyRole'
-   */
-  roleMetadataKey?: string
-
-  /**
    * Use organizations as groups
    * @default true
    */
@@ -30,16 +24,17 @@ export interface ClerkAuthConfig {
 }
 
 /**
- * Map Clerk user to CanopyCMS AuthUser
+ * Map Clerk user to CanopyCMS AuthUser.
+ *
+ * Note: CanopyCMS no longer uses roles from auth providers. Instead, permissions
+ * are managed through internal groups (Admins, Reviewers) within CanopyCMS.
+ * Organizations from Clerk are passed through as groups for ACL matching.
  */
-const mapClerkUser = (clerkUser: any, roleKey: string, organizationIds?: string[]): AuthUser => {
-  const role = clerkUser.publicMetadata?.[roleKey] as Role | undefined
-
+const mapClerkUser = (clerkUser: any, organizationIds?: string[]): AuthUser => {
   return {
     userId: clerkUser.id,
     email: clerkUser.primaryEmailAddress?.emailAddress,
     name: clerkUser.fullName ?? clerkUser.username ?? clerkUser.id,
-    role: role ?? 'editor', // default to editor
     groups: organizationIds,
   }
 }
@@ -52,7 +47,6 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
   constructor(config: ClerkAuthConfig = {}) {
     this.config = {
-      roleMetadataKey: config.roleMetadataKey ?? 'canopyRole',
       useOrganizationsAsGroups: config.useOrganizationsAsGroups ?? true,
     }
 
@@ -76,7 +70,7 @@ export class ClerkAuthPlugin implements AuthPlugin {
       // Get user details
       const clerkUser = await client.users.getUser(userId)
 
-      // Get organizations if enabled
+      // Get organizations if enabled - these become the user's groups
       let organizationIds: string[] | undefined
       if (this.config.useOrganizationsAsGroups) {
         const orgs = await client.users.getOrganizationMembershipList({
@@ -86,7 +80,7 @@ export class ClerkAuthPlugin implements AuthPlugin {
         organizationIds = orgList.map((m: any) => m.organization.id)
       }
 
-      const user = mapClerkUser(clerkUser, this.config.roleMetadataKey, organizationIds)
+      const user = mapClerkUser(clerkUser, organizationIds)
 
       return { valid: true, user }
     } catch (error) {

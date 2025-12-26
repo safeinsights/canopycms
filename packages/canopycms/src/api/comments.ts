@@ -2,6 +2,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { CommentThread, CommentType } from '../comment-store'
 import { CommentStore } from '../comment-store'
 import { resolveBranchWorkspace } from '../paths'
+import { isReviewer } from '../reserved-groups'
 
 interface AddCommentRequest {
   text: string
@@ -119,13 +120,13 @@ export const resolveComment = async (
 
   // Check permissions: thread author, reviewer, or admin
   const isAuthor = thread.authorId === req.user.userId
-  const isReviewer = req.user.role === 'manager' || req.user.role === 'admin'
+  const userIsReviewer = isReviewer(req.user.groups)
 
-  if (!isAuthor && !isReviewer) {
+  if (!isAuthor && !userIsReviewer) {
     return {
       ok: false,
       status: 403,
-      error: 'Only thread author, reviewers, or admins can resolve comments',
+      error: 'Only thread author, Reviewers, or Admins can resolve comments',
     }
   }
 

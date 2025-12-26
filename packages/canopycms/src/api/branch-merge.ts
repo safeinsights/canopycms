@@ -1,6 +1,7 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { loadBranchState } from '../branch-workspace'
 import { BranchMetadata } from '../branch-metadata'
+import { isAdmin } from '../reserved-groups'
 
 export interface MarkAsMergedParams {
   branch: string
@@ -24,7 +25,7 @@ export async function markAsMerged(
   }
 
   // Check permissions - only admins can mark as merged
-  if (req.user.role !== 'admin') {
+  if (!isAdmin(req.user.groups)) {
     return { ok: false, status: 403, error: 'Forbidden: admin access required' }
   }
 

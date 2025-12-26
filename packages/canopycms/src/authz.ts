@@ -1,15 +1,15 @@
-import type { BranchState, CanopyGroupId, CanopyUserId, Role } from './types'
+import type { BranchState, CanopyGroupId, CanopyUserId } from './types'
 import type { DefaultBranchAccess } from './config'
+import { isAdmin, isReviewer } from './reserved-groups'
 
 export interface UserContext {
   userId: CanopyUserId
   groups?: CanopyGroupId[]
-  role?: Role
 }
 
 export interface BranchAccessResult {
   allowed: boolean
-  reason: 'admin_or_manager' | 'allowed_by_acl' | 'denied_by_acl' | 'no_acl'
+  reason: 'privileged' | 'allowed_by_acl' | 'denied_by_acl' | 'no_acl'
 }
 
 export const checkBranchAccessWithDefault = (
@@ -17,9 +17,9 @@ export const checkBranchAccessWithDefault = (
   user: UserContext,
   defaultAccess: DefaultBranchAccess = 'deny',
 ): BranchAccessResult => {
-  const isPrivileged = user.role === 'admin' || user.role === 'manager'
-  if (isPrivileged) {
-    return { allowed: true, reason: 'admin_or_manager' }
+  // Admins and Reviewers have full branch access
+  if (isAdmin(user.groups) || isReviewer(user.groups)) {
+    return { allowed: true, reason: 'privileged' }
   }
 
   const access = state.branch.access

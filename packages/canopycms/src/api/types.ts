@@ -1,11 +1,10 @@
-import type { BranchState, Role } from '../types'
+import type { BranchState } from '../types'
 import type { CanopyConfig } from '../config'
 import type { GitHubService } from '../github-service'
 
 export interface RequestUser {
   userId: string
   groups?: string[]
-  role?: Role
 }
 
 export interface ApiContext {
@@ -23,6 +22,8 @@ export interface ApiContext {
     ) => { allowed: boolean; branch: any; path: any }
     createGitManagerFor?: (repoPath: string, opts?: { baseBranch?: string; remote?: string }) => any
     githubService?: GitHubService
+    /** Bootstrap admin user IDs that are always treated as Admins */
+    bootstrapAdminIds: Set<string>
   }
   // TODO DRY this definition up in terms of AssetStore interface
   assetStore?: {

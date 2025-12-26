@@ -3,6 +3,7 @@ import type { InternalGroup } from '../groups-file'
 import { loadInternalGroups, saveInternalGroups } from '../groups-loader'
 import { resolveBranchWorkspace } from '../paths'
 import type { CanopyGroupId, CanopyUserId } from '../types'
+import { isAdmin } from '../reserved-groups'
 
 /**
  * Get internal groups (admin only)
@@ -12,7 +13,7 @@ export const getInternalGroups = async (
   req: ApiRequest<undefined>,
 ): Promise<ApiResponse<{ groups: InternalGroup[] }>> => {
   // Check admin permission
-  if (req.user.role !== 'admin') {
+  if (!isAdmin(req.user.groups)) {
     return { ok: false, status: 403, error: 'Admin access required' }
   }
 
@@ -55,7 +56,7 @@ export const updateInternalGroups = async (
   req: ApiRequest<UpdateInternalGroupsBody>,
 ): Promise<ApiResponse> => {
   // Check admin permission
-  if (req.user.role !== 'admin') {
+  if (!isAdmin(req.user.groups)) {
     return { ok: false, status: 403, error: 'Admin access required' }
   }
 
@@ -115,7 +116,7 @@ export const searchExternalGroups = async (
   params: SearchExternalGroupsParams,
 ): Promise<ApiResponse<{ groups: ExternalGroup[] }>> => {
   // Require admin for external group search
-  if (req.user.role !== 'admin') {
+  if (!isAdmin(req.user.groups)) {
     return { ok: false, status: 403, error: 'Admin access required' }
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { defineCanopyTestConfig } from './config-test'
 import { buildPathPermissions, checkPathAccess } from './path-permissions'
+import { RESERVED_GROUPS } from './reserved-groups'
 
 const config = defineCanopyTestConfig({
   schema: [
@@ -28,22 +29,23 @@ describe('path permissions', () => {
       rules,
       relativePath: 'content/admin/secret.md',
       userId: 'any',
-      role: 'admin',
+      groupIds: [RESERVED_GROUPS.ADMINS],
     })
     expect(result.allowed).toBe(true)
+    expect(result.reason).toBe('admin')
   })
 
-  it('allows manager', () => {
+  it('allows reviewer for managerOrAdminAllowed paths', () => {
     const result = checkPathAccess({
       rules,
       relativePath: 'content/admin/secret.md',
       userId: 'any',
-      role: 'manager',
+      groupIds: [RESERVED_GROUPS.REVIEWERS],
     })
     expect(result.allowed).toBe(true)
   })
 
-  it('denies managerOrAdminAllowed for editors without matching allowlists', () => {
+  it('denies managerOrAdminAllowed for regular users without matching allowlists', () => {
     const result = checkPathAccess({
       rules,
       relativePath: 'content/admin/secret.md',

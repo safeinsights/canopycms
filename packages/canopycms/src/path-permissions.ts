@@ -2,8 +2,9 @@ import path from 'node:path'
 
 import { minimatch } from 'minimatch'
 
-import type { CanopyUserId, Role } from './types'
+import type { CanopyUserId } from './types'
 import type { CanopyConfig, PathPermission } from './config'
+import { isAdmin, isReviewer } from './reserved-groups'
 
 export interface PathPermissionResult {
   allowed: boolean
@@ -26,10 +27,10 @@ const isAllowedByRule = (
   rule: PathPermission,
   userId: CanopyUserId,
   groupIds: string[] | undefined,
-  role?: Role,
 ): boolean => {
+  // managerOrAdminAllowed means only Reviewers (and Admins) can access
   if (rule.managerOrAdminAllowed) {
-    return role === 'admin' || role === 'manager'
+    return isReviewer(groupIds)
   }
   const hasUserConstraint = !!rule.allowedUsers?.length
   const hasGroupConstraint = !!rule.allowedGroups?.length
@@ -53,25 +54,23 @@ export const checkPathAccess = ({
   relativePath,
   userId,
   groupIds,
-  role,
 }: {
   rules: PathPermission[]
   relativePath: string
   userId: CanopyUserId
   groupIds?: string[]
-  role?: Role
 }): PathPermissionResult => {
   const normalizedPath = normalize(relativePath)
-  const privileged = role === 'admin' || role === 'manager'
-  if (privileged) {
-    return { allowed: true, reason: 'admin_or_manager' }
+  // Only Admins bypass all path permissions (not Reviewers)
+  if (isAdmin(groupIds)) {
+    return { allowed: true, reason: 'admin' }
   }
 
   for (const rule of rules) {
     if (!matchesRule(rule, normalizedPath)) {
       continue
     }
-    const allowed = isAllowedByRule(rule, userId, groupIds, role)
+    const allowed = isAllowedByRule(rule, userId, groupIds)
     return {
       allowed,
       matchedRule: rule,

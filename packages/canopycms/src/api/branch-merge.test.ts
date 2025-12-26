@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { markAsMerged } from './branch-merge'
 import type { ApiContext, ApiRequest } from './types'
+import { RESERVED_GROUPS } from '../reserved-groups'
 
 vi.mock('../branch-metadata', () => {
   return {
@@ -40,7 +41,7 @@ describe('branch merge api - markAsMerged', () => {
     } as any
 
     req = {
-      user: { userId: 'admin1', role: 'admin' },
+      user: { userId: 'admin1', groups: [RESERVED_GROUPS.ADMINS] },
       body: {},
     } as any
   })
@@ -70,7 +71,7 @@ describe('branch merge api - markAsMerged', () => {
   })
 
   it('returns 403 if user lacks admin access', async () => {
-    req.user.role = 'editor' // Not an admin
+    req.user.groups = [] // Not an admin
 
     const result = await markAsMerged(ctx, req, { branch: 'feature/x' })
 
