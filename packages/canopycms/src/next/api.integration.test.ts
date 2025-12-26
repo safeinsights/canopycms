@@ -10,6 +10,7 @@ import { defineCanopyConfig } from '../config'
 import { defineCanopyTestConfig } from '../config-test'
 import { loadBranchState } from '../branch-workspace'
 import { resolveBranchPath } from '../paths'
+import { createMockAuthPlugin } from './test-utils'
 
 vi.mock('next/server', () => {
   const mod = {
@@ -88,7 +89,7 @@ describe('canopycms catch-all integration', () => {
 
     const handler = createCanopyCatchAllHandler({
       config,
-      getUser: async () => ({ userId: 'tester' }),
+      authPlugin: createMockAuthPlugin({ userId: 'tester', role: 'admin' }),
     })
 
     const call = async (
@@ -246,7 +247,7 @@ describe('canopycms catch-all integration', () => {
 
     const handler = createCanopyCatchAllHandler({
       config,
-      getUser: async () => ({ userId: 'tester' }),
+      authPlugin: createMockAuthPlugin({ userId: 'tester', role: 'admin' }),
     })
 
     const call = async (method: string, segments: string[], body?: unknown) => {

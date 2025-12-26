@@ -1,4 +1,4 @@
-import { clerkClient } from '@clerk/nextjs/server'
+import { auth, clerkClient } from '@clerk/nextjs/server'
 import type { NextRequest } from 'next/server'
 import type { AuthPlugin, AuthPluginFactory } from 'canopycms/auth'
 import type {
@@ -7,7 +7,6 @@ import type {
   GroupMetadata,
   TokenVerificationResult,
 } from 'canopycms/auth'
-import type { Role } from 'canopycms'
 
 /**
  * Get Clerk client - handles both v5 (direct object) and v6 (async function)
@@ -17,11 +16,6 @@ async function getClient() {
 }
 
 export interface ClerkAuthConfig {
-  /**
-   * Clerk secret key (defaults to process.env.CLERK_SECRET_KEY)
-   */
-  secretKey?: string
-
   /**
    * Field in public metadata for role mapping
    * @default 'canopyRole'
@@ -58,34 +52,29 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
   constructor(config: ClerkAuthConfig = {}) {
     this.config = {
-      secretKey: config.secretKey ?? process.env.CLERK_SECRET_KEY ?? '',
       roleMetadataKey: config.roleMetadataKey ?? 'canopyRole',
       useOrganizationsAsGroups: config.useOrganizationsAsGroups ?? true,
     }
 
-    if (!this.config.secretKey) {
-      throw new Error('ClerkAuthPlugin: CLERK_SECRET_KEY is required')
+    if (!process.env.CLERK_SECRET_KEY) {
+      throw new Error('ClerkAuthPlugin: CLERK_SECRET_KEY environment variable is required')
     }
   }
 
-  async verifyToken(req: NextRequest): Promise<TokenVerificationResult> {
+  async verifyToken(_req: NextRequest): Promise<TokenVerificationResult> {
     try {
+      // Use Clerk's auth() helper which properly verifies the session
+      // This works with Clerk's middleware and handles token verification internally
+      const { userId, sessionId } = await auth()
+
+      if (!userId || !sessionId) {
+        return { valid: false, error: 'No authenticated session' }
+      }
+
       const client = await getClient()
 
-      // Extract session token from cookies
-      const sessionToken = req.cookies.get('__session')?.value
-      if (!sessionToken) {
-        return { valid: false, error: 'No session token' }
-      }
-
-      // Verify with Clerk
-      const session = await client.sessions.verifySession(sessionToken, sessionToken)
-      if (!session) {
-        return { valid: false, error: 'Invalid session' }
-      }
-
       // Get user details
-      const clerkUser = await client.users.getUser(session.userId)
+      const clerkUser = await client.users.getUser(userId)
 
       // Get organizations if enabled
       let organizationIds: string[] | undefined

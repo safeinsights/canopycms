@@ -56,22 +56,6 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 
 ---
 
-## Active Work: Auth Provider Refactoring (BLOCKING)
-
-**Priority**: 🚨 **#1 - BLOCKING CURRENT WORK**
-**Plan File**: [.claude/plans/auth-provider-refactor.md](.claude/plans/auth-provider-refactor.md)
-**Estimated Effort**: 4-6 hours
-
-**BLOCKING ISSUE**: npm workspace hoisting is preventing `@clerk/nextjs` from being resolved in the example app. This blocks the completion of auth integration.
-
-**Solution**: Move Clerk implementation to separate `canopycms-auth-clerk` package.
-
-See [.claude/plans/auth-provider-refactor.md](.claude/plans/auth-provider-refactor.md) for detailed implementation steps.
-
-**After this is complete**, continue with auth integration: [.claude/plans/auth-integration.md](.claude/plans/auth-integration.md)
-
----
-
 ## Prioritized Backlog
 
 ### 1. Code Cleanup & Framework Abstraction
