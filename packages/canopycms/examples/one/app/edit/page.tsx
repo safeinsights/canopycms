@@ -1,7 +1,14 @@
-import { CanopyEditorPage } from 'canopycms'
+'use client'
 
+import { useClerkAuthConfig } from 'canopycms-auth-clerk/client'
+import { CanopyEditorPage } from 'canopycms/client'
 import config from '../../canopycms.config'
 
-const EditPage = CanopyEditorPage(config)
+export default function EditPage() {
+  const clerkAuth = useClerkAuthConfig()
 
-export default EditPage
+  const clientConfig = config.client(clerkAuth)
+
+  const EditorPage = CanopyEditorPage(clientConfig)
+  return <EditorPage searchParams={{}} />
+}
