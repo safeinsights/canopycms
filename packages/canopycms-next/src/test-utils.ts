@@ -1,13 +1,14 @@
-import type { AuthPlugin } from '../auth'
-import type { AuthUser } from '../auth/types'
-import { RESERVED_GROUPS } from '../reserved-groups'
+import type { AuthPlugin } from 'canopycms/auth'
+import type { AuthUser } from 'canopycms/auth'
+
+const ADMINS = 'Admins'
 
 /**
  * Create a mock AuthPlugin for testing.
  * Returns a valid user by default (as Admin), or can be configured to return specific users.
  */
 export const createMockAuthPlugin = (
-  user: AuthUser = { userId: 'test-user', groups: [RESERVED_GROUPS.ADMINS] },
+  user: AuthUser = { userId: 'test-user', groups: [ADMINS] },
 ): AuthPlugin => ({
   verifyToken: async () => ({ valid: true, user }),
   searchUsers: async () => [],

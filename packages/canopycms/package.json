@@ -10,8 +10,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
-    "./next": "./src/next/api.ts",
-    "./auth": "./src/auth/index.ts"
+    "./server": "./src/server.ts",
+    "./auth": "./src/auth/index.ts",
+    "./http": "./src/http/index.ts"
   },
   "files": [
     "dist"
