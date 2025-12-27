@@ -30,6 +30,7 @@ const makeCtx = (allowed = true, githubService?: any): ApiContext => ({
     checkBranchAccess: vi.fn().mockReturnValue({ allowed, reason: allowed ? 'allowed_by_acl' : 'denied_by_acl' }),
     checkContentAccess: vi.fn(),
     githubService,
+    bootstrapAdminIds: new Set<string>(),
   },
   getBranchState: vi.fn().mockResolvedValue(baseState),
 })

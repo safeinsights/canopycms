@@ -57,6 +57,7 @@ describe('listEntries', () => {
         config,
         checkBranchAccess: services.checkBranchAccess,
         checkContentAccess: services.checkContentAccess,
+        bootstrapAdminIds: new Set<string>(),
       },
       getBranchState: vi.fn().mockResolvedValue({
         branch: { name: 'main', status: 'editing', access: {}, createdBy: 'u1', createdAt: 'now', updatedAt: 'now' },
@@ -84,6 +85,7 @@ describe('listEntries', () => {
         config: { schema: [] } as any,
         checkBranchAccess: vi.fn(),
         checkContentAccess: vi.fn(),
+        bootstrapAdminIds: new Set<string>(),
       },
       getBranchState: vi.fn().mockResolvedValue(null),
     }

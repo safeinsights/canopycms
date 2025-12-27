@@ -31,6 +31,7 @@ const makeCtx = (githubService?: any): ApiContext => ({
     checkBranchAccess: vi.fn(),
     checkContentAccess: vi.fn(),
     githubService,
+    bootstrapAdminIds: new Set<string>(),
   },
   getBranchState: vi.fn().mockResolvedValue(baseState),
 })
