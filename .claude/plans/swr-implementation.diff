@@ -1,0 +1,401 @@
+diff --git a/AGENTS.md b/AGENTS.md
+index 35bc4af..6d7a15e 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -43,6 +43,7 @@ Purpose: CanopyCMS is a schema-driven, branch-aware CMS for a team of users to e
+ - Use extensionless local imports.
+ - Keep the styling of the host app separate from that of the CanopyCMS editing interface. CanopyCMS uses Mantine, but host apps/examples can use whatever they want.
+ - Keep docs current: update `PROMPT.md`, `README.md`, and AGENTS when behavior or workflows change.
++- Follow architectural patterns documented in `packages/canopycms/ARCHITECTURE.md`.
+ - Always honor branch modes (prod/local-prod-sim/local-simple) and path traversal guards. Branch metadata/registry live under `.canopycms/`.
+ - Run `npm run typecheck --workspaces` and `npm test --workspaces` before handoff when changes are made.
+ - Update Storybook stories when UI changes.
+diff --git a/package-lock.json b/package-lock.json
+index 0f5ee37..26fdf67 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -7814,6 +7814,7 @@
+         "react-split-pane": "^0.1.92",
+         "simple-git": "^3.22.0",
+         "storybook": "^8.6.14",
++        "swr": "^2.2.5",
+         "zod": "^3.23.8"
+       },
+       "devDependencies": {
+diff --git a/packages/canopycms/package.json b/packages/canopycms/package.json
+index 28011cc..c000033 100644
+--- a/packages/canopycms/package.json
++++ b/packages/canopycms/package.json
+@@ -49,6 +49,7 @@
+     "react-split-pane": "^0.1.92",
+     "simple-git": "^3.22.0",
+     "storybook": "^8.6.14",
++    "swr": "^2.2.5",
+     "zod": "^3.23.8"
+   },
+   "devDependencies": {
+diff --git a/packages/canopycms/src/editor/Editor.tsx b/packages/canopycms/src/editor/Editor.tsx
+index 3efd2ce..5591b6e 100644
+--- a/packages/canopycms/src/editor/Editor.tsx
++++ b/packages/canopycms/src/editor/Editor.tsx
+@@ -22,6 +22,7 @@ import { buildPreviewSrc } from './editor-utils'
+ import { useEditorLayout, useDraftManager, useEntryManager, useGroupManager, usePermissionManager, useCommentSystem, useBranchManager } from './hooks'
+ import { useBranchActions } from './hooks/useBranchActions'
+ import { EditorFooter, EditorHeader, EditorSidebar } from './components'
++import { EditorSWRProvider } from './api'
+ 
+ export interface EditorEntry {
+   id: string
+@@ -333,6 +334,7 @@ export const Editor: React.FC<EditorProps> = ({
+ 
+   return (
+     <CanopyCMSProvider {...(themeOptions ?? {})}>
++      <EditorSWRProvider>
+       <Box bg="gray.0" style={{ minHeight: '100vh', width: '100%' }}>
+         <EditorHeader
+           ref={headerRef}
+@@ -553,6 +555,7 @@ export const Editor: React.FC<EditorProps> = ({
+           />
+         </Drawer>
+       </Box>
++      </EditorSWRProvider>
+     </CanopyCMSProvider>
+   )
+ }
+diff --git a/packages/canopycms/src/editor/hooks/index.ts b/packages/canopycms/src/editor/hooks/index.ts
+index 0d61227..05bbaa3 100644
+--- a/packages/canopycms/src/editor/hooks/index.ts
++++ b/packages/canopycms/src/editor/hooks/index.ts
+@@ -8,3 +8,8 @@ export * from './useDraftManager'
+ export * from './useCommentSystem'
+ export * from './useGroupManager'
+ export * from './usePermissionManager'
++
++// SWR data hooks (see ARCHITECTURE.md for usage patterns)
++export * from './useBranchesData'
++export * from './useEntriesData'
++export * from './useCommentsData'
+diff --git a/packages/canopycms/src/editor/hooks/useBranchManager.tsx b/packages/canopycms/src/editor/hooks/useBranchManager.tsx
+index 82dd664..2b42734 100644
+--- a/packages/canopycms/src/editor/hooks/useBranchManager.tsx
++++ b/packages/canopycms/src/editor/hooks/useBranchManager.tsx
+@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
+ import { notifications } from '@mantine/notifications'
+ import type { BranchState } from '../../types'
+ import type { BranchMode } from '../../paths'
+-import type { ApiResponse } from '../../api/types'
+ import type { CommentThread } from '../../comment-store'
++import { useBranchesData } from './useBranchesData'
+ 
+ /**
+  * Branch summary for display in BranchManager component.
+@@ -95,7 +95,14 @@ export interface UseBranchManagerReturn {
+  */
+ export function useBranchManager(options: UseBranchManagerOptions): UseBranchManagerReturn {
+   const [branchName, setBranchName] = useState<string>(options.initialBranch)
+-  const [branches, setBranches] = useState<BranchState[]>([])
++
++  // Use SWR for branches data - automatic deduplication and caching
++  const { branches, isLoading: branchesLoading, revalidate: revalidateBranches } = useBranchesData()
++
++  // Update busy state based on SWR loading
++  useEffect(() => {
++    options.setBusy(branchesLoading)
++  }, [branchesLoading, options.setBusy])
+ 
+   const currentBranch = branches.find((b) => b.branch.name === branchName)
+   const branchStatus = currentBranch?.branch.status ?? 'editing'
+@@ -121,25 +128,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
+     })
+   }, [branches, branchName, options.comments])
+ 
++  // Wrapper for revalidation that matches the old loadBranches signature
+   const loadBranches = async () => {
+-    options.setBusy(true)
+-    try {
+-      const res = await fetch('/api/canopycms/branches')
+-      if (res.status === 404) {
+-        // No branch endpoint available; stay branchless until user selects/creates via other means.
+-        setBranches([])
+-        return
+-      }
+-      if (!res.ok) throw new Error(`Failed to load branches: ${res.status}`)
+-      const payload = (await res.json()) as ApiResponse<{ branches: BranchState[] }>
+-      const list = ('data' in payload ? payload.data?.branches : (payload as any).branches) ?? []
+-      setBranches(list)
+-    } catch (err) {
+-      console.error(err)
+-      notifications.show({ message: 'Failed to load branches', color: 'red' })
+-    } finally {
+-      options.setBusy(false)
+-    }
++    await revalidateBranches()
+   }
+ 
+   const handleSubmit = async (branchNameToSubmit: string) => {
+@@ -151,7 +142,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
+         throw new Error(payload.error || 'Failed to submit branch')
+       }
+       notifications.show({ message: 'Branch submitted for review', color: 'green' })
+-      await loadBranches()
++      await revalidateBranches()
+     } catch (err) {
+       const message = err instanceof Error ? err.message : 'Failed to submit branch'
+       notifications.show({ message, color: 'red' })
+@@ -169,7 +160,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
+         throw new Error(payload.error || 'Failed to withdraw branch')
+       }
+       notifications.show({ message: 'Branch withdrawn', color: 'blue' })
+-      await loadBranches()
++      await revalidateBranches()
+     } catch (err) {
+       const message = err instanceof Error ? err.message : 'Failed to withdraw branch'
+       notifications.show({ message, color: 'red' })
+@@ -189,7 +180,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
+         throw new Error(payload.error || 'Failed to request changes')
+       }
+       notifications.show({ message: 'Changes requested', color: 'orange' })
+-      await loadBranches()
++      await revalidateBranches()
+     } catch (err) {
+       const message = err instanceof Error ? err.message : 'Failed to request changes'
+       notifications.show({ message, color: 'red' })
+@@ -199,14 +190,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
+   }
+ 
+   const handleReloadBranchData = async () => {
+-    await loadBranches()
++    await revalidateBranches()
+   }
+ 
+-  // Load branches on mount and when branchName changes
+-  useEffect(() => {
+-    loadBranches().catch(console.error)
+-  }, [branchName])
+-
+   // Sync branch to URL parameter
+   useEffect(() => {
+     if (typeof window === 'undefined') return
+diff --git a/packages/canopycms/src/editor/hooks/useCommentSystem.ts b/packages/canopycms/src/editor/hooks/useCommentSystem.ts
+index fd395f8..2ae1357 100644
+--- a/packages/canopycms/src/editor/hooks/useCommentSystem.ts
++++ b/packages/canopycms/src/editor/hooks/useCommentSystem.ts
+@@ -3,7 +3,7 @@ import { notifications } from '@mantine/notifications'
+ import type { CommentThread } from '../../comment-store'
+ import type { EditorEntry } from '../Editor'
+ import { normalizeCanopyPath } from '../canopy-path'
+-import type { ApiResponse } from '../../api/types'
++import { useCommentsData } from './useCommentsData'
+ 
+ export interface UseCommentSystemOptions {
+   /**
+@@ -106,7 +106,6 @@ export interface UseCommentSystemReturn {
+  * ```
+  */
+ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSystemReturn {
+-  const [comments, setComments] = useState<CommentThread[]>([])
+   const [focusedFieldPath, setFocusedFieldPath] = useState<string | undefined>(undefined)
+   const [highlightThreadId, setHighlightThreadId] = useState<string | undefined>(undefined)
+   const [commentsPanelOpen, setCommentsPanelOpen] = useState(false)
+@@ -116,21 +115,17 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
+     canopyPath?: string
+   } | null>(null)
+ 
+-  const loadComments = async (branch: string) => {
+-    if (!branch) return
+-    try {
+-      const res = await fetch(`/api/canopycms/${branch}/comments`)
+-      if (!res.ok) {
+-        console.error('Failed to load comments:', res.status)
+-        return
+-      }
+-      const payload = (await res.json()) as ApiResponse<{ threads: CommentThread[] }>
+-      const threads = payload.data?.threads ?? []
+-      setComments(threads)
+-      options.onCommentsChange?.(threads)
+-    } catch (err) {
+-      console.error('Failed to load comments:', err)
+-    }
++  // Use SWR for comments data - automatic deduplication and caching
++  const { comments, revalidate: revalidateComments } = useCommentsData(options.branchName)
++
++  // Notify parent when comments change
++  useEffect(() => {
++    options.onCommentsChange?.(comments)
++  }, [comments, options.onCommentsChange])
++
++  // Wrapper for SWR revalidation that matches old loadComments signature
++  const loadComments = async (_branch: string) => {
++    await revalidateComments()
+   }
+ 
+   const handleAddComment = async (
+@@ -142,7 +137,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
+   ) => {
+     if (!options.branchName) return
+     try {
+-      const body: any = { text, threadId, type }
++      const body: Record<string, unknown> = { text, threadId, type }
+ 
+       // Add entryId for field/entry comments
+       if (entryId && (type === 'field' || type === 'entry')) {
+@@ -160,7 +155,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
+         body: JSON.stringify(body),
+       })
+       if (!res.ok) throw new Error('Failed to add comment')
+-      await loadComments(options.branchName)
++      await revalidateComments()
+       // Branch summaries auto-update via useMemo watching comments
+       notifications.show({ message: 'Comment added', color: 'green' })
+     } catch (err) {
+@@ -178,7 +173,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
+         }
+       )
+       if (!res.ok) throw new Error('Failed to resolve thread')
+-      await loadComments(options.branchName)
++      await revalidateComments()
+       // Branch summaries auto-update via useMemo watching comments
+       notifications.show({ message: 'Thread resolved', color: 'green' })
+     } catch (err) {
+@@ -220,15 +215,6 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
+     return ''
+   }, [activeCommentContext, options.selectedId, options.branchName])
+ 
+-  // Load comments when branch changes
+-  useEffect(() => {
+-    if (options.branchName) {
+-      loadComments(options.branchName).catch((err) => {
+-        console.error(err)
+-      })
+-    }
+-  }, [options.branchName])
+-
+   // Listen for field focus messages from preview frame
+   useEffect(() => {
+     const handleFocus = (event: MessageEvent) => {
+diff --git a/packages/canopycms/src/editor/hooks/useEntryManager.ts b/packages/canopycms/src/editor/hooks/useEntryManager.ts
+index e69fc96..5fe76ff 100644
+--- a/packages/canopycms/src/editor/hooks/useEntryManager.ts
++++ b/packages/canopycms/src/editor/hooks/useEntryManager.ts
+@@ -1,7 +1,6 @@
+-import { useEffect, useMemo, useState } from 'react'
++import { useEffect, useMemo, useRef, useState } from 'react'
+ import { notifications } from '@mantine/notifications'
+ import type { ApiResponse } from '../../api/types'
+-import type { ListEntriesResponse } from '../../api/entries'
+ import type { EditorEntry, EditorCollection } from '../Editor'
+ import type { FormValue } from '../FormRenderer'
+ import {
+@@ -9,6 +8,7 @@ import {
+   buildWritePayload,
+   normalizeContentPayload,
+ } from '../editor-utils'
++import { useEntriesData } from './useEntriesData'
+ 
+ export interface UseEntryManagerOptions {
+   initialEntries: EditorEntry[]
+@@ -71,6 +71,45 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
+   )
+   const [navigatorOpen, setNavigatorOpen] = useState(false)
+ 
++  // Use SWR for entries data - automatic deduplication and caching
++  const { entriesData, isLoading: entriesLoading, revalidate: revalidateEntries } = useEntriesData(options.branchName)
++
++  // Track previous branch to detect changes
++  const prevBranchRef = useRef(options.branchName)
++
++  // Update busy state based on SWR loading
++  useEffect(() => {
++    options.setBusy(entriesLoading)
++  }, [entriesLoading, options.setBusy])
++
++  // Sync SWR data to entries state when data changes
++  useEffect(() => {
++    if (entriesData) {
++      const refreshed = buildEntriesFromListResponse({
++        response: entriesData,
++        branchName: options.branchName,
++        resolvePreviewSrc: (entry) => options.resolvePreviewSrc(entry) ?? '',
++        existingEntries: entriesState,
++        currentEntry: entriesState.find((e) => e.id === selectedId),
++        initialEntries: options.initialEntries,
++      })
++      setEntriesState(refreshed)
++      // Check for newly created entry
++      const newlyCreated = refreshed.find((e) => !entriesState.find((old) => old.id === e.id))
++      if (newlyCreated) {
++        setSelectedId(newlyCreated.id)
++      }
++    }
++  }, [entriesData])
++
++  // Clear selection when branch changes
++  useEffect(() => {
++    if (prevBranchRef.current !== options.branchName) {
++      setSelectedId('')
++      prevBranchRef.current = options.branchName
++    }
++  }, [options.branchName])
++
+   const collectionById = useMemo(() => {
+     const map = new Map<string, EditorCollection>()
+     if (!options.collections) return map
+@@ -111,25 +150,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
+     return normalizeContentPayload(content)
+   }
+ 
+-  const refreshEntries = async (branch: string = options.branchName) => {
+-    if (!branch) return
+-    const res = await fetch(`/api/canopycms/${branch}/entries`)
+-    if (!res.ok) throw new Error(`Refresh failed: ${res.status}`)
+-    const payload = (await res.json()) as ApiResponse<ListEntriesResponse>
+-    const data = ('data' in payload ? payload.data : payload) as ListEntriesResponse
+-    const refreshed = buildEntriesFromListResponse({
+-      response: data,
+-      branchName: branch,
+-      resolvePreviewSrc: (entry) => options.resolvePreviewSrc(entry) ?? '',
+-      existingEntries: entriesState,
+-      currentEntry,
+-      initialEntries: options.initialEntries,
+-    })
+-    setEntriesState(refreshed)
+-    const newlyCreated = refreshed.find((e) => !entriesState.find((old) => old.id === e.id))
+-    if (newlyCreated) {
+-      setSelectedId(newlyCreated.id)
+-    }
++  // Wrapper for SWR revalidation that matches old refreshEntries signature
++  const refreshEntries = async (_branch?: string) => {
++    await revalidateEntries()
+   }
+ 
+   const handleCreateEntry = async (collectionId: string) => {
+@@ -152,7 +175,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
+         }
+       )
+       if (!res.ok) throw new Error(`Create failed: ${res.status}`)
+-      await refreshEntries()
++      await revalidateEntries()
+       notifications.show({ message: 'Created new entry', color: 'green' })
+     } catch (err) {
+       console.error(err)
+@@ -162,20 +185,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
+     }
+   }
+ 
+-  // Clear selection and refresh entries when branch changes (reactive pattern)
+-  useEffect(() => {
+-    if (options.branchName) {
+-      // Clear selection when branch changes
+-      setSelectedId('')
+-
+-      // Refresh entries for new branch
+-      options.setBusy(true)
+-      refreshEntries(options.branchName)
+-        .catch(console.error)
+-        .finally(() => options.setBusy(false))
+-    }
+-  }, [options.branchName])
+-
+   // Validate selected entry when entries change
+   useEffect(() => {
+     if (!entriesState.find((e) => e.id === selectedId)) {

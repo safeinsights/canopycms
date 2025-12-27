@@ -141,7 +141,14 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 - Identify bottlenecks
 - Add caching layer if needed (Valkey/Redis)
 
-### 9. Cleanup
+### 9. SWR Request Deduplication
+**Estimated**: 1 session
+**Priority**: Low-Medium
+**Plan**: [.claude/plans/swr.md](.claude/plans/swr.md)
+
+On initial `/edit` page load, we see 15+ API requests when there should be 3 (one per endpoint). This is caused by React Strict Mode, multiple independent hooks with separate useEffects, and no request deduplication. The plan recommends adding SWR (~4KB) for automatic request deduplication, caching, and Strict Mode compatibility. This doesn't break functionality, just adds latency.
+
+### 10. Cleanup
 
 - Add JSDoc comments for critical interfaces
 - Create developer guide for extending CanopyCMS
