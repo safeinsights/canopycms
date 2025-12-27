@@ -324,7 +324,7 @@ describe('canDeleteBranch', () => {
 })
 
 describe('deleteBranch api', () => {
-  const makeBranchState = (createdBy: string, status = 'editing' as const) => ({
+  const makeBranchState = (createdBy: string, status: 'editing' | 'submitted' = 'editing') => ({
     branch: {
       name: 'feature/x',
       status,

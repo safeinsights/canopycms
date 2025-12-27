@@ -43,6 +43,7 @@ describe('permissions API', () => {
           add: vi.fn(),
           commit: vi.fn(),
         })),
+        bootstrapAdminIds: new Set<string>(),
       },
       authPlugin: mockAuthPlugin,
       getBranchState: vi.fn(),

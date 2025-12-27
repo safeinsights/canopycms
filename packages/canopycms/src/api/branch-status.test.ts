@@ -43,6 +43,7 @@ const makeCtx = (allowed = true): ApiContext => ({
       commit: vi.fn(),
       push: vi.fn(),
     }),
+    bootstrapAdminIds: new Set<string>(),
   },
   getBranchState: vi.fn().mockResolvedValue(baseState),
 })

@@ -58,6 +58,7 @@ const makeCtx = (allowed = true): ApiContext => ({
     config: { schema: [], mode: 'local-simple' } as any,
     checkBranchAccess: vi.fn().mockReturnValue({ allowed, reason: allowed ? 'allowed' : 'denied' }),
     checkContentAccess: vi.fn(),
+    bootstrapAdminIds: new Set<string>(),
   },
   getBranchState: vi.fn().mockResolvedValue(baseState),
 })

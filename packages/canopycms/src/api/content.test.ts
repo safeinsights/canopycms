@@ -27,6 +27,7 @@ const allowedCtx = (): ApiContext => ({
     config: { schema: [] } as any,
     checkBranchAccess: vi.fn(),
     checkContentAccess: vi.fn().mockReturnValue({ allowed: true, branch: {}, path: {} }),
+    bootstrapAdminIds: new Set<string>(),
   },
   getBranchState: vi.fn().mockResolvedValue({
     branch: {
@@ -47,6 +48,7 @@ describe('content api', () => {
         config: { schema: [] } as any,
         checkBranchAccess: vi.fn(),
         checkContentAccess: vi.fn().mockReturnValue({ allowed: false, branch: {}, path: {} }),
+        bootstrapAdminIds: new Set<string>(),
       },
       getBranchState: vi.fn().mockResolvedValue({
         branch: {
