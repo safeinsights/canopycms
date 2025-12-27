@@ -162,6 +162,20 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     }
   }
 
+  // Clear selection and refresh entries when branch changes (reactive pattern)
+  useEffect(() => {
+    if (options.branchName) {
+      // Clear selection when branch changes
+      setSelectedId('')
+
+      // Refresh entries for new branch
+      options.setBusy(true)
+      refreshEntries(options.branchName)
+        .catch(console.error)
+        .finally(() => options.setBusy(false))
+    }
+  }, [options.branchName])
+
   // Validate selected entry when entries change
   useEffect(() => {
     if (!entriesState.find((e) => e.id === selectedId)) {

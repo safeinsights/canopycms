@@ -32,11 +32,6 @@ export interface UseCommentSystemOptions {
   canResolveComments: boolean
 
   /**
-   * Callback to reload branch data after comment operations.
-   */
-  onReloadBranches: () => Promise<void>
-
-  /**
    * Callback to change the selected entry.
    */
   setSelectedId: (id: string) => void
@@ -166,7 +161,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
       })
       if (!res.ok) throw new Error('Failed to add comment')
       await loadComments(options.branchName)
-      await options.onReloadBranches()
+      // Branch summaries auto-update via useMemo watching comments
       notifications.show({ message: 'Comment added', color: 'green' })
     } catch (err) {
       notifications.show({ message: 'Failed to add comment', color: 'red' })
@@ -184,7 +179,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
       )
       if (!res.ok) throw new Error('Failed to resolve thread')
       await loadComments(options.branchName)
-      await options.onReloadBranches()
+      // Branch summaries auto-update via useMemo watching comments
       notifications.show({ message: 'Thread resolved', color: 'green' })
     } catch (err) {
       notifications.show({ message: 'Failed to resolve thread', color: 'red' })

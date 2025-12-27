@@ -1,27 +1,35 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { NextRequest } from 'next/server'
 
-// Mock @clerk/nextjs/server - must be hoisted before imports
-vi.mock('@clerk/nextjs/server', () => ({
-  auth: vi.fn(),
-  clerkClient: {
-    users: {
-      getUser: vi.fn(),
-      getUserList: vi.fn(),
-      getOrganizationMembershipList: vi.fn(),
-    },
-    organizations: {
-      getOrganization: vi.fn(),
-      getOrganizationList: vi.fn(),
-    },
+// Create mock objects
+const mockGetUser = vi.fn()
+const mockGetUserList = vi.fn()
+const mockGetOrganizationMembershipList = vi.fn()
+const mockGetOrganization = vi.fn()
+const mockGetOrganizationList = vi.fn()
+
+const mockClerkClient = {
+  users: {
+    getUser: mockGetUser,
+    getUserList: mockGetUserList,
+    getOrganizationMembershipList: mockGetOrganizationMembershipList,
   },
+  organizations: {
+    getOrganization: mockGetOrganization,
+    getOrganizationList: mockGetOrganizationList,
+  },
+}
+
+// Mock @clerk/backend - must be hoisted before imports
+vi.mock('@clerk/backend', () => ({
+  createClerkClient: vi.fn(() => mockClerkClient),
+  verifyToken: vi.fn(),
 }))
 
 import { ClerkAuthPlugin } from './clerk-plugin'
-import { clerkClient, auth } from '@clerk/nextjs/server'
+import { verifyToken } from '@clerk/backend'
+import type { CanopyRequest } from 'canopycms/http'
 
-const mockClerkClient = clerkClient as any
-const mockAuth = auth as any
+const mockVerifyToken = verifyToken as any
 
 describe('ClerkAuthPlugin', () => {
   beforeEach(() => {
@@ -49,37 +57,61 @@ describe('ClerkAuthPlugin', () => {
   })
 
   describe('verifyToken', () => {
-    it('returns invalid if no authenticated session', async () => {
+    it('returns invalid if no token in request', async () => {
       const plugin = new ClerkAuthPlugin()
-      const req = {} as unknown as NextRequest
-
-      mockAuth.mockResolvedValue({ userId: null, sessionId: null })
+      const req = {
+        header: vi.fn().mockReturnValue(null),
+      } as unknown as CanopyRequest
 
       const result = await plugin.verifyToken(req)
 
       expect(result.valid).toBe(false)
-      expect(result.error).toBe('No authenticated session')
+      expect(result.error).toBe('No authentication token found')
+    })
+
+    it('returns invalid if token verification fails', async () => {
+      const plugin = new ClerkAuthPlugin()
+      const req = {
+        header: vi.fn().mockImplementation((name: string) => {
+          if (name === 'Authorization') return 'Bearer test_token'
+          return null
+        }),
+      } as unknown as CanopyRequest
+
+      mockVerifyToken.mockRejectedValue(new Error('Invalid token'))
+
+      const result = await plugin.verifyToken(req)
+
+      expect(result.valid).toBe(false)
+      expect(result.error).toBe('Invalid token')
     })
 
     it('verifies valid session and returns user', async () => {
       const plugin = new ClerkAuthPlugin()
-      const req = {} as unknown as NextRequest
+      const req = {
+        header: vi.fn().mockImplementation((name: string) => {
+          if (name === 'Authorization') return 'Bearer valid_token'
+          return null
+        }),
+      } as unknown as CanopyRequest
 
-      mockAuth.mockResolvedValue({
-        userId: 'user_123',
-        sessionId: 'sess_123',
+      mockVerifyToken.mockResolvedValue({
+        sub: 'user_123',
+        sid: 'sess_123',
       })
 
-      mockClerkClient.users.getUser.mockResolvedValue({
+      mockGetUser.mockResolvedValue({
         id: 'user_123',
         fullName: 'John Doe',
         primaryEmailAddress: { emailAddress: 'john@example.com' },
       })
 
-      mockClerkClient.users.getOrganizationMembershipList.mockResolvedValue([
-        { organization: { id: 'org_1' } },
-        { organization: { id: 'org_2' } },
-      ])
+      mockGetOrganizationMembershipList.mockResolvedValue({
+        data: [
+          { organization: { id: 'org_1' } },
+          { organization: { id: 'org_2' } },
+        ],
+      })
 
       const result = await plugin.verifyToken(req)
 
@@ -94,14 +126,19 @@ describe('ClerkAuthPlugin', () => {
 
     it('returns user without groups if organizations disabled', async () => {
       const plugin = new ClerkAuthPlugin({ useOrganizationsAsGroups: false })
-      const req = {} as unknown as NextRequest
+      const req = {
+        header: vi.fn().mockImplementation((name: string) => {
+          if (name === 'Authorization') return 'Bearer valid_token'
+          return null
+        }),
+      } as unknown as CanopyRequest
 
-      mockAuth.mockResolvedValue({
-        userId: 'user_123',
-        sessionId: 'sess_123',
+      mockVerifyToken.mockResolvedValue({
+        sub: 'user_123',
+        sid: 'sess_123',
       })
 
-      mockClerkClient.users.getUser.mockResolvedValue({
+      mockGetUser.mockResolvedValue({
         id: 'user_123',
         fullName: 'Jane Doe',
         primaryEmailAddress: { emailAddress: 'jane@example.com' },
@@ -111,19 +148,51 @@ describe('ClerkAuthPlugin', () => {
 
       expect(result.valid).toBe(true)
       expect(result.user?.groups).toBeUndefined()
-      expect(mockClerkClient.users.getOrganizationMembershipList).not.toHaveBeenCalled()
+      expect(mockGetOrganizationMembershipList).not.toHaveBeenCalled()
     })
 
     it('handles errors gracefully', async () => {
       const plugin = new ClerkAuthPlugin()
-      const req = {} as unknown as NextRequest
+      const req = {
+        header: vi.fn().mockImplementation((name: string) => {
+          if (name === 'Authorization') return 'Bearer valid_token'
+          return null
+        }),
+      } as unknown as CanopyRequest
 
-      mockAuth.mockRejectedValue(new Error('Network error'))
+      mockVerifyToken.mockRejectedValue(new Error('Network error'))
 
       const result = await plugin.verifyToken(req)
 
       expect(result.valid).toBe(false)
       expect(result.error).toBe('Network error')
+    })
+
+    it('extracts token from __session cookie', async () => {
+      const plugin = new ClerkAuthPlugin()
+      const req = {
+        header: vi.fn().mockImplementation((name: string) => {
+          if (name === 'Cookie') return '__session=cookie_token; other=value'
+          return null
+        }),
+      } as unknown as CanopyRequest
+
+      mockVerifyToken.mockResolvedValue({
+        sub: 'user_123',
+      })
+
+      mockGetUser.mockResolvedValue({
+        id: 'user_123',
+        fullName: 'Cookie User',
+        primaryEmailAddress: { emailAddress: 'cookie@example.com' },
+      })
+
+      mockGetOrganizationMembershipList.mockResolvedValue({ data: [] })
+
+      const result = await plugin.verifyToken(req)
+
+      expect(result.valid).toBe(true)
+      expect(mockVerifyToken).toHaveBeenCalledWith('cookie_token', expect.any(Object))
     })
   })
 
@@ -131,20 +200,22 @@ describe('ClerkAuthPlugin', () => {
     it('searches users and returns results', async () => {
       const plugin = new ClerkAuthPlugin()
 
-      mockClerkClient.users.getUserList.mockResolvedValue([
-        {
-          id: 'user_1',
-          fullName: 'Alice Smith',
-          primaryEmailAddress: { emailAddress: 'alice@example.com' },
-          imageUrl: 'https://example.com/alice.jpg',
-        },
-        {
-          id: 'user_2',
-          username: 'bob',
-          primaryEmailAddress: { emailAddress: 'bob@example.com' },
-          imageUrl: 'https://example.com/bob.jpg',
-        },
-      ])
+      mockGetUserList.mockResolvedValue({
+        data: [
+          {
+            id: 'user_1',
+            fullName: 'Alice Smith',
+            primaryEmailAddress: { emailAddress: 'alice@example.com' },
+            imageUrl: 'https://example.com/alice.jpg',
+          },
+          {
+            id: 'user_2',
+            username: 'bob',
+            primaryEmailAddress: { emailAddress: 'bob@example.com' },
+            imageUrl: 'https://example.com/bob.jpg',
+          },
+        ],
+      })
 
       const results = await plugin.searchUsers('alice')
 
@@ -161,7 +232,7 @@ describe('ClerkAuthPlugin', () => {
         email: 'bob@example.com',
         avatarUrl: 'https://example.com/bob.jpg',
       })
-      expect(mockClerkClient.users.getUserList).toHaveBeenCalledWith({
+      expect(mockGetUserList).toHaveBeenCalledWith({
         query: 'alice',
         limit: 10,
       })
@@ -170,7 +241,7 @@ describe('ClerkAuthPlugin', () => {
     it('returns empty array on error', async () => {
       const plugin = new ClerkAuthPlugin()
 
-      mockClerkClient.users.getUserList.mockRejectedValue(new Error('API error'))
+      mockGetUserList.mockRejectedValue(new Error('API error'))
 
       const results = await plugin.searchUsers('test')
 
@@ -182,7 +253,7 @@ describe('ClerkAuthPlugin', () => {
     it('gets user metadata by ID', async () => {
       const plugin = new ClerkAuthPlugin()
 
-      mockClerkClient.users.getUser.mockResolvedValue({
+      mockGetUser.mockResolvedValue({
         id: 'user_123',
         fullName: 'Test User',
         primaryEmailAddress: { emailAddress: 'test@example.com' },
@@ -202,7 +273,7 @@ describe('ClerkAuthPlugin', () => {
     it('returns null on error', async () => {
       const plugin = new ClerkAuthPlugin()
 
-      mockClerkClient.users.getUser.mockRejectedValue(new Error('User not found'))
+      mockGetUser.mockRejectedValue(new Error('User not found'))
 
       const result = await plugin.getUserMetadata('user_123')
 
@@ -214,7 +285,7 @@ describe('ClerkAuthPlugin', () => {
     it('gets organization metadata when enabled', async () => {
       const plugin = new ClerkAuthPlugin({ useOrganizationsAsGroups: true })
 
-      mockClerkClient.organizations.getOrganization.mockResolvedValue({
+      mockGetOrganization.mockResolvedValue({
         id: 'org_123',
         name: 'Test Org',
         membersCount: 42,
@@ -235,13 +306,13 @@ describe('ClerkAuthPlugin', () => {
       const result = await plugin.getGroupMetadata('org_123')
 
       expect(result).toBeNull()
-      expect(mockClerkClient.organizations.getOrganization).not.toHaveBeenCalled()
+      expect(mockGetOrganization).not.toHaveBeenCalled()
     })
 
     it('returns null on error', async () => {
       const plugin = new ClerkAuthPlugin({ useOrganizationsAsGroups: true })
 
-      mockClerkClient.organizations.getOrganization.mockRejectedValue(new Error('Org not found'))
+      mockGetOrganization.mockRejectedValue(new Error('Org not found'))
 
       const result = await plugin.getGroupMetadata('org_123')
 
@@ -253,10 +324,12 @@ describe('ClerkAuthPlugin', () => {
     it('lists organizations when enabled', async () => {
       const plugin = new ClerkAuthPlugin({ useOrganizationsAsGroups: true })
 
-      mockClerkClient.organizations.getOrganizationList.mockResolvedValue([
-        { id: 'org_1', name: 'Org One', membersCount: 10 },
-        { id: 'org_2', name: 'Org Two', membersCount: 20 },
-      ])
+      mockGetOrganizationList.mockResolvedValue({
+        data: [
+          { id: 'org_1', name: 'Org One', membersCount: 10 },
+          { id: 'org_2', name: 'Org Two', membersCount: 20 },
+        ],
+      })
 
       const results = await plugin.listGroups(50)
 
@@ -266,7 +339,7 @@ describe('ClerkAuthPlugin', () => {
         name: 'Org One',
         memberCount: 10,
       })
-      expect(mockClerkClient.organizations.getOrganizationList).toHaveBeenCalledWith({ limit: 50 })
+      expect(mockGetOrganizationList).toHaveBeenCalledWith({ limit: 50 })
     })
 
     it('returns empty array when organizations disabled', async () => {
@@ -275,13 +348,13 @@ describe('ClerkAuthPlugin', () => {
       const results = await plugin.listGroups()
 
       expect(results).toEqual([])
-      expect(mockClerkClient.organizations.getOrganizationList).not.toHaveBeenCalled()
+      expect(mockGetOrganizationList).not.toHaveBeenCalled()
     })
 
     it('returns empty array on error', async () => {
       const plugin = new ClerkAuthPlugin({ useOrganizationsAsGroups: true })
 
-      mockClerkClient.organizations.getOrganizationList.mockRejectedValue(new Error('API error'))
+      mockGetOrganizationList.mockRejectedValue(new Error('API error'))
 
       const results = await plugin.listGroups()
 

@@ -189,7 +189,8 @@ describe('useCommentSystem', () => {
         }),
       })
     )
-    expect(mockReloadBranches).toHaveBeenCalled()
+    // Branch summaries auto-update via useMemo watching comments
+    // No need to reload branches explicitly
   })
 
   it('adds entry comment successfully', async () => {
@@ -308,7 +309,8 @@ describe('useCommentSystem', () => {
         method: 'POST',
       })
     )
-    expect(mockReloadBranches).toHaveBeenCalled()
+    // Branch summaries auto-update via useMemo watching comments
+    // No need to reload branches explicitly
   })
 
   it('handles resolve thread error', async () => {

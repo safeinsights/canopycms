@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 
 import { Box, Drawer, Paper, Text } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
@@ -20,6 +20,7 @@ import { PermissionManager } from './PermissionManager'
 import type { CommentThread } from '../comment-store'
 import { buildPreviewSrc } from './editor-utils'
 import { useEditorLayout, useDraftManager, useEntryManager, useGroupManager, usePermissionManager, useCommentSystem, useBranchManager } from './hooks'
+import { useBranchActions } from './hooks/useBranchActions'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 
 export interface EditorEntry {
@@ -93,7 +94,12 @@ export const Editor: React.FC<EditorProps> = ({
   onAccountClick,
   onLogoutClick,
 }) => {
-  const [busy, setBusy] = useState(false)
+  // Per-resource loading states
+  const [branchesLoading, setBranchesLoading] = useState(false)
+  const [entriesLoading, setEntriesLoading] = useState(false)
+  const [commentsLoading, setCommentsLoading] = useState(false)
+  const busy = branchesLoading || entriesLoading || commentsLoading
+
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
@@ -101,7 +107,28 @@ export const Editor: React.FC<EditorProps> = ({
   // Use custom hooks for layout, entry, draft, group, permission, comment, and branch management
   const { layout, setLayout, highlightEnabled, setHighlightEnabled, headerRef, headerHeight } = useEditorLayout()
 
-  // Entry manager hook
+  // Comments state (shared between useCommentSystem and useBranchManager)
+  const [commentsForBranchSummaries, setCommentsForBranchSummaries] = useState<CommentThread[]>([])
+
+  // 1. Branch manager (provides branchNameState, no dependencies)
+  const {
+    branchName: branchNameState,
+    setBranchName,
+    branches,
+    branchSummaries,
+    handleSubmit,
+    handleWithdraw,
+    handleRequestChanges,
+    handleReloadBranchData,
+    loadBranches,
+  } = useBranchManager({
+    initialBranch: branchName,
+    branchMode,
+    setBusy: setBranchesLoading,
+    comments: commentsForBranchSummaries,
+  })
+
+  // 2. Entry manager (depends on branchNameState, owns selectedId)
   const {
     selectedId,
     setSelectedId,
@@ -117,14 +144,14 @@ export const Editor: React.FC<EditorProps> = ({
   } = useEntryManager({
     initialEntries: entries,
     initialSelectedId,
-    branchName: branchName,  // Use prop directly, will be managed by useBranchManager
+    branchName: branchNameState,
     collections,
     previewBaseByCollection,
-    resolvePreviewSrc: (entry) => buildPreviewSrc(entry, { branchName, previewBaseByCollection }),
-    setBusy,
+    resolvePreviewSrc: (entry) => buildPreviewSrc(entry, { branchName: branchNameState, previewBaseByCollection }),
+    setBusy: setEntriesLoading,
   })
 
-  // Draft manager hook
+  // 3. Draft manager (depends on branchNameState, selectedId from useEntryManager)
   const {
     drafts,
     setDrafts,
@@ -137,61 +164,27 @@ export const Editor: React.FC<EditorProps> = ({
     handleDiscardDrafts,
     handleDiscardFileDraft,
     handleReload,
+    isSelectedDirty,
   } = useDraftManager({
-    branchName,
+    branchName: branchNameState,
     selectedId,
     currentEntry,
     entries: entriesState,
     initialValues,
     loadEntry,
     saveEntry,
-    setBusy,
-  })
-  const {
-    groupsData,
-    groupsLoading,
-    handleSaveGroups,
-    handleSearchUsers,
-    handleSearchExternalGroups,
-  } = useGroupManager({ isOpen: groupManagerOpen })
-  const { permissionsData, permissionsLoading, handleSavePermissions, handleListGroups } = usePermissionManager({
-    isOpen: permissionManagerOpen,
+    setBusy: setEntriesLoading,
   })
 
-  // Comments state (shared between useCommentSystem and useBranchManager)
-  const [commentsForBranchSummaries, setCommentsForBranchSummaries] = useState<CommentThread[]>([])
-
-  // Ref to hold loadComments function to break circular dependency
-  const loadCommentsRef = useRef<(branch: string) => Promise<void>>(async () => {})
-
-  // Branch manager hook (gets comments via state updated by useCommentSystem below)
-  const {
+  // 4. Branch actions (depends on isSelectedDirty, setBranchName)
+  const { handleBranchChange, handleCreateBranch } = useBranchActions({
     branchName: branchNameState,
-    branchSummaries,
-    handleBranchChange,
-    handleCreateBranch,
-    handleSubmit,
-    handleWithdraw,
-    handleRequestChanges,
-    handleReloadBranchData,
-    loadBranches,
-  } = useBranchManager({
-    initialBranch: branchName,
-    branchMode,
-    selectedId,
-    drafts,
-    loadedValues,
-    setDrafts,
-    setLoadedValues,
-    setSelectedId,
-    setEntries: setEntriesState,
-    onEntriesRefresh: refreshEntries,
-    onCommentsLoad: (branch: string) => loadCommentsRef.current(branch),
-    setBusy,
-    comments: commentsForBranchSummaries,
+    setBranchName,
+    isSelectedDirty,
+    onReloadBranches: () => loadBranches(),
   })
 
-  // Comment system hook (now has access to setBranchManagerOpen from state above)
+  // 5. Comment system (depends on branchNameState)
   const {
     comments,
     focusedFieldPath,
@@ -210,14 +203,22 @@ export const Editor: React.FC<EditorProps> = ({
     currentEntry,
     currentUser,
     canResolveComments,
-    onReloadBranches: () => loadBranches({ refreshEntries: false }),
     setSelectedId,
     setBranchManagerOpen,
     onCommentsChange: setCommentsForBranchSummaries,
   })
 
-  // Wire up loadComments ref
-  loadCommentsRef.current = loadComments
+  const {
+    groupsData,
+    groupsLoading,
+    handleSaveGroups,
+    handleSearchUsers,
+    handleSearchExternalGroups,
+  } = useGroupManager({ isOpen: groupManagerOpen })
+
+  const { permissionsData, permissionsLoading, handleSavePermissions, handleListGroups } = usePermissionManager({
+    isOpen: permissionManagerOpen,
+  })
 
   const flattenedCollections = useMemo(() => {
     const all: EditorCollection[] = []
@@ -244,7 +245,7 @@ export const Editor: React.FC<EditorProps> = ({
   useEffect(() => {
     const load = async () => {
       if (!currentEntry || drafts[selectedId]) return
-      setBusy(true)
+      setEntriesLoading(true)
       try {
         const loaded = await loadEntry(currentEntry)
         setLoadedValues((prev) => ({ ...prev, [selectedId]: loaded }))
@@ -253,12 +254,12 @@ export const Editor: React.FC<EditorProps> = ({
         console.error(err)
         notifications.show({ message: 'Failed to load entry', color: 'red' })
       } finally {
-        setBusy(false)
+        setEntriesLoading(false)
       }
     }
     load().catch((err) => {
       console.error(err)
-      setBusy(false)
+      setEntriesLoading(false)
       notifications.show({ message: 'Failed to load entry', color: 'red' })
     })
   }, [currentEntry, drafts, selectedId])
