@@ -10,7 +10,7 @@ Read packages/canopycms/README.md to understand what we are building from an end
 
 - Config/schema DSL with zod (`defineCanopyConfig`): ordered `schema` array (collections/singletons can be mixed and nested), select/reference/object/code/block fields, default branch settings, media config, optional `contentRoot` (default `content`; collection ids resolve under it). Collection-level `blocks` were removed (blocks live on fields).
 - Content store reads/writes MD/MDX/JSON with frontmatter (gray-matter), resolves collection ids as `contentRoot`-prefixed paths, singleton-aware path resolution, traversal guards. Uses `process.cwd()` today (needs branch root wiring).
-- Path permissions + branch access helpers (roles admin/manager/editor). Content access checks combine branch + path.
+- Path permissions + branch access helpers (groups-only model: Admins, Reviewers). Content access checks combine branch + path.
 - Branch metadata + registry + workspace manager: persists `.canopycms/branch.json` per branch and `.canopycms/branches.json` at base root; workspace manager ensures metadata/registry entries.
 - Git manager abstraction (`simple-git`); createGitManager from services uses config defaults for base branch/remote. Branch workspace creation auto-clones remote for prod/local-prod-sim, requires git bot author identity, and checks out branch.
 - Services factory loads config, precomputes access checkers, registry helper.
@@ -25,7 +25,7 @@ Read packages/canopycms/README.md to understand what we are building from an end
 - Minimized adopter work (specify config, make a catch all API route that defers to Canopy, make an Edit page that defers to Canopy's editor page, load data in views using Canopy helpers)
 - content write/save/load works end to end
 
-- SOME OF THIS ISN'T DONE, VERIFY: Auth system with pluggable providers (Clerk implementation in `canopycms-auth-clerk` package), role-based access control (admin/manager/editor), group management (internal + external), permission management (path-based), API endpoints, admin UI components, and example app with Clerk sign-in/sign-up pages, middleware route protection, and sidebar auth integration.
+- Auth system with pluggable providers (Clerk implementation in `canopycms-auth-clerk` package), groups-only permission model (reserved groups: `Admins`, `Reviewers`), group management (internal + external), permission management (path-based), bootstrap admin support via `CANOPY_BOOTSTRAP_ADMIN_IDS` env var, API endpoints for groups/permissions/branches, admin UI components (GroupManager, PermissionManager, BranchManager with permission-aware buttons), and example app with Clerk sign-in/sign-up pages, middleware route protection, and sidebar auth integration.
 
 ## Prioritized Backlog
 

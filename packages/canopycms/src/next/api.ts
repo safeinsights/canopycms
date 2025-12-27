@@ -5,7 +5,7 @@ import { createCanopyServices, getEffectiveGroups, type CanopyServices } from '.
 import type { CanopyConfig } from '../config'
 import { BranchRegistry } from '../branch-registry'
 import type { ApiContext } from '../api/types'
-import { createBranch, listBranches } from '../api/branch'
+import { createBranch, listBranches, deleteBranch, updateBranchAccess } from '../api/branch'
 import { getBranchStatus, submitBranchForMerge } from '../api/branch-status'
 import { withdrawBranch } from '../api/branch-withdraw'
 import { requestChanges, approveBranch } from '../api/branch-review'
@@ -24,6 +24,8 @@ import { AuthPlugin } from '../auth'
 export type CanopyNextHandler =
   | typeof createBranch
   | typeof listBranches
+  | typeof deleteBranch
+  | typeof updateBranchAccess
   | typeof getBranchStatus
   | typeof submitBranchForMerge
   | typeof withdrawBranch
@@ -135,6 +137,8 @@ const buildRouteMap = (options: CanopyNextOptions): Record<string, CanopyRouteHa
   return {
     [routeKey('GET', ['branches'])]: withOptions(listBranches),
     [routeKey('POST', ['branches'])]: withOptions(createBranch),
+    [routeKey('DELETE', [':branch'])]: withOptions(deleteBranch),
+    [routeKey('PATCH', [':branch', 'access'])]: withOptions(updateBranchAccess),
     [routeKey('GET', [':branch', 'status'])]: withOptions(getBranchStatus),
     [routeKey('POST', [':branch', 'submit'])]: withOptions(submitBranchForMerge),
     [routeKey('POST', [':branch', 'withdraw'])]: withOptions(withdrawBranch),

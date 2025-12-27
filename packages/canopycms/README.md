@@ -114,8 +114,7 @@ const handler = createCanopyHandler({
   config,
   authPlugin: createClerkAuthPlugin({
     secretKey: process.env.CLERK_SECRET_KEY,
-    roleMetadataKey: 'canopyRole',
-    useOrganizationsAsGroups: true,
+    useOrganizationsAsGroups: true, // Map Clerk organizations to CMS groups
   }),
 })
 
@@ -154,7 +153,14 @@ export default async function Page({ searchParams }: { searchParams?: { branch?:
 `read` returns `{ data, path }` and throws if the content is missing. In preview pages, `useCanopyPreview` can infer the entry id from `window.location` so you can usually ignore `path`. Pass a `branch` when you want branch-specific data; otherwise it defaults to your configured base branch. The helper enforces the same branch/path access rules as the API handlers.
 
 4. **Wire auth**
-   Provide a real `getUser` in `canopyHandlers` (e.g., Clerk) so branch/path permissions can be enforced (roles: admin/manager/editor; groups allowed).
+   Provide an `authPlugin` in `createCanopyHandler` (e.g., Clerk) so branch/path permissions can be enforced.
+
+**Permission Model:**
+
+- **Reserved Groups**: `Admins` (full access to all operations), `Reviewers` (can review branches, request changes, approve PRs)
+- **Bootstrap Admins**: Set `CANOPY_BOOTSTRAP_ADMIN_IDS=user_id1,user_id2` to grant admin access to specific users before the group system is configured
+- **Path-based permissions**: Define which groups can access which content paths
+- **Branch permissions**: Branch creators can edit their branches; Admins/Reviewers can see all branches
 
 5. **Embed the editor** in an editor-only build/app
 

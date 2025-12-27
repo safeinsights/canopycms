@@ -2,9 +2,10 @@ import React from 'react'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
-import { BranchManager } from './BranchManager'
-import type { BranchSummary } from './BranchManager'
+import { BranchManager, getBranchPermissions } from './BranchManager'
+import type { BranchSummary, UserContext } from './BranchManager'
 import { CanopyCMSProvider } from './theme'
+import { RESERVED_GROUPS } from '../reserved-groups'
 
 const originalMatchMedia = window.matchMedia
 
@@ -53,17 +54,71 @@ const renderBranchManager = (props: React.ComponentProps<typeof BranchManager>) 
   )
 }
 
+describe('getBranchPermissions', () => {
+  it('returns all false when no user provided', () => {
+    const branch: BranchSummary = { name: 'main', status: 'editing', createdBy: 'user1' }
+    const perms = getBranchPermissions(branch, undefined)
+    expect(perms.canSubmit).toBe(false)
+    expect(perms.canWithdraw).toBe(false)
+    expect(perms.canDelete).toBe(false)
+    expect(perms.canRequestChanges).toBe(false)
+  })
+
+  it('allows creator to submit editing branch', () => {
+    const branch: BranchSummary = { name: 'main', status: 'editing', createdBy: 'user1' }
+    const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+    expect(perms.canSubmit).toBe(true)
+  })
+
+  it('allows creator to withdraw submitted branch', () => {
+    const branch: BranchSummary = { name: 'main', status: 'submitted', createdBy: 'user1' }
+    const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+    expect(perms.canWithdraw).toBe(true)
+  })
+
+  it('allows admin to delete any branch', () => {
+    const branch: BranchSummary = { name: 'main', status: 'editing', createdBy: 'other' }
+    const perms = getBranchPermissions(branch, {
+      userId: 'admin',
+      groups: [RESERVED_GROUPS.ADMINS],
+    })
+    expect(perms.canDelete).toBe(true)
+  })
+
+  it('blocks delete for submitted branches', () => {
+    const branch: BranchSummary = { name: 'main', status: 'submitted', createdBy: 'user1' }
+    const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+    expect(perms.canDelete).toBe(false)
+  })
+
+  it('allows reviewer to request changes on submitted branch', () => {
+    const branch: BranchSummary = { name: 'main', status: 'submitted', createdBy: 'other' }
+    const perms = getBranchPermissions(branch, {
+      userId: 'reviewer',
+      groups: [RESERVED_GROUPS.REVIEWERS],
+    })
+    expect(perms.canRequestChanges).toBe(true)
+  })
+})
+
 describe('BranchManager', () => {
+  // Admin user can do everything
+  const adminUser = { userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] }
+  // Creator user for testing branch operations
+  const creatorUser = { userId: 'user1', groups: [] }
+
   const baseBranches: BranchSummary[] = [
     {
       name: 'main',
       status: 'editing',
+      createdBy: 'user1',
       updatedAt: '2024-01-01',
       access: { users: ['user1'] },
     },
     {
       name: 'feature/test',
       status: 'submitted',
+      createdBy: 'user1',
       updatedAt: '2024-01-02',
       access: { users: ['user1'] },
       pullRequestUrl: 'https://github.com/owner/repo/pull/1',
@@ -95,7 +150,8 @@ describe('BranchManager', () => {
 
   it('calls onSubmit when Submit button clicked', async () => {
     const onSubmit = vi.fn()
-    renderBranchManager({ branches: baseBranches, onSubmit })
+    // Use creator user so they can submit their own branch
+    renderBranchManager({ branches: baseBranches, onSubmit, user: creatorUser })
 
     const submitButton = screen.getByRole('button', { name: /submit/i })
     await userEvent.click(submitButton)
@@ -105,7 +161,8 @@ describe('BranchManager', () => {
 
   it('calls onWithdraw when Withdraw button clicked', async () => {
     const onWithdraw = vi.fn()
-    renderBranchManager({ branches: baseBranches, onWithdraw })
+    // Use creator user so they can withdraw their own branch
+    renderBranchManager({ branches: baseBranches, onWithdraw, user: creatorUser })
 
     const withdrawButton = screen.getByRole('button', { name: /withdraw/i })
     await userEvent.click(withdrawButton)
@@ -182,7 +239,8 @@ describe('BranchManager', () => {
 
   it('calls onRequestChanges when button clicked', async () => {
     const onRequestChanges = vi.fn()
-    renderBranchManager({ branches: baseBranches, onRequestChanges })
+    // Use admin user who can request changes on submitted branches
+    renderBranchManager({ branches: baseBranches, onRequestChanges, user: adminUser })
 
     const requestChangesButtons = screen.getAllByRole('button', { name: /request changes/i })
     // The second branch (feature/test) is submitted, so its button should be at index 1
@@ -193,7 +251,8 @@ describe('BranchManager', () => {
 
   it('calls onDelete when delete button clicked', async () => {
     const onDelete = vi.fn()
-    renderBranchManager({ branches: baseBranches, onDelete })
+    // Use creator user so they can delete their own branch (main is editing, not submitted)
+    renderBranchManager({ branches: baseBranches, onDelete, user: creatorUser })
 
     const deleteButtons = screen.getAllByRole('button', { name: /delete/i })
     await userEvent.click(deleteButtons[0])
