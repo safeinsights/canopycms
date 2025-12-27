@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest'
 
 import { deleteAsset, listAssets, uploadAsset } from './assets'
 import type { ApiContext } from './types'
+import { RESERVED_GROUPS } from '../reserved-groups'
 
 const makeCtx = (): ApiContext => ({
   services: {
     config: { schema: [] } as any,
     checkBranchAccess: () => ({ allowed: true, reason: 'no_acl' }),
     checkContentAccess: () => ({ allowed: true, branch: {}, path: {} }),
+    bootstrapAdminIds: new Set<string>(),
   },
   getBranchState: async () => null,
   assetStore: {
@@ -23,17 +25,66 @@ describe('asset api', () => {
     expect(res.status).toBe(501)
   })
 
-  it('lists assets', async () => {
-    const res = await listAssets(makeCtx(), { user: { userId: 'u' } })
+  it('lists assets for any user', async () => {
+    const res = await listAssets(makeCtx(), { user: { userId: 'u', groups: [] } })
     expect(res.ok).toBe(true)
     expect(res.data?.assets[0].key).toBe('a.png')
   })
 
-  it('uploads and deletes assets', async () => {
-    const ctx = makeCtx()
-    const uploadRes = await uploadAsset(ctx, { user: { userId: 'u' }, body: { key: 'a.png', data: Buffer.from('x') } })
-    expect(uploadRes.ok).toBe(true)
-    const deleteRes = await deleteAsset(ctx, { user: { userId: 'u' }, body: { key: 'a.png' } })
-    expect(deleteRes.ok).toBe(true)
+  describe('uploadAsset', () => {
+    it('returns 403 for non-privileged users', async () => {
+      const res = await uploadAsset(makeCtx(), {
+        user: { userId: 'u', groups: [] },
+        body: { key: 'a.png', data: Buffer.from('x') },
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(403)
+      expect(res.error).toBe('Only Admins and Reviewers can upload assets')
+    })
+
+    it('allows Reviewers to upload', async () => {
+      const res = await uploadAsset(makeCtx(), {
+        user: { userId: 'u', groups: [RESERVED_GROUPS.REVIEWERS] },
+        body: { key: 'a.png', data: Buffer.from('x') },
+      })
+      expect(res.ok).toBe(true)
+    })
+
+    it('allows Admins to upload', async () => {
+      const res = await uploadAsset(makeCtx(), {
+        user: { userId: 'u', groups: [RESERVED_GROUPS.ADMINS] },
+        body: { key: 'a.png', data: Buffer.from('x') },
+      })
+      expect(res.ok).toBe(true)
+    })
+  })
+
+  describe('deleteAsset', () => {
+    it('returns 403 for non-admin users', async () => {
+      const res = await deleteAsset(makeCtx(), {
+        user: { userId: 'u', groups: [] },
+        body: { key: 'a.png' },
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(403)
+      expect(res.error).toBe('Only Admins can delete assets')
+    })
+
+    it('returns 403 for Reviewers', async () => {
+      const res = await deleteAsset(makeCtx(), {
+        user: { userId: 'u', groups: [RESERVED_GROUPS.REVIEWERS] },
+        body: { key: 'a.png' },
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(403)
+    })
+
+    it('allows Admins to delete', async () => {
+      const res = await deleteAsset(makeCtx(), {
+        user: { userId: 'u', groups: [RESERVED_GROUPS.ADMINS] },
+        body: { key: 'a.png' },
+      })
+      expect(res.ok).toBe(true)
+    })
   })
 })

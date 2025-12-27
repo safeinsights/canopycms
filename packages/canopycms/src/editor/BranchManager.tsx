@@ -2,10 +2,11 @@
 
 import React, { useState } from 'react'
 
-import { Badge, Button, Group, Paper, ScrollArea, Stack, Text, Title, TextInput, Textarea, Collapse } from '@mantine/core'
+import { Badge, Button, Group, Paper, ScrollArea, Stack, Text, Title, TextInput, Textarea, Collapse, Tooltip } from '@mantine/core'
 import type { BranchMode } from '../paths'
 import type { CommentThread } from '../comment-store'
 import { BranchComments } from './comments/BranchComments'
+import { isAdmin, isReviewer } from '../reserved-groups'
 
 export interface BranchSummary {
   name: string
@@ -21,6 +22,46 @@ export interface BranchSummary {
   commentCount?: number
 }
 
+export interface UserContext {
+  userId: string
+  groups?: string[]
+}
+
+/**
+ * Compute what actions the current user can perform on a branch
+ */
+export const getBranchPermissions = (
+  branch: BranchSummary,
+  user: UserContext | undefined
+): {
+  canSubmit: boolean
+  canWithdraw: boolean
+  canDelete: boolean
+  canRequestChanges: boolean
+} => {
+  if (!user) {
+    return { canSubmit: false, canWithdraw: false, canDelete: false, canRequestChanges: false }
+  }
+
+  const userIsAdmin = isAdmin(user.groups)
+  const userIsReviewer = isReviewer(user.groups)
+  const userIsCreator = branch.createdBy === user.userId
+
+  // Submit: Only creator can submit their branch
+  const canSubmit = userIsCreator && branch.status === 'editing'
+
+  // Withdraw: Only creator can withdraw their submitted branch
+  const canWithdraw = userIsCreator && branch.status === 'submitted'
+
+  // Delete: Admin or creator (but not if submitted)
+  const canDelete = (userIsAdmin || userIsCreator) && branch.status !== 'submitted'
+
+  // Request changes: Only Reviewers or Admins can request changes on submitted branches
+  const canRequestChanges = (userIsAdmin || userIsReviewer) && branch.status === 'submitted'
+
+  return { canSubmit, canWithdraw, canDelete, canRequestChanges }
+}
+
 const statusColorMap: Record<string, { color: string; variant?: 'light' | 'filled' }> = {
   editing: { color: 'brand', variant: 'light' },
   submitted: { color: 'green', variant: 'light' },
@@ -30,6 +71,8 @@ const statusColorMap: Record<string, { color: string; variant?: 'light' | 'fille
 export interface BranchManagerProps {
   branches: BranchSummary[]
   mode?: BranchMode
+  /** Current user context for permission checks */
+  user?: UserContext
   onSelect?: (name: string) => void
   onCreate?: (branch: { name: string; title?: string; description?: string }) => void
   onDelete?: (name: string) => void
@@ -49,6 +92,7 @@ export interface BranchManagerProps {
 export const BranchManager: React.FC<BranchManagerProps> = ({
   branches,
   mode,
+  user,
   onSelect,
   onCreate,
   onDelete,
@@ -168,6 +212,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
           <Stack gap="sm">
             {branches.map((b) => {
               const statusColor = statusColorMap[b.status] ?? { color: 'neutral', variant: 'light' as const }
+              const perms = getBranchPermissions(b, user)
               return (
                 <Paper key={b.name} withBorder radius="md" p="md" shadow="xs">
                   <Group justify="space-between" align="flex-start">
@@ -230,20 +275,52 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         Open
                       </Button>
                       {b.status === 'submitted' ? (
-                        <Button size="xs" variant="light" color="orange" onClick={() => onWithdraw?.(b.name)}>
-                          Withdraw
-                        </Button>
+                        <Tooltip label="Only the branch creator can withdraw" disabled={perms.canWithdraw}>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            color="orange"
+                            onClick={() => onWithdraw?.(b.name)}
+                            disabled={!perms.canWithdraw}
+                          >
+                            Withdraw
+                          </Button>
+                        </Tooltip>
                       ) : (
-                        <Button size="xs" variant="light" color="green" onClick={() => onSubmit?.(b.name)}>
-                          Submit
-                        </Button>
+                        <Tooltip label="Only the branch creator can submit" disabled={perms.canSubmit}>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            color="green"
+                            onClick={() => onSubmit?.(b.name)}
+                            disabled={!perms.canSubmit}
+                          >
+                            Submit
+                          </Button>
+                        </Tooltip>
                       )}
-                      <Button size="xs" variant="outline" color="neutral" onClick={() => onRequestChanges?.(b.name)}>
-                        Request changes
-                      </Button>
-                      <Button size="xs" variant="outline" color="red" onClick={() => onDelete?.(b.name)}>
-                        Delete
-                      </Button>
+                      <Tooltip label="Only Reviewers or Admins can request changes" disabled={perms.canRequestChanges}>
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          color="neutral"
+                          onClick={() => onRequestChanges?.(b.name)}
+                          disabled={!perms.canRequestChanges}
+                        >
+                          Request changes
+                        </Button>
+                      </Tooltip>
+                      <Tooltip label={b.status === 'submitted' ? 'Cannot delete branch with open PR' : 'Only Admin or branch creator can delete'} disabled={perms.canDelete}>
+                        <Button
+                          size="xs"
+                          variant="outline"
+                          color="red"
+                          onClick={() => onDelete?.(b.name)}
+                          disabled={!perms.canDelete}
+                        >
+                          Delete
+                        </Button>
+                      </Tooltip>
                     </Group>
                   </Group>
                 </Paper>

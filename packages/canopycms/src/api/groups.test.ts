@@ -14,6 +14,8 @@ import {
   getInternalGroups,
   updateInternalGroups,
   searchExternalGroups,
+  validateAdminGroupUpdate,
+  validateReservedGroups,
   type UpdateInternalGroupsBody,
   type SearchExternalGroupsParams,
 } from './groups'
@@ -41,6 +43,7 @@ describe('groups API', () => {
           gitBotAuthorEmail: 'bot@example.com',
         },
         createGitManagerFor: vi.fn(() => mockGit),
+        bootstrapAdminIds: new Set<string>(),
       },
       getBranchState: vi.fn(async () => ({
         branch: {
@@ -137,6 +140,8 @@ describe('groups API', () => {
 
     it('should return 500 if main branch not found', async () => {
       mockContext.getBranchState = vi.fn(async () => null)
+      // Add bootstrap admin so validation passes
+      ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
       const req: ApiRequest<UpdateInternalGroupsBody> = {
         user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
@@ -154,6 +159,8 @@ describe('groups API', () => {
 
     it('should save groups and commit changes for admin', async () => {
       vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      // Add bootstrap admin so validation passes
+      ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
       const groups: InternalGroup[] = [
         {
@@ -291,6 +298,154 @@ describe('groups API', () => {
         status: 500,
         error: 'Search failed',
       })
+    })
+  })
+
+  describe('validateAdminGroupUpdate', () => {
+    it('should return valid when Admins group has members', () => {
+      const groups: InternalGroup[] = [
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: ['admin-1' as CanopyUserId] },
+      ]
+      const result = validateAdminGroupUpdate(groups, new Set())
+      expect(result.valid).toBe(true)
+    })
+
+    it('should return valid when bootstrap admins exist even if Admins group is empty', () => {
+      const groups: InternalGroup[] = [
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
+      ]
+      const result = validateAdminGroupUpdate(groups, new Set(['bootstrap-admin']))
+      expect(result.valid).toBe(true)
+    })
+
+    it('should return valid when bootstrap admins exist and Admins group is missing', () => {
+      const groups: InternalGroup[] = []
+      const result = validateAdminGroupUpdate(groups, new Set(['bootstrap-admin']))
+      expect(result.valid).toBe(true)
+    })
+
+    it('should return invalid when no admins exist', () => {
+      const groups: InternalGroup[] = [
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
+      ]
+      const result = validateAdminGroupUpdate(groups, new Set())
+      expect(result.valid).toBe(false)
+      expect(result.error).toBe('Cannot remove last admin - at least one admin is required')
+    })
+
+    it('should return invalid when Admins group is missing and no bootstrap admins', () => {
+      const groups: InternalGroup[] = []
+      const result = validateAdminGroupUpdate(groups, new Set())
+      expect(result.valid).toBe(false)
+      expect(result.error).toBe('Cannot remove last admin - at least one admin is required')
+    })
+
+    it('should not double count when bootstrap admin is also in Admins group', () => {
+      const groups: InternalGroup[] = [
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: ['admin-1' as CanopyUserId] },
+      ]
+      // Same user is bootstrap admin
+      const result = validateAdminGroupUpdate(groups, new Set(['admin-1']))
+      expect(result.valid).toBe(true)
+      // Still valid but only counts as 1 admin, not 2
+    })
+  })
+
+  describe('validateReservedGroups', () => {
+    it('should return valid for non-reserved groups', () => {
+      const groups: InternalGroup[] = [
+        { id: 'editors' as CanopyGroupId, name: 'Content Editors', members: [] },
+      ]
+      const result = validateReservedGroups(groups)
+      expect(result.valid).toBe(true)
+    })
+
+    it('should return valid when reserved group name matches ID', () => {
+      const groups: InternalGroup[] = [
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
+        { id: RESERVED_GROUPS.REVIEWERS as CanopyGroupId, name: 'Reviewers', members: [] },
+      ]
+      const result = validateReservedGroups(groups)
+      expect(result.valid).toBe(true)
+    })
+
+    it('should return invalid when Admins group is renamed', () => {
+      const groups: InternalGroup[] = [
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Administrators', members: [] },
+      ]
+      const result = validateReservedGroups(groups)
+      expect(result.valid).toBe(false)
+      expect(result.error).toBe("Reserved group 'Admins' cannot be renamed")
+    })
+
+    it('should return invalid when Reviewers group is renamed', () => {
+      const groups: InternalGroup[] = [
+        { id: RESERVED_GROUPS.REVIEWERS as CanopyGroupId, name: 'Content Reviewers', members: [] },
+      ]
+      const result = validateReservedGroups(groups)
+      expect(result.valid).toBe(false)
+      expect(result.error).toBe("Reserved group 'Reviewers' cannot be renamed")
+    })
+  })
+
+  describe('updateInternalGroups safety validations', () => {
+    it('should reject update that removes last admin', async () => {
+      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+
+      const groups: InternalGroup[] = [
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
+      ]
+
+      const req: ApiRequest<UpdateInternalGroupsBody> = {
+        user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
+        body: { groups },
+      }
+
+      const result = await updateInternalGroups(mockContext, req)
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toBe('Cannot remove last admin - at least one admin is required')
+    })
+
+    it('should reject update that renames reserved group', async () => {
+      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+
+      const groups: InternalGroup[] = [
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Super Admins', members: ['admin-1' as CanopyUserId] },
+      ]
+
+      const req: ApiRequest<UpdateInternalGroupsBody> = {
+        user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
+        body: { groups },
+      }
+
+      const result = await updateInternalGroups(mockContext, req)
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toBe("Reserved group 'Admins' cannot be renamed")
+    })
+
+    it('should allow update when bootstrap admin exists even with empty Admins group', async () => {
+      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+
+      // Add bootstrap admin
+      ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
+
+      const groups: InternalGroup[] = [
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
+      ]
+
+      const req: ApiRequest<UpdateInternalGroupsBody> = {
+        user: { userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
+        body: { groups },
+      }
+
+      const result = await updateInternalGroups(mockContext, req)
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
     })
   })
 })

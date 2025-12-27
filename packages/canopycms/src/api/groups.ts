@@ -3,7 +3,56 @@ import type { InternalGroup } from '../groups-file'
 import { loadInternalGroups, saveInternalGroups } from '../groups-loader'
 import { resolveBranchWorkspace } from '../paths'
 import type { CanopyGroupId, CanopyUserId } from '../types'
-import { isAdmin } from '../reserved-groups'
+import { isAdmin, RESERVED_GROUPS, isReservedGroup } from '../reserved-groups'
+
+/**
+ * Validate that an update to internal groups doesn't remove the last admin.
+ * Considers both internal Admins group members and bootstrap admins.
+ */
+export const validateAdminGroupUpdate = (
+  newGroups: InternalGroup[],
+  bootstrapAdminIds: Set<string>
+): { valid: boolean; error?: string } => {
+  // Find the Admins group in the new groups
+  const adminsGroup = newGroups.find((g) => g.id === RESERVED_GROUPS.ADMINS)
+  const adminMembersCount = adminsGroup?.members?.length ?? 0
+
+  // Total admins = internal Admins group members + bootstrap admins (excluding overlap)
+  const internalAdmins = new Set(adminsGroup?.members ?? [])
+  let totalAdmins = adminMembersCount
+
+  // Add bootstrap admins that aren't already in the internal group
+  for (const bootstrapId of bootstrapAdminIds) {
+    if (!internalAdmins.has(bootstrapId)) {
+      totalAdmins++
+    }
+  }
+
+  if (totalAdmins === 0) {
+    return { valid: false, error: 'Cannot remove last admin - at least one admin is required' }
+  }
+
+  return { valid: true }
+}
+
+/**
+ * Validate that reserved groups are not deleted or renamed.
+ */
+export const validateReservedGroups = (
+  newGroups: InternalGroup[]
+): { valid: boolean; error?: string } => {
+  // Check if any reserved group IDs have been altered
+  for (const group of newGroups) {
+    if (isReservedGroup(group.id)) {
+      // Reserved group exists - make sure the name matches the ID
+      if (group.name !== group.id) {
+        return { valid: false, error: `Reserved group '${group.id}' cannot be renamed` }
+      }
+    }
+  }
+
+  return { valid: true }
+}
 
 /**
  * Get internal groups (admin only)
@@ -62,6 +111,18 @@ export const updateInternalGroups = async (
 
   if (!req.body?.groups) {
     return { ok: false, status: 400, error: 'groups array required' }
+  }
+
+  // Validate reserved groups are not renamed
+  const reservedValidation = validateReservedGroups(req.body.groups)
+  if (!reservedValidation.valid) {
+    return { ok: false, status: 400, error: reservedValidation.error }
+  }
+
+  // Validate we're not removing the last admin
+  const adminValidation = validateAdminGroupUpdate(req.body.groups, ctx.services.bootstrapAdminIds)
+  if (!adminValidation.valid) {
+    return { ok: false, status: 400, error: adminValidation.error }
   }
 
   try {

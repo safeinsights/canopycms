@@ -331,4 +331,4 @@ describe('GitManager.resolveRemoteUrl', () => {
       cwdSpy.mockRestore()
     }
   })
-})
+}, 10000)

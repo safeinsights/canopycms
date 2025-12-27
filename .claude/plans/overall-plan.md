@@ -2,7 +2,7 @@
 
 **Created**: 2024-12-21
 **Status**: Active
-**Current Phase**: Auth Integration Completion
+**Current Phase**: Documentation & Polish
 
 ---
 
@@ -38,17 +38,20 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 - Review workflow with status tracking
 - Post-merge cleanup and archiving
 
-**Auth System** (80% Complete):
-- ✅ Auth plugin interface defined ([src/auth/plugin.ts](../../packages/canopycms/src/auth/plugin.ts))
-- ✅ Clerk auth plugin implemented ([src/auth/providers/clerk.ts](../../packages/canopycms/src/auth/providers/clerk.ts)) with 35+ tests
+**Auth & Permissions System** (Complete):
+- ✅ Groups-only permission model (replaced role-based system)
+- ✅ Reserved groups: `Admins` (full access), `Reviewers` (review capabilities)
+- ✅ Bootstrap admin support via `CANOPY_BOOTSTRAP_ADMIN_IDS` env var
+- ✅ Auth plugin interface (Clerk implementation in separate package)
 - ✅ Group management system (internal + external groups)
 - ✅ Permission management system (path-based permissions)
-- ✅ GroupManager UI component with Storybook stories
-- ✅ PermissionManager UI component
-- ✅ API endpoints for groups and permissions
-- ❌ **Missing**: API routes not registered in route handler
-- ❌ **Missing**: Editor UI handlers still use console.log placeholders
-- ❌ **Missing**: Example app not configured with Clerk
+- ✅ GroupManager and PermissionManager UI components
+- ✅ All API endpoints registered and working
+- ✅ Branch creation/deletion/access modification permissions
+- ✅ Asset upload (Admins/Reviewers) and delete (Admins only) permissions
+- ✅ Safety rules: last admin protection, reserved group protection
+- ✅ Client-side permission-aware UI (BranchManager buttons disabled with tooltips)
+- ✅ 497 tests passing
 
 ---
 
@@ -229,11 +232,12 @@ All plans are stored in `.claude/plans/` within the workspace to keep them versi
 
 ## Success Metrics
 
-**Phase 1 Complete (Auth)** - CURRENT TARGET:
-- ✅ Auth system fully functional end-to-end
-- ✅ Example app demonstrates Clerk integration
-- ✅ GroupManager and PermissionManager working with real data
-- ✅ All tests passing
+**Phase 1 Complete (Auth)** - DONE:
+- ✅ Groups-only permission model (admin/manager/editor roles removed)
+- ✅ Reserved groups system (Admins, Reviewers)
+- ✅ Bootstrap admin support for initial setup
+- ✅ All branch/asset/path permission checks working
+- ✅ 497 tests passing
 
 **Phase 2 Complete (Schema & Assets)**:
 - ✅ Schema utilities for static site generation

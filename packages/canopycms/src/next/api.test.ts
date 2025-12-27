@@ -14,6 +14,8 @@ import { createMockAuthPlugin } from './test-utils'
 vi.mock('../api/branch', () => ({
   createBranch: vi.fn().mockResolvedValue({ ok: true, status: 200, data: { branch: { branch: { name: 'x' } } } }),
   listBranches: vi.fn().mockResolvedValue({ ok: true, status: 200, data: { branches: [] } }),
+  deleteBranch: vi.fn().mockResolvedValue({ ok: true, status: 200, data: { deleted: true } }),
+  updateBranchAccess: vi.fn().mockResolvedValue({ ok: true, status: 200, data: { branch: { branch: { name: 'x' } } } }),
 }))
 vi.mock('../api/branch-status', () => ({
   getBranchStatus: vi.fn().mockResolvedValue({ ok: true, status: 200, data: { branch: { branch: { name: 'x' } } } }),

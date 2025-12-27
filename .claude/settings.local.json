@@ -17,7 +17,8 @@
       "Bash(npm ls:*)",
       "Bash(npx vitest:*)",
       "Bash(grep:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(xargs:*)"
     ]
   }
 }
