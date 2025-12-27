@@ -1,8 +1,8 @@
 import configBundle from '../../../../canopycms.config'
-import { createCanopyHandler } from 'canopycms/next'
+import { createCanopyCatchAllHandler } from 'canopycms-next'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 
-const handler = createCanopyHandler({
+const handler = createCanopyCatchAllHandler({
   config: configBundle.server,
   authPlugin: createClerkAuthPlugin({
     useOrganizationsAsGroups: true,

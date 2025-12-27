@@ -1,6 +1,6 @@
-import type { NextRequest } from 'next/server'
 import type { AuthUser, UserSearchResult, GroupMetadata, TokenVerificationResult } from './types'
 import type { CanopyUserId, CanopyGroupId } from '../types'
+import type { CanopyRequest } from '../http/types'
 
 /**
  * Abstract auth provider interface.
@@ -8,9 +8,10 @@ import type { CanopyUserId, CanopyGroupId } from '../types'
  */
 export interface AuthPlugin {
   /**
-   * Verify token from request and return user context
+   * Verify token from request and return user context.
+   * @param req - Framework-agnostic request object
    */
-  verifyToken(req: NextRequest): Promise<TokenVerificationResult>
+  verifyToken(req: CanopyRequest): Promise<TokenVerificationResult>
 
   /**
    * Search for users (for permission management UI)
