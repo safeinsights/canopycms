@@ -42,7 +42,11 @@ describe('useEntryManager', () => {
   }
 
   beforeEach(() => {
-    global.fetch = vi.fn()
+    // Mock fetch with default response for refreshEntries called in useEffect
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: { entries: [], collections: [] } }),
+    })
     delete (window as any).location
     window.location = {
       href: 'http://localhost/',
@@ -79,10 +83,17 @@ describe('useEntryManager', () => {
 
   it('loads entry successfully', async () => {
     const mockData = { data: { slug: 'test', title: 'Test Entry', body: 'Content' } }
-    ;(global.fetch as any).mockResolvedValueOnce({
-      ok: true,
-      json: async () => mockData,
-    })
+    ;(global.fetch as any)
+      .mockResolvedValueOnce({
+        // First call: refreshEntries in useEffect
+        ok: true,
+        json: async () => ({ data: { entries: [], collections: [] } }),
+      })
+      .mockResolvedValueOnce({
+        // Second call: loadEntry
+        ok: true,
+        json: async () => mockData,
+      })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
 
@@ -93,10 +104,17 @@ describe('useEntryManager', () => {
   })
 
   it('handles load entry error', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
-      ok: false,
-      status: 404,
-    })
+    ;(global.fetch as any)
+      .mockResolvedValueOnce({
+        // First call: refreshEntries in useEffect
+        ok: true,
+        json: async () => ({ data: { entries: [], collections: [] } }),
+      })
+      .mockResolvedValueOnce({
+        // Second call: loadEntry with error
+        ok: false,
+        status: 404,
+      })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
 
@@ -106,10 +124,17 @@ describe('useEntryManager', () => {
   it('saves entry successfully', async () => {
     const mockValue = { title: 'Updated Title', body: 'Updated Content' }
     const mockResponse = { data: mockValue }
-    ;(global.fetch as any).mockResolvedValueOnce({
-      ok: true,
-      json: async () => mockResponse,
-    })
+    ;(global.fetch as any)
+      .mockResolvedValueOnce({
+        // First call: refreshEntries in useEffect
+        ok: true,
+        json: async () => ({ data: { entries: [], collections: [] } }),
+      })
+      .mockResolvedValueOnce({
+        // Second call: saveEntry
+        ok: true,
+        json: async () => mockResponse,
+      })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
 
@@ -126,10 +151,17 @@ describe('useEntryManager', () => {
   })
 
   it('handles save entry error', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
-      ok: false,
-      status: 500,
-    })
+    ;(global.fetch as any)
+      .mockResolvedValueOnce({
+        // First call: refreshEntries in useEffect
+        ok: true,
+        json: async () => ({ data: { entries: [], collections: [] } }),
+      })
+      .mockResolvedValueOnce({
+        // Second call: saveEntry with error
+        ok: false,
+        status: 500,
+      })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
 
@@ -138,15 +170,22 @@ describe('useEntryManager', () => {
 
   it('refreshes entries successfully', async () => {
     const mockRefreshed = [mockEntry, { ...mockEntry, id: 'entry2', slug: 'test2' }]
-    ;(global.fetch as any).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: {
-          entries: mockRefreshed,
-          collections: [],
-        },
-      }),
-    })
+    ;(global.fetch as any)
+      .mockResolvedValueOnce({
+        // First call: refreshEntries in useEffect
+        ok: true,
+        json: async () => ({ data: { entries: [], collections: [] } }),
+      })
+      .mockResolvedValueOnce({
+        // Second call: manual refreshEntries
+        ok: true,
+        json: async () => ({
+          data: {
+            entries: mockRefreshed,
+            collections: [],
+          },
+        }),
+      })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
 
@@ -163,15 +202,22 @@ describe('useEntryManager', () => {
 
   it('selects newly created entry after refresh', async () => {
     const newEntry = { ...mockEntry, id: 'new-entry', slug: 'new' }
-    ;(global.fetch as any).mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: {
-          entries: [mockEntry, newEntry],
-          collections: [],
-        },
-      }),
-    })
+    ;(global.fetch as any)
+      .mockResolvedValueOnce({
+        // First call: refreshEntries in useEffect
+        ok: true,
+        json: async () => ({ data: { entries: [mockEntry], collections: [] } }),
+      })
+      .mockResolvedValueOnce({
+        // Second call: manual refreshEntries
+        ok: true,
+        json: async () => ({
+          data: {
+            entries: [mockEntry, newEntry],
+            collections: [],
+          },
+        }),
+      })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
 
@@ -227,7 +273,9 @@ describe('useEntryManager', () => {
       await result.current.handleCreateEntry('posts')
     })
 
-    expect(global.fetch).not.toHaveBeenCalled()
+    // Only the initial refreshEntries call, not a create call
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/main/entries')
   })
 
   it('does not create entry for singleton collection', async () => {
@@ -248,7 +296,9 @@ describe('useEntryManager', () => {
       await result.current.handleCreateEntry('config')
     })
 
-    expect(global.fetch).not.toHaveBeenCalled()
+    // Only the initial refreshEntries call, not a create call
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/main/entries')
   })
 
   it('toggles navigator open state', () => {

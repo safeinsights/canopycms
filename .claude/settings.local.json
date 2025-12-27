@@ -12,13 +12,13 @@
       "Bash(npm search:*)",
       "Bash(npm view:*)",
       "Bash(npx tsc:*)",
-      "Bash(pkill:*)",
       "Bash(ls:*)",
       "Bash(npm ls:*)",
       "Bash(npx vitest:*)",
       "Bash(grep:*)",
       "Bash(find:*)",
-      "Bash(xargs:*)"
+      "Bash(xargs:*)",
+      "Bash(timeout 30 npm run dev:*)"
     ]
   }
 }

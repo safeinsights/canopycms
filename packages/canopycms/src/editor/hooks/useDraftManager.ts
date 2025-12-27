@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { EditorEntry } from '../Editor'
 import type { FormValue } from '../FormRenderer'
@@ -28,6 +28,8 @@ export interface UseDraftManagerReturn {
   handleDiscardDrafts: () => void
   handleDiscardFileDraft: () => void
   handleReload: () => Promise<void>
+  isDirtyForEntry: (entryId: string) => boolean
+  isSelectedDirty: () => boolean
 }
 
 /**
@@ -81,6 +83,16 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       })
       .filter((x): x is { id: string; label: string } => x !== null)
   }, [drafts, options.entries])
+
+  // Clear drafts when branch changes (before localStorage restore)
+  const prevBranchRef = useRef(options.branchName)
+  useEffect(() => {
+    if (prevBranchRef.current && prevBranchRef.current !== options.branchName) {
+      setDrafts({})
+      setLoadedValues({})
+    }
+    prevBranchRef.current = options.branchName
+  }, [options.branchName])
 
   // Restore drafts from localStorage on mount or when storageKey changes
   useEffect(() => {
@@ -172,6 +184,21 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
   }
 
+  // Compute dirty state for a given entry
+  const isDirtyForEntry = (entryId: string): boolean => {
+    if (!drafts[entryId]) return false
+    return (
+      !loadedValues[entryId] ||
+      JSON.stringify(drafts[entryId]) !== JSON.stringify(loadedValues[entryId])
+    )
+  }
+
+  // Convenience helper for checking current selection
+  const isSelectedDirty = (): boolean => {
+    if (!options.selectedId) return false
+    return isDirtyForEntry(options.selectedId)
+  }
+
   return {
     drafts,
     setDrafts,
@@ -186,5 +213,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     handleDiscardDrafts,
     handleDiscardFileDraft,
     handleReload,
+    isDirtyForEntry,
+    isSelectedDirty,
   }
 }

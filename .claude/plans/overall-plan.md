@@ -81,9 +81,6 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 - Extract reusable Mantine components
 - Library evaluation (replace custom code with external libs)
 - Document adapter API for other frameworks (Astro, SvelteKit, Remix)
-- Create framework adapter examples
-- Add JSDoc comments for critical interfaces
-- Create developer guide for extending CanopyCMS
 
 ### 2. Observability & Safety
 
@@ -156,6 +153,11 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 - Performance profiling
 - Identify bottlenecks
 - Add caching layer if needed (Valkey/Redis)
+
+### 9. Cleanup
+
+- Add JSDoc comments for critical interfaces
+- Create developer guide for extending CanopyCMS
 
 ---
 
