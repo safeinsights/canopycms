@@ -14,7 +14,9 @@ Read packages/canopycms/README.md to understand what we are building from an end
 - Branch metadata + registry + workspace manager: persists `.canopycms/branch.json` per branch and `.canopycms/branches.json` at base root; workspace manager ensures metadata/registry entries.
 - Git manager abstraction (`simple-git`); createGitManager from services uses config defaults for base branch/remote. Branch workspace creation auto-clones remote for prod/local-prod-sim, requires git bot author identity, and checks out branch.
 - Services factory loads config, precomputes access checkers, registry helper.
-- Next adapter (`canopycms/next`) wraps API handlers; supports pluggable `getUser`/`getBranchState`; host provides config/services (no auto discovery; config-loader removed). Catch-all Next handler available for minimal setup.
+- Framework-agnostic HTTP layer (`canopycms/http`): Core request/response types (`CanopyRequest`, `CanopyResponse`), route matching, and request handler factory. Framework adapters convert to/from these generic types.
+- Next.js adapter in separate `canopycms-next` package: thin layer that wraps `NextRequest`/`NextResponse` and delegates to core handler. Supports Next.js 14 and 15 params patterns.
+- Auth plugin uses generic `CanopyRequest` interface; `canopycms-auth-clerk` uses `@clerk/backend` for framework-agnostic JWT verification.
 - API handlers for branches (create/list), branch status (get/submit stub), content (read/write), entries listing, assets (local adapter interface). Content/entries currently point at `process.cwd()`.
 - Editor UI (Mantine): Editor wrapper with split panes, navigator, branch manager skeleton, form renderer with blocks/select/reference/code/etc., preview bridge with draft updates + click-to-focus/highlight. Drafts persist in localStorage per branch/entry. Editor has experimental client-side entry loading helpers but example currently uses manual entries to avoid client/server boundary issues.
 - Example (`packages/canopycms/examples/one`): Next app using `canopycms/client` editor and listEntries API; content endpoints are stubbed only for entries (writes not wired). Example config uses `contentRoot` default with paths like `posts`/`home`; catch-all Next route is in place.
@@ -80,8 +82,11 @@ Read packages/canopycms/README.md to understand what we are building from an end
    - Harden the security of the code. Check that all API permissions are correct and that we have control over who is doing what.
 1. **Add cache if needed**
    - See how performance is and see if a cache is needed. If so add, e.g. Valkey.
-1. **Other Framework Support**
-   - Make sure Next.js support is isolated and accessed via abstract mechanisms so that other frameworks can have adapters built
+1. **Other Framework Support** ✅ DONE
+   - Next.js code abstracted into `canopycms-next` package
+   - Core `canopycms/http` module provides framework-agnostic types and handler
+   - Auth plugins use generic `CanopyRequest` interface
+   - New adapters (Express, Hono, etc.) just need to convert request/response types
 
 ## Notes for Codex
 

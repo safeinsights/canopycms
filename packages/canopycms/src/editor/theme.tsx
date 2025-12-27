@@ -110,7 +110,7 @@ export const CanopyCMSProvider: React.FC<CanopyCMSProviderProps> = ({
   return (
     <MantineProvider theme={theme} defaultColorScheme={colorScheme}>
       <ModalsProvider>
-        {withNotifications ? <Notifications position="top-right" /> : null}
+        {withNotifications ? <Notifications position="bottom-left" /> : null}
         {children}
       </ModalsProvider>
     </MantineProvider>

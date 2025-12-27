@@ -22,7 +22,9 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 - Git-backed content store with branch-aware workspaces
 - Branch modes: `local-simple`, `local-prod-sim`, `prod`
 - Content formats: JSON, Markdown, MDX with frontmatter
-- Service factory and Next.js adapter
+- Framework-agnostic HTTP layer (`canopycms/http`) with generic request/response types
+- Next.js adapter in separate `canopycms-next` package
+- Auth plugins use generic `CanopyRequest` interface (Clerk uses `@clerk/backend`)
 
 **Editor UI**:
 
@@ -63,27 +65,24 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 
 ### 1. Code Cleanup & Framework Abstraction
 
-**Estimated**: 3-4 sessions
+**Estimated**: 1-2 sessions remaining
 **Priority**: High (after auth completion)
 
-**Goals**:
+**Completed** ✅:
 
-- Abstract framework-specific code (Next.js) into adapters
-- Abstract auth provider code (Clerk) into plugin system
-- Make core CanopyCMS framework-agnostic
+- ✅ Abstract framework-specific code (Next.js) into adapters - `canopycms-next` package
+- ✅ Abstract auth provider code (Clerk) into plugin system - uses `@clerk/backend`
+- ✅ Make core CanopyCMS framework-agnostic - `canopycms/http` module
+- ✅ Auth plugin system is fully pluggable (Clerk is just one implementation)
+
+**Remaining**:
+
 - DRY up repetitive code
 - Extract reusable Mantine components
 - Library evaluation (replace custom code with external libs)
-- Improve developer experience for future Claude sessions
-
-**Key Changes**:
-
-- Move Next.js-specific logic to `/src/next/` adapter
 - Document adapter API for other frameworks (Astro, SvelteKit, Remix)
-- Ensure auth plugin system is fully pluggable (Clerk is just one implementation)
 - Create framework adapter examples
 - Add JSDoc comments for critical interfaces
-- Simplify file organization for easier navigation
 - Create developer guide for extending CanopyCMS
 
 ### 2. Observability & Safety
@@ -214,9 +213,16 @@ This master plan references the following sub-plans:
 - [packages/canopycms/src/api/permissions.ts](../../packages/canopycms/src/api/permissions.ts) - API endpoints
 - [packages/canopycms/src/editor/PermissionManager.tsx](../../packages/canopycms/src/editor/PermissionManager.tsx) - UI component
 
-**Integration**:
+**HTTP & Framework Adapters**:
 
-- [packages/canopycms/src/next/api.ts](../../packages/canopycms/src/next/api.ts) - Next.js route adapter
+- [packages/canopycms/src/http/types.ts](../../packages/canopycms/src/http/types.ts) - CanopyRequest/Response interfaces
+- [packages/canopycms/src/http/router.ts](../../packages/canopycms/src/http/router.ts) - Route matching
+- [packages/canopycms/src/http/handler.ts](../../packages/canopycms/src/http/handler.ts) - Core request handler
+- [packages/canopycms-next/src/adapter.ts](../../packages/canopycms-next/src/adapter.ts) - Next.js adapter
+- [packages/canopycms-auth-clerk/src/clerk-plugin.ts](../../packages/canopycms-auth-clerk/src/clerk-plugin.ts) - Clerk auth (uses @clerk/backend)
+
+**Editor Integration**:
+
 - [packages/canopycms/src/editor/Editor.tsx](../../packages/canopycms/src/editor/Editor.tsx) - Main editor component
 
 ### GitHub PR Workflow Files (Complete)
