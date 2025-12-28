@@ -5,6 +5,7 @@ import { GroupManager } from './GroupManager'
 import type { InternalGroup } from '../groups-file'
 import type { ExternalGroup } from '../api/groups'
 import type { UserSearchResult } from '../auth/types'
+import { mockConsole } from '../test-utils/console-spy.js'
 
 const originalMatchMedia = window.matchMedia
 
@@ -567,6 +568,7 @@ describe('GroupManager', () => {
     })
 
     it('shows error when external group search fails', async () => {
+      const consoleSpy = mockConsole()
       const mockError = vi.fn().mockRejectedValue(new Error('Search failed'))
 
       render(
@@ -595,6 +597,8 @@ describe('GroupManager', () => {
         },
         { timeout: 1000 },
       )
+      expect(consoleSpy).toHaveErrored('External group search failed')
+      consoleSpy.restore()
     })
   })
 

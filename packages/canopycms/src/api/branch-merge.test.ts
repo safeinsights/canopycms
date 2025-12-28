@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { markAsMerged } from './branch-merge'
 import type { ApiContext, ApiRequest } from './types'
 import { RESERVED_GROUPS } from '../reserved-groups'
+import { mockConsole } from '../test-utils/console-spy.js'
 
 vi.mock('../branch-metadata', () => {
   return {
@@ -127,6 +128,7 @@ describe('branch merge api - markAsMerged', () => {
   })
 
   it('handles github service errors gracefully', async () => {
+    const consoleSpy = mockConsole()
     mockGithubService.getPullRequest = vi.fn().mockRejectedValue(new Error('API error'))
 
     const result = await markAsMerged(ctx, req, { branch: 'feature/x' })
@@ -134,6 +136,8 @@ describe('branch merge api - markAsMerged', () => {
     // Should still succeed (manual override allowed)
     expect(result.ok).toBe(true)
     expect(result.status).toBe(200)
+    expect(consoleSpy).toHaveErrored('Failed to verify PR merge status')
+    consoleSpy.restore()
   })
 
   it('works without github service (manual mode)', async () => {
