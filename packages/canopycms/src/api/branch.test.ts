@@ -1,8 +1,15 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { createBranch, listBranches, deleteBranch, updateBranchAccess, canCreateBranch, canDeleteBranch, canModifyBranchAccess } from './branch'
 import type { ApiContext } from './types'
 import { RESERVED_GROUPS } from '../reserved-groups'
+
+// Mock permissions loader
+vi.mock('../permissions-loader', () => ({
+  loadPathPermissions: vi.fn(),
+}))
+
+import * as permissionsLoader from '../permissions-loader'
 
 vi.mock('../branch-workspace', () => {
   return {
@@ -78,15 +85,25 @@ vi.mock('../branch-metadata', () => {
   }
 })
 
+const makeBranchStateForMain = () => ({
+  branch: { name: 'main', status: 'editing' as const, access: {}, createdBy: 'system', createdAt: 'now', updatedAt: 'now' },
+  workspaceRoot: '/test/repo',
+})
+
 const baseCtx: ApiContext = {
   services: {
-    config: { schema: [], pathPermissions: [] } as any,
+    config: { schema: [], defaultBaseBranch: 'main', mode: 'local-simple' } as any,
     checkBranchAccess: vi.fn(),
     checkContentAccess: vi.fn(),
     bootstrapAdminIds: new Set<string>(),
   },
-  getBranchState: vi.fn(),
+  getBranchState: vi.fn().mockResolvedValue(makeBranchStateForMain()),
 }
+
+beforeEach(() => {
+  // Default: no path permissions (open access)
+  vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([])
+})
 
 describe('canCreateBranch', () => {
   it('allows admins to create branches', () => {
@@ -170,38 +187,37 @@ describe('branch api', () => {
   })
 
   it('rejects branch creation when user has no path access', async () => {
-    const restrictedCtx: ApiContext = {
-      ...baseCtx,
-      services: {
-        ...baseCtx.services,
-        config: {
-          schema: [],
-          pathPermissions: [{ path: 'content/**', allowedUsers: ['other-user'] }],
-        } as any,
-      },
-    }
-    const res = await createBranch(restrictedCtx, { user: { userId: 'u1', groups: [] }, body: { branch: 'feature/test' } })
+    // Mock permissions loaded from JSON file
+    vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([
+      { path: 'content/**', allowedUsers: ['other-user'] },
+    ])
+    const res = await createBranch(baseCtx, { user: { userId: 'u1', groups: [] }, body: { branch: 'feature/test' } })
     expect(res.ok).toBe(false)
     expect(res.status).toBe(403)
     expect(res.error).toBe('You do not have permission to create branches')
   })
 
   it('allows admin to create branch even with restrictions', async () => {
-    const restrictedCtx: ApiContext = {
-      ...baseCtx,
-      services: {
-        ...baseCtx.services,
-        config: {
-          schema: [],
-          pathPermissions: [{ path: 'content/**', allowedUsers: ['other-user'] }],
-        } as any,
-      },
-    }
-    const res = await createBranch(restrictedCtx, {
+    // Mock permissions loaded from JSON file
+    vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([
+      { path: 'content/**', allowedUsers: ['other-user'] },
+    ])
+    const res = await createBranch(baseCtx, {
       user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] },
       body: { branch: 'feature/test' },
     })
     expect(res.ok).toBe(true)
+  })
+
+  it('loads permissions from JSON file via main branch', async () => {
+    // This test verifies the new behavior: permissions come from JSON, not config
+    const mockPermissions = [{ path: 'content/**', allowedUsers: ['u1'] }]
+    vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue(mockPermissions)
+
+    const res = await createBranch(baseCtx, { user: { userId: 'u1', groups: [] }, body: { branch: 'feature/test' } })
+
+    expect(res.ok).toBe(true)
+    expect(permissionsLoader.loadPathPermissions).toHaveBeenCalled()
   })
 
   it('lists all branches for admins', async () => {

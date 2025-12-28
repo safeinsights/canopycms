@@ -3,7 +3,7 @@ import path from 'node:path'
 import { minimatch } from 'minimatch'
 
 import type { CanopyUserId } from './types'
-import type { CanopyConfig, PathPermission } from './config'
+import type { PathPermission, DefaultPathAccess } from './config'
 import { isAdmin, isReviewer } from './reserved-groups'
 
 export interface PathPermissionResult {
@@ -16,8 +16,6 @@ const normalize = (p: string): string => {
   const normalized = p.split(path.sep).join('/')
   return normalized.replace(/^\.?\/*/, '')
 }
-
-export const buildPathPermissions = (config: CanopyConfig): PathPermission[] => config.pathPermissions ?? []
 
 const matchesRule = (rule: PathPermission, relativePath: string): boolean => minimatch(relativePath, rule.path, { dot: true })
 
@@ -45,18 +43,20 @@ const isAllowedByRule = (
 
 /**
  * Evaluate access for a relative path against config-defined rules.
- * Default allow if no rule matches. First matching rule wins.
+ * Uses defaultAccess when no rule matches. First matching rule wins.
  */
 export const checkPathAccess = ({
   rules,
   relativePath,
   userId,
   groupIds,
+  defaultAccess = 'allow',
 }: {
   rules: PathPermission[]
   relativePath: string
   userId: CanopyUserId
   groupIds?: string[]
+  defaultAccess?: DefaultPathAccess
 }): PathPermissionResult => {
   const normalizedPath = normalize(relativePath)
   // Only Admins bypass all path permissions (not Reviewers)
@@ -76,13 +76,16 @@ export const checkPathAccess = ({
     }
   }
 
-  return { allowed: true, reason: 'no_rule_match' }
+  return { allowed: defaultAccess === 'allow', reason: 'no_rule_match' }
 }
 
 /**
- * Factory to bind rules once.
+ * Factory to bind rules and defaultAccess once.
  */
-export const createCheckPathAccess = (rules: PathPermission[]) => {
-  return (input: Omit<Parameters<typeof checkPathAccess>[0], 'rules'>): PathPermissionResult =>
-    checkPathAccess({ ...input, rules })
+export const createCheckPathAccess = (
+  rules: PathPermission[],
+  defaultAccess: DefaultPathAccess = 'allow'
+) => {
+  return (input: Omit<Parameters<typeof checkPathAccess>[0], 'rules' | 'defaultAccess'>): PathPermissionResult =>
+    checkPathAccess({ ...input, rules, defaultAccess })
 }

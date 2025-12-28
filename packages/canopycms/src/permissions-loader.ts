@@ -1,21 +1,19 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { PathPermission, CanopyConfig } from './config'
+import type { PathPermission } from './config'
 import type { PermissionsFile } from './permissions-file'
-import { PermissionsFileSchema, createDefaultPermissionsFile } from './permissions-file'
+import { PermissionsFileSchema } from './permissions-file'
 
 const PERMISSIONS_FILE_PATH = '.canopycms/permissions.json'
 
 /**
  * Load path permissions from .canopycms/permissions.json
- * Falls back to config.pathPermissions if file doesn't exist
+ * Returns empty array if file doesn't exist (no restrictions).
  *
  * @param repoRoot - Repository root directory
- * @param config - CanopyConfig for fallback
  */
 export const loadPathPermissions = async (
-  repoRoot: string,
-  config: CanopyConfig
+  repoRoot: string
 ): Promise<PathPermission[]> => {
   const permissionsPath = path.join(repoRoot, PERMISSIONS_FILE_PATH)
 
@@ -26,10 +24,9 @@ export const loadPathPermissions = async (
 
     return validated.pathPermissions
   } catch (error) {
-    // File doesn't exist or is invalid, fall back to config
+    // File doesn't exist - return empty array (no restrictions)
     if ((error as any).code === 'ENOENT') {
-      // File doesn't exist - use config fallback
-      return config.pathPermissions ?? []
+      return []
     }
 
     // Parse/validation error - this is more serious

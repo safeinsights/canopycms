@@ -1,21 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
-import { defineCanopyTestConfig } from './config-test'
-import { buildPathPermissions, checkPathAccess } from './path-permissions'
+import { checkPathAccess } from './path-permissions'
 import { RESERVED_GROUPS } from './reserved-groups'
+import type { PathPermission } from './config'
 
-const config = defineCanopyTestConfig({
-  schema: [
-    { type: 'collection', name: 'posts', path: 'posts', format: 'md', fields: [{ name: 'title', type: 'string' }] },
-  ],
-  pathPermissions: [
-    { path: 'content/admin/**', managerOrAdminAllowed: true },
-    { path: 'content/partners/**', allowedGroups: ['partner-org'] },
-    { path: 'content/restricted/**', allowedUsers: ['user-a'] },
-  ],
-})
-
-const rules = buildPathPermissions(config)
+// Path permission rules (previously from config.pathPermissions, now from .canopycms/permissions.json)
+const rules: PathPermission[] = [
+  { path: 'content/admin/**', managerOrAdminAllowed: true },
+  { path: 'content/partners/**', allowedGroups: ['partner-org'] },
+  { path: 'content/restricted/**', allowedUsers: ['user-a'] },
+]
 
 describe('path permissions', () => {
   it('allows admin', () => {
@@ -76,5 +70,40 @@ describe('path permissions', () => {
       userId: 'user-x',
     })
     expect(result.allowed).toBe(true)
+  })
+
+  it('uses defaultAccess=allow when no rule matches and explicitly set', () => {
+    const result = checkPathAccess({
+      rules,
+      relativePath: 'content/open/page.md',
+      userId: 'user-x',
+      defaultAccess: 'allow',
+    })
+    expect(result.allowed).toBe(true)
+    expect(result.reason).toBe('no_rule_match')
+  })
+
+  it('uses defaultAccess=deny when no rule matches', () => {
+    const result = checkPathAccess({
+      rules,
+      relativePath: 'content/open/page.md',
+      userId: 'user-x',
+      defaultAccess: 'deny',
+    })
+    expect(result.allowed).toBe(false)
+    expect(result.reason).toBe('no_rule_match')
+  })
+
+  it('applies matching rule regardless of defaultAccess', () => {
+    // Even with defaultAccess=allow, a matching rule that denies should deny
+    const result = checkPathAccess({
+      rules,
+      relativePath: 'content/admin/secret.md',
+      userId: 'regular-user',
+      groupIds: [],
+      defaultAccess: 'allow',
+    })
+    expect(result.allowed).toBe(false)
+    expect(result.reason).toBe('denied_by_rule')
   })
 })

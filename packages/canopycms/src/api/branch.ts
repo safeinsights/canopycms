@@ -3,9 +3,10 @@ import { BranchWorkspaceManager } from '../branch-workspace'
 import { BranchRegistry } from '../branch-registry'
 import { BranchMetadata } from '../branch-metadata'
 import type { ApiContext, ApiRequest, ApiResponse, RequestUser } from './types'
-import { getDefaultBranchBase } from '../paths'
+import { getDefaultBranchBase, resolveBranchWorkspace } from '../paths'
 import { isPrivileged, isAdmin } from '../reserved-groups'
 import type { PathPermission } from '../config'
+import { loadPathPermissions } from '../permissions-loader'
 
 /**
  * Check if a user can create branches.
@@ -71,14 +72,24 @@ export const createBranch = async (
     return { ok: false, status: 400, error: 'branch is required' }
   }
 
+  const branchMode = ctx.services.config.mode ?? 'local-simple'
+
+  // Load path permissions from the main branch's JSON file
+  const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
+  const mainBranchState = await ctx.getBranchState(mainBranch)
+
+  let pathPermissions: PathPermission[] = []
+  if (mainBranchState) {
+    const branchPaths = resolveBranchWorkspace(mainBranchState, branchMode)
+    pathPermissions = await loadPathPermissions(branchPaths.branchRoot)
+  }
+
   // Check if user can create branches
-  const pathPermissions = ctx.services.config.pathPermissions ?? []
   const canCreate = canCreateBranch(req.user, pathPermissions)
   if (!canCreate.allowed) {
     return { ok: false, status: 403, error: 'You do not have permission to create branches' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
   const manager = new BranchWorkspaceManager(ctx.services.config)
   const workspace = await manager.openOrCreateBranch({
     branchName,

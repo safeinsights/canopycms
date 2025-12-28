@@ -76,6 +76,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const { branchRoot } = resolveBranchWorkspace(state, branchMode, basePathOverride)
     return {
       state,
+      branchRoot,
       store: new ContentStore(branchRoot, services.config),
     }
   }
@@ -138,7 +139,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
 
   const readDocument = async (input: ReadContentInput) => {
     const { entryPath, slug, branchName, user } = resolveTarget(input)
-    const { state, store } = await resolveStore(branchName)
+    const { state, branchRoot, store } = await resolveStore(branchName)
 
     let relativePath: string
     try {
@@ -149,7 +150,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     }
 
     const actor = user ?? { userId: 'anonymous' }
-    const access = services.checkContentAccess(state, relativePath, actor)
+    const access = await services.checkContentAccess(state, branchRoot, relativePath, actor)
     if (!access.allowed) {
       throw new ContentStoreError('Forbidden')
     }

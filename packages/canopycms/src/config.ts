@@ -145,6 +145,7 @@ const relativePathSchema = z
 const normalizePathValue = (val: string): string => normalize(val).split('/').filter(Boolean).join('/')
 
 const defaultBranchAccessSchema = z.enum(['allow', 'deny']).default('deny')
+const defaultPathAccessSchema = z.enum(['allow', 'deny']).default('allow')
 const defaultBaseBranchSchema = z.string().default('main')
 const defaultRemoteNameSchema = z.string().default('origin')
 const defaultRemoteUrlSchema = z.string().min(1)
@@ -192,9 +193,9 @@ schemaItemSchema = z.discriminatedUnion('type', [collectionSchema, singletonSche
 export const CanopyConfigSchema = z
   .object({
     schema: z.array(schemaItemSchema).min(1),
-    pathPermissions: z.array(pathPermissionSchema).optional(),
     media: mediaSchema.optional(),
     defaultBranchAccess: defaultBranchAccessSchema.optional(),
+    defaultPathAccess: defaultPathAccessSchema.optional(),
     defaultBaseBranch: defaultBaseBranchSchema.optional(),
     defaultRemoteName: defaultRemoteNameSchema.optional(),
     defaultRemoteUrl: defaultRemoteUrlSchema.optional(),
@@ -213,14 +214,6 @@ export const CanopyConfigSchema = z
         code: z.ZodIssueCode.custom,
         message: 'At least one collection or singleton is required',
       })
-    }
-    // Show deprecation warning for config-based pathPermissions
-    if (data.pathPermissions && data.pathPermissions.length > 0) {
-      console.warn(
-        'DEPRECATION WARNING: config.pathPermissions is deprecated. ' +
-        'Use .canopycms/permissions.json instead. ' +
-        'Permissions from config will be used as fallback if .canopycms/permissions.json does not exist.'
-      )
     }
   })
 
@@ -263,6 +256,7 @@ export function extractClientConfig(serverConfig: CanopyConfig): CanopyClientCon
   return { schema, defaultBaseBranch, contentRoot, editor, mode }
 }
 export type DefaultBranchAccess = z.infer<typeof defaultBranchAccessSchema>
+export type DefaultPathAccess = z.infer<typeof defaultPathAccessSchema>
 export type DefaultBaseBranch = z.infer<typeof defaultBaseBranchSchema>
 export type DefaultRemoteName = z.infer<typeof defaultRemoteNameSchema>
 export type DefaultRemoteUrl = z.infer<typeof defaultRemoteUrlSchema>
@@ -406,9 +400,8 @@ type DeepReadonly<T> = T extends (infer U)[]
   ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
   : T
 
-export type CanopyConfigAuthoring = Omit<CanopyConfigInput, 'schema' | 'pathPermissions'> & {
+export type CanopyConfigAuthoring = Omit<CanopyConfigInput, 'schema'> & {
   schema: DeepReadonly<CanopyConfigInput['schema']>
-  pathPermissions?: DeepReadonly<CanopyConfigInput['pathPermissions']>
 }
 
 export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAuthoring) {
@@ -444,15 +437,15 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
 
 /**
  * Helper to compose config fragments defined across multiple files.
- * Later fragments can override media, and path permissions are concatenated.
+ * Later fragments can override media.
  */
 export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): CanopyConfig => {
   const schema: SchemaItemConfig[] = []
-  let pathPermissions: PathPermission[] | undefined
   let media: MediaConfig | undefined
   let contentRoot: ContentRoot | undefined
   let sourceRoot: SourceRoot | undefined
   let defaultBranchAccess: DefaultBranchAccess | undefined
+  let defaultPathAccess: DefaultPathAccess | undefined
   let defaultBaseBranch: DefaultBaseBranch | undefined
   let defaultRemoteName: DefaultRemoteName | undefined
   let defaultRemoteUrl: DefaultRemoteUrl | undefined
@@ -463,9 +456,6 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
   for (const fragment of fragments) {
     if (fragment.schema) {
       schema.push(...fragment.schema)
-    }
-    if (fragment.pathPermissions) {
-      pathPermissions = [...(pathPermissions ?? []), ...fragment.pathPermissions]
     }
     if (fragment.media) {
       media = fragment.media
@@ -478,6 +468,9 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     }
     if (fragment.defaultBranchAccess) {
       defaultBranchAccess = fragment.defaultBranchAccess
+    }
+    if (fragment.defaultPathAccess) {
+      defaultPathAccess = fragment.defaultPathAccess
     }
     if (fragment.defaultBaseBranch) {
       defaultBaseBranch = fragment.defaultBaseBranch
@@ -503,11 +496,11 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     schema,
     gitBotAuthorName: gitBotAuthorName as string,
     gitBotAuthorEmail: gitBotAuthorEmail as string,
-    ...(pathPermissions ? { pathPermissions } : {}),
     ...(media ? { media } : {}),
     ...(contentRoot ? { contentRoot } : {}),
     ...(sourceRoot ? { sourceRoot } : {}),
     ...(defaultBranchAccess ? { defaultBranchAccess } : {}),
+    ...(defaultPathAccess ? { defaultPathAccess } : {}),
     ...(defaultBaseBranch ? { defaultBaseBranch } : {}),
     ...(defaultRemoteName ? { defaultRemoteName } : {}),
     ...(defaultRemoteUrl ? { defaultRemoteUrl } : {}),
