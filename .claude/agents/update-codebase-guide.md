@@ -1,5 +1,5 @@
 ---
-name: docs-codebase
+name: update-codebase-guide
 description: Codebase guide maintainer. Use PROACTIVELY after adding new modules, APIs, or significant architectural changes to keep codebase-guide.md accurate.
 tools: Read, Edit, Grep, Glob
 ---
