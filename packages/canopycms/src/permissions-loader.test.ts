@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { loadPathPermissions, savePathPermissions, ensurePermissionsFile } from './permissions-loader'
 import { defineCanopyConfig } from './config'
+import { mockConsole } from './test-utils/console-spy.js'
 
 describe('permissions loader', () => {
   let testRoot: string
@@ -119,6 +120,7 @@ describe('permissions loader', () => {
     })
 
     it('throws error on invalid JSON', async () => {
+      const consoleSpy = mockConsole()
       const config = defineCanopyConfig({
         schema: [
           {
@@ -139,9 +141,12 @@ describe('permissions loader', () => {
       await fs.writeFile(path.join(canopyDir, 'permissions.json'), 'invalid json', 'utf-8')
 
       await expect(loadPathPermissions(testRoot, config)).rejects.toThrow('Invalid permissions file')
+      expect(consoleSpy).toHaveErrored('Failed to parse permissions file')
+      consoleSpy.restore()
     })
 
     it('throws error on invalid schema', async () => {
+      const consoleSpy = mockConsole()
       const config = defineCanopyConfig({
         schema: [
           {
@@ -171,6 +176,8 @@ describe('permissions loader', () => {
       )
 
       await expect(loadPathPermissions(testRoot, config)).rejects.toThrow('Invalid permissions file')
+      expect(consoleSpy).toHaveErrored('Failed to parse permissions file')
+      consoleSpy.restore()
     })
   })
 

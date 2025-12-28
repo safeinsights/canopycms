@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { GitHubService, createGitHubService } from './github-service'
 import type { CanopyConfig } from './config'
+import { mockConsole } from './test-utils/console-spy.js'
 
 describe('GitHubService', () => {
   describe('parseRemoteUrl', () => {
@@ -71,14 +72,20 @@ describe('GitHubService', () => {
     })
 
     it('should return null when token is missing', () => {
+      const consoleSpy = mockConsole()
       const service = createGitHubService(mockConfig, 'https://github.com/owner/repo.git')
       expect(service).toBeNull()
+      expect(consoleSpy).toHaveWarned('GitHub token not found')
+      consoleSpy.restore()
     })
 
     it('should return null when remoteUrl is missing', () => {
+      const consoleSpy = mockConsole()
       process.env.GITHUB_BOT_TOKEN = 'test-token'
       const service = createGitHubService(mockConfig)
       expect(service).toBeNull()
+      expect(consoleSpy).toHaveWarned('requires remoteUrl')
+      consoleSpy.restore()
     })
 
     it('should create service with GITHUB_BOT_TOKEN', () => {
@@ -101,9 +108,12 @@ describe('GitHubService', () => {
     })
 
     it('should return null for invalid remote URL', () => {
+      const consoleSpy = mockConsole()
       process.env.GITHUB_BOT_TOKEN = 'test-token'
       const service = createGitHubService(mockConfig, 'invalid-url')
       expect(service).toBeNull()
+      expect(consoleSpy).toHaveWarned('Failed to parse GitHub remote URL')
+      consoleSpy.restore()
     })
 
     it('should use config baseBranch', () => {

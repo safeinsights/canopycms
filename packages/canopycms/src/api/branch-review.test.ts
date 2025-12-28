@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { requestChanges, approveBranch } from './branch-review'
 import type { ApiContext } from './types'
 import { RESERVED_GROUPS } from '../reserved-groups'
+import { mockConsole } from '../test-utils/console-spy.js'
 
 vi.mock('../branch-metadata', () => {
   return {
@@ -95,6 +96,7 @@ describe('branch review api - requestChanges', () => {
   })
 
   it('handles github service errors gracefully', async () => {
+    const consoleSpy = mockConsole()
     const convertToDraft = vi.fn().mockRejectedValue(new Error('API error'))
     const githubService = { convertToDraft }
     const res = await requestChanges(
@@ -105,6 +107,8 @@ describe('branch review api - requestChanges', () => {
     // Should still succeed even if GitHub API fails
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
+    expect(consoleSpy).toHaveErrored('Failed to convert PR to draft')
+    consoleSpy.restore()
   })
 
   it('skips PR conversion if no PR number', async () => {

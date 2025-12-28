@@ -33,6 +33,10 @@ Purpose: CanopyCMS is a schema-driven, branch-aware CMS for a team of users to e
 - `local-simple`: A development version that operates in the current checkout without extra clones; shows branch functionality but disables it, because the developer is managing the branch themselves and working in their own clone. Content is saved directly to their cloned repo.
 - Modes settable in config: keep `prod`, `local-prod-sim`, and `local-simple` working; branch root resolution must honor mode and prevent traversal.
 
+## Development Guidelines
+
+See [DEVELOPING.md](DEVELOPING.md) for detailed development patterns and practices.
+
 ## Working agreements:
 - Use TypeScript/React; keep code ASCII; prefer `rg` for search and `apply_patch` for edits. Avoid destructive git commands.
 - Prefer using popular, maintained libraries over bespoke code.
