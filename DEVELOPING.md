@@ -84,3 +84,31 @@ This approach ensures:
 - Expected console output doesn't pollute test runs
 - Unexpected console output still surfaces (helping catch real issues)
 - Console behavior is properly tested as part of the functionality
+
+## Quality Checks
+
+Before handoff, run typecheck and tests:
+
+```bash
+npm run typecheck --workspaces
+npm test --workspaces
+```
+
+### Storybook
+
+Update stories when UI changes. Run Storybook to verify:
+
+```bash
+npm run storybook --workspace=packages/canopycms
+```
+
+### Test Coverage
+
+Add tests alongside new logic. Integration tests cover end-to-end behavior.
+
+### Claude Subagents
+
+For automated quality checks, see:
+- `.claude/agents/test.md` - Test runner
+- `.claude/agents/typecheck.md` - Type checker
+- `.claude/agents/review.md` - Code review

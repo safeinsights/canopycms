@@ -27,17 +27,17 @@ Purpose: CanopyCMS is a schema-driven, branch-aware CMS for a team of users to e
 - Path-based access: admins define who can edit specific files/trees; enforced on read/write.
 - Assets: pluggable adapter (local for dev; S3 required soon; LFS option). Keep assets out of Git when using cloud storage.
 
-## Operating Modes (must support all three)
-- `prod`: branch clones live under a configurable filesystem directory. There may be an independent worker process.
-- `local-prod-sim`: A version of prod that is easy for a developer to work on on their machine. Same as prod, but use `.canopycms/branches/` (overridable) in the repo, gitignored for the filesystem root. If prod uses an independent worker, have some way to make this easy for the developer.
-- `local-simple`: A development version that operates in the current checkout without extra clones; shows branch functionality but disables it, because the developer is managing the branch themselves and working in their own clone. Content is saved directly to their cloned repo.
-- Modes settable in config: keep `prod`, `local-prod-sim`, and `local-simple` working; branch root resolution must honor mode and prevent traversal.
+## Operating Modes
+See [ARCHITECTURE.md](ARCHITECTURE.md#operating-modes) for detailed mode behavior. All three modes must work:
+- `prod`: Branch clones on persistent filesystem (e.g., EFS)
+- `local-prod-sim`: Simulates prod locally in `.canopycms/branches/`
+- `local-simple`: Direct editing in current checkout, no cloning
 
 ## Development Guidelines
 
 See [DEVELOPING.md](DEVELOPING.md) for detailed development patterns and practices.
 
-## Working agreements:
+## Working Agreements
 - Use TypeScript/React; keep code ASCII; prefer `rg` for search and `apply_patch` for edits. Avoid destructive git commands.
 - Prefer using popular, maintained libraries over bespoke code.
 - Avoid `any` unless documented.
@@ -48,15 +48,15 @@ See [DEVELOPING.md](DEVELOPING.md) for detailed development patterns and practic
 - Keep the styling of the host app separate from that of the CanopyCMS editing interface. CanopyCMS uses Mantine, but host apps/examples can use whatever they want.
 - Keep docs current: update `BACKLOG.md`, `README.md`, and AGENTS when behavior or workflows change.
 - Always honor branch modes (prod/local-prod-sim/local-simple) and path traversal guards. Branch metadata/registry live under `.canopycms/`.
-- Run `npm run typecheck --workspaces` and `npm test --workspaces` before handoff when changes are made.
-- Update Storybook stories when UI changes.
-- Add tests when introducing new logic; keep coverage alongside the code being added; have some integration tests to cover end-to-end behavior.
 - Keep as much code in the package as possible so adopters do less work; avoid new package entrypoints without intent.
 - Expose client-only React via `canopycms/client` with `use client`; keep server-only deps out of browser bundles.
 - Propose next work at the end of each iteration.
 
-## How adopters integrate:
-- Define config via `defineCanopyConfig`; git bot author fields are required; contentRoot defaults to `content`.
-- Add the catch-all Next handler from `canopycms/next` (`createCanopyHandler`); prefer a host-provided `getUser` for authZ.
-- Read content server-side with `createContentReader` (branch-aware, enforces permissions). Use the catch-all API for editor traffic.
-- Embed the `<Editor>` from `canopycms/client` with resolved schema collections; preview uses the bridge (postMessage) and branch-aware URLs.
+## Quality Checks
+See [DEVELOPING.md](DEVELOPING.md#quality-checks) for testing and typecheck requirements. Claude subagents are available:
+- `.claude/agents/test.md` - Run tests and fix failures
+- `.claude/agents/typecheck.md` - Type checking
+- `.claude/agents/review.md` - Code review checklist
+
+## Adopter Integration Constraints
+Keep adopter effort minimal: only expose config + Editor + one catch-all API route. See [README.md](README.md#adopter-integration) for practical integration steps.
