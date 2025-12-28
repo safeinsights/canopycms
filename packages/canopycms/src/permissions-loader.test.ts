@@ -7,7 +7,6 @@ import {
   savePathPermissions,
   ensurePermissionsFile,
 } from './permissions-loader'
-import { defineCanopyConfig } from './config'
 import { mockConsole } from './test-utils/console-spy.js'
 
 describe('permissions loader', () => {
@@ -23,20 +22,6 @@ describe('permissions loader', () => {
 
   describe('loadPathPermissions', () => {
     it('loads from file when it exists', async () => {
-      const config = defineCanopyConfig({
-        schema: [
-          {
-            type: 'collection',
-            name: 'posts',
-            path: 'posts',
-            format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
-          },
-        ],
-        gitBotAuthorName: 'Bot',
-        gitBotAuthorEmail: 'bot@example.com',
-      }).server
-
       // Create permissions file
       const canopyDir = path.join(testRoot, '.canopycms')
       await fs.mkdir(canopyDir, { recursive: true })
@@ -60,7 +45,7 @@ describe('permissions loader', () => {
         'utf-8',
       )
 
-      const permissions = await loadPathPermissions(testRoot, config)
+      const permissions = await loadPathPermissions(testRoot)
 
       expect(permissions).toHaveLength(2)
       expect(permissions[0]).toEqual({
@@ -73,99 +58,26 @@ describe('permissions loader', () => {
       })
     })
 
-    it('falls back to config when file does not exist', async () => {
-      const configBundle = defineCanopyConfig({
-        schema: [
-          {
-            type: 'collection',
-            name: 'posts',
-            path: 'posts',
-            format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
-          },
-        ],
-        pathPermissions: [
-          {
-            path: 'content/restricted/**',
-            allowedUsers: ['user-a'],
-          },
-        ],
-        gitBotAuthorName: 'Bot',
-        gitBotAuthorEmail: 'bot@example.com',
-      })
-
-      const permissions = await loadPathPermissions(testRoot, configBundle.server)
-
-      expect(permissions).toHaveLength(1)
-      expect(permissions[0]).toEqual({
-        path: 'content/restricted/**',
-        allowedUsers: ['user-a'],
-      })
-    })
-
-    it('returns empty array when neither file nor config exists', async () => {
-      const config = defineCanopyConfig({
-        schema: [
-          {
-            type: 'collection',
-            name: 'posts',
-            path: 'posts',
-            format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
-          },
-        ],
-        gitBotAuthorName: 'Bot',
-        gitBotAuthorEmail: 'bot@example.com',
-      }).server
-
-      const permissions = await loadPathPermissions(testRoot, config)
-
+    it('returns empty array when file does not exist', async () => {
+      const permissions = await loadPathPermissions(testRoot)
       expect(permissions).toEqual([])
     })
 
     it('throws error on invalid JSON', async () => {
       const consoleSpy = mockConsole()
-      const config = defineCanopyConfig({
-        schema: [
-          {
-            type: 'collection',
-            name: 'posts',
-            path: 'posts',
-            format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
-          },
-        ],
-        gitBotAuthorName: 'Bot',
-        gitBotAuthorEmail: 'bot@example.com',
-      }).server
 
       // Create invalid permissions file
       const canopyDir = path.join(testRoot, '.canopycms')
       await fs.mkdir(canopyDir, { recursive: true })
       await fs.writeFile(path.join(canopyDir, 'permissions.json'), 'invalid json', 'utf-8')
 
-      await expect(loadPathPermissions(testRoot, config)).rejects.toThrow(
-        'Invalid permissions file',
-      )
+      await expect(loadPathPermissions(testRoot)).rejects.toThrow('Invalid permissions file')
       expect(consoleSpy).toHaveErrored('Failed to parse permissions file')
       consoleSpy.restore()
     })
 
     it('throws error on invalid schema', async () => {
       const consoleSpy = mockConsole()
-      const config = defineCanopyConfig({
-        schema: [
-          {
-            type: 'collection',
-            name: 'posts',
-            path: 'posts',
-            format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
-          },
-        ],
-        gitBotAuthorName: 'Bot',
-        gitBotAuthorEmail: 'bot@example.com',
-      }).server
 
       // Create file with wrong version
       const canopyDir = path.join(testRoot, '.canopycms')
@@ -181,9 +93,7 @@ describe('permissions loader', () => {
         'utf-8',
       )
 
-      await expect(loadPathPermissions(testRoot, config)).rejects.toThrow(
-        'Invalid permissions file',
-      )
+      await expect(loadPathPermissions(testRoot)).rejects.toThrow('Invalid permissions file')
       expect(consoleSpy).toHaveErrored('Failed to parse permissions file')
       consoleSpy.restore()
     })
@@ -246,20 +156,7 @@ describe('permissions loader', () => {
       const secondPermissions = [{ path: 'content/second/**', allowedUsers: ['user-2'] }]
       await savePathPermissions(testRoot, secondPermissions, 'admin-2')
 
-      const config = defineCanopyConfig({
-        schema: [
-          {
-            type: 'collection',
-            name: 'posts',
-            path: 'posts',
-            format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
-          },
-        ],
-        gitBotAuthorName: 'Bot',
-        gitBotAuthorEmail: 'bot@example.com',
-      }).server
-      const loaded = await loadPathPermissions(testRoot, config)
+      const loaded = await loadPathPermissions(testRoot)
 
       expect(loaded).toHaveLength(1)
       expect(loaded[0].path).toBe('content/second/**')
@@ -285,20 +182,7 @@ describe('permissions loader', () => {
 
       await ensurePermissionsFile(testRoot, 'new-admin')
 
-      const config = defineCanopyConfig({
-        schema: [
-          {
-            type: 'collection',
-            name: 'posts',
-            path: 'posts',
-            format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
-          },
-        ],
-        gitBotAuthorName: 'Bot',
-        gitBotAuthorEmail: 'bot@example.com',
-      }).server
-      const loaded = await loadPathPermissions(testRoot, config)
+      const loaded = await loadPathPermissions(testRoot)
 
       // Original permissions should still be there
       expect(loaded).toHaveLength(1)

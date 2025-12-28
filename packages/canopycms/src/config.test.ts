@@ -50,7 +50,6 @@ describe('config validation', () => {
           ],
         },
       ],
-      pathPermissions: [{ path: 'content/partners/**', allowedGroups: ['partner-org'] }],
       media: { adapter: 's3', bucket: 'my-bucket', region: 'us-east-1' },
     })
 
@@ -108,7 +107,6 @@ describe('config validation', () => {
           fields: [{ name: 'hero', type: 'string' }],
         },
       ],
-      pathPermissions: [{ path: 'content/home/**', managerOrAdminAllowed: true }],
       media: { adapter: 'local' as const },
     }
 
@@ -116,7 +114,6 @@ describe('config validation', () => {
 
     expect(config.schema[0].name).toBe('posts')
     expect(config.schema[1].name).toBe('homepage')
-    expect(config.pathPermissions?.[0].path).toBe('content/home/**')
     expect(config.media?.adapter).toBe('local')
   })
 

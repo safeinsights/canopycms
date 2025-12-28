@@ -8,7 +8,7 @@ const makeCtx = (): ApiContext => ({
   services: {
     config: { schema: [] } as any,
     checkBranchAccess: () => ({ allowed: true, reason: 'no_acl' }),
-    checkContentAccess: () => ({ allowed: true, branch: {}, path: {} }),
+    checkContentAccess: async () => ({ allowed: true, branch: {}, path: {} }),
     bootstrapAdminIds: new Set<string>(),
   },
   getBranchState: async () => null,

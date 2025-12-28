@@ -245,8 +245,9 @@ export const listEntries = async (
           item.collectionId,
           item.type === 'singleton' ? '' : item.slug,
         )
-        const access = ctx.services.checkContentAccess(
+        const access = await ctx.services.checkContentAccess(
           branchState,
+          root,
           normalized.relativePath,
           req.user,
         )

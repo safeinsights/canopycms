@@ -17,9 +17,10 @@ export interface ApiContext {
     ) => { allowed: boolean; reason: string }
     checkContentAccess: (
       branchState: BranchState,
+      branchRoot: string,
       relativePath: string,
       user: RequestUser,
-    ) => { allowed: boolean; branch: any; path: any }
+    ) => Promise<{ allowed: boolean; branch: any; path: any }>
     createGitManagerFor?: (repoPath: string, opts?: { baseBranch?: string; remote?: string }) => any
     githubService?: GitHubService
     /** Bootstrap admin user IDs that are always treated as Admins */

@@ -33,12 +33,19 @@ describe('createCanopyServices', () => {
           fields: [{ name: 'title', type: 'string' }],
         },
       ],
-      pathPermissions: [{ path: 'content/admin/**', managerOrAdminAllowed: true }],
       defaultBranchAccess: 'deny',
     })
 
     const services = createCanopyServices(cfg)
-    expect(services.pathPermissions.length).toBe(1)
+
+    // Path permissions are now loaded from JSON file at runtime, not from config
+    // Service creates checkPathAccess with empty rules (default open access)
+    const pathResult = services.checkPathAccess({
+      relativePath: 'content/any/file.md',
+      userId: 'user-1',
+      groupIds: [],
+    })
+    expect(pathResult.allowed).toBe(true) // No rules = default allow
 
     const branchAllowed = services.checkBranchAccess(
       {

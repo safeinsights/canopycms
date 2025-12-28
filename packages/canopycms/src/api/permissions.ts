@@ -27,7 +27,7 @@ export const getPermissions = async (
 
     const branchMode = ctx.services.config.mode ?? 'local-simple'
     const branchPaths = resolveBranchWorkspace(branchState, branchMode)
-    const permissions = await loadPathPermissions(branchPaths.branchRoot, ctx.services.config)
+    const permissions = await loadPathPermissions(branchPaths.branchRoot)
 
     return {
       ok: true,

@@ -5,7 +5,9 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from '../config-test'
-import { createCanopyServices } from '../services'
+import { createCheckBranchAccess } from '../authz'
+import { createCheckContentAccess } from '../content-access'
+import type { PathPermission } from '../config'
 import type { ApiContext } from './types'
 import { listEntries } from './entries'
 
@@ -49,14 +51,26 @@ describe('listEntries', () => {
           fields: [{ name: 'siteName', type: 'string' }],
         },
       ],
-      pathPermissions: [{ path: 'content/posts/hidden.json', allowedUsers: ['other'] }],
     })
-    const services = createCanopyServices(config)
+
+    // Mock loadPathPermissions to return rules that hide 'hidden.json' from user 'u1'
+    const pathRules: PathPermission[] = [
+      { path: 'content/posts/hidden.json', allowedUsers: ['other'] },
+    ]
+    const mockLoadPermissions = vi.fn().mockResolvedValue(pathRules)
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: mockLoadPermissions,
+      defaultPathAccess: 'allow',
+    })
+
     const ctx: ApiContext = {
       services: {
         config,
-        checkBranchAccess: services.checkBranchAccess,
-        checkContentAccess: services.checkContentAccess,
+        checkBranchAccess,
+        checkContentAccess,
         bootstrapAdminIds: new Set<string>(),
       },
       getBranchState: vi.fn().mockResolvedValue({
@@ -91,7 +105,7 @@ describe('listEntries', () => {
       services: {
         config: { schema: [] } as any,
         checkBranchAccess: vi.fn(),
-        checkContentAccess: vi.fn(),
+        checkContentAccess: vi.fn().mockResolvedValue({ allowed: true, branch: {}, path: {} }),
         bootstrapAdminIds: new Set<string>(),
       },
       getBranchState: vi.fn().mockResolvedValue(null),

@@ -30,7 +30,12 @@ export const readContent = async (
     return { ok: false, status: 400, error: message }
   }
 
-  const access = ctx.services.checkContentAccess(branchState, relativePath, req.user)
+  const access = await ctx.services.checkContentAccess(
+    branchState,
+    branchPaths.branchRoot,
+    relativePath,
+    req.user,
+  )
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
@@ -70,7 +75,12 @@ export const writeContent = async (
     return { ok: false, status: 400, error: message }
   }
 
-  const access = ctx.services.checkContentAccess(branchState, relativePath, req.user)
+  const access = await ctx.services.checkContentAccess(
+    branchState,
+    branchPaths.branchRoot,
+    relativePath,
+    req.user,
+  )
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }

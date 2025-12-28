@@ -1,9 +1,10 @@
 import type { CanopyConfig } from './config'
 import type { BranchState } from './types'
 import type { UserContext } from './authz'
-import { buildPathPermissions, createCheckPathAccess } from './path-permissions'
+import { createCheckPathAccess } from './path-permissions'
 import { createCheckBranchAccess } from './authz'
 import { createCheckContentAccess } from './content-access'
+import { loadPathPermissions } from './permissions-loader'
 import { GitManager } from './git-manager'
 import { BranchRegistry } from './branch-registry'
 import { getDefaultBranchBase } from './paths'
@@ -48,7 +49,6 @@ export interface CanopyServices {
   ) => ReturnType<ReturnType<typeof createCheckBranchAccess>>
   checkPathAccess: ReturnType<typeof createCheckPathAccess>
   checkContentAccess: ReturnType<typeof createCheckContentAccess>
-  pathPermissions: ReturnType<typeof buildPathPermissions>
   createGitManagerFor: (
     repoPath: string,
     opts?: { baseBranch?: string; remote?: string },
@@ -73,11 +73,14 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   const bootstrapAdminIds = getBootstrapAdminIds()
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
-  const pathPermissions = buildPathPermissions(config)
-  const checkPathAccess = createCheckPathAccess(pathPermissions)
+  // Path permissions are loaded dynamically from .canopycms/permissions.json at request time.
+  // At the service level, we bind with empty rules for direct path checks.
+  const checkPathAccess = createCheckPathAccess([], config.defaultPathAccess ?? 'allow')
+  // Content access loads permissions dynamically from the branch root
   const checkContentAccess = createCheckContentAccess({
     checkBranchAccess,
-    checkPathAccess: (input) => checkPathAccess(input),
+    loadPathPermissions,
+    defaultPathAccess: config.defaultPathAccess ?? 'allow',
   })
   const createGitManagerFor = (repoPath: string, opts?: { baseBranch?: string; remote?: string }) =>
     new GitManager({
@@ -112,7 +115,6 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
     checkBranchAccess,
     checkPathAccess,
     checkContentAccess,
-    pathPermissions,
     createGitManagerFor,
     registry,
     githubService,
