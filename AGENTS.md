@@ -46,7 +46,7 @@ See [DEVELOPING.md](DEVELOPING.md) for detailed development patterns and practic
 - Learn from `reference/` but do not edit its contents.
 - Use extensionless local imports.
 - Keep the styling of the host app separate from that of the CanopyCMS editing interface. CanopyCMS uses Mantine, but host apps/examples can use whatever they want.
-- Keep docs current: update `PROMPT.md`, `README.md`, and AGENTS when behavior or workflows change.
+- Keep docs current: update `BACKLOG.md`, `README.md`, and AGENTS when behavior or workflows change.
 - Always honor branch modes (prod/local-prod-sim/local-simple) and path traversal guards. Branch metadata/registry live under `.canopycms/`.
 - Run `npm run typecheck --workspaces` and `npm test --workspaces` before handoff when changes are made.
 - Update Storybook stories when UI changes.
