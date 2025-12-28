@@ -43,6 +43,10 @@ You are a code review specialist for CanopyCMS. Your job is to review code chang
 - [ ] Storybook stories for UI changes
 - [ ] Code comments for complex logic
 
+### Other Ad Hoc Checks
+
+As an expert reviewer, you probably know other things you want to check
+
 ## Commands
 
 ```bash
