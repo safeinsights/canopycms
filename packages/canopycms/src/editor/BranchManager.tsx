@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react'
 
-import { Badge, Button, Group, Paper, ScrollArea, Stack, Text, Title, TextInput, Textarea, Collapse, Tooltip } from '@mantine/core'
+import { Badge, Button, Group, Paper, ScrollArea, Stack, Text, TextInput, Textarea, Collapse, Tooltip } from '@mantine/core'
 import type { BranchMode } from '../paths'
 import type { CommentThread } from '../comment-store'
 import { BranchComments } from './comments/BranchComments'
@@ -127,22 +127,10 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   }
 
   return (
-    <Paper withBorder radius="md" shadow="sm" h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
-      <Group justify="space-between" px="md" py="sm">
-        <div>
-          <Title order={4}>Branches</Title>
-          <Text size="xs" c="dimmed">
-            Manage access, status, and lifecycle
-          </Text>
-        </div>
-        <Button variant="subtle" color="neutral" size="xs" onClick={onClose}>
-          Close
-        </Button>
-      </Group>
-
+    <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
       {/* Branch-level comments */}
       {currentUserId && onAddComment && onResolveThread && (
-        <Stack px="md" pt="sm">
+        <Stack pt="sm">
           <BranchComments
             comments={comments}
             currentUserId={currentUserId}
@@ -155,7 +143,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
       )}
 
       {!isLocalSimple && (
-        <Stack gap="sm" px="md" pt="sm">
+        <Stack gap="sm" pt="sm">
           <Button
             variant="light"
             size="sm"
@@ -201,7 +189,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
         </Stack>
       )}
 
-      <ScrollArea style={{ flex: 1 }} px="md" pb="md">
+      <ScrollArea style={{ flex: 1 }} pb="md">
         {branches.length === 0 ? (
           <Text size="sm" c="dimmed" py="md">
             {isLocalSimple
@@ -329,6 +317,6 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
           </Stack>
         )}
       </ScrollArea>
-    </Paper>
+    </Stack>
   )
 }

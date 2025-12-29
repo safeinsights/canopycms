@@ -11,7 +11,6 @@ import {
   ScrollArea,
   Stack,
   Text,
-  Title,
   Loader,
   Alert,
   Tooltip,
@@ -374,24 +373,11 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
   }
 
   return (
-    <Paper withBorder radius="md" shadow="sm" h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
-      <Group justify="space-between" px="md" py="sm">
-        <div>
-          <Title order={4}>Permissions</Title>
-          <Text size="xs" c="dimmed">
-            Manage content access by path (read, edit, review)
-          </Text>
-        </div>
-        <Button variant="subtle" color="neutral" size="xs" onClick={onClose}>
-          Close
-        </Button>
-      </Group>
-
+    <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
       {!canEdit && (
         <Alert
           icon={<IconAlertCircle size={16} />}
           color="yellow"
-          mx="md"
           mb="sm"
           title="Read-only"
         >
@@ -403,7 +389,6 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
         <Alert
           icon={<IconAlertCircle size={16} />}
           color="red"
-          mx="md"
           mb="sm"
           title="Error"
           withCloseButton
@@ -417,7 +402,6 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
         <Alert
           icon={<IconAlertCircle size={16} />}
           color="orange"
-          mx="md"
           mb="sm"
           title="Warning"
           withCloseButton
@@ -427,7 +411,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
         </Alert>
       )}
 
-      <Group gap="xs" px="md" pb="sm">
+      <Group gap="xs" pb="sm">
         <Button size="xs" variant="subtle" onClick={expandAll}>
           Expand All
         </Button>
@@ -436,7 +420,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
         </Button>
       </Group>
 
-      <ScrollArea style={{ flex: 1 }} px="md" pb="md">
+      <ScrollArea style={{ flex: 1 }} pb="md">
         {loading ? (
           <Group justify="center" py="xl">
             <Loader size="md" />
@@ -475,7 +459,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
       </ScrollArea>
 
       {canEdit && isDirty && (
-        <Group justify="flex-end" px="md" py="sm" gap="sm" style={{ borderTop: '1px solid var(--mantine-color-gray-3)' }}>
+        <Group justify="flex-end" py="sm" gap="sm" style={{ borderTop: '1px solid var(--mantine-color-gray-3)' }}>
           <Button
             variant="subtle"
             color="neutral"
@@ -493,7 +477,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
           </Button>
         </Group>
       )}
-    </Paper>
+    </Stack>
   )
 }
 
