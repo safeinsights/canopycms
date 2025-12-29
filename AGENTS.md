@@ -47,7 +47,7 @@ See [DEVELOPING.md](DEVELOPING.md) for detailed development patterns and practic
 - Use TypeScript/React; keep code ASCII; prefer `rg` for search and `apply_patch` for edits. Avoid destructive git commands.
 - Prefer using popular, maintained libraries over bespoke code.
 - Avoid `any` unless documented.
-- This is new code that has not been used by others yet, so no need to maintain interfaces for legacy uses.
+- IMPORTANT: This is new code that has not been used by others yet, so no need to maintain interfaces for legacy uses, no need for migrations.
 - Primary target is Next.js websites, but will expand to others.
 - Learn from `reference/` but do not edit its contents.
 - Use extensionless local imports.

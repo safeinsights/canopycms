@@ -42,7 +42,11 @@ describe('branch withdraw api', () => {
   it('returns 404 if branch not found', async () => {
     const ctx = makeCtx()
     ctx.getBranchState = vi.fn().mockResolvedValue(null)
-    const res = await withdrawBranch(ctx, { user: { userId: 'u1' } }, { branch: 'missing' })
+    const res = await withdrawBranch(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'missing' },
+    )
     expect(res.status).toBe(404)
     expect(res.error).toBe('Branch not found')
   })
@@ -50,7 +54,7 @@ describe('branch withdraw api', () => {
   it('returns 403 if access forbidden', async () => {
     const res = await withdrawBranch(
       makeCtx(false),
-      { user: { userId: 'u1' } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(403)
@@ -63,7 +67,11 @@ describe('branch withdraw api', () => {
       ...baseState,
       branch: { ...baseState.branch, status: 'editing' },
     })
-    const res = await withdrawBranch(ctx, { user: { userId: 'u1' } }, { branch: 'feature/x' })
+    const res = await withdrawBranch(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' },
+    )
     expect(res.status).toBe(400)
     expect(res.error).toContain("Only 'submitted' branches can be withdrawn")
   })
@@ -71,7 +79,7 @@ describe('branch withdraw api', () => {
   it('withdraws branch when allowed', async () => {
     const res = await withdrawBranch(
       makeCtx(true),
-      { user: { userId: 'u1' } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)
@@ -83,7 +91,7 @@ describe('branch withdraw api', () => {
     const githubService = { convertToDraft }
     const res = await withdrawBranch(
       makeCtx(true, githubService),
-      { user: { userId: 'u1' } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)
@@ -96,7 +104,7 @@ describe('branch withdraw api', () => {
     const githubService = { convertToDraft }
     const res = await withdrawBranch(
       makeCtx(true, githubService),
-      { user: { userId: 'u1' } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
     )
     // Should still succeed even if GitHub API fails
@@ -114,7 +122,11 @@ describe('branch withdraw api', () => {
       ...baseState,
       pullRequestNumber: undefined,
     })
-    const res = await withdrawBranch(ctx, { user: { userId: 'u1' } }, { branch: 'feature/x' })
+    const res = await withdrawBranch(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' },
+    )
     expect(res.ok).toBe(true)
     expect(convertToDraft).not.toHaveBeenCalled()
   })

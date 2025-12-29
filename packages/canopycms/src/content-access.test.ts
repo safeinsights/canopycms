@@ -17,7 +17,10 @@ const branchState = {
 }
 
 // Path permission rules (from .canopycms/permissions.json)
-const pathRules: PathPermission[] = [{ path: 'content/admin/**', managerOrAdminAllowed: true }]
+// Rule with explicit constraints - only Admins group can edit admin paths
+const pathRules: PathPermission[] = [
+  { path: 'content/admin/**', edit: { allowedGroups: ['Admins'] } },
+]
 
 describe('checkContentAccess', () => {
   it('denies when branch ACL defaults to deny and no allowlist', async () => {
@@ -28,10 +31,13 @@ describe('checkContentAccess', () => {
       defaultPathAccess: 'allow',
     })
 
-    const res = await checkContent(branchState, '/repo', 'content/pages/foo.md', {
-      userId: 'u1',
-      groups: [],
-    })
+    const res = await checkContent(
+      branchState,
+      '/repo',
+      'content/pages/foo.md',
+      { type: 'authenticated', userId: 'u1', groups: [] },
+      'edit',
+    )
 
     expect(mockLoadPermissions).toHaveBeenCalledWith('/repo')
     expect(res.allowed).toBe(false)
@@ -46,10 +52,17 @@ describe('checkContentAccess', () => {
       defaultPathAccess: 'allow',
     })
 
-    const res = await checkContent(branchState, '/repo', 'content/pages/foo.md', {
-      userId: 'u1',
-      groups: [RESERVED_GROUPS.REVIEWERS],
-    })
+    const res = await checkContent(
+      branchState,
+      '/repo',
+      'content/pages/foo.md',
+      {
+        type: 'authenticated',
+        userId: 'u1',
+        groups: [RESERVED_GROUPS.REVIEWERS],
+      },
+      'edit',
+    )
 
     expect(res.allowed).toBe(true)
     expect(res.branch.reason).toBe('privileged')
@@ -63,10 +76,13 @@ describe('checkContentAccess', () => {
       defaultPathAccess: 'allow',
     })
 
-    const res = await checkContent(branchState, '/repo', 'content/admin/secret.md', {
-      userId: 'u1',
-      groups: [],
-    })
+    const res = await checkContent(
+      branchState,
+      '/repo',
+      'content/admin/secret.md',
+      { type: 'authenticated', userId: 'u1', groups: [] },
+      'edit',
+    )
 
     expect(res.allowed).toBe(false)
     expect(res.path.allowed).toBe(false)
@@ -80,10 +96,13 @@ describe('checkContentAccess', () => {
       defaultPathAccess: 'deny',
     })
 
-    const res = await checkContent(branchState, '/repo', 'content/open/page.md', {
-      userId: 'u1',
-      groups: [],
-    })
+    const res = await checkContent(
+      branchState,
+      '/repo',
+      'content/open/page.md',
+      { type: 'authenticated', userId: 'u1', groups: [] },
+      'edit',
+    )
 
     expect(res.allowed).toBe(false)
     expect(res.path.allowed).toBe(false)
@@ -98,10 +117,13 @@ describe('checkContentAccess', () => {
       defaultPathAccess: 'allow',
     })
 
-    const res = await checkContent(branchState, '/repo', 'content/open/page.md', {
-      userId: 'u1',
-      groups: [],
-    })
+    const res = await checkContent(
+      branchState,
+      '/repo',
+      'content/open/page.md',
+      { type: 'authenticated', userId: 'u1', groups: [] },
+      'edit',
+    )
 
     expect(res.allowed).toBe(true)
     expect(res.path.allowed).toBe(true)

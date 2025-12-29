@@ -58,7 +58,7 @@ describe('branch status api', () => {
   it('denies submit when access forbidden', async () => {
     const res = await submitBranchForMerge(
       makeCtx(false),
-      { user: { userId: 'u1' } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(403)
@@ -67,7 +67,7 @@ describe('branch status api', () => {
   it('submits branch when allowed', async () => {
     const res = await submitBranchForMerge(
       makeCtx(true),
-      { user: { userId: 'u1' } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)

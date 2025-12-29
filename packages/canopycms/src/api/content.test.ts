@@ -63,7 +63,7 @@ describe('content api', () => {
     }
     const res = await readContent(
       ctx,
-      { user: { userId: 'u1' } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x', collection: 'posts', slug: 'hello' },
     )
     expect(res.status).toBe(403)
@@ -74,7 +74,7 @@ describe('content api', () => {
     const ctx = allowedCtx()
     const res = await readContent(
       ctx,
-      { user: { userId: 'u1' } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x', collection: 'posts', slug: 'hello' },
     )
     expect(res.ok).toBe(true)
@@ -83,7 +83,7 @@ describe('content api', () => {
   it('writes content with correct format handling', async () => {
     const ctx = allowedCtx()
     const res = await writeContent(ctx, {
-      user: { userId: 'u1' },
+      user: { type: 'authenticated', userId: 'u1', groups: [] },
       branch: 'feature/x',
       body: { collection: 'posts', slug: 'hello', format: 'json', data: { title: 'hi' } },
     })

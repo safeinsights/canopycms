@@ -113,11 +113,20 @@ knownFieldSchema = z.discriminatedUnion('type', [
 
 fieldSchema = z.lazy(() => z.union([knownFieldSchema, customFieldSchema]))
 
-const pathPermissionSchema = z.object({
-  path: z.string().min(1),
+export type PermissionLevel = 'read' | 'edit' | 'review'
+
+const permissionTargetSchema = z.object({
   allowedUsers: z.array(z.string() as z.ZodType<CanopyUserId>).optional(),
   allowedGroups: z.array(z.string() as z.ZodType<CanopyGroupId>).optional(),
-  managerOrAdminAllowed: z.boolean().optional(),
+})
+
+export type PermissionTarget = z.infer<typeof permissionTargetSchema>
+
+const pathPermissionSchema = z.object({
+  path: z.string().min(1),
+  read: permissionTargetSchema.optional(),
+  edit: permissionTargetSchema.optional(),
+  review: permissionTargetSchema.optional(),
 })
 
 const mediaSchema = z.union([
@@ -157,7 +166,7 @@ const normalizePathValue = (val: string): string =>
   normalize(val).split('/').filter(Boolean).join('/')
 
 const defaultBranchAccessSchema = z.enum(['allow', 'deny']).default('deny')
-const defaultPathAccessSchema = z.enum(['allow', 'deny']).default('allow')
+const defaultPathAccessSchema = z.enum(['allow', 'deny']).default('deny')
 const defaultBaseBranchSchema = z.string().default('main')
 const defaultRemoteNameSchema = z.string().default('origin')
 const defaultRemoteUrlSchema = z.string().min(1)

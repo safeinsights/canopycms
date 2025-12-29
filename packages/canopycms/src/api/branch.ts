@@ -2,21 +2,22 @@ import type { BranchAccessControl, BranchState } from '../types'
 import { BranchWorkspaceManager } from '../branch-workspace'
 import { BranchRegistry } from '../branch-registry'
 import { BranchMetadata } from '../branch-metadata'
-import type { ApiContext, ApiRequest, ApiResponse, RequestUser } from './types'
+import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { getDefaultBranchBase, resolveBranchWorkspace } from '../paths'
 import { isPrivileged, isAdmin } from '../reserved-groups'
 import type { PathPermission } from '../config'
 import { loadPathPermissions } from '../permissions-loader'
+import type { CanopyUser } from '../user'
 
 /**
  * Check if a user can create branches.
  * Returns true if:
  * - User is Admin or Reviewer (privileged)
- * - User has access to at least one path via pathPermissions rules
+ * - User has edit access to at least one path via pathPermissions rules
  * - No path permissions are defined (open access)
  */
 export const canCreateBranch = (
-  user: RequestUser,
+  user: CanopyUser,
   pathPermissions: PathPermission[],
 ): { allowed: boolean; reason: string } => {
   // Admins and Reviewers can always create branches
@@ -29,24 +30,22 @@ export const canCreateBranch = (
     return { allowed: true, reason: 'no_restrictions' }
   }
 
-  // Check if user has access to at least one path rule
+  // Check if user has edit access to at least one path rule
   for (const rule of pathPermissions) {
-    // Skip rules that only allow managers/admins
-    if (rule.managerOrAdminAllowed) {
-      continue
-    }
+    const editTarget = rule.edit
+    if (!editTarget) continue
 
     // Check if rule has no user/group constraints (open to all)
-    const hasUserConstraint = !!rule.allowedUsers?.length
-    const hasGroupConstraint = !!rule.allowedGroups?.length
+    const hasUserConstraint = !!editTarget.allowedUsers?.length
+    const hasGroupConstraint = !!editTarget.allowedGroups?.length
     if (!hasUserConstraint && !hasGroupConstraint) {
       return { allowed: true, reason: 'open_path_rule' }
     }
 
     // Check if user matches the rule
-    const matchesUser = hasUserConstraint && rule.allowedUsers?.includes(user.userId)
+    const matchesUser = hasUserConstraint && editTarget.allowedUsers?.includes(user.userId)
     const matchesGroup =
-      hasGroupConstraint && user.groups?.some((gid) => rule.allowedGroups?.includes(gid))
+      hasGroupConstraint && user.groups?.some((gid) => editTarget.allowedGroups?.includes(gid))
 
     if (matchesUser || matchesGroup) {
       return { allowed: true, reason: 'path_access' }
@@ -127,7 +126,11 @@ export const listBranches = async (
       return true
     }
     // User's group is in allowedGroups
-    if (branch.access?.allowedGroups?.some((groupId) => req.user.groups?.includes(groupId))) {
+    if (
+      branch.access?.allowedGroups?.some((groupId) =>
+        (req.user.groups as readonly string[])?.includes(groupId),
+      )
+    ) {
       return true
     }
     return false
@@ -141,7 +144,7 @@ export const listBranches = async (
  * Returns true if user is Admin or the branch creator.
  */
 export const canDeleteBranch = (
-  user: RequestUser,
+  user: CanopyUser,
   branchState: BranchState,
 ): { allowed: boolean; reason: string } => {
   // Admins can delete any branch
@@ -206,7 +209,7 @@ export interface UpdateBranchAccessBody {
  * Returns true if user is Admin or the branch creator.
  */
 export const canModifyBranchAccess = (
-  user: RequestUser,
+  user: CanopyUser,
   branchState: BranchState,
 ): { allowed: boolean; reason: string } => {
   // Admins can modify any branch

@@ -3,42 +3,53 @@ import { describe, expect, it } from 'vitest'
 import { checkPathAccess } from './path-permissions'
 import { RESERVED_GROUPS } from './reserved-groups'
 import type { PathPermission } from './config'
+import type { CanopyUser } from './user'
 
 // Path permission rules (previously from config.pathPermissions, now from .canopycms/permissions.json)
 const rules: PathPermission[] = [
-  { path: 'content/admin/**', managerOrAdminAllowed: true },
-  { path: 'content/partners/**', allowedGroups: ['partner-org'] },
-  { path: 'content/restricted/**', allowedUsers: ['user-a'] },
+  { path: 'content/admin/**', edit: {} },
+  { path: 'content/partners/**', edit: { allowedGroups: ['partner-org'] } },
+  { path: 'content/restricted/**', edit: { allowedUsers: ['user-a'] } },
 ]
+
+// Helper to create authenticated users
+const createUser = (userId: string, groups: string[] = []): CanopyUser => ({
+  type: 'authenticated',
+  userId,
+  groups,
+})
 
 describe('path permissions', () => {
   it('allows admin', () => {
     const result = checkPathAccess({
       rules,
       relativePath: 'content/admin/secret.md',
-      userId: 'any',
-      groupIds: [RESERVED_GROUPS.ADMINS],
+      user: createUser('any', [RESERVED_GROUPS.ADMINS]),
+      defaultAccess: 'deny',
+      level: 'edit',
     })
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('admin')
   })
 
-  it('allows reviewer for managerOrAdminAllowed paths', () => {
+  it('allows user when edit rule has no constraints', () => {
     const result = checkPathAccess({
       rules,
       relativePath: 'content/admin/secret.md',
-      userId: 'any',
-      groupIds: [RESERVED_GROUPS.REVIEWERS],
+      user: createUser('any', []),
+      defaultAccess: 'deny',
+      level: 'edit',
     })
     expect(result.allowed).toBe(true)
   })
 
-  it('denies managerOrAdminAllowed for regular users without matching allowlists', () => {
+  it('denies when user does not match allowedUsers or allowedGroups', () => {
     const result = checkPathAccess({
       rules,
-      relativePath: 'content/admin/secret.md',
-      userId: 'user-a',
-      groupIds: ['partner-org'],
+      relativePath: 'content/restricted/secret.md',
+      user: createUser('user-b', ['partner-org']),
+      defaultAccess: 'deny',
+      level: 'edit',
     })
     expect(result.allowed).toBe(false)
   })
@@ -47,8 +58,9 @@ describe('path permissions', () => {
     const result = checkPathAccess({
       rules,
       relativePath: 'content/partners/page.md',
-      userId: 'user-x',
-      groupIds: ['partner-org'],
+      user: createUser('user-x', ['partner-org']),
+      defaultAccess: 'deny',
+      level: 'edit',
     })
     expect(result.allowed).toBe(true)
   })
@@ -57,8 +69,9 @@ describe('path permissions', () => {
     const result = checkPathAccess({
       rules,
       relativePath: 'content/partners/page.md',
-      userId: 'user-x',
-      groupIds: ['other-org'],
+      user: createUser('user-x', ['other-org']),
+      defaultAccess: 'deny',
+      level: 'edit',
     })
     expect(result.allowed).toBe(false)
   })
@@ -67,7 +80,9 @@ describe('path permissions', () => {
     const result = checkPathAccess({
       rules,
       relativePath: 'content/open/page.md',
-      userId: 'user-x',
+      user: createUser('user-x'),
+      defaultAccess: 'allow',
+      level: 'edit',
     })
     expect(result.allowed).toBe(true)
   })
@@ -76,8 +91,9 @@ describe('path permissions', () => {
     const result = checkPathAccess({
       rules,
       relativePath: 'content/open/page.md',
-      userId: 'user-x',
+      user: createUser('user-x'),
       defaultAccess: 'allow',
+      level: 'edit',
     })
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('no_rule_match')
@@ -87,8 +103,9 @@ describe('path permissions', () => {
     const result = checkPathAccess({
       rules,
       relativePath: 'content/open/page.md',
-      userId: 'user-x',
+      user: createUser('user-x'),
       defaultAccess: 'deny',
+      level: 'edit',
     })
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('no_rule_match')
@@ -98,10 +115,10 @@ describe('path permissions', () => {
     // Even with defaultAccess=allow, a matching rule that denies should deny
     const result = checkPathAccess({
       rules,
-      relativePath: 'content/admin/secret.md',
-      userId: 'regular-user',
-      groupIds: [],
+      relativePath: 'content/restricted/secret.md',
+      user: createUser('regular-user', []),
       defaultAccess: 'allow',
+      level: 'edit',
     })
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('denied_by_rule')

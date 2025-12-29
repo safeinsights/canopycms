@@ -250,6 +250,7 @@ export const listEntries = async (
           root,
           normalized.relativePath,
           req.user,
+          'read',
         )
         if (!access.allowed) continue
         if (search) {

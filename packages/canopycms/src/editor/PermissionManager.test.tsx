@@ -86,11 +86,11 @@ describe('PermissionManager', () => {
   const mockPermissions: PathPermission[] = [
     {
       path: 'content/posts/**',
-      allowedGroups: ['editors'],
+      edit: { allowedGroups: ['editors'] },
     },
     {
       path: 'content/about.md',
-      allowedUsers: ['alice'],
+      edit: { allowedUsers: ['alice'] },
     },
   ]
 
@@ -131,7 +131,7 @@ describe('PermissionManager', () => {
       )
 
       expect(screen.getByText('Permissions')).toBeTruthy()
-      expect(screen.getByText('Manage content access by path')).toBeTruthy()
+      expect(screen.getByText('Manage content access by path (read, edit, review)')).toBeTruthy()
       expect(screen.getByText('content')).toBeTruthy()
     })
 

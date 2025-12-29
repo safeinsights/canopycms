@@ -35,6 +35,7 @@ export const readContent = async (
     branchPaths.branchRoot,
     relativePath,
     req.user,
+    'read',
   )
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
@@ -80,6 +81,7 @@ export const writeContent = async (
     branchPaths.branchRoot,
     relativePath,
     req.user,
+    'edit',
   )
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }

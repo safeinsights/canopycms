@@ -67,21 +67,29 @@ describe('comments api - listComments', () => {
   it('returns 404 if branch not found', async () => {
     const ctx = makeCtx()
     ctx.getBranchState = vi.fn().mockResolvedValue(null)
-    const res = await listComments(ctx, { user: { userId: 'u1' } }, { branch: 'missing' })
+    const res = await listComments(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'missing' },
+    )
     expect(res.status).toBe(404)
   })
 
   it('returns 403 if access forbidden', async () => {
     const res = await listComments(
       makeCtx(false),
-      { user: { userId: 'u1' } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(403)
   })
 
   it('lists comments when allowed', async () => {
-    const res = await listComments(makeCtx(), { user: { userId: 'u1' } }, { branch: 'feature/x' })
+    const res = await listComments(
+      makeCtx(),
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' },
+    )
     expect(res.ok).toBe(true)
     expect(res.data?.threads).toHaveLength(1)
   })
@@ -94,7 +102,7 @@ describe('comments api - addComment', () => {
     const res = await addComment(
       ctx,
       {
-        user: { userId: 'u1' },
+        user: { type: 'authenticated', userId: 'u1', groups: [] },
         body: { text: 'test', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
       },
       { branch: 'missing' },
@@ -106,7 +114,7 @@ describe('comments api - addComment', () => {
     const res = await addComment(
       makeCtx(false),
       {
-        user: { userId: 'u1' },
+        user: { type: 'authenticated', userId: 'u1', groups: [] },
         body: { text: 'test', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
       },
       { branch: 'feature/x' },
@@ -117,7 +125,7 @@ describe('comments api - addComment', () => {
   it('returns 400 if text is missing', async () => {
     const res = await addComment(
       makeCtx(),
-      { user: { userId: 'u1' }, body: { type: 'field' } as any },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] }, body: { type: 'field' } as any },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(400)
@@ -127,7 +135,7 @@ describe('comments api - addComment', () => {
   it('returns 400 if type is missing', async () => {
     const res = await addComment(
       makeCtx(),
-      { user: { userId: 'u1' }, body: { text: 'test' } as any },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] }, body: { text: 'test' } as any },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(400)
@@ -138,7 +146,7 @@ describe('comments api - addComment', () => {
     const res = await addComment(
       makeCtx(),
       {
-        user: { userId: 'u1' },
+        user: { type: 'authenticated', userId: 'u1', groups: [] },
         body: { text: 'test', type: 'field', entryId: 'posts/hello' } as any,
       },
       { branch: 'feature/x' },
@@ -150,7 +158,10 @@ describe('comments api - addComment', () => {
   it('returns 400 if entryId missing for field comment', async () => {
     const res = await addComment(
       makeCtx(),
-      { user: { userId: 'u1' }, body: { text: 'test', type: 'field', canopyPath: 'title' } as any },
+      {
+        user: { type: 'authenticated', userId: 'u1', groups: [] },
+        body: { text: 'test', type: 'field', canopyPath: 'title' } as any,
+      },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(400)
@@ -160,7 +171,10 @@ describe('comments api - addComment', () => {
   it('returns 400 if entryId missing for entry comment', async () => {
     const res = await addComment(
       makeCtx(),
-      { user: { userId: 'u1' }, body: { text: 'test', type: 'entry' } as any },
+      {
+        user: { type: 'authenticated', userId: 'u1', groups: [] },
+        body: { text: 'test', type: 'entry' } as any,
+      },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(400)
@@ -171,7 +185,7 @@ describe('comments api - addComment', () => {
     const res = await addComment(
       makeCtx(),
       {
-        user: { userId: 'u1' },
+        user: { type: 'authenticated', userId: 'u1', groups: [] },
         body: { text: 'Great work!', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
       },
       { branch: 'feature/x' },
@@ -185,7 +199,7 @@ describe('comments api - addComment', () => {
     const res = await addComment(
       makeCtx(),
       {
-        user: { userId: 'u1' },
+        user: { type: 'authenticated', userId: 'u1', groups: [] },
         body: { text: 'Entry feedback', type: 'entry', entryId: 'posts/hello' },
       },
       { branch: 'feature/x' },
@@ -197,7 +211,7 @@ describe('comments api - addComment', () => {
     const res = await addComment(
       makeCtx(),
       {
-        user: { userId: 'u1' },
+        user: { type: 'authenticated', userId: 'u1', groups: [] },
         body: { text: 'Branch discussion', type: 'branch' },
       },
       { branch: 'feature/x' },
@@ -209,7 +223,7 @@ describe('comments api - addComment', () => {
     const res = await addComment(
       makeCtx(),
       {
-        user: { userId: 'u1' },
+        user: { type: 'authenticated', userId: 'u1', groups: [] },
         body: {
           text: 'Reply comment',
           threadId: 'existing-thread',
@@ -230,7 +244,7 @@ describe('comments api - resolveComment', () => {
     ctx.getBranchState = vi.fn().mockResolvedValue(null)
     const res = await resolveComment(
       ctx,
-      { user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'missing', threadId: 'thread1' },
     )
     expect(res.status).toBe(404)
@@ -239,7 +253,7 @@ describe('comments api - resolveComment', () => {
   it('returns 403 if user is not author, reviewer, or admin', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { userId: 'u2', groups: [] } },
+      { user: { type: 'authenticated', userId: 'u2', groups: [] } },
       { branch: 'feature/x', threadId: 'thread1' },
     )
     expect(res.status).toBe(403)
@@ -249,7 +263,7 @@ describe('comments api - resolveComment', () => {
   it('allows thread author to resolve', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { userId: 'u1', groups: [] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x', threadId: 'thread1' },
     )
     expect(res.ok).toBe(true)
@@ -259,7 +273,7 @@ describe('comments api - resolveComment', () => {
   it('allows admin to resolve', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { userId: 'u2', groups: [RESERVED_GROUPS.ADMINS] } },
+      { user: { type: 'authenticated', userId: 'u2', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'feature/x', threadId: 'thread1' },
     )
     expect(res.ok).toBe(true)
@@ -268,7 +282,7 @@ describe('comments api - resolveComment', () => {
   it('allows reviewer to resolve', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { userId: 'u2', groups: [RESERVED_GROUPS.REVIEWERS] } },
+      { user: { type: 'authenticated', userId: 'u2', groups: [RESERVED_GROUPS.REVIEWERS] } },
       { branch: 'feature/x', threadId: 'thread1' },
     )
     expect(res.ok).toBe(true)

@@ -1,12 +1,8 @@
 import { createClerkClient, verifyToken as clerkVerifyToken } from '@clerk/backend'
 import type { CanopyRequest } from 'canopycms/http'
 import type { AuthPlugin, AuthPluginFactory } from 'canopycms/auth'
-import type {
-  AuthUser,
-  UserSearchResult,
-  GroupMetadata,
-  TokenVerificationResult,
-} from 'canopycms/auth'
+import type { UserSearchResult, GroupMetadata, TokenVerificationResult } from 'canopycms/auth'
+import type { AuthenticatedUser } from 'canopycms'
 
 export interface ClerkAuthConfig {
   /**
@@ -34,19 +30,20 @@ export interface ClerkAuthConfig {
 }
 
 /**
- * Map Clerk user to CanopyCMS AuthUser.
+ * Map Clerk user to CanopyCMS AuthenticatedUser.
  *
  * Note: CanopyCMS no longer uses roles from auth providers. Instead, permissions
  * are managed through internal groups (Admins, Reviewers) within CanopyCMS.
  * Organizations from Clerk are passed through as groups for ACL matching.
  */
-const mapClerkUser = (clerkUser: any, organizationIds?: string[]): AuthUser => {
+const mapClerkUser = (clerkUser: any, organizationIds?: string[]): AuthenticatedUser => {
   return {
+    type: 'authenticated',
     userId: clerkUser.id,
     email:
       clerkUser.primaryEmailAddress?.emailAddress ?? clerkUser.email_addresses?.[0]?.email_address,
     name: clerkUser.fullName ?? clerkUser.full_name ?? clerkUser.username ?? clerkUser.id,
-    groups: organizationIds,
+    groups: organizationIds ?? [],
   }
 }
 

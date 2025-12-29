@@ -43,7 +43,7 @@ describe('branch review api - requestChanges', () => {
     ctx.getBranchState = vi.fn().mockResolvedValue(null)
     const res = await requestChanges(
       ctx,
-      { user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'missing' },
     )
     expect(res.status).toBe(404)
@@ -53,7 +53,7 @@ describe('branch review api - requestChanges', () => {
   it('returns 403 if user not admin/reviewer', async () => {
     const res = await requestChanges(
       makeCtx(),
-      { user: { userId: 'u1', groups: [] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(403)
@@ -68,7 +68,7 @@ describe('branch review api - requestChanges', () => {
     })
     const res = await requestChanges(
       ctx,
-      { user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(400)
@@ -78,7 +78,7 @@ describe('branch review api - requestChanges', () => {
   it('requests changes when allowed (admin)', async () => {
     const res = await requestChanges(
       makeCtx(),
-      { user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)
@@ -88,7 +88,7 @@ describe('branch review api - requestChanges', () => {
   it('requests changes when allowed (reviewer)', async () => {
     const res = await requestChanges(
       makeCtx(),
-      { user: { userId: 'u1', groups: [RESERVED_GROUPS.REVIEWERS] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.REVIEWERS] } },
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)
@@ -100,7 +100,7 @@ describe('branch review api - requestChanges', () => {
     const githubService = { convertToDraft }
     const res = await requestChanges(
       makeCtx(githubService),
-      { user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)
@@ -113,7 +113,7 @@ describe('branch review api - requestChanges', () => {
     const githubService = { convertToDraft }
     const res = await requestChanges(
       makeCtx(githubService),
-      { user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'feature/x' },
     )
     // Should still succeed even if GitHub API fails
@@ -133,7 +133,7 @@ describe('branch review api - requestChanges', () => {
     })
     const res = await requestChanges(
       ctx,
-      { user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)
@@ -144,7 +144,7 @@ describe('branch review api - requestChanges', () => {
     const res = await requestChanges(
       makeCtx(),
       {
-        user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] },
         body: { comment: 'Please fix the typo' },
       },
       { branch: 'feature/x' },
@@ -159,7 +159,7 @@ describe('branch review api - approveBranch', () => {
     ctx.getBranchState = vi.fn().mockResolvedValue(null)
     const res = await approveBranch(
       ctx,
-      { user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'missing' },
     )
     expect(res.status).toBe(404)
@@ -169,7 +169,7 @@ describe('branch review api - approveBranch', () => {
   it('returns 403 if user not admin/reviewer', async () => {
     const res = await approveBranch(
       makeCtx(),
-      { user: { userId: 'u1', groups: [] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(403)
@@ -184,7 +184,7 @@ describe('branch review api - approveBranch', () => {
     })
     const res = await approveBranch(
       ctx,
-      { user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(400)
@@ -194,7 +194,7 @@ describe('branch review api - approveBranch', () => {
   it('approves branch when allowed (admin)', async () => {
     const res = await approveBranch(
       makeCtx(),
-      { user: { userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)
@@ -204,7 +204,7 @@ describe('branch review api - approveBranch', () => {
   it('approves branch when allowed (reviewer)', async () => {
     const res = await approveBranch(
       makeCtx(),
-      { user: { userId: 'u1', groups: [RESERVED_GROUPS.REVIEWERS] } },
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.REVIEWERS] } },
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)

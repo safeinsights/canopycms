@@ -57,12 +57,11 @@ const mockSchema: CanopyConfig['schema'] = [
 const mockPermissions: PathPermission[] = [
   {
     path: 'content/posts/**',
-    allowedGroups: ['editors', 'content-team'],
+    edit: { allowedGroups: ['editors', 'content-team'] },
   },
   {
     path: 'content/pages/**',
-    allowedUsers: ['alice'],
-    allowedGroups: ['marketing'],
+    edit: { allowedUsers: ['alice'], allowedGroups: ['marketing'] },
   },
 ]
 
@@ -164,12 +163,11 @@ export const WithInheritance: Story = {
     permissions: [
       {
         path: 'content/**',
-        allowedGroups: ['managers'],
+        edit: { allowedGroups: ['managers'] },
       },
       {
         path: 'content/posts/**',
-        allowedGroups: ['editors'],
-        allowedUsers: ['alice'],
+        edit: { allowedGroups: ['editors'], allowedUsers: ['alice'] },
       },
     ],
     canEdit: true,
@@ -186,25 +184,23 @@ export const ComplexPermissions: Story = {
     permissions: [
       {
         path: 'content/**',
-        allowedGroups: ['managers'],
+        edit: { allowedGroups: ['managers'] },
       },
       {
         path: 'content/posts/**',
-        allowedGroups: ['editors', 'content-team'],
-        allowedUsers: ['alice', 'bob'],
+        edit: { allowedGroups: ['editors', 'content-team'], allowedUsers: ['alice', 'bob'] },
       },
       {
         path: 'content/pages/**',
-        allowedUsers: ['alice'],
-        allowedGroups: ['marketing'],
+        edit: { allowedUsers: ['alice'], allowedGroups: ['marketing'] },
       },
       {
         path: 'content/about.md',
-        allowedUsers: ['diana'],
+        edit: { allowedUsers: ['diana'] },
       },
       {
         path: 'content/settings.json',
-        allowedGroups: ['engineering'],
+        edit: { allowedGroups: ['engineering'] },
       },
     ],
     canEdit: true,
@@ -319,12 +315,12 @@ export const LargeSchema: Story = {
       ],
     },
     permissions: [
-      { path: 'content/posts/**', allowedGroups: ['editors'] },
-      { path: 'content/posts/getting-started.mdx', allowedUsers: ['alice', 'bob'] },
-      { path: 'content/pages/**', allowedGroups: ['marketing'] },
-      { path: 'content/products/**', allowedGroups: ['engineering'] },
-      { path: 'content/categories/**', allowedGroups: ['content-team'] },
-      { path: 'content/authors/**', allowedUsers: ['alice'] },
+      { path: 'content/posts/**', edit: { allowedGroups: ['editors'] } },
+      { path: 'content/posts/getting-started.mdx', edit: { allowedUsers: ['alice', 'bob'] } },
+      { path: 'content/pages/**', edit: { allowedGroups: ['marketing'] } },
+      { path: 'content/products/**', edit: { allowedGroups: ['engineering'] } },
+      { path: 'content/categories/**', edit: { allowedGroups: ['content-team'] } },
+      { path: 'content/authors/**', edit: { allowedUsers: ['alice'] } },
     ],
     canEdit: true,
     onSave: mockSave,
@@ -381,8 +377,10 @@ export const ManyPermissionsOnNode: Story = {
     permissions: [
       {
         path: 'content/posts/**',
-        allowedGroups: ['editors', 'content-team', 'marketing', 'managers', 'customer-support'],
-        allowedUsers: ['alice', 'bob', 'charlie', 'diana'],
+        edit: {
+          allowedGroups: ['editors', 'content-team', 'marketing', 'managers', 'customer-support'],
+          allowedUsers: ['alice', 'bob', 'charlie', 'diana'],
+        },
       },
     ],
     canEdit: true,
@@ -399,8 +397,10 @@ export const LongNames: Story = {
     permissions: [
       {
         path: 'content/posts/**',
-        allowedGroups: ['very-long-group-name-that-might-cause-layout-issues'],
-        allowedUsers: ['user-with-an-extremely-long-email-address@verylongdomain.example.com'],
+        edit: {
+          allowedGroups: ['very-long-group-name-that-might-cause-layout-issues'],
+          allowedUsers: ['user-with-an-extremely-long-email-address@verylongdomain.example.com'],
+        },
       },
     ],
     canEdit: true,
@@ -453,8 +453,8 @@ export const DeepNesting: Story = {
       ],
     },
     permissions: [
-      { path: 'content/posts/2024/january/**', allowedGroups: ['editors'] },
-      { path: 'content/posts/2024/january/week1.mdx', allowedUsers: ['alice'] },
+      { path: 'content/posts/2024/january/**', edit: { allowedGroups: ['editors'] } },
+      { path: 'content/posts/2024/january/week1.mdx', edit: { allowedUsers: ['alice'] } },
     ],
     canEdit: true,
     onSave: mockSave,
@@ -469,11 +469,11 @@ export const PermissionOverrides: Story = {
     schema: mockSchema,
     permissions: [
       // Parent folder has managers access
-      { path: 'content/**', allowedGroups: ['managers'] },
+      { path: 'content/**', edit: { allowedGroups: ['managers'] } },
       // Child folder overrides with editors
-      { path: 'content/posts/**', allowedGroups: ['editors'] },
+      { path: 'content/posts/**', edit: { allowedGroups: ['editors'] } },
       // Specific file overrides with specific user
-      { path: 'content/posts/sensitive-post.mdx', allowedUsers: ['alice'] },
+      { path: 'content/posts/sensitive-post.mdx', edit: { allowedUsers: ['alice'] } },
     ],
     contentTree: {
       path: 'content',

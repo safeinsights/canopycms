@@ -1,5 +1,5 @@
 import type { AuthPlugin } from 'canopycms/auth'
-import type { AuthUser } from 'canopycms/auth'
+import type { AuthenticatedUser } from 'canopycms'
 
 const ADMINS = 'Admins'
 
@@ -8,7 +8,7 @@ const ADMINS = 'Admins'
  * Returns a valid user by default (as Admin), or can be configured to return specific users.
  */
 export const createMockAuthPlugin = (
-  user: AuthUser = { userId: 'test-user', groups: [ADMINS] },
+  user: AuthenticatedUser = { type: 'authenticated', userId: 'test-user', groups: [ADMINS] },
 ): AuthPlugin => ({
   verifyToken: async () => ({ valid: true, user }),
   searchUsers: async () => [],

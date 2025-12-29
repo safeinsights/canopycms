@@ -114,6 +114,7 @@ describe('ClerkAuthPlugin', () => {
 
       expect(result.valid).toBe(true)
       expect(result.user).toEqual({
+        type: 'authenticated',
         userId: 'user_123',
         name: 'John Doe',
         email: 'john@example.com',
@@ -144,7 +145,7 @@ describe('ClerkAuthPlugin', () => {
       const result = await plugin.verifyToken(req)
 
       expect(result.valid).toBe(true)
-      expect(result.user?.groups).toBeUndefined()
+      expect(result.user?.groups).toEqual([])
       expect(mockGetOrganizationMembershipList).not.toHaveBeenCalled()
     })
 

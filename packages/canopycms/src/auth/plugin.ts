@@ -1,4 +1,4 @@
-import type { AuthUser, UserSearchResult, GroupMetadata, TokenVerificationResult } from './types'
+import type { UserSearchResult, GroupMetadata, TokenVerificationResult } from './types'
 import type { CanopyUserId, CanopyGroupId } from '../types'
 import type { CanopyRequest } from '../http/types'
 
