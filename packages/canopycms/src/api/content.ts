@@ -22,9 +22,16 @@ export const readContent = async (
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchWorkspace(branchState, branchMode)
   const store = new ContentStore(branchPaths.branchRoot, ctx.services.config)
+
+  // Prepend contentRoot to collection if not already present
+  const contentRoot = ctx.services.config.contentRoot || 'content'
+  const fullCollection = params.collection.startsWith(contentRoot + '/')
+    ? params.collection
+    : `${contentRoot}/${params.collection}`
+
   let relativePath: string
   try {
-    relativePath = store.resolveDocumentPath(params.collection, params.slug ?? '').relativePath
+    relativePath = store.resolveDocumentPath(fullCollection, params.slug ?? '').relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: message }
@@ -41,7 +48,7 @@ export const readContent = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
-  const doc = await store.read(params.collection, params.slug ?? '')
+  const doc = await store.read(fullCollection, params.slug ?? '')
   return { ok: true, status: 200, data: doc }
 }
 
@@ -68,9 +75,16 @@ export const writeContent = async (
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchWorkspace(branchState, branchMode)
   const store = new ContentStore(branchPaths.branchRoot, ctx.services.config)
+
+  // Prepend contentRoot to collection if not already present
+  const contentRoot = ctx.services.config.contentRoot || 'content'
+  const fullCollection = req.body.collection.startsWith(contentRoot + '/')
+    ? req.body.collection
+    : `${contentRoot}/${req.body.collection}`
+
   let relativePath: string
   try {
-    relativePath = store.resolveDocumentPath(req.body.collection, req.body.slug ?? '').relativePath
+    relativePath = store.resolveDocumentPath(fullCollection, req.body.slug ?? '').relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: message }
@@ -89,11 +103,11 @@ export const writeContent = async (
 
   const result =
     req.body.format === 'json'
-      ? await store.write(req.body.collection, req.body.slug ?? '', {
+      ? await store.write(fullCollection, req.body.slug ?? '', {
           format: 'json',
           data: req.body.data ?? {},
         })
-      : await store.write(req.body.collection, req.body.slug ?? '', {
+      : await store.write(fullCollection, req.body.slug ?? '', {
           format: req.body.format,
           data: req.body.data,
           body: req.body.body ?? '',
