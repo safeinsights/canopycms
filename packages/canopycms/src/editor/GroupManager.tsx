@@ -14,7 +14,6 @@ import {
   Text,
   TextInput,
   Textarea,
-  Title,
   Alert,
   Tabs,
   Tooltip,
@@ -259,44 +258,18 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
 
   if (!canEdit) {
     return (
-      <Paper
-        withBorder
-        radius="md"
-        shadow="sm"
-        h="100%"
-        style={{ display: 'flex', flexDirection: 'column' }}
-      >
-        <Group justify="space-between" px="md" py="sm">
-          <div>
-            <Title order={4}>Groups</Title>
-            <Text size="xs" c="dimmed">
-              View groups and organizations
-            </Text>
-          </div>
-          {onClose && (
-            <Button size="xs" variant="subtle" onClick={onClose}>
-              Close
-            </Button>
-          )}
-        </Group>
-
-        <Alert
-          icon={<IconAlertCircle size={16} />}
-          color="yellow"
-          mx="md"
-          mb="sm"
-          title="Read-only"
-        >
+      <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
+        <Alert icon={<IconAlertCircle size={16} />} color="yellow" mb="sm" title="Read-only">
           You need admin access to manage groups.
         </Alert>
 
         <Tabs defaultValue="internal" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <Tabs.List px="md">
+          <Tabs.List>
             <Tabs.Tab value="internal">Internal Groups</Tabs.Tab>
             <Tabs.Tab value="external">External Groups</Tabs.Tab>
           </Tabs.List>
 
-          <Tabs.Panel value="internal" style={{ flex: 1, overflow: 'auto' }} px="md" pt="md">
+          <Tabs.Panel value="internal" style={{ flex: 1, overflow: 'auto' }} pt="md">
             {groups.length === 0 ? (
               <Paper withBorder p="md" style={{ textAlign: 'center' }}>
                 <IconUsers size={32} color="gray" style={{ margin: '0 auto', marginBottom: 8 }} />
@@ -329,43 +302,22 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
             )}
           </Tabs.Panel>
 
-          <Tabs.Panel value="external" style={{ flex: 1, overflow: 'auto' }} px="md" pt="md">
+          <Tabs.Panel value="external" style={{ flex: 1, overflow: 'auto' }} pt="md">
             <Text size="sm" c="dimmed" mb="md">
               External groups are read-only
             </Text>
           </Tabs.Panel>
         </Tabs>
-      </Paper>
+      </Stack>
     )
   }
 
   return (
-    <Paper
-      withBorder
-      radius="md"
-      shadow="sm"
-      h="100%"
-      style={{ display: 'flex', flexDirection: 'column' }}
-    >
-      <Group justify="space-between" px="md" py="sm">
-        <div>
-          <Title order={4}>Groups</Title>
-          <Text size="xs" c="dimmed">
-            Manage groups and organizations
-          </Text>
-        </div>
-        {onClose && (
-          <Button size="xs" variant="subtle" onClick={onClose}>
-            Close
-          </Button>
-        )}
-      </Group>
-
+    <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
       {error && (
         <Alert
           icon={<IconAlertCircle size={16} />}
           color="red"
-          mx="md"
           mb="sm"
           title="Error"
           withCloseButton
@@ -384,14 +336,14 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
         </Group>
       ) : (
         <Tabs defaultValue="internal" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <Tabs.List px="md">
+          <Tabs.List>
             <Tabs.Tab value="internal">Internal Groups</Tabs.Tab>
             <Tabs.Tab value="external">External Groups</Tabs.Tab>
           </Tabs.List>
 
           {/* Internal Groups Tab */}
           <Tabs.Panel value="internal" style={{ flex: 1, overflow: 'auto' }}>
-            <ScrollArea style={{ height: '100%' }} px="md" pt="md">
+            <ScrollArea style={{ height: '100%' }} pt="md">
               <Stack gap="sm" pb="md">
                 <Group justify="space-between" mb="xs">
                   <Text size="sm" fw={500} c="dimmed">
@@ -577,7 +529,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
 
           {/* External Groups Tab */}
           <Tabs.Panel value="external" style={{ flex: 1, overflow: 'auto' }}>
-            <ScrollArea style={{ height: '100%' }} px="md" pt="md">
+            <ScrollArea style={{ height: '100%' }} pt="md">
               <Stack gap="sm" pb="md">
                 <Text size="sm" c="dimmed" mb="xs">
                   Search for external groups from your organization
@@ -651,7 +603,6 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
       {canEdit && isDirty && (
         <Group
           justify="flex-end"
-          px="md"
           py="sm"
           gap="sm"
           style={{ borderTop: '1px solid var(--mantine-color-gray-3)' }}
@@ -702,6 +653,6 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
           </Group>
         </Stack>
       </Modal>
-    </Paper>
+    </Stack>
   )
 }

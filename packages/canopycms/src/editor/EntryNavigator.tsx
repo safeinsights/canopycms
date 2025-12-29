@@ -38,7 +38,6 @@ export interface EntryNavigatorProps {
   collections?: EntryNavCollection[]
   selectedId?: string
   onSelect: (id: string) => void
-  title?: string
 }
 
 export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
@@ -46,7 +45,6 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   collections,
   selectedId,
   onSelect,
-  title,
 }) => {
   const treeData = useMemo<TreeNodeData[]>(() => {
     if (collections?.length) {
@@ -172,30 +170,19 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   }
 
   return (
-    <Paper
-      withBorder
-      radius="md"
-      shadow="sm"
-      h="100%"
-      style={{ display: 'flex', flexDirection: 'column' }}
-    >
-      {!collections?.length && (
-        <Text px="sm" py="xs" size="xs" fw={700} tt="uppercase" c="dimmed">
-          {title ?? 'Content'}
-        </Text>
-      )}
+    <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
       <ScrollArea type="auto" offsetScrollbars style={{ flex: 1 }}>
         {treeData.length === 0 ? (
-          <Text size="xs" c="dimmed" px="sm" py="sm">
+          <Text size="xs" c="dimmed" py="sm">
             No content
           </Text>
         ) : (
-          <Box px="sm" py="sm">
+          <Box py="sm">
             <Tree data={treeData} renderNode={renderNode} selectOnClick={false} levelOffset="sm" />
           </Box>
         )}
       </ScrollArea>
-    </Paper>
+    </Stack>
   )
 }
 

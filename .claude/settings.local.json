@@ -18,7 +18,10 @@
       "Bash(grep:*)",
       "Bash(find:*)",
       "Bash(xargs:*)",
-      "Bash(timeout 30 npm run dev:*)"
+      "Bash(timeout 30 npm run dev:*)",
+      "WebFetch(domain:mantine.dev)",
+      "WebFetch(domain:clerk.com)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

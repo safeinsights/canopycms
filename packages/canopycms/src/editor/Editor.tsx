@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react'
 
-import { Box, Drawer, Paper, Text } from '@mantine/core'
+import { Box, Drawer, Paper, Text, Title } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 
 import type { ContentFormat, FieldConfig } from '../config'
@@ -441,7 +441,11 @@ export const Editor: React.FC<EditorProps> = ({
           opened={navigatorOpen}
           onClose={() => setNavigatorOpen(false)}
           position="left"
-          title="Content"
+          title={
+            <div>
+              <Title order={4}>Content</Title>
+            </div>
+          }
           padding="md"
           size={360}
           overlayProps={{ blur: 2 }}
@@ -458,14 +462,20 @@ export const Editor: React.FC<EditorProps> = ({
               setSelectedId(id)
               setNavigatorOpen(false)
             }}
-            title="Content"
           />
         </Drawer>
         <Drawer
           opened={branchManagerOpen}
           onClose={() => setBranchManagerOpen(false)}
           position="right"
-          title="Branches"
+          title={
+            <div>
+              <Title order={4}>Branches</Title>
+              <Text size="xs" c="dimmed">
+                Manage access, status, and lifecycle
+              </Text>
+            </div>
+          }
           padding="md"
           size={420}
           overlayProps={{ blur: 2 }}
@@ -522,7 +532,14 @@ export const Editor: React.FC<EditorProps> = ({
           opened={groupManagerOpen}
           onClose={() => setGroupManagerOpen(false)}
           position="right"
-          title="Manage Groups"
+          title={
+            <div>
+              <Title order={4}>Groups</Title>
+              <Text size="xs" c="dimmed">
+                Manage groups and organizations
+              </Text>
+            </div>
+          }
           padding="md"
           size={600}
           overlayProps={{ blur: 2 }}
@@ -543,7 +560,14 @@ export const Editor: React.FC<EditorProps> = ({
           opened={permissionManagerOpen}
           onClose={() => setPermissionManagerOpen(false)}
           position="right"
-          title="Manage Permissions"
+          title={
+            <div>
+              <Title order={4}>Permissions</Title>
+              <Text size="xs" c="dimmed">
+                Manage content access by path (read, edit, review)
+              </Text>
+            </div>
+          }
           padding="md"
           size={700}
           overlayProps={{ blur: 2 }}

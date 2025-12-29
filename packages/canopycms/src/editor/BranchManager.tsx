@@ -10,7 +10,6 @@ import {
   ScrollArea,
   Stack,
   Text,
-  Title,
   TextInput,
   Textarea,
   Collapse,
@@ -146,28 +145,10 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   }
 
   return (
-    <Paper
-      withBorder
-      radius="md"
-      shadow="sm"
-      h="100%"
-      style={{ display: 'flex', flexDirection: 'column' }}
-    >
-      <Group justify="space-between" px="md" py="sm">
-        <div>
-          <Title order={4}>Branches</Title>
-          <Text size="xs" c="dimmed">
-            Manage access, status, and lifecycle
-          </Text>
-        </div>
-        <Button variant="subtle" color="neutral" size="xs" onClick={onClose}>
-          Close
-        </Button>
-      </Group>
-
+    <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
       {/* Branch-level comments */}
       {currentUserId && onAddComment && onResolveThread && (
-        <Stack px="md" pt="sm">
+        <Stack pt="sm">
           <BranchComments
             comments={comments}
             currentUserId={currentUserId}
@@ -180,7 +161,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
       )}
 
       {!isLocalSimple && (
-        <Stack gap="sm" px="md" pt="sm">
+        <Stack gap="sm" pt="sm">
           <Button
             variant="light"
             size="sm"
@@ -222,7 +203,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
         </Stack>
       )}
 
-      <ScrollArea style={{ flex: 1 }} px="md" pb="md">
+      <ScrollArea style={{ flex: 1 }} pb="md">
         {branches.length === 0 ? (
           <Text size="sm" c="dimmed" py="md">
             {isLocalSimple
@@ -371,6 +352,6 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
           </Stack>
         )}
       </ScrollArea>
-    </Paper>
+    </Stack>
   )
 }
