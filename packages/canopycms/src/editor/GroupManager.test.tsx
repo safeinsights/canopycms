@@ -79,13 +79,11 @@ describe('GroupManager', () => {
   let mockOnSave: (groups: InternalGroup[]) => Promise<void>
   let mockOnSearchUsers: (query: string, limit?: number) => Promise<UserSearchResult[]>
   let mockOnSearchExternalGroups: (query: string) => Promise<ExternalGroup[]>
-  let mockOnClose: () => void
 
   beforeEach(() => {
     mockOnSave = vi.fn().mockResolvedValue(undefined)
     mockOnSearchUsers = vi.fn().mockResolvedValue(mockUserSearchResults)
     mockOnSearchExternalGroups = vi.fn().mockResolvedValue(mockExternalGroups)
-    mockOnClose = vi.fn()
   })
 
   describe('rendering', () => {
@@ -101,8 +99,6 @@ describe('GroupManager', () => {
         { wrapper }
       )
 
-      expect(screen.getByText('Groups')).toBeTruthy()
-      expect(screen.getByText('Manage groups and organizations')).toBeTruthy()
       expect(screen.getByText('Internal Groups')).toBeTruthy()
       expect(screen.getByText('External Groups')).toBeTruthy()
     })
@@ -760,35 +756,6 @@ describe('GroupManager', () => {
     })
   })
 
-  describe('close button', () => {
-    it('calls onClose when close button is clicked', () => {
-      render(
-        <GroupManager
-          internalGroups={mockInternalGroups}
-          canEdit={true}
-          onSave={mockOnSave}
-          onClose={mockOnClose}
-        />,
-        { wrapper }
-      )
-
-      const closeButton = screen.getByText('Close')
-      fireEvent.click(closeButton)
-
-      expect(mockOnClose).toHaveBeenCalled()
-    })
-
-    it('does not render close button when onClose is not provided', () => {
-      render(
-        <GroupManager
-          internalGroups={mockInternalGroups}
-          canEdit={true}
-          onSave={mockOnSave}
-        />,
-        { wrapper }
-      )
-
-      expect(screen.queryByText('Close')).toBeFalsy()
-    })
-  })
+  // Note: onClose prop is accepted but not used to render a close button
+  // The close button is provided by parent component (Drawer/Modal)
 })

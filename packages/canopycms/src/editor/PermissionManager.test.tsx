@@ -106,13 +106,11 @@ describe('PermissionManager', () => {
   let mockOnSave: (permissions: PathPermission[]) => Promise<void>
   let mockOnSearchUsers: (query: string, limit?: number) => Promise<UserSearchResult[]>
   let mockOnListGroups: () => Promise<GroupMetadata[]>
-  let mockOnClose: () => void
 
   beforeEach(() => {
     mockOnSave = vi.fn().mockResolvedValue(undefined)
     mockOnSearchUsers = vi.fn().mockResolvedValue(mockUsers)
     mockOnListGroups = vi.fn().mockResolvedValue(mockGroups)
-    mockOnClose = vi.fn()
   })
 
   describe('rendering', () => {
@@ -129,9 +127,9 @@ describe('PermissionManager', () => {
         { wrapper }
       )
 
-      expect(screen.getByText('Permissions')).toBeTruthy()
-      expect(screen.getByText('Manage content access by path (read, edit, review)')).toBeTruthy()
       expect(screen.getByText('content')).toBeTruthy()
+      expect(screen.getByText('Expand All')).toBeTruthy()
+      expect(screen.getByText('Collapse All')).toBeTruthy()
     })
 
     it('renders loading state', () => {
@@ -774,25 +772,6 @@ describe('PermissionManager', () => {
     })
   })
 
-  describe('close button', () => {
-    it('calls onClose when close button clicked', () => {
-      render(
-        <PermissionManager
-          schema={mockSchema}
-          permissions={mockPermissions}
-          canEdit={true}
-          onSave={mockOnSave}
-          onSearchUsers={mockOnSearchUsers}
-          onListGroups={mockOnListGroups}
-          onClose={mockOnClose}
-        />,
-        { wrapper }
-      )
-
-      const closeButton = screen.getByText('Close')
-      fireEvent.click(closeButton)
-
-      expect(mockOnClose).toHaveBeenCalled()
-    })
-  })
+  // Note: onClose prop is accepted but not used to render a close button
+  // The close button is provided by parent component (Drawer/Modal)
 })
