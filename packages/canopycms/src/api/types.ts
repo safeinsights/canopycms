@@ -1,22 +1,19 @@
 import type { BranchState } from '../types'
-import type { CanopyConfig } from '../config'
+import type { CanopyConfig, PermissionLevel } from '../config'
 import type { GitHubService } from '../github-service'
-
-export interface RequestUser {
-  userId: string
-  groups?: string[]
-}
+import type { CanopyUser } from '../user'
 
 export interface ApiContext {
   // TODO DRY this services entry up by using a Partial<CanopyServices> or similar
   services: {
     config: CanopyConfig
-    checkBranchAccess: (state: BranchState, user: RequestUser) => { allowed: boolean; reason: string }
+    checkBranchAccess: (state: BranchState, user: CanopyUser) => { allowed: boolean; reason: string }
     checkContentAccess: (
       branchState: BranchState,
       branchRoot: string,
       relativePath: string,
-      user: RequestUser
+      user: CanopyUser,
+      level: PermissionLevel
     ) => Promise<{ allowed: boolean; branch: any; path: any }>
     createGitManagerFor?: (repoPath: string, opts?: { baseBranch?: string; remote?: string }) => any
     githubService?: GitHubService
@@ -43,7 +40,7 @@ export interface ApiContext {
 export interface ApiRequest<TBody = unknown> {
   branch?: string
   body?: TBody
-  user: RequestUser
+  user: CanopyUser
 }
 
 export interface ApiResponse<TData = unknown> {

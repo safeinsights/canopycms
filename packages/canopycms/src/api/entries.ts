@@ -243,7 +243,7 @@ export const listEntries = async (
           item.collectionId,
           item.type === 'singleton' ? '' : item.slug
         )
-        const access = await ctx.services.checkContentAccess(branchState, root, normalized.relativePath, req.user)
+        const access = await ctx.services.checkContentAccess(branchState, root, normalized.relativePath, req.user, 'read')
         if (!access.allowed) continue
         if (search) {
           const haystack = `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()

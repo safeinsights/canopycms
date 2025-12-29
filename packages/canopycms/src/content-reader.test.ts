@@ -7,6 +7,7 @@ import { simpleGit } from 'simple-git'
 
 import { createContentReader } from './content-reader'
 import { defineCanopyTestConfig } from './config-test'
+import { ANONYMOUS_USER } from './user'
 import type { BranchState } from './types'
 import { ContentStoreError } from './content-store'
 
@@ -39,6 +40,7 @@ describe('createContentReader', () => {
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
+      defaultPathAccess: 'allow',
       schema: [
         {
           type: 'singleton',
@@ -65,11 +67,11 @@ describe('createContentReader', () => {
       getBranchState: async (branch) => (branch === 'main' ? branchState : null),
     })
 
-    const home = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/home', branch: 'main' })
+    const home = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/home', branch: 'main', user: ANONYMOUS_USER })
     expect(home.path).toBe('/?branch=main')
     expect(home.data.hero.title).toBe('Hi')
 
-    await expect(reader.read({ entryPath: 'content/posts', slug: 'missing' })).rejects.toBeInstanceOf(
+    await expect(reader.read({ entryPath: 'content/posts', slug: 'missing', user: ANONYMOUS_USER })).rejects.toBeInstanceOf(
       ContentStoreError
     )
   })
@@ -82,6 +84,7 @@ describe('createContentReader', () => {
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
+      defaultPathAccess: 'allow',
       schema: [
         {
           type: 'singleton',
@@ -108,11 +111,11 @@ describe('createContentReader', () => {
       getBranchState: async () => branchState,
     })
 
-    const { data } = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/home' })
+    const { data } = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/home', user: ANONYMOUS_USER })
     expect(data.hero.title).toBe('Hello')
 
     await expect(
-      reader.read({ entryPath: 'content/posts', slug: 'missing' })
+      reader.read({ entryPath: 'content/posts', slug: 'missing', user: ANONYMOUS_USER })
     ).rejects.toBeInstanceOf(ContentStoreError)
   })
 
@@ -138,7 +141,7 @@ describe('createContentReader', () => {
       getBranchState: async () => branchState,
     })
 
-    await expect(reader.read({ entryPath: 'content/home', user: { userId: 'anon' } })).rejects.toBeInstanceOf(
+    await expect(reader.read({ entryPath: 'content/home', user: { type: 'authenticated', userId: 'anon', groups: [] } })).rejects.toBeInstanceOf(
       ContentStoreError
     )
   })
@@ -152,6 +155,7 @@ describe('createContentReader', () => {
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
+      defaultPathAccess: 'allow',
       schema: [
         {
           type: 'collection',
@@ -179,6 +183,7 @@ describe('createContentReader', () => {
     const post = await reader.read<{ title: string }>({
       entryPath: 'content/posts',
       slug: 'first',
+      user: ANONYMOUS_USER,
     })
     expect(post.data.title).toBe('Hello world')
     expect(post.path).toBe('/posts/first?branch=main')
@@ -186,6 +191,7 @@ describe('createContentReader', () => {
     const home = await reader.read<{ title: string }>({
       entryPath: 'content/home',
       branch: 'feature/foo',
+      user: ANONYMOUS_USER,
     })
     expect(home.path).toBe('/?branch=feature%2Ffoo')
   })
@@ -206,6 +212,7 @@ describe('createContentReader', () => {
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
+      defaultPathAccess: 'allow',
       mode: 'local-simple',
       schema: [
         {
@@ -221,7 +228,7 @@ describe('createContentReader', () => {
     })
 
     const reader = createContentReader({ config, basePathOverride: root })
-    const doc = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/home' })
+    const doc = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/home', user: ANONYMOUS_USER })
     expect(doc.path).toBe('/?branch=main')
     expect(doc.data.hero.title).toBe('Welcome')
 

@@ -40,7 +40,7 @@ export function mockConsole(): MockConsole {
     debug: [],
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const spies: Array<ReturnType<typeof vi.spyOn<any, any>>> = []
+  const spies: any[] = []
 
   const methods: ConsoleMethod[] = ['log', 'warn', 'error', 'info', 'debug']
 

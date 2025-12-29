@@ -1,6 +1,6 @@
 import type { CanopyConfig } from './config'
 import type { BranchState } from './types'
-import type { UserContext } from './authz'
+import type { CanopyUser } from './user'
 import { createCheckPathAccess } from './path-permissions'
 import { createCheckBranchAccess } from './authz'
 import { createCheckContentAccess } from './content-access'
@@ -43,7 +43,7 @@ export const getEffectiveGroups = (
 
 export interface CanopyServices {
   config: CanopyConfig
-  checkBranchAccess: (state: BranchState, user: UserContext) => ReturnType<ReturnType<typeof createCheckBranchAccess>>
+  checkBranchAccess: (state: BranchState, user: CanopyUser) => ReturnType<ReturnType<typeof createCheckBranchAccess>>
   checkPathAccess: ReturnType<typeof createCheckPathAccess>
   checkContentAccess: ReturnType<typeof createCheckContentAccess>
   createGitManagerFor: (repoPath: string, opts?: { baseBranch?: string; remote?: string }) => GitManager
@@ -69,12 +69,12 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
   // Path permissions are loaded dynamically from .canopycms/permissions.json at request time.
   // At the service level, we bind with empty rules for direct path checks.
-  const checkPathAccess = createCheckPathAccess([], config.defaultPathAccess ?? 'allow')
+  const checkPathAccess = createCheckPathAccess([], config.defaultPathAccess ?? 'deny')
   // Content access loads permissions dynamically from the branch root
   const checkContentAccess = createCheckContentAccess({
     checkBranchAccess,
     loadPathPermissions,
-    defaultPathAccess: config.defaultPathAccess ?? 'allow',
+    defaultPathAccess: config.defaultPathAccess ?? 'deny',
   })
   const createGitManagerFor = (repoPath: string, opts?: { baseBranch?: string; remote?: string }) =>
     new GitManager({

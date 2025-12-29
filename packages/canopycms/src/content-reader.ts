@@ -5,7 +5,7 @@ import type { CanopyConfig, ResolvedSchemaItem } from './config'
 import { getDefaultBranchBase, resolveBranchWorkspace, type BranchMode } from './paths'
 import { createCanopyServices, type CanopyServices } from './services'
 import type { BranchState } from './types'
-import type { UserContext } from './authz'
+import type { CanopyUser } from './user'
 import { resolveSchema } from './config'
 
 export interface ContentReaderOptions {
@@ -25,7 +25,8 @@ export interface ReadContentInput {
   entryPath: string
   slug?: string
   branch?: string
-  user?: UserContext
+  /** User making the request. Required - use ANONYMOUS_USER for public access. */
+  user: CanopyUser
 }
 
 export interface ContentReader {
@@ -149,8 +150,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       throw new ContentStoreError(message)
     }
 
-    const actor = user ?? { userId: 'anonymous' }
-    const access = await services.checkContentAccess(state, branchRoot, relativePath, actor)
+    const access = await services.checkContentAccess(state, branchRoot, relativePath, user, 'read')
     if (!access.allowed) {
       throw new ContentStoreError('Forbidden')
     }

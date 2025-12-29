@@ -54,7 +54,7 @@ describe('listEntries', () => {
     })
 
     // Mock loadPathPermissions to return rules that hide 'hidden.json' from user 'u1'
-    const pathRules: PathPermission[] = [{ path: 'content/posts/hidden.json', allowedUsers: ['other'] }]
+    const pathRules: PathPermission[] = [{ path: 'content/posts/hidden.json', edit: { allowedUsers: ['other'] } }]
     const mockLoadPermissions = vi.fn().mockResolvedValue(pathRules)
 
     const checkBranchAccess = createCheckBranchAccess('allow')
@@ -79,7 +79,7 @@ describe('listEntries', () => {
       }),
     }
 
-    const res = await listEntries(ctx, { user: { userId: 'u1' } }, { branch: 'main', limit: 1 })
+    const res = await listEntries(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'main', limit: 1 })
 
     expect(res.ok).toBe(true)
     expect(res.data?.entries.some((e) => e.slug === 'first')).toBe(true)
@@ -101,7 +101,7 @@ describe('listEntries', () => {
       },
       getBranchState: vi.fn().mockResolvedValue(null),
     }
-    const res = await listEntries(ctx, { user: { userId: 'u1' } }, { branch: 'missing' })
+    const res = await listEntries(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'missing' })
     expect(res.status).toBe(404)
     expect(res.ok).toBe(false)
   })

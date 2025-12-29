@@ -2,9 +2,9 @@ import path from 'node:path'
 
 import { minimatch } from 'minimatch'
 
-import type { CanopyUserId } from './types'
-import type { PathPermission, DefaultPathAccess } from './config'
-import { isAdmin, isReviewer } from './reserved-groups'
+import type { PathPermission, DefaultPathAccess, PermissionLevel, PermissionTarget } from './config'
+import { isAdmin } from './reserved-groups'
+import type { CanopyUser } from './user'
 
 export interface PathPermissionResult {
   allowed: boolean
@@ -17,26 +17,24 @@ const normalize = (p: string): string => {
   return normalized.replace(/^\.?\/*/, '')
 }
 
-const matchesRule = (rule: PathPermission, relativePath: string): boolean => minimatch(relativePath, rule.path, { dot: true })
+const matchesRule = (rule: PathPermission, relativePath: string): boolean =>
+  minimatch(relativePath, rule.path, { dot: true })
 
-const isAllowedByRule = (
-  rule: PathPermission,
-  userId: CanopyUserId,
-  groupIds: string[] | undefined
-): boolean => {
-  // managerOrAdminAllowed means only Reviewers (and Admins) can access
-  if (rule.managerOrAdminAllowed) {
-    return isReviewer(groupIds)
-  }
-  const hasUserConstraint = !!rule.allowedUsers?.length
-  const hasGroupConstraint = !!rule.allowedGroups?.length
-  const matchesUser = hasUserConstraint && rule.allowedUsers?.includes(userId)
-  const matchesGroup =
-    hasGroupConstraint && groupIds?.some((gid) => rule.allowedGroups?.includes(gid))
+/**
+ * Check if user matches a permission target
+ */
+const isAllowedByTarget = (target: PermissionTarget, user: CanopyUser): boolean => {
+  const hasUserConstraint = !!target.allowedUsers?.length
+  const hasGroupConstraint = !!target.allowedGroups?.length
 
+  // No constraints means allowed (rule applies to everyone)
   if (!hasUserConstraint && !hasGroupConstraint) {
     return true
   }
+
+  const matchesUser = hasUserConstraint && target.allowedUsers?.includes(user.userId)
+  const matchesGroup =
+    hasGroupConstraint && user.groups?.some((gid) => target.allowedGroups?.includes(gid))
 
   return Boolean(matchesUser || matchesGroup)
 }
@@ -48,19 +46,20 @@ const isAllowedByRule = (
 export const checkPathAccess = ({
   rules,
   relativePath,
-  userId,
-  groupIds,
-  defaultAccess = 'allow',
+  user,
+  defaultAccess,
+  level,
 }: {
   rules: PathPermission[]
   relativePath: string
-  userId: CanopyUserId
-  groupIds?: string[]
-  defaultAccess?: DefaultPathAccess
+  user: CanopyUser
+  defaultAccess: DefaultPathAccess
+  level: PermissionLevel
 }): PathPermissionResult => {
   const normalizedPath = normalize(relativePath)
-  // Only Admins bypass all path permissions (not Reviewers)
-  if (isAdmin(groupIds)) {
+
+  // Only Admins bypass all path permissions
+  if (isAdmin(user.groups)) {
     return { allowed: true, reason: 'admin' }
   }
 
@@ -68,7 +67,15 @@ export const checkPathAccess = ({
     if (!matchesRule(rule, normalizedPath)) {
       continue
     }
-    const allowed = isAllowedByRule(rule, userId, groupIds)
+
+    // Get the permission target for this level
+    const target = rule[level]
+    if (!target) {
+      // No permissions defined for this level on this rule, continue to next rule
+      continue
+    }
+
+    const allowed = isAllowedByTarget(target, user)
     return {
       allowed,
       matchedRule: rule,
@@ -84,8 +91,8 @@ export const checkPathAccess = ({
  */
 export const createCheckPathAccess = (
   rules: PathPermission[],
-  defaultAccess: DefaultPathAccess = 'allow'
+  defaultAccess: DefaultPathAccess
 ) => {
-  return (input: Omit<Parameters<typeof checkPathAccess>[0], 'rules' | 'defaultAccess'>): PathPermissionResult =>
+  return (input: { relativePath: string; user: CanopyUser; level: PermissionLevel }): PathPermissionResult =>
     checkPathAccess({ ...input, rules, defaultAccess })
 }

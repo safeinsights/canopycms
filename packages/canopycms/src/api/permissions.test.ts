@@ -53,8 +53,8 @@ describe('permissions API', () => {
   describe('getPermissions', () => {
     it('returns permissions for admin user', async () => {
       const mockPermissions: PathPermission[] = [
-        { path: 'content/admin/**', managerOrAdminAllowed: true },
-        { path: 'content/public/**', allowedUsers: ['user-1'] },
+        { path: 'content/admin/**', edit: {} },
+        { path: 'content/public/**', edit: { allowedUsers: ['user-1'] } },
       ]
 
       const mockGetBranchState = vi.fn().mockResolvedValue({
@@ -73,7 +73,7 @@ describe('permissions API', () => {
       vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue(mockPermissions)
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const result = await getPermissions(mockContext, req)
@@ -85,7 +85,7 @@ describe('permissions API', () => {
 
     it('denies access for non-admin users', async () => {
       const req: ApiRequest<undefined> = {
-        user: { userId: 'user-1', groups: [] },
+        user: { type: 'authenticated', userId: 'user-1', groups: [] },
       }
 
       const result = await getPermissions(mockContext, req)
@@ -100,7 +100,7 @@ describe('permissions API', () => {
       mockContext.getBranchState = mockGetBranchState
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const result = await getPermissions(mockContext, req)
@@ -114,7 +114,7 @@ describe('permissions API', () => {
   describe('updatePermissions', () => {
     it('updates permissions for admin user', async () => {
       const newPermissions: PathPermission[] = [
-        { path: 'content/updated/**', allowedGroups: ['new-group'] },
+        { path: 'content/updated/**', edit: { allowedGroups: ['new-group'] } },
       ]
 
       const mockGetBranchState = vi.fn().mockResolvedValue({
@@ -137,7 +137,7 @@ describe('permissions API', () => {
       mockContext.services.createGitManagerFor = vi.fn().mockReturnValue(mockGit)
 
       const req: ApiRequest<{ permissions: PathPermission[] }> = {
-        user: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
         body: { permissions: newPermissions },
       }
 
@@ -154,7 +154,7 @@ describe('permissions API', () => {
 
     it('denies access for non-admin users', async () => {
       const req: ApiRequest<{ permissions: PathPermission[] }> = {
-        user: { userId: 'user-1', groups: [] },
+        user: { type: 'authenticated', userId: 'user-1', groups: [] },
         body: { permissions: [] },
       }
 
@@ -168,7 +168,7 @@ describe('permissions API', () => {
     it('requires permissions array in body', async () => {
       // Type as Partial to test runtime validation
       const req = {
-        user: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
         body: {},
       } as ApiRequest<Partial<{ permissions: PathPermission[] }>>
 
@@ -184,7 +184,7 @@ describe('permissions API', () => {
       mockContext.getBranchState = mockGetBranchState
 
       const req: ApiRequest<{ permissions: PathPermission[] }> = {
-        user: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
         body: { permissions: [] },
       }
 
@@ -206,7 +206,7 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.searchUsers).mockResolvedValue(mockUsers)
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const result = await searchUsers(mockContext, req, { query: 'alice' })
@@ -224,7 +224,7 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.searchUsers).mockResolvedValue(mockUsers)
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'reviewer-1', groups: [RESERVED_GROUPS.REVIEWERS] },
+        user: { type: 'authenticated', userId: 'reviewer-1', groups: [RESERVED_GROUPS.REVIEWERS] },
       }
 
       const result = await searchUsers(mockContext, req, { query: 'test', limit: 5 })
@@ -236,7 +236,7 @@ describe('permissions API', () => {
 
     it('denies access for regular users', async () => {
       const req: ApiRequest<undefined> = {
-        user: { userId: 'user-1', groups: [] },
+        user: { type: 'authenticated', userId: 'user-1', groups: [] },
       }
 
       const result = await searchUsers(mockContext, req, { query: 'test' })
@@ -250,7 +250,7 @@ describe('permissions API', () => {
       mockContext.authPlugin = undefined
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const result = await searchUsers(mockContext, req, { query: 'test' })
@@ -264,7 +264,7 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.searchUsers).mockRejectedValue(new Error('API error'))
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const result = await searchUsers(mockContext, req, { query: 'test' })
@@ -285,7 +285,7 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue(mockGroups)
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const result = await listGroups(mockContext, req)
@@ -303,7 +303,7 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue(mockGroups)
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'reviewer-1', groups: [RESERVED_GROUPS.REVIEWERS] },
+        user: { type: 'authenticated', userId: 'reviewer-1', groups: [RESERVED_GROUPS.REVIEWERS] },
       }
 
       const result = await listGroups(mockContext, req)
@@ -314,7 +314,7 @@ describe('permissions API', () => {
 
     it('denies access for regular users', async () => {
       const req: ApiRequest<undefined> = {
-        user: { userId: 'user-1', groups: [] },
+        user: { type: 'authenticated', userId: 'user-1', groups: [] },
       }
 
       const result = await listGroups(mockContext, req)
@@ -328,7 +328,7 @@ describe('permissions API', () => {
       mockContext.authPlugin = undefined
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const result = await listGroups(mockContext, req)
@@ -342,7 +342,7 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.listGroups).mockRejectedValue(new Error('Network error'))
 
       const req: ApiRequest<undefined> = {
-        user: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
       }
 
       const result = await listGroups(mockContext, req)

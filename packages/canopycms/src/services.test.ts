@@ -33,13 +33,14 @@ describe('createCanopyServices', () => {
     const services = createCanopyServices(cfg)
 
     // Path permissions are now loaded from JSON file at runtime, not from config
-    // Service creates checkPathAccess with empty rules (default open access)
+    // Service creates checkPathAccess with empty rules (default deny)
     const pathResult = services.checkPathAccess({
       relativePath: 'content/any/file.md',
-      userId: 'user-1',
-      groupIds: [],
+      user: { type: 'authenticated', userId: 'user-1', groups: [] },
+      level: 'read',
     })
-    expect(pathResult.allowed).toBe(true) // No rules = default allow
+    expect(pathResult.allowed).toBe(false) // No rules = default deny
+    expect(pathResult.reason).toBe('no_rule_match')
 
     const branchAllowed = services.checkBranchAccess(
       {
@@ -52,7 +53,7 @@ describe('createCanopyServices', () => {
           updatedAt: new Date().toISOString(),
         },
       },
-      { userId: 'u1', groups: [] }
+      { type: 'authenticated', userId: 'u1', groups: [] }
     )
     expect(branchAllowed.allowed).toBe(false) // default deny, no ACL
   })

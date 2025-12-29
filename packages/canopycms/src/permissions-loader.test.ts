@@ -30,11 +30,11 @@ describe('permissions loader', () => {
           pathPermissions: [
             {
               path: 'content/admin/**',
-              managerOrAdminAllowed: true,
+              edit: {},
             },
             {
               path: 'content/partners/**',
-              allowedGroups: ['partner-org'],
+              edit: { allowedGroups: ['partner-org'] },
             },
           ],
         }),
@@ -46,11 +46,11 @@ describe('permissions loader', () => {
       expect(permissions).toHaveLength(2)
       expect(permissions[0]).toEqual({
         path: 'content/admin/**',
-        managerOrAdminAllowed: true,
+        edit: {},
       })
       expect(permissions[1]).toEqual({
         path: 'content/partners/**',
-        allowedGroups: ['partner-org'],
+        edit: { allowedGroups: ['partner-org'] },
       })
     })
 
@@ -100,11 +100,11 @@ describe('permissions loader', () => {
       const permissions = [
         {
           path: 'content/admin/**',
-          managerOrAdminAllowed: true,
+          edit: {},
         },
         {
           path: 'content/users/**',
-          allowedUsers: ['user-1', 'user-2'],
+          edit: { allowedUsers: ['user-1', 'user-2'] },
         },
       ]
 
@@ -120,12 +120,12 @@ describe('permissions loader', () => {
       expect(parsed.pathPermissions).toHaveLength(2)
       expect(parsed.pathPermissions[0]).toEqual({
         path: 'content/admin/**',
-        managerOrAdminAllowed: true,
+        edit: {},
       })
     })
 
     it('creates .canopycms directory if it does not exist', async () => {
-      const permissions = [{ path: 'content/**', allowedGroups: ['all'] }]
+      const permissions = [{ path: 'content/**', edit: { allowedGroups: ['all'] } }]
 
       await savePathPermissions(testRoot, permissions, 'user-1')
 
@@ -138,7 +138,7 @@ describe('permissions loader', () => {
       const invalidPermissions: any = [
         {
           path: '', // Invalid empty path
-          managerOrAdminAllowed: true,
+          edit: {},
         },
       ]
 
@@ -146,10 +146,10 @@ describe('permissions loader', () => {
     })
 
     it('overwrites existing file', async () => {
-      const firstPermissions = [{ path: 'content/first/**', allowedUsers: ['user-1'] }]
+      const firstPermissions = [{ path: 'content/first/**', edit: { allowedUsers: ['user-1'] } }]
       await savePathPermissions(testRoot, firstPermissions, 'admin-1')
 
-      const secondPermissions = [{ path: 'content/second/**', allowedUsers: ['user-2'] }]
+      const secondPermissions = [{ path: 'content/second/**', edit: { allowedUsers: ['user-2'] } }]
       await savePathPermissions(testRoot, secondPermissions, 'admin-2')
 
       const loaded = await loadPathPermissions(testRoot)
@@ -173,7 +173,7 @@ describe('permissions loader', () => {
     })
 
     it('does nothing if file already exists', async () => {
-      const existingPermissions = [{ path: 'content/**', allowedUsers: ['existing'] }]
+      const existingPermissions = [{ path: 'content/**', edit: { allowedUsers: ['existing'] } }]
       await savePathPermissions(testRoot, existingPermissions, 'original-admin')
 
       await ensurePermissionsFile(testRoot, 'new-admin')

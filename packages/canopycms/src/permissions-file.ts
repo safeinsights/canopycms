@@ -1,6 +1,11 @@
 import { z } from 'zod'
 import type { CanopyUserId, CanopyGroupId } from './types'
 
+const permissionTargetSchema = z.object({
+  allowedUsers: z.array(z.string() as z.ZodType<CanopyUserId>).optional(),
+  allowedGroups: z.array(z.string() as z.ZodType<CanopyGroupId>).optional(),
+})
+
 /**
  * Schema for .canopycms/permissions.json
  */
@@ -11,9 +16,9 @@ export const PermissionsFileSchema = z.object({
   pathPermissions: z.array(
     z.object({
       path: z.string().min(1),
-      allowedUsers: z.array(z.string() as z.ZodType<CanopyUserId>).optional(),
-      allowedGroups: z.array(z.string() as z.ZodType<CanopyGroupId>).optional(),
-      managerOrAdminAllowed: z.boolean().optional(),
+      read: permissionTargetSchema.optional(),
+      edit: permissionTargetSchema.optional(),
+      review: permissionTargetSchema.optional(),
     })
   ),
 })

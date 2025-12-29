@@ -38,21 +38,21 @@ describe('content api', () => {
         branch: { name: 'feature/x', status: 'editing', access: {}, createdBy: 'u1', createdAt: 'now', updatedAt: 'now' },
       }),
     }
-    const res = await readContent(ctx, { user: { userId: 'u1' } }, { branch: 'feature/x', collection: 'posts', slug: 'hello' })
+    const res = await readContent(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x', collection: 'posts', slug: 'hello' })
     expect(res.status).toBe(403)
     expect(res.ok).toBe(false)
   })
 
   it('reads content when allowed', async () => {
     const ctx = allowedCtx()
-    const res = await readContent(ctx, { user: { userId: 'u1' } }, { branch: 'feature/x', collection: 'posts', slug: 'hello' })
+    const res = await readContent(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x', collection: 'posts', slug: 'hello' })
     expect(res.ok).toBe(true)
   })
 
   it('writes content with correct format handling', async () => {
     const ctx = allowedCtx()
     const res = await writeContent(ctx, {
-      user: { userId: 'u1' },
+      user: { type: 'authenticated', userId: 'u1', groups: [] },
       branch: 'feature/x',
       body: { collection: 'posts', slug: 'hello', format: 'json', data: { title: 'hi' } },
     })

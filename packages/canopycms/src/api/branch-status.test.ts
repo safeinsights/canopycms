@@ -47,12 +47,12 @@ describe('branch status api', () => {
   })
 
   it('denies submit when access forbidden', async () => {
-    const res = await submitBranchForMerge(makeCtx(false), { user: { userId: 'u1' } }, { branch: 'feature/x' })
+    const res = await submitBranchForMerge(makeCtx(false), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
     expect(res.status).toBe(403)
   })
 
   it('submits branch when allowed', async () => {
-    const res = await submitBranchForMerge(makeCtx(true), { user: { userId: 'u1' } }, { branch: 'feature/x' })
+    const res = await submitBranchForMerge(makeCtx(true), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
     expect(res.ok).toBe(true)
   })
 })

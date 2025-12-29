@@ -1,18 +1,5 @@
 import type { CanopyUserId, CanopyGroupId } from '../types'
-
-/**
- * User context returned by auth plugins.
- *
- * Note: The `groups` array should contain group IDs from both the auth provider
- * (e.g., Clerk organizations) and internal CanopyCMS groups. The reserved groups
- * "Admins" and "Reviewers" have special meaning - see reserved-groups.ts.
- */
-export interface AuthUser {
-  userId: CanopyUserId
-  groups?: CanopyGroupId[]
-  email?: string
-  name?: string
-}
+import type { AuthenticatedUser } from '../user'
 
 /**
  * User search result for permission UI
@@ -35,10 +22,11 @@ export interface GroupMetadata {
 }
 
 /**
- * Token verification result
+ * Token verification result from auth plugins.
+ * Returns an AuthenticatedUser on success.
  */
 export interface TokenVerificationResult {
   valid: boolean
-  user?: AuthUser
+  user?: AuthenticatedUser
   error?: string
 }

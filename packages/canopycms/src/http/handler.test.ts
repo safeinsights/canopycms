@@ -26,7 +26,7 @@ const ADMINS = 'Admins'
  * Create a mock AuthPlugin for testing.
  */
 const createMockAuthPlugin = (
-  user = { userId: 'test-user', groups: [ADMINS] }
+  user = { type: 'authenticated' as const, userId: 'test-user', groups: [ADMINS] }
 ): AuthPlugin => ({
   verifyToken: async () => ({ valid: true, user }),
   searchUsers: async () => [],
@@ -210,7 +210,7 @@ describe('createCanopyRequestHandler', () => {
     services.bootstrapAdminIds = new Set(['test-user'])
 
     // User without Admins group
-    const authPlugin = createMockAuthPlugin({ userId: 'test-user', groups: [] })
+    const authPlugin = createMockAuthPlugin({ type: 'authenticated', userId: 'test-user', groups: [] })
 
     const handler = createCanopyRequestHandler({
       services,

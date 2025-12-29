@@ -9,6 +9,7 @@ import type { BranchState } from '../types'
 import { BranchRegistry } from '../branch-registry'
 import { getDefaultBranchBase } from '../paths'
 import { loadBranchState } from '../branch-workspace'
+import type { AuthenticatedUser } from '../user'
 
 /**
  * Options for creating a Canopy request handler.
@@ -124,9 +125,10 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       )
     }
 
-    // Apply bootstrap admin groups
-    const user = {
+    // Apply bootstrap admin groups and ensure user is an AuthenticatedUser
+    const user: AuthenticatedUser = {
       ...authResult.user,
+      type: 'authenticated',
       groups: getEffectiveGroups(
         authResult.user.userId,
         authResult.user.groups,

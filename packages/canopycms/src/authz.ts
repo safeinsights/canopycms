@@ -1,11 +1,7 @@
-import type { BranchState, CanopyGroupId, CanopyUserId } from './types'
+import type { BranchState } from './types'
 import type { DefaultBranchAccess } from './config'
 import { isAdmin, isReviewer } from './reserved-groups'
-
-export interface UserContext {
-  userId: CanopyUserId
-  groups?: CanopyGroupId[]
-}
+import type { CanopyUser } from './user'
 
 export interface BranchAccessResult {
   allowed: boolean
@@ -14,7 +10,7 @@ export interface BranchAccessResult {
 
 export const checkBranchAccessWithDefault = (
   state: BranchState,
-  user: UserContext,
+  user: CanopyUser,
   defaultAccess: DefaultBranchAccess = 'deny'
 ): BranchAccessResult => {
   // Admins and Reviewers have full branch access
@@ -44,6 +40,6 @@ export const checkBranchAccessWithDefault = (
 }
 
 export const createCheckBranchAccess = (defaultAccess: DefaultBranchAccess = 'deny') => {
-  return (state: BranchState, user: UserContext): BranchAccessResult =>
+  return (state: BranchState, user: CanopyUser): BranchAccessResult =>
     checkBranchAccessWithDefault(state, user, defaultAccess)
 }
