@@ -1,7 +1,7 @@
 export type CanopyUserId = string
 export type CanopyGroupId = string
 
-export type BranchStatus = 'editing' | 'submitted' | 'locked' | 'archived'
+export type BranchStatus = 'editing' | 'submitted' | 'approved' | 'locked' | 'archived'
 
 export interface BranchAccessControl {
   allowedUsers?: CanopyUserId[]

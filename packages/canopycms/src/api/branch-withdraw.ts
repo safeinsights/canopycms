@@ -1,6 +1,6 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchState } from '../types'
-import { BranchMetadata } from '../branch-metadata'
+import { createBranchMetadata } from '../branch-metadata'
 import { resolveBranchWorkspace } from '../paths'
 
 /**
@@ -45,7 +45,7 @@ export const withdrawBranch = async (
   // Update branch status to 'editing'
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchWorkspace(state, branchMode)
-  const meta = new BranchMetadata(branchPaths.metadataRoot)
+  const meta = createBranchMetadata(branchPaths.metadataRoot, branchPaths.baseRoot)
 
   await meta.update({
     branch: { name: state.branch.name, status: 'editing' },

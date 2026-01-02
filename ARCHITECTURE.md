@@ -242,3 +242,21 @@ Simplicity. Git operations (clone, commit, push) happen synchronously during API
 ### Why "Publish Branch" doesn't actually publish?
 
 Separation of concerns. CanopyCMS handles content editing and PR creation. The actual publication (merging the PR and deploying the site) is handled by GitHub and your CI/CD pipeline. This makes the system more flexible—you can have any merge/deploy workflow you want, and CanopyCMS doesn't need credentials to actually push to production.
+
+### Why is the branch registry a cache, not a source of truth?
+
+The branch registry (`branches.json`) is a **read-only cache** for fast branch listing. Individual `branch.json` files in each branch workspace are the source of truth.
+
+**Design:**
+
+- When branch state changes, the registry cache is invalidated (atomic rename to `branches.stale.json`)
+- `list()` regenerates the cache on-demand by scanning branch directories
+- Concurrent regeneration is safe—all processes produce identical output from the same `branch.json` files
+- No write conflicts because the cache is never directly updated, only regenerated
+
+**Why this design:**
+
+- **Single source of truth**: Eliminates synchronization bugs between `branch.json` and `branches.json`
+- **Atomic invalidation**: Prevents race conditions on concurrent updates
+- **Lazy regeneration**: Amortizes the cost of directory scanning across reads
+- **Self-healing**: If the cache becomes corrupted or stale, the next read fixes it
