@@ -5,54 +5,233 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { BranchRegistry } from './branch-registry'
-import type { BranchState } from './types'
-
-const sampleState = (name: string): BranchState => ({
-  branch: {
-    name,
-    status: 'editing',
-    access: {},
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    createdBy: 'user-1',
-  },
-})
+import { BranchMetadata } from './branch-metadata'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-registry-'))
 
+/**
+ * Create a branch directory with a valid branch.json metadata file
+ */
+const createBranchWithMetadata = async (
+  root: string,
+  branchName: string,
+  status: 'editing' | 'submitted' = 'editing'
+) => {
+  const branchDir = path.join(root, branchName)
+  const metaDir = path.join(branchDir, '.canopycms')
+  await fs.mkdir(metaDir, { recursive: true })
+
+  const metadata = new BranchMetadata(branchDir)
+  await metadata.save({
+    schemaVersion: 1,
+    branch: {
+      name: branchName,
+      status,
+      access: {},
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      createdBy: 'user-1',
+    },
+  })
+}
+
 describe('BranchRegistry', () => {
-  it('creates and reads registry with upserts', async () => {
-    const root = await tmpDir()
-    const registry = new BranchRegistry(root)
-    const stateA = sampleState('feature/a')
-    await registry.upsert(stateA)
+  describe('list()', () => {
+    it('returns empty array when no branches exist', async () => {
+      const root = await tmpDir()
+      const registry = new BranchRegistry(root)
 
-    const fetched = await registry.get('feature/a')
-    expect(fetched?.branch.name).toBe('feature/a')
+      const branches = await registry.list()
+      expect(branches).toEqual([])
+    })
 
-    const list = await registry.list()
-    expect(list).toHaveLength(1)
+    it('scans branch directories and returns branches', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
+      await createBranchWithMetadata(root, 'feature-b')
+
+      const registry = new BranchRegistry(root)
+      const branches = await registry.list()
+
+      expect(branches).toHaveLength(2)
+      expect(branches.map((b) => b.branch.name).sort()).toEqual(['feature-a', 'feature-b'])
+    })
+
+    it('skips directories without branch.json', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
+      // Create a directory without metadata
+      await fs.mkdir(path.join(root, 'empty-dir'), { recursive: true })
+
+      const registry = new BranchRegistry(root)
+      const branches = await registry.list()
+
+      expect(branches).toHaveLength(1)
+      expect(branches[0].branch.name).toBe('feature-a')
+    })
+
+    it('skips hidden directories like .canopycms', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
+      // Create .canopycms directory at root (registry storage)
+      await fs.mkdir(path.join(root, '.canopycms'), { recursive: true })
+
+      const registry = new BranchRegistry(root)
+      const branches = await registry.list()
+
+      expect(branches).toHaveLength(1)
+    })
+
+    it('creates cache file after first list()', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
+
+      const registry = new BranchRegistry(root)
+      await registry.list()
+
+      // Cache file should exist
+      const cacheFile = path.join(root, '.canopycms', 'branches.json')
+      const exists = await fs
+        .stat(cacheFile)
+        .then(() => true)
+        .catch(() => false)
+      expect(exists).toBe(true)
+    })
+
+    it('uses cached result on subsequent calls', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
+
+      const registry = new BranchRegistry(root)
+
+      // First call regenerates
+      const first = await registry.list()
+      expect(first).toHaveLength(1)
+
+      // Add another branch directly (bypassing invalidation)
+      await createBranchWithMetadata(root, 'feature-b')
+
+      // Second call should return cached result (still 1 branch)
+      const second = await registry.list()
+      expect(second).toHaveLength(1)
+    })
   })
 
-  it('updates existing entries on upsert', async () => {
-    const root = await tmpDir()
-    const registry = new BranchRegistry(root)
-    const stateA = sampleState('feature/a')
-    await registry.upsert(stateA)
-    await registry.upsert({ ...stateA, pullRequestNumber: 12 })
+  describe('get()', () => {
+    it('returns branch by name', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
 
-    const fetched = await registry.get('feature/a')
-    expect(fetched?.pullRequestNumber).toBe(12)
+      const registry = new BranchRegistry(root)
+      const branch = await registry.get('feature-a')
+
+      expect(branch?.branch.name).toBe('feature-a')
+    })
+
+    it('returns undefined for non-existent branch', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
+
+      const registry = new BranchRegistry(root)
+      const branch = await registry.get('does-not-exist')
+
+      expect(branch).toBeUndefined()
+    })
   })
 
-  it('removes branches', async () => {
-    const root = await tmpDir()
-    const registry = new BranchRegistry(root)
-    await registry.upsert(sampleState('feature/a'))
-    await registry.upsert(sampleState('feature/b'))
+  describe('invalidate()', () => {
+    it('causes next list() to regenerate cache', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
 
-    await registry.remove('feature/a')
-    const remaining = await registry.list()
-    expect(remaining.map((b) => b.branch.name)).toEqual(['feature/b'])
+      const registry = new BranchRegistry(root)
+
+      // First call populates cache
+      const first = await registry.list()
+      expect(first).toHaveLength(1)
+
+      // Add another branch
+      await createBranchWithMetadata(root, 'feature-b')
+
+      // Without invalidation, cache would still show 1
+      // But with invalidation, it should regenerate
+      await registry.invalidate()
+
+      const after = await registry.list()
+      expect(after).toHaveLength(2)
+    })
+
+    it('is safe to call when no cache exists', async () => {
+      const root = await tmpDir()
+      const registry = new BranchRegistry(root)
+
+      // Should not throw
+      await registry.invalidate()
+    })
+
+    it('renames cache file to stale file', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
+
+      const registry = new BranchRegistry(root)
+      await registry.list() // Create cache
+
+      const cacheFile = path.join(root, '.canopycms', 'branches.json')
+      const staleFile = path.join(root, '.canopycms', 'branches.stale.json')
+
+      // Cache exists, stale doesn't
+      expect(
+        await fs
+          .stat(cacheFile)
+          .then(() => true)
+          .catch(() => false)
+      ).toBe(true)
+      expect(
+        await fs
+          .stat(staleFile)
+          .then(() => true)
+          .catch(() => false)
+      ).toBe(false)
+
+      await registry.invalidate()
+
+      // Now stale exists, cache doesn't
+      expect(
+        await fs
+          .stat(cacheFile)
+          .then(() => true)
+          .catch(() => false)
+      ).toBe(false)
+      expect(
+        await fs
+          .stat(staleFile)
+          .then(() => true)
+          .catch(() => false)
+      ).toBe(true)
+    })
+  })
+
+  describe('cache integrity', () => {
+    it('includes workspace paths in branch state', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
+
+      const registry = new BranchRegistry(root)
+      const branches = await registry.list()
+
+      expect(branches[0].workspaceRoot).toBe(path.join(root, 'feature-a'))
+      expect(branches[0].baseRoot).toBe(root)
+      expect(branches[0].metadataRoot).toBe(path.join(root, 'feature-a'))
+    })
+
+    it('reflects status from branch.json', async () => {
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a', 'submitted')
+
+      const registry = new BranchRegistry(root)
+      const branches = await registry.list()
+
+      expect(branches[0].branch.status).toBe('submitted')
+    })
   })
 })

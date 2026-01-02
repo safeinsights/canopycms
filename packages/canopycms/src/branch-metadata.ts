@@ -5,6 +5,8 @@ import type { BranchState, BranchStatus, CanopyGroupId, CanopyUserId } from './t
 
 const BRANCH_META_DIR = '.canopycms'
 const BRANCH_META_FILE = 'branch.json'
+const REGISTRY_FILE = 'branches.json'
+const REGISTRY_STALE_FILE = 'branches.stale.json'
 
 export interface BranchMetadataFile {
   schemaVersion: number
@@ -28,13 +30,27 @@ export interface BranchMetadataFile {
 
 const CURRENT_SCHEMA_VERSION = 1
 
+export interface BranchMetadataOptions {
+  branchRoot: string
+  registryDir?: string
+}
+
 export class BranchMetadata {
   private readonly branchRoot: string
   private readonly filePath: string
+  private readonly registryDir?: string
 
-  constructor(branchRoot: string) {
-    this.branchRoot = path.resolve(branchRoot)
-    this.filePath = path.join(this.branchRoot, BRANCH_META_DIR, BRANCH_META_FILE)
+  constructor(branchRoot: string)
+  constructor(options: BranchMetadataOptions)
+  constructor(branchRootOrOptions: string | BranchMetadataOptions) {
+    if (typeof branchRootOrOptions === 'string') {
+      this.branchRoot = path.resolve(branchRootOrOptions)
+      this.filePath = path.join(this.branchRoot, BRANCH_META_DIR, BRANCH_META_FILE)
+    } else {
+      this.branchRoot = path.resolve(branchRootOrOptions.branchRoot)
+      this.filePath = path.join(this.branchRoot, BRANCH_META_DIR, BRANCH_META_FILE)
+      this.registryDir = branchRootOrOptions.registryDir
+    }
   }
 
   async load(): Promise<BranchMetadataFile | null> {
@@ -83,7 +99,33 @@ export class BranchMetadata {
       pullRequestUrl: update.pullRequestUrl ?? existing?.pullRequestUrl,
     }
     await this.save(merged)
+
+    // Invalidate registry cache if registryDir provided
+    if (this.registryDir) {
+      await this.invalidateRegistry()
+    }
+
     return merged
+  }
+
+  /**
+   * Invalidates the registry cache by atomically renaming branches.json to branches.stale.json.
+   * This causes the next registry.list() call to regenerate from branch.json files.
+   */
+  private async invalidateRegistry(): Promise<void> {
+    if (!this.registryDir) return
+
+    const registryPath = path.join(this.registryDir, BRANCH_META_DIR, REGISTRY_FILE)
+    const stalePath = path.join(this.registryDir, BRANCH_META_DIR, REGISTRY_STALE_FILE)
+
+    try {
+      await fs.rename(registryPath, stalePath)
+    } catch (err: any) {
+      // ENOENT means already stale or never existed, which is fine
+      if (err?.code !== 'ENOENT') {
+        throw err
+      }
+    }
   }
 
   static toBranchState(meta: BranchMetadataFile): BranchState {
@@ -112,4 +154,15 @@ export interface BranchMetadataUpdate {
   branch?: Partial<BranchMetadataFile['branch']>
   pullRequestUrl?: string
   pullRequestNumber?: number
+}
+
+/**
+ * Factory function to create a BranchMetadata instance with registry invalidation.
+ * Use this in API handlers to ensure registry cache is invalidated on updates.
+ */
+export const createBranchMetadata = (branchRoot: string, registryDir?: string): BranchMetadata => {
+  if (registryDir) {
+    return new BranchMetadata({ branchRoot, registryDir })
+  }
+  return new BranchMetadata(branchRoot)
 }

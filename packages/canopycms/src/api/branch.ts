@@ -1,7 +1,10 @@
+import fs from 'node:fs/promises'
+import path from 'node:path'
+
 import type { BranchAccessControl, BranchState } from '../types'
 import { BranchWorkspaceManager } from '../branch-workspace'
 import { BranchRegistry } from '../branch-registry'
-import { BranchMetadata } from '../branch-metadata'
+import { createBranchMetadata } from '../branch-metadata'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { getDefaultBranchBase, resolveBranchWorkspace } from '../paths'
 import { isPrivileged, isAdmin } from '../reserved-groups'
@@ -185,14 +188,31 @@ export const deleteBranch = async (
     return { ok: false, status: 400, error: 'Cannot delete branch with open pull request' }
   }
 
-  // Remove from registry
   const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const registry = new BranchRegistry(getDefaultBranchBase(branchMode))
-  await registry.remove(branchName)
+  const branchPaths = resolveBranchWorkspace(branchState, branchMode)
 
-  // TODO: Clean up workspace files and delete remote branch if exists
-  // This would require additional filesystem operations and git commands
-  // For now, we just remove from the registry
+  // Delete branch metadata file so it disappears from registry scans
+  const metadataFile = path.join(branchPaths.metadataRoot, '.canopycms', 'branch.json')
+  try {
+    await fs.unlink(metadataFile)
+  } catch (err: any) {
+    if (err?.code !== 'ENOENT') {
+      console.error(`CanopyCMS: Failed to delete branch metadata for ${branchName}:`, err.message)
+    }
+  }
+
+  // In multi-branch modes, also delete the entire branch directory
+  if (branchMode !== 'local-simple' && branchPaths.branchRoot !== branchPaths.baseRoot) {
+    try {
+      await fs.rm(branchPaths.branchRoot, { recursive: true, force: true })
+    } catch (err: any) {
+      console.error(`CanopyCMS: Failed to delete branch directory for ${branchName}:`, err.message)
+    }
+  }
+
+  // Invalidate registry cache so next list() will regenerate without this branch
+  const registry = new BranchRegistry(branchPaths.baseRoot)
+  await registry.invalidate()
 
   return { ok: true, status: 200, data: { deleted: true } }
 }
@@ -256,18 +276,17 @@ export const updateBranchAccess = async (
     newAccess.allowedGroups = req.body.allowedGroups
   }
 
-  // Update metadata
+  // Update metadata (automatically invalidates registry cache)
   if (!branchState.metadataRoot) {
     return { ok: false, status: 500, error: 'Branch metadata root not found' }
   }
-  const metadata = new BranchMetadata(branchState.metadataRoot)
+  const branchMode = ctx.services.config.mode ?? 'local-simple'
+  const metadata = createBranchMetadata(branchState.metadataRoot, getDefaultBranchBase(branchMode))
   const updated = await metadata.update({
     branch: { access: newAccess },
   })
 
-  // Update registry
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const registry = new BranchRegistry(getDefaultBranchBase(branchMode))
+  // Build updated state for response
   const newState: BranchState = {
     ...branchState,
     branch: {
@@ -276,7 +295,6 @@ export const updateBranchAccess = async (
       updatedAt: updated.branch.updatedAt,
     },
   }
-  await registry.upsert(newState)
 
   return { ok: true, status: 200, data: { branch: newState } }
 }

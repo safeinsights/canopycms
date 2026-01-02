@@ -3,10 +3,25 @@ import { describe, expect, it, vi } from 'vitest'
 import { getBranchStatus, submitBranchForMerge } from './branch-status'
 import type { ApiContext } from './types'
 
+const mockMetadataUpdate = vi.fn().mockResolvedValue({
+  schemaVersion: 1,
+  branch: {
+    name: 'feature/x',
+    status: 'submitted',
+    access: {},
+    createdBy: 'u1',
+    createdAt: 'now',
+    updatedAt: 'now',
+  },
+})
+
 vi.mock('../branch-metadata', () => {
   return {
     BranchMetadata: vi.fn().mockImplementation(() => ({
-      update: vi.fn().mockResolvedValue(undefined),
+      update: mockMetadataUpdate,
+    })),
+    createBranchMetadata: vi.fn().mockImplementation(() => ({
+      update: mockMetadataUpdate,
     })),
   }
 })
@@ -41,7 +56,7 @@ const makeCtx = (allowed = true): ApiContext => ({
 
 describe('branch status api', () => {
   it('gets status', async () => {
-    const res = await getBranchStatus(makeCtx(), { branch: 'feature/x' })
+    const res = await getBranchStatus(makeCtx(), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
     expect(res.ok).toBe(true)
     expect(res.data?.branch.branch.name).toBe('feature/x')
   })

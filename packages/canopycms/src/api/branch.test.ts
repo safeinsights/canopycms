@@ -61,26 +61,31 @@ vi.mock('../branch-registry', () => {
           },
         },
       ]),
-      remove: vi.fn().mockResolvedValue(undefined),
-      upsert: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockResolvedValue(undefined),
+      invalidate: vi.fn().mockResolvedValue(undefined),
     })),
   }
+})
+
+const mockMetadataUpdate = vi.fn().mockResolvedValue({
+  schemaVersion: 1,
+  branch: {
+    name: 'feature/x',
+    status: 'editing',
+    access: { allowedUsers: ['u2'] },
+    createdBy: 'u1',
+    createdAt: 'now',
+    updatedAt: 'updated-now',
+  },
 })
 
 vi.mock('../branch-metadata', () => {
   return {
     BranchMetadata: vi.fn().mockImplementation(() => ({
-      update: vi.fn().mockResolvedValue({
-        schemaVersion: 1,
-        branch: {
-          name: 'feature/x',
-          status: 'editing',
-          access: { allowedUsers: ['u2'] },
-          createdBy: 'u1',
-          createdAt: 'now',
-          updatedAt: 'updated-now',
-        },
-      }),
+      update: mockMetadataUpdate,
+    })),
+    createBranchMetadata: vi.fn().mockImplementation(() => ({
+      update: mockMetadataUpdate,
     })),
   }
 })

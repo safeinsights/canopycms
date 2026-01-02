@@ -1,6 +1,6 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchState } from '../types'
-import { BranchMetadata } from '../branch-metadata'
+import { createBranchMetadata } from '../branch-metadata'
 import { resolveBranchWorkspace } from '../paths'
 import { isReviewer } from '../reserved-groups'
 
@@ -51,7 +51,7 @@ export const requestChanges = async (
   // Update branch status to 'editing'
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchWorkspace(state, branchMode)
-  const meta = new BranchMetadata(branchPaths.metadataRoot)
+  const meta = createBranchMetadata(branchPaths.metadataRoot, branchPaths.baseRoot)
 
   await meta.update({
     branch: { name: state.branch.name, status: 'editing' },
@@ -99,9 +99,21 @@ export const approveBranch = async (
     }
   }
 
-  // For now, this just returns the current state
-  // Actual approval and merge happen on GitHub
-  // In the future, we could call githubService.approvePullRequest() if needed
+  // Update branch status to 'approved'
+  const branchMode = ctx.services.config.mode ?? 'local-simple'
+  const branchPaths = resolveBranchWorkspace(state, branchMode)
+  const meta = createBranchMetadata(branchPaths.metadataRoot, branchPaths.baseRoot)
 
-  return { ok: true, status: 200, data: { branch: state } }
+  await meta.update({
+    branch: { name: state.branch.name, status: 'approved' },
+  })
+
+  // TODO: Optionally call githubService.approvePullRequest() when GitHub integration is needed
+
+  const updated = await ctx.getBranchState(params.branch)
+  if (!updated) {
+    return { ok: false, status: 500, error: 'Failed to update branch' }
+  }
+
+  return { ok: true, status: 200, data: { branch: updated } }
 }

@@ -56,7 +56,7 @@ describe('Role Permission Integration', () => {
 
     expect(adminAccessResponse.status).toBe(200)
     const status = (await adminAccessResponse.json()) as any
-    expect(status.data.branch.name).toBe('editor-branch')
+    expect(status.data.branch.branch.name).toBe('editor-branch')
   })
 
   it('allows admin to modify any branch access control', async () => {

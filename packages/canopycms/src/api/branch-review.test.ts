@@ -10,6 +10,9 @@ vi.mock('../branch-metadata', () => {
     BranchMetadata: vi.fn().mockImplementation(() => ({
       update: vi.fn().mockResolvedValue(undefined),
     })),
+    createBranchMetadata: vi.fn().mockImplementation(() => ({
+      update: vi.fn().mockResolvedValue(undefined),
+    })),
   }
 })
 
