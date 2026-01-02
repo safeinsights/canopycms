@@ -5,11 +5,16 @@ import { resolveBranchWorkspace } from '../paths'
 
 export const getBranchStatus = async (
   ctx: ApiContext,
+  req: ApiRequest,
   params: { branch: string },
 ): Promise<ApiResponse<{ branch: BranchState }>> => {
   const state = await ctx.getBranchState(params.branch)
   if (!state) {
     return { ok: false, status: 404, error: 'Branch not found' }
+  }
+  const access = ctx.services.checkBranchAccess(state, req.user)
+  if (!access.allowed) {
+    return { ok: false, status: 403, error: 'Forbidden' }
   }
   return { ok: true, status: 200, data: { branch: state } }
 }

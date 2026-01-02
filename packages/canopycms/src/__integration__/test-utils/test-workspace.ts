@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
+import { vi } from 'vitest'
 import type { CanopyConfig } from '../../config'
 import { defineCanopyTestConfig } from '../../config-test'
 
@@ -14,7 +15,7 @@ export interface TestWorkspace {
   seedPath: string
   /** Full Canopy configuration */
   config: CanopyConfig
-  /** Cleanup function to remove all temp files */
+  /** Cleanup function to remove all temp files and restore cwd mock */
   cleanup: () => Promise<void>
 }
 
@@ -75,12 +76,17 @@ export async function createTestWorkspace(
       ...configOverrides,
     })
 
+    // Mock process.cwd() to return tmpRoot so BranchRegistry uses isolated path
+    // This prevents parallel tests from corrupting shared registry files
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpRoot)
+
     return {
       tmpRoot,
       remotePath,
       seedPath,
       config,
       cleanup: async () => {
+        cwdSpy.mockRestore()
         await fs.rm(tmpRoot, { recursive: true, force: true })
       },
     }

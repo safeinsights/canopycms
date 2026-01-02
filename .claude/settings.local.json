@@ -21,7 +21,10 @@
       "Bash(timeout 30 npm run dev:*)",
       "WebFetch(domain:mantine.dev)",
       "WebFetch(domain:clerk.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(npm run test:e2e:*)",
+      "Bash(timeout 120 npm run test:e2e)",
+      "Bash(lsof:*)"
     ]
   }
 }
