@@ -109,40 +109,40 @@ describe('Permission Denied Errors', () => {
     expect(response.ok).toBe(false)
   })
 
-  it('returns 403 when non-admin tries to delete branch', async () => {
-    // Editor creates a branch
-    await editorClient.post('/api/canopycms/branches', {
+  it('returns 403 when non-admin tries to delete branch they did not create', async () => {
+    // Admin creates a branch
+    await adminClient.post('/api/canopycms/branches', {
       branch: 'feature/delete-test',
       title: 'Delete Test',
     })
 
-    // Editor tries to delete their own branch (should fail - only admins can delete)
+    // Editor tries to delete (not their branch, not admin) - should fail
     const editorDeleteResponse = await editorClient.delete('/api/canopycms/feature-delete-test')
 
     expect(editorDeleteResponse.status).toBe(403)
     expect(editorDeleteResponse.ok).toBe(false)
 
-    // Reviewer tries to delete (should also fail)
+    // Reviewer tries to delete (not their branch, not admin) - should also fail
     const reviewerDeleteResponse = await reviewerClient.delete('/api/canopycms/feature-delete-test')
 
     expect(reviewerDeleteResponse.status).toBe(403)
     expect(reviewerDeleteResponse.ok).toBe(false)
 
-    // Admin can delete
+    // Admin can delete (they are the creator and also admin)
     const adminDeleteResponse = await adminClient.delete('/api/canopycms/feature-delete-test')
 
     expect(adminDeleteResponse.status).toBe(200)
     expect(adminDeleteResponse.ok).toBe(true)
   })
 
-  it('returns 403 when editor tries to modify branch access control', async () => {
-    // Editor creates a branch
-    await editorClient.post('/api/canopycms/branches', {
+  it('returns 403 when editor tries to modify branch access control on branch they did not create', async () => {
+    // Admin creates a branch
+    await adminClient.post('/api/canopycms/branches', {
       branch: 'feature/access-test',
       title: 'Access Test',
     })
 
-    // Editor tries to modify access control (should fail)
+    // Editor tries to modify access control (not their branch, not admin) - should fail
     const response = await editorClient.patch('/api/canopycms/feature-access-test/access', {
       allowedUsers: ['test-editor'],
       allowedGroups: [],

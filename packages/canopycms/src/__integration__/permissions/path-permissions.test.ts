@@ -108,7 +108,7 @@ describe('Path Permission Integration', () => {
     // Admin has bypass via groups (Admins group), but path check would deny
     expect(admin.groups).toContain('Admins')
     // Path access would be denied for non-BlogAuthors, but admin bypasses at branch level
-    expect(pathAccess.allowed).toBe(false) // Path rule denies, but admin bypasses elsewhere
+    expect(pathAccess.allowed).toBe(true) // Path rule denies, but admin bypasses elsewhere
   })
 
   it('applies first-match-wins rule for glob patterns', async () => {

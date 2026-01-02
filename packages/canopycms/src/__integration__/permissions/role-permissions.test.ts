@@ -150,7 +150,7 @@ describe('Role Permission Integration', () => {
 
     expect(approveResponse.status).toBe(200)
     const approveData = (await approveResponse.json()) as any
-    expect(approveData.data.branch.status).toBe('approved')
+    expect(approveData.data.branch.branch.status).toBe('approved')
   })
 
   it('prevents editor from approving their own branch', async () => {
@@ -190,19 +190,19 @@ describe('Role Permission Integration', () => {
     expect(statusResponse.status).toBe(404)
   })
 
-  it('prevents non-admin from deleting branches', async () => {
-    // Editor creates a branch
-    await editorClient.post('/api/canopycms/branches', {
+  it('prevents non-creator non-admin from deleting branches', async () => {
+    // Admin creates a branch
+    await adminClient.post('/api/canopycms/branches', {
       branch: 'delete-test',
       title: 'Delete Test',
     })
 
-    // Editor tries to delete (should fail)
+    // Editor tries to delete (not creator, not admin) - should fail
     const editorDeleteResponse = await editorClient.delete('/api/canopycms/delete-test')
 
     expect(editorDeleteResponse.status).toBe(403)
 
-    // Reviewer tries to delete (should fail)
+    // Reviewer tries to delete (not creator, not admin) - should fail
     const reviewerDeleteResponse = await reviewerClient.delete('/api/canopycms/delete-test')
 
     expect(reviewerDeleteResponse.status).toBe(403)
@@ -308,5 +308,40 @@ describe('Role Permission Integration', () => {
     expect(reviewerListResponse.status).toBe(200)
     const reviewerBranches = (await reviewerListResponse.json()) as any
     expect(reviewerBranches.data.branches.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('allows branch creator to delete their own branch', async () => {
+    // Editor creates branch
+    await editorClient.post('/api/canopycms/branches', {
+      branch: 'editor-own-branch',
+      title: 'Editor Own Branch',
+    })
+
+    // Editor deletes their own branch - should succeed
+    const deleteResponse = await editorClient.delete('/api/canopycms/editor-own-branch')
+
+    expect(deleteResponse.status).toBe(200)
+    expect(deleteResponse.ok).toBe(true)
+
+    // Verify branch is deleted
+    const statusResponse = await editorClient.get('/api/canopycms/editor-own-branch/status')
+    expect(statusResponse.status).toBe(404)
+  })
+
+  it('allows branch creator to modify access on their own branch', async () => {
+    // Editor creates branch
+    await editorClient.post('/api/canopycms/branches', {
+      branch: 'editor-access-branch',
+      title: 'Editor Access Branch',
+    })
+
+    // Editor modifies access on their own branch - should succeed
+    const response = await editorClient.patch('/api/canopycms/editor-access-branch/access', {
+      allowedUsers: ['other-user'],
+      allowedGroups: [],
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.ok).toBe(true)
   })
 })

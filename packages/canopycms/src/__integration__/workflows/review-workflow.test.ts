@@ -74,7 +74,7 @@ describe('Review Workflow Integration', () => {
 
     expect(submitResponse.status).toBe(200)
     const submitData = (await submitResponse.json()) as any
-    expect(submitData.data.branch.status).toBe('submitted')
+    expect(submitData.data.branch.branch.status).toBe('submitted')
 
     // STEP 4: Reviewer adds comment
     const commentResponse = await reviewerClient.post('/api/canopycms/feature-review-test/comments', {
@@ -96,7 +96,7 @@ describe('Review Workflow Integration', () => {
 
     expect(requestChangesResponse.status).toBe(200)
     const requestChangesData = (await requestChangesResponse.json()) as any
-    expect(requestChangesData.data.branch.status).toBe('editing')
+    expect(requestChangesData.data.branch.branch.status).toBe('editing')
 
     // STEP 6: Editor updates content and resubmits
     await editorClient.put('/api/canopycms/feature-review-test/content/posts/test-post', {
@@ -125,7 +125,7 @@ describe('Review Workflow Integration', () => {
 
     expect(approveResponse.status).toBe(200)
     const approveData = (await approveResponse.json()) as any
-    expect(approveData.data.branch.status).toBe('approved')
+    expect(approveData.data.branch.branch.status).toBe('approved')
   })
 
   it('allows multiple reviewers to comment', async () => {
@@ -231,6 +231,6 @@ describe('Review Workflow Integration', () => {
 
     expect(withdrawResponse.status).toBe(200)
     const withdrawData = (await withdrawResponse.json()) as any
-    expect(withdrawData.data.branch.status).toBe('editing')
+    expect(withdrawData.data.branch.branch.status).toBe('editing')
   })
 })

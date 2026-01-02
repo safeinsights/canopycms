@@ -98,7 +98,7 @@ describe('API Editing Workflow Integration', () => {
 
     expect(statusResponse.status).toBe(200)
     const status = (await statusResponse.json()) as any
-    expect(status.data.branch.status).toBe('editing')
+    expect(status.data.branch.branch.status).toBe('editing')
   })
 
   it('enforces permissions at API level', async () => {
