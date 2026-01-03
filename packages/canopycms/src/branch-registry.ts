@@ -127,8 +127,7 @@ export class BranchRegistry {
         }
 
         const branchRoot = path.join(this.root, entry.name)
-        const metadata = new BranchMetadata(branchRoot)
-        const meta = await metadata.load()
+        const meta = await BranchMetadata.loadOnly(branchRoot)
 
         if (meta) {
           const state: BranchState = {

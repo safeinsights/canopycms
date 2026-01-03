@@ -1,6 +1,6 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchState } from '../types'
-import { createBranchMetadata } from '../branch-metadata'
+import { getBranchMetadata } from '../branch-metadata'
 import { resolveBranchWorkspace } from '../paths'
 import { isReviewer } from '../reserved-groups'
 
@@ -51,9 +51,9 @@ export const requestChanges = async (
   // Update branch status to 'editing'
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchWorkspace(state, branchMode)
-  const meta = createBranchMetadata(branchPaths.metadataRoot, branchPaths.baseRoot)
+  const meta = getBranchMetadata(branchPaths.metadataRoot, branchPaths.baseRoot)
 
-  await meta.update({
+  await meta.save({
     branch: { name: state.branch.name, status: 'editing' },
   })
 
@@ -102,9 +102,9 @@ export const approveBranch = async (
   // Update branch status to 'approved'
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchWorkspace(state, branchMode)
-  const meta = createBranchMetadata(branchPaths.metadataRoot, branchPaths.baseRoot)
+  const meta = getBranchMetadata(branchPaths.metadataRoot, branchPaths.baseRoot)
 
-  await meta.update({
+  await meta.save({
     branch: { name: state.branch.name, status: 'approved' },
   })
 

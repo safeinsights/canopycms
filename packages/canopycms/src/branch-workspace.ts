@@ -3,8 +3,7 @@ import path from 'node:path'
 
 import type { CanopyConfig } from './config'
 import { ensureBranchRoot, resolveBranchPath } from './paths'
-import { BranchMetadata, createBranchMetadata, type BranchMetadataFile } from './branch-metadata'
-import { BranchRegistry } from './branch-registry'
+import { BranchMetadata, getBranchMetadata, type BranchMetadataFile } from './branch-metadata'
 import type { BranchAccessControl, BranchState, CanopyUserId } from './types'
 import type { BranchMode } from './paths'
 import { GitManager } from './git-manager'
@@ -104,39 +103,17 @@ export class BranchWorkspaceManager {
 
     await this.ensureGitWorkspace({ branchRoot, branchName: safeName, mode, remoteUrl })
 
-    // Use factory with registryDir to ensure cache is invalidated on updates
-    const metadata = createBranchMetadata(metadataRoot, baseRoot)
-    let meta = await metadata.load()
-    const now = new Date().toISOString()
-
-    if (!meta || meta.branch.name !== safeName) {
-      meta = {
-        schemaVersion: 1,
-        branch: {
-          name: safeName,
-          title,
-          description,
-          status: 'editing',
-          access: access ?? {},
-          createdBy,
-          createdAt: now,
-          updatedAt: now,
-        },
-      }
-      await metadata.save(meta)
-      // Invalidate registry cache so it regenerates with the new branch
-      const registry = new BranchRegistry(baseRoot)
-      await registry.invalidate()
-    } else if (title || description || access) {
-      // update() automatically invalidates registry cache
-      meta = await metadata.update({
-        branch: {
-          title: title ?? meta.branch.title,
-          description: description ?? meta.branch.description,
-          access: access ?? meta.branch.access,
-        },
-      })
-    }
+    // update() handles both creation and updates, preserving existing values and invalidating registry
+    const metadata = getBranchMetadata(metadataRoot, baseRoot)
+    const meta = await metadata.save({
+      branch: {
+        name: safeName,
+        title,
+        description,
+        access,
+        createdBy,
+      },
+    })
 
     const state: BranchState = {
       ...BranchMetadata.toBranchState(meta),
@@ -158,42 +135,29 @@ export class BranchWorkspaceManager {
 
 /**
  * Load branch state from metadata file (source of truth).
- * Falls back to registry cache if metadata file doesn't exist.
+ * Returns null if the branch doesn't exist.
  */
 export const loadBranchState = async (options: {
   branchName: string
   mode: BranchMode
   basePathOverride?: string
-  registry?: BranchRegistry
 }): Promise<BranchState | null> => {
-  const { branchRoot, baseRoot, metadataRoot, branchName: safeName } = resolveBranchPath({
+  const { branchRoot, baseRoot, metadataRoot } = resolveBranchPath({
     branchName: options.branchName,
     mode: options.mode,
     basePathOverride: options.basePathOverride,
   })
 
-  // Try to load from metadata file (source of truth)
-  const meta = await new BranchMetadata(metadataRoot).load()
-  if (meta) {
-    return {
-      ...BranchMetadata.toBranchState(meta),
-      workspaceRoot: branchRoot,
-      baseRoot,
-      metadataRoot,
-    }
+  // Load from metadata file (source of truth)
+  const meta = await BranchMetadata.loadOnly(metadataRoot)
+  if (!meta) {
+    return null
   }
 
-  // Fall back to registry cache
-  const registry = options.registry ?? new BranchRegistry(baseRoot)
-  const registryEntry = await registry.get(safeName)
-  if (registryEntry) {
-    return {
-      ...registryEntry,
-      workspaceRoot: registryEntry.workspaceRoot ?? branchRoot,
-      baseRoot: registryEntry.baseRoot ?? baseRoot,
-      metadataRoot: registryEntry.metadataRoot ?? metadataRoot,
-    }
+  return {
+    ...BranchMetadata.toBranchState(meta),
+    workspaceRoot: branchRoot,
+    baseRoot,
+    metadataRoot,
   }
-
-  return null
 }

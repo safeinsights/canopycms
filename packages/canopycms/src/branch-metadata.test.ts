@@ -4,69 +4,105 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { BranchMetadata, createBranchMetadata } from './branch-metadata'
+import { BranchMetadata, getBranchMetadata } from './branch-metadata'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branchmeta-'))
 
 describe('BranchMetadata', () => {
-  it('saves and loads metadata', async () => {
-    const root = await tmpDir()
-    const meta = new BranchMetadata(root)
-    const now = new Date().toISOString()
+  describe('loadOnly', () => {
+    it('loads metadata from disk', async () => {
+      const root = await tmpDir()
+      const now = new Date().toISOString()
 
-    await meta.save({
-      schemaVersion: 1,
-      branch: {
-        name: 'feature/x',
-        status: 'editing',
-        access: { allowedUsers: ['u1'], allowedGroups: ['g1'] },
-        createdBy: 'u1',
-        createdAt: now,
-        updatedAt: now,
-      },
+      // Manually write file to test loadOnly
+      const metaDir = path.join(root, '.canopycms')
+      await fs.mkdir(metaDir, { recursive: true })
+      await fs.writeFile(
+        path.join(metaDir, 'branch.json'),
+        JSON.stringify({
+          schemaVersion: 1,
+          branch: {
+            name: 'feature/x',
+            status: 'editing',
+            access: { allowedUsers: ['u1'], allowedGroups: ['g1'] },
+            createdBy: 'u1',
+            createdAt: now,
+            updatedAt: now,
+          },
+        })
+      )
+
+      const loaded = await BranchMetadata.loadOnly(root)
+      expect(loaded?.branch.name).toBe('feature/x')
+      expect(loaded?.branch.access.allowedGroups).toContain('g1')
     })
 
-    const loaded = await meta.load()
-    expect(loaded?.branch.name).toBe('feature/x')
-    expect(loaded?.branch.access.allowedGroups).toContain('g1')
+    it('returns null for missing metadata', async () => {
+      const root = await tmpDir()
+      const loaded = await BranchMetadata.loadOnly(root)
+      expect(loaded).toBeNull()
+    })
   })
 
-  it('updates existing metadata and stamps updatedAt', async () => {
-    const root = await tmpDir()
-    const meta = new BranchMetadata(root)
-    const now = new Date().toISOString()
-    await meta.save({
-      schemaVersion: 1,
-      branch: {
-        name: 'feature/y',
-        status: 'editing',
-        access: {},
-        createdBy: 'u1',
-        createdAt: now,
-        updatedAt: now,
-      },
+  describe('update', () => {
+    it('creates metadata when none exists', async () => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const meta = getBranchMetadata(root, registryDir)
+
+      const created = await meta.save({
+        branch: {
+          name: 'feature/x',
+          status: 'editing',
+          access: { allowedUsers: ['u1'], allowedGroups: ['g1'] },
+          createdBy: 'u1',
+        },
+      })
+
+      expect(created.branch.name).toBe('feature/x')
+      expect(created.branch.access.allowedGroups).toContain('g1')
+
+      const loaded = await BranchMetadata.loadOnly(root)
+      expect(loaded?.branch.name).toBe('feature/x')
     })
 
-    const updated = await meta.update({
-      branch: {
-        name: 'feature/y',
-        status: 'submitted',
-        access: { managerOrAdminAllowed: true },
-      },
-      pullRequestNumber: 10,
-      pullRequestUrl: 'https://example.com/pr/10',
-    })
+    it('updates existing metadata and stamps updatedAt', async () => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const meta = getBranchMetadata(root, registryDir)
 
-    expect(updated.branch.status).toBe('submitted')
-    expect(updated.pullRequestNumber).toBe(10)
-    expect(updated.branch.access.managerOrAdminAllowed).toBe(true)
-    expect(new Date(updated.branch.updatedAt).getTime()).toBeGreaterThanOrEqual(
-      new Date(now).getTime()
-    )
+      // First create
+      const created = await meta.save({
+        branch: {
+          name: 'feature/y',
+          status: 'editing',
+          createdBy: 'u1',
+        },
+      })
+
+      // Then update
+      const updated = await meta.save({
+        branch: {
+          name: 'feature/y',
+          status: 'submitted',
+          access: { managerOrAdminAllowed: true },
+        },
+        pullRequestNumber: 10,
+        pullRequestUrl: 'https://example.com/pr/10',
+      })
+
+      expect(updated.branch.status).toBe('submitted')
+      expect(updated.pullRequestNumber).toBe(10)
+      expect(updated.branch.access.managerOrAdminAllowed).toBe(true)
+      expect(updated.branch.createdAt).toBe(created.branch.createdAt) // createdAt unchanged
+      expect(new Date(updated.branch.updatedAt).getTime()).toBeGreaterThanOrEqual(
+        new Date(created.branch.createdAt).getTime()
+      )
+    })
   })
 
   describe('registry invalidation', () => {
-    it('update() invalidates registry cache when registryDir provided', async () => {
+    it('update() invalidates registry cache', async () => {
       const branchRoot = await tmpDir()
       const registryDir = await tmpDir()
 
@@ -76,22 +112,22 @@ describe('BranchMetadata', () => {
       await fs.writeFile(cacheFile, JSON.stringify({ version: 1, branches: [] }))
 
       // Create metadata with registryDir
-      const meta = createBranchMetadata(branchRoot, registryDir)
-      const now = new Date().toISOString()
+      const meta = getBranchMetadata(branchRoot, registryDir)
+
+      // First update creates the metadata and invalidates cache
       await meta.save({
-        schemaVersion: 1,
         branch: {
           name: 'feature/z',
           status: 'editing',
-          access: {},
           createdBy: 'u1',
-          createdAt: now,
-          updatedAt: now,
         },
       })
 
-      // Update should invalidate registry
-      await meta.update({
+      // Recreate cache file to test invalidation on second update
+      await fs.writeFile(cacheFile, JSON.stringify({ version: 1, branches: [] }))
+
+      // Second update should also invalidate registry
+      await meta.save({
         branch: { status: 'submitted' },
       })
 
@@ -110,75 +146,23 @@ describe('BranchMetadata', () => {
       expect(staleExists).toBe(true)
     })
 
-    it('update() works without registryDir (backward compat)', async () => {
-      const root = await tmpDir()
-      const meta = new BranchMetadata(root) // No registryDir
-      const now = new Date().toISOString()
-
-      await meta.save({
-        schemaVersion: 1,
-        branch: {
-          name: 'feature/compat',
-          status: 'editing',
-          access: {},
-          createdBy: 'u1',
-          createdAt: now,
-          updatedAt: now,
-        },
-      })
-
-      // Should not throw even without registryDir
-      const updated = await meta.update({
-        branch: { status: 'submitted' },
-      })
-
-      expect(updated.branch.status).toBe('submitted')
-    })
-
-    it('createBranchMetadata factory creates metadata with registryDir', async () => {
+    it('getBranchMetadata factory creates metadata with registryDir', async () => {
       const branchRoot = await tmpDir()
       const registryDir = await tmpDir()
 
-      const meta = createBranchMetadata(branchRoot, registryDir)
+      const meta = getBranchMetadata(branchRoot, registryDir)
 
-      // Should be able to save
-      const now = new Date().toISOString()
+      // Create metadata via update
       await meta.save({
-        schemaVersion: 1,
         branch: {
           name: 'feature/factory',
           status: 'editing',
-          access: {},
           createdBy: 'u1',
-          createdAt: now,
-          updatedAt: now,
         },
       })
 
-      const loaded = await meta.load()
+      const loaded = await BranchMetadata.loadOnly(branchRoot)
       expect(loaded?.branch.name).toBe('feature/factory')
-    })
-
-    it('createBranchMetadata factory works without registryDir', async () => {
-      const branchRoot = await tmpDir()
-
-      const meta = createBranchMetadata(branchRoot)
-
-      const now = new Date().toISOString()
-      await meta.save({
-        schemaVersion: 1,
-        branch: {
-          name: 'feature/no-registry',
-          status: 'editing',
-          access: {},
-          createdBy: 'u1',
-          createdAt: now,
-          updatedAt: now,
-        },
-      })
-
-      const loaded = await meta.load()
-      expect(loaded?.branch.name).toBe('feature/no-registry')
     })
   })
 })

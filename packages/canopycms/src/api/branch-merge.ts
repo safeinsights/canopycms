@@ -1,6 +1,6 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { loadBranchState } from '../branch-workspace'
-import { BranchMetadata } from '../branch-metadata'
+import { getBranchMetadata } from '../branch-metadata'
 import { isAdmin } from '../reserved-groups'
 
 export interface MarkAsMergedParams {
@@ -64,8 +64,8 @@ export async function markAsMerged(
   }
 
   // Update branch status to 'archived'
-  const meta = new BranchMetadata(state.metadataRoot!)
-  await meta.update({
+  const meta = getBranchMetadata(state.metadataRoot!, state.baseRoot!)
+  await meta.save({
     branch: {
       status: 'archived',
     },

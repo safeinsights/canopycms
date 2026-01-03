@@ -14,7 +14,7 @@ import { simpleGit } from 'simple-git'
 import { GitHubService } from '../github-service'
 import { GitManager } from '../git-manager'
 import { BranchWorkspaceManager, loadBranchState } from '../branch-workspace'
-import { BranchMetadata } from '../branch-metadata'
+import { getBranchMetadata } from '../branch-metadata'
 import { CommentStore } from '../comment-store'
 import { defineCanopyTestConfig } from '../config-test'
 
@@ -225,9 +225,8 @@ describe('PR Workflow Integration', () => {
     })
 
     // Update branch metadata with PR info
-    const metadata = new BranchMetadata(workspace.metadataRoot)
-    await metadata.load()
-    await metadata.update({
+    const metadata = getBranchMetadata(workspace.metadataRoot, workspace.baseRoot)
+    await metadata.save({
       branch: { status: 'submitted' },
       pullRequestNumber: prResult.number,
       pullRequestUrl: prResult.url,
@@ -241,8 +240,7 @@ describe('PR Workflow Integration', () => {
 
     // ===== STEP 4: Withdraw submission (convert PR to draft) =====
     await githubService.convertToDraft(prResult.number)
-    await metadata.load()
-    await metadata.update({ branch: { status: 'editing' } })
+    await metadata.save({ branch: { status: 'editing' } })
 
     const withdrawnState = await loadBranchState({ branchName, mode: config.mode ?? 'local-simple' })
     expect(withdrawnState?.branch.status).toBe('editing')
@@ -263,8 +261,7 @@ describe('PR Workflow Integration', () => {
     expect(prDetails.draft).toBe(true)
 
     // ===== STEP 5: Request changes (reviewer action) =====
-    await metadata.load()
-    await metadata.update({ branch: { status: 'editing' } })
+    await metadata.save({ branch: { status: 'editing' } })
 
     const changesRequestedState = await loadBranchState({ branchName, mode: config.mode ?? 'local-simple' })
     expect(changesRequestedState?.branch.status).toBe('editing')
@@ -306,9 +303,7 @@ describe('PR Workflow Integration', () => {
     }))
 
     await githubService.convertToReady(prResult.number)
-
-    await metadata.load()
-    await metadata.update({ branch: { status: 'submitted' } })
+    await metadata.save({ branch: { status: 'submitted' } })
 
     const resubmittedState = await loadBranchState({ branchName, mode: config.mode ?? 'local-simple' })
     expect(resubmittedState?.branch.status).toBe('submitted')
@@ -396,8 +391,7 @@ describe('PR Workflow Integration', () => {
     expect(mergedPR.state).toBe('closed')
 
     // Mark branch as merged in CanopyCMS
-    await metadata.load()
-    await metadata.update({ branch: { status: 'archived' } })
+    await metadata.save({ branch: { status: 'archived' } })
 
     const archivedState = await loadBranchState({ branchName, mode: config.mode ?? 'local-simple' })
     expect(archivedState?.branch.status).toBe('archived')

@@ -3,10 +3,9 @@ import path from 'node:path'
 
 import type { BranchAccessControl, BranchState } from '../types'
 import { BranchWorkspaceManager } from '../branch-workspace'
-import { BranchRegistry } from '../branch-registry'
-import { createBranchMetadata } from '../branch-metadata'
+import { getBranchMetadata } from '../branch-metadata'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import { getDefaultBranchBase, resolveBranchWorkspace } from '../paths'
+import { resolveBranchWorkspace } from '../paths'
 import { isPrivileged, isAdmin } from '../reserved-groups'
 import type { PathPermission } from '../config'
 import { loadPathPermissions } from '../permissions-loader'
@@ -108,9 +107,7 @@ export const listBranches = async (
   ctx: ApiContext,
   req: ApiRequest
 ): Promise<ApiResponse<{ branches: BranchState[] }>> => {
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const registry = new BranchRegistry(getDefaultBranchBase(branchMode))
-  const allBranches = await registry.list()
+  const allBranches = await ctx.services.registry.list()
 
   // Admins and Reviewers see all branches
   if (isPrivileged(req.user.groups)) {
@@ -171,6 +168,12 @@ export const deleteBranch = async (
     return { ok: false, status: 400, error: 'branch is required' }
   }
 
+  // Disallow delete in local-simple mode (branch = developer's git checkout)
+  const branchMode = ctx.services.config.mode ?? 'local-simple'
+  if (branchMode === 'local-simple') {
+    return { ok: false, status: 400, error: 'Cannot delete branches in local-simple mode' }
+  }
+
   // Get branch state
   const branchState = await ctx.getBranchState(branchName)
   if (!branchState) {
@@ -188,7 +191,6 @@ export const deleteBranch = async (
     return { ok: false, status: 400, error: 'Cannot delete branch with open pull request' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchWorkspace(branchState, branchMode)
 
   // Delete branch metadata file so it disappears from registry scans
@@ -202,7 +204,7 @@ export const deleteBranch = async (
   }
 
   // In multi-branch modes, also delete the entire branch directory
-  if (branchMode !== 'local-simple' && branchPaths.branchRoot !== branchPaths.baseRoot) {
+  if (branchPaths.branchRoot !== branchPaths.baseRoot) {
     try {
       await fs.rm(branchPaths.branchRoot, { recursive: true, force: true })
     } catch (err: any) {
@@ -211,8 +213,7 @@ export const deleteBranch = async (
   }
 
   // Invalidate registry cache so next list() will regenerate without this branch
-  const registry = new BranchRegistry(branchPaths.baseRoot)
-  await registry.invalidate()
+  await ctx.services.registry.invalidate()
 
   return { ok: true, status: 200, data: { deleted: true } }
 }
@@ -277,12 +278,11 @@ export const updateBranchAccess = async (
   }
 
   // Update metadata (automatically invalidates registry cache)
-  if (!branchState.metadataRoot) {
+  if (!branchState.metadataRoot || !branchState.baseRoot) {
     return { ok: false, status: 500, error: 'Branch metadata root not found' }
   }
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const metadata = createBranchMetadata(branchState.metadataRoot, getDefaultBranchBase(branchMode))
-  const updated = await metadata.update({
+  const metadata = getBranchMetadata(branchState.metadataRoot, branchState.baseRoot)
+  const updated = await metadata.save({
     branch: { access: newAccess },
   })
 

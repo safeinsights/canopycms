@@ -18,10 +18,10 @@ const mockMetadataUpdate = vi.fn().mockResolvedValue({
 vi.mock('../branch-metadata', () => {
   return {
     BranchMetadata: vi.fn().mockImplementation(() => ({
-      update: mockMetadataUpdate,
+      save: mockMetadataUpdate,
     })),
-    createBranchMetadata: vi.fn().mockImplementation(() => ({
-      update: mockMetadataUpdate,
+    getBranchMetadata: vi.fn().mockImplementation(() => ({
+      save: mockMetadataUpdate,
     })),
   }
 })

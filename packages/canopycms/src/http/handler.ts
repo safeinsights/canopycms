@@ -6,8 +6,6 @@ import type { AuthPlugin } from '../auth/plugin'
 import { createCanopyServices, getEffectiveGroups, type CanopyServices } from '../services'
 import type { CanopyConfig } from '../config'
 import type { BranchState } from '../types'
-import { BranchRegistry } from '../branch-registry'
-import { getDefaultBranchBase } from '../paths'
 import { loadBranchState } from '../branch-workspace'
 import type { AuthenticatedUser } from '../user'
 
@@ -34,11 +32,10 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     throw new Error('CanopyCMS: config or services is required')
   }
   const branchMode = services.config.mode ?? 'local-simple'
-  const registry = services.registry ?? new BranchRegistry(getDefaultBranchBase(branchMode))
   const getBranchState =
     options.getBranchState ??
     (async (branch: string) =>
-      (await loadBranchState({ branchName: branch, mode: branchMode, registry })) ?? null)
+      (await loadBranchState({ branchName: branch, mode: branchMode })) ?? null)
   return {
     services,
     assetStore: options.assetStore,

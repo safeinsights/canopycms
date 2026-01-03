@@ -1,8 +1,7 @@
-import { BranchRegistry } from './branch-registry'
 import { BranchWorkspaceManager, loadBranchState } from './branch-workspace'
 import { ContentStore, ContentStoreError, type ContentDocument } from './content-store'
 import type { CanopyConfig, ResolvedSchemaItem } from './config'
-import { getDefaultBranchBase, resolveBranchWorkspace, type BranchMode } from './paths'
+import { resolveBranchWorkspace, type BranchMode } from './paths'
 import { createCanopyServices, type CanopyServices } from './services'
 import type { BranchState } from './types'
 import type { CanopyUser } from './user'
@@ -11,7 +10,6 @@ import { resolveSchema } from './config'
 export interface ContentReaderOptions {
   config?: CanopyConfig
   services?: CanopyServices
-  registry?: BranchRegistry
   workspaceManager?: BranchWorkspaceManager
   basePathOverride?: string
   defaultBranch?: string
@@ -45,10 +43,6 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const services = options.services ?? createCanopyServices(options.config!)
   const branchMode: BranchMode = services.config.mode ?? 'local-simple'
   const basePathOverride = options.basePathOverride
-  const branchBase = getDefaultBranchBase(branchMode, basePathOverride)
-  const registry =
-    options.registry ??
-    (basePathOverride ? new BranchRegistry(branchBase) : services.registry ?? new BranchRegistry(branchBase))
   const workspaceManager = options.workspaceManager ?? new BranchWorkspaceManager(services.config)
   const defaultBranch = options.defaultBranch ?? services.config.defaultBaseBranch ?? 'main'
   const allowCreateBranch = options.allowCreateBranch ?? true
@@ -57,7 +51,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const resolveBranchState = async (branchName: string): Promise<BranchState> => {
     const existing = options.getBranchState
       ? await options.getBranchState(branchName)
-      : await loadBranchState({ branchName, mode: branchMode, basePathOverride, registry })
+      : await loadBranchState({ branchName, mode: branchMode, basePathOverride })
     if (existing) return existing
     if (!allowCreateBranch) {
       throw new ContentStoreError(`Branch not found: ${branchName}`)

@@ -24,7 +24,15 @@
       "WebFetch(domain:github.com)",
       "Bash(npm run test:e2e:*)",
       "Bash(timeout 120 npm run test:e2e)",
-      "Bash(lsof:*)"
+      "Bash(lsof:*)",
+      "Bash(for test in src/*.test.ts)",
+      "Bash(do)",
+      "Bash(if [ -d .canopycms ])",
+      "Bash(then)",
+      "Bash(echo:*)",
+      "Bash(break)",
+      "Bash(fi)",
+      "Bash(done)"
     ]
   }
 }
