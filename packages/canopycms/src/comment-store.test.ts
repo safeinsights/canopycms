@@ -286,4 +286,133 @@ describe('CommentStore', () => {
     expect(threads).toHaveLength(1)
     expect(threads[0].comments[0].text).toBe('Persisted')
   })
+
+  it('includes version in saved file', async () => {
+    await store.addComment({
+      userId: 'user1',
+      text: 'Comment',
+      type: 'branch',
+    })
+
+    // Read raw file to check version
+    const filePath = path.join(tmpDir, '.canopycms', 'comments.json')
+    const raw = await fs.readFile(filePath, 'utf-8')
+    const data = JSON.parse(raw)
+    expect(data.version).toBe(1)
+
+    // Add another comment, version should increment
+    await store.addComment({
+      userId: 'user2',
+      text: 'Second',
+      type: 'branch',
+    })
+
+    const raw2 = await fs.readFile(filePath, 'utf-8')
+    const data2 = JSON.parse(raw2)
+    expect(data2.version).toBe(2)
+  })
+
+  describe('concurrency', () => {
+    it('handles concurrent addComment calls from different store instances', async () => {
+      const store1 = new CommentStore(tmpDir)
+      const store2 = new CommentStore(tmpDir)
+
+      // Both add comments concurrently
+      const results = await Promise.allSettled([
+        store1.addComment({ userId: 'user1', text: 'Comment 1', type: 'branch' }),
+        store2.addComment({ userId: 'user2', text: 'Comment 2', type: 'branch' }),
+      ])
+
+      // Check if any rejected
+      for (const r of results) {
+        if (r.status === 'rejected') {
+          console.error('Operation failed:', r.reason)
+        }
+      }
+
+      // Both should succeed (via retry)
+      const result1 = results[0].status === 'fulfilled' ? results[0].value : null
+      const result2 = results[1].status === 'fulfilled' ? results[1].value : null
+
+      expect(result1?.threadId).toBeDefined()
+      expect(result2?.threadId).toBeDefined()
+      expect(result1?.threadId).not.toBe(result2?.threadId)
+
+      // Both comments should be present
+      const threads = await store1.listThreads()
+      expect(threads.length).toBe(2)
+
+      const texts = threads.map((t) => t.comments[0].text).sort()
+      expect(texts).toEqual(['Comment 1', 'Comment 2'])
+    })
+
+    it('handles concurrent resolveThread calls', async () => {
+      // Create two threads first
+      const thread1 = await store.addComment({ userId: 'user1', text: 'Thread 1', type: 'branch' })
+      const thread2 = await store.addComment({ userId: 'user2', text: 'Thread 2', type: 'branch' })
+
+      const store1 = new CommentStore(tmpDir)
+      const store2 = new CommentStore(tmpDir)
+
+      // Resolve both threads concurrently
+      const [result1, result2] = await Promise.all([
+        store1.resolveThread(thread1.threadId, 'resolver1'),
+        store2.resolveThread(thread2.threadId, 'resolver2'),
+      ])
+
+      expect(result1).toBe(true)
+      expect(result2).toBe(true)
+
+      // Both threads should be resolved
+      const t1 = await store.getThread(thread1.threadId)
+      const t2 = await store.getThread(thread2.threadId)
+      expect(t1?.resolved).toBe(true)
+      expect(t2?.resolved).toBe(true)
+    })
+
+    it('handles concurrent deleteThread calls', async () => {
+      // Create two threads first
+      const thread1 = await store.addComment({ userId: 'user1', text: 'Thread 1', type: 'branch' })
+      const thread2 = await store.addComment({ userId: 'user2', text: 'Thread 2', type: 'branch' })
+
+      const store1 = new CommentStore(tmpDir)
+      const store2 = new CommentStore(tmpDir)
+
+      // Delete both threads concurrently
+      const [result1, result2] = await Promise.all([
+        store1.deleteThread(thread1.threadId),
+        store2.deleteThread(thread2.threadId),
+      ])
+
+      expect(result1).toBe(true)
+      expect(result2).toBe(true)
+
+      // Both threads should be gone
+      const threads = await store.listThreads()
+      expect(threads.length).toBe(0)
+    })
+
+    it('handles high contention with many concurrent writes', async () => {
+      const numConcurrent = 10
+      const stores = Array.from({ length: numConcurrent }, () => new CommentStore(tmpDir))
+
+      // All add comments concurrently
+      const results = await Promise.all(
+        stores.map((s, i) =>
+          s.addComment({
+            userId: `user${i}`,
+            text: `Comment ${i}`,
+            type: 'branch',
+          }),
+        ),
+      )
+
+      // All should succeed
+      expect(results.every((r) => r.threadId && r.commentId)).toBe(true)
+
+      // All comments should be present
+      const threads = await store.listThreads()
+      expect(threads.length).toBe(numConcurrent)
+    })
+  })
 })
