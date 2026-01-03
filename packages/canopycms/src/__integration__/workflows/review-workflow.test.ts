@@ -138,17 +138,20 @@ describe('Review Workflow Integration', () => {
       message: 'Ready for review',
     })
 
-    // Both reviewer and admin add comments (sequentially to avoid file race condition)
-    const reviewerComment = await reviewerClient.post('/api/canopycms/feature-multi-reviewer/comments', {
-      text: 'Reviewer comment',
-      type: 'branch',
-    })
-    expect(reviewerComment.status).toBe(200)
+    // Both reviewer and admin add comments concurrently
+    // (CommentStore now handles concurrency with optimistic locking)
+    const [reviewerComment, adminComment] = await Promise.all([
+      reviewerClient.post('/api/canopycms/feature-multi-reviewer/comments', {
+        text: 'Reviewer comment',
+        type: 'branch',
+      }),
+      adminClient.post('/api/canopycms/feature-multi-reviewer/comments', {
+        text: 'Admin comment',
+        type: 'branch',
+      }),
+    ])
 
-    const adminComment = await adminClient.post('/api/canopycms/feature-multi-reviewer/comments', {
-      text: 'Admin comment',
-      type: 'branch',
-    })
+    expect(reviewerComment.status).toBe(200)
     expect(adminComment.status).toBe(200)
 
     // List all comments
