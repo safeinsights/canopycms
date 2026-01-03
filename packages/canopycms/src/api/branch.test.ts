@@ -38,57 +38,6 @@ vi.mock('../branch-workspace', () => {
   }
 })
 
-vi.mock('../branch-registry', () => {
-  return {
-    BranchRegistry: vi.fn().mockImplementation(() => ({
-      list: vi.fn().mockResolvedValue([
-        {
-          branch: {
-            name: 'feature/a',
-            status: 'editing',
-            access: {},
-            createdBy: 'u1',
-            createdAt: 'now',
-            updatedAt: 'now',
-          },
-        },
-        {
-          branch: {
-            name: 'feature/b',
-            status: 'editing',
-            access: {},
-            createdBy: 'u2',
-            createdAt: 'now',
-            updatedAt: 'now',
-          },
-        },
-        {
-          branch: {
-            name: 'feature/c',
-            status: 'editing',
-            access: { allowedUsers: ['u1'] },
-            createdBy: 'u3',
-            createdAt: 'now',
-            updatedAt: 'now',
-          },
-        },
-        {
-          branch: {
-            name: 'feature/d',
-            status: 'editing',
-            access: { allowedGroups: ['editors'] },
-            createdBy: 'u3',
-            createdAt: 'now',
-            updatedAt: 'now',
-          },
-        },
-      ]),
-      get: vi.fn().mockResolvedValue(undefined),
-      invalidate: vi.fn().mockResolvedValue(undefined),
-    })),
-  }
-})
-
 const mockMetadataUpdate = vi.fn().mockResolvedValue({
   schemaVersion: 1,
   branch: {
@@ -104,10 +53,10 @@ const mockMetadataUpdate = vi.fn().mockResolvedValue({
 vi.mock('../branch-metadata', () => {
   return {
     BranchMetadata: vi.fn().mockImplementation(() => ({
-      update: mockMetadataUpdate,
+      save: mockMetadataUpdate,
     })),
-    createBranchMetadata: vi.fn().mockImplementation(() => ({
-      update: mockMetadataUpdate,
+    getBranchMetadata: vi.fn().mockImplementation(() => ({
+      save: mockMetadataUpdate,
     })),
   }
 })
@@ -124,11 +73,59 @@ const makeBranchStateForMain = () => ({
   workspaceRoot: '/test/repo',
 })
 
+const mockRegistry = {
+  list: vi.fn().mockResolvedValue([
+    {
+      branch: {
+        name: 'feature/a',
+        status: 'editing',
+        access: {},
+        createdBy: 'u1',
+        createdAt: 'now',
+        updatedAt: 'now',
+      },
+    },
+    {
+      branch: {
+        name: 'feature/b',
+        status: 'editing',
+        access: {},
+        createdBy: 'u2',
+        createdAt: 'now',
+        updatedAt: 'now',
+      },
+    },
+    {
+      branch: {
+        name: 'feature/c',
+        status: 'editing',
+        access: { allowedUsers: ['u1'] },
+        createdBy: 'u3',
+        createdAt: 'now',
+        updatedAt: 'now',
+      },
+    },
+    {
+      branch: {
+        name: 'feature/d',
+        status: 'editing',
+        access: { allowedGroups: ['editors'] },
+        createdBy: 'u3',
+        createdAt: 'now',
+        updatedAt: 'now',
+      },
+    },
+  ]),
+  get: vi.fn().mockResolvedValue(undefined),
+  invalidate: vi.fn().mockResolvedValue(undefined),
+}
+
 const baseCtx: ApiContext = {
   services: {
     config: { schema: [], defaultBaseBranch: 'main', mode: 'local-simple' } as any,
     checkBranchAccess: vi.fn(),
     checkContentAccess: vi.fn(),
+    registry: mockRegistry as any,
     bootstrapAdminIds: new Set<string>(),
   },
   getBranchState: vi.fn().mockResolvedValue(makeBranchStateForMain()),
@@ -384,17 +381,36 @@ describe('deleteBranch api', () => {
     },
   })
 
+  // Context with mode that allows deletion
+  const deleteCtx: ApiContext = {
+    ...baseCtx,
+    services: {
+      ...baseCtx.services,
+      config: { ...baseCtx.services.config, mode: 'local-prod-sim' } as any,
+    },
+  }
+
   it('returns 400 if branch param missing', async () => {
     const res = await deleteBranch(
-      baseCtx,
+      deleteCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: '' },
     )
     expect(res.status).toBe(400)
   })
 
+  it('returns 400 in local-simple mode', async () => {
+    const res = await deleteBranch(
+      baseCtx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' },
+    )
+    expect(res.status).toBe(400)
+    expect(res.error).toBe('Cannot delete branches in local-simple mode')
+  })
+
   it('returns 404 if branch not found', async () => {
-    const ctx = { ...baseCtx, getBranchState: vi.fn().mockResolvedValue(null) }
+    const ctx = { ...deleteCtx, getBranchState: vi.fn().mockResolvedValue(null) }
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -404,7 +420,10 @@ describe('deleteBranch api', () => {
   })
 
   it('returns 403 if user not authorized', async () => {
-    const ctx = { ...baseCtx, getBranchState: vi.fn().mockResolvedValue(makeBranchState('other')) }
+    const ctx = {
+      ...deleteCtx,
+      getBranchState: vi.fn().mockResolvedValue(makeBranchState('other')),
+    }
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -416,7 +435,7 @@ describe('deleteBranch api', () => {
 
   it('returns 400 if branch has submitted status', async () => {
     const ctx = {
-      ...baseCtx,
+      ...deleteCtx,
       getBranchState: vi.fn().mockResolvedValue(makeBranchState('u1', 'submitted')),
     }
     const res = await deleteBranch(
@@ -429,7 +448,7 @@ describe('deleteBranch api', () => {
   })
 
   it('deletes branch when user is creator', async () => {
-    const ctx = { ...baseCtx, getBranchState: vi.fn().mockResolvedValue(makeBranchState('u1')) }
+    const ctx = { ...deleteCtx, getBranchState: vi.fn().mockResolvedValue(makeBranchState('u1')) }
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -440,7 +459,10 @@ describe('deleteBranch api', () => {
   })
 
   it('deletes branch when user is admin', async () => {
-    const ctx = { ...baseCtx, getBranchState: vi.fn().mockResolvedValue(makeBranchState('other')) }
+    const ctx = {
+      ...deleteCtx,
+      getBranchState: vi.fn().mockResolvedValue(makeBranchState('other')),
+    }
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] } },
@@ -511,6 +533,7 @@ describe('updateBranchAccess api', () => {
       updatedAt: 'now',
     },
     metadataRoot: '/tmp/metadata',
+    baseRoot: '/tmp/base',
   })
 
   it('returns 400 if branch param missing', async () => {

@@ -7,7 +7,10 @@ import { mockConsole } from '../test-utils/console-spy.js'
 vi.mock('../branch-metadata', () => {
   return {
     BranchMetadata: vi.fn().mockImplementation(() => ({
-      update: vi.fn().mockResolvedValue(undefined),
+      save: vi.fn().mockResolvedValue(undefined),
+    })),
+    getBranchMetadata: vi.fn().mockImplementation(() => ({
+      save: vi.fn().mockResolvedValue(undefined),
     })),
   }
 })

@@ -2,11 +2,10 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import type { BranchState, BranchStatus, CanopyGroupId, CanopyUserId } from './types'
+import { BranchRegistry } from './branch-registry'
 
 const BRANCH_META_DIR = '.canopycms'
 const BRANCH_META_FILE = 'branch.json'
-const REGISTRY_FILE = 'branches.json'
-const REGISTRY_STALE_FILE = 'branches.stale.json'
 
 export interface BranchMetadataFile {
   schemaVersion: number
@@ -30,30 +29,43 @@ export interface BranchMetadataFile {
 
 const CURRENT_SCHEMA_VERSION = 1
 
-export interface BranchMetadataOptions {
-  branchRoot: string
-  registryDir?: string
-}
-
 export class BranchMetadata {
   private readonly branchRoot: string
   private readonly filePath: string
-  private readonly registryDir?: string
+  private readonly registryDir: string
 
-  constructor(branchRoot: string)
-  constructor(options: BranchMetadataOptions)
-  constructor(branchRootOrOptions: string | BranchMetadataOptions) {
-    if (typeof branchRootOrOptions === 'string') {
-      this.branchRoot = path.resolve(branchRootOrOptions)
-      this.filePath = path.join(this.branchRoot, BRANCH_META_DIR, BRANCH_META_FILE)
-    } else {
-      this.branchRoot = path.resolve(branchRootOrOptions.branchRoot)
-      this.filePath = path.join(this.branchRoot, BRANCH_META_DIR, BRANCH_META_FILE)
-      this.registryDir = branchRootOrOptions.registryDir
+  private constructor(branchRoot: string, registryDir: string) {
+    this.branchRoot = path.resolve(branchRoot)
+    this.filePath = path.join(this.branchRoot, BRANCH_META_DIR, BRANCH_META_FILE)
+    this.registryDir = registryDir
+  }
+
+  /**
+   * Load branch metadata without requiring registryDir.
+   * Use this for read-only access (e.g., in registry scanning or loadBranchState).
+   */
+  static async loadOnly(branchRoot: string): Promise<BranchMetadataFile | null> {
+    const filePath = path.join(path.resolve(branchRoot), BRANCH_META_DIR, BRANCH_META_FILE)
+    try {
+      const raw = await fs.readFile(filePath, 'utf8')
+      return JSON.parse(raw) as BranchMetadataFile
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') {
+        return null
+      }
+      throw err
     }
   }
 
-  async load(): Promise<BranchMetadataFile | null> {
+  /**
+   * Get a BranchMetadata instance configured for registry invalidation.
+   * Use this in API handlers to ensure registry cache is invalidated on updates.
+   */
+  static get(branchRoot: string, registryDir: string): BranchMetadata {
+    return new BranchMetadata(branchRoot, registryDir)
+  }
+
+  private async load(): Promise<BranchMetadataFile | null> {
     try {
       const raw = await fs.readFile(this.filePath, 'utf8')
       const parsed = JSON.parse(raw) as BranchMetadataFile
@@ -66,7 +78,7 @@ export class BranchMetadata {
     }
   }
 
-  async save(meta: BranchMetadataFile): Promise<void> {
+  private async write(meta: BranchMetadataFile): Promise<void> {
     const payload = {
       ...meta,
       schemaVersion: meta.schemaVersion ?? CURRENT_SCHEMA_VERSION,
@@ -75,59 +87,48 @@ export class BranchMetadata {
     await fs.writeFile(this.filePath, JSON.stringify(payload, null, 2) + '\n', 'utf8')
   }
 
-  async update(update: BranchMetadataUpdate): Promise<BranchMetadataFile> {
-    const existing = (await this.load()) ?? null
+  async save(incoming: BranchMetadataUpdate): Promise<BranchMetadataFile> {
+    const existing = await this.load()
+    const now = new Date().toISOString()
+
+    const defaults = {
+      name: 'unknown',
+      status: 'editing' as const,
+      access: {},
+      createdBy: 'unknown',
+      createdAt: now,
+    }
+
     const merged: BranchMetadataFile = {
       schemaVersion: CURRENT_SCHEMA_VERSION,
       branch: {
-        name: update.branch?.name ?? existing?.branch.name ?? 'unknown',
-        title: update.branch?.title ?? existing?.branch.title,
-        description: update.branch?.description ?? existing?.branch.description,
-        status: update.branch?.status ?? existing?.branch.status ?? 'editing',
+        ...defaults,
+        ...existing?.branch,
+        ...incoming.branch,
         access: {
-          allowedUsers: update.branch?.access?.allowedUsers ?? existing?.branch.access.allowedUsers,
-          allowedGroups:
-            update.branch?.access?.allowedGroups ?? existing?.branch.access.allowedGroups,
-          managerOrAdminAllowed:
-            update.branch?.access?.managerOrAdminAllowed ??
-            existing?.branch.access.managerOrAdminAllowed,
+          ...existing?.branch?.access,
+          ...incoming.branch?.access,
         },
-        createdBy: update.branch?.createdBy ?? existing?.branch.createdBy ?? 'unknown',
-        createdAt:
-          update.branch?.createdAt ?? existing?.branch.createdAt ?? new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        // Immutable after creation
+        createdBy: existing?.branch.createdBy ?? incoming.branch?.createdBy ?? defaults.createdBy,
+        createdAt: existing?.branch.createdAt ?? defaults.createdAt,
+        updatedAt: now,
       },
-      pullRequestNumber: update.pullRequestNumber ?? existing?.pullRequestNumber,
-      pullRequestUrl: update.pullRequestUrl ?? existing?.pullRequestUrl,
+      pullRequestNumber: incoming.pullRequestNumber ?? existing?.pullRequestNumber,
+      pullRequestUrl: incoming.pullRequestUrl ?? existing?.pullRequestUrl,
     }
-    await this.save(merged)
-
-    // Invalidate registry cache if registryDir provided
-    if (this.registryDir) {
-      await this.invalidateRegistry()
-    }
+    await this.write(merged)
+    await this.invalidateRegistry()
 
     return merged
   }
 
   /**
-   * Invalidates the registry cache by atomically renaming branches.json to branches.stale.json.
-   * This causes the next registry.list() call to regenerate from branch.json files.
+   * Invalidates the registry cache so next list() call regenerates from branch.json files.
    */
   private async invalidateRegistry(): Promise<void> {
-    if (!this.registryDir) return
-
-    const registryPath = path.join(this.registryDir, BRANCH_META_DIR, REGISTRY_FILE)
-    const stalePath = path.join(this.registryDir, BRANCH_META_DIR, REGISTRY_STALE_FILE)
-
-    try {
-      await fs.rename(registryPath, stalePath)
-    } catch (err: any) {
-      // ENOENT means already stale or never existed, which is fine
-      if (err?.code !== 'ENOENT') {
-        throw err
-      }
-    }
+    const registry = new BranchRegistry(this.registryDir)
+    await registry.invalidate()
   }
 
   static toBranchState(meta: BranchMetadataFile): BranchState {
@@ -152,19 +153,23 @@ export class BranchMetadata {
   }
 }
 
+/**
+ * Fields that can be set via save().
+ * - createdBy: Only used on initial creation; ignored if metadata already exists
+ * - createdAt/updatedAt: Managed automatically
+ */
 export interface BranchMetadataUpdate {
-  branch?: Partial<BranchMetadataFile['branch']>
+  branch?: Partial<Omit<BranchMetadataFile['branch'], 'createdAt' | 'updatedAt'>> & {
+    createdBy?: CanopyUserId // Only used on initial creation
+  }
   pullRequestUrl?: string
   pullRequestNumber?: number
 }
 
 /**
- * Factory function to create a BranchMetadata instance with registry invalidation.
+ * Get a BranchMetadata instance configured for registry invalidation.
  * Use this in API handlers to ensure registry cache is invalidated on updates.
  */
-export const createBranchMetadata = (branchRoot: string, registryDir?: string): BranchMetadata => {
-  if (registryDir) {
-    return new BranchMetadata({ branchRoot, registryDir })
-  }
-  return new BranchMetadata(branchRoot)
+export const getBranchMetadata = (branchRoot: string, registryDir: string): BranchMetadata => {
+  return BranchMetadata.get(branchRoot, registryDir)
 }

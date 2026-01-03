@@ -5,7 +5,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { BranchRegistry } from './branch-registry'
-import { BranchMetadata } from './branch-metadata'
+import { getBranchMetadata } from './branch-metadata'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-registry-'))
 
@@ -21,15 +21,11 @@ const createBranchWithMetadata = async (
   const metaDir = path.join(branchDir, '.canopycms')
   await fs.mkdir(metaDir, { recursive: true })
 
-  const metadata = new BranchMetadata(branchDir)
+  const metadata = getBranchMetadata(branchDir, root)
   await metadata.save({
-    schemaVersion: 1,
     branch: {
       name: branchName,
       status,
-      access: {},
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
       createdBy: 'user-1',
     },
   })
@@ -108,8 +104,24 @@ describe('BranchRegistry', () => {
       const first = await registry.list()
       expect(first).toHaveLength(1)
 
-      // Add another branch directly (bypassing invalidation)
-      await createBranchWithMetadata(root, 'feature-b')
+      // Add another branch directly by writing file (bypassing invalidation)
+      const branchDir = path.join(root, 'feature-b')
+      const metaDir = path.join(branchDir, '.canopycms')
+      await fs.mkdir(metaDir, { recursive: true })
+      await fs.writeFile(
+        path.join(metaDir, 'branch.json'),
+        JSON.stringify({
+          schemaVersion: 1,
+          branch: {
+            name: 'feature-b',
+            status: 'editing',
+            access: {},
+            createdBy: 'user-1',
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          },
+        }),
+      )
 
       // Second call should return cached result (still 1 branch)
       const second = await registry.list()

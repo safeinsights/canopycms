@@ -1,6 +1,6 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchState } from '../types'
-import { createBranchMetadata } from '../branch-metadata'
+import { getBranchMetadata } from '../branch-metadata'
 import { resolveBranchWorkspace } from '../paths'
 
 export const getBranchStatus = async (
@@ -35,7 +35,7 @@ export const submitBranchForMerge = async (
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchWorkspace(state, branchMode)
-  const meta = createBranchMetadata(branchPaths.metadataRoot, branchPaths.baseRoot)
+  const meta = getBranchMetadata(branchPaths.metadataRoot, branchPaths.baseRoot)
 
   const gitFactory = ctx.services.createGitManagerFor
   if (!gitFactory) {
@@ -105,7 +105,7 @@ export const submitBranchForMerge = async (
   }
 
   // Update metadata with status and PR info
-  await meta.update({
+  await meta.save({
     branch: { name: state.branch.name, status: 'submitted' },
     pullRequestUrl: prUrl,
     pullRequestNumber: prNumber,
