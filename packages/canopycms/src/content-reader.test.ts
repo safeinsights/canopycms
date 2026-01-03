@@ -8,14 +8,16 @@ import { simpleGit } from 'simple-git'
 import { createContentReader } from './content-reader'
 import { defineCanopyTestConfig } from './config-test'
 import { ANONYMOUS_USER } from './user'
-import type { BranchState } from './types'
+import type { BranchContext } from './types'
 import { ContentStoreError } from './content-store'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-content-reader-'))
 
-const buildBranchState = (workspaceRoot: string, name = 'main'): BranchState => {
+const buildBranchContext = (branchRoot: string, name = 'main'): BranchContext => {
   const now = new Date().toISOString()
   return {
+    baseRoot: branchRoot,
+    branchRoot,
     branch: {
       name,
       status: 'editing',
@@ -24,9 +26,6 @@ const buildBranchState = (workspaceRoot: string, name = 'main'): BranchState => 
       createdAt: now,
       updatedAt: now,
     },
-    workspaceRoot,
-    baseRoot: workspaceRoot,
-    metadataRoot: workspaceRoot,
   }
 }
 
@@ -58,11 +57,11 @@ describe('createContentReader', () => {
         },
       ],
     })
-    const branchState = buildBranchState(root)
+    const branchContext = buildBranchContext(root)
     const reader = createContentReader({
       config,
       allowCreateBranch: false,
-      getBranchState: async (branch) => (branch === 'main' ? branchState : null),
+      getBranchContext: async (branch) => (branch === 'main' ? branchContext : null),
     })
 
     const home = await reader.read<{ hero: { title: string } }>({
@@ -104,11 +103,11 @@ describe('createContentReader', () => {
         },
       ],
     })
-    const branchState = buildBranchState(root)
+    const branchContext = buildBranchContext(root)
     const reader = createContentReader({
       config,
       allowCreateBranch: false,
-      getBranchState: async () => branchState,
+      getBranchContext: async () => branchContext,
     })
 
     const { data } = await reader.read<{ hero: { title: string } }>({
@@ -137,11 +136,11 @@ describe('createContentReader', () => {
         },
       ],
     })
-    const branchState = buildBranchState(root)
+    const branchContext = buildBranchContext(root)
     const reader = createContentReader({
       config,
       allowCreateBranch: false,
-      getBranchState: async () => branchState,
+      getBranchContext: async () => branchContext,
     })
 
     await expect(
@@ -187,11 +186,11 @@ describe('createContentReader', () => {
         },
       ],
     })
-    const branchState = buildBranchState(root)
+    const branchContext = buildBranchContext(root)
     const reader = createContentReader({
       config,
       allowCreateBranch: false,
-      getBranchState: async () => branchState,
+      getBranchContext: async () => branchContext,
     })
 
     const post = await reader.read<{ title: string }>({

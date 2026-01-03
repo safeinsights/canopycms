@@ -47,8 +47,8 @@ describe('API Editing Workflow Integration', () => {
     expect(createResponse.status).toBe(200)
     expect(createResponse.ok).toBe(true)
     const createData = (await createResponse.json()) as any
-    expect(createData.data.branch.branch.name).toBe('feature-new-post')
-    expect(createData.data.branch.branch.status).toBe('editing')
+    expect(createData.data.branch.name).toBe('feature-new-post')
+    expect(createData.data.branch.status).toBe('editing')
 
     // STEP 2: Write content via API
     const writeResponse = await editorClient.put(
@@ -84,7 +84,8 @@ describe('API Editing Workflow Integration', () => {
     expect(readResponse.status).toBe(200)
     expect(readResponse.ok).toBe(true)
     const content = (await readResponse.json()) as any
-    expect(content.data.title).toBe('Hello World')
+    // content.data is the ContentDocument: { format, data: {...frontmatter}, body, ... }
+    expect(content.data.data.title).toBe('Hello World')
     expect(content.data.body?.trim()).toBe('This is my first post!')
 
     // STEP 4: List entries via API
@@ -100,7 +101,7 @@ describe('API Editing Workflow Integration', () => {
 
     expect(statusResponse.status).toBe(200)
     const status = (await statusResponse.json()) as any
-    expect(status.data.branch.branch.status).toBe('editing')
+    expect(status.data.branch.status).toBe('editing')
   })
 
   it('enforces permissions at API level', async () => {
@@ -181,7 +182,7 @@ describe('API Editing Workflow Integration', () => {
     expect(adminWriteResponse.status).toBe(200)
     expect(editorWriteResponse.status).toBe(200)
 
-    // Verify isolation - each user can only see their own content
+    // Verify each user can read their own content
     const adminReadResponse = await adminClient.get(
       '/api/canopycms/admin-feature/content/posts/admin-post',
     )
@@ -192,7 +193,15 @@ describe('API Editing Workflow Integration', () => {
     )
     expect(editorReadResponse.status).toBe(200)
 
-    // Cross-branch access should fail
+    // Admin restricts their branch to admin-only
+    const restrictResponse = await adminClient.patch('/api/canopycms/admin-feature/access', {
+      allowedUsers: ['test-admin'],
+      allowedGroups: [],
+      managerOrAdminAllowed: true,
+    })
+    expect(restrictResponse.status).toBe(200)
+
+    // Cross-branch access with ACL
     const adminReadEditorResponse = await adminClient.get(
       '/api/canopycms/editor-feature/content/posts/editor-post',
     )
@@ -201,7 +210,7 @@ describe('API Editing Workflow Integration', () => {
     const editorReadAdminResponse = await editorClient.get(
       '/api/canopycms/admin-feature/content/posts/admin-post',
     )
-    expect(editorReadAdminResponse.status).toBe(403) // Editor cannot access admin branch
+    expect(editorReadAdminResponse.status).toBe(403) // Editor cannot access restricted admin branch
   })
 
   it('lists branches via API with proper filtering', async () => {
@@ -226,8 +235,6 @@ describe('API Editing Workflow Integration', () => {
     const editorListResponse = await editorClient.get('/api/canopycms/branches')
     expect(editorListResponse.status).toBe(200)
     const editorBranches = (await editorListResponse.json()) as any
-    expect(editorBranches.data.branches.some((b: any) => b.branch.name === 'editor-branch')).toBe(
-      true,
-    )
+    expect(editorBranches.data.branches.some((b: any) => b.name === 'editor-branch')).toBe(true)
   })
 })

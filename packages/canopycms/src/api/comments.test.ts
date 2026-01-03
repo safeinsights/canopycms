@@ -42,7 +42,9 @@ vi.mock('../comment-store', () => {
   }
 })
 
-const baseState = {
+const baseContext = {
+  baseRoot: '/tmp/base',
+  branchRoot: '/tmp/base/feature-x',
   branch: {
     name: 'feature/x',
     status: 'editing' as const,
@@ -59,14 +61,15 @@ const makeCtx = (allowed = true): ApiContext => ({
     checkBranchAccess: vi.fn().mockReturnValue({ allowed, reason: allowed ? 'allowed' : 'denied' }),
     checkContentAccess: vi.fn(),
     bootstrapAdminIds: new Set<string>(),
+    registry: undefined as any,
   },
-  getBranchState: vi.fn().mockResolvedValue(baseState),
+  getBranchContext: vi.fn().mockResolvedValue(baseContext),
 })
 
 describe('comments api - listComments', () => {
   it('returns 404 if branch not found', async () => {
     const ctx = makeCtx()
-    ctx.getBranchState = vi.fn().mockResolvedValue(null)
+    ctx.getBranchContext = vi.fn().mockResolvedValue(null)
     const res = await listComments(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -98,7 +101,7 @@ describe('comments api - listComments', () => {
 describe('comments api - addComment', () => {
   it('returns 404 if branch not found', async () => {
     const ctx = makeCtx()
-    ctx.getBranchState = vi.fn().mockResolvedValue(null)
+    ctx.getBranchContext = vi.fn().mockResolvedValue(null)
     const res = await addComment(
       ctx,
       {
@@ -241,7 +244,7 @@ describe('comments api - addComment', () => {
 describe('comments api - resolveComment', () => {
   it('returns 404 if branch not found', async () => {
     const ctx = makeCtx()
-    ctx.getBranchState = vi.fn().mockResolvedValue(null)
+    ctx.getBranchContext = vi.fn().mockResolvedValue(null)
     const res = await resolveComment(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },

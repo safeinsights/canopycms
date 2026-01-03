@@ -1,6 +1,5 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import { loadBranchState } from '../branch-workspace'
-import { getBranchMetadata } from '../branch-metadata'
+import { getBranchMetadataFileManager } from '../branch-metadata'
 import { isAdmin } from '../reserved-groups'
 
 export interface MarkAsMergedParams {
@@ -18,9 +17,9 @@ export async function markAsMerged(
 ): Promise<ApiResponse<{ branch: { name: string; status: string } }>> {
   const { branch: branchName } = params
 
-  // Load branch state
-  const state = await ctx.getBranchState(branchName)
-  if (!state) {
+  // Load branch context
+  const context = await ctx.getBranchContext(branchName)
+  if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
@@ -30,15 +29,15 @@ export async function markAsMerged(
   }
 
   // Verify branch is submitted with a PR
-  if (state.branch.status !== 'submitted') {
+  if (context.branch.status !== 'submitted') {
     return {
       ok: false,
       status: 400,
-      error: `Cannot mark as merged: branch status is "${state.branch.status}", expected "submitted"`,
+      error: `Cannot mark as merged: branch status is "${context.branch.status}", expected "submitted"`,
     }
   }
 
-  if (!state.pullRequestNumber) {
+  if (!context.branch.pullRequestNumber) {
     return {
       ok: false,
       status: 400,
@@ -49,12 +48,12 @@ export async function markAsMerged(
   // Optionally verify PR is actually merged via GitHub API
   if (ctx.services.githubService) {
     try {
-      const pr = await ctx.services.githubService.getPullRequest(state.pullRequestNumber)
+      const pr = await ctx.services.githubService.getPullRequest(context.branch.pullRequestNumber)
       if (!pr.merged) {
         return {
           ok: false,
           status: 400,
-          error: `Cannot mark as merged: PR #${state.pullRequestNumber} is not merged on GitHub`,
+          error: `Cannot mark as merged: PR #${context.branch.pullRequestNumber} is not merged on GitHub`,
         }
       }
     } catch (err) {
@@ -64,7 +63,7 @@ export async function markAsMerged(
   }
 
   // Update branch status to 'archived'
-  const meta = getBranchMetadata(state.metadataRoot!, state.baseRoot!)
+  const meta = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)
   await meta.save({
     branch: {
       status: 'archived',

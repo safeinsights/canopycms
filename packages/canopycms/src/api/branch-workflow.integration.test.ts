@@ -13,8 +13,8 @@ import { simpleGit } from 'simple-git'
 
 import { GitHubService } from '../github-service'
 import { GitManager } from '../git-manager'
-import { BranchWorkspaceManager, loadBranchState } from '../branch-workspace'
-import { getBranchMetadata } from '../branch-metadata'
+import { BranchWorkspaceManager, loadBranchContext } from '../branch-workspace'
+import { getBranchMetadataFileManager } from '../branch-metadata'
 import { CommentStore } from '../comment-store'
 import { defineCanopyTestConfig } from '../config-test'
 
@@ -173,9 +173,9 @@ describe('PR Workflow Integration', () => {
 
     expect(workspace).toBeTruthy()
     expect(workspace.branchRoot).toBeTruthy()
-    expect(workspace.branchName).toBe(branchName)
-    expect(workspace.metadata.branch.status).toBe('editing')
-    expect(workspace.state.pullRequestNumber).toBeUndefined()
+    expect(workspace.branch.name).toBe(branchName)
+    expect(workspace.branch.status).toBe('editing')
+    expect(workspace.branch.pullRequestNumber).toBeUndefined()
 
     // Configure git user for test commits
     const branchGit = simpleGit({ baseDir: workspace.branchRoot })
@@ -207,8 +207,8 @@ describe('PR Workflow Integration', () => {
     // Create PR via GitHub service
     const prResult = await githubService.createPullRequest({
       branchName,
-      title: workspace.metadata.branch.title ?? 'Test PR',
-      body: workspace.metadata.branch.description ?? 'Test PR description',
+      title: workspace.branch.title ?? 'Test PR',
+      body: workspace.branch.description ?? 'Test PR description',
       draft: false,
     })
 
@@ -225,31 +225,33 @@ describe('PR Workflow Integration', () => {
     })
 
     // Update branch metadata with PR info
-    const metadata = getBranchMetadata(workspace.metadataRoot, workspace.baseRoot)
+    const metadata = getBranchMetadataFileManager(workspace.branchRoot, workspace.baseRoot)
     await metadata.save({
-      branch: { status: 'submitted' },
-      pullRequestNumber: prResult.number,
-      pullRequestUrl: prResult.url,
+      branch: {
+        status: 'submitted',
+        pullRequestNumber: prResult.number,
+        pullRequestUrl: prResult.url,
+      },
     })
 
     // Reload state and verify PR info
-    const submittedState = await loadBranchState({
+    const submittedContext = await loadBranchContext({
       branchName,
       mode: config.mode ?? 'local-simple',
     })
-    expect(submittedState?.branch.status).toBe('submitted')
-    expect(submittedState?.pullRequestNumber).toBe(1)
-    expect(submittedState?.pullRequestUrl).toContain('pull/1')
+    expect(submittedContext?.branch.status).toBe('submitted')
+    expect(submittedContext?.branch.pullRequestNumber).toBe(1)
+    expect(submittedContext?.branch.pullRequestUrl).toContain('pull/1')
 
     // ===== STEP 4: Withdraw submission (convert PR to draft) =====
     await githubService.convertToDraft(prResult.number)
     await metadata.save({ branch: { status: 'editing' } })
 
-    const withdrawnState = await loadBranchState({
+    const withdrawnContext = await loadBranchContext({
       branchName,
       mode: config.mode ?? 'local-simple',
     })
-    expect(withdrawnState?.branch.status).toBe('editing')
+    expect(withdrawnContext?.branch.status).toBe('editing')
 
     // Mock PR as draft for next get() call
     mockOctokit.pulls.get.mockImplementationOnce(async (opts: any) => ({
@@ -269,11 +271,11 @@ describe('PR Workflow Integration', () => {
     // ===== STEP 5: Request changes (reviewer action) =====
     await metadata.save({ branch: { status: 'editing' } })
 
-    const changesRequestedState = await loadBranchState({
+    const changesRequestedContext = await loadBranchContext({
       branchName,
       mode: config.mode ?? 'local-simple',
     })
-    expect(changesRequestedState?.branch.status).toBe('editing')
+    expect(changesRequestedContext?.branch.status).toBe('editing')
 
     // ===== STEP 6: Make additional changes and resubmit =====
     await fs.writeFile(
@@ -314,15 +316,15 @@ describe('PR Workflow Integration', () => {
     await githubService.convertToReady(prResult.number)
     await metadata.save({ branch: { status: 'submitted' } })
 
-    const resubmittedState = await loadBranchState({
+    const resubmittedContext = await loadBranchContext({
       branchName,
       mode: config.mode ?? 'local-simple',
     })
-    expect(resubmittedState?.branch.status).toBe('submitted')
-    expect(resubmittedState?.pullRequestNumber).toBe(1) // Same PR number
+    expect(resubmittedContext?.branch.status).toBe('submitted')
+    expect(resubmittedContext?.branch.pullRequestNumber).toBe(1) // Same PR number
 
     // ===== STEP 7: Add and resolve comments =====
-    const commentStore = new CommentStore(workspace.metadataRoot)
+    const commentStore = new CommentStore(workspace.branchRoot)
     await commentStore.load()
 
     // Add field comment
@@ -405,12 +407,15 @@ describe('PR Workflow Integration', () => {
     // Mark branch as merged in CanopyCMS
     await metadata.save({ branch: { status: 'archived' } })
 
-    const archivedState = await loadBranchState({ branchName, mode: config.mode ?? 'local-simple' })
-    expect(archivedState?.branch.status).toBe('archived')
-    expect(archivedState?.pullRequestNumber).toBe(1)
+    const archivedContext = await loadBranchContext({
+      branchName,
+      mode: config.mode ?? 'local-simple',
+    })
+    expect(archivedContext?.branch.status).toBe('archived')
+    expect(archivedContext?.branch.pullRequestNumber).toBe(1)
 
     // Verify comments are still accessible in archived branch
-    const archivedComments = new CommentStore(archivedState!.metadataRoot!)
+    const archivedComments = new CommentStore(archivedContext!.branchRoot)
     await archivedComments.load()
     const archivedThreads = await archivedComments.listThreads()
     expect(archivedThreads).toHaveLength(3) // All comments preserved

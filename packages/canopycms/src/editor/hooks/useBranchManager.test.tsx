@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useBranchManager, UseBranchManagerOptions } from './useBranchManager'
-import type { BranchState } from '../../types'
+import type { BranchMetadata } from '../../types'
 
 // Mock notifications
 vi.mock('@mantine/notifications', () => ({
@@ -18,28 +18,24 @@ vi.mock('@mantine/modals', () => ({
 }))
 
 describe('useBranchManager', () => {
-  const mockBranches: BranchState[] = [
+  const mockBranches: BranchMetadata[] = [
     {
-      branch: {
-        name: 'main',
-        status: 'editing',
-        title: 'Main Branch',
-        access: { allowedUsers: [], allowedGroups: [] },
-        createdBy: 'user1',
-        createdAt: '2024-01-01',
-        updatedAt: '2024-01-02',
-      },
+      name: 'main',
+      status: 'editing',
+      title: 'Main Branch',
+      access: { allowedUsers: [], allowedGroups: [] },
+      createdBy: 'user1',
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-02',
     },
     {
-      branch: {
-        name: 'feature',
-        status: 'submitted',
-        title: 'Feature Branch',
-        access: { allowedUsers: ['user1'], allowedGroups: ['group1'] },
-        createdBy: 'user1',
-        createdAt: '2024-01-01',
-        updatedAt: '2024-01-03',
-      },
+      name: 'feature',
+      status: 'submitted',
+      title: 'Feature Branch',
+      access: { allowedUsers: ['user1'], allowedGroups: ['group1'] },
+      createdBy: 'user1',
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-03',
     },
   ]
 

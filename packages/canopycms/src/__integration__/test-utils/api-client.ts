@@ -23,9 +23,9 @@ export function createApiClient(options: ApiClientOptions) {
   const handler = createCanopyRequestHandler({
     services,
     authPlugin: options.authPlugin,
-    getBranchState: async (branchName) => {
-      const metadata = await services.registry.get(branchName)
-      return metadata ?? null
+    getBranchContext: async (branchName: string) => {
+      const context = await services.registry.get(branchName)
+      return context ?? null
     },
   })
 

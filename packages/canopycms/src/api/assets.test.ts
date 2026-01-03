@@ -10,8 +10,9 @@ const makeCtx = (): ApiContext => ({
     checkBranchAccess: () => ({ allowed: true, reason: 'no_acl' }),
     checkContentAccess: async () => ({ allowed: true, branch: {}, path: {} }),
     bootstrapAdminIds: new Set<string>(),
+    registry: undefined as any,
   },
-  getBranchState: async () => null,
+  getBranchContext: async () => null,
   assetStore: {
     list: async () => [{ key: 'a.png', url: 'http://cdn/a.png' }],
     upload: async (key) => ({ key }),

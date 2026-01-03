@@ -1,7 +1,7 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { PathPermission } from '../config'
 import { loadPathPermissions, savePathPermissions } from '../permissions-loader'
-import { resolveBranchWorkspace } from '../paths'
+import { resolveBranchPaths } from '../paths'
 import { isAdmin, isReviewer } from '../reserved-groups'
 
 /**
@@ -19,14 +19,14 @@ export const getPermissions = async (
   try {
     // Load from main branch
     const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-    const branchState = await ctx.getBranchState(mainBranch)
+    const context = await ctx.getBranchContext(mainBranch)
 
-    if (!branchState) {
+    if (!context) {
       return { ok: false, status: 500, error: 'Main branch not found' }
     }
 
     const branchMode = ctx.services.config.mode ?? 'local-simple'
-    const branchPaths = resolveBranchWorkspace(branchState, branchMode)
+    const branchPaths = resolveBranchPaths(context, branchMode)
     const permissions = await loadPathPermissions(branchPaths.branchRoot)
 
     return {
@@ -66,14 +66,14 @@ export const updatePermissions = async (
   try {
     // Save to main branch
     const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-    const branchState = await ctx.getBranchState(mainBranch)
+    const context = await ctx.getBranchContext(mainBranch)
 
-    if (!branchState) {
+    if (!context) {
       return { ok: false, status: 500, error: 'Main branch not found' }
     }
 
     const branchMode = ctx.services.config.mode ?? 'local-simple'
-    const branchPaths = resolveBranchWorkspace(branchState, branchMode)
+    const branchPaths = resolveBranchPaths(context, branchMode)
 
     await savePathPermissions(branchPaths.branchRoot, req.body.permissions, req.user.userId)
 

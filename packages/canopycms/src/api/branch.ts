@@ -1,11 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import type { BranchAccessControl, BranchState } from '../types'
+import type { BranchAccessControl, BranchContext, BranchMetadata } from '../types'
 import { BranchWorkspaceManager } from '../branch-workspace'
-import { getBranchMetadata } from '../branch-metadata'
+import { getBranchMetadataFileManager } from '../branch-metadata'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import { resolveBranchWorkspace } from '../paths'
+import { resolveBranchPaths } from '../paths'
 import { isPrivileged, isAdmin } from '../reserved-groups'
 import type { PathPermission } from '../config'
 import { loadPathPermissions } from '../permissions-loader'
@@ -61,13 +61,13 @@ export interface CreateBranchBody {
   branch: string
   title?: string
   description?: string
-  access?: BranchState['branch']['access']
+  access?: BranchMetadata['access']
 }
 
 export const createBranch = async (
   ctx: ApiContext,
   req: ApiRequest<CreateBranchBody>,
-): Promise<ApiResponse<{ branch: BranchState }>> => {
+): Promise<ApiResponse<{ branch: BranchMetadata }>> => {
   const branchName = req.body?.branch
   if (!branchName) {
     return { ok: false, status: 400, error: 'branch is required' }
@@ -77,11 +77,11 @@ export const createBranch = async (
 
   // Load path permissions from the main branch's JSON file
   const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-  const mainBranchState = await ctx.getBranchState(mainBranch)
+  const mainBranchContext = await ctx.getBranchContext(mainBranch)
 
   let pathPermissions: PathPermission[] = []
-  if (mainBranchState) {
-    const branchPaths = resolveBranchWorkspace(mainBranchState, branchMode)
+  if (mainBranchContext) {
+    const branchPaths = resolveBranchPaths(mainBranchContext, branchMode)
     pathPermissions = await loadPathPermissions(branchPaths.branchRoot)
   }
 
@@ -92,7 +92,7 @@ export const createBranch = async (
   }
 
   const manager = new BranchWorkspaceManager(ctx.services.config)
-  const workspace = await manager.openOrCreateBranch({
+  const context = await manager.openOrCreateBranch({
     branchName,
     mode: branchMode,
     createdBy: req.user.userId,
@@ -100,23 +100,23 @@ export const createBranch = async (
     description: req.body?.description,
     access: req.body?.access,
   })
-  return { ok: true, status: 200, data: { branch: workspace.state } }
+  return { ok: true, status: 200, data: { branch: context.branch } }
 }
 
 export const listBranches = async (
   ctx: ApiContext,
   req: ApiRequest,
-): Promise<ApiResponse<{ branches: BranchState[] }>> => {
+): Promise<ApiResponse<{ branches: BranchMetadata[] }>> => {
   const allBranches = await ctx.services.registry.list()
 
   // Admins and Reviewers see all branches
   if (isPrivileged(req.user.groups)) {
-    return { ok: true, status: 200, data: { branches: allBranches } }
+    return { ok: true, status: 200, data: { branches: allBranches.map((c) => c.branch) } }
   }
 
   // Regular users only see branches they created or have explicit access to
-  const visibleBranches = allBranches.filter((state) => {
-    const branch = state.branch
+  const visibleBranches = allBranches.filter((context) => {
+    const branch = context.branch
     // User created the branch
     if (branch.createdBy === req.user.userId) {
       return true
@@ -136,7 +136,7 @@ export const listBranches = async (
     return false
   })
 
-  return { ok: true, status: 200, data: { branches: visibleBranches } }
+  return { ok: true, status: 200, data: { branches: visibleBranches.map((c) => c.branch) } }
 }
 
 /**
@@ -145,7 +145,7 @@ export const listBranches = async (
  */
 export const canDeleteBranch = (
   user: CanopyUser,
-  branchState: BranchState,
+  branchContext: BranchContext,
 ): { allowed: boolean; reason: string } => {
   // Admins can delete any branch
   if (isAdmin(user.groups)) {
@@ -153,7 +153,7 @@ export const canDeleteBranch = (
   }
 
   // Branch creator can delete their own branch
-  if (branchState.branch.createdBy === user.userId) {
+  if (branchContext.branch.createdBy === user.userId) {
     return { allowed: true, reason: 'creator' }
   }
 
@@ -176,27 +176,27 @@ export const deleteBranch = async (
     return { ok: false, status: 400, error: 'Cannot delete branches in local-simple mode' }
   }
 
-  // Get branch state
-  const branchState = await ctx.getBranchState(branchName)
-  if (!branchState) {
+  // Get branch context
+  const branchContext = await ctx.getBranchContext(branchName)
+  if (!branchContext) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
   // Check permission
-  const canDelete = canDeleteBranch(req.user, branchState)
+  const canDelete = canDeleteBranch(req.user, branchContext)
   if (!canDelete.allowed) {
     return { ok: false, status: 403, error: 'You do not have permission to delete this branch' }
   }
 
   // Block deletion if branch has open PR (submitted status)
-  if (branchState.branch.status === 'submitted') {
+  if (branchContext.branch.status === 'submitted') {
     return { ok: false, status: 400, error: 'Cannot delete branch with open pull request' }
   }
 
-  const branchPaths = resolveBranchWorkspace(branchState, branchMode)
+  const branchPaths = resolveBranchPaths(branchContext, branchMode)
 
   // Delete branch metadata file so it disappears from registry scans
-  const metadataFile = path.join(branchPaths.metadataRoot, '.canopycms', 'branch.json')
+  const metadataFile = path.join(branchPaths.branchRoot, '.canopycms', 'branch.json')
   try {
     await fs.unlink(metadataFile)
   } catch (err: any) {
@@ -231,7 +231,7 @@ export interface UpdateBranchAccessBody {
  */
 export const canModifyBranchAccess = (
   user: CanopyUser,
-  branchState: BranchState,
+  branchContext: BranchContext,
 ): { allowed: boolean; reason: string } => {
   // Admins can modify any branch
   if (isAdmin(user.groups)) {
@@ -239,7 +239,7 @@ export const canModifyBranchAccess = (
   }
 
   // Branch creator can modify their own branch
-  if (branchState.branch.createdBy === user.userId) {
+  if (branchContext.branch.createdBy === user.userId) {
     return { allowed: true, reason: 'creator' }
   }
 
@@ -250,27 +250,27 @@ export const updateBranchAccess = async (
   ctx: ApiContext,
   req: ApiRequest<UpdateBranchAccessBody>,
   params: { branch: string },
-): Promise<ApiResponse<{ branch: BranchState }>> => {
+): Promise<ApiResponse<{ branch: BranchMetadata }>> => {
   const branchName = params.branch
   if (!branchName) {
     return { ok: false, status: 400, error: 'branch is required' }
   }
 
-  // Get branch state
-  const branchState = await ctx.getBranchState(branchName)
-  if (!branchState) {
+  // Get branch context
+  const branchContext = await ctx.getBranchContext(branchName)
+  if (!branchContext) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
   // Check permission
-  const canModify = canModifyBranchAccess(req.user, branchState)
+  const canModify = canModifyBranchAccess(req.user, branchContext)
   if (!canModify.allowed) {
     return { ok: false, status: 403, error: 'You do not have permission to modify this branch' }
   }
 
   // Build new access control
   const newAccess: BranchAccessControl = {
-    ...branchState.branch.access,
+    ...branchContext.branch.access,
   }
   if (req.body?.allowedUsers !== undefined) {
     newAccess.allowedUsers = req.body.allowedUsers
@@ -280,23 +280,10 @@ export const updateBranchAccess = async (
   }
 
   // Update metadata (automatically invalidates registry cache)
-  if (!branchState.metadataRoot || !branchState.baseRoot) {
-    return { ok: false, status: 500, error: 'Branch metadata root not found' }
-  }
-  const metadata = getBranchMetadata(branchState.metadataRoot, branchState.baseRoot)
+  const metadata = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
   const updated = await metadata.save({
     branch: { access: newAccess },
   })
 
-  // Build updated state for response
-  const newState: BranchState = {
-    ...branchState,
-    branch: {
-      ...branchState.branch,
-      access: newAccess,
-      updatedAt: updated.branch.updatedAt,
-    },
-  }
-
-  return { ok: true, status: 200, data: { branch: newState } }
+  return { ok: true, status: 200, data: { branch: updated.branch } }
 }

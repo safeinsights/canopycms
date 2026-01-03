@@ -1,9 +1,9 @@
-import { BranchWorkspaceManager, loadBranchState } from './branch-workspace'
+import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError, type ContentDocument } from './content-store'
 import type { CanopyConfig, ResolvedSchemaItem } from './config'
-import { resolveBranchWorkspace, type BranchMode } from './paths'
+import { resolveBranchPaths, type BranchMode } from './paths'
 import { createCanopyServices, type CanopyServices } from './services'
-import type { BranchState } from './types'
+import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
 import { resolveSchema } from './config'
 
@@ -15,7 +15,7 @@ export interface ContentReaderOptions {
   defaultBranch?: string
   createdBy?: string
   allowCreateBranch?: boolean
-  getBranchState?: (branch: string) => Promise<BranchState | null>
+  getBranchContext?: (branch: string) => Promise<BranchContext | null>
 }
 
 export interface ReadContentInput {
@@ -51,29 +51,28 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const allowCreateBranch = options.allowCreateBranch ?? true
   const createdBy = options.createdBy ?? 'canopycms-content-reader'
 
-  const resolveBranchState = async (branchName: string): Promise<BranchState> => {
-    const existing = options.getBranchState
-      ? await options.getBranchState(branchName)
-      : await loadBranchState({ branchName, mode: branchMode, basePathOverride })
+  const resolveBranchContext = async (branchName: string): Promise<BranchContext> => {
+    const existing = options.getBranchContext
+      ? await options.getBranchContext(branchName)
+      : await loadBranchContext({ branchName, mode: branchMode, basePathOverride })
     if (existing) return existing
     if (!allowCreateBranch) {
       throw new ContentStoreError(`Branch not found: ${branchName}`)
     }
-    const workspace = await workspaceManager.openOrCreateBranch({
+    return await workspaceManager.openOrCreateBranch({
       branchName,
       mode: branchMode,
       basePathOverride,
       createdBy,
       remoteUrl: services.config.defaultRemoteUrl,
     })
-    return workspace.state
   }
 
   const resolveStore = async (branchName: string) => {
-    const state = await resolveBranchState(branchName)
-    const { branchRoot } = resolveBranchWorkspace(state, branchMode, basePathOverride)
+    const context = await resolveBranchContext(branchName)
+    const { branchRoot } = resolveBranchPaths(context, branchMode, basePathOverride)
     return {
-      state,
+      context,
       branchRoot,
       store: new ContentStore(branchRoot, services.config),
     }
@@ -140,7 +139,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
 
   const readDocument = async (input: ReadContentInput) => {
     const { entryPath, slug, branchName, user } = resolveTarget(input)
-    const { state, branchRoot, store } = await resolveStore(branchName)
+    const { context, branchRoot, store } = await resolveStore(branchName)
 
     let relativePath: string
     try {
@@ -150,7 +149,13 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       throw new ContentStoreError(message)
     }
 
-    const access = await services.checkContentAccess(state, branchRoot, relativePath, user, 'read')
+    const access = await services.checkContentAccess(
+      context,
+      branchRoot,
+      relativePath,
+      user,
+      'read',
+    )
     if (!access.allowed) {
       throw new ContentStoreError('Forbidden')
     }

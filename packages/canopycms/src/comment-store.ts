@@ -40,8 +40,8 @@ export interface CommentsFile {
 export class CommentStore {
   private filePath: string
 
-  constructor(metadataRoot: string) {
-    this.filePath = path.join(metadataRoot, 'comments.json')
+  constructor(branchRoot: string) {
+    this.filePath = path.join(branchRoot, '.canopycms', 'comments.json')
   }
 
   async load(): Promise<CommentsFile> {

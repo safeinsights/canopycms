@@ -2,9 +2,9 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import type { CanopyConfig } from './config'
-import { ensureBranchRoot, resolveBranchPath } from './paths'
-import { BranchMetadata, getBranchMetadata, type BranchMetadataFile } from './branch-metadata'
-import type { BranchAccessControl, BranchState, CanopyUserId } from './types'
+import { ensureBranchRoot } from './paths'
+import { getBranchMetadataFileManager } from './branch-metadata'
+import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
 import type { BranchMode } from './paths'
 import { GitManager } from './git-manager'
 
@@ -17,15 +17,6 @@ export interface OpenBranchOptions {
   access?: BranchAccessControl
   createdBy: CanopyUserId
   remoteUrl?: string
-}
-
-export interface BranchWorkspace {
-  branchName: string
-  branchRoot: string
-  baseRoot: string
-  metadataRoot: string
-  metadata: BranchMetadataFile
-  state: BranchState
 }
 
 /**
@@ -95,13 +86,12 @@ export class BranchWorkspaceManager {
     await git.checkoutBranch(options.branchName)
   }
 
-  async openOrCreateBranch(options: OpenBranchOptions): Promise<BranchWorkspace> {
+  async openOrCreateBranch(options: OpenBranchOptions): Promise<BranchContext> {
     const { branchName, mode, basePathOverride, title, description, access, createdBy, remoteUrl } =
       options
     const {
       branchRoot,
       baseRoot,
-      metadataRoot,
       branchName: safeName,
     } = await ensureBranchRoot({
       mode,
@@ -111,8 +101,8 @@ export class BranchWorkspaceManager {
 
     await this.ensureGitWorkspace({ branchRoot, branchName: safeName, mode, remoteUrl })
 
-    // update() handles both creation and updates, preserving existing values and invalidating registry
-    const metadata = getBranchMetadata(metadataRoot, baseRoot)
+    // save() handles both creation and updates, preserving existing values and invalidating registry
+    const metadata = getBranchMetadataFileManager(branchRoot, baseRoot)
     const meta = await metadata.save({
       branch: {
         name: safeName,
@@ -123,49 +113,12 @@ export class BranchWorkspaceManager {
       },
     })
 
-    const state: BranchState = {
-      ...BranchMetadata.toBranchState(meta),
-      workspaceRoot: branchRoot,
-      metadataRoot,
-      baseRoot,
-    }
-
     return {
-      branchName: safeName,
+      branch: meta.branch,
       branchRoot,
       baseRoot,
-      metadataRoot,
-      metadata: meta,
-      state,
     }
   }
 }
 
-/**
- * Load branch state from metadata file (source of truth).
- * Returns null if the branch doesn't exist.
- */
-export const loadBranchState = async (options: {
-  branchName: string
-  mode: BranchMode
-  basePathOverride?: string
-}): Promise<BranchState | null> => {
-  const { branchRoot, baseRoot, metadataRoot } = resolveBranchPath({
-    branchName: options.branchName,
-    mode: options.mode,
-    basePathOverride: options.basePathOverride,
-  })
-
-  // Load from metadata file (source of truth)
-  const meta = await BranchMetadata.loadOnly(metadataRoot)
-  if (!meta) {
-    return null
-  }
-
-  return {
-    ...BranchMetadata.toBranchState(meta),
-    workspaceRoot: branchRoot,
-    baseRoot,
-    metadataRoot,
-  }
-}
+export { loadBranchContext } from './branch-metadata'

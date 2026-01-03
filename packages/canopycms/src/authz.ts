@@ -1,4 +1,4 @@
-import type { BranchState } from './types'
+import type { BranchContext } from './types'
 import type { DefaultBranchAccess } from './config'
 import { isAdmin, isReviewer } from './reserved-groups'
 import type { CanopyUser } from './user'
@@ -9,7 +9,7 @@ export interface BranchAccessResult {
 }
 
 export const checkBranchAccessWithDefault = (
-  state: BranchState,
+  context: BranchContext,
   user: CanopyUser,
   defaultAccess: DefaultBranchAccess = 'deny',
 ): BranchAccessResult => {
@@ -18,7 +18,7 @@ export const checkBranchAccessWithDefault = (
     return { allowed: true, reason: 'privileged' }
   }
 
-  const access = state.branch.access
+  const access = context.branch.access
   const hasUserConstraint = !!access.allowedUsers?.length
   const hasGroupConstraint = !!access.allowedGroups?.length
   const managerOrAdminAllowed = access.managerOrAdminAllowed ?? false
@@ -40,6 +40,6 @@ export const checkBranchAccessWithDefault = (
 }
 
 export const createCheckBranchAccess = (defaultAccess: DefaultBranchAccess = 'deny') => {
-  return (state: BranchState, user: CanopyUser): BranchAccessResult =>
-    checkBranchAccessWithDefault(state, user, defaultAccess)
+  return (context: BranchContext, user: CanopyUser): BranchAccessResult =>
+    checkBranchAccessWithDefault(context, user, defaultAccess)
 }

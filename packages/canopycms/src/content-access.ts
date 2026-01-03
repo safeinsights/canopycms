@@ -1,4 +1,4 @@
-import type { BranchState } from './types'
+import type { BranchContext } from './types'
 import type { BranchAccessResult } from './authz'
 import type { PathPermissionResult } from './path-permissions'
 import type { PathPermission, DefaultPathAccess, PermissionLevel } from './config'
@@ -12,7 +12,7 @@ export interface ContentAccessResult {
 }
 
 export interface ContentAccessDeps {
-  checkBranchAccess: (state: BranchState, user: CanopyUser) => BranchAccessResult
+  checkBranchAccess: (context: BranchContext, user: CanopyUser) => BranchAccessResult
   loadPathPermissions: (branchRoot: string) => Promise<PathPermission[]>
   defaultPathAccess: DefaultPathAccess
 }
@@ -23,13 +23,13 @@ export interface ContentAccessDeps {
  */
 export const checkContentAccess = async (
   deps: ContentAccessDeps,
-  branchState: BranchState,
+  context: BranchContext,
   branchRoot: string,
   relativePath: string,
   user: CanopyUser,
   level: PermissionLevel,
 ): Promise<ContentAccessResult> => {
-  const branch = deps.checkBranchAccess(branchState, user)
+  const branch = deps.checkBranchAccess(context, user)
 
   const rules = await deps.loadPathPermissions(branchRoot)
   const pathChecker = createCheckPathAccess(rules, deps.defaultPathAccess)
@@ -49,11 +49,11 @@ export const checkContentAccess = async (
 
 export const createCheckContentAccess = (deps: ContentAccessDeps) => {
   return (
-    branchState: BranchState,
+    context: BranchContext,
     branchRoot: string,
     relativePath: string,
     user: CanopyUser,
     level: PermissionLevel,
   ): Promise<ContentAccessResult> =>
-    checkContentAccess(deps, branchState, branchRoot, relativePath, user, level)
+    checkContentAccess(deps, context, branchRoot, relativePath, user, level)
 }

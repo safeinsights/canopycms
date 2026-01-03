@@ -4,11 +4,11 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { BranchMetadata, getBranchMetadata } from './branch-metadata'
+import { BranchMetadataFileManager, getBranchMetadataFileManager } from './branch-metadata'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branchmeta-'))
 
-describe('BranchMetadata', () => {
+describe('BranchMetadataFileManager', () => {
   describe('loadOnly', () => {
     it('loads metadata from disk', async () => {
       const root = await tmpDir()
@@ -32,14 +32,14 @@ describe('BranchMetadata', () => {
         }),
       )
 
-      const loaded = await BranchMetadata.loadOnly(root)
+      const loaded = await BranchMetadataFileManager.loadOnly(root)
       expect(loaded?.branch.name).toBe('feature/x')
       expect(loaded?.branch.access.allowedGroups).toContain('g1')
     })
 
     it('returns null for missing metadata', async () => {
       const root = await tmpDir()
-      const loaded = await BranchMetadata.loadOnly(root)
+      const loaded = await BranchMetadataFileManager.loadOnly(root)
       expect(loaded).toBeNull()
     })
   })
@@ -48,7 +48,7 @@ describe('BranchMetadata', () => {
     it('creates metadata when none exists', async () => {
       const root = await tmpDir()
       const registryDir = await tmpDir()
-      const meta = getBranchMetadata(root, registryDir)
+      const meta = getBranchMetadataFileManager(root, registryDir)
 
       const created = await meta.save({
         branch: {
@@ -62,14 +62,14 @@ describe('BranchMetadata', () => {
       expect(created.branch.name).toBe('feature/x')
       expect(created.branch.access.allowedGroups).toContain('g1')
 
-      const loaded = await BranchMetadata.loadOnly(root)
+      const loaded = await BranchMetadataFileManager.loadOnly(root)
       expect(loaded?.branch.name).toBe('feature/x')
     })
 
     it('updates existing metadata and stamps updatedAt', async () => {
       const root = await tmpDir()
       const registryDir = await tmpDir()
-      const meta = getBranchMetadata(root, registryDir)
+      const meta = getBranchMetadataFileManager(root, registryDir)
 
       // First create
       const created = await meta.save({
@@ -86,13 +86,13 @@ describe('BranchMetadata', () => {
           name: 'feature/y',
           status: 'submitted',
           access: { managerOrAdminAllowed: true },
+          pullRequestNumber: 10,
+          pullRequestUrl: 'https://example.com/pr/10',
         },
-        pullRequestNumber: 10,
-        pullRequestUrl: 'https://example.com/pr/10',
       })
 
       expect(updated.branch.status).toBe('submitted')
-      expect(updated.pullRequestNumber).toBe(10)
+      expect(updated.branch.pullRequestNumber).toBe(10)
       expect(updated.branch.access.managerOrAdminAllowed).toBe(true)
       expect(updated.branch.createdAt).toBe(created.branch.createdAt) // createdAt unchanged
       expect(new Date(updated.branch.updatedAt).getTime()).toBeGreaterThanOrEqual(
@@ -112,7 +112,7 @@ describe('BranchMetadata', () => {
       await fs.writeFile(cacheFile, JSON.stringify({ version: 1, branches: [] }))
 
       // Create metadata with registryDir
-      const meta = getBranchMetadata(branchRoot, registryDir)
+      const meta = getBranchMetadataFileManager(branchRoot, registryDir)
 
       // First update creates the metadata and invalidates cache
       await meta.save({
@@ -146,11 +146,11 @@ describe('BranchMetadata', () => {
       expect(staleExists).toBe(true)
     })
 
-    it('getBranchMetadata factory creates metadata with registryDir', async () => {
+    it('getBranchMetadataFileManager factory creates metadata with registryDir', async () => {
       const branchRoot = await tmpDir()
       const registryDir = await tmpDir()
 
-      const meta = getBranchMetadata(branchRoot, registryDir)
+      const meta = getBranchMetadataFileManager(branchRoot, registryDir)
 
       // Create metadata via update
       await meta.save({
@@ -161,7 +161,7 @@ describe('BranchMetadata', () => {
         },
       })
 
-      const loaded = await BranchMetadata.loadOnly(branchRoot)
+      const loaded = await BranchMetadataFileManager.loadOnly(branchRoot)
       expect(loaded?.branch.name).toBe('feature/factory')
     })
   })

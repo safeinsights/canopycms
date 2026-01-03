@@ -5,7 +5,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-import { BranchWorkspaceManager, loadBranchState } from './branch-workspace'
+import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
 import { defineCanopyConfig } from './config'
 import { defineCanopyTestConfig } from './config-test'
 import { BranchRegistry } from './branch-registry'
@@ -43,8 +43,8 @@ describe('BranchWorkspaceManager', () => {
     const meta = JSON.parse(await fs.readFile(metaFile, 'utf8'))
     expect(meta.branch.name).toBe('feature-foo')
     expect(meta.branch.title).toBe('Foo Feature')
-    expect(workspace.metadataRoot).toBe(workspace.branchRoot)
-    expect(workspace.state.workspaceRoot).toBe(workspace.branchRoot)
+    expect(workspace.branchRoot).toBeDefined()
+    expect(workspace.baseRoot).toBe(root)
 
     // Note: In local-simple mode, there's only one "branch" at the root,
     // so the registry (which scans subdirectories) doesn't apply
@@ -96,8 +96,8 @@ describe('BranchWorkspaceManager', () => {
     const meta = JSON.parse(await fs.readFile(metaFile, 'utf8'))
     expect(meta.branch.name).toBe('feature-foo')
     expect(meta.branch.title).toBe('Foo Feature')
-    expect(workspace.metadataRoot).toBe(workspace.branchRoot)
-    expect(workspace.state.workspaceRoot).toBe(workspace.branchRoot)
+    expect(workspace.branchRoot).toBeDefined()
+    expect(workspace.baseRoot).toBe(branchesRoot)
 
     // In multi-branch mode, registry can scan subdirectories and find the branch
     const registry = new BranchRegistry(branchesRoot)
@@ -177,14 +177,14 @@ describe('BranchWorkspaceManager', () => {
       createdBy: 'user-1',
     })
 
-    const state = await loadBranchState({
+    const state = await loadBranchContext({
       branchName: 'main',
       mode: 'local-simple',
       basePathOverride: root,
     })
 
     expect(state?.branch.name).toBe('main')
-    expect(state?.workspaceRoot).toBe(root)
+    expect(state?.branchRoot).toBe(root)
     expect(state?.baseRoot).toBe(root)
   })
 })

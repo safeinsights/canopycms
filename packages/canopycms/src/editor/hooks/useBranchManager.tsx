@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { notifications } from '@mantine/notifications'
-import type { BranchState } from '../../types'
+import type { BranchMetadata } from '../../types'
 import type { BranchMode } from '../../paths'
 import type { ApiResponse } from '../../api/types'
 import type { CommentThread } from '../../comment-store'
@@ -47,9 +47,9 @@ export interface UseBranchManagerOptions {
 export interface UseBranchManagerReturn {
   branchName: string
   setBranchName: (name: string) => void
-  branches: BranchState[]
+  branches: BranchMetadata[]
   branchSummaries: BranchSummary[]
-  currentBranch: BranchState | undefined
+  currentBranch: BranchMetadata | undefined
   branchStatus: string
   handleSubmit: (branchName: string) => Promise<void>
   handleWithdraw: (branchName: string) => Promise<void>
@@ -95,24 +95,24 @@ export interface UseBranchManagerReturn {
  */
 export function useBranchManager(options: UseBranchManagerOptions): UseBranchManagerReturn {
   const [branchName, setBranchName] = useState<string>(options.initialBranch)
-  const [branches, setBranches] = useState<BranchState[]>([])
+  const [branches, setBranches] = useState<BranchMetadata[]>([])
 
-  const currentBranch = branches.find((b) => b.branch.name === branchName)
-  const branchStatus = currentBranch?.branch.status ?? 'editing'
+  const currentBranch = branches.find((b) => b.name === branchName)
+  const branchStatus = currentBranch?.status ?? 'editing'
 
   // Compute branch summaries with comment counts
   const branchSummaries = useMemo(() => {
     return branches.map((b) => {
-      const branchComments = b.branch.name === branchName ? options.comments : []
+      const branchComments = b.name === branchName ? options.comments : []
       const unresolvedCount = branchComments.filter((t) => !t.resolved).length
       return {
-        name: b.branch.name,
-        status: b.branch.status,
-        createdBy: b.branch.createdBy,
-        updatedAt: b.branch.updatedAt,
+        name: b.name,
+        status: b.status,
+        createdBy: b.createdBy,
+        updatedAt: b.updatedAt,
         access: {
-          users: b.branch.access.allowedUsers,
-          groups: b.branch.access.allowedGroups,
+          users: b.access.allowedUsers,
+          groups: b.access.allowedGroups,
         },
         pullRequestUrl: b.pullRequestUrl,
         pullRequestNumber: b.pullRequestNumber,
@@ -131,7 +131,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         return
       }
       if (!res.ok) throw new Error(`Failed to load branches: ${res.status}`)
-      const payload = (await res.json()) as ApiResponse<{ branches: BranchState[] }>
+      const payload = (await res.json()) as ApiResponse<{ branches: BranchMetadata[] }>
       const list = ('data' in payload ? payload.data?.branches : (payload as any).branches) ?? []
       setBranches(list)
     } catch (err) {

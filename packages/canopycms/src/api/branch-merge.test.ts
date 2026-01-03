@@ -6,10 +6,10 @@ import { mockConsole } from '../test-utils/console-spy.js'
 
 vi.mock('../branch-metadata', () => {
   return {
-    BranchMetadata: vi.fn().mockImplementation(() => ({
+    BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
       save: vi.fn().mockResolvedValue(undefined),
     })),
-    getBranchMetadata: vi.fn().mockImplementation(() => ({
+    getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
       save: vi.fn().mockResolvedValue(undefined),
     })),
   }
@@ -32,15 +32,16 @@ describe('branch merge api - markAsMerged', () => {
         checkBranchAccess: vi.fn().mockResolvedValue({ allowed: true }),
         githubService: mockGithubService,
       } as any,
-      getBranchState: vi.fn().mockResolvedValue({
+      getBranchContext: vi.fn().mockResolvedValue({
+        baseRoot: '/test',
+        branchRoot: '/test/feature-x',
         branch: {
           name: 'feature/x',
           status: 'submitted',
           createdBy: 'user1',
           updatedAt: new Date().toISOString(),
+          pullRequestNumber: 42,
         },
-        pullRequestNumber: 42,
-        metadataRoot: '/test/workspace/.canopycms',
       }),
     } as any
 
@@ -65,7 +66,7 @@ describe('branch merge api - markAsMerged', () => {
   })
 
   it('returns 404 if branch not found', async () => {
-    ctx.getBranchState = vi.fn().mockResolvedValue(null)
+    ctx.getBranchContext = vi.fn().mockResolvedValue(null)
 
     const result = await markAsMerged(ctx, req, { branch: 'nonexistent' })
 
@@ -85,14 +86,15 @@ describe('branch merge api - markAsMerged', () => {
   })
 
   it('returns 400 if branch is not submitted', async () => {
-    ctx.getBranchState = vi.fn().mockResolvedValue({
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      baseRoot: '/test',
+      branchRoot: '/test/feature-x',
       branch: {
         name: 'feature/x',
         status: 'editing',
         createdBy: 'user1',
         updatedAt: new Date().toISOString(),
       },
-      metadataRoot: '/test/workspace/.canopycms',
     })
 
     const result = await markAsMerged(ctx, req, { branch: 'feature/x' })
@@ -103,14 +105,15 @@ describe('branch merge api - markAsMerged', () => {
   })
 
   it('returns 400 if branch has no PR', async () => {
-    ctx.getBranchState = vi.fn().mockResolvedValue({
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      baseRoot: '/test',
+      branchRoot: '/test/feature-x',
       branch: {
         name: 'feature/x',
         status: 'submitted',
         createdBy: 'user1',
         updatedAt: new Date().toISOString(),
       },
-      metadataRoot: '/test/workspace/.canopycms',
     })
 
     const result = await markAsMerged(ctx, req, { branch: 'feature/x' })

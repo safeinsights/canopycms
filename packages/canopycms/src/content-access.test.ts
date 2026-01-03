@@ -5,7 +5,9 @@ import { createCheckContentAccess } from './content-access'
 import { RESERVED_GROUPS } from './reserved-groups'
 import type { PathPermission } from './config'
 
-const branchState = {
+const branchContext = {
+  baseRoot: '/tmp/base',
+  branchRoot: '/tmp/base/feature-x',
   branch: {
     name: 'feature/x',
     status: 'editing' as const,
@@ -32,7 +34,7 @@ describe('checkContentAccess', () => {
     })
 
     const res = await checkContent(
-      branchState,
+      branchContext,
       '/repo',
       'content/pages/foo.md',
       { type: 'authenticated', userId: 'u1', groups: [] },
@@ -53,7 +55,7 @@ describe('checkContentAccess', () => {
     })
 
     const res = await checkContent(
-      branchState,
+      branchContext,
       '/repo',
       'content/pages/foo.md',
       {
@@ -77,7 +79,7 @@ describe('checkContentAccess', () => {
     })
 
     const res = await checkContent(
-      branchState,
+      branchContext,
       '/repo',
       'content/admin/secret.md',
       { type: 'authenticated', userId: 'u1', groups: [] },
@@ -97,7 +99,7 @@ describe('checkContentAccess', () => {
     })
 
     const res = await checkContent(
-      branchState,
+      branchContext,
       '/repo',
       'content/open/page.md',
       { type: 'authenticated', userId: 'u1', groups: [] },
@@ -118,7 +120,7 @@ describe('checkContentAccess', () => {
     })
 
     const res = await checkContent(
-      branchState,
+      branchContext,
       '/repo',
       'content/open/page.md',
       { type: 'authenticated', userId: 'u1', groups: [] },

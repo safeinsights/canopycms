@@ -1,7 +1,7 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { ContentStore, ContentStoreError } from '../content-store'
 import type { ContentFormat } from '../config'
-import { resolveBranchWorkspace } from '../paths'
+import { resolveBranchPaths } from '../paths'
 
 export interface ReadContentParams {
   branch: string
@@ -14,13 +14,13 @@ export const readContent = async (
   req: ApiRequest<undefined>,
   params: ReadContentParams,
 ): Promise<ApiResponse> => {
-  const branchState = await ctx.getBranchState(params.branch)
-  if (!branchState) {
+  const context = await ctx.getBranchContext(params.branch)
+  if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchWorkspace(branchState, branchMode)
+  const branchPaths = resolveBranchPaths(context, branchMode)
   const store = new ContentStore(branchPaths.branchRoot, ctx.services.config)
 
   // Prepend contentRoot to collection if not already present
@@ -38,7 +38,7 @@ export const readContent = async (
   }
 
   const access = await ctx.services.checkContentAccess(
-    branchState,
+    context,
     branchPaths.branchRoot,
     relativePath,
     req.user,
@@ -67,13 +67,13 @@ export const writeContent = async (
   if (!req.body?.collection || !req.branch) {
     return { ok: false, status: 400, error: 'collection and branch are required' }
   }
-  const branchState = await ctx.getBranchState(req.branch)
-  if (!branchState) {
+  const context = await ctx.getBranchContext(req.branch)
+  if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchWorkspace(branchState, branchMode)
+  const branchPaths = resolveBranchPaths(context, branchMode)
   const store = new ContentStore(branchPaths.branchRoot, ctx.services.config)
 
   // Prepend contentRoot to collection if not already present
@@ -91,7 +91,7 @@ export const writeContent = async (
   }
 
   const access = await ctx.services.checkContentAccess(
-    branchState,
+    context,
     branchPaths.branchRoot,
     relativePath,
     req.user,
@@ -101,17 +101,22 @@ export const writeContent = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
-  const result =
-    req.body.format === 'json'
-      ? await store.write(fullCollection, req.body.slug ?? '', {
-          format: 'json',
-          data: req.body.data ?? {},
-        })
-      : await store.write(fullCollection, req.body.slug ?? '', {
-          format: req.body.format,
-          data: req.body.data,
-          body: req.body.body ?? '',
-        })
+  try {
+    const result =
+      req.body.format === 'json'
+        ? await store.write(fullCollection, req.body.slug ?? '', {
+            format: 'json',
+            data: req.body.data ?? {},
+          })
+        : await store.write(fullCollection, req.body.slug ?? '', {
+            format: req.body.format,
+            data: req.body.data,
+            body: req.body.body ?? '',
+          })
 
-  return { ok: true, status: 200, data: result }
+    return { ok: true, status: 200, data: result }
+  } catch (err) {
+    const message = err instanceof ContentStoreError ? err.message : 'Write failed'
+    return { ok: false, status: 400, error: message }
+  }
 }

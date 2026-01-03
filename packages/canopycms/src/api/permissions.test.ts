@@ -44,9 +44,10 @@ describe('permissions API', () => {
           commit: vi.fn(),
         })),
         bootstrapAdminIds: new Set<string>(),
+        registry: undefined as any,
       },
       authPlugin: mockAuthPlugin,
-      getBranchState: vi.fn(),
+      getBranchContext: vi.fn(),
     }
   })
 
@@ -57,7 +58,9 @@ describe('permissions API', () => {
         { path: 'content/public/**', edit: { allowedUsers: ['user-1'] } },
       ]
 
-      const mockGetBranchState = vi.fn().mockResolvedValue({
+      const mockGetBranchContext = vi.fn().mockResolvedValue({
+        baseRoot: '/test/repo',
+        branchRoot: '/test/repo',
         branch: {
           name: 'main',
           status: 'editing' as const,
@@ -66,9 +69,8 @@ describe('permissions API', () => {
           createdAt: '2024-01-01T00:00:00Z',
           updatedAt: '2024-01-01T00:00:00Z',
         },
-        workspaceRoot: '/test/repo',
       })
-      mockContext.getBranchState = mockGetBranchState
+      mockContext.getBranchContext = mockGetBranchContext
 
       vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue(mockPermissions)
 
@@ -97,7 +99,7 @@ describe('permissions API', () => {
 
     it('returns error when main branch not found', async () => {
       const mockGetBranchState = vi.fn().mockResolvedValue(null)
-      mockContext.getBranchState = mockGetBranchState
+      mockContext.getBranchContext = mockGetBranchState
 
       const req: ApiRequest<undefined> = {
         user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
@@ -117,7 +119,9 @@ describe('permissions API', () => {
         { path: 'content/updated/**', edit: { allowedGroups: ['new-group'] } },
       ]
 
-      const mockGetBranchState = vi.fn().mockResolvedValue({
+      const mockGetBranchContext = vi.fn().mockResolvedValue({
+        baseRoot: '/test/repo',
+        branchRoot: '/test/repo',
         branch: {
           name: 'main',
           status: 'editing' as const,
@@ -126,9 +130,8 @@ describe('permissions API', () => {
           createdAt: '2024-01-01T00:00:00Z',
           updatedAt: '2024-01-01T00:00:00Z',
         },
-        workspaceRoot: '/test/repo',
       })
-      mockContext.getBranchState = mockGetBranchState
+      mockContext.getBranchContext = mockGetBranchContext
 
       const mockGit = {
         add: vi.fn(),
@@ -187,7 +190,7 @@ describe('permissions API', () => {
 
     it('returns error when main branch not found', async () => {
       const mockGetBranchState = vi.fn().mockResolvedValue(null)
-      mockContext.getBranchState = mockGetBranchState
+      mockContext.getBranchContext = mockGetBranchState
 
       const req: ApiRequest<{ permissions: PathPermission[] }> = {
         user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },

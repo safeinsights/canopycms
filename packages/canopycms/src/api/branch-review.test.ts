@@ -5,18 +5,32 @@ import type { ApiContext } from './types'
 import { RESERVED_GROUPS } from '../reserved-groups'
 import { mockConsole } from '../test-utils/console-spy.js'
 
+const mockMetadataSave = vi.fn().mockResolvedValue({
+  schemaVersion: 1,
+  branch: {
+    name: 'feature/x',
+    status: 'editing',
+    access: {},
+    createdBy: 'u1',
+    createdAt: 'now',
+    updatedAt: 'now',
+  },
+})
+
 vi.mock('../branch-metadata', () => {
   return {
-    BranchMetadata: vi.fn().mockImplementation(() => ({
-      save: vi.fn().mockResolvedValue(undefined),
+    BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
+      save: mockMetadataSave,
     })),
-    getBranchMetadata: vi.fn().mockImplementation(() => ({
-      save: vi.fn().mockResolvedValue(undefined),
+    getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
+      save: mockMetadataSave,
     })),
   }
 })
 
-const baseState = {
+const baseContext = {
+  baseRoot: '/tmp/base',
+  branchRoot: '/tmp/base/feature-x',
   branch: {
     name: 'feature/x',
     status: 'submitted' as const,
@@ -24,9 +38,9 @@ const baseState = {
     createdBy: 'u1',
     createdAt: 'now',
     updatedAt: 'now',
+    pullRequestNumber: 123,
+    pullRequestUrl: 'https://github.com/owner/repo/pull/123',
   },
-  pullRequestNumber: 123,
-  pullRequestUrl: 'https://github.com/owner/repo/pull/123',
 }
 
 const makeCtx = (githubService?: any): ApiContext => ({
@@ -36,14 +50,15 @@ const makeCtx = (githubService?: any): ApiContext => ({
     checkContentAccess: vi.fn(),
     githubService,
     bootstrapAdminIds: new Set<string>(),
+    registry: undefined as any,
   },
-  getBranchState: vi.fn().mockResolvedValue(baseState),
+  getBranchContext: vi.fn().mockResolvedValue(baseContext),
 })
 
 describe('branch review api - requestChanges', () => {
   it('returns 404 if branch not found', async () => {
     const ctx = makeCtx()
-    ctx.getBranchState = vi.fn().mockResolvedValue(null)
+    ctx.getBranchContext = vi.fn().mockResolvedValue(null)
     const res = await requestChanges(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
@@ -65,9 +80,9 @@ describe('branch review api - requestChanges', () => {
 
   it('returns 400 if branch not submitted', async () => {
     const ctx = makeCtx()
-    ctx.getBranchState = vi.fn().mockResolvedValue({
-      ...baseState,
-      branch: { ...baseState.branch, status: 'editing' },
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, status: 'editing' },
     })
     const res = await requestChanges(
       ctx,
@@ -130,9 +145,9 @@ describe('branch review api - requestChanges', () => {
     const convertToDraft = vi.fn()
     const githubService = { convertToDraft }
     const ctx = makeCtx(githubService)
-    ctx.getBranchState = vi.fn().mockResolvedValue({
-      ...baseState,
-      pullRequestNumber: undefined,
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, pullRequestNumber: undefined },
     })
     const res = await requestChanges(
       ctx,
@@ -159,7 +174,7 @@ describe('branch review api - requestChanges', () => {
 describe('branch review api - approveBranch', () => {
   it('returns 404 if branch not found', async () => {
     const ctx = makeCtx()
-    ctx.getBranchState = vi.fn().mockResolvedValue(null)
+    ctx.getBranchContext = vi.fn().mockResolvedValue(null)
     const res = await approveBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
@@ -181,9 +196,9 @@ describe('branch review api - approveBranch', () => {
 
   it('returns 400 if branch not submitted', async () => {
     const ctx = makeCtx()
-    ctx.getBranchState = vi.fn().mockResolvedValue({
-      ...baseState,
-      branch: { ...baseState.branch, status: 'editing' },
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, status: 'editing' },
     })
     const res = await approveBranch(
       ctx,

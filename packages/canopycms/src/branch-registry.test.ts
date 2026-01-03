@@ -5,7 +5,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { BranchRegistry } from './branch-registry'
-import { getBranchMetadata } from './branch-metadata'
+import { getBranchMetadataFileManager } from './branch-metadata'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-registry-'))
 
@@ -21,7 +21,7 @@ const createBranchWithMetadata = async (
   const metaDir = path.join(branchDir, '.canopycms')
   await fs.mkdir(metaDir, { recursive: true })
 
-  const metadata = getBranchMetadata(branchDir, root)
+  const metadata = getBranchMetadataFileManager(branchDir, root)
   await metadata.save({
     branch: {
       name: branchName,
@@ -231,9 +231,8 @@ describe('BranchRegistry', () => {
       const registry = new BranchRegistry(root)
       const branches = await registry.list()
 
-      expect(branches[0].workspaceRoot).toBe(path.join(root, 'feature-a'))
+      expect(branches[0].branchRoot).toBe(path.join(root, 'feature-a'))
       expect(branches[0].baseRoot).toBe(root)
-      expect(branches[0].metadataRoot).toBe(path.join(root, 'feature-a'))
     })
 
     it('reflects status from branch.json', async () => {

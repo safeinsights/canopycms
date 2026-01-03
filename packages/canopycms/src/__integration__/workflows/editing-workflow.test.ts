@@ -41,8 +41,8 @@ describe('Editing Workflow Integration', () => {
 
     expect(createResponse.status).toBe(200)
     const createData = (await createResponse.json()) as any
-    expect(createData.data.branch.branch.status).toBe('editing')
-    expect(createData.data.branch.branch.createdBy).toBe('test-editor')
+    expect(createData.data.branch.status).toBe('editing')
+    expect(createData.data.branch.createdBy).toBe('test-editor')
 
     // Get branch workspace path from response
     const branchRoot = createData.data.branch.workspaceRoot

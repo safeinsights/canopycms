@@ -78,7 +78,7 @@ describe('Path Permission Integration', () => {
     })
 
     // Check branch access first - admin should have bypass
-    const branchAccess = checkBranchAccessWithDefault(branch.metadata, admin)
+    const branchAccess = checkBranchAccessWithDefault(branch, admin)
     expect(branchAccess.allowed).toBe(true)
     expect(branchAccess.reason).toBe('privileged')
 

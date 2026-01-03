@@ -28,8 +28,11 @@ const allowedCtx = (): ApiContext => ({
     checkBranchAccess: vi.fn(),
     checkContentAccess: vi.fn().mockReturnValue({ allowed: true, branch: {}, path: {} }),
     bootstrapAdminIds: new Set<string>(),
+    registry: undefined as any,
   },
-  getBranchState: vi.fn().mockResolvedValue({
+  getBranchContext: vi.fn().mockResolvedValue({
+    baseRoot: '/tmp/base',
+    branchRoot: '/tmp/base/feature-x',
     branch: {
       name: 'feature/x',
       status: 'editing',
@@ -49,8 +52,11 @@ describe('content api', () => {
         checkBranchAccess: vi.fn(),
         checkContentAccess: vi.fn().mockReturnValue({ allowed: false, branch: {}, path: {} }),
         bootstrapAdminIds: new Set<string>(),
+        registry: undefined as any,
       },
-      getBranchState: vi.fn().mockResolvedValue({
+      getBranchContext: vi.fn().mockResolvedValue({
+        baseRoot: '/tmp/base',
+        branchRoot: '/tmp/base/feature-x',
         branch: {
           name: 'feature/x',
           status: 'editing',

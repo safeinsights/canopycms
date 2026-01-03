@@ -23,45 +23,49 @@ vi.mock('../branch-workspace', () => {
   return {
     BranchWorkspaceManager: vi.fn().mockImplementation(() => ({
       openOrCreateBranch: vi.fn().mockResolvedValue({
-        state: {
-          branch: {
-            name: 'feature/test',
-            status: 'editing',
-            access: {},
-            createdBy: 'user-1',
-            createdAt: 'now',
-            updatedAt: 'now',
-          },
+        baseRoot: '/tmp/base',
+        branchRoot: '/tmp/base/feature-test',
+        branch: {
+          name: 'feature/test',
+          status: 'editing',
+          access: {},
+          createdBy: 'user-1',
+          createdAt: 'now',
+          updatedAt: 'now',
         },
       }),
     })),
   }
 })
 
-const mockMetadataUpdate = vi.fn().mockResolvedValue({
-  schemaVersion: 1,
-  branch: {
-    name: 'feature/x',
-    status: 'editing',
-    access: { allowedUsers: ['u2'] },
-    createdBy: 'u1',
-    createdAt: 'now',
-    updatedAt: 'updated-now',
-  },
+const mockMetadataUpdate = vi.fn().mockImplementation((updates: { branch?: { access?: any } }) => {
+  return Promise.resolve({
+    schemaVersion: 1,
+    branch: {
+      name: 'feature/x',
+      status: 'editing',
+      access: updates?.branch?.access ?? { allowedUsers: ['u2'] },
+      createdBy: 'u1',
+      createdAt: 'now',
+      updatedAt: 'updated-now',
+    },
+  })
 })
 
 vi.mock('../branch-metadata', () => {
   return {
-    BranchMetadata: vi.fn().mockImplementation(() => ({
+    BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
       save: mockMetadataUpdate,
     })),
-    getBranchMetadata: vi.fn().mockImplementation(() => ({
+    getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
       save: mockMetadataUpdate,
     })),
   }
 })
 
-const makeBranchStateForMain = () => ({
+const makeBranchContextForMain = () => ({
+  baseRoot: '/test/repo',
+  branchRoot: '/test/repo',
   branch: {
     name: 'main',
     status: 'editing' as const,
@@ -70,12 +74,13 @@ const makeBranchStateForMain = () => ({
     createdAt: 'now',
     updatedAt: 'now',
   },
-  workspaceRoot: '/test/repo',
 })
 
 const mockRegistry = {
   list: vi.fn().mockResolvedValue([
     {
+      baseRoot: '/test/base',
+      branchRoot: '/test/base/feature-a',
       branch: {
         name: 'feature/a',
         status: 'editing',
@@ -86,6 +91,8 @@ const mockRegistry = {
       },
     },
     {
+      baseRoot: '/test/base',
+      branchRoot: '/test/base/feature-b',
       branch: {
         name: 'feature/b',
         status: 'editing',
@@ -96,6 +103,8 @@ const mockRegistry = {
       },
     },
     {
+      baseRoot: '/test/base',
+      branchRoot: '/test/base/feature-c',
       branch: {
         name: 'feature/c',
         status: 'editing',
@@ -106,6 +115,8 @@ const mockRegistry = {
       },
     },
     {
+      baseRoot: '/test/base',
+      branchRoot: '/test/base/feature-d',
       branch: {
         name: 'feature/d',
         status: 'editing',
@@ -128,7 +139,7 @@ const baseCtx: ApiContext = {
     registry: mockRegistry as any,
     bootstrapAdminIds: new Set<string>(),
   },
-  getBranchState: vi.fn().mockResolvedValue(makeBranchStateForMain()),
+  getBranchContext: vi.fn().mockResolvedValue(makeBranchContextForMain()),
 }
 
 beforeEach(() => {
@@ -226,7 +237,7 @@ describe('branch api', () => {
       body: { branch: 'feature/test' },
     })
     expect(res.ok).toBe(true)
-    expect(res.data?.branch.branch.name).toBe('feature/test')
+    expect(res.data?.branch.name).toBe('feature/test')
   })
 
   it('rejects branch creation when user has no path access', async () => {
@@ -291,7 +302,7 @@ describe('branch api', () => {
     })
     expect(res.ok).toBe(true)
     // u1 created feature/a and is in allowedUsers for feature/c
-    const names = res.data?.branches.map((b) => b.branch.name)
+    const names = res.data?.branches.map((b) => b.name)
     expect(names).toContain('feature/a')
     expect(names).toContain('feature/c')
     expect(names).not.toContain('feature/b')
@@ -304,7 +315,7 @@ describe('branch api', () => {
     })
     expect(res.ok).toBe(true)
     // u4 has 'editors' group which is in allowedGroups for feature/d
-    const names = res.data?.branches.map((b) => b.branch.name)
+    const names = res.data?.branches.map((b) => b.name)
     expect(names).toContain('feature/d')
     expect(names).not.toContain('feature/a')
     expect(names).not.toContain('feature/b')
@@ -321,7 +332,9 @@ describe('branch api', () => {
 })
 
 describe('canDeleteBranch', () => {
-  const makeBranchState = (createdBy: string, status = 'editing' as const) => ({
+  const makeBranchContext = (createdBy: string, status = 'editing' as const) => ({
+    baseRoot: '/tmp/base',
+    branchRoot: '/tmp/base/feature-x',
     branch: {
       name: 'feature/x',
       status,
@@ -335,7 +348,7 @@ describe('canDeleteBranch', () => {
   it('allows admins to delete any branch', () => {
     const result = canDeleteBranch(
       { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] },
-      makeBranchState('other'),
+      makeBranchContext('other'),
     )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('admin')
@@ -344,7 +357,7 @@ describe('canDeleteBranch', () => {
   it('allows branch creator to delete their branch', () => {
     const result = canDeleteBranch(
       { type: 'authenticated', userId: 'u1', groups: [] },
-      makeBranchState('u1'),
+      makeBranchContext('u1'),
     )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('creator')
@@ -353,7 +366,7 @@ describe('canDeleteBranch', () => {
   it('denies non-creator non-admin from deleting', () => {
     const result = canDeleteBranch(
       { type: 'authenticated', userId: 'u2', groups: [] },
-      makeBranchState('u1'),
+      makeBranchContext('u1'),
     )
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('not_authorized')
@@ -362,7 +375,7 @@ describe('canDeleteBranch', () => {
   it('denies reviewers from deleting others branches', () => {
     const result = canDeleteBranch(
       { type: 'authenticated', userId: 'u2', groups: [RESERVED_GROUPS.REVIEWERS] },
-      makeBranchState('u1'),
+      makeBranchContext('u1'),
     )
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('not_authorized')
@@ -370,7 +383,9 @@ describe('canDeleteBranch', () => {
 })
 
 describe('deleteBranch api', () => {
-  const makeBranchState = (createdBy: string, status: 'editing' | 'submitted' = 'editing') => ({
+  const makeBranchContext = (createdBy: string, status: 'editing' | 'submitted' = 'editing') => ({
+    baseRoot: '/tmp/base',
+    branchRoot: '/tmp/base/feature-x',
     branch: {
       name: 'feature/x',
       status,
@@ -410,7 +425,7 @@ describe('deleteBranch api', () => {
   })
 
   it('returns 404 if branch not found', async () => {
-    const ctx = { ...deleteCtx, getBranchState: vi.fn().mockResolvedValue(null) }
+    const ctx = { ...deleteCtx, getBranchContext: vi.fn().mockResolvedValue(null) }
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -422,7 +437,7 @@ describe('deleteBranch api', () => {
   it('returns 403 if user not authorized', async () => {
     const ctx = {
       ...deleteCtx,
-      getBranchState: vi.fn().mockResolvedValue(makeBranchState('other')),
+      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('other')),
     }
     const res = await deleteBranch(
       ctx,
@@ -436,7 +451,7 @@ describe('deleteBranch api', () => {
   it('returns 400 if branch has submitted status', async () => {
     const ctx = {
       ...deleteCtx,
-      getBranchState: vi.fn().mockResolvedValue(makeBranchState('u1', 'submitted')),
+      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1', 'submitted')),
     }
     const res = await deleteBranch(
       ctx,
@@ -448,7 +463,10 @@ describe('deleteBranch api', () => {
   })
 
   it('deletes branch when user is creator', async () => {
-    const ctx = { ...deleteCtx, getBranchState: vi.fn().mockResolvedValue(makeBranchState('u1')) }
+    const ctx = {
+      ...deleteCtx,
+      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1')),
+    }
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -461,7 +479,7 @@ describe('deleteBranch api', () => {
   it('deletes branch when user is admin', async () => {
     const ctx = {
       ...deleteCtx,
-      getBranchState: vi.fn().mockResolvedValue(makeBranchState('other')),
+      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('other')),
     }
     const res = await deleteBranch(
       ctx,
@@ -474,7 +492,9 @@ describe('deleteBranch api', () => {
 })
 
 describe('canModifyBranchAccess', () => {
-  const makeBranchState = (createdBy: string) => ({
+  const makeBranchContext = (createdBy: string) => ({
+    baseRoot: '/tmp/base',
+    branchRoot: '/tmp/base/feature-x',
     branch: {
       name: 'feature/x',
       status: 'editing' as const,
@@ -488,7 +508,7 @@ describe('canModifyBranchAccess', () => {
   it('allows admins to modify any branch', () => {
     const result = canModifyBranchAccess(
       { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] },
-      makeBranchState('other'),
+      makeBranchContext('other'),
     )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('admin')
@@ -497,7 +517,7 @@ describe('canModifyBranchAccess', () => {
   it('allows branch creator to modify their branch', () => {
     const result = canModifyBranchAccess(
       { type: 'authenticated', userId: 'u1', groups: [] },
-      makeBranchState('u1'),
+      makeBranchContext('u1'),
     )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('creator')
@@ -506,7 +526,7 @@ describe('canModifyBranchAccess', () => {
   it('denies non-creator non-admin from modifying', () => {
     const result = canModifyBranchAccess(
       { type: 'authenticated', userId: 'u2', groups: [] },
-      makeBranchState('u1'),
+      makeBranchContext('u1'),
     )
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('not_authorized')
@@ -515,7 +535,7 @@ describe('canModifyBranchAccess', () => {
   it('denies reviewers from modifying others branches', () => {
     const result = canModifyBranchAccess(
       { type: 'authenticated', userId: 'u2', groups: [RESERVED_GROUPS.REVIEWERS] },
-      makeBranchState('u1'),
+      makeBranchContext('u1'),
     )
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('not_authorized')
@@ -523,7 +543,9 @@ describe('canModifyBranchAccess', () => {
 })
 
 describe('updateBranchAccess api', () => {
-  const makeBranchState = (createdBy: string) => ({
+  const makeBranchContext = (createdBy: string) => ({
+    baseRoot: '/tmp/base',
+    branchRoot: '/tmp/base/feature-x',
     branch: {
       name: 'feature/x',
       status: 'editing' as const,
@@ -532,8 +554,6 @@ describe('updateBranchAccess api', () => {
       createdAt: 'now',
       updatedAt: 'now',
     },
-    metadataRoot: '/tmp/metadata',
-    baseRoot: '/tmp/base',
   })
 
   it('returns 400 if branch param missing', async () => {
@@ -546,7 +566,7 @@ describe('updateBranchAccess api', () => {
   })
 
   it('returns 404 if branch not found', async () => {
-    const ctx = { ...baseCtx, getBranchState: vi.fn().mockResolvedValue(null) }
+    const ctx = { ...baseCtx, getBranchContext: vi.fn().mockResolvedValue(null) }
     const res = await updateBranchAccess(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -556,7 +576,10 @@ describe('updateBranchAccess api', () => {
   })
 
   it('returns 403 if user not authorized', async () => {
-    const ctx = { ...baseCtx, getBranchState: vi.fn().mockResolvedValue(makeBranchState('other')) }
+    const ctx = {
+      ...baseCtx,
+      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('other')),
+    }
     const res = await updateBranchAccess(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -567,7 +590,7 @@ describe('updateBranchAccess api', () => {
   })
 
   it('updates branch access when user is creator', async () => {
-    const ctx = { ...baseCtx, getBranchState: vi.fn().mockResolvedValue(makeBranchState('u1')) }
+    const ctx = { ...baseCtx, getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1')) }
     const res = await updateBranchAccess(
       ctx,
       {
@@ -577,11 +600,14 @@ describe('updateBranchAccess api', () => {
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)
-    expect(res.data?.branch.branch.access.allowedUsers).toEqual(['u2', 'u3'])
+    expect(res.data?.branch.access.allowedUsers).toEqual(['u2', 'u3'])
   })
 
   it('updates branch access when user is admin', async () => {
-    const ctx = { ...baseCtx, getBranchState: vi.fn().mockResolvedValue(makeBranchState('other')) }
+    const ctx = {
+      ...baseCtx,
+      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('other')),
+    }
     const res = await updateBranchAccess(
       ctx,
       {
@@ -591,30 +617,8 @@ describe('updateBranchAccess api', () => {
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)
-    expect(res.data?.branch.branch.access.allowedGroups).toEqual(['editors'])
+    expect(res.data?.branch.access.allowedGroups).toEqual(['editors'])
   })
 
-  it('returns 500 if metadataRoot is missing', async () => {
-    const ctx = {
-      ...baseCtx,
-      getBranchState: vi.fn().mockResolvedValue({
-        branch: {
-          name: 'feature/x',
-          status: 'editing',
-          access: {},
-          createdBy: 'u1',
-          createdAt: 'now',
-          updatedAt: 'now',
-        },
-        // No metadataRoot
-      }),
-    }
-    const res = await updateBranchAccess(
-      ctx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [] }, body: { allowedUsers: ['u2'] } },
-      { branch: 'feature/x' },
-    )
-    expect(res.status).toBe(500)
-    expect(res.error).toBe('Branch metadata root not found')
-  })
+  // Test for missing branchRoot removed - BranchContext now requires branchRoot at type level
 })

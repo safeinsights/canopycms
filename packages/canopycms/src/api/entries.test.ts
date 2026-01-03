@@ -72,8 +72,11 @@ describe('listEntries', () => {
         checkBranchAccess,
         checkContentAccess,
         bootstrapAdminIds: new Set<string>(),
+        registry: undefined as any,
       },
-      getBranchState: vi.fn().mockResolvedValue({
+      getBranchContext: vi.fn().mockResolvedValue({
+        baseRoot: root,
+        branchRoot: root,
         branch: {
           name: 'main',
           status: 'editing',
@@ -82,9 +85,6 @@ describe('listEntries', () => {
           createdAt: 'now',
           updatedAt: 'now',
         },
-        workspaceRoot: root,
-        baseRoot: root,
-        metadataRoot: root,
       }),
     }
 
@@ -111,8 +111,9 @@ describe('listEntries', () => {
         checkBranchAccess: vi.fn(),
         checkContentAccess: vi.fn().mockResolvedValue({ allowed: true, branch: {}, path: {} }),
         bootstrapAdminIds: new Set<string>(),
+        registry: undefined as any,
       },
-      getBranchState: vi.fn().mockResolvedValue(null),
+      getBranchContext: vi.fn().mockResolvedValue(null),
     }
     const res = await listEntries(
       ctx,
