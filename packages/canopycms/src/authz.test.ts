@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
 import { checkBranchAccessWithDefault } from './authz'
-import type { BranchState } from './types'
+import type { BranchContext } from './types'
 import { RESERVED_GROUPS } from './reserved-groups'
 
-const baseState: BranchState = {
+const baseContext: BranchContext = {
+  baseRoot: '/tmp/base',
+  branchRoot: '/tmp/base/feature-x',
   branch: {
     name: 'feature/x',
     status: 'editing',
@@ -17,25 +19,25 @@ const baseState: BranchState = {
 
 describe('branch access', () => {
   it('allows Admins', () => {
-    const res = checkBranchAccessWithDefault(baseState, { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.ADMINS] })
+    const res = checkBranchAccessWithDefault(baseContext, { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.ADMINS] })
     expect(res.allowed).toBe(true)
     expect(res.reason).toBe('privileged')
   })
 
   it('allows Reviewers', () => {
-    const res = checkBranchAccessWithDefault(baseState, { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.REVIEWERS] })
+    const res = checkBranchAccessWithDefault(baseContext, { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.REVIEWERS] })
     expect(res.allowed).toBe(true)
     expect(res.reason).toBe('privileged')
   })
 
   it('denies when no ACLs are set (default deny)', () => {
-    const res = checkBranchAccessWithDefault(baseState, { type: 'authenticated', userId: 'u', groups: [] })
+    const res = checkBranchAccessWithDefault(baseContext, { type: 'authenticated', userId: 'u', groups: [] })
     expect(res.allowed).toBe(false)
     expect(res.reason).toBe('no_acl')
   })
 
   it('honors default allow override', () => {
-    const res = checkBranchAccessWithDefault(baseState, { type: 'authenticated', userId: 'u', groups: [] }, 'allow')
+    const res = checkBranchAccessWithDefault(baseContext, { type: 'authenticated', userId: 'u', groups: [] }, 'allow')
     expect(res.allowed).toBe(true)
     expect(res.reason).toBe('no_acl')
   })
@@ -43,8 +45,8 @@ describe('branch access', () => {
   it('denies when managerOrAdminAllowed set but user is not privileged', () => {
     const res = checkBranchAccessWithDefault(
       {
-        ...baseState,
-        branch: { ...baseState.branch, access: { managerOrAdminAllowed: true } },
+        ...baseContext,
+        branch: { ...baseContext.branch, access: { managerOrAdminAllowed: true } },
       },
       { type: 'authenticated', userId: 'u', groups: [] }
     )
@@ -55,8 +57,8 @@ describe('branch access', () => {
   it('allows matching user', () => {
     const res = checkBranchAccessWithDefault(
       {
-        ...baseState,
-        branch: { ...baseState.branch, access: { allowedUsers: ['user-1'] } },
+        ...baseContext,
+        branch: { ...baseContext.branch, access: { allowedUsers: ['user-1'] } },
       },
       { type: 'authenticated', userId: 'user-1', groups: [] }
     )
@@ -66,8 +68,8 @@ describe('branch access', () => {
   it('allows matching group', () => {
     const res = checkBranchAccessWithDefault(
       {
-        ...baseState,
-        branch: { ...baseState.branch, access: { allowedGroups: ['group-1'] } },
+        ...baseContext,
+        branch: { ...baseContext.branch, access: { allowedGroups: ['group-1'] } },
       },
       { type: 'authenticated', userId: 'u', groups: ['group-1'] }
     )
@@ -77,8 +79,8 @@ describe('branch access', () => {
   it('denies when allowlists miss', () => {
     const res = checkBranchAccessWithDefault(
       {
-        ...baseState,
-        branch: { ...baseState.branch, access: { allowedUsers: ['user-2'] } },
+        ...baseContext,
+        branch: { ...baseContext.branch, access: { allowedUsers: ['user-2'] } },
       },
       { type: 'authenticated', userId: 'user-1', groups: [] }
     )

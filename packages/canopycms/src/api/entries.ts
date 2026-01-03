@@ -8,7 +8,7 @@ import type { FieldConfig, ContentFormat, FlatCollection, ResolvedSchemaItem } f
 import { ContentStore, ContentStoreError } from '../content-store'
 import { flattenSchema, resolveSchema } from '../config'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import { resolveBranchWorkspace } from '../paths'
+import { resolveBranchPaths } from '../paths'
 
 type CollectionKind = 'collection' | 'singleton'
 
@@ -203,13 +203,13 @@ export const listEntries = async (
     return { ok: false, status: 400, error: 'branch is required' }
   }
 
-  const branchState = await ctx.getBranchState(params.branch)
-  if (!branchState) {
+  const context = await ctx.getBranchContext(params.branch)
+  if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchWorkspace(branchState, branchMode)
+  const branchPaths = resolveBranchPaths(context, branchMode)
   const root = branchPaths.branchRoot
   const store = new ContentStore(root, ctx.services.config)
   const resolvedSchema = resolveSchema(ctx.services.config.schema, ctx.services.config.contentRoot)
@@ -243,7 +243,7 @@ export const listEntries = async (
           item.collectionId,
           item.type === 'singleton' ? '' : item.slug
         )
-        const access = await ctx.services.checkContentAccess(branchState, root, normalized.relativePath, req.user, 'read')
+        const access = await ctx.services.checkContentAccess(context, root, normalized.relativePath, req.user, 'read')
         if (!access.allowed) continue
         if (search) {
           const haystack = `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()

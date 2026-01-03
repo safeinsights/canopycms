@@ -1,4 +1,4 @@
-import type { BranchState } from '../types'
+import type { BranchContext } from '../types'
 import type { CanopyConfig, PermissionLevel } from '../config'
 import type { GitHubService } from '../github-service'
 import type { CanopyUser } from '../user'
@@ -8,9 +8,9 @@ export interface ApiContext {
   // TODO DRY this services entry up by using a Partial<CanopyServices> or similar
   services: {
     config: CanopyConfig
-    checkBranchAccess: (state: BranchState, user: CanopyUser) => { allowed: boolean; reason: string }
+    checkBranchAccess: (context: BranchContext, user: CanopyUser) => { allowed: boolean; reason: string }
     checkContentAccess: (
-      branchState: BranchState,
+      branchContext: BranchContext,
       branchRoot: string,
       relativePath: string,
       user: CanopyUser,
@@ -30,10 +30,10 @@ export interface ApiContext {
     delete(key: string): Promise<void>
   }
   /**
-   * Load a branch state for the requested branch name.
-   * Can be backed by BranchRegistry + BranchMetadata.
+   * Load a branch context for the requested branch name.
+   * Can be backed by BranchRegistry + BranchMetadataFileManager.
    */
-  getBranchState: (branchName: string) => Promise<BranchState | null>
+  getBranchContext: (branchName: string) => Promise<BranchContext | null>
   /**
    * Auth plugin for user/group search (optional)
    */

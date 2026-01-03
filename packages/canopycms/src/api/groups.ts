@@ -1,7 +1,7 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { InternalGroup } from '../groups-file'
 import { loadInternalGroups, saveInternalGroups } from '../groups-loader'
-import { resolveBranchWorkspace } from '../paths'
+import { resolveBranchPaths } from '../paths'
 import type { CanopyGroupId, CanopyUserId } from '../types'
 import { isAdmin, RESERVED_GROUPS, isReservedGroup } from '../reserved-groups'
 
@@ -69,14 +69,14 @@ export const getInternalGroups = async (
   try {
     // Load from main branch
     const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-    const branchState = await ctx.getBranchState(mainBranch)
+    const context = await ctx.getBranchContext(mainBranch)
 
-    if (!branchState) {
+    if (!context) {
       return { ok: false, status: 500, error: 'Main branch not found' }
     }
 
     const branchMode = ctx.services.config.mode ?? 'local-simple'
-    const branchPaths = resolveBranchWorkspace(branchState, branchMode)
+    const branchPaths = resolveBranchPaths(context, branchMode)
     const groups = await loadInternalGroups(branchPaths.branchRoot)
 
     return {
@@ -128,14 +128,14 @@ export const updateInternalGroups = async (
   try {
     // Save to main branch
     const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-    const branchState = await ctx.getBranchState(mainBranch)
+    const context = await ctx.getBranchContext(mainBranch)
 
-    if (!branchState) {
+    if (!context) {
       return { ok: false, status: 500, error: 'Main branch not found' }
     }
 
     const branchMode = ctx.services.config.mode ?? 'local-simple'
-    const branchPaths = resolveBranchWorkspace(branchState, branchMode)
+    const branchPaths = resolveBranchPaths(context, branchMode)
 
     await saveInternalGroups(branchPaths.branchRoot, req.body.groups, req.user.userId)
 

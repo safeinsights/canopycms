@@ -1,41 +1,41 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import type { BranchState } from '../types'
-import { getBranchMetadata } from '../branch-metadata'
-import { resolveBranchWorkspace } from '../paths'
+import type { BranchMetadata } from '../types'
+import { getBranchMetadataFileManager } from '../branch-metadata'
+import { resolveBranchPaths } from '../paths'
 
 export const getBranchStatus = async (
   ctx: ApiContext,
   req: ApiRequest,
   params: { branch: string }
-): Promise<ApiResponse<{ branch: BranchState }>> => {
-  const state = await ctx.getBranchState(params.branch)
-  if (!state) {
+): Promise<ApiResponse<{ branch: BranchMetadata }>> => {
+  const context = await ctx.getBranchContext(params.branch)
+  if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
-  const access = ctx.services.checkBranchAccess(state, req.user)
+  const access = ctx.services.checkBranchAccess(context, req.user)
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
-  return { ok: true, status: 200, data: { branch: state } }
+  return { ok: true, status: 200, data: { branch: context.branch } }
 }
 
 export const submitBranchForMerge = async (
   ctx: ApiContext,
   req: ApiRequest,
   params: { branch: string }
-): Promise<ApiResponse<{ branch: BranchState }>> => {
-  const state = await ctx.getBranchState(params.branch)
-  if (!state) {
+): Promise<ApiResponse<{ branch: BranchMetadata }>> => {
+  const context = await ctx.getBranchContext(params.branch)
+  if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
-  const access = ctx.services.checkBranchAccess(state, req.user)
+  const access = ctx.services.checkBranchAccess(context, req.user)
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchWorkspace(state, branchMode)
-  const meta = getBranchMetadata(branchPaths.metadataRoot, branchPaths.baseRoot)
+  const branchPaths = resolveBranchPaths(context, branchMode)
+  const meta = getBranchMetadataFileManager(branchPaths.branchRoot, branchPaths.baseRoot)
 
   const gitFactory = ctx.services.createGitManagerFor
   if (!gitFactory) {
@@ -45,12 +45,12 @@ export const submitBranchForMerge = async (
   // Commit and push changes
   try {
     const git = gitFactory(branchPaths.branchRoot)
-    await git.checkoutBranch(state.branch.name)
+    await git.checkoutBranch(context.branch.name)
     const status = await git.status()
     if (status.files.length > 0) {
       await git.add(['.'])
-      await git.commit(`Submit ${state.branch.name}`)
-      await git.push(state.branch.name)
+      await git.commit(`Submit ${context.branch.name}`)
+      await git.push(context.branch.name)
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to push branch changes'
@@ -63,33 +63,32 @@ export const submitBranchForMerge = async (
 
   // Create or update PR if GitHub service is available
   const githubService = ctx.services.githubService
-  let prUrl = state.pullRequestUrl
-  let prNumber = state.pullRequestNumber
+  let prUrl = context.branch.pullRequestUrl
+  let prNumber = context.branch.pullRequestNumber
 
   if (githubService && branchMode !== 'local-simple') {
     try {
-      const baseBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-      const prTitle = state.branch.title || `Submit ${state.branch.name}`
-      const prBody = state.branch.description || ''
+      const prTitle = context.branch.title || `Submit ${context.branch.name}`
+      const prBody = context.branch.description || ''
 
-      if (state.pullRequestNumber) {
+      if (context.branch.pullRequestNumber) {
         // Update existing PR
-        await githubService.updatePullRequest(state.pullRequestNumber, {
+        await githubService.updatePullRequest(context.branch.pullRequestNumber, {
           title: prTitle,
           body: prBody,
         })
         // Convert to ready if it was draft
-        const pr = await githubService.getPullRequest(state.pullRequestNumber)
+        const pr = await githubService.getPullRequest(context.branch.pullRequestNumber)
         if (pr.draft) {
-          await githubService.convertToReady(state.pullRequestNumber)
+          await githubService.convertToReady(context.branch.pullRequestNumber)
         }
         // Keep existing URL and number
-        prUrl = state.pullRequestUrl
-        prNumber = state.pullRequestNumber
+        prUrl = context.branch.pullRequestUrl
+        prNumber = context.branch.pullRequestNumber
       } else {
         // Create new PR
         const result = await githubService.createPullRequest({
-          branchName: state.branch.name,
+          branchName: context.branch.name,
           title: prTitle,
           body: prBody,
           draft: false,
@@ -100,20 +99,14 @@ export const submitBranchForMerge = async (
     } catch (err) {
       // Log error but don't fail submission - code is already pushed
       const message = err instanceof Error ? err.message : 'Unknown error'
-      console.error(`CanopyCMS: Failed to create/update PR for ${state.branch.name}:`, message)
+      console.error(`CanopyCMS: Failed to create/update PR for ${context.branch.name}:`, message)
     }
   }
 
   // Update metadata with status and PR info
-  await meta.save({
-    branch: { name: state.branch.name, status: 'submitted' },
-    pullRequestUrl: prUrl,
-    pullRequestNumber: prNumber,
+  const updated = await meta.save({
+    branch: { name: context.branch.name, status: 'submitted', pullRequestUrl: prUrl, pullRequestNumber: prNumber },
   })
 
-  const updated = await ctx.getBranchState(params.branch)
-  if (!updated) {
-    return { ok: false, status: 500, error: 'Failed to update branch' }
-  }
-  return { ok: true, status: 200, data: { branch: updated } }
+  return { ok: true, status: 200, data: { branch: updated.branch } }
 }

@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import type { BranchState } from './types'
-import { BranchMetadata } from './branch-metadata'
+import type { BranchContext } from './types'
+import { BranchMetadataFileManager } from './branch-metadata'
 
 const REGISTRY_DIR = '.canopycms'
 const REGISTRY_FILE = 'branches.json'
@@ -12,7 +12,7 @@ const REGISTRY_VERSION = 1
 
 export interface BranchRegistrySnapshot {
   version: number
-  branches: BranchState[]
+  branches: BranchContext[]
 }
 
 /**
@@ -42,7 +42,7 @@ export class BranchRegistry {
   /**
    * Returns all branches. Uses cache if fresh, regenerates if stale.
    */
-  async list(): Promise<BranchState[]> {
+  async list(): Promise<BranchContext[]> {
     try {
       const raw = await fs.readFile(this.registryPath, 'utf8')
       const parsed = JSON.parse(raw) as BranchRegistrySnapshot
@@ -63,7 +63,7 @@ export class BranchRegistry {
   /**
    * Returns a single branch by name. Uses cache if available.
    */
-  async get(name: string): Promise<BranchState | undefined> {
+  async get(name: string): Promise<BranchContext | undefined> {
     const branches = await this.list()
     return branches.find((b) => b.branch.name === name)
   }
@@ -87,7 +87,7 @@ export class BranchRegistry {
    * Scans branch directories and rebuilds the cache.
    * Concurrent calls are safe - all produce identical content.
    */
-  private async regenerate(): Promise<BranchState[]> {
+  private async regenerate(): Promise<BranchContext[]> {
     const branches = await this.scanBranchDirectories()
 
     // Write to unique temp file first, then atomic rename
@@ -114,8 +114,8 @@ export class BranchRegistry {
   /**
    * Scans the root directory for branch subdirectories with valid branch.json files.
    */
-  private async scanBranchDirectories(): Promise<BranchState[]> {
-    const branches: BranchState[] = []
+  private async scanBranchDirectories(): Promise<BranchContext[]> {
+    const branches: BranchContext[] = []
 
     try {
       const entries = await fs.readdir(this.root, { withFileTypes: true })
@@ -127,16 +127,14 @@ export class BranchRegistry {
         }
 
         const branchRoot = path.join(this.root, entry.name)
-        const meta = await BranchMetadata.loadOnly(branchRoot)
+        const meta = await BranchMetadataFileManager.loadOnly(branchRoot)
 
         if (meta) {
-          const state: BranchState = {
-            ...BranchMetadata.toBranchState(meta),
-            workspaceRoot: branchRoot,
+          branches.push({
+            branch: meta.branch,
+            branchRoot,
             baseRoot: this.root,
-            metadataRoot: branchRoot,
-          }
-          branches.push(state)
+          })
         }
       }
     } catch (err: any) {

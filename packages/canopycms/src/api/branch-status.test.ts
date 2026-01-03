@@ -17,16 +17,18 @@ const mockMetadataUpdate = vi.fn().mockResolvedValue({
 
 vi.mock('../branch-metadata', () => {
   return {
-    BranchMetadata: vi.fn().mockImplementation(() => ({
+    BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
       save: mockMetadataUpdate,
     })),
-    getBranchMetadata: vi.fn().mockImplementation(() => ({
+    getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
       save: mockMetadataUpdate,
     })),
   }
 })
 
-const baseState = {
+const baseContext = {
+  baseRoot: '/tmp/base',
+  branchRoot: '/tmp/base/feature-x',
   branch: {
     name: 'feature/x',
     status: 'editing',
@@ -50,15 +52,16 @@ const makeCtx = (allowed = true): ApiContext => ({
       push: vi.fn(),
     }),
     bootstrapAdminIds: new Set<string>(),
+    registry: undefined as any,
   },
-  getBranchState: vi.fn().mockResolvedValue(baseState),
+  getBranchContext: vi.fn().mockResolvedValue(baseContext),
 })
 
 describe('branch status api', () => {
   it('gets status', async () => {
     const res = await getBranchStatus(makeCtx(), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
     expect(res.ok).toBe(true)
-    expect(res.data?.branch.branch.name).toBe('feature/x')
+    expect(res.data?.branch.name).toBe('feature/x')
   })
 
   it('denies submit when access forbidden', async () => {

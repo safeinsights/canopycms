@@ -19,13 +19,18 @@ export interface BranchMetadata {
   createdBy: CanopyUserId
   createdAt: string
   updatedAt: string
-}
-
-export interface BranchState {
-  branch: BranchMetadata
   pullRequestUrl?: string
   pullRequestNumber?: number
-  workspaceRoot?: string
-  baseRoot?: string
-  metadataRoot?: string
+}
+
+export interface BranchPaths {
+  /** Root where all branches live (e.g., /mnt/efs/site, ~/.canopycms/branches) */
+  baseRoot: string
+
+  /** This branch's directory. Usually {baseRoot}/{branchName}, equals baseRoot in local-simple mode */
+  branchRoot: string
+}
+
+export interface BranchContext extends BranchPaths {
+  branch: BranchMetadata
 }

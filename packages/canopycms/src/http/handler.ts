@@ -5,8 +5,8 @@ import type { ApiContext, ApiResponse } from '../api/types'
 import type { AuthPlugin } from '../auth/plugin'
 import { createCanopyServices, getEffectiveGroups, type CanopyServices } from '../services'
 import type { CanopyConfig } from '../config'
-import type { BranchState } from '../types'
-import { loadBranchState } from '../branch-workspace'
+import type { BranchContext } from '../types'
+import { loadBranchContext } from '../branch-workspace'
 import type { AuthenticatedUser } from '../user'
 
 /**
@@ -18,7 +18,7 @@ export interface CanopyHandlerOptions {
   services?: CanopyServices
   config?: CanopyConfig
   assetStore?: ApiContext['assetStore']
-  getBranchState?: (branch: string) => Promise<BranchState | null>
+  getBranchContext?: (branch: string) => Promise<BranchContext | null>
   authPlugin: AuthPlugin
 }
 
@@ -32,14 +32,14 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     throw new Error('CanopyCMS: config or services is required')
   }
   const branchMode = services.config.mode ?? 'local-simple'
-  const getBranchState =
-    options.getBranchState ??
+  const getBranchContext =
+    options.getBranchContext ??
     (async (branch: string) =>
-      (await loadBranchState({ branchName: branch, mode: branchMode })) ?? null)
+      (await loadBranchContext({ branchName: branch, mode: branchMode })) ?? null)
   return {
     services,
     assetStore: options.assetStore,
-    getBranchState,
+    getBranchContext,
     authPlugin: options.authPlugin,
   }
 }

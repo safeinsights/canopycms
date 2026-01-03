@@ -1,7 +1,7 @@
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { CommentThread, CommentType } from '../comment-store'
 import { CommentStore } from '../comment-store'
-import { resolveBranchWorkspace } from '../paths'
+import { resolveBranchPaths } from '../paths'
 import { isReviewer } from '../reserved-groups'
 
 interface AddCommentRequest {
@@ -24,19 +24,19 @@ export const listComments = async (
   req: ApiRequest,
   params: { branch: string }
 ): Promise<ApiResponse<ListCommentsResponse>> => {
-  const state = await ctx.getBranchState(params.branch)
-  if (!state) {
+  const context = await ctx.getBranchContext(params.branch)
+  if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const access = ctx.services.checkBranchAccess(state, req.user)
+  const access = ctx.services.checkBranchAccess(context, req.user)
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchWorkspace(state, branchMode)
-  const commentStore = new CommentStore(branchPaths.metadataRoot)
+  const branchPaths = resolveBranchPaths(context, branchMode)
+  const commentStore = new CommentStore(branchPaths.branchRoot)
 
   const threads = await commentStore.listThreads({ includeResolved: true })
 
@@ -51,12 +51,12 @@ export const addComment = async (
   req: ApiRequest<AddCommentRequest>,
   params: { branch: string }
 ): Promise<ApiResponse<{ threadId: string; commentId: string }>> => {
-  const state = await ctx.getBranchState(params.branch)
-  if (!state) {
+  const context = await ctx.getBranchContext(params.branch)
+  if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const access = ctx.services.checkBranchAccess(state, req.user)
+  const access = ctx.services.checkBranchAccess(context, req.user)
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
@@ -79,8 +79,8 @@ export const addComment = async (
   }
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchWorkspace(state, branchMode)
-  const commentStore = new CommentStore(branchPaths.metadataRoot)
+  const branchPaths = resolveBranchPaths(context, branchMode)
+  const commentStore = new CommentStore(branchPaths.branchRoot)
 
   const result = await commentStore.addComment({
     userId: req.user.userId,
@@ -103,14 +103,14 @@ export const resolveComment = async (
   req: ApiRequest,
   params: { branch: string; threadId: string }
 ): Promise<ApiResponse<{ resolved: boolean }>> => {
-  const state = await ctx.getBranchState(params.branch)
-  if (!state) {
+  const context = await ctx.getBranchContext(params.branch)
+  if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchWorkspace(state, branchMode)
-  const commentStore = new CommentStore(branchPaths.metadataRoot)
+  const branchPaths = resolveBranchPaths(context, branchMode)
+  const commentStore = new CommentStore(branchPaths.branchRoot)
 
   // Get the thread to check permissions
   const thread = await commentStore.getThread(params.threadId)

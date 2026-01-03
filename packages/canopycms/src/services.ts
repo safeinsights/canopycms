@@ -1,5 +1,5 @@
 import type { CanopyConfig } from './config'
-import type { BranchState } from './types'
+import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
 import { createCheckPathAccess } from './path-permissions'
 import { createCheckBranchAccess } from './authz'
@@ -43,7 +43,7 @@ export const getEffectiveGroups = (
 
 export interface CanopyServices {
   config: CanopyConfig
-  checkBranchAccess: (state: BranchState, user: CanopyUser) => ReturnType<ReturnType<typeof createCheckBranchAccess>>
+  checkBranchAccess: (context: BranchContext, user: CanopyUser) => ReturnType<ReturnType<typeof createCheckBranchAccess>>
   checkPathAccess: ReturnType<typeof createCheckPathAccess>
   checkContentAccess: ReturnType<typeof createCheckContentAccess>
   createGitManagerFor: (repoPath: string, opts?: { baseBranch?: string; remote?: string }) => GitManager

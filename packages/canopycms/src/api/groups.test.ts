@@ -45,7 +45,9 @@ describe('groups API', () => {
         createGitManagerFor: vi.fn(() => mockGit),
         bootstrapAdminIds: new Set<string>(),
       },
-      getBranchState: vi.fn(async () => ({
+      getBranchContext: vi.fn(async () => ({
+        baseRoot: '/test',
+        branchRoot: '/test/main',
         branch: {
           name: 'main',
           status: 'editing' as const,
@@ -54,7 +56,6 @@ describe('groups API', () => {
           createdAt: '2024-01-01T00:00:00.000Z',
           updatedAt: '2024-01-01T00:00:00.000Z',
         },
-        workspaceRoot: '/test/main',
       })),
     } as unknown as ApiContext
   })
@@ -75,7 +76,7 @@ describe('groups API', () => {
     })
 
     it('should return 500 if main branch not found', async () => {
-      mockContext.getBranchState = vi.fn(async () => null)
+      mockContext.getBranchContext = vi.fn(async () => null)
 
       const req: ApiRequest<undefined> = {
         user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
@@ -139,7 +140,7 @@ describe('groups API', () => {
     })
 
     it('should return 500 if main branch not found', async () => {
-      mockContext.getBranchState = vi.fn(async () => null)
+      mockContext.getBranchContext = vi.fn(async () => null)
       // Add bootstrap admin so validation passes
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 

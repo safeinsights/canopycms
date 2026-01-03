@@ -70,12 +70,12 @@ describe('listEntries', () => {
         checkBranchAccess,
         checkContentAccess,
         bootstrapAdminIds: new Set<string>(),
+        registry: undefined as any,
       },
-      getBranchState: vi.fn().mockResolvedValue({
-        branch: { name: 'main', status: 'editing', access: {}, createdBy: 'u1', createdAt: 'now', updatedAt: 'now' },
-        workspaceRoot: root,
+      getBranchContext: vi.fn().mockResolvedValue({
         baseRoot: root,
-        metadataRoot: root,
+        branchRoot: root,
+        branch: { name: 'main', status: 'editing', access: {}, createdBy: 'u1', createdAt: 'now', updatedAt: 'now' },
       }),
     }
 
@@ -98,8 +98,9 @@ describe('listEntries', () => {
         checkBranchAccess: vi.fn(),
         checkContentAccess: vi.fn().mockResolvedValue({ allowed: true, branch: {}, path: {} }),
         bootstrapAdminIds: new Set<string>(),
+        registry: undefined as any,
       },
-      getBranchState: vi.fn().mockResolvedValue(null),
+      getBranchContext: vi.fn().mockResolvedValue(null),
     }
     const res = await listEntries(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'missing' })
     expect(res.status).toBe(404)

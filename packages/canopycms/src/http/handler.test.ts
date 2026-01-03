@@ -87,7 +87,7 @@ describe('createCanopyRequestHandler', () => {
     const handler = createCanopyRequestHandler({
       services,
       authPlugin,
-      getBranchState: async () => null,
+      getBranchContext: async () => null,
     })
 
     const req = createMockRequest({
@@ -108,7 +108,7 @@ describe('createCanopyRequestHandler', () => {
     const handler = createCanopyRequestHandler({
       services,
       authPlugin,
-      getBranchState: async () => null,
+      getBranchContext: async () => null,
     })
 
     const req = createMockRequest()
@@ -125,7 +125,7 @@ describe('createCanopyRequestHandler', () => {
     const handler = createCanopyRequestHandler({
       services,
       authPlugin,
-      getBranchState: async () => null,
+      getBranchContext: async () => null,
     })
 
     const req = createMockRequest()
@@ -142,14 +142,18 @@ describe('createCanopyRequestHandler', () => {
     const handler = createCanopyRequestHandler({
       services,
       authPlugin,
-      getBranchState: async () => ({
+      getBranchContext: async () => ({
+        baseRoot: '/tmp/base',
+        branchRoot: '/tmp/base/test',
         branch: {
           name: 'test',
           status: 'editing',
+          access: {},
           createdBy: 'user1',
+          createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         },
-      } as any),
+      }),
     })
 
     const req = createMockRequest({
@@ -172,7 +176,7 @@ describe('createCanopyRequestHandler', () => {
     const handler = createCanopyRequestHandler({
       services,
       authPlugin,
-      getBranchState: async () => null,
+      getBranchContext: async () => null,
     })
 
     const req = createMockRequest({
@@ -192,7 +196,7 @@ describe('createCanopyRequestHandler', () => {
     const handler = createCanopyRequestHandler({
       services,
       authPlugin,
-      getBranchState: async () => null,
+      getBranchContext: async () => null,
     })
 
     const req = createMockRequest({
@@ -215,7 +219,7 @@ describe('createCanopyRequestHandler', () => {
     const handler = createCanopyRequestHandler({
       services,
       authPlugin,
-      getBranchState: async () => null,
+      getBranchContext: async () => null,
     })
 
     const req = createMockRequest()

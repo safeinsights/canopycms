@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import type { BranchState } from './types'
+import type { BranchContext } from './types'
 
 export type BranchMode = 'prod' | 'local-prod-sim' | 'local-simple'
 
@@ -14,7 +14,6 @@ export interface BranchPathOptions {
 export interface BranchPathResult {
   branchRoot: string
   baseRoot: string
-  metadataRoot: string
   branchName: string
 }
 
@@ -51,52 +50,46 @@ export const resolveBranchPath = (options: BranchPathOptions): BranchPathResult 
   const baseWithSep = normalizedBase.endsWith(path.sep) ? normalizedBase : `${normalizedBase}${path.sep}`
   const branchRoot =
     options.mode === 'local-simple' ? normalizedBase : path.resolve(normalizedBase, safeBranch)
-  const metadataRoot = branchRoot
 
   const withinBase = (target: string) => {
     const resolved = path.resolve(target)
     return resolved === normalizedBase || resolved.startsWith(baseWithSep)
   }
 
-  if (!withinBase(branchRoot) || !withinBase(metadataRoot)) {
+  if (!withinBase(branchRoot)) {
     throw new BranchPathError('Branch path resolves outside the base root')
   }
 
-  return { branchRoot, baseRoot: normalizedBase, metadataRoot, branchName: safeBranch }
+  return { branchRoot, baseRoot: normalizedBase, branchName: safeBranch }
 }
 
 export const ensureBranchRoot = async (options: BranchPathOptions): Promise<BranchPathResult> => {
   const result = resolveBranchPath(options)
   await fs.mkdir(result.branchRoot, { recursive: true })
-  if (result.metadataRoot && result.metadataRoot !== result.branchRoot) {
-    await fs.mkdir(result.metadataRoot, { recursive: true })
-  }
   return result
 }
 
 export const getDefaultBranchBase = (mode: BranchMode, override?: string): string =>
   resolveBaseRoot(mode, override)
 
-export const resolveBranchWorkspace = (
-  branchState: BranchState,
+export const resolveBranchPaths = (
+  branchContext: BranchContext,
   mode: BranchMode,
   basePathOverride?: string
 ): BranchPathResult => {
-  if (branchState.workspaceRoot || branchState.metadataRoot || branchState.baseRoot) {
-    const baseRoot = path.resolve(branchState.baseRoot ?? resolveBaseRoot(mode, basePathOverride))
-    const branchRoot = path.resolve(branchState.workspaceRoot ?? baseRoot)
-    const metadataRoot = path.resolve(branchState.metadataRoot ?? branchRoot)
+  if (branchContext.branchRoot || branchContext.baseRoot) {
+    const baseRoot = path.resolve(branchContext.baseRoot ?? resolveBaseRoot(mode, basePathOverride))
+    const branchRoot = path.resolve(branchContext.branchRoot ?? baseRoot)
     return {
       branchRoot,
-      metadataRoot,
       baseRoot,
-      branchName: sanitizeBranchName(branchState.branch.name),
+      branchName: sanitizeBranchName(branchContext.branch.name),
     }
   }
 
   return resolveBranchPath({
     mode,
-    branchName: branchState.branch.name,
+    branchName: branchContext.branch.name,
     basePathOverride,
   })
 }

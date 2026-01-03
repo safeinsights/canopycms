@@ -36,7 +36,7 @@ You are a codebase guide for CanopyCMS. Your job is to help navigate the project
 
 ## Authentication & Permissions
 
-**Location**: packages/canopycms/src/auth/, packages/canopycms/src/permissions/
+**Location**: packages/canopycms/src/auth/, packages/canopycms/src/
 
 ### Permission Model
 - Groups-only (no roles) - users belong to groups with associated permissions
@@ -47,10 +47,10 @@ You are a codebase guide for CanopyCMS. Your job is to help navigate the project
 ### Key Files
 - auth/plugin.ts - AuthPlugin interface
 - auth/types.ts - CanopyUser, AuthPluginConfig
-- permissions/authz.ts - Authorization checks
-- permissions/path-permissions.ts - Path-based ACLs
-- permissions/groups-loader.ts - Group management
-- permissions/permissions-loader.ts - Permission persistence
+- authz.ts - Authorization checks
+- path-permissions.ts - Path-based ACLs
+- groups-loader.ts - Group management
+- permissions-loader.ts - Permission persistence
 
 ### Auth Flow
 1. Host app provides getUser function to adapter
@@ -60,7 +60,10 @@ You are a codebase guide for CanopyCMS. Your job is to help navigate the project
 
 ## Comment System
 
-**Location**: packages/canopycms/src/editor/comments/, packages/canopycms/src/comments/
+**Location**: packages/canopycms/src/editor/comments/, packages/canopycms/src/
+
+### Comment Store
+- comment-store.ts - Comment persistence and retrieval
 
 ### Comment Types
 - **Field comments**: Attached to specific form fields (canopyPath)
@@ -82,12 +85,13 @@ You are a codebase guide for CanopyCMS. Your job is to help navigate the project
 
 ## Content Store
 
-**Location**: packages/canopycms/src/content/
+**Location**: packages/canopycms/src/
 
 ### Key Files
 - content-store.ts - Content persistence
 - content-reader.ts - Content reading
 - content-access.ts - Access layer
+- content-types.ts - Content type definitions
 - config.ts - Schema configuration
 
 ### Content Model
@@ -129,13 +133,18 @@ defineCanopyConfig({
 
 ## Git & Branch Management
 
-**Location**: packages/canopycms/src/git/, packages/canopycms/src/branch/
+**Location**: packages/canopycms/src/
 
 ### Key Files
 - git-manager.ts - Wrapper around simple-git
-- branch-registry.ts - Branch tracking
-- branch-workspace.ts - Workspace management
-- branch-metadata.ts - PR info, status, lock state
+- branch-registry.ts - Branch tracking (BranchRegistry class, cache-based listing)
+- branch-workspace.ts - Workspace management (BranchWorkspaceManager class, loadBranchContext function)
+- branch-metadata.ts - PR info, status, lock state (BranchMetadataFileManager class, getBranchMetadataFileManager function)
+
+### Key Types
+- BranchContext - Branch state with paths (branchRoot, baseRoot) and metadata
+- BranchMetadata - Branch info (name, status, access, timestamps)
+- BranchPaths - Path information (baseRoot, branchRoot)
 
 ### Operating Modes
 - `prod`: Branch clones in configurable filesystem directory

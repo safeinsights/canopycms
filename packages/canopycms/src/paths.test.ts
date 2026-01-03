@@ -23,7 +23,7 @@ describe('paths', () => {
 
   it('ensures branch root is created under base', async () => {
     const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branches-'))
-    const { branchRoot, metadataRoot } = await ensureBranchRoot({
+    const { branchRoot, baseRoot } = await ensureBranchRoot({
       mode: 'local-prod-sim',
       branchName: 'feature/test',
       basePathOverride: temp,
@@ -31,16 +31,15 @@ describe('paths', () => {
     const stat = await fs.stat(branchRoot)
     expect(stat.isDirectory()).toBe(true)
     expect(branchRoot.startsWith(temp)).toBe(true)
-    expect(metadataRoot).toBe(branchRoot)
+    expect(baseRoot).toBe(temp)
   })
 
   it('uses cwd for local-simple mode', () => {
-    const { baseRoot, branchRoot, metadataRoot } = resolveBranchPath({
+    const { baseRoot, branchRoot } = resolveBranchPath({
       mode: 'local-simple',
       branchName: 'current',
     })
     expect(baseRoot).toBe(path.resolve(process.cwd()))
     expect(branchRoot).toBe(path.resolve(process.cwd()))
-    expect(metadataRoot).toBe(branchRoot)
   })
 })

@@ -56,7 +56,7 @@ describe('Role Permission Integration', () => {
 
     expect(adminAccessResponse.status).toBe(200)
     const status = (await adminAccessResponse.json()) as any
-    expect(status.data.branch.branch.name).toBe('editor-branch')
+    expect(status.data.branch.name).toBe('editor-branch')
   })
 
   it('allows admin to modify any branch access control', async () => {
@@ -150,7 +150,7 @@ describe('Role Permission Integration', () => {
 
     expect(approveResponse.status).toBe(200)
     const approveData = (await approveResponse.json()) as any
-    expect(approveData.data.branch.branch.status).toBe('approved')
+    expect(approveData.data.branch.status).toBe('approved')
   })
 
   it('prevents editor from approving their own branch', async () => {
@@ -299,7 +299,7 @@ describe('Role Permission Integration', () => {
     const editorListResponse = await editorClient.get('/api/canopycms/branches')
     expect(editorListResponse.status).toBe(200)
     const editorBranches = (await editorListResponse.json()) as any
-    const editorBranchNames = editorBranches.data.branches.map((b: any) => b.branch.name)
+    const editorBranchNames = editorBranches.data.branches.map((b: any) => b.name)
     expect(editorBranchNames).toContain('editor-branch')
     expect(editorBranchNames).not.toContain('admin-only')
 

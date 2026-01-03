@@ -44,6 +44,8 @@ describe('createCanopyServices', () => {
 
     const branchAllowed = services.checkBranchAccess(
       {
+        baseRoot: '/tmp/base',
+        branchRoot: '/tmp/base/feature-x',
         branch: {
           name: 'feature/x',
           status: 'editing',

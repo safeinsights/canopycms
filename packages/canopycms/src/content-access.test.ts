@@ -5,7 +5,9 @@ import { createCheckContentAccess } from './content-access'
 import { RESERVED_GROUPS } from './reserved-groups'
 import type { PathPermission } from './config'
 
-const branchState = {
+const branchContext = {
+  baseRoot: '/tmp/base',
+  branchRoot: '/tmp/base/feature-x',
   branch: {
     name: 'feature/x',
     status: 'editing' as const,
@@ -29,7 +31,7 @@ describe('checkContentAccess', () => {
       defaultPathAccess: 'allow',
     })
 
-    const res = await checkContent(branchState, '/repo', 'content/pages/foo.md', { type: 'authenticated', userId: 'u1', groups: [] }, 'edit')
+    const res = await checkContent(branchContext, '/repo', 'content/pages/foo.md', { type: 'authenticated', userId: 'u1', groups: [] }, 'edit')
 
     expect(mockLoadPermissions).toHaveBeenCalledWith('/repo')
     expect(res.allowed).toBe(false)
@@ -44,7 +46,7 @@ describe('checkContentAccess', () => {
       defaultPathAccess: 'allow',
     })
 
-    const res = await checkContent(branchState, '/repo', 'content/pages/foo.md', {
+    const res = await checkContent(branchContext, '/repo', 'content/pages/foo.md', {
       type: 'authenticated',
       userId: 'u1',
       groups: [RESERVED_GROUPS.REVIEWERS],
@@ -62,7 +64,7 @@ describe('checkContentAccess', () => {
       defaultPathAccess: 'allow',
     })
 
-    const res = await checkContent(branchState, '/repo', 'content/admin/secret.md', { type: 'authenticated', userId: 'u1', groups: [] }, 'edit')
+    const res = await checkContent(branchContext, '/repo', 'content/admin/secret.md', { type: 'authenticated', userId: 'u1', groups: [] }, 'edit')
 
     expect(res.allowed).toBe(false)
     expect(res.path.allowed).toBe(false)
@@ -76,7 +78,7 @@ describe('checkContentAccess', () => {
       defaultPathAccess: 'deny',
     })
 
-    const res = await checkContent(branchState, '/repo', 'content/open/page.md', { type: 'authenticated', userId: 'u1', groups: [] }, 'edit')
+    const res = await checkContent(branchContext, '/repo', 'content/open/page.md', { type: 'authenticated', userId: 'u1', groups: [] }, 'edit')
 
     expect(res.allowed).toBe(false)
     expect(res.path.allowed).toBe(false)
@@ -91,7 +93,7 @@ describe('checkContentAccess', () => {
       defaultPathAccess: 'allow',
     })
 
-    const res = await checkContent(branchState, '/repo', 'content/open/page.md', { type: 'authenticated', userId: 'u1', groups: [] }, 'edit')
+    const res = await checkContent(branchContext, '/repo', 'content/open/page.md', { type: 'authenticated', userId: 'u1', groups: [] }, 'edit')
 
     expect(res.allowed).toBe(true)
     expect(res.path.allowed).toBe(true)
