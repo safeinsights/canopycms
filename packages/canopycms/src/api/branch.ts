@@ -5,6 +5,15 @@ import type { BranchAccessControl, BranchContext, BranchMetadata } from '../type
 import { BranchWorkspaceManager } from '../branch-workspace'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+
+/** Response type for single branch operations (create, update, status) */
+export type BranchResponse = ApiResponse<{ branch: BranchMetadata }>
+
+/** Response type for listing branches */
+export type BranchListResponse = ApiResponse<{ branches: BranchMetadata[] }>
+
+/** Response type for branch deletion */
+export type BranchDeleteResponse = ApiResponse<{ deleted: boolean }>
 import { resolveBranchPaths } from '../paths'
 import { isPrivileged, isAdmin } from '../reserved-groups'
 import type { PathPermission } from '../config'
@@ -67,7 +76,7 @@ export interface CreateBranchBody {
 export const createBranch = async (
   ctx: ApiContext,
   req: ApiRequest<CreateBranchBody>
-): Promise<ApiResponse<{ branch: BranchMetadata }>> => {
+): Promise<BranchResponse> => {
   const branchName = req.body?.branch
   if (!branchName) {
     return { ok: false, status: 400, error: 'branch is required' }
@@ -106,7 +115,7 @@ export const createBranch = async (
 export const listBranches = async (
   ctx: ApiContext,
   req: ApiRequest
-): Promise<ApiResponse<{ branches: BranchMetadata[] }>> => {
+): Promise<BranchListResponse> => {
   const allBranches = await ctx.services.registry.list()
 
   // Admins and Reviewers see all branches
@@ -162,7 +171,7 @@ export const deleteBranch = async (
   ctx: ApiContext,
   req: ApiRequest,
   params: { branch: string }
-): Promise<ApiResponse<{ deleted: boolean }>> => {
+): Promise<BranchDeleteResponse> => {
   const branchName = params.branch
   if (!branchName) {
     return { ok: false, status: 400, error: 'branch is required' }
@@ -248,7 +257,7 @@ export const updateBranchAccess = async (
   ctx: ApiContext,
   req: ApiRequest<UpdateBranchAccessBody>,
   params: { branch: string }
-): Promise<ApiResponse<{ branch: BranchMetadata }>> => {
+): Promise<BranchResponse> => {
   const branchName = params.branch
   if (!branchName) {
     return { ok: false, status: 400, error: 'branch is required' }

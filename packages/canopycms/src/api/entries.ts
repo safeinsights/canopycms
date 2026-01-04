@@ -55,6 +55,9 @@ export interface ListEntriesResponse {
   }
 }
 
+/** Response type for listing entries */
+export type EntriesResponse = ApiResponse<ListEntriesResponse>
+
 const extensionFor = (format: ContentFormat): string => {
   if (format === 'md') return '.md'
   if (format === 'mdx') return '.mdx'
@@ -198,7 +201,7 @@ export const listEntries = async (
   ctx: ApiContext,
   req: ApiRequest<undefined>,
   params: ListEntriesParams
-): Promise<ApiResponse<ListEntriesResponse>> => {
+): Promise<EntriesResponse> => {
   if (!params.branch) {
     return { ok: false, status: 400, error: 'branch is required' }
   }

@@ -6,6 +6,9 @@ export interface MarkAsMergedParams {
   branch: string
 }
 
+/** Response type for branch merge operations */
+export type BranchMergeResponse = ApiResponse<{ branch: { name: string; status: string } }>
+
 /**
  * Mark a branch as merged and archived after PR is merged on GitHub.
  * This is typically called manually by admins or via a webhook (future).
@@ -14,7 +17,7 @@ export async function markAsMerged(
   ctx: ApiContext,
   req: ApiRequest,
   params: MarkAsMergedParams
-): Promise<ApiResponse<{ branch: { name: string; status: string } }>> {
+): Promise<BranchMergeResponse> {
   const { branch: branchName } = params
 
   // Load branch context

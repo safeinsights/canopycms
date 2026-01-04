@@ -4,13 +4,16 @@ import { loadPathPermissions, savePathPermissions } from '../permissions-loader'
 import { resolveBranchPaths } from '../paths'
 import { isAdmin, isReviewer } from '../reserved-groups'
 
+/** Response type for getting permissions */
+export type PermissionsResponse = ApiResponse<{ permissions: PathPermission[] }>
+
 /**
  * Get current permissions (admin only)
  */
 export const getPermissions = async (
   ctx: ApiContext,
   req: ApiRequest<undefined>
-): Promise<ApiResponse<{ permissions: PathPermission[] }>> => {
+): Promise<PermissionsResponse> => {
   // Check admin permission
   if (!isAdmin(req.user.groups)) {
     return { ok: false, status: 403, error: 'Admin access required' }

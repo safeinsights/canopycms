@@ -10,6 +10,8 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createMockAuthPlugin } from '../test-utils/multi-user'
 import { createApiClient, type ApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
+import type { BranchResponse } from '../../api/branch'
+import type { CommentsResponse, AddCommentResponse, ResolveCommentResponse } from '../../api/comments'
 
 describe('Review Workflow Integration', () => {
   let workspace: TestWorkspace
@@ -50,8 +52,8 @@ describe('Review Workflow Integration', () => {
     })
 
     expect(createResponse.status).toBe(200)
-    const createData = (await createResponse.json()) as any
-    expect(createData.data.branch.status).toBe('editing')
+    const createData = await createResponse.json<BranchResponse>()
+    expect(createData.data?.branch.status).toBe('editing')
 
     // STEP 2: Editor writes content (will fail due to collection bug)
     await editorClient.put('/api/canopycms/feature-review-test/content/posts/test-post', {
@@ -73,8 +75,8 @@ describe('Review Workflow Integration', () => {
     })
 
     expect(submitResponse.status).toBe(200)
-    const submitData = (await submitResponse.json()) as any
-    expect(submitData.data.branch.status).toBe('submitted')
+    const submitData = await submitResponse.json<BranchResponse>()
+    expect(submitData.data?.branch.status).toBe('submitted')
 
     // STEP 4: Reviewer adds comment
     const commentResponse = await reviewerClient.post('/api/canopycms/feature-review-test/comments', {
@@ -94,8 +96,8 @@ describe('Review Workflow Integration', () => {
     )
 
     expect(requestChangesResponse.status).toBe(200)
-    const requestChangesData = (await requestChangesResponse.json()) as any
-    expect(requestChangesData.data.branch.status).toBe('editing')
+    const requestChangesData = await requestChangesResponse.json<BranchResponse>()
+    expect(requestChangesData.data?.branch.status).toBe('editing')
 
     // STEP 6: Editor updates content and resubmits
     await editorClient.put('/api/canopycms/feature-review-test/content/posts/test-post', {
@@ -123,8 +125,8 @@ describe('Review Workflow Integration', () => {
     })
 
     expect(approveResponse.status).toBe(200)
-    const approveData = (await approveResponse.json()) as any
-    expect(approveData.data.branch.status).toBe('approved')
+    const approveData = await approveResponse.json<BranchResponse>()
+    expect(approveData.data?.branch.status).toBe('approved')
   })
 
   it('allows multiple reviewers to comment', async () => {
@@ -158,8 +160,8 @@ describe('Review Workflow Integration', () => {
     const listResponse = await reviewerClient.get('/api/canopycms/feature-multi-reviewer/comments')
 
     expect(listResponse.status).toBe(200)
-    const listData = (await listResponse.json()) as any
-    expect(listData.data.threads.length).toBeGreaterThanOrEqual(2)
+    const listData = await listResponse.json<CommentsResponse>()
+    expect(listData.data?.threads.length).toBeGreaterThanOrEqual(2)
   })
 
   it('enforces reviewer permissions', async () => {
@@ -199,8 +201,8 @@ describe('Review Workflow Integration', () => {
     })
 
     expect(commentResponse.status).toBe(200)
-    const commentData = (await commentResponse.json()) as any
-    const threadId = commentData.data.threadId
+    const commentData = await commentResponse.json<AddCommentResponse>()
+    const threadId = commentData.data?.threadId
 
     // Reviewer resolves the comment thread
     const resolveResponse = await reviewerClient.post(
@@ -209,8 +211,8 @@ describe('Review Workflow Integration', () => {
     )
 
     expect(resolveResponse.status).toBe(200)
-    const resolveData = (await resolveResponse.json()) as any
-    expect(resolveData.data.resolved).toBe(true)
+    const resolveData = await resolveResponse.json<ResolveCommentResponse>()
+    expect(resolveData.data?.resolved).toBe(true)
   })
 
   it('allows withdrawal from review', async () => {
@@ -230,7 +232,7 @@ describe('Review Workflow Integration', () => {
     const withdrawResponse = await editorClient.post('/api/canopycms/feature-withdraw-test/withdraw', {})
 
     expect(withdrawResponse.status).toBe(200)
-    const withdrawData = (await withdrawResponse.json()) as any
-    expect(withdrawData.data.branch.status).toBe('editing')
+    const withdrawData = await withdrawResponse.json<BranchResponse>()
+    expect(withdrawData.data?.branch.status).toBe('editing')
   })
 })

@@ -10,6 +10,7 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createMockAuthPlugin } from '../test-utils/multi-user'
 import { createApiClient, type ApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
+import type { ApiResponse } from '../../api/types'
 
 describe('Invalid Content Errors', () => {
   let workspace: TestWorkspace
@@ -169,7 +170,7 @@ describe('Invalid Content Errors', () => {
 
     expect(response.status).toBe(400)
     expect(response.ok).toBe(false)
-    const error = (await response.json()) as any
+    const error = await response.json<ApiResponse>()
     expect(error.error).toContain('collection')
   })
 
@@ -212,7 +213,7 @@ describe('Invalid Content Errors', () => {
     // Should either succeed (if empty slug is valid) or fail gracefully
     if (!response.ok) {
       expect(response.status).toBeGreaterThanOrEqual(400)
-      const error = (await response.json()) as any
+      const error = await response.json<ApiResponse>()
       expect(error.error).toBeDefined()
     }
   })

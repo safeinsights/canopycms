@@ -4,12 +4,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import path from 'node:path'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
-import { createMockAuthPlugin, createTestUser } from '../test-utils/multi-user'
+import { createMockAuthPlugin } from '../test-utils/multi-user'
 import { createApiClient, type ApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
+import type { BranchResponse, BranchListResponse } from '../../api/branch'
+import type { EntriesResponse } from '../../api/entries'
+import type { ApiResponse } from '../../api/types'
 
 describe('API Editing Workflow Integration', () => {
   let workspace: TestWorkspace
@@ -46,9 +48,9 @@ describe('API Editing Workflow Integration', () => {
 
     expect(createResponse.status).toBe(200)
     expect(createResponse.ok).toBe(true)
-    const createData = (await createResponse.json()) as any
-    expect(createData.data.branch.name).toBe('feature-new-post')
-    expect(createData.data.branch.status).toBe('editing')
+    const createData = await createResponse.json<BranchResponse>()
+    expect(createData.data?.branch.name).toBe('feature-new-post')
+    expect(createData.data?.branch.status).toBe('editing')
 
     // STEP 2: Write content via API
     const writeResponse = await editorClient.put(
@@ -81,25 +83,25 @@ describe('API Editing Workflow Integration', () => {
     }
     expect(readResponse.status).toBe(200)
     expect(readResponse.ok).toBe(true)
-    const content = (await readResponse.json()) as any
+    const content = await readResponse.json<ApiResponse<{ format: string; data: Record<string, unknown>; body?: string }>>()
     // content.data is the ContentDocument: { format, data: {...frontmatter}, body, ... }
-    expect(content.data.data.title).toBe('Hello World')
-    expect(content.data.body?.trim()).toBe('This is my first post!')
+    expect(content.data?.data.title).toBe('Hello World')
+    expect(content.data?.body?.trim()).toBe('This is my first post!')
 
     // STEP 4: List entries via API
     const entriesResponse = await editorClient.get('/api/canopycms/feature-new-post/entries')
 
     expect(entriesResponse.status).toBe(200)
-    const entries = (await entriesResponse.json()) as any
-    expect(entries.data.entries).toBeDefined()
-    expect(entries.data.entries.length).toBeGreaterThan(0)
+    const entries = await entriesResponse.json<EntriesResponse>()
+    expect(entries.data?.entries).toBeDefined()
+    expect(entries.data?.entries.length).toBeGreaterThan(0)
 
     // STEP 5: Get branch status via API
     const statusResponse = await editorClient.get('/api/canopycms/feature-new-post/status')
 
     expect(statusResponse.status).toBe(200)
-    const status = (await statusResponse.json()) as any
-    expect(status.data.branch.status).toBe('editing')
+    const status = await statusResponse.json<BranchResponse>()
+    expect(status.data?.branch.status).toBe('editing')
   })
 
   it('enforces permissions at API level', async () => {
@@ -220,13 +222,13 @@ describe('API Editing Workflow Integration', () => {
     // List branches as admin - should see all
     const adminListResponse = await adminClient.get('/api/canopycms/branches')
     expect(adminListResponse.status).toBe(200)
-    const adminBranches = (await adminListResponse.json()) as any
-    expect(adminBranches.data.branches.length).toBeGreaterThanOrEqual(2)
+    const adminBranches = await adminListResponse.json<BranchListResponse>()
+    expect(adminBranches.data?.branches.length).toBeGreaterThanOrEqual(2)
 
     // List branches as editor - should see their own + public
     const editorListResponse = await editorClient.get('/api/canopycms/branches')
     expect(editorListResponse.status).toBe(200)
-    const editorBranches = (await editorListResponse.json()) as any
-    expect(editorBranches.data.branches.some((b: any) => b.name === 'editor-branch')).toBe(true)
+    const editorBranches = await editorListResponse.json<BranchListResponse>()
+    expect(editorBranches.data?.branches.some((b) => b.name === 'editor-branch')).toBe(true)
   })
 })

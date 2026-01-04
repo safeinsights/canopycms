@@ -12,9 +12,18 @@ interface AddCommentRequest {
   canopyPath?: string
 }
 
-interface ListCommentsResponse {
+export interface ListCommentsResponse {
   threads: CommentThread[]
 }
+
+/** Response type for listing comments */
+export type CommentsResponse = ApiResponse<ListCommentsResponse>
+
+/** Response type for adding a comment */
+export type AddCommentResponse = ApiResponse<{ threadId: string; commentId: string }>
+
+/** Response type for resolving a comment */
+export type ResolveCommentResponse = ApiResponse<{ resolved: boolean }>
 
 /**
  * List all comment threads for a branch
@@ -23,7 +32,7 @@ export const listComments = async (
   ctx: ApiContext,
   req: ApiRequest,
   params: { branch: string }
-): Promise<ApiResponse<ListCommentsResponse>> => {
+): Promise<CommentsResponse> => {
   const context = await ctx.getBranchContext(params.branch)
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
@@ -50,7 +59,7 @@ export const addComment = async (
   ctx: ApiContext,
   req: ApiRequest<AddCommentRequest>,
   params: { branch: string }
-): Promise<ApiResponse<{ threadId: string; commentId: string }>> => {
+): Promise<AddCommentResponse> => {
   const context = await ctx.getBranchContext(params.branch)
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
@@ -102,7 +111,7 @@ export const resolveComment = async (
   ctx: ApiContext,
   req: ApiRequest,
   params: { branch: string; threadId: string }
-): Promise<ApiResponse<{ resolved: boolean }>> => {
+): Promise<ResolveCommentResponse> => {
   const context = await ctx.getBranchContext(params.branch)
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }

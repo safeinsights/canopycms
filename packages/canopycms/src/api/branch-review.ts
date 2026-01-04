@@ -1,5 +1,5 @@
-import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import type { BranchMetadata } from '../types'
+import type { ApiContext, ApiRequest } from './types'
+import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { resolveBranchPaths } from '../paths'
 import { isReviewer } from '../reserved-groups'
@@ -12,7 +12,7 @@ export const requestChanges = async (
   ctx: ApiContext,
   req: ApiRequest<{ comment?: string }>,
   params: { branch: string }
-): Promise<ApiResponse<{ branch: BranchMetadata }>> => {
+): Promise<BranchResponse> => {
   const context = await ctx.getBranchContext(params.branch)
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
@@ -70,7 +70,7 @@ export const approveBranch = async (
   ctx: ApiContext,
   req: ApiRequest,
   params: { branch: string }
-): Promise<ApiResponse<{ branch: BranchMetadata }>> => {
+): Promise<BranchResponse> => {
   const context = await ctx.getBranchContext(params.branch)
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }

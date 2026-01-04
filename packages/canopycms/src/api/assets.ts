@@ -5,6 +5,12 @@ export interface ListAssetsParams {
   prefix?: string
 }
 
+/** Response type for listing assets */
+export type AssetsListResponse = ApiResponse<{ assets: { key: string; url?: string }[] }>
+
+/** Response type for uploading an asset */
+export type AssetUploadResponse = ApiResponse<{ asset: { key: string; url?: string } }>
+
 /**
  * List assets - any authenticated user can list assets.
  */
@@ -12,7 +18,7 @@ export const listAssets = async (
   ctx: ApiContext,
   _req: ApiRequest,
   params: ListAssetsParams = {}
-): Promise<ApiResponse<{ assets: { key: string; url?: string }[] }>> => {
+): Promise<AssetsListResponse> => {
   if (!ctx.assetStore) return { ok: false, status: 501, error: 'Asset store not configured' }
   const assets = await ctx.assetStore.list(params.prefix ?? '')
   return { ok: true, status: 200, data: { assets } }
@@ -30,7 +36,7 @@ export interface UploadAssetBody {
 export const uploadAsset = async (
   ctx: ApiContext,
   req: ApiRequest<UploadAssetBody>
-): Promise<ApiResponse<{ asset: { key: string; url?: string } }>> => {
+): Promise<AssetUploadResponse> => {
   if (!ctx.assetStore) return { ok: false, status: 501, error: 'Asset store not configured' }
 
   // Require privileged access to upload assets

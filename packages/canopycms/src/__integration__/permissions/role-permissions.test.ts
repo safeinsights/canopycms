@@ -10,6 +10,7 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createMockAuthPlugin } from '../test-utils/multi-user'
 import { createApiClient, type ApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
+import type { BranchResponse, BranchListResponse } from '../../api/branch'
 
 describe('Role Permission Integration', () => {
   let workspace: TestWorkspace
@@ -55,8 +56,8 @@ describe('Role Permission Integration', () => {
     const adminAccessResponse = await adminClient.get('/api/canopycms/editor-branch/status')
 
     expect(adminAccessResponse.status).toBe(200)
-    const status = (await adminAccessResponse.json()) as any
-    expect(status.data.branch.name).toBe('editor-branch')
+    const status = await adminAccessResponse.json<BranchResponse>()
+    expect(status.data?.branch.name).toBe('editor-branch')
   })
 
   it('allows admin to modify any branch access control', async () => {
@@ -149,8 +150,8 @@ describe('Role Permission Integration', () => {
     })
 
     expect(approveResponse.status).toBe(200)
-    const approveData = (await approveResponse.json()) as any
-    expect(approveData.data.branch.status).toBe('approved')
+    const approveData = await approveResponse.json<BranchResponse>()
+    expect(approveData.data?.branch.status).toBe('approved')
   })
 
   it('prevents editor from approving their own branch', async () => {
@@ -292,22 +293,22 @@ describe('Role Permission Integration', () => {
     // Admin sees all branches
     const adminListResponse = await adminClient.get('/api/canopycms/branches')
     expect(adminListResponse.status).toBe(200)
-    const adminBranches = (await adminListResponse.json()) as any
-    expect(adminBranches.data.branches.length).toBeGreaterThanOrEqual(3)
+    const adminBranches = await adminListResponse.json<BranchListResponse>()
+    expect(adminBranches.data?.branches.length).toBeGreaterThanOrEqual(3)
 
     // Editor sees their own + public branches (not admin-only)
     const editorListResponse = await editorClient.get('/api/canopycms/branches')
     expect(editorListResponse.status).toBe(200)
-    const editorBranches = (await editorListResponse.json()) as any
-    const editorBranchNames = editorBranches.data.branches.map((b: any) => b.name)
+    const editorBranches = await editorListResponse.json<BranchListResponse>()
+    const editorBranchNames = editorBranches.data?.branches.map((b) => b.name)
     expect(editorBranchNames).toContain('editor-branch')
     expect(editorBranchNames).not.toContain('admin-only')
 
     // Reviewer sees all branches (privileged role)
     const reviewerListResponse = await reviewerClient.get('/api/canopycms/branches')
     expect(reviewerListResponse.status).toBe(200)
-    const reviewerBranches = (await reviewerListResponse.json()) as any
-    expect(reviewerBranches.data.branches.length).toBeGreaterThanOrEqual(3)
+    const reviewerBranches = await reviewerListResponse.json<BranchListResponse>()
+    expect(reviewerBranches.data?.branches.length).toBeGreaterThanOrEqual(3)
   })
 
   it('allows branch creator to delete their own branch', async () => {
