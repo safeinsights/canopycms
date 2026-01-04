@@ -5,10 +5,10 @@ import { defineConfig, devices } from '@playwright/test'
  * Tests UI-only features like preview bridge, draft persistence, modals, and drag-drop.
  */
 export default defineConfig({
-  testDir: './packages/canopycms/e2e',
+  testDir: './apps/test-app/e2e',
 
-  // Run tests in files in parallel
-  fullyParallel: true,
+  // Run tests sequentially for now (shared workspace)
+  fullyParallel: false,
 
   // Fail the build on CI if you accidentally left test.only in the source code
   forbidOnly: !!process.env.CI,
@@ -29,6 +29,9 @@ export default defineConfig({
 
     // Collect trace when retrying the failed test
     trace: 'on-first-retry',
+
+    // Take screenshot on failure for debugging
+    screenshot: 'only-on-failure',
   },
 
   // Configure projects for major browsers

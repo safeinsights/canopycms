@@ -235,7 +235,7 @@ describe('useEntryManager', () => {
     ;(global.fetch as any)
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({}),
+        json: async () => ({ data: { entries: [], collections: [] } }),
       })
       .mockResolvedValueOnce({
         ok: true,

@@ -32,9 +32,28 @@ export interface TestWorkspace {
  *
  * Based on the pattern from branch-workflow.integration.test.ts
  */
+// Warnings to suppress in integration tests (expected when using local git repos)
+const suppressedWarnings: (string | RegExp)[] = [
+  'CanopyCMS: GitHub token not found',
+  'CanopyCMS: Failed to parse GitHub remote URL',
+  'CanopyCMS: GitHub service requires remoteUrl',
+]
+
 export async function createTestWorkspace(
   configOverrides?: Partial<Parameters<typeof defineCanopyTestConfig>[0]>,
 ): Promise<TestWorkspace> {
+  // Suppress known CanopyCMS warnings that are expected in integration tests
+  const originalWarn = console.warn
+  const warnSpy = vi.spyOn(console, 'warn').mockImplementation((...args) => {
+    const message = String(args[0] ?? '')
+    const shouldSuppress = suppressedWarnings.some((pattern) =>
+      typeof pattern === 'string' ? message.includes(pattern) : pattern.test(message),
+    )
+    if (!shouldSuppress) {
+      originalWarn.apply(console, args)
+    }
+  })
+
   // Create root temp directory
   const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-test-'))
   const remotePath = path.join(tmpRoot, 'remote.git')
@@ -86,12 +105,14 @@ export async function createTestWorkspace(
       seedPath,
       config,
       cleanup: async () => {
+        warnSpy.mockRestore()
         cwdSpy.mockRestore()
         await fs.rm(tmpRoot, { recursive: true, force: true })
       },
     }
   } catch (error) {
     // Cleanup on error
+    warnSpy.mockRestore()
     await fs.rm(tmpRoot, { recursive: true, force: true }).catch(() => {})
     throw error
   }

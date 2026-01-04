@@ -220,6 +220,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               <Menu withinPortal shadow="sm">
                 <Menu.Target>
                   <Button
+                    data-testid="file-dropdown-button"
                     variant="outline"
                     color="gray"
                     size="xs"
@@ -237,7 +238,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     Discard File Draft
                   </Menu.Item>
                   <Menu.Divider />
-                  <Menu.Item onClick={onNavigatorOpen}>All Files</Menu.Item>
+                  <Menu.Item data-testid="all-files-menu-item" onClick={onNavigatorOpen}>
+                    All Files
+                  </Menu.Item>
                   <Menu.Divider />
                   <Menu.Item disabled>{'TODO: replace with real modified file list'}</Menu.Item>
                   <Menu.Divider />
@@ -355,6 +358,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
           </Stack>
           <Group gap="xs" wrap="nowrap">
             <Button
+              data-testid="save-button"
               variant="light"
               size="sm"
               onClick={onSave}
