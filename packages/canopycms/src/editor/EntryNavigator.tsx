@@ -109,6 +109,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     return (
       <Box
         {...elementProps}
+        data-testid={`entry-nav-item-${String(node.label ?? '').toLowerCase().replace(/\s+/g, '-')}`}
         onClick={(event) => {
           elementProps.onClick(event)
           if (isLeaf && node.nodeProps?.isEntry) {
@@ -160,7 +161,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   }
 
   return (
-    <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
+    <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0} data-testid="entry-navigator">
       <ScrollArea type="auto" offsetScrollbars style={{ flex: 1 }}>
         {treeData.length === 0 ? (
           <Text size="xs" c="dimmed" py="sm">

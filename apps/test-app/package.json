@@ -1,0 +1,28 @@
+{
+  "name": "canopycms-test-app",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dedicated test app for Playwright E2E tests",
+  "scripts": {
+    "dev": "next dev --port 5174",
+    "build": "next build",
+    "start": "next start --port 5174",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "canopycms": "file:../../packages/canopycms",
+    "canopycms-next": "file:../../packages/canopycms-next",
+    "next": "14.2.25",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.6.3"
+  }
+}

@@ -32,7 +32,9 @@
       "Bash(echo:*)",
       "Bash(break)",
       "Bash(fi)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(tree:*)",
+      "Bash(npx playwright test:*)"
     ]
   }
 }

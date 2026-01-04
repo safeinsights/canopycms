@@ -63,6 +63,12 @@ describe('useBranchManager', () => {
   })
 
   it('initializes with initial branch', () => {
+    ;(global.fetch as any).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { branches: [] } }),
+    })
+
     const { result } = renderHook(() => useBranchManager(defaultOptions))
 
     expect(result.current.branchName).toBe('main')
