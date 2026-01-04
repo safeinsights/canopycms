@@ -10,6 +10,8 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createMockAuthPlugin } from '../test-utils/multi-user'
 import { createApiClient, type ApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
+import type { BranchResponse } from '../../api/branch'
+import type { ApiResponse } from '../../api/types'
 
 describe('Conflict Resolution Integration', () => {
   let workspace: TestWorkspace
@@ -185,8 +187,11 @@ describe('Conflict Resolution Integration', () => {
       '/api/canopycms/feature-uncommitted-test/content/posts/test-post',
     )
     expect(read.status).toBe(200)
-    const content = (await read.json()) as any
-    expect(content.data.data.title).toBe('Test Post Updated')
+    const content =
+      await read.json<
+        ApiResponse<{ format: string; data: Record<string, unknown>; body?: string }>
+      >()
+    expect(content.data?.data.title).toBe('Test Post Updated')
   })
 
   it('recovers from git errors gracefully', async () => {
@@ -263,9 +268,9 @@ describe('Conflict Resolution Integration', () => {
     // Get branch status
     const statusResponse = await editor1Client.get('/api/canopycms/feature-stale-state/status')
     expect(statusResponse.status).toBe(200)
-    const status = (await statusResponse.json()) as any
+    const status = await statusResponse.json<BranchResponse>()
 
     // Branch should be in editing state
-    expect(status.data?.branch?.status || status.data?.status).toBeDefined()
+    expect(status.data?.branch?.status).toBeDefined()
   })
 })

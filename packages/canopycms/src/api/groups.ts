@@ -2,8 +2,11 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { InternalGroup } from '../groups-file'
 import { loadInternalGroups, saveInternalGroups } from '../groups-loader'
 import { resolveBranchPaths } from '../paths'
-import type { CanopyGroupId, CanopyUserId } from '../types'
+import type { CanopyGroupId } from '../types'
 import { isAdmin, RESERVED_GROUPS, isReservedGroup } from '../reserved-groups'
+
+/** Response type for getting internal groups */
+export type InternalGroupsResponse = ApiResponse<{ groups: InternalGroup[] }>
 
 /**
  * Validate that an update to internal groups doesn't remove the last admin.
@@ -60,7 +63,7 @@ export const validateReservedGroups = (
 export const getInternalGroups = async (
   ctx: ApiContext,
   req: ApiRequest<undefined>,
-): Promise<ApiResponse<{ groups: InternalGroup[] }>> => {
+): Promise<InternalGroupsResponse> => {
   // Check admin permission
   if (!isAdmin(req.user.groups)) {
     return { ok: false, status: 403, error: 'Admin access required' }
@@ -171,11 +174,14 @@ export interface ExternalGroup {
   name: string
 }
 
+/** Response type for searching external groups */
+export type ExternalGroupsResponse = ApiResponse<{ groups: ExternalGroup[] }>
+
 export const searchExternalGroups = async (
   ctx: ApiContext,
   req: ApiRequest<undefined>,
   params: SearchExternalGroupsParams,
-): Promise<ApiResponse<{ groups: ExternalGroup[] }>> => {
+): Promise<ExternalGroupsResponse> => {
   // Require admin for external group search
   if (!isAdmin(req.user.groups)) {
     return { ok: false, status: 403, error: 'Admin access required' }

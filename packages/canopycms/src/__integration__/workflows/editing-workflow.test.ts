@@ -12,6 +12,7 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createMockAuthPlugin } from '../test-utils/multi-user'
 import { createApiClient, type ApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
+import type { BranchResponse } from '../../api/branch'
 
 describe('Editing Workflow Integration', () => {
   let workspace: TestWorkspace
@@ -40,12 +41,12 @@ describe('Editing Workflow Integration', () => {
     })
 
     expect(createResponse.status).toBe(200)
-    const createData = (await createResponse.json()) as any
-    expect(createData.data.branch.status).toBe('editing')
-    expect(createData.data.branch.createdBy).toBe('test-editor')
+    const createData = await createResponse.json<BranchResponse>()
+    expect(createData.data?.branch.status).toBe('editing')
+    expect(createData.data?.branch.createdBy).toBe('test-editor')
 
     // Get branch workspace path from response
-    const branchRoot = createData.data.branch.workspaceRoot
+    const branchRoot = (createData.data?.branch as { workspaceRoot?: string })?.workspaceRoot
 
     // Write content via API (will fail due to collection path bug, but test the structure)
     const writeResponse = await editorClient.put(
@@ -148,8 +149,8 @@ describe('Editing Workflow Integration', () => {
     })
 
     expect(createResponse.status).toBe(200)
-    const createData = (await createResponse.json()) as any
-    const branchRoot = createData.data.branch.workspaceRoot
+    const createData = await createResponse.json<BranchResponse>()
+    const branchRoot = (createData.data?.branch as { workspaceRoot?: string })?.workspaceRoot
 
     // Write multiple posts via API
     await Promise.all([

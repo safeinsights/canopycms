@@ -10,6 +10,7 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createMockAuthPlugin } from '../test-utils/multi-user'
 import { createApiClient, type ApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
+import type { ApiResponse } from '../../api/types'
 
 describe('Permission Denied Errors', () => {
   let workspace: TestWorkspace
@@ -59,7 +60,7 @@ describe('Permission Denied Errors', () => {
 
     expect(response.status).toBe(403)
     expect(response.ok).toBe(false)
-    const error = (await response.json()) as any
+    const error = await response.json<ApiResponse>()
     expect(error.error).toBeDefined()
   })
 
@@ -168,11 +169,11 @@ describe('Permission Denied Errors', () => {
     const response = await editorClient.get('/api/canopycms/restricted/status')
 
     expect(response.status).toBe(403)
-    const error = (await response.json()) as any
+    const error = await response.json<ApiResponse>()
     expect(error.error).toBeTruthy()
     expect(typeof error.error).toBe('string')
     // Error message should be informative
-    expect(error.error.length).toBeGreaterThan(0)
+    expect(error.error!.length).toBeGreaterThan(0)
   })
 
   it('returns 403 when reviewer tries to edit content', async () => {

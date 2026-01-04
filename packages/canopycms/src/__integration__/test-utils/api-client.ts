@@ -3,7 +3,7 @@
  * Creates requests and calls the Canopy HTTP handler.
  */
 
-import type { CanopyRequest, CanopyResponse } from '../../http/types'
+import type { CanopyRequest } from '../../http/types'
 import { createCanopyRequestHandler } from '../../http/handler'
 import { createCanopyServices } from '../../services'
 import type { CanopyConfig } from '../../config'
@@ -60,7 +60,7 @@ export function createApiClient(options: ApiClientOptions) {
     return {
       status: response.status,
       ok: response.status >= 200 && response.status < 300,
-      json: async () => response.body,
+      json: async <T = unknown>() => response.body as T,
       body: response.body,
     }
   }
