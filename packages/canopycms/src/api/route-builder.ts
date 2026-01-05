@@ -182,6 +182,30 @@ interface EndpointConfig<
  *   }
  * })
  * ```
+ *
+ * @example With query parameters (manual validation)
+ * ```ts
+ * const searchUsers = defineEndpoint({
+ *   namespace: 'permissions',
+ *   name: 'searchUsers',
+ *   method: 'GET',
+ *   path: '/permissions/users/search',
+ *   responseType: 'SearchUsersResponse',
+ *   response: {} as SearchUsersResponse,
+ *   defaultMockData: { users: [] },
+ *   handler: async (ctx, req) => {
+ *     // NOTE: Query parameters currently require manual validation via req.query
+ *     // Zod validation for query parameters will be added in a future update
+ *     const query = req.query?.q as string | undefined
+ *     if (!query) {
+ *       return { ok: false, status: 400, error: 'Query parameter "q" is required' }
+ *     }
+ *     const limitStr = req.query?.limit as string | undefined
+ *     const limit = limitStr ? parseInt(limitStr, 10) : undefined
+ *     // ... use query and limit
+ *   }
+ * })
+ * ```
  */
 export function defineEndpoint<
   TParams extends z.ZodType | undefined = undefined,
