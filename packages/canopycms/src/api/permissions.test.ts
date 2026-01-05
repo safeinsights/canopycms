@@ -11,8 +11,14 @@ vi.mock('../permissions-loader', () => ({
   savePathPermissions: vi.fn(),
 }))
 
-import { getPermissions, updatePermissions, searchUsers, listGroups } from './permissions'
+import { PERMISSION_ROUTES } from './permissions'
 import * as permissionsLoader from '../permissions-loader'
+
+// Extract handlers for testing
+const getPermissions = PERMISSION_ROUTES.get.handler
+const updatePermissions = PERMISSION_ROUTES.update.handler
+const searchUsers = PERMISSION_ROUTES.searchUsers.handler
+const listGroups = PERMISSION_ROUTES.listGroups.handler
 
 describe('permissions API', () => {
   let mockContext: ApiContext
@@ -139,12 +145,11 @@ describe('permissions API', () => {
       }
       mockContext.services.createGitManagerFor = vi.fn().mockReturnValue(mockGit)
 
-      const req: ApiRequest<{ permissions: PathPermission[] }> = {
+      const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
-        body: { permissions: newPermissions },
       }
 
-      const result = await updatePermissions(mockContext, req)
+      const result = await updatePermissions(mockContext, req, { permissions: newPermissions })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
@@ -156,12 +161,11 @@ describe('permissions API', () => {
     })
 
     it('denies access for non-admin users', async () => {
-      const req: ApiRequest<{ permissions: PathPermission[] }> = {
+      const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'user-1', groups: [] },
-        body: { permissions: [] },
       }
 
-      const result = await updatePermissions(mockContext, req)
+      const result = await updatePermissions(mockContext, req, { permissions: [] })
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(403)
@@ -170,12 +174,11 @@ describe('permissions API', () => {
 
     it('requires permissions array in body', async () => {
       // Type as Partial to test runtime validation
-      const req = {
+      const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
-        body: {},
-      } as ApiRequest<Partial<{ permissions: PathPermission[] }>>
+      }
 
-      const result = await updatePermissions(mockContext, req as ApiRequest<{ permissions: PathPermission[] }>)
+      const result = await updatePermissions(mockContext, req, {} as any)
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(400)
@@ -186,12 +189,11 @@ describe('permissions API', () => {
       const mockGetBranchState = vi.fn().mockResolvedValue(null)
       mockContext.getBranchContext = mockGetBranchState
 
-      const req: ApiRequest<{ permissions: PathPermission[] }> = {
+      const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
-        body: { permissions: [] },
       }
 
-      const result = await updatePermissions(mockContext, req)
+      const result = await updatePermissions(mockContext, req, { permissions: [] })
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(500)
@@ -210,9 +212,10 @@ describe('permissions API', () => {
 
       const req: ApiRequest<undefined> = {
         user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        query: { q: 'alice' },
       }
 
-      const result = await searchUsers(mockContext, req, { query: 'alice' })
+      const result = await searchUsers(mockContext, req)
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
@@ -228,9 +231,10 @@ describe('permissions API', () => {
 
       const req: ApiRequest<undefined> = {
         user: { type: 'authenticated', userId: 'reviewer-1', groups: [RESERVED_GROUPS.REVIEWERS] },
+        query: { q: 'test', limit: '5' },
       }
 
-      const result = await searchUsers(mockContext, req, { query: 'test', limit: 5 })
+      const result = await searchUsers(mockContext, req)
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
@@ -240,9 +244,10 @@ describe('permissions API', () => {
     it('denies access for regular users', async () => {
       const req: ApiRequest<undefined> = {
         user: { type: 'authenticated', userId: 'user-1', groups: [] },
+        query: { q: 'test' },
       }
 
-      const result = await searchUsers(mockContext, req, { query: 'test' })
+      const result = await searchUsers(mockContext, req)
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(403)
@@ -254,9 +259,10 @@ describe('permissions API', () => {
 
       const req: ApiRequest<undefined> = {
         user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        query: { q: 'test' },
       }
 
-      const result = await searchUsers(mockContext, req, { query: 'test' })
+      const result = await searchUsers(mockContext, req)
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(501)
@@ -268,9 +274,10 @@ describe('permissions API', () => {
 
       const req: ApiRequest<undefined> = {
         user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        query: { q: 'test' },
       }
 
-      const result = await searchUsers(mockContext, req, { query: 'test' })
+      const result = await searchUsers(mockContext, req)
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(500)

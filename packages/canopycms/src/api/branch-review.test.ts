@@ -5,6 +5,10 @@ import type { ApiContext } from './types'
 import { RESERVED_GROUPS } from '../reserved-groups'
 import { mockConsole } from '../test-utils/console-spy.js'
 
+// Extract handlers for testing
+const requestChangesHandler = requestChanges.handler
+const approveBranchHandler = approveBranch.handler
+
 const mockMetadataSave = vi.fn().mockResolvedValue({
   schemaVersion: 1,
   branch: {
@@ -59,16 +63,17 @@ describe('branch review api - requestChanges', () => {
   it('returns 404 if branch not found', async () => {
     const ctx = makeCtx()
     ctx.getBranchContext = vi.fn().mockResolvedValue(null)
-    const res = await requestChanges(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'missing' })
+    const res = await requestChangesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'missing' }, {})
     expect(res.status).toBe(404)
     expect(res.error).toBe('Branch not found')
   })
 
   it('returns 403 if user not admin/reviewer', async () => {
-    const res = await requestChanges(
+    const res = await requestChangesHandler(
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' }
+      { branch: 'feature/x' },
+      {}
     )
     expect(res.status).toBe(403)
     expect(res.error).toContain('Only Admins and Reviewers can request changes')
@@ -80,22 +85,23 @@ describe('branch review api - requestChanges', () => {
       ...baseContext,
       branch: { ...baseContext.branch, status: 'editing' },
     })
-    const res = await requestChanges(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'feature/x' })
+    const res = await requestChangesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'feature/x' }, {})
     expect(res.status).toBe(400)
     expect(res.error).toContain('Only \'submitted\' branches can have changes requested')
   })
 
   it('requests changes when allowed (admin)', async () => {
-    const res = await requestChanges(makeCtx(), { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'feature/x' })
+    const res = await requestChangesHandler(makeCtx(), { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'feature/x' }, {})
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
   })
 
   it('requests changes when allowed (reviewer)', async () => {
-    const res = await requestChanges(
+    const res = await requestChangesHandler(
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.REVIEWERS] } },
-      { branch: 'feature/x' }
+      { branch: 'feature/x' },
+      {}
     )
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
@@ -104,10 +110,11 @@ describe('branch review api - requestChanges', () => {
   it('converts PR to draft if github service available', async () => {
     const convertToDraft = vi.fn().mockResolvedValue(undefined)
     const githubService = { convertToDraft }
-    const res = await requestChanges(
+    const res = await requestChangesHandler(
       makeCtx(githubService),
       { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
-      { branch: 'feature/x' }
+      { branch: 'feature/x' },
+      {}
     )
     expect(res.ok).toBe(true)
     expect(convertToDraft).toHaveBeenCalledWith(123)
@@ -117,10 +124,11 @@ describe('branch review api - requestChanges', () => {
     const consoleSpy = mockConsole()
     const convertToDraft = vi.fn().mockRejectedValue(new Error('API error'))
     const githubService = { convertToDraft }
-    const res = await requestChanges(
+    const res = await requestChangesHandler(
       makeCtx(githubService),
       { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
-      { branch: 'feature/x' }
+      { branch: 'feature/x' },
+      {}
     )
     // Should still succeed even if GitHub API fails
     expect(res.ok).toBe(true)
@@ -137,16 +145,17 @@ describe('branch review api - requestChanges', () => {
       ...baseContext,
       branch: { ...baseContext.branch, pullRequestNumber: undefined },
     })
-    const res = await requestChanges(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'feature/x' })
+    const res = await requestChangesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'feature/x' }, {})
     expect(res.ok).toBe(true)
     expect(convertToDraft).not.toHaveBeenCalled()
   })
 
   it('accepts optional comment parameter', async () => {
-    const res = await requestChanges(
+    const res = await requestChangesHandler(
       makeCtx(),
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] }, body: { comment: 'Please fix the typo' } },
-      { branch: 'feature/x' }
+      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      { branch: 'feature/x' },
+      { comment: 'Please fix the typo' }
     )
     expect(res.ok).toBe(true)
   })
@@ -156,13 +165,13 @@ describe('branch review api - approveBranch', () => {
   it('returns 404 if branch not found', async () => {
     const ctx = makeCtx()
     ctx.getBranchContext = vi.fn().mockResolvedValue(null)
-    const res = await approveBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'missing' })
+    const res = await approveBranchHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'missing' })
     expect(res.status).toBe(404)
     expect(res.error).toBe('Branch not found')
   })
 
   it('returns 403 if user not admin/reviewer', async () => {
-    const res = await approveBranch(makeCtx(), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    const res = await approveBranchHandler(makeCtx(), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
     expect(res.status).toBe(403)
     expect(res.error).toContain('Only Admins and Reviewers can approve branches')
   })
@@ -173,19 +182,19 @@ describe('branch review api - approveBranch', () => {
       ...baseContext,
       branch: { ...baseContext.branch, status: 'editing' },
     })
-    const res = await approveBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'feature/x' })
+    const res = await approveBranchHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'feature/x' })
     expect(res.status).toBe(400)
     expect(res.error).toContain('Only \'submitted\' branches can be approved')
   })
 
   it('approves branch when allowed (admin)', async () => {
-    const res = await approveBranch(makeCtx(), { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'feature/x' })
+    const res = await approveBranchHandler(makeCtx(), { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'feature/x' })
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
   })
 
   it('approves branch when allowed (reviewer)', async () => {
-    const res = await approveBranch(
+    const res = await approveBranchHandler(
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.REVIEWERS] } },
       { branch: 'feature/x' }

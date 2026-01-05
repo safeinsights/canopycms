@@ -1,12 +1,40 @@
+import { z } from 'zod'
+
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { InternalGroup } from '../groups-file'
 import { loadInternalGroups, saveInternalGroups } from '../groups-loader'
 import { resolveBranchPaths } from '../paths'
 import type { CanopyGroupId } from '../types'
 import { isAdmin, RESERVED_GROUPS, isReservedGroup } from '../reserved-groups'
+import { defineEndpoint } from './route-builder'
 
 /** Response type for getting internal groups */
 export type InternalGroupsResponse = ApiResponse<{ groups: InternalGroup[] }>
+
+/** Response type for updating internal groups */
+export type UpdateInternalGroupsResponse = ApiResponse<Record<string, never>>
+
+/** Response type for searching external groups */
+export type ExternalGroupsResponse = ApiResponse<{ groups: ExternalGroup[] }>
+
+// ============================================================================
+// Zod Schemas for Validation
+// ============================================================================
+
+const internalGroupSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  members: z.array(z.string()),
+})
+
+const updateInternalGroupsBodySchema = z.object({
+  groups: z.array(internalGroupSchema)
+})
+
+const searchExternalGroupsParamsSchema = z.object({
+  query: z.string()
+})
 
 /**
  * Validate that an update to internal groups doesn't remove the last admin.
@@ -60,9 +88,9 @@ export const validateReservedGroups = (
 /**
  * Get internal groups (admin only)
  */
-export const getInternalGroups = async (
+const getInternalGroupsHandler = async (
   ctx: ApiContext,
-  req: ApiRequest<undefined>
+  req: ApiRequest
 ): Promise<InternalGroupsResponse> => {
   // Check admin permission
   if (!isAdmin(req.user.groups)) {
@@ -103,27 +131,28 @@ export interface UpdateInternalGroupsBody {
 /**
  * Update internal groups (admin only)
  */
-export const updateInternalGroups = async (
+const updateInternalGroupsHandler = async (
   ctx: ApiContext,
-  req: ApiRequest<UpdateInternalGroupsBody>
-): Promise<ApiResponse> => {
+  req: ApiRequest,
+  body: z.infer<typeof updateInternalGroupsBodySchema>
+): Promise<UpdateInternalGroupsResponse> => {
   // Check admin permission
   if (!isAdmin(req.user.groups)) {
     return { ok: false, status: 403, error: 'Admin access required' }
   }
 
-  if (!req.body?.groups) {
+  if (!body?.groups) {
     return { ok: false, status: 400, error: 'groups array required' }
   }
 
   // Validate reserved groups are not renamed
-  const reservedValidation = validateReservedGroups(req.body.groups)
+  const reservedValidation = validateReservedGroups(body.groups)
   if (!reservedValidation.valid) {
     return { ok: false, status: 400, error: reservedValidation.error }
   }
 
   // Validate we're not removing the last admin
-  const adminValidation = validateAdminGroupUpdate(req.body.groups, ctx.services.bootstrapAdminIds)
+  const adminValidation = validateAdminGroupUpdate(body.groups, ctx.services.bootstrapAdminIds)
   if (!adminValidation.valid) {
     return { ok: false, status: 400, error: adminValidation.error }
   }
@@ -140,7 +169,7 @@ export const updateInternalGroups = async (
     const branchMode = ctx.services.config.mode ?? 'local-simple'
     const branchPaths = resolveBranchPaths(context, branchMode)
 
-    await saveInternalGroups(branchPaths.branchRoot, req.body.groups, req.user.userId)
+    await saveInternalGroups(branchPaths.branchRoot, body.groups, req.user.userId)
 
     // Commit the change
     if (ctx.services.createGitManagerFor) {
@@ -174,13 +203,10 @@ export interface ExternalGroup {
   name: string
 }
 
-/** Response type for searching external groups */
-export type ExternalGroupsResponse = ApiResponse<{ groups: ExternalGroup[] }>
-
-export const searchExternalGroups = async (
+const searchExternalGroupsHandler = async (
   ctx: ApiContext,
-  req: ApiRequest<undefined>,
-  params: SearchExternalGroupsParams
+  req: ApiRequest,
+  params: z.infer<typeof searchExternalGroupsParamsSchema>
 ): Promise<ExternalGroupsResponse> => {
   // Require admin for external group search
   if (!isAdmin(req.user.groups)) {
@@ -203,3 +229,63 @@ export const searchExternalGroups = async (
     }
   }
 }
+
+// ============================================================================
+// Route Definitions with defineEndpoint
+// ============================================================================
+
+/**
+ * Get internal groups
+ * GET /groups/internal
+ */
+const getInternal = defineEndpoint({
+  namespace: 'groups',
+  name: 'getInternal',
+  method: 'GET',
+  path: '/groups/internal',
+  responseType: 'InternalGroupsResponse',
+  response: {} as InternalGroupsResponse,
+  defaultMockData: { groups: [] },
+  handler: getInternalGroupsHandler,
+})
+
+/**
+ * Update internal groups
+ * PUT /groups/internal
+ */
+const updateInternal = defineEndpoint({
+  namespace: 'groups',
+  name: 'updateInternal',
+  method: 'PUT',
+  path: '/groups/internal',
+  body: updateInternalGroupsBodySchema,
+  responseType: 'UpdateInternalGroupsResponse',
+  response: {} as UpdateInternalGroupsResponse,
+  defaultMockData: {},
+  handler: updateInternalGroupsHandler,
+})
+
+/**
+ * Search external groups
+ * GET /groups/search?q=...
+ */
+const searchExternal = defineEndpoint({
+  namespace: 'groups',
+  name: 'searchExternal',
+  method: 'GET',
+  path: '/groups/search',
+  params: searchExternalGroupsParamsSchema,
+  responseType: 'ExternalGroupsResponse',
+  response: {} as ExternalGroupsResponse,
+  defaultMockData: { groups: [] },
+  handler: searchExternalGroupsHandler,
+})
+
+/**
+ * Exported routes for router registration
+ */
+export const GROUP_ROUTES = {
+  getInternal,
+  updateInternal,
+  searchExternal,
+} as const

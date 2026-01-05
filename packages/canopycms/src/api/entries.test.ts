@@ -9,7 +9,7 @@ import { createCheckBranchAccess } from '../authz'
 import { createCheckContentAccess } from '../content-access'
 import type { PathPermission } from '../config'
 import type { ApiContext } from './types'
-import { listEntries } from './entries'
+import { listEntriesHandler } from './entries'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-entries-'))
 
@@ -79,7 +79,7 @@ describe('listEntries', () => {
       }),
     }
 
-    const res = await listEntries(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'main', limit: 1 })
+    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'main', limit: 1 })
 
     expect(res.ok).toBe(true)
     expect(res.data?.entries.some((e) => e.slug === 'first')).toBe(true)
@@ -102,7 +102,7 @@ describe('listEntries', () => {
       },
       getBranchContext: vi.fn().mockResolvedValue(null),
     }
-    const res = await listEntries(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'missing' })
+    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'missing' })
     expect(res.status).toBe(404)
     expect(res.ok).toBe(false)
   })

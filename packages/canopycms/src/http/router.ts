@@ -1,15 +1,12 @@
-import type { ApiContext, ApiRequest, ApiResponse } from '../api/types'
-import { createBranch, listBranches, deleteBranch, updateBranchAccess } from '../api/branch'
-import { getBranchStatus, submitBranchForMerge } from '../api/branch-status'
-import { withdrawBranch } from '../api/branch-withdraw'
-import { requestChanges, approveBranch } from '../api/branch-review'
-import { markAsMerged } from '../api/branch-merge'
-import { readContent, writeContent } from '../api/content'
-import { deleteAsset, listAssets, uploadAsset } from '../api/assets'
-import { listEntries } from '../api/entries'
-import { listComments, addComment, resolveComment } from '../api/comments'
-import { getPermissions, updatePermissions, searchUsers, listGroups } from '../api/permissions'
-import { getInternalGroups, updateInternalGroups, searchExternalGroups } from '../api/groups'
+import type { ApiResponse } from '../api/types'
+import { BRANCH_ROUTES } from '../api/branch'
+import { WORKFLOW_ROUTES } from '../api/branch-status'
+import { COMMENT_ROUTES } from '../api/comments'
+import { CONTENT_ROUTES } from '../api/content'
+import { ENTRY_ROUTES } from '../api/entries'
+import { ASSET_ROUTES } from '../api/assets'
+import { PERMISSION_ROUTES } from '../api/permissions'
+import { GROUP_ROUTES } from '../api/groups'
 
 /**
  * Handler function signature for Canopy API routes.
@@ -25,8 +22,20 @@ export type CanopyHandler = (...args: any[]) => Promise<ApiResponse<any>>
  */
 export interface RouteDefinition {
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
-  pattern: string[] // e.g., [':branch', 'content', ':collection', '...slug']
+  pattern: readonly string[] // e.g., [':branch', 'content', ':collection', '...slug']
   handler: CanopyHandler
+  // Optional validation function for routes defined with defineEndpoint()
+  validate?: (extracted: {
+    params?: Record<string, string>
+    body?: unknown
+  }) => {
+    ok: true
+    params?: any
+    body?: any
+  } | {
+    ok: false
+    error: string
+  }
 }
 
 /**
@@ -35,6 +44,8 @@ export interface RouteDefinition {
 export interface RouteMatch {
   handler: CanopyHandler
   params: Record<string, string>
+  // Optional validation function for new-style routes
+  validate?: RouteDefinition['validate']
 }
 
 /**
@@ -49,71 +60,38 @@ export interface CanopyRouter {
 }
 
 /**
- * Standard route definitions for the Canopy API.
- * These are the built-in routes that all adapters use.
+ * Build the standard route definitions for the Canopy API.
+ * Assembled from co-located route definitions in each API module.
+ *
+ * This is a function (not a top-level constant) to ensure all route modules
+ * have been fully initialized before we try to access their exports.
+ * This prevents module initialization timing issues with ES modules.
  */
-export const CANOPY_ROUTES: RouteDefinition[] = [
-  // Branch management
-  { method: 'GET', pattern: ['branches'], handler: listBranches },
-  { method: 'POST', pattern: ['branches'], handler: createBranch },
-  { method: 'DELETE', pattern: [':branch'], handler: deleteBranch },
-  { method: 'PATCH', pattern: [':branch', 'access'], handler: updateBranchAccess },
-
-  // Branch workflow
-  { method: 'GET', pattern: [':branch', 'status'], handler: getBranchStatus },
-  { method: 'POST', pattern: [':branch', 'submit'], handler: submitBranchForMerge },
-  { method: 'POST', pattern: [':branch', 'withdraw'], handler: withdrawBranch },
-  { method: 'POST', pattern: [':branch', 'request-changes'], handler: requestChanges },
-  { method: 'POST', pattern: [':branch', 'approve'], handler: approveBranch },
-  { method: 'POST', pattern: [':branch', 'mark-merged'], handler: markAsMerged },
-
-  // Comments
-  { method: 'GET', pattern: [':branch', 'comments'], handler: listComments },
-  { method: 'POST', pattern: [':branch', 'comments'], handler: addComment },
-  {
-    method: 'POST',
-    pattern: [':branch', 'comments', ':threadId', 'resolve'],
-    handler: resolveComment,
-  },
-
-  // Content
-  {
-    method: 'GET',
-    pattern: [':branch', 'content', ':collection', '...slug'],
-    handler: readContent,
-  },
-  {
-    method: 'PUT',
-    pattern: [':branch', 'content', ':collection', '...slug'],
-    handler: writeContent,
-  },
-
-  // Assets
-  { method: 'GET', pattern: ['assets'], handler: listAssets },
-  { method: 'POST', pattern: ['assets'], handler: uploadAsset },
-  { method: 'DELETE', pattern: ['assets'], handler: deleteAsset },
-
-  // Entries
-  { method: 'GET', pattern: [':branch', 'entries'], handler: listEntries },
-
-  // Permissions
-  { method: 'GET', pattern: ['permissions'], handler: getPermissions },
-  { method: 'PUT', pattern: ['permissions'], handler: updatePermissions },
-  { method: 'GET', pattern: ['users', 'search'], handler: searchUsers },
-  { method: 'GET', pattern: ['groups'], handler: listGroups },
-
-  // Groups
-  { method: 'GET', pattern: ['groups', 'internal'], handler: getInternalGroups },
-  { method: 'PUT', pattern: ['groups', 'internal'], handler: updateInternalGroups },
-  { method: 'GET', pattern: ['groups', 'search'], handler: searchExternalGroups },
-]
+function buildCanopyRoutes(): RouteDefinition[] {
+  return [
+    ...Object.values(BRANCH_ROUTES),
+    ...Object.values(WORKFLOW_ROUTES),
+    ...Object.values(COMMENT_ROUTES),
+    ...Object.values(CONTENT_ROUTES),
+    ...Object.values(ENTRY_ROUTES),
+    ...Object.values(ASSET_ROUTES),
+    ...Object.values(PERMISSION_ROUTES),
+    ...Object.values(GROUP_ROUTES),
+  ].map((route): RouteDefinition => ({
+    method: route.method,
+    pattern: route.pattern,
+    handler: route.handler,
+    // Include validation function if present (new-style routes from defineEndpoint)
+    validate: 'validate' in route ? (route.validate as any) : undefined,
+  }))
+}
 
 /**
  * Match a route pattern against actual path segments.
  * Supports :param for single-segment params and ...slug for catch-all.
  */
 const matchPattern = (
-  pattern: string[],
+  pattern: readonly string[],
   actual: string[]
 ): { params: Record<string, string> } | null => {
   const params: Record<string, string> = {}
@@ -149,18 +127,24 @@ const matchPattern = (
  * Create the standard Canopy router with all API routes.
  */
 export function createCanopyRouter(): CanopyRouter {
+  const routes = buildCanopyRoutes()
+
   return {
-    routes: CANOPY_ROUTES,
+    routes,
 
     match(method: string, segments: string[]): RouteMatch | null {
       const upperMethod = method.toUpperCase()
 
-      for (const route of CANOPY_ROUTES) {
+      for (const route of routes) {
         if (route.method !== upperMethod) continue
 
         const match = matchPattern(route.pattern, segments)
         if (match) {
-          return { handler: route.handler, params: match.params }
+          return {
+            handler: route.handler,
+            params: match.params,
+            validate: route.validate, // Include validation function if present
+          }
         }
       }
 

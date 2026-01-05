@@ -1,10 +1,12 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { z } from 'zod'
 
 import type { BranchAccessControl, BranchContext, BranchMetadata } from '../types'
 import { BranchWorkspaceManager } from '../branch-workspace'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import { defineEndpoint } from './route-builder'
 
 /** Response type for single branch operations (create, update, status) */
 export type BranchResponse = ApiResponse<{ branch: BranchMetadata }>
@@ -14,6 +16,30 @@ export type BranchListResponse = ApiResponse<{ branches: BranchMetadata[] }>
 
 /** Response type for branch deletion */
 export type BranchDeleteResponse = ApiResponse<{ deleted: boolean }>
+
+// ============================================================================
+// Zod Schemas for Validation
+// ============================================================================
+
+const branchParamSchema = z.object({
+  branch: z.string().min(1)
+})
+
+const createBranchBodySchema = z.object({
+  branch: z.string().min(1),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  access: z.object({
+    allowedUsers: z.array(z.string()).optional(),
+    allowedGroups: z.array(z.string()).optional(),
+  }).optional()
+})
+
+const updateBranchAccessBodySchema = z.object({
+  allowedUsers: z.array(z.string()).optional(),
+  allowedGroups: z.array(z.string()).optional()
+})
+
 import { resolveBranchPaths } from '../paths'
 import { isPrivileged, isAdmin } from '../reserved-groups'
 import type { PathPermission } from '../config'
@@ -73,14 +99,12 @@ export interface CreateBranchBody {
   access?: BranchMetadata['access']
 }
 
-export const createBranch = async (
+export const createBranchHandler = async (
   ctx: ApiContext,
-  req: ApiRequest<CreateBranchBody>
+  req: ApiRequest,
+  body: z.infer<typeof createBranchBodySchema>
 ): Promise<BranchResponse> => {
-  const branchName = req.body?.branch
-  if (!branchName) {
-    return { ok: false, status: 400, error: 'branch is required' }
-  }
+  const branchName = body.branch
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
 
@@ -105,14 +129,14 @@ export const createBranch = async (
     branchName,
     mode: branchMode,
     createdBy: req.user.userId,
-    title: req.body?.title,
-    description: req.body?.description,
-    access: req.body?.access,
+    title: body.title,
+    description: body.description,
+    access: body.access,
   })
   return { ok: true, status: 200, data: { branch: context.branch } }
 }
 
-export const listBranches = async (
+export const listBranchesHandler = async (
   ctx: ApiContext,
   req: ApiRequest
 ): Promise<BranchListResponse> => {
@@ -167,15 +191,12 @@ export const canDeleteBranch = (
   return { allowed: false, reason: 'not_authorized' }
 }
 
-export const deleteBranch = async (
+export const deleteBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
-  params: { branch: string }
+  params: z.infer<typeof branchParamSchema>
 ): Promise<BranchDeleteResponse> => {
   const branchName = params.branch
-  if (!branchName) {
-    return { ok: false, status: 400, error: 'branch is required' }
-  }
 
   // Disallow delete in local-simple mode (branch = developer's git checkout)
   const branchMode = ctx.services.config.mode ?? 'local-simple'
@@ -253,15 +274,13 @@ export const canModifyBranchAccess = (
   return { allowed: false, reason: 'not_authorized' }
 }
 
-export const updateBranchAccess = async (
+export const updateBranchAccessHandler = async (
   ctx: ApiContext,
-  req: ApiRequest<UpdateBranchAccessBody>,
-  params: { branch: string }
+  req: ApiRequest,
+  params: z.infer<typeof branchParamSchema>,
+  body: z.infer<typeof updateBranchAccessBodySchema>
 ): Promise<BranchResponse> => {
   const branchName = params.branch
-  if (!branchName) {
-    return { ok: false, status: 400, error: 'branch is required' }
-  }
 
   // Get branch context
   const branchContext = await ctx.getBranchContext(branchName)
@@ -279,11 +298,11 @@ export const updateBranchAccess = async (
   const newAccess: BranchAccessControl = {
     ...branchContext.branch.access,
   }
-  if (req.body?.allowedUsers !== undefined) {
-    newAccess.allowedUsers = req.body.allowedUsers
+  if (body.allowedUsers !== undefined) {
+    newAccess.allowedUsers = body.allowedUsers
   }
-  if (req.body?.allowedGroups !== undefined) {
-    newAccess.allowedGroups = req.body.allowedGroups
+  if (body.allowedGroups !== undefined) {
+    newAccess.allowedGroups = body.allowedGroups
   }
 
   // Update metadata (automatically invalidates registry cache)
@@ -294,3 +313,81 @@ export const updateBranchAccess = async (
 
   return { ok: true, status: 200, data: { branch: updated.branch } }
 }
+
+// ============================================================================
+// Route Definitions with defineEndpoint
+// ============================================================================
+
+/**
+ * List all branches visible to current user
+ * GET /branches
+ */
+const listBranches = defineEndpoint({
+  namespace: 'branches',
+  name: 'list',
+  method: 'GET',
+  path: '/branches',
+  responseType: 'BranchListResponse',
+  response: {} as BranchListResponse,
+  defaultMockData: { branches: [] },
+  handler: listBranchesHandler,
+})
+
+/**
+ * Create a new branch
+ * POST /branches
+ */
+const createBranch = defineEndpoint({
+  namespace: 'branches',
+  name: 'create',
+  method: 'POST',
+  path: '/branches',
+  body: createBranchBodySchema,
+  responseType: 'BranchResponse',
+  response: {} as BranchResponse,
+  defaultMockData: { branch: { name: 'test-branch', status: 'editing', access: {}, createdBy: 'user-1', createdAt: '2024-01-01', updatedAt: '2024-01-01' } },
+  handler: createBranchHandler,
+})
+
+/**
+ * Delete a branch
+ * DELETE /:branch
+ */
+const deleteBranch = defineEndpoint({
+  namespace: 'branches',
+  name: 'delete',
+  method: 'DELETE',
+  path: '/:branch',
+  params: branchParamSchema,
+  responseType: 'BranchDeleteResponse',
+  response: {} as BranchDeleteResponse,
+  defaultMockData: { deleted: true },
+  handler: deleteBranchHandler,
+})
+
+/**
+ * Update branch access control
+ * PATCH /:branch/access
+ */
+const updateBranchAccess = defineEndpoint({
+  namespace: 'branches',
+  name: 'updateAccess',
+  method: 'PATCH',
+  path: '/:branch/access',
+  params: branchParamSchema,
+  body: updateBranchAccessBodySchema,
+  responseType: 'BranchResponse',
+  response: {} as BranchResponse,
+  defaultMockData: { branch: { name: 'test-branch', status: 'editing', access: {}, createdBy: 'user-1', createdAt: '2024-01-01', updatedAt: '2024-01-01' } },
+  handler: updateBranchAccessHandler,
+})
+
+/**
+ * Exported routes for router registration
+ */
+export const BRANCH_ROUTES = {
+  list: listBranches,
+  create: createBranch,
+  delete: deleteBranch,
+  updateAccess: updateBranchAccess,
+} as const

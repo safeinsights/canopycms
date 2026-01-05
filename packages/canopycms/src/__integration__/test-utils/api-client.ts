@@ -8,6 +8,7 @@ import { createCanopyRequestHandler } from '../../http/handler'
 import { createCanopyServices } from '../../services'
 import type { CanopyConfig } from '../../config'
 import type { AuthPlugin } from '../../auth/plugin'
+import { CanopyApiClient } from '../../api/client'
 
 export interface ApiClientOptions {
   config: CanopyConfig
@@ -17,6 +18,9 @@ export interface ApiClientOptions {
 /**
  * Create an API client that makes requests through the HTTP handler.
  * This simulates real API calls without needing a server.
+ *
+ * The client wraps the production CanopyApiClient with a custom fetch
+ * that routes through the handler directly instead of making network requests.
  */
 export function createApiClient(options: ApiClientOptions) {
   const services = createCanopyServices(options.config)
@@ -30,8 +34,56 @@ export function createApiClient(options: ApiClientOptions) {
   })
 
   /**
-   * Make an API request
-   * Returns a fetch-like response object with json() method for consistency with tests
+   * Custom fetch that routes through the handler
+   */
+  const testFetch: typeof fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    // Handle Request objects by extracting URL
+    const urlStr = typeof input === 'string'
+      ? input
+      : input instanceof URL
+      ? input.toString()
+      : input.url
+
+    const path = urlStr.replace(/^http:\/\/[^/]+/, '') // Strip protocol/host
+    const segments = path.replace(/^\/api\/canopycms\/?/, '').split('/').filter(Boolean)
+
+    const req: CanopyRequest = {
+      method: init?.method ?? 'GET',
+      url: urlStr,
+      header: (name: string) => {
+        if (!init?.headers) return null
+        if (init.headers instanceof Headers) {
+          return init.headers.get(name)
+        }
+        return (init.headers as Record<string, string>)[name.toLowerCase()] ?? null
+      },
+      json: async () => {
+        if (!init?.body) return undefined
+        if (typeof init.body === 'string') {
+          return JSON.parse(init.body)
+        }
+        return undefined
+      },
+    }
+
+    const response = await handler(req, segments)
+
+    // Return a Response-like object
+    return {
+      status: response.status,
+      ok: response.status >= 200 && response.status < 300,
+      json: async () => response.body,
+    } as Response
+  }
+
+  // Create production client with test fetch
+  const client = new CanopyApiClient({
+    baseUrl: '/api/canopycms',
+    fetch: testFetch,
+  })
+
+  /**
+   * Legacy request function for backward compatibility
    */
   async function request(
     method: string,
@@ -39,54 +91,39 @@ export function createApiClient(options: ApiClientOptions) {
     body?: any,
     headers: Record<string, string> = {}
   ) {
-    // Parse path to extract route segments
-    // Expected format: /api/canopycms/...
-    const url = `http://localhost:3000${path}`
-    const segments = path.replace(/^\/api\/canopycms\/?/, '').split('/').filter(Boolean)
-
-    const req: CanopyRequest = {
+    const response = await testFetch(path, {
       method,
-      url,
-      header: (name: string) => headers[name.toLowerCase()] ?? null,
-      json: async () => body,
-    }
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    })
 
-    const response = await handler(req, segments)
-
-    // Return a fetch-like object for easier testing
     return {
       status: response.status,
-      ok: response.status >= 200 && response.status < 300,
-      json: async <T = unknown>() => response.body as T,
-      body: response.body,
+      ok: response.ok,
+      json: async <T = unknown>() => response.json() as Promise<T>,
+      body: await response.json(),
     }
   }
 
   return {
-    /**
-     * GET request
-     */
-    get: (path: string, headers?: Record<string, string>) => request('GET', path, undefined, headers),
+    // Expose all typed client methods
+    ...client,
 
-    /**
-     * POST request
-     */
-    post: (path: string, body?: any, headers?: Record<string, string>) => request('POST', path, body, headers),
+    // Legacy compatibility: keep old method signatures
+    get: (path: string, headers?: Record<string, string>) =>
+      request('GET', path, undefined, headers),
 
-    /**
-     * PUT request
-     */
-    put: (path: string, body?: any, headers?: Record<string, string>) => request('PUT', path, body, headers),
+    post: (path: string, body?: any, headers?: Record<string, string>) =>
+      request('POST', path, body, headers),
 
-    /**
-     * PATCH request
-     */
-    patch: (path: string, body?: any, headers?: Record<string, string>) => request('PATCH', path, body, headers),
+    put: (path: string, body?: any, headers?: Record<string, string>) =>
+      request('PUT', path, body, headers),
 
-    /**
-     * DELETE request
-     */
-    delete: (path: string, headers?: Record<string, string>) => request('DELETE', path, undefined, headers),
+    patch: (path: string, body?: any, headers?: Record<string, string>) =>
+      request('PATCH', path, body, headers),
+
+    delete: (path: string, headers?: Record<string, string>) =>
+      request('DELETE', path, undefined, headers),
 
     /**
      * Access to underlying services for setup/teardown

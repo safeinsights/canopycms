@@ -1,6 +1,21 @@
 import { useEffect, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { InternalGroup } from '../../groups-file'
+import { createApiClient } from '../../api'
+
+// Lazy singleton - created on first access to pick up any fetch mocks in tests
+let apiClient: ReturnType<typeof createApiClient> | null = null
+function getApiClient() {
+  if (!apiClient) {
+    apiClient = createApiClient()
+  }
+  return apiClient
+}
+
+// For testing: reset the singleton to pick up new fetch mocks
+export function resetApiClient() {
+  apiClient = null
+}
 
 export interface UseGroupManagerOptions {
   /**
@@ -49,10 +64,9 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
   const loadGroups = async () => {
     setGroupsLoading(true)
     try {
-      const res = await fetch('/api/canopycms/groups/internal')
-      if (!res.ok) throw new Error('Failed to load groups')
-      const data = await res.json()
-      setGroupsData(data.data?.groups ?? [])
+      const result = await getApiClient().groups.getInternal()
+      if (!result.ok) throw new Error('Failed to load groups')
+      setGroupsData(result.data?.groups ?? [])
     } catch (err) {
       console.error('Failed to load groups:', err)
       notifications.show({ message: 'Failed to load groups', color: 'red' })
@@ -63,14 +77,9 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
 
   const handleSaveGroups = async (groups: InternalGroup[]) => {
     try {
-      const res = await fetch('/api/canopycms/groups/internal', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groups }),
-      })
-      if (!res.ok) {
-        const payload = await res.json()
-        throw new Error(payload.error || 'Failed to save groups')
+      const result = await getApiClient().groups.updateInternal(groups)
+      if (!result.ok) {
+        throw new Error(result.error || 'Failed to save groups')
       }
       notifications.show({
         title: 'Groups Saved',
@@ -87,11 +96,9 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
 
   const handleSearchUsers = async (query: string, limit?: number) => {
     try {
-      const params = new URLSearchParams({ query, limit: String(limit ?? 10) })
-      const res = await fetch(`/api/canopycms/users/search?${params}`)
-      if (!res.ok) return []
-      const data = await res.json()
-      return data.data?.users ?? []
+      const result = await getApiClient().permissions.searchUsers()
+      if (!result.ok) return []
+      return result.data?.users ?? []
     } catch (err) {
       console.error('User search failed:', err)
       return []
@@ -100,11 +107,9 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
 
   const handleSearchExternalGroups = async (query: string) => {
     try {
-      const params = new URLSearchParams({ query })
-      const res = await fetch(`/api/canopycms/groups/search?${params}`)
-      if (!res.ok) return []
-      const data = await res.json()
-      return data.data?.groups ?? []
+      const result = await getApiClient().groups.searchExternal({ q: query })
+      if (!result.ok) return []
+      return result.data?.groups ?? []
     } catch (err) {
       console.error('External group search failed:', err)
       return []

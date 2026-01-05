@@ -1,6 +1,12 @@
+import { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { isAdmin } from '../reserved-groups'
+import { defineEndpoint } from './route-builder'
+
+const markAsMergedParamsSchema = z.object({
+  branch: z.string().min(1)
+})
 
 export interface MarkAsMergedParams {
   branch: string
@@ -9,15 +15,11 @@ export interface MarkAsMergedParams {
 /** Response type for branch merge operations */
 export type BranchMergeResponse = ApiResponse<{ branch: { name: string; status: string } }>
 
-/**
- * Mark a branch as merged and archived after PR is merged on GitHub.
- * This is typically called manually by admins or via a webhook (future).
- */
-export async function markAsMerged(
+const markAsMergedHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
-  params: MarkAsMergedParams
-): Promise<BranchMergeResponse> {
+  params: z.infer<typeof markAsMergedParamsSchema>
+): Promise<BranchMergeResponse> => {
   const { branch: branchName } = params
 
   // Load branch context
@@ -96,3 +98,19 @@ export async function markAsMerged(
     },
   }
 }
+
+/**
+ * Mark a branch as merged and archived after PR is merged on GitHub
+ * POST /:branch/mark-merged
+ */
+export const markAsMerged = defineEndpoint({
+  namespace: 'workflow',
+  name: 'markMerged',
+  method: 'POST',
+  path: '/:branch/mark-merged',
+  params: markAsMergedParamsSchema,
+  responseType: 'BranchMergeResponse',
+  response: {} as BranchMergeResponse,
+  defaultMockData: { branch: { name: 'test-branch', status: 'archived' } },
+  handler: markAsMergedHandler,
+})

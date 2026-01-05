@@ -1,6 +1,21 @@
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
 import { Text } from '@mantine/core'
+import { createApiClient } from '../../api'
+
+// Lazy singleton - created on first access to pick up any fetch mocks in tests
+let apiClient: ReturnType<typeof createApiClient> | null = null
+function getApiClient() {
+  if (!apiClient) {
+    apiClient = createApiClient()
+  }
+  return apiClient
+}
+
+// For testing: reset the singleton to pick up new fetch mocks
+export function resetApiClient() {
+  apiClient = null
+}
 
 export interface UseBranchActionsOptions {
   branchName: string
@@ -85,18 +100,13 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
 
     // Create the branch via API
     try {
-      const res = await fetch('/api/canopycms/branches', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch: branch.name,
-          title: branch.title,
-          description: branch.description,
-        }),
+      const result = await getApiClient().branches.create({
+        branch: branch.name,
+        title: branch.title,
+        description: branch.description,
       })
-      if (!res.ok) {
-        const payload = await res.json()
-        throw new Error(payload.error || 'Failed to create branch')
+      if (!result.ok) {
+        throw new Error(result.error || 'Failed to create branch')
       }
       notifications.show({ message: `Branch "${branch.name}" created`, color: 'green' })
       await options.onReloadBranches()

@@ -1,6 +1,17 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useBranchActions } from './useBranchActions'
+import { useBranchActions, resetApiClient } from './useBranchActions'
+import type { MockApiClient } from '../../api/__test__/mock-client'
+import { setupMockApiClient, setupMockLocation, setupMockHistory } from './__test__/test-utils'
+
+// Mock the API client module
+vi.mock('../../api', async () => {
+  const actual = await vi.importActual('../../api')
+  return {
+    ...actual,
+    createApiClient: vi.fn(),
+  }
+})
 
 // Mock notifications
 vi.mock('@mantine/notifications', () => ({
@@ -17,6 +28,7 @@ vi.mock('@mantine/modals', () => ({
 }))
 
 describe('useBranchActions', () => {
+  let mockClient: MockApiClient
   const mockSetBranchName = vi.fn()
   const mockIsSelectedDirty = vi.fn(() => false)
   const mockOnReloadBranches = vi.fn().mockResolvedValue(undefined)
@@ -30,14 +42,12 @@ describe('useBranchActions', () => {
     onBranchSwitch: mockOnBranchSwitch,
   }
 
-  beforeEach(() => {
-    global.fetch = vi.fn()
-    delete (window as any).location
-    window.location = {
-      href: 'http://localhost/',
-      search: '',
-    } as any
-    window.history.replaceState = vi.fn()
+  beforeEach(async () => {
+    mockClient = await setupMockApiClient()
+    resetApiClient()
+
+    setupMockLocation()
+    setupMockHistory()
     mockSetBranchName.mockClear()
     mockIsSelectedDirty.mockReturnValue(false)
     mockOnReloadBranches.mockClear()
@@ -45,7 +55,7 @@ describe('useBranchActions', () => {
   })
 
   afterEach(() => {
-    vi.restoreAllMocks()
+    vi.clearAllMocks()
   })
 
   it('handles branch change without unsaved changes', async () => {
@@ -105,9 +115,19 @@ describe('useBranchActions', () => {
   })
 
   it('creates new branch successfully', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.branches.create.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({}),
+      status: 200,
+      data: {
+        branch: {
+          name: 'new-branch',
+          status: 'editing',
+          access: { allowedUsers: [], allowedGroups: [] },
+          createdBy: 'user1',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      },
     })
 
     const { result } = renderHook(() => useBranchActions(defaultOptions))
@@ -120,26 +140,20 @@ describe('useBranchActions', () => {
       })
     })
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      '/api/canopycms/branches',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          branch: 'new-branch',
-          title: 'New Branch',
-          description: 'Test branch',
-        }),
-      })
-    )
+    expect(mockClient.branches.create).toHaveBeenCalledWith({
+      branch: 'new-branch',
+      title: 'New Branch',
+      description: 'Test branch',
+    })
     expect(mockOnReloadBranches).toHaveBeenCalled()
     expect(mockSetBranchName).toHaveBeenCalledWith('new-branch')
   })
 
   it('handles create branch error', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.branches.create.mockResolvedValueOnce({
       ok: false,
-      json: async () => ({ error: 'Branch already exists' }),
+      status: 400,
+      error: 'Branch already exists',
     })
 
     const { result } = renderHook(() => useBranchActions(defaultOptions))
@@ -183,7 +197,7 @@ describe('useBranchActions', () => {
       await result.current.handleCreateBranch({ name: 'new-branch' })
     })
 
-    expect(global.fetch).not.toHaveBeenCalled()
+    expect(mockClient.branches.create).not.toHaveBeenCalled()
   })
 
   it('updates URL when switching branches', async () => {

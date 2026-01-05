@@ -43,6 +43,7 @@ export interface ApiContext {
 export interface ApiRequest<TBody = unknown> {
   branch?: string
   body?: TBody
+  query?: Record<string, string | string[] | undefined>
   user: CanopyUser
 }
 

@@ -1,15 +1,18 @@
+import { z } from 'zod'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { resolveBranchPaths } from '../paths'
+import { defineEndpoint } from './route-builder'
 
-/**
- * Withdraw a submitted branch, converting the PR to draft and unlocking editing
- */
-export const withdrawBranch = async (
+const branchParamSchema = z.object({
+  branch: z.string().min(1)
+})
+
+const withdrawBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
-  params: { branch: string }
+  params: z.infer<typeof branchParamSchema>
 ): Promise<BranchResponse> => {
   const context = await ctx.getBranchContext(params.branch)
   if (!context) {
@@ -53,3 +56,19 @@ export const withdrawBranch = async (
 
   return { ok: true, status: 200, data: { branch: updated.branch } }
 }
+
+/**
+ * Withdraw a submitted branch, converting the PR to draft and unlocking editing
+ * POST /:branch/withdraw
+ */
+export const withdrawBranch = defineEndpoint({
+  namespace: 'workflow',
+  name: 'withdraw',
+  method: 'POST',
+  path: '/:branch/withdraw',
+  params: branchParamSchema,
+  responseType: 'BranchResponse',
+  response: {} as BranchResponse,
+  defaultMockData: { branch: { name: 'test-branch', status: 'editing', access: {}, createdBy: 'user-1', createdAt: '2024-01-01', updatedAt: '2024-01-01' } },
+  handler: withdrawBranchHandler,
+})

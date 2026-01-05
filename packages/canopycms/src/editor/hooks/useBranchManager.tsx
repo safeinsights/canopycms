@@ -2,8 +2,22 @@ import { useEffect, useMemo, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { BranchMetadata } from '../../types'
 import type { BranchMode } from '../../paths'
-import type { ApiResponse } from '../../api/types'
 import type { CommentThread } from '../../comment-store'
+import { createApiClient } from '../../api'
+
+// Lazy singleton - created on first access to pick up any fetch mocks in tests
+let apiClient: ReturnType<typeof createApiClient> | null = null
+function getApiClient() {
+  if (!apiClient) {
+    apiClient = createApiClient()
+  }
+  return apiClient
+}
+
+// For testing: reset the singleton to pick up new fetch mocks
+export function resetApiClient() {
+  apiClient = null
+}
 
 /**
  * Branch summary for display in BranchManager component.
@@ -124,15 +138,14 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const loadBranches = async () => {
     options.setBusy(true)
     try {
-      const res = await fetch('/api/canopycms/branches')
-      if (res.status === 404) {
+      const result = await getApiClient().branches.list()
+      if (result.status === 404) {
         // No branch endpoint available; stay branchless until user selects/creates via other means.
         setBranches([])
         return
       }
-      if (!res.ok) throw new Error(`Failed to load branches: ${res.status}`)
-      const payload = (await res.json()) as ApiResponse<{ branches: BranchMetadata[] }>
-      const list = ('data' in payload ? payload.data?.branches : (payload as any).branches) ?? []
+      if (!result.ok) throw new Error(`Failed to load branches: ${result.status}`)
+      const list = result.data?.branches ?? []
       setBranches(list)
     } catch (err) {
       console.error(err)
@@ -145,10 +158,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const handleSubmit = async (branchNameToSubmit: string) => {
     options.setBusy(true)
     try {
-      const res = await fetch(`/api/canopycms/${branchNameToSubmit}/submit`, { method: 'POST' })
-      if (!res.ok) {
-        const payload = await res.json()
-        throw new Error(payload.error || 'Failed to submit branch')
+      const result = await getApiClient().workflow.submit({ branch: branchNameToSubmit })
+      if (!result.ok) {
+        throw new Error(result.error || 'Failed to submit branch')
       }
       notifications.show({ message: 'Branch submitted for review', color: 'green' })
       await loadBranches()
@@ -163,10 +175,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const handleWithdraw = async (branchNameToWithdraw: string) => {
     options.setBusy(true)
     try {
-      const res = await fetch(`/api/canopycms/${branchNameToWithdraw}/withdraw`, { method: 'POST' })
-      if (!res.ok) {
-        const payload = await res.json()
-        throw new Error(payload.error || 'Failed to withdraw branch')
+      const result = await getApiClient().workflow.withdraw({ branch: branchNameToWithdraw })
+      if (!result.ok) {
+        throw new Error(result.error || 'Failed to withdraw branch')
       }
       notifications.show({ message: 'Branch withdrawn', color: 'blue' })
       await loadBranches()
@@ -181,12 +192,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const handleRequestChanges = async (branchNameForChanges: string) => {
     options.setBusy(true)
     try {
-      const res = await fetch(`/api/canopycms/${branchNameForChanges}/request-changes`, {
-        method: 'POST',
-      })
-      if (!res.ok) {
-        const payload = await res.json()
-        throw new Error(payload.error || 'Failed to request changes')
+      const result = await getApiClient().workflow.requestChanges({ branch: branchNameForChanges }, {})
+      if (!result.ok) {
+        throw new Error(result.error || 'Failed to request changes')
       }
       notifications.show({ message: 'Changes requested', color: 'orange' })
       await loadBranches()

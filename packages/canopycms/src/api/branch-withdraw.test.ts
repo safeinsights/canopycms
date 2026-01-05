@@ -4,6 +4,9 @@ import { withdrawBranch } from './branch-withdraw'
 import type { ApiContext } from './types'
 import { mockConsole } from '../test-utils/console-spy.js'
 
+// Extract handler for testing
+const withdrawHandler = withdrawBranch.handler
+
 const mockMetadataSave = vi.fn().mockResolvedValue({
   schemaVersion: 1,
   branch: {
@@ -60,13 +63,13 @@ describe('branch withdraw api', () => {
   it('returns 404 if branch not found', async () => {
     const ctx = makeCtx()
     ctx.getBranchContext = vi.fn().mockResolvedValue(null)
-    const res = await withdrawBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'missing' })
+    const res = await withdrawHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'missing' })
     expect(res.status).toBe(404)
     expect(res.error).toBe('Branch not found')
   })
 
   it('returns 403 if access forbidden', async () => {
-    const res = await withdrawBranch(makeCtx(false), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    const res = await withdrawHandler(makeCtx(false), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
     expect(res.status).toBe(403)
     expect(res.error).toBe('Forbidden')
   })
@@ -77,13 +80,13 @@ describe('branch withdraw api', () => {
       ...baseContext,
       branch: { ...baseContext.branch, status: 'editing' },
     })
-    const res = await withdrawBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    const res = await withdrawHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
     expect(res.status).toBe(400)
     expect(res.error).toContain('Only \'submitted\' branches can be withdrawn')
   })
 
   it('withdraws branch when allowed', async () => {
-    const res = await withdrawBranch(makeCtx(true), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    const res = await withdrawHandler(makeCtx(true), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
   })
@@ -91,7 +94,7 @@ describe('branch withdraw api', () => {
   it('converts PR to draft if github service available', async () => {
     const convertToDraft = vi.fn().mockResolvedValue(undefined)
     const githubService = { convertToDraft }
-    const res = await withdrawBranch(makeCtx(true, githubService), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    const res = await withdrawHandler(makeCtx(true, githubService), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
     expect(res.ok).toBe(true)
     expect(convertToDraft).toHaveBeenCalledWith(123)
   })
@@ -100,7 +103,7 @@ describe('branch withdraw api', () => {
     const consoleSpy = mockConsole()
     const convertToDraft = vi.fn().mockRejectedValue(new Error('API error'))
     const githubService = { convertToDraft }
-    const res = await withdrawBranch(makeCtx(true, githubService), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    const res = await withdrawHandler(makeCtx(true, githubService), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
     // Should still succeed even if GitHub API fails
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
@@ -116,7 +119,7 @@ describe('branch withdraw api', () => {
       ...baseContext,
       branch: { ...baseContext.branch, pullRequestNumber: undefined },
     })
-    const res = await withdrawBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    const res = await withdrawHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
     expect(res.ok).toBe(true)
     expect(convertToDraft).not.toHaveBeenCalled()
   })

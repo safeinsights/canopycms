@@ -34,7 +34,16 @@
       "Bash(fi)",
       "Bash(done)",
       "Bash(tree:*)",
-      "Bash(npx playwright test:*)"
+      "Bash(npx playwright test:*)",
+      "Bash(git diff:*)",
+      "Bash(tsx scripts/generate-client.ts:*)",
+      "Bash(npx tsx:*)",
+      "Bash(npm run generate:client:*)",
+      "Bash(npx playwright show-report:*)",
+      "Bash(node -e:*)",
+      "Bash(tac:*)",
+      "Bash(playwright test:*)",
+      "Bash(tee:*)"
     ]
   }
 }

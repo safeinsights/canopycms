@@ -1,7 +1,46 @@
+import { z } from 'zod'
+
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { ContentStore, ContentStoreError } from '../content-store'
 import type { ContentFormat } from '../config'
 import { resolveBranchPaths } from '../paths'
+import { defineEndpoint } from './route-builder'
+
+/** Response type for content read operations */
+export type ContentReadResponse = ApiResponse<{
+  format: string
+  data: Record<string, unknown>
+  body?: string
+}>
+
+/** Response type for content write operations */
+export type ContentWriteResponse = ApiResponse<{
+  format: string
+  data: Record<string, unknown>
+  body?: string
+}>
+
+// ============================================================================
+// Zod Schemas for Validation
+// ============================================================================
+
+const readContentParamsSchema = z.object({
+  branch: z.string().min(1),
+  collection: z.string().min(1),
+  slug: z.string().optional(),
+})
+
+const writeContentParamsSchema = z.object({
+  branch: z.string().min(1),
+  collection: z.string().min(1),
+  slug: z.string().optional(),
+})
+
+const writeContentBodySchema = z.object({
+  format: z.enum(['json', 'md', 'mdx']),
+  data: z.record(z.unknown()).optional(),
+  body: z.string().optional(),
+})
 
 export interface ReadContentParams {
   branch: string
@@ -9,11 +48,11 @@ export interface ReadContentParams {
   slug?: string
 }
 
-export const readContent = async (
+const readContentHandler = async (
   ctx: ApiContext,
-  req: ApiRequest<undefined>,
-  params: ReadContentParams
-): Promise<ApiResponse> => {
+  req: ApiRequest,
+  params: z.infer<typeof readContentParamsSchema>
+): Promise<ContentReadResponse> => {
   const context = await ctx.getBranchContext(params.branch)
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
@@ -54,14 +93,13 @@ export interface WriteContentBody {
   body?: string
 }
 
-export const writeContent = async (
+const writeContentHandler = async (
   ctx: ApiContext,
-  req: ApiRequest<WriteContentBody>
-): Promise<ApiResponse> => {
-  if (!req.body?.collection || !req.branch) {
-    return { ok: false, status: 400, error: 'collection and branch are required' }
-  }
-  const context = await ctx.getBranchContext(req.branch)
+  req: ApiRequest,
+  params: z.infer<typeof writeContentParamsSchema>,
+  body: z.infer<typeof writeContentBodySchema>
+): Promise<ContentWriteResponse> => {
+  const context = await ctx.getBranchContext(params.branch)
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -72,13 +110,13 @@ export const writeContent = async (
 
   // Prepend contentRoot to collection if not already present
   const contentRoot = ctx.services.config.contentRoot || 'content'
-  const fullCollection = req.body.collection.startsWith(contentRoot + '/')
-    ? req.body.collection
-    : `${contentRoot}/${req.body.collection}`
+  const fullCollection = params.collection.startsWith(contentRoot + '/')
+    ? params.collection
+    : `${contentRoot}/${params.collection}`
 
   let relativePath: string
   try {
-    relativePath = store.resolveDocumentPath(fullCollection, req.body.slug ?? '').relativePath
+    relativePath = store.resolveDocumentPath(fullCollection, params.slug ?? '').relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: message }
@@ -91,15 +129,15 @@ export const writeContent = async (
 
   try {
     const result =
-      req.body.format === 'json'
-        ? await store.write(fullCollection, req.body.slug ?? '', {
+      body.format === 'json'
+        ? await store.write(fullCollection, params.slug ?? '', {
             format: 'json',
-            data: req.body.data ?? {},
+            data: body.data ?? {},
           })
-        : await store.write(fullCollection, req.body.slug ?? '', {
-            format: req.body.format,
-            data: req.body.data,
-            body: req.body.body ?? '',
+        : await store.write(fullCollection, params.slug ?? '', {
+            format: body.format,
+            data: body.data,
+            body: body.body ?? '',
           })
 
     return { ok: true, status: 200, data: result }
@@ -108,3 +146,48 @@ export const writeContent = async (
     return { ok: false, status: 400, error: message }
   }
 }
+
+// ============================================================================
+// Route Definitions with defineEndpoint
+// ============================================================================
+
+/**
+ * Read content from a collection
+ * GET /:branch/content/:collection/:slug
+ */
+const readContent = defineEndpoint({
+  namespace: 'content',
+  name: 'read',
+  method: 'GET',
+  path: '/:branch/content/:collection/...slug',
+  params: readContentParamsSchema,
+  responseType: 'ContentReadResponse',
+  response: {} as ContentReadResponse,
+  defaultMockData: { format: 'json', data: {} },
+  handler: readContentHandler,
+})
+
+/**
+ * Write content to a collection
+ * PUT /:branch/content/:collection/:slug
+ */
+const writeContent = defineEndpoint({
+  namespace: 'content',
+  name: 'write',
+  method: 'PUT',
+  path: '/:branch/content/:collection/...slug',
+  params: writeContentParamsSchema,
+  body: writeContentBodySchema,
+  responseType: 'ContentWriteResponse',
+  response: {} as ContentWriteResponse,
+  defaultMockData: { format: 'json', data: {} },
+  handler: writeContentHandler,
+})
+
+/**
+ * Exported routes for router registration
+ */
+export const CONTENT_ROUTES = {
+  read: readContent,
+  write: writeContent,
+} as const

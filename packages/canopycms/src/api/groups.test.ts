@@ -11,15 +11,18 @@ vi.mock('../groups-loader', () => ({
 }))
 
 import {
-  getInternalGroups,
-  updateInternalGroups,
-  searchExternalGroups,
+  GROUP_ROUTES,
   validateAdminGroupUpdate,
   validateReservedGroups,
   type UpdateInternalGroupsBody,
   type SearchExternalGroupsParams,
 } from './groups'
 import * as groupsLoader from '../groups-loader'
+
+// Extract handlers for testing
+const getInternalGroups = GROUP_ROUTES.getInternal.handler
+const updateInternalGroups = GROUP_ROUTES.updateInternal.handler
+const searchExternalGroups = GROUP_ROUTES.searchExternal.handler
 
 describe('groups API', () => {
   let mockContext: ApiContext
@@ -110,12 +113,11 @@ describe('groups API', () => {
 
   describe('updateInternalGroups', () => {
     it('should return 403 for non-admin users', async () => {
-      const req: ApiRequest<UpdateInternalGroupsBody> = {
+      const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'user-1' as CanopyUserId, groups: [] },
-        body: { groups: [] },
       }
 
-      const result = await updateInternalGroups(mockContext, req)
+      const result = await updateInternalGroups(mockContext, req, { groups: [] })
 
       expect(result).toEqual({
         ok: false,
@@ -125,12 +127,11 @@ describe('groups API', () => {
     })
 
     it('should return 400 if groups not provided', async () => {
-      const req: ApiRequest<UpdateInternalGroupsBody> = {
+      const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
-        body: {} as UpdateInternalGroupsBody,
       }
 
-      const result = await updateInternalGroups(mockContext, req)
+      const result = await updateInternalGroups(mockContext, req, {} as UpdateInternalGroupsBody)
 
       expect(result).toEqual({
         ok: false,
@@ -144,12 +145,11 @@ describe('groups API', () => {
       // Add bootstrap admin so validation passes
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
-      const req: ApiRequest<UpdateInternalGroupsBody> = {
+      const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
-        body: { groups: [] },
       }
 
-      const result = await updateInternalGroups(mockContext, req)
+      const result = await updateInternalGroups(mockContext, req, { groups: [] })
 
       expect(result).toEqual({
         ok: false,
@@ -172,12 +172,11 @@ describe('groups API', () => {
         },
       ]
 
-      const req: ApiRequest<UpdateInternalGroupsBody> = {
+      const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
-        body: { groups },
       }
 
-      const result = await updateInternalGroups(mockContext, req)
+      const result = await updateInternalGroups(mockContext, req, { groups })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
@@ -397,12 +396,11 @@ describe('groups API', () => {
         { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
       ]
 
-      const req: ApiRequest<UpdateInternalGroupsBody> = {
+      const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
-        body: { groups },
       }
 
-      const result = await updateInternalGroups(mockContext, req)
+      const result = await updateInternalGroups(mockContext, req, { groups })
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(400)
@@ -416,12 +414,11 @@ describe('groups API', () => {
         { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Super Admins', members: ['admin-1' as CanopyUserId] },
       ]
 
-      const req: ApiRequest<UpdateInternalGroupsBody> = {
+      const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
-        body: { groups },
       }
 
-      const result = await updateInternalGroups(mockContext, req)
+      const result = await updateInternalGroups(mockContext, req, { groups })
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(400)
@@ -438,12 +435,11 @@ describe('groups API', () => {
         { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
       ]
 
-      const req: ApiRequest<UpdateInternalGroupsBody> = {
+      const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
-        body: { groups },
       }
 
-      const result = await updateInternalGroups(mockContext, req)
+      const result = await updateInternalGroups(mockContext, req, { groups })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)

@@ -81,41 +81,46 @@ describe('Editor integration', () => {
 
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
-      if (url.endsWith('/api/canopycms/branches')) return Promise.resolve(okJson({}, 404))
+      if (url.endsWith('/api/canopycms/branches')) return Promise.resolve(okJson({ ok: false, status: 404 }, 404))
       if (url.includes('/entries')) {
         return Promise.resolve(
           okJson({
-            collections: [
-              {
-                id: 'posts',
-                name: 'posts',
-                type: 'collection',
-                format: 'json',
-                schema: entry.schema,
-              },
-            ],
-            entries: [
-              {
-                id: entry.id,
-                collectionId: entry.collectionId,
-                collectionName: entry.collectionName,
-                slug: entry.slug,
-                format: entry.format,
-                type: entry.type,
-                exists: true,
-              },
-            ],
-            pagination: { hasMore: false, limit: 50 },
+            ok: true,
+            status: 200,
+            data: {
+              collections: [
+                {
+                  id: 'posts',
+                  name: 'posts',
+                  type: 'collection',
+                  format: 'json',
+                  schema: entry.schema,
+                },
+              ],
+              entries: [
+                {
+                  id: entry.id,
+                  collectionId: entry.collectionId,
+                  collectionName: entry.collectionName,
+                  slug: entry.slug,
+                  format: entry.format,
+                  type: entry.type,
+                  exists: true,
+                },
+              ],
+              pagination: { hasMore: false, limit: 50 },
+            },
           })
         )
       }
-      if (url === entry.apiPath && (!init || !init.method)) {
-        return Promise.resolve(okJson({ data: { title: 'Loaded title' } }))
+      if (url === entry.apiPath && (!init || !init.method || init.method === 'GET')) {
+        return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
       }
       if (url === entry.apiPath && init?.method === 'PUT') {
-        return Promise.resolve(okJson(JSON.parse(init.body as string)))
+        const body = JSON.parse(init.body as string)
+        return Promise.resolve(okJson({ ok: true, status: 200, data: body.data }))
       }
-      return Promise.resolve(okJson({}))
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
     })
 
     vi.stubGlobal('fetch', fetchMock)

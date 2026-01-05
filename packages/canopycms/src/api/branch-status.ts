@@ -1,12 +1,29 @@
+import { z } from 'zod'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
+import { withdrawBranch } from './branch-withdraw'
+import { requestChanges, approveBranch } from './branch-review'
+import { markAsMerged } from './branch-merge'
 import { resolveBranchPaths } from '../paths'
+import { defineEndpoint } from './route-builder'
+import type { BranchMetadata } from '../types'
 
-export const getBranchStatus = async (
+// Re-export for client generation
+export type { BranchMergeResponse } from './branch-merge'
+
+// ============================================================================
+// Zod Schemas for Validation
+// ============================================================================
+
+const branchParamSchema = z.object({
+  branch: z.string().min(1)
+})
+
+const getBranchStatusHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
-  params: { branch: string }
+  params: z.infer<typeof branchParamSchema>
 ): Promise<BranchResponse> => {
   const context = await ctx.getBranchContext(params.branch)
   if (!context) {
@@ -19,10 +36,10 @@ export const getBranchStatus = async (
   return { ok: true, status: 200, data: { branch: context.branch } }
 }
 
-export const submitBranchForMerge = async (
+const submitBranchForMergeHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
-  params: { branch: string }
+  params: z.infer<typeof branchParamSchema>
 ): Promise<BranchResponse> => {
   const context = await ctx.getBranchContext(params.branch)
   if (!context) {
@@ -110,3 +127,51 @@ export const submitBranchForMerge = async (
 
   return { ok: true, status: 200, data: { branch: updated.branch } }
 }
+
+// ============================================================================
+// Route Definitions with defineEndpoint
+// ============================================================================
+
+/**
+ * Get branch status
+ * GET /:branch/status
+ */
+const getBranchStatus = defineEndpoint({
+  namespace: 'workflow',
+  name: 'getStatus',
+  method: 'GET',
+  path: '/:branch/status',
+  params: branchParamSchema,
+  responseType: 'BranchResponse',
+  response: {} as BranchResponse,
+  defaultMockData: { branch: { name: 'test-branch', status: 'editing', access: {}, createdBy: 'user-1', createdAt: '2024-01-01', updatedAt: '2024-01-01' } },
+  handler: getBranchStatusHandler,
+})
+
+/**
+ * Submit branch for merge/review
+ * POST /:branch/submit
+ */
+const submitBranchForMerge = defineEndpoint({
+  namespace: 'workflow',
+  name: 'submit',
+  method: 'POST',
+  path: '/:branch/submit',
+  params: branchParamSchema,
+  responseType: 'BranchResponse',
+  response: {} as BranchResponse,
+  defaultMockData: { branch: { name: 'test-branch', status: 'submitted', access: {}, createdBy: 'user-1', createdAt: '2024-01-01', updatedAt: '2024-01-01' } },
+  handler: submitBranchForMergeHandler,
+})
+
+/**
+ * Exported routes for router registration
+ */
+export const WORKFLOW_ROUTES = {
+  getStatus: getBranchStatus,
+  submit: submitBranchForMerge,
+  withdraw: withdrawBranch,
+  requestChanges: requestChanges,
+  approve: approveBranch,
+  markMerged: markAsMerged,
+} as const

@@ -1,7 +1,18 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useEntryManager } from './useEntryManager'
+import { useEntryManager, resetApiClient } from './useEntryManager'
 import type { EditorEntry, EditorCollection } from '../Editor'
+import type { MockApiClient } from '../../api/__test__/mock-client'
+import { setupMockApiClient, setupMockLocation, setupMockHistory } from './__test__/test-utils'
+
+// Mock the API client module
+vi.mock('../../api', async () => {
+  const actual = await vi.importActual('../../api')
+  return {
+    ...actual,
+    createApiClient: vi.fn(),
+  }
+})
 
 // Mock notifications
 vi.mock('@mantine/notifications', () => ({
@@ -11,6 +22,8 @@ vi.mock('@mantine/notifications', () => ({
 }))
 
 describe('useEntryManager', () => {
+  let mockClient: MockApiClient
+
   const mockEntry: EditorEntry = {
     id: 'entry1',
     label: 'Test Entry',
@@ -23,6 +36,16 @@ describe('useEntryManager', () => {
     schema: [],
   }
 
+  const mockEntryListItem = {
+    id: 'entry1',
+    slug: 'test',
+    collectionId: 'posts',
+    collectionName: 'posts',
+    format: 'mdx' as const,
+    type: 'entry' as const,
+    path: '/content/posts/test',
+  }
+
   const mockCollections: EditorCollection[] = [
     {
       id: 'posts',
@@ -33,6 +56,16 @@ describe('useEntryManager', () => {
     },
   ]
 
+  const mockCollectionSummary = {
+    id: 'posts',
+    name: 'posts',
+    label: 'Posts',
+    type: 'collection' as const,
+    format: 'mdx' as const,
+    path: '/content/posts',
+    schema: [],
+  }
+
   const defaultOptions = {
     initialEntries: [mockEntry],
     branchName: 'main',
@@ -41,22 +74,16 @@ describe('useEntryManager', () => {
     setBusy: vi.fn(),
   }
 
-  beforeEach(() => {
-    // Mock fetch with default response for refreshEntries called in useEffect
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ data: { entries: [], collections: [] } }),
-    })
-    delete (window as any).location
-    window.location = {
-      href: 'http://localhost/',
-      search: '',
-    } as any
-    window.history.replaceState = vi.fn()
+  beforeEach(async () => {
+    mockClient = await setupMockApiClient()
+    resetApiClient()
+
+    setupMockLocation()
+    setupMockHistory()
   })
 
   afterEach(() => {
-    vi.restoreAllMocks()
+    vi.clearAllMocks()
   })
 
   it('initializes with provided entries and selects first entry', () => {
@@ -82,39 +109,26 @@ describe('useEntryManager', () => {
   })
 
   it('loads entry successfully', async () => {
-    const mockData = { data: { slug: 'test', title: 'Test Entry', body: 'Content' } }
-    ;(global.fetch as any)
-      .mockResolvedValueOnce({
-        // First call: refreshEntries in useEffect
-        ok: true,
-        json: async () => ({ data: { entries: [], collections: [] } }),
-      })
-      .mockResolvedValueOnce({
-        // Second call: loadEntry
-        ok: true,
-        json: async () => mockData,
-      })
+    const mockData = { slug: 'test', title: 'Test Entry', body: 'Content' }
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: mockData as any, // Mock uses simplified format that normalizeContentPayload handles
+    })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
 
     const loaded = await result.current.loadEntry(mockEntry)
 
     expect(loaded).toEqual({ slug: 'test', title: 'Test Entry', body: 'Content' })
-    expect(global.fetch).toHaveBeenCalledWith(mockEntry.apiPath)
+    expect(mockClient.content.read).toHaveBeenCalledWith({ branch: 'main', collection: 'posts', slug: 'test' })
   })
 
   it('handles load entry error', async () => {
-    ;(global.fetch as any)
-      .mockResolvedValueOnce({
-        // First call: refreshEntries in useEffect
-        ok: true,
-        json: async () => ({ data: { entries: [], collections: [] } }),
-      })
-      .mockResolvedValueOnce({
-        // Second call: loadEntry with error
-        ok: false,
-        status: 404,
-      })
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+    })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
 
@@ -123,45 +137,35 @@ describe('useEntryManager', () => {
 
   it('saves entry successfully', async () => {
     const mockValue = { title: 'Updated Title', body: 'Updated Content' }
-    const mockResponse = { data: mockValue }
-    ;(global.fetch as any)
-      .mockResolvedValueOnce({
-        // First call: refreshEntries in useEffect
-        ok: true,
-        json: async () => ({ data: { entries: [], collections: [] } }),
-      })
-      .mockResolvedValueOnce({
-        // Second call: saveEntry
-        ok: true,
-        json: async () => mockResponse,
-      })
+    const mockResponse = { title: 'Updated Title', body: 'Updated Content' }
+    mockClient.content.write.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: mockResponse as any, // Mock uses simplified format that normalizeContentPayload handles
+    })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
 
     const saved = await result.current.saveEntry(mockEntry, mockValue)
 
-    expect(saved).toEqual(mockValue)
-    expect(global.fetch).toHaveBeenCalledWith(
-      mockEntry.apiPath,
-      expect.objectContaining({
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-      })
+    expect(saved).toEqual({ title: 'Updated Title', body: 'Updated Content' })
+    expect(mockClient.content.write).toHaveBeenCalledWith(
+      { branch: 'main', collection: 'posts', slug: 'test' },
+      {
+        collection: 'posts',
+        slug: 'test',
+        format: 'mdx',
+        data: { title: 'Updated Title' }, // body is extracted
+        body: 'Updated Content',
+      }
     )
   })
 
   it('handles save entry error', async () => {
-    ;(global.fetch as any)
-      .mockResolvedValueOnce({
-        // First call: refreshEntries in useEffect
-        ok: true,
-        json: async () => ({ data: { entries: [], collections: [] } }),
-      })
-      .mockResolvedValueOnce({
-        // Second call: saveEntry with error
-        ok: false,
-        status: 500,
-      })
+    mockClient.content.write.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+    })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
 
@@ -169,22 +173,25 @@ describe('useEntryManager', () => {
   })
 
   it('refreshes entries successfully', async () => {
-    const mockRefreshed = [mockEntry, { ...mockEntry, id: 'entry2', slug: 'test2' }]
-    ;(global.fetch as any)
+    const mockRefreshed = [
+      mockEntryListItem,
+      { ...mockEntryListItem, id: 'entry2', slug: 'test2', path: '/content/posts/test2' },
+    ]
+    // First call is from useEffect on mount, second is from manual call
+    mockClient.entries.list
       .mockResolvedValueOnce({
-        // First call: refreshEntries in useEffect
         ok: true,
-        json: async () => ({ data: { entries: [], collections: [] } }),
+        status: 200,
+        data: { entries: [], collections: [mockCollectionSummary], pagination: { hasMore: false, limit: 100 } },
       })
       .mockResolvedValueOnce({
-        // Second call: manual refreshEntries
         ok: true,
-        json: async () => ({
-          data: {
-            entries: mockRefreshed,
-            collections: [],
-          },
-        }),
+        status: 200,
+        data: {
+          entries: mockRefreshed,
+          collections: [mockCollectionSummary],
+          pagination: { hasMore: false, limit: 100 },
+        },
       })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
@@ -197,26 +204,26 @@ describe('useEntryManager', () => {
       expect(result.current.entries).toHaveLength(2)
     })
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/main/entries')
+    expect(mockClient.entries.list).toHaveBeenCalledWith({ branch: 'main' })
   })
 
   it('selects newly created entry after refresh', async () => {
-    const newEntry = { ...mockEntry, id: 'new-entry', slug: 'new' }
-    ;(global.fetch as any)
+    const newEntry = { ...mockEntryListItem, id: 'new-entry', slug: 'new', path: '/content/posts/new' }
+    // First call is from useEffect on mount, second is from manual call
+    mockClient.entries.list
       .mockResolvedValueOnce({
-        // First call: refreshEntries in useEffect
         ok: true,
-        json: async () => ({ data: { entries: [mockEntry], collections: [] } }),
+        status: 200,
+        data: { entries: [mockEntryListItem], collections: [mockCollectionSummary], pagination: { hasMore: false, limit: 100 } },
       })
       .mockResolvedValueOnce({
-        // Second call: manual refreshEntries
         ok: true,
-        json: async () => ({
-          data: {
-            entries: [mockEntry, newEntry],
-            collections: [],
-          },
-        }),
+        status: 200,
+        data: {
+          entries: [mockEntryListItem, newEntry],
+          collections: [mockCollectionSummary],
+          pagination: { hasMore: false, limit: 100 },
+        },
       })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
@@ -232,20 +239,27 @@ describe('useEntryManager', () => {
 
   it('creates new entry successfully', async () => {
     window.prompt = vi.fn(() => 'new-post')
-    ;(global.fetch as any)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: { entries: [], collections: [] } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          data: {
-            entries: [mockEntry, { ...mockEntry, id: 'new-post', slug: 'new-post' }],
-            collections: [],
-          },
-        }),
-      })
+
+    // Mock content.write for the create operation
+    mockClient.content.write.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { format: 'mdx', data: {} },
+    })
+
+    // Mock entries.list for the refresh after create
+    mockClient.entries.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: {
+        entries: [
+          mockEntryListItem,
+          { ...mockEntryListItem, id: 'new-post', slug: 'new-post', path: '/content/posts/new-post' },
+        ],
+        collections: [mockCollectionSummary],
+        pagination: { hasMore: false, limit: 100 },
+      },
+    })
 
     const { result } = renderHook(() => useEntryManager(defaultOptions))
 
@@ -254,10 +268,11 @@ describe('useEntryManager', () => {
     })
 
     expect(window.prompt).toHaveBeenCalledWith('New Posts slug?', 'untitled')
-    expect(global.fetch).toHaveBeenCalledWith(
-      '/api/canopycms/main/content/posts/new-post',
+    expect(mockClient.content.write).toHaveBeenCalledWith(
+      { branch: 'main', collection: 'posts', slug: 'new-post' },
       expect.objectContaining({
-        method: 'PUT',
+        collection: 'posts',
+        format: 'mdx',
       })
     )
     expect(defaultOptions.setBusy).toHaveBeenCalledWith(true)
@@ -273,9 +288,8 @@ describe('useEntryManager', () => {
       await result.current.handleCreateEntry('posts')
     })
 
-    // Only the initial refreshEntries call, not a create call
-    expect(global.fetch).toHaveBeenCalledTimes(1)
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/main/entries')
+    // Should not call content.write
+    expect(mockClient.content.write).not.toHaveBeenCalled()
   })
 
   it('does not create entry for singleton collection', async () => {
@@ -296,9 +310,8 @@ describe('useEntryManager', () => {
       await result.current.handleCreateEntry('config')
     })
 
-    // Only the initial refreshEntries call, not a create call
-    expect(global.fetch).toHaveBeenCalledTimes(1)
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/main/entries')
+    // Should not call content.write for singleton
+    expect(mockClient.content.write).not.toHaveBeenCalled()
   })
 
   it('toggles navigator open state', () => {

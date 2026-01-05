@@ -1,6 +1,17 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useGroupManager } from './useGroupManager'
+import { useGroupManager, resetApiClient } from './useGroupManager'
+import type { MockApiClient } from '../../api/__test__/mock-client'
+import { setupMockApiClient, setupMockConsole } from './__test__/test-utils'
+
+// Mock the API client module
+vi.mock('../../api', async () => {
+  const actual = await vi.importActual('../../api')
+  return {
+    ...actual,
+    createApiClient: vi.fn(),
+  }
+})
 
 // Mock notifications
 vi.mock('@mantine/notifications', () => ({
@@ -10,12 +21,15 @@ vi.mock('@mantine/notifications', () => ({
 }))
 
 describe('useGroupManager', () => {
-  beforeEach(() => {
-    global.fetch = vi.fn()
+  let mockClient: MockApiClient
+
+  beforeEach(async () => {
+    mockClient = await setupMockApiClient()
+    resetApiClient()
   })
 
   afterEach(() => {
-    vi.restoreAllMocks()
+    vi.clearAllMocks()
   })
 
   it('initializes with empty groups', () => {
@@ -31,9 +45,10 @@ describe('useGroupManager', () => {
       { id: 'group2', name: 'Reviewers', members: [] },
     ]
 
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.groups.getInternal.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { groups: mockGroups } }),
+      status: 200,
+      data: { groups: mockGroups },
     })
 
     const { result } = renderHook(() => useGroupManager({ isOpen: true }))
@@ -46,13 +61,14 @@ describe('useGroupManager', () => {
     })
 
     expect(result.current.groupsData).toEqual(mockGroups)
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/groups/internal')
+    expect(mockClient.groups.getInternal).toHaveBeenCalled()
   })
 
   it('handles load groups error', async () => {
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    ;(global.fetch as any).mockResolvedValueOnce({
+    const { error, restore } = setupMockConsole(['error'])
+    mockClient.groups.getInternal.mockResolvedValueOnce({
       ok: false,
+      status: 500,
     })
 
     const { result } = renderHook(() => useGroupManager({ isOpen: true }))
@@ -62,16 +78,17 @@ describe('useGroupManager', () => {
     })
 
     expect(result.current.groupsData).toEqual([])
-    consoleErrorSpy.mockRestore()
+    restore()
   })
 
   it('saves groups successfully', async () => {
     const mockGroups = [{ id: 'group1', name: 'Editors', members: [] }]
 
     // Mock initial load
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.groups.getInternal.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { groups: [] } }),
+      status: 200,
+      data: { groups: [] },
     })
 
     const { result } = renderHook(() => useGroupManager({ isOpen: true }))
@@ -81,15 +98,16 @@ describe('useGroupManager', () => {
     })
 
     // Mock save
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.groups.updateInternal.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({}),
+      status: 200,
     })
 
     // Mock reload after save
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.groups.getInternal.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { groups: mockGroups } }),
+      status: 200,
+      data: { groups: mockGroups },
     })
 
     await result.current.handleSaveGroups(mockGroups)
@@ -98,17 +116,14 @@ describe('useGroupManager', () => {
       expect(result.current.groupsData).toEqual(mockGroups)
     })
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/groups/internal', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ groups: mockGroups }),
-    })
+    expect(mockClient.groups.updateInternal).toHaveBeenCalledWith(mockGroups)
   })
 
   it('handles save groups error', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.groups.updateInternal.mockResolvedValueOnce({
       ok: false,
-      json: async () => ({ error: 'Save failed' }),
+      status: 500,
+      error: 'Save failed',
     })
 
     const { result } = renderHook(() => useGroupManager({ isOpen: false }))
@@ -122,9 +137,10 @@ describe('useGroupManager', () => {
       { id: 'user2', name: 'Jane Smith' },
     ]
 
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.permissions.searchUsers.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { users: mockUsers } }),
+      status: 200,
+      data: { users: mockUsers },
     })
 
     const { result } = renderHook(() => useGroupManager({ isOpen: false }))
@@ -132,12 +148,13 @@ describe('useGroupManager', () => {
     const users = await result.current.handleSearchUsers('john', 10)
 
     expect(users).toEqual(mockUsers)
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/users/search?query=john&limit=10')
+    expect(mockClient.permissions.searchUsers).toHaveBeenCalledWith()
   })
 
   it('handles user search error', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.permissions.searchUsers.mockResolvedValueOnce({
       ok: false,
+      status: 500,
     })
 
     const { result } = renderHook(() => useGroupManager({ isOpen: false }))
@@ -153,9 +170,10 @@ describe('useGroupManager', () => {
       { id: 'ext2', name: 'External Group 2' },
     ]
 
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.groups.searchExternal.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { groups: mockExternalGroups } }),
+      status: 200,
+      data: { groups: mockExternalGroups },
     })
 
     const { result } = renderHook(() => useGroupManager({ isOpen: false }))
@@ -163,12 +181,13 @@ describe('useGroupManager', () => {
     const groups = await result.current.handleSearchExternalGroups('external')
 
     expect(groups).toEqual(mockExternalGroups)
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/groups/search?query=external')
+    expect(mockClient.groups.searchExternal).toHaveBeenCalledWith({ q: 'external' })
   })
 
   it('handles external group search error', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.groups.searchExternal.mockResolvedValueOnce({
       ok: false,
+      status: 500,
     })
 
     const { result } = renderHook(() => useGroupManager({ isOpen: false }))
@@ -182,15 +201,16 @@ describe('useGroupManager', () => {
     const { result } = renderHook(() => useGroupManager({ isOpen: false }))
 
     expect(result.current.groupsLoading).toBe(false)
-    expect(global.fetch).not.toHaveBeenCalled()
+    expect(mockClient.groups.getInternal).not.toHaveBeenCalled()
   })
 
   it('can manually reload groups', async () => {
     const mockGroups = [{ id: 'group1', name: 'Editors', members: [] }]
 
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.groups.getInternal.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { groups: mockGroups } }),
+      status: 200,
+      data: { groups: mockGroups },
     })
 
     const { result } = renderHook(() => useGroupManager({ isOpen: false }))
