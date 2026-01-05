@@ -3,22 +3,29 @@ import { createCanopyRequestHandler } from './handler'
 import type { CanopyRequest } from './types'
 import type { AuthPlugin } from '../auth/plugin'
 
-// Mock the branch API to avoid git operations
-vi.mock('../api/branch', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../api/branch')>()
-  return {
-    ...original,
-    createBranch: vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      data: {
-        branch: {
-          branch: { name: 'new-branch', status: 'editing', createdBy: 'test-user' },
-        },
+// Mock the BranchWorkspaceManager to avoid git operations
+vi.mock('../branch-workspace', () => ({
+  BranchWorkspaceManager: vi.fn().mockImplementation(() => ({
+    openOrCreateBranch: vi.fn().mockResolvedValue({
+      branch: {
+        name: 'new-branch',
+        status: 'editing',
+        createdBy: 'test-user',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        access: {},
       },
+      branchRoot: '/tmp/test',
+      baseRoot: '/tmp/base',
     }),
-  }
-})
+  })),
+  loadBranchContext: vi.fn().mockResolvedValue(null),
+}))
+
+// Mock the permissions loader to avoid file system operations
+vi.mock('../permissions-loader', () => ({
+  loadPathPermissions: vi.fn().mockResolvedValue([]),
+}))
 
 const ADMINS = 'Admins'
 

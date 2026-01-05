@@ -4,6 +4,9 @@ import type { ApiContext, ApiRequest } from './types'
 import { RESERVED_GROUPS } from '../reserved-groups'
 import { mockConsole } from '../test-utils/console-spy.js'
 
+// Extract handler for testing
+const markAsMergedHandler = markAsMerged.handler
+
 vi.mock('../branch-metadata', () => {
   return {
     BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
@@ -52,7 +55,7 @@ describe('branch merge api - markAsMerged', () => {
   })
 
   it('marks a submitted branch as archived after PR is merged', async () => {
-    const result = await markAsMerged(ctx, req, { branch: 'feature/x' })
+    const result = await markAsMergedHandler(ctx, req, { branch: 'feature/x' })
 
     expect(result.ok).toBe(true)
     expect(result.status).toBe(200)
@@ -60,7 +63,7 @@ describe('branch merge api - markAsMerged', () => {
   })
 
   it('verifies PR is merged on GitHub before marking', async () => {
-    await markAsMerged(ctx, req, { branch: 'feature/x' })
+    await markAsMergedHandler(ctx, req, { branch: 'feature/x' })
 
     expect(mockGithubService.getPullRequest).toHaveBeenCalledWith(42)
   })
@@ -68,7 +71,7 @@ describe('branch merge api - markAsMerged', () => {
   it('returns 404 if branch not found', async () => {
     ctx.getBranchContext = vi.fn().mockResolvedValue(null)
 
-    const result = await markAsMerged(ctx, req, { branch: 'nonexistent' })
+    const result = await markAsMergedHandler(ctx, req, { branch: 'nonexistent' })
 
     expect(result.ok).toBe(false)
     expect(result.status).toBe(404)
@@ -78,7 +81,7 @@ describe('branch merge api - markAsMerged', () => {
   it('returns 403 if user lacks admin access', async () => {
     req.user.groups = [] // Not an admin
 
-    const result = await markAsMerged(ctx, req, { branch: 'feature/x' })
+    const result = await markAsMergedHandler(ctx, req, { branch: 'feature/x' })
 
     expect(result.ok).toBe(false)
     expect(result.status).toBe(403)
@@ -97,7 +100,7 @@ describe('branch merge api - markAsMerged', () => {
       },
     })
 
-    const result = await markAsMerged(ctx, req, { branch: 'feature/x' })
+    const result = await markAsMergedHandler(ctx, req, { branch: 'feature/x' })
 
     expect(result.ok).toBe(false)
     expect(result.status).toBe(400)
@@ -116,7 +119,7 @@ describe('branch merge api - markAsMerged', () => {
       },
     })
 
-    const result = await markAsMerged(ctx, req, { branch: 'feature/x' })
+    const result = await markAsMergedHandler(ctx, req, { branch: 'feature/x' })
 
     expect(result.ok).toBe(false)
     expect(result.status).toBe(400)
@@ -126,7 +129,7 @@ describe('branch merge api - markAsMerged', () => {
   it('returns 400 if PR is not merged on GitHub', async () => {
     mockGithubService.getPullRequest = vi.fn().mockResolvedValue({ merged: false })
 
-    const result = await markAsMerged(ctx, req, { branch: 'feature/x' })
+    const result = await markAsMergedHandler(ctx, req, { branch: 'feature/x' })
 
     expect(result.ok).toBe(false)
     expect(result.status).toBe(400)
@@ -137,7 +140,7 @@ describe('branch merge api - markAsMerged', () => {
     const consoleSpy = mockConsole()
     mockGithubService.getPullRequest = vi.fn().mockRejectedValue(new Error('API error'))
 
-    const result = await markAsMerged(ctx, req, { branch: 'feature/x' })
+    const result = await markAsMergedHandler(ctx, req, { branch: 'feature/x' })
 
     // Should still succeed (manual override allowed)
     expect(result.ok).toBe(true)
@@ -149,7 +152,7 @@ describe('branch merge api - markAsMerged', () => {
   it('works without github service (manual mode)', async () => {
     ctx.services.githubService = undefined
 
-    const result = await markAsMerged(ctx, req, { branch: 'feature/x' })
+    const result = await markAsMergedHandler(ctx, req, { branch: 'feature/x' })
 
     expect(result.ok).toBe(true)
     expect(result.status).toBe(200)

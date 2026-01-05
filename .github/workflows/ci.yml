@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  validate:
+    name: Validate, Typecheck & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate API clients
+        run: npm run generate:client
+        working-directory: packages/canopycms
+
+      - name: Check generated files are committed
+        run: |
+          if [ -n "$(git status --porcelain packages/canopycms/src/api/client.ts packages/canopycms/src/api/__test__/mock-client.ts)" ]; then
+            echo "❌ Generated files are out of sync!"
+            echo ""
+            echo "Run 'npm run generate:client' in packages/canopycms and commit the changes."
+            echo ""
+            echo "Changes detected:"
+            git diff packages/canopycms/src/api/client.ts
+            git diff packages/canopycms/src/api/__test__/mock-client.ts
+            exit 1
+          fi
+          echo "✅ Generated files are up to date"
+
+      - name: TypeScript type checking
+        run: npm run typecheck
+        working-directory: packages/canopycms
+
+      - name: Run tests
+        run: npm test
+        working-directory: packages/canopycms

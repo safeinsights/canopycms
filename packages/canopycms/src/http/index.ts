@@ -4,7 +4,7 @@ export { jsonResponse } from './types'
 
 // Router
 export type { CanopyHandler, RouteDefinition, RouteMatch, CanopyRouter } from './router'
-export { CANOPY_ROUTES, createCanopyRouter } from './router'
+export { createCanopyRouter } from './router'
 
 // Core request handler
 export type { CanopyHandlerOptions, CanopyRequestHandler } from './handler'

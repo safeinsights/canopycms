@@ -1,18 +1,38 @@
+import { z } from 'zod'
+
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { PathPermission } from '../config'
 import { loadPathPermissions, savePathPermissions } from '../permissions-loader'
 import { resolveBranchPaths } from '../paths'
 import { isAdmin, isReviewer } from '../reserved-groups'
+import { defineEndpoint } from './route-builder'
 
 /** Response type for getting permissions */
 export type PermissionsResponse = ApiResponse<{ permissions: PathPermission[] }>
 
+/** Response type for user search */
+export type SearchUsersResponse = ApiResponse<{ users: any[] }>
+
+/** Response type for list groups */
+export type ListGroupsResponse = ApiResponse<{ groups: any[] }>
+
+// ============================================================================
+// Zod Schemas for Validation
+// ============================================================================
+
+const updatePermissionsBodySchema = z.object({
+  permissions: z.array(z.any()), // PathPermission type is complex, using any for now
+})
+
+export type UpdatePermissionsBody = z.infer<typeof updatePermissionsBodySchema>
+export type SearchUsersParams = { query: string; limit?: number }
+
 /**
  * Get current permissions (admin only)
  */
-export const getPermissions = async (
+const getPermissionsHandler = async (
   ctx: ApiContext,
-  req: ApiRequest<undefined>,
+  req: ApiRequest,
 ): Promise<PermissionsResponse> => {
   // Check admin permission
   if (!isAdmin(req.user.groups)) {
@@ -46,23 +66,20 @@ export const getPermissions = async (
   }
 }
 
-export interface UpdatePermissionsBody {
-  permissions: PathPermission[]
-}
-
 /**
  * Update permissions (admin only)
  */
-export const updatePermissions = async (
+const updatePermissionsHandler = async (
   ctx: ApiContext,
-  req: ApiRequest<UpdatePermissionsBody>,
+  req: ApiRequest,
+  body: z.infer<typeof updatePermissionsBodySchema>,
 ): Promise<ApiResponse> => {
   // Check admin permission
   if (!isAdmin(req.user.groups)) {
     return { ok: false, status: 403, error: 'Admin access required' }
   }
 
-  if (!req.body?.permissions) {
+  if (!body?.permissions) {
     return { ok: false, status: 400, error: 'permissions array required' }
   }
 
@@ -78,7 +95,7 @@ export const updatePermissions = async (
     const branchMode = ctx.services.config.mode ?? 'local-simple'
     const branchPaths = resolveBranchPaths(context, branchMode)
 
-    await savePathPermissions(branchPaths.branchRoot, req.body.permissions, req.user.userId)
+    await savePathPermissions(branchPaths.branchRoot, body.permissions, req.user.userId)
 
     // Commit the change
     if (ctx.services.createGitManagerFor) {
@@ -103,16 +120,10 @@ export const updatePermissions = async (
 /**
  * Search users (for permission UI)
  */
-export interface SearchUsersParams {
-  query: string
-  limit?: number
-}
-
-export const searchUsers = async (
+const searchUsersHandler = async (
   ctx: ApiContext,
-  req: ApiRequest<undefined>,
-  params: SearchUsersParams,
-): Promise<ApiResponse> => {
+  req: ApiRequest,
+): Promise<SearchUsersResponse> => {
   // Require admin or reviewer for user search
   if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
     return { ok: false, status: 403, error: 'Admin or Reviewer access required' }
@@ -123,8 +134,16 @@ export const searchUsers = async (
     return { ok: false, status: 501, error: 'Auth plugin not configured' }
   }
 
+  const query = req.query?.q as string | undefined
+  if (!query) {
+    return { ok: false, status: 400, error: 'Query parameter "q" is required' }
+  }
+
+  const limitStr = req.query?.limit as string | undefined
+  const limit = limitStr ? parseInt(limitStr, 10) : undefined
+
   try {
-    const users = await authPlugin.searchUsers(params.query, params.limit)
+    const users = await authPlugin.searchUsers(query, limit)
     return { ok: true, status: 200, data: { users } }
   } catch (error) {
     return {
@@ -138,10 +157,7 @@ export const searchUsers = async (
 /**
  * List groups (for permission UI)
  */
-export const listGroups = async (
-  ctx: ApiContext,
-  req: ApiRequest<undefined>,
-): Promise<ApiResponse> => {
+const listGroupsHandler = async (ctx: ApiContext, req: ApiRequest): Promise<ListGroupsResponse> => {
   // Require admin or reviewer for group list
   if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
     return { ok: false, status: 403, error: 'Admin or Reviewer access required' }
@@ -163,3 +179,78 @@ export const listGroups = async (
     }
   }
 }
+
+// ============================================================================
+// Route Definitions with defineEndpoint
+// ============================================================================
+
+/**
+ * Get current permissions (admin only)
+ * GET /permissions
+ */
+const getPermissions = defineEndpoint({
+  namespace: 'permissions',
+  name: 'get',
+  method: 'GET',
+  path: '/permissions',
+  responseType: 'PermissionsResponse',
+  response: {} as PermissionsResponse,
+  defaultMockData: { permissions: [] },
+  handler: getPermissionsHandler,
+})
+
+/**
+ * Update permissions (admin only)
+ * PUT /permissions
+ */
+const updatePermissions = defineEndpoint({
+  namespace: 'permissions',
+  name: 'update',
+  method: 'PUT',
+  path: '/permissions',
+  body: updatePermissionsBodySchema,
+  responseType: 'PermissionsResponse',
+  response: {} as PermissionsResponse,
+  defaultMockData: { permissions: [] },
+  handler: updatePermissionsHandler,
+})
+
+/**
+ * Search for users (admin/reviewer only)
+ * GET /users/search?q=...
+ */
+const searchUsers = defineEndpoint({
+  namespace: 'permissions',
+  name: 'searchUsers',
+  method: 'GET',
+  path: '/users/search',
+  responseType: 'SearchUsersResponse',
+  response: {} as SearchUsersResponse,
+  defaultMockData: { users: [] },
+  handler: searchUsersHandler,
+})
+
+/**
+ * List groups (admin/reviewer only)
+ * GET /groups
+ */
+const listGroups = defineEndpoint({
+  namespace: 'permissions',
+  name: 'listGroups',
+  method: 'GET',
+  path: '/groups',
+  responseType: 'ListGroupsResponse',
+  response: {} as ListGroupsResponse,
+  defaultMockData: { groups: [] },
+  handler: listGroupsHandler,
+})
+
+/**
+ * Exported routes for router registration
+ */
+export const PERMISSION_ROUTES = {
+  get: getPermissions,
+  update: updatePermissions,
+  searchUsers: searchUsers,
+  listGroups: listGroups,
+} as const

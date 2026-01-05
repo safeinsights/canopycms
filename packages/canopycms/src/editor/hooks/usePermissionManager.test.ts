@@ -1,6 +1,17 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { usePermissionManager } from './usePermissionManager'
+import { usePermissionManager, resetApiClient } from './usePermissionManager'
+import type { MockApiClient } from '../../api/__test__/mock-client'
+import { setupMockApiClient, setupMockConsole } from './__test__/test-utils'
+
+// Mock the API client module
+vi.mock('../../api', async () => {
+  const actual = await vi.importActual('../../api')
+  return {
+    ...actual,
+    createApiClient: vi.fn(),
+  }
+})
 
 // Mock notifications
 vi.mock('@mantine/notifications', () => ({
@@ -10,12 +21,15 @@ vi.mock('@mantine/notifications', () => ({
 }))
 
 describe('usePermissionManager', () => {
-  beforeEach(() => {
-    global.fetch = vi.fn()
+  let mockClient: MockApiClient
+
+  beforeEach(async () => {
+    mockClient = await setupMockApiClient()
+    resetApiClient()
   })
 
   afterEach(() => {
-    vi.restoreAllMocks()
+    vi.clearAllMocks()
   })
 
   it('initializes with empty permissions', () => {
@@ -31,9 +45,10 @@ describe('usePermissionManager', () => {
       { path: '/content/posts', groups: ['writers'], access: 'read' },
     ]
 
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.permissions.get.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { permissions: mockPermissions } }),
+      status: 200,
+      data: { permissions: mockPermissions },
     })
 
     const { result } = renderHook(() => usePermissionManager({ isOpen: true }))
@@ -46,13 +61,14 @@ describe('usePermissionManager', () => {
     })
 
     expect(result.current.permissionsData).toEqual(mockPermissions)
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/permissions')
+    expect(mockClient.permissions.get).toHaveBeenCalled()
   })
 
   it('handles load permissions error', async () => {
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    ;(global.fetch as any).mockResolvedValueOnce({
+    const { error, restore } = setupMockConsole(['error'])
+    mockClient.permissions.get.mockResolvedValueOnce({
       ok: false,
+      status: 500,
     })
 
     const { result } = renderHook(() => usePermissionManager({ isOpen: true }))
@@ -62,16 +78,17 @@ describe('usePermissionManager', () => {
     })
 
     expect(result.current.permissionsData).toEqual([])
-    consoleErrorSpy.mockRestore()
+    restore()
   })
 
   it('saves permissions successfully', async () => {
     const mockPermissions = [{ path: '/content/pages', groups: ['editors'], access: 'write' }]
 
     // Mock initial load
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.permissions.get.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { permissions: [] } }),
+      status: 200,
+      data: { permissions: [] },
     })
 
     const { result } = renderHook(() => usePermissionManager({ isOpen: true }))
@@ -81,15 +98,16 @@ describe('usePermissionManager', () => {
     })
 
     // Mock save
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.permissions.update.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({}),
+      status: 200,
     })
 
     // Mock reload after save
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.permissions.get.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { permissions: mockPermissions } }),
+      status: 200,
+      data: { permissions: mockPermissions },
     })
 
     await result.current.handleSavePermissions(mockPermissions)
@@ -98,17 +116,14 @@ describe('usePermissionManager', () => {
       expect(result.current.permissionsData).toEqual(mockPermissions)
     })
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/permissions', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ permissions: mockPermissions }),
-    })
+    expect(mockClient.permissions.update).toHaveBeenCalledWith(mockPermissions)
   })
 
   it('handles save permissions error', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.permissions.update.mockResolvedValueOnce({
       ok: false,
-      json: async () => ({ error: 'Save failed' }),
+      status: 500,
+      error: 'Save failed',
     })
 
     const { result } = renderHook(() => usePermissionManager({ isOpen: false }))
@@ -122,9 +137,10 @@ describe('usePermissionManager', () => {
       { id: 'group2', name: 'Writers' },
     ]
 
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.permissions.listGroups.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { groups: mockGroups } }),
+      status: 200,
+      data: { groups: mockGroups },
     })
 
     const { result } = renderHook(() => usePermissionManager({ isOpen: false }))
@@ -132,12 +148,13 @@ describe('usePermissionManager', () => {
     const groups = await result.current.handleListGroups()
 
     expect(groups).toEqual(mockGroups)
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/groups')
+    expect(mockClient.permissions.listGroups).toHaveBeenCalled()
   })
 
   it('handles list groups error', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.permissions.listGroups.mockResolvedValueOnce({
       ok: false,
+      status: 500,
     })
 
     const { result } = renderHook(() => usePermissionManager({ isOpen: false }))
@@ -151,15 +168,16 @@ describe('usePermissionManager', () => {
     const { result } = renderHook(() => usePermissionManager({ isOpen: false }))
 
     expect(result.current.permissionsLoading).toBe(false)
-    expect(global.fetch).not.toHaveBeenCalled()
+    expect(mockClient.permissions.get).not.toHaveBeenCalled()
   })
 
   it('can manually reload permissions', async () => {
     const mockPermissions = [{ path: '/content/pages', groups: ['editors'], access: 'write' }]
 
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.permissions.get.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { permissions: mockPermissions } }),
+      status: 200,
+      data: { permissions: mockPermissions },
     })
 
     const { result } = renderHook(() => usePermissionManager({ isOpen: false }))

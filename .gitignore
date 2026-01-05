@@ -8,5 +8,5 @@ dist
 coverage
 .DS_Store
 reference
-test-results/.last-run.json
-playwright-report
+test-results/
+playwright-report/

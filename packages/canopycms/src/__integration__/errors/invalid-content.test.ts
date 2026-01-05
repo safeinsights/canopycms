@@ -165,13 +165,11 @@ describe('Invalid Content Errors', () => {
       title: 'Missing Fields',
     })
 
-    // Try to write without collection field
+    // Try to write without format field (required in body)
     const response = await editorClient.put(
       '/api/canopycms/feature-missing-fields/content/posts/test',
       {
-        // Missing: collection
-        slug: 'test',
-        format: 'mdx',
+        // Missing: format (required field)
         data: { title: 'Test' },
         body: 'Content',
       },
@@ -180,7 +178,7 @@ describe('Invalid Content Errors', () => {
     expect(response.status).toBe(400)
     expect(response.ok).toBe(false)
     const error = await response.json<ApiResponse>()
-    expect(error.error).toContain('collection')
+    expect(error.error).toContain('format')
   })
 
   it('returns 400 for invalid format type', async () => {

@@ -1,6 +1,21 @@
 import { useEffect, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { PathPermission } from '../../config'
+import { createApiClient } from '../../api'
+
+// Lazy singleton - created on first access to pick up any fetch mocks in tests
+let apiClient: ReturnType<typeof createApiClient> | null = null
+function getApiClient() {
+  if (!apiClient) {
+    apiClient = createApiClient()
+  }
+  return apiClient
+}
+
+// For testing: reset the singleton to pick up new fetch mocks
+export function resetApiClient() {
+  apiClient = null
+}
 
 export interface UsePermissionManagerOptions {
   /**
@@ -49,10 +64,9 @@ export function usePermissionManager(
   const loadPermissions = async () => {
     setPermissionsLoading(true)
     try {
-      const res = await fetch('/api/canopycms/permissions')
-      if (!res.ok) throw new Error('Failed to load permissions')
-      const data = await res.json()
-      setPermissionsData(data.data?.permissions ?? [])
+      const result = await getApiClient().permissions.get()
+      if (!result.ok) throw new Error('Failed to load permissions')
+      setPermissionsData(result.data?.permissions ?? [])
     } catch (err) {
       console.error('Failed to load permissions:', err)
       notifications.show({ message: 'Failed to load permissions', color: 'red' })
@@ -63,14 +77,9 @@ export function usePermissionManager(
 
   const handleSavePermissions = async (permissions: PathPermission[]) => {
     try {
-      const res = await fetch('/api/canopycms/permissions', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ permissions }),
-      })
-      if (!res.ok) {
-        const payload = await res.json()
-        throw new Error(payload.error || 'Failed to save permissions')
+      const result = await getApiClient().permissions.update(permissions)
+      if (!result.ok) {
+        throw new Error(result.error || 'Failed to save permissions')
       }
       notifications.show({
         title: 'Permissions Saved',
@@ -87,10 +96,9 @@ export function usePermissionManager(
 
   const handleListGroups = async () => {
     try {
-      const res = await fetch('/api/canopycms/groups')
-      if (!res.ok) return []
-      const data = await res.json()
-      return data.data?.groups ?? []
+      const result = await getApiClient().permissions.listGroups()
+      if (!result.ok) return []
+      return result.data?.groups ?? []
     } catch (err) {
       console.error('Group list failed:', err)
       return []

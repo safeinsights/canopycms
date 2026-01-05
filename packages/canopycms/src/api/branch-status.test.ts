@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { getBranchStatus, submitBranchForMerge } from './branch-status'
+import { WORKFLOW_ROUTES } from './branch-status'
 import type { ApiContext } from './types'
+
+// Extract handlers for testing
+const getBranchStatus = WORKFLOW_ROUTES.getStatus.handler
+const submitBranchForMerge = WORKFLOW_ROUTES.submit.handler
 
 const mockMetadataUpdate = vi.fn().mockResolvedValue({
   schemaVersion: 1,

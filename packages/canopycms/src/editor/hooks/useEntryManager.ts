@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { notifications } from '@mantine/notifications'
-import type { ApiResponse } from '../../api/types'
 import type { ListEntriesResponse } from '../../api/entries'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { FormValue } from '../FormRenderer'
@@ -9,6 +8,21 @@ import {
   buildWritePayload,
   normalizeContentPayload,
 } from '../editor-utils'
+import { createApiClient } from '../../api'
+
+// Lazy singleton - created on first access to pick up any fetch mocks in tests
+let apiClient: ReturnType<typeof createApiClient> | null = null
+function getApiClient() {
+  if (!apiClient) {
+    apiClient = createApiClient()
+  }
+  return apiClient
+}
+
+// For testing: reset the singleton to pick up new fetch mocks
+export function resetApiClient() {
+  apiClient = null
+}
 
 export interface UseEntryManagerOptions {
   initialEntries: EditorEntry[]
@@ -92,31 +106,40 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   )
 
   const loadEntry = async (entry: EditorEntry) => {
-    const res = await fetch(entry.apiPath)
-    if (!res.ok) throw new Error(`Load failed: ${res.status}`)
-    const payload = (await res.json()) as ApiResponse
-    const content = 'data' in payload ? (payload as ApiResponse).data : payload
-    return normalizeContentPayload(content)
+    if (!entry.collectionId || entry.slug == null) {
+      throw new Error('Entry missing collectionId or slug')
+    }
+    const result = await getApiClient().content.read({
+      branch: options.branchName,
+      collection: entry.collectionId,
+      slug: entry.slug,
+    })
+    if (!result.ok) throw new Error(`Load failed: ${result.status}`)
+    return normalizeContentPayload(result.data)
   }
 
   const saveEntry = async (entry: EditorEntry, value: FormValue) => {
-    const res = await fetch(entry.apiPath, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildWritePayload(entry, value)),
-    })
-    if (!res.ok) throw new Error(`Save failed: ${res.status}`)
-    const payload = (await res.json()) as ApiResponse
-    const content = 'data' in payload ? (payload as ApiResponse).data : payload
-    return normalizeContentPayload(content)
+    if (!entry.collectionId || entry.slug == null) {
+      throw new Error('Entry missing collectionId or slug')
+    }
+    const payload = buildWritePayload(entry, value)
+    const result = await getApiClient().content.write(
+      {
+        branch: options.branchName,
+        collection: entry.collectionId,
+        slug: entry.slug,
+      },
+      payload as any, // buildWritePayload returns the correct shape
+    )
+    if (!result.ok) throw new Error(`Save failed: ${result.status}`)
+    return normalizeContentPayload(result.data)
   }
 
   const refreshEntries = async (branch: string = options.branchName) => {
     if (!branch) return
-    const res = await fetch(`/api/canopycms/${branch}/entries`)
-    if (!res.ok) throw new Error(`Refresh failed: ${res.status}`)
-    const payload = (await res.json()) as ApiResponse<ListEntriesResponse>
-    const data = ('data' in payload ? payload.data : payload) as ListEntriesResponse
+    const result = await getApiClient().entries.list({ branch })
+    if (!result.ok) throw new Error(`Refresh failed: ${result.status}`)
+    const data = result.data as ListEntriesResponse
     const refreshed = buildEntriesFromListResponse({
       response: data,
       branchName: branch,
@@ -143,15 +166,15 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         col.format === 'json'
           ? { collection: collectionId, slug, format: 'json' as const, data: {} }
           : { collection: collectionId, slug, format: col.format, data: {}, body: '' }
-      const res = await fetch(
-        `/api/canopycms/${options.branchName}/content/${encodeURIComponent(collectionId)}/${encodeURIComponent(slug)}`,
+      const result = await getApiClient().content.write(
         {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          branch: options.branchName,
+          collection: collectionId,
+          slug,
         },
+        payload as any,
       )
-      if (!res.ok) throw new Error(`Create failed: ${res.status}`)
+      if (!result.ok) throw new Error(`Create failed: ${result.status}`)
       await refreshEntries()
       notifications.show({ message: 'Created new entry', color: 'green' })
     } catch (err) {

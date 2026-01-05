@@ -18,10 +18,12 @@
     "dist"
   ],
   "scripts": {
+    "prebuild": "npx tsx scripts/generate-client.ts",
     "build": "tsc -p tsconfig.build.json",
     "lint": "echo \"TODO: add lint\"",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "generate:client": "npx tsx scripts/generate-client.ts",
     "storybook": "storybook dev -p 6006 -c .storybook",
     "storybook:build": "storybook build -c .storybook"
   },

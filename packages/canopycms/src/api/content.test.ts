@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { readContent, writeContent } from './content'
+import { CONTENT_ROUTES } from './content'
 import type { ApiContext } from './types'
+
+// Extract handlers for testing
+const readContent = CONTENT_ROUTES.read.handler
+const writeContent = CONTENT_ROUTES.write.handler
 
 vi.mock('../content-store', () => {
   return {
@@ -88,11 +92,12 @@ describe('content api', () => {
 
   it('writes content with correct format handling', async () => {
     const ctx = allowedCtx()
-    const res = await writeContent(ctx, {
-      user: { type: 'authenticated', userId: 'u1', groups: [] },
-      branch: 'feature/x',
-      body: { collection: 'posts', slug: 'hello', format: 'json', data: { title: 'hi' } },
-    })
+    const res = await writeContent(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x', collection: 'posts', slug: 'hello' },
+      { format: 'json', data: { title: 'hi' } },
+    )
     expect(res.ok).toBe(true)
   })
 })

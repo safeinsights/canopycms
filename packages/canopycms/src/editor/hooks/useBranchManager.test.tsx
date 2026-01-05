@@ -1,7 +1,23 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useBranchManager, UseBranchManagerOptions } from './useBranchManager'
+import { useBranchManager, UseBranchManagerOptions, resetApiClient } from './useBranchManager'
 import type { BranchMetadata } from '../../types'
+import type { MockApiClient } from '../../api/__test__/mock-client'
+import {
+  setupMockApiClient,
+  setupMockLocation,
+  setupMockHistory,
+  setupMockConsole,
+} from './__test__/test-utils'
+
+// Mock the API client module
+vi.mock('../../api', async () => {
+  const actual = await vi.importActual('../../api')
+  return {
+    ...actual,
+    createApiClient: vi.fn(),
+  }
+})
 
 // Mock notifications
 vi.mock('@mantine/notifications', () => ({
@@ -18,6 +34,8 @@ vi.mock('@mantine/modals', () => ({
 }))
 
 describe('useBranchManager', () => {
+  let mockClient: MockApiClient
+
   const mockBranches: BranchMetadata[] = [
     {
       name: 'main',
@@ -48,25 +66,23 @@ describe('useBranchManager', () => {
     comments: [],
   }
 
-  beforeEach(() => {
-    global.fetch = vi.fn()
-    delete (window as any).location
-    window.location = {
-      href: 'http://localhost/',
-      search: '',
-    } as any
-    window.history.replaceState = vi.fn()
+  beforeEach(async () => {
+    mockClient = await setupMockApiClient()
+    resetApiClient()
+
+    setupMockLocation()
+    setupMockHistory()
   })
 
   afterEach(() => {
-    vi.restoreAllMocks()
+    vi.clearAllMocks()
   })
 
   it('initializes with initial branch', () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      json: async () => ({ data: { branches: [] } }),
+      data: { branches: [] },
     })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions))
@@ -76,9 +92,10 @@ describe('useBranchManager', () => {
   })
 
   it('loads branches on mount', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { branches: mockBranches } }),
+      status: 200,
+      data: { branches: mockBranches },
     })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions))
@@ -87,13 +104,13 @@ describe('useBranchManager', () => {
       expect(result.current.branches).toEqual(mockBranches)
     })
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/branches')
+    expect(mockClient.branches.list).toHaveBeenCalled()
     expect(mockSetBusy).toHaveBeenCalledWith(true)
     expect(mockSetBusy).toHaveBeenCalledWith(false)
   })
 
   it('handles branch load returning 404 gracefully', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.branches.list.mockResolvedValueOnce({
       ok: false,
       status: 404,
     })
@@ -106,8 +123,8 @@ describe('useBranchManager', () => {
   })
 
   it('handles branch load error', async () => {
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    ;(global.fetch as any).mockResolvedValueOnce({
+    const { restore } = setupMockConsole(['error'])
+    mockClient.branches.list.mockResolvedValueOnce({
       ok: false,
       status: 500,
     })
@@ -118,13 +135,14 @@ describe('useBranchManager', () => {
       expect(mockSetBusy).toHaveBeenCalledWith(false)
     })
 
-    consoleErrorSpy.mockRestore()
+    restore()
   })
 
   it('computes currentBranch and branchStatus', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { branches: mockBranches } }),
+      status: 200,
+      data: { branches: mockBranches },
     })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions))
@@ -135,56 +153,23 @@ describe('useBranchManager', () => {
     })
   })
 
-  // NOTE: Moved to useBranchActions - needs new test file
-  it.skip('handles branch change without unsaved changes', async () => {
-    ;(global.fetch as any).mockResolvedValue({
-      ok: true,
-      json: async () => ({ data: { branches: mockBranches } }),
-    })
-
-    const { result } = renderHook(() => useBranchManager(defaultOptions))
-
-    await waitFor(() => {
-      expect(result.current.branches).toHaveLength(2)
-    })
-
-    // handleBranchChange moved to useBranchActions
-  })
-
-  // NOTE: Moved to useBranchActions - needs new test file
-  it.skip('shows confirmation modal when switching with unsaved changes', async () => {
-    // handleBranchChange and dirty checking moved to useBranchActions
-  })
-
-  // NOTE: Moved to useBranchActions - needs new test file
-  it.skip('does not switch branch when already on that branch', async () => {
-    // handleBranchChange moved to useBranchActions
-  })
-
-  // NOTE: Moved to useBranchActions - needs new test file
-  it.skip('creates new branch successfully', async () => {
-    // handleCreateBranch moved to useBranchActions
-  })
-
-  // NOTE: Moved to useBranchActions - needs new test file
-  it.skip('handles create branch error', async () => {
-    // handleCreateBranch moved to useBranchActions
-  })
-
   it('submits branch successfully', async () => {
-    ;(global.fetch as any)
+    mockClient.branches.list
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ data: { branches: mockBranches } }),
+        status: 200,
+        data: { branches: mockBranches },
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({}),
+        status: 200,
+        data: { branches: mockBranches },
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: { branches: mockBranches } }),
-      })
+
+    mockClient.workflow.submit.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+    })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions))
 
@@ -196,22 +181,24 @@ describe('useBranchManager', () => {
       await result.current.handleSubmit('feature')
     })
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/feature/submit', { method: 'POST' })
+    expect(mockClient.workflow.submit).toHaveBeenCalledWith({ branch: 'feature' })
     expect(mockSetBusy).toHaveBeenCalledWith(true)
     expect(mockSetBusy).toHaveBeenCalledWith(false)
   })
 
   it('handles submit error', async () => {
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    ;(global.fetch as any)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: { branches: mockBranches } }),
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        json: async () => ({ error: 'Submit failed' }),
-      })
+    const { restore } = setupMockConsole(['error'])
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches },
+    })
+
+    mockClient.workflow.submit.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      error: 'Submit failed',
+    })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions))
 
@@ -224,23 +211,26 @@ describe('useBranchManager', () => {
     })
 
     expect(mockSetBusy).toHaveBeenCalledWith(false)
-    consoleErrorSpy.mockRestore()
+    restore()
   })
 
   it('withdraws branch successfully', async () => {
-    ;(global.fetch as any)
+    mockClient.branches.list
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ data: { branches: mockBranches } }),
+        status: 200,
+        data: { branches: mockBranches },
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({}),
+        status: 200,
+        data: { branches: mockBranches },
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: { branches: mockBranches } }),
-      })
+
+    mockClient.workflow.withdraw.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+    })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions))
 
@@ -252,23 +242,26 @@ describe('useBranchManager', () => {
       await result.current.handleWithdraw('feature')
     })
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/feature/withdraw', { method: 'POST' })
+    expect(mockClient.workflow.withdraw).toHaveBeenCalledWith({ branch: 'feature' })
   })
 
   it('requests changes successfully', async () => {
-    ;(global.fetch as any)
+    mockClient.branches.list
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ data: { branches: mockBranches } }),
+        status: 200,
+        data: { branches: mockBranches },
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({}),
+        status: 200,
+        data: { branches: mockBranches },
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: { branches: mockBranches } }),
-      })
+
+    mockClient.workflow.requestChanges.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+    })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions))
 
@@ -280,20 +273,20 @@ describe('useBranchManager', () => {
       await result.current.handleRequestChanges('feature')
     })
 
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/feature/request-changes', {
-      method: 'POST',
-    })
+    expect(mockClient.workflow.requestChanges).toHaveBeenCalledWith({ branch: 'feature' }, {})
   })
 
   it('reloads branch data', async () => {
-    ;(global.fetch as any)
+    mockClient.branches.list
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ data: { branches: mockBranches } }),
+        status: 200,
+        data: { branches: mockBranches },
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ data: { branches: mockBranches } }),
+        status: 200,
+        data: { branches: mockBranches },
       })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions))
@@ -306,14 +299,15 @@ describe('useBranchManager', () => {
       await result.current.handleReloadBranchData()
     })
 
-    // Verify loadBranches was called (via fetch)
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/branches')
+    // Verify loadBranches was called
+    expect(mockClient.branches.list).toHaveBeenCalledTimes(2)
   })
 
   it('syncs branch name to URL', async () => {
-    ;(global.fetch as any).mockResolvedValue({
+    mockClient.branches.list.mockResolvedValue({
       ok: true,
-      json: async () => ({ data: { branches: mockBranches } }),
+      status: 200,
+      data: { branches: mockBranches },
     })
 
     renderHook(() => useBranchManager(defaultOptions))
@@ -327,15 +321,11 @@ describe('useBranchManager', () => {
     expect(urlCall).toBeTruthy()
   })
 
-  // NOTE: Moved to useBranchActions - needs new test file
-  it.skip('calls onBranchSwitch callback when provided', async () => {
-    // onBranchSwitch and handleBranchChange moved to useBranchActions
-  })
-
   it('loads branches on mount', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.branches.list.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { branches: mockBranches } }),
+      status: 200,
+      data: { branches: mockBranches },
     })
 
     const { result } = renderHook(() => useBranchManager(defaultOptions))
@@ -345,24 +335,19 @@ describe('useBranchManager', () => {
     })
 
     // Verify loadBranches was called
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/branches')
-  })
-
-  // NOTE: Comment loading moved to useCommentSystem
-  it.skip('loads comments when branch name changes', async () => {
-    // Comment loading is now handled by useCommentSystem hook
+    expect(mockClient.branches.list).toHaveBeenCalled()
   })
 
   it('handles error during loadBranches in useEffect', async () => {
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    ;(global.fetch as any).mockRejectedValueOnce(new Error('Network error'))
+    const { error, restore } = setupMockConsole(['error'])
+    mockClient.branches.list.mockRejectedValueOnce(new Error('Network error'))
 
     renderHook(() => useBranchManager(defaultOptions))
 
     await waitFor(() => {
-      expect(consoleErrorSpy).toHaveBeenCalled()
+      expect(error).toHaveBeenCalled()
     })
 
-    consoleErrorSpy.mockRestore()
+    restore()
   })
 })

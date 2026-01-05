@@ -1,8 +1,19 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useCommentSystem } from './useCommentSystem'
+import { useCommentSystem, resetApiClient } from './useCommentSystem'
 import type { EditorEntry } from '../Editor'
 import type { CommentThread } from '../../comment-store'
+import type { MockApiClient } from '../../api/__test__/mock-client'
+import { setupMockApiClient, setupMockConsole } from './__test__/test-utils'
+
+// Mock the API client module
+vi.mock('../../api', async () => {
+  const actual = await vi.importActual('../../api')
+  return {
+    ...actual,
+    createApiClient: vi.fn(),
+  }
+})
 
 // Mock notifications
 vi.mock('@mantine/notifications', () => ({
@@ -12,6 +23,8 @@ vi.mock('@mantine/notifications', () => ({
 }))
 
 describe('useCommentSystem', () => {
+  let mockClient: MockApiClient
+
   const mockEntry: EditorEntry = {
     id: 'entry1',
     label: 'Test Entry',
@@ -92,17 +105,20 @@ describe('useCommentSystem', () => {
     setBranchManagerOpen: vi.fn(),
   }
 
-  beforeEach(() => {
-    // Mock fetch with default successful response to handle automatic loadComments on mount
-    global.fetch = vi.fn().mockResolvedValue({
+  beforeEach(async () => {
+    mockClient = await setupMockApiClient()
+    // Mock default response for automatic loadComments on mount
+    mockClient.comments.list.mockResolvedValue({
       ok: true,
-      json: async () => ({ data: { threads: [] } }),
+      status: 200,
+      data: { threads: [] },
     })
+    resetApiClient()
     mockReloadBranches.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
-    vi.restoreAllMocks()
+    vi.clearAllMocks()
   })
 
   it('initializes with empty state', () => {
@@ -122,9 +138,10 @@ describe('useCommentSystem', () => {
     const { result } = renderHook(() => useCommentSystem(defaultOptions))
 
     // Override the default empty response with mockComments
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.comments.list.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { threads: mockComments } }),
+      status: 200,
+      data: { threads: mockComments },
     })
 
     await act(async () => {
@@ -134,16 +151,16 @@ describe('useCommentSystem', () => {
     await waitFor(() => {
       expect(result.current.comments).toEqual(mockComments)
     })
-    expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/main/comments')
+    expect(mockClient.comments.list).toHaveBeenCalledWith({ branch: 'main' })
   })
 
   it('handles load comments error gracefully', async () => {
-    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { error, restore } = setupMockConsole(['error'])
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions))
 
     // Override the default mock for this specific test
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.comments.list.mockResolvedValueOnce({
       ok: false,
       status: 500,
     })
@@ -152,15 +169,16 @@ describe('useCommentSystem', () => {
       await result.current.loadComments('main')
     })
 
-    expect(consoleErrorSpy).toHaveBeenCalledWith('Failed to load comments:', 500)
+    expect(error).toHaveBeenCalledWith('Failed to load comments:', 500)
     expect(result.current.comments).toEqual([])
-    consoleErrorSpy.mockRestore()
+    restore()
   })
 
   it('loads comments when branchName changes', async () => {
-    ;(global.fetch as any).mockResolvedValue({
+    mockClient.comments.list.mockResolvedValue({
       ok: true,
-      json: async () => ({ data: { threads: [] } }),
+      status: 200,
+      data: { threads: [] },
     })
 
     const { rerender } = renderHook((props) => useCommentSystem(props), {
@@ -168,30 +186,33 @@ describe('useCommentSystem', () => {
     })
 
     await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/main/comments')
+      expect(mockClient.comments.list).toHaveBeenCalledWith({ branch: 'main' })
     })
 
     rerender({ ...defaultOptions, branchName: 'feature' })
 
     await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith('/api/canopycms/feature/comments')
+      expect(mockClient.comments.list).toHaveBeenCalledWith({ branch: 'feature' })
     })
   })
 
   it('adds field comment successfully', async () => {
-    ;(global.fetch as any)
+    mockClient.comments.list
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ data: { threads: [] } }),
+        status: 200,
+        data: { threads: [] },
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({}),
+        status: 200,
+        data: { threads: mockComments },
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: { threads: mockComments } }),
-      })
+
+    mockClient.comments.add.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+    })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions))
 
@@ -199,38 +220,37 @@ describe('useCommentSystem', () => {
       await result.current.handleAddComment('Test comment', 'field', 'entry1', 'title')
     })
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      '/api/canopycms/main/comments',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: 'Test comment',
-          type: 'field',
-          entryId: 'entry1',
-          canopyPath: 'title',
-          threadId: undefined,
-        }),
-      }),
+    expect(mockClient.comments.add).toHaveBeenCalledWith(
+      { branch: 'main' },
+      {
+        text: 'Test comment',
+        type: 'field',
+        entryId: 'entry1',
+        canopyPath: 'title',
+        threadId: undefined,
+      },
     )
     // Branch summaries auto-update via useMemo watching comments
     // No need to reload branches explicitly
   })
 
   it('adds entry comment successfully', async () => {
-    ;(global.fetch as any)
+    mockClient.comments.list
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ data: { threads: [] } }),
+        status: 200,
+        data: { threads: [] },
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({}),
+        status: 200,
+        data: { threads: [] },
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: { threads: [] } }),
-      })
+
+    mockClient.comments.add.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+    })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions))
 
@@ -238,34 +258,34 @@ describe('useCommentSystem', () => {
       await result.current.handleAddComment('Test comment', 'entry', 'entry1')
     })
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      '/api/canopycms/main/comments',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          text: 'Test comment',
-          type: 'entry',
-          entryId: 'entry1',
-          threadId: undefined,
-        }),
-      }),
+    expect(mockClient.comments.add).toHaveBeenCalledWith(
+      { branch: 'main' },
+      {
+        text: 'Test comment',
+        type: 'entry',
+        entryId: 'entry1',
+        threadId: undefined,
+      },
     )
   })
 
   it('adds branch comment successfully', async () => {
-    ;(global.fetch as any)
+    mockClient.comments.list
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ data: { threads: [] } }),
+        status: 200,
+        data: { threads: [] },
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({}),
+        status: 200,
+        data: { threads: [] },
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: { threads: [] } }),
-      })
+
+    mockClient.comments.add.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+    })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions))
 
@@ -273,29 +293,27 @@ describe('useCommentSystem', () => {
       await result.current.handleAddComment('Test comment', 'branch')
     })
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      '/api/canopycms/main/comments',
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({
-          text: 'Test comment',
-          type: 'branch',
-          threadId: undefined,
-        }),
-      }),
+    expect(mockClient.comments.add).toHaveBeenCalledWith(
+      { branch: 'main' },
+      {
+        text: 'Test comment',
+        type: 'branch',
+        threadId: undefined,
+      },
     )
   })
 
   it('handles add comment error', async () => {
-    ;(global.fetch as any)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: { threads: [] } }),
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-      })
+    mockClient.comments.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { threads: [] },
+    })
+
+    mockClient.comments.add.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+    })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions))
 
@@ -307,19 +325,22 @@ describe('useCommentSystem', () => {
   })
 
   it('resolves thread successfully', async () => {
-    ;(global.fetch as any)
+    mockClient.comments.list
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ data: { threads: [] } }),
+        status: 200,
+        data: { threads: [] },
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({}),
+        status: 200,
+        data: { threads: [] },
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: { threads: [] } }),
-      })
+
+    mockClient.comments.resolve.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+    })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions))
 
@@ -327,26 +348,25 @@ describe('useCommentSystem', () => {
       await result.current.handleResolveThread('thread1')
     })
 
-    expect(global.fetch).toHaveBeenCalledWith(
-      '/api/canopycms/main/comments/thread1/resolve',
-      expect.objectContaining({
-        method: 'POST',
-      }),
-    )
+    expect(mockClient.comments.resolve).toHaveBeenCalledWith({
+      branch: 'main',
+      threadId: 'thread1',
+    })
     // Branch summaries auto-update via useMemo watching comments
     // No need to reload branches explicitly
   })
 
   it('handles resolve thread error', async () => {
-    ;(global.fetch as any)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ data: { threads: [] } }),
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-      })
+    mockClient.comments.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { threads: [] },
+    })
+
+    mockClient.comments.resolve.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+    })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions))
 
@@ -358,9 +378,10 @@ describe('useCommentSystem', () => {
   })
 
   it('computes activeThreads for field context', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.comments.list.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { threads: mockComments } }),
+      status: 200,
+      data: { threads: mockComments },
     })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions))
@@ -379,9 +400,10 @@ describe('useCommentSystem', () => {
   })
 
   it('computes activeThreads for entry context', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.comments.list.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { threads: mockComments } }),
+      status: 200,
+      data: { threads: mockComments },
     })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions))
@@ -400,9 +422,10 @@ describe('useCommentSystem', () => {
   })
 
   it('computes activeThreads for branch context', async () => {
-    ;(global.fetch as any).mockResolvedValueOnce({
+    mockClient.comments.list.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ data: { threads: mockComments } }),
+      status: 200,
+      data: { threads: mockComments },
     })
 
     const { result } = renderHook(() => useCommentSystem(defaultOptions))
@@ -526,10 +549,7 @@ describe('useCommentSystem', () => {
       await result.current.handleAddComment('Test', 'field', 'entry1', 'title')
     })
 
-    expect(global.fetch).not.toHaveBeenCalledWith(
-      expect.stringContaining('/comments'),
-      expect.anything(),
-    )
+    expect(mockClient.comments.add).not.toHaveBeenCalled()
   })
 
   it('does not resolve thread when branchName is empty', async () => {
@@ -539,9 +559,6 @@ describe('useCommentSystem', () => {
       await result.current.handleResolveThread('thread1')
     })
 
-    expect(global.fetch).not.toHaveBeenCalledWith(
-      expect.stringContaining('/resolve'),
-      expect.anything(),
-    )
+    expect(mockClient.comments.resolve).not.toHaveBeenCalled()
   })
 })

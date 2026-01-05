@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
-import { listComments, addComment, resolveComment } from './comments'
+import { COMMENT_ROUTES } from './comments'
 import type { ApiContext } from './types'
 import { RESERVED_GROUPS } from '../reserved-groups'
+
+// Extract handlers for testing
+const listComments = COMMENT_ROUTES.list.handler
+const addComment = COMMENT_ROUTES.add.handler
+const resolveComment = COMMENT_ROUTES.resolve.handler
 
 vi.mock('../comment-store', () => {
   return {
@@ -104,11 +109,9 @@ describe('comments api - addComment', () => {
     ctx.getBranchContext = vi.fn().mockResolvedValue(null)
     const res = await addComment(
       ctx,
-      {
-        user: { type: 'authenticated', userId: 'u1', groups: [] },
-        body: { text: 'test', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
-      },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'missing' },
+      { text: 'test', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
     )
     expect(res.status).toBe(404)
   })
@@ -116,43 +119,19 @@ describe('comments api - addComment', () => {
   it('returns 403 if access forbidden', async () => {
     const res = await addComment(
       makeCtx(false),
-      {
-        user: { type: 'authenticated', userId: 'u1', groups: [] },
-        body: { text: 'test', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
-      },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
+      { text: 'test', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
     )
     expect(res.status).toBe(403)
-  })
-
-  it('returns 400 if text is missing', async () => {
-    const res = await addComment(
-      makeCtx(),
-      { user: { type: 'authenticated', userId: 'u1', groups: [] }, body: { type: 'field' } as any },
-      { branch: 'feature/x' },
-    )
-    expect(res.status).toBe(400)
-    expect(res.error).toContain('text is required')
-  })
-
-  it('returns 400 if type is missing', async () => {
-    const res = await addComment(
-      makeCtx(),
-      { user: { type: 'authenticated', userId: 'u1', groups: [] }, body: { text: 'test' } as any },
-      { branch: 'feature/x' },
-    )
-    expect(res.status).toBe(400)
-    expect(res.error).toContain('type is required')
   })
 
   it('returns 400 if canopyPath missing for field comment', async () => {
     const res = await addComment(
       makeCtx(),
-      {
-        user: { type: 'authenticated', userId: 'u1', groups: [] },
-        body: { text: 'test', type: 'field', entryId: 'posts/hello' } as any,
-      },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
+      { text: 'test', type: 'field', entryId: 'posts/hello' } as any,
     )
     expect(res.status).toBe(400)
     expect(res.error).toContain('canopyPath required')
@@ -161,11 +140,9 @@ describe('comments api - addComment', () => {
   it('returns 400 if entryId missing for field comment', async () => {
     const res = await addComment(
       makeCtx(),
-      {
-        user: { type: 'authenticated', userId: 'u1', groups: [] },
-        body: { text: 'test', type: 'field', canopyPath: 'title' } as any,
-      },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
+      { text: 'test', type: 'field', canopyPath: 'title' } as any,
     )
     expect(res.status).toBe(400)
     expect(res.error).toContain('entryId required')
@@ -174,11 +151,9 @@ describe('comments api - addComment', () => {
   it('returns 400 if entryId missing for entry comment', async () => {
     const res = await addComment(
       makeCtx(),
-      {
-        user: { type: 'authenticated', userId: 'u1', groups: [] },
-        body: { text: 'test', type: 'entry' } as any,
-      },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
+      { text: 'test', type: 'entry' } as any,
     )
     expect(res.status).toBe(400)
     expect(res.error).toContain('entryId required')
@@ -187,11 +162,9 @@ describe('comments api - addComment', () => {
   it('adds field comment when allowed', async () => {
     const res = await addComment(
       makeCtx(),
-      {
-        user: { type: 'authenticated', userId: 'u1', groups: [] },
-        body: { text: 'Great work!', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
-      },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
+      { text: 'Great work!', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
     )
     expect(res.ok).toBe(true)
     expect(res.data?.threadId).toBe('thread1')
@@ -201,11 +174,9 @@ describe('comments api - addComment', () => {
   it('adds entry comment when allowed', async () => {
     const res = await addComment(
       makeCtx(),
-      {
-        user: { type: 'authenticated', userId: 'u1', groups: [] },
-        body: { text: 'Entry feedback', type: 'entry', entryId: 'posts/hello' },
-      },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
+      { text: 'Entry feedback', type: 'entry', entryId: 'posts/hello' },
     )
     expect(res.ok).toBe(true)
   })
@@ -213,11 +184,9 @@ describe('comments api - addComment', () => {
   it('adds branch comment when allowed', async () => {
     const res = await addComment(
       makeCtx(),
-      {
-        user: { type: 'authenticated', userId: 'u1', groups: [] },
-        body: { text: 'Branch discussion', type: 'branch' },
-      },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
+      { text: 'Branch discussion', type: 'branch' },
     )
     expect(res.ok).toBe(true)
   })
@@ -225,17 +194,15 @@ describe('comments api - addComment', () => {
   it('accepts optional threadId for replies', async () => {
     const res = await addComment(
       makeCtx(),
-      {
-        user: { type: 'authenticated', userId: 'u1', groups: [] },
-        body: {
-          text: 'Reply comment',
-          threadId: 'existing-thread',
-          type: 'field',
-          entryId: 'posts/hello',
-          canopyPath: 'title',
-        },
-      },
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
+      {
+        text: 'Reply comment',
+        threadId: 'existing-thread',
+        type: 'field',
+        entryId: 'posts/hello',
+        canopyPath: 'title',
+      },
     )
     expect(res.ok).toBe(true)
   })

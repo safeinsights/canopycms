@@ -1,17 +1,24 @@
+import { z } from 'zod'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { resolveBranchPaths } from '../paths'
 import { isReviewer } from '../reserved-groups'
+import { defineEndpoint } from './route-builder'
 
-/**
- * Request changes on a submitted branch (reviewer action)
- * Converts PR to draft and unlocks branch for editing
- */
-export const requestChanges = async (
+const branchParamSchema = z.object({
+  branch: z.string().min(1),
+})
+
+const requestChangesBodySchema = z.object({
+  comment: z.string().optional(),
+})
+
+const requestChangesHandler = async (
   ctx: ApiContext,
-  req: ApiRequest<{ comment?: string }>,
-  params: { branch: string },
+  req: ApiRequest,
+  params: z.infer<typeof branchParamSchema>,
+  body?: z.infer<typeof requestChangesBodySchema>,
 ): Promise<BranchResponse> => {
   const context = await ctx.getBranchContext(params.branch)
   if (!context) {
@@ -62,14 +69,10 @@ export const requestChanges = async (
   return { ok: true, status: 200, data: { branch: updated.branch } }
 }
 
-/**
- * Approve a branch (optional for v1)
- * This doesn't actually merge - that happens on GitHub
- */
-export const approveBranch = async (
+const approveBranchHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
-  params: { branch: string },
+  params: z.infer<typeof branchParamSchema>,
 ): Promise<BranchResponse> => {
   const context = await ctx.getBranchContext(params.branch)
   if (!context) {
@@ -107,3 +110,54 @@ export const approveBranch = async (
 
   return { ok: true, status: 200, data: { branch: updated.branch } }
 }
+
+/**
+ * Request changes on a submitted branch (reviewer action)
+ * POST /:branch/request-changes
+ */
+export const requestChanges = defineEndpoint({
+  namespace: 'workflow',
+  name: 'requestChanges',
+  method: 'POST',
+  path: '/:branch/request-changes',
+  params: branchParamSchema,
+  body: requestChangesBodySchema,
+  responseType: 'BranchResponse',
+  response: {} as BranchResponse,
+  defaultMockData: {
+    branch: {
+      name: 'test-branch',
+      status: 'editing',
+      access: {},
+      createdBy: 'user-1',
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-01',
+    },
+  },
+  handler: requestChangesHandler,
+})
+
+/**
+ * Approve a branch (optional for v1)
+ * POST /:branch/approve
+ */
+export const approveBranch = defineEndpoint({
+  namespace: 'workflow',
+  name: 'approve',
+  method: 'POST',
+  path: '/:branch/approve',
+  params: branchParamSchema,
+  responseType: 'BranchResponse',
+  response: {} as BranchResponse,
+  defaultMockData: {
+    branch: {
+      name: 'test-branch',
+      status: 'approved',
+      access: {},
+      createdBy: 'user-1',
+      createdAt: '2024-01-01',
+      updatedAt: '2024-01-01',
+    },
+  },
+  handler: approveBranchHandler,
+})

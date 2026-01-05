@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import path from 'node:path'
+import { z } from 'zod'
 
 import matter from 'gray-matter'
 
@@ -9,6 +10,7 @@ import { ContentStore, ContentStoreError } from '../content-store'
 import { flattenSchema, resolveSchema } from '../config'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { resolveBranchPaths } from '../paths'
+import { defineEndpoint } from './route-builder'
 
 type CollectionKind = 'collection' | 'singleton'
 
@@ -57,6 +59,18 @@ export interface ListEntriesResponse {
 
 /** Response type for listing entries */
 export type EntriesResponse = ApiResponse<ListEntriesResponse>
+
+// ============================================================================
+// Zod Schemas for Validation
+// ============================================================================
+
+const listEntriesParamsSchema = z.object({
+  branch: z.string().min(1),
+  collection: z.string().optional(),
+  limit: z.number().optional(),
+  cursor: z.string().optional(),
+  q: z.string().optional(),
+})
 
 const extensionFor = (format: ContentFormat): string => {
   if (format === 'md') return '.md'
@@ -199,10 +213,10 @@ const filterSchemaTree = (nodes: ResolvedSchemaItem[], targetId?: string): Resol
   return filtered
 }
 
-export const listEntries = async (
+export const listEntriesHandler = async (
   ctx: ApiContext,
-  req: ApiRequest<undefined>,
-  params: ListEntriesParams,
+  req: ApiRequest,
+  params: z.infer<typeof listEntriesParamsSchema>,
 ): Promise<EntriesResponse> => {
   if (!params.branch) {
     return { ok: false, status: 400, error: 'branch is required' }
@@ -293,3 +307,37 @@ export const listEntries = async (
     },
   }
 }
+
+// ============================================================================
+// Route Definitions with defineEndpoint
+// ============================================================================
+
+/**
+ * List entries for a branch
+ * GET /:branch/entries
+ */
+export const listEntries = defineEndpoint({
+  namespace: 'entries',
+  name: 'list',
+  method: 'GET',
+  path: '/:branch/entries',
+  params: listEntriesParamsSchema,
+  responseType: 'EntriesResponse',
+  response: {} as EntriesResponse,
+  defaultMockData: {
+    collections: [],
+    entries: [],
+    pagination: {
+      hasMore: false,
+      limit: 50,
+    },
+  },
+  handler: listEntriesHandler,
+})
+
+/**
+ * Exported routes for router registration
+ */
+export const ENTRY_ROUTES = {
+  list: listEntries,
+} as const

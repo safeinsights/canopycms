@@ -154,9 +154,30 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     const branch = (mergedParams as any)?.branch ?? (body as any)?.branch
     const apiReq = { user, body, branch }
 
-    // Call the handler
-    const result = await match.handler(apiCtx as any, apiReq as any, mergedParams as any)
-    return jsonResponse(result, result.status)
+    // Validate params and body using the route's validation function (if available)
+    if (match.validate) {
+      const validationResult = match.validate({ params: mergedParams, body })
+      if (!validationResult.ok) {
+        return jsonResponse({ ok: false, status: 400, error: validationResult.error }, 400)
+      }
+
+      // Call handler with validated params/body based on what's defined
+      const handlerArgs: any[] = [apiCtx, apiReq]
+      if (validationResult.params !== undefined) {
+        handlerArgs.push(validationResult.params)
+      }
+      if (validationResult.body !== undefined) {
+        handlerArgs.push(validationResult.body)
+      }
+
+      const result = await match.handler(...handlerArgs)
+      return jsonResponse(result, result.status)
+    } else {
+      // Should not happen - all routes should use defineEndpoint now
+      // This is here for safety in case any route doesn't have validation
+      const result = await match.handler(apiCtx as any, apiReq as any, mergedParams as any)
+      return jsonResponse(result, result.status)
+    }
   }
 }
 
