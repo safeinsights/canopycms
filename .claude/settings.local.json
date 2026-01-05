@@ -43,7 +43,8 @@
       "Bash(node -e:*)",
       "Bash(tac:*)",
       "Bash(playwright test:*)",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "Edit(*)"
     ]
   }
 }

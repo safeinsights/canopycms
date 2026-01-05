@@ -286,6 +286,19 @@ describe('permissions API', () => {
       expect(result.status).toBe(500)
       expect(result.error).toBe('API error')
     })
+
+    it('returns 400 when query parameter is missing', async () => {
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        query: {}, // Missing 'q' parameter
+      }
+
+      const result = await searchUsers(mockContext, req)
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toBe('Query parameter "q" is required')
+    })
   })
 
   describe('listGroups', () => {
