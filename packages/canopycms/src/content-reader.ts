@@ -6,6 +6,7 @@ import { createCanopyServices, type CanopyServices } from './services'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
 import { resolveSchema } from './config'
+import { isBuildMode } from './build-mode'
 
 export interface ContentReaderOptions {
   config?: CanopyConfig
@@ -143,9 +144,13 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       throw new ContentStoreError(message)
     }
 
-    const access = await services.checkContentAccess(context, branchRoot, relativePath, user, 'read')
-    if (!access.allowed) {
-      throw new ContentStoreError('Forbidden')
+    const shouldCheckPermissions = !isBuildMode()
+
+    if (shouldCheckPermissions) {
+      const access = await services.checkContentAccess(context, branchRoot, relativePath, user, 'read')
+      if (!access.allowed) {
+        throw new ContentStoreError('Forbidden')
+      }
     }
 
     try {
