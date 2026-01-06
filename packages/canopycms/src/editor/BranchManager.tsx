@@ -127,7 +127,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   }
 
   return (
-    <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0}>
+    <Stack h="100%" style={{ display: 'flex', flexDirection: 'column' }} gap={0} data-testid="branch-manager">
       {/* Branch-level comments */}
       {currentUserId && onAddComment && onResolveThread && (
         <Stack pt="sm">
@@ -149,6 +149,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
             size="sm"
             fullWidth
             onClick={() => setShowCreateForm(!showCreateForm)}
+            data-testid="create-branch-button"
           >
             {showCreateForm ? 'Cancel' : 'Create New Branch'}
           </Button>
@@ -162,12 +163,14 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   value={newBranchName}
                   onChange={(e) => setNewBranchName(e.target.value)}
                   required
+                  data-testid="branch-name-input"
                 />
                 <TextInput
                   label="Title (optional)"
                   placeholder="Brief description"
                   value={newBranchTitle}
                   onChange={(e) => setNewBranchTitle(e.target.value)}
+                  data-testid="branch-title-input"
                 />
                 <Textarea
                   label="Description (optional)"
@@ -175,11 +178,13 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                   value={newBranchDescription}
                   onChange={(e) => setNewBranchDescription(e.target.value)}
                   minRows={2}
+                  data-testid="branch-description-textarea"
                 />
                 <Button
                   onClick={handleCreate}
                   disabled={!newBranchName.trim()}
                   fullWidth
+                  data-testid="create-branch-submit"
                 >
                   Create Branch
                 </Button>
@@ -202,12 +207,12 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
               const statusColor = statusColorMap[b.status] ?? { color: 'neutral', variant: 'light' as const }
               const perms = getBranchPermissions(b, user)
               return (
-                <Paper key={b.name} withBorder radius="md" p="md" shadow="xs">
+                <Paper key={b.name} withBorder radius="md" p="md" shadow="xs" data-testid={`branch-list-item-${b.name}`}>
                   <Group justify="space-between" align="flex-start">
                     <Stack gap={4}>
                       <Group gap="xs">
                         <Text fw={600}>{b.name}</Text>
-                        <Badge color={statusColor.color} variant={statusColor.variant}>
+                        <Badge color={statusColor.color} variant={statusColor.variant} data-testid={`branch-status-badge-${b.name}`}>
                           {b.status}
                         </Badge>
                         {b.pullRequestNumber && (
@@ -259,7 +264,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                       )}
                     </Stack>
                     <Group gap={8}>
-                      <Button size="xs" variant="light" onClick={() => onSelect?.(b.name)}>
+                      <Button size="xs" variant="light" onClick={() => onSelect?.(b.name)} data-testid={`switch-to-branch-button-${b.name}`}>
                         Open
                       </Button>
                       {b.status === 'submitted' ? (
@@ -270,6 +275,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                             color="orange"
                             onClick={() => onWithdraw?.(b.name)}
                             disabled={!perms.canWithdraw}
+                            data-testid={`withdraw-branch-button-${b.name}`}
                           >
                             Withdraw
                           </Button>
@@ -282,6 +288,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                             color="green"
                             onClick={() => onSubmit?.(b.name)}
                             disabled={!perms.canSubmit}
+                            data-testid={`submit-branch-button-${b.name}`}
                           >
                             Submit
                           </Button>
@@ -294,6 +301,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                           color="neutral"
                           onClick={() => onRequestChanges?.(b.name)}
                           disabled={!perms.canRequestChanges}
+                          data-testid={`request-changes-button-${b.name}`}
                         >
                           Request changes
                         </Button>
@@ -305,6 +313,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                           color="red"
                           onClick={() => onDelete?.(b.name)}
                           disabled={!perms.canDelete}
+                          data-testid={`delete-branch-button-${b.name}`}
                         >
                           Delete
                         </Button>

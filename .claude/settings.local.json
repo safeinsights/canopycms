@@ -40,13 +40,18 @@
       "Bash(npx tsx:*)",
       "Bash(npm run generate:client:*)",
       "Bash(npx playwright show-report:*)",
+      "Bash((npx playwright:*)",
       "Bash(node -e:*)",
       "Bash(tac:*)",
       "Bash(playwright test:*)",
       "Bash(tee:*)",
       "Edit(*)",
       "Bash(git show:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(pkill:*)",
+      "Bash(timeout 10 npm run dev:*)",
+      "Bash(E2E_DEBUG=true npx playwright test:*)",
+      "Bash(E2E_DEBUG=true CANOPYCMS_DEBUG=true npx playwright test:*)"
     ]
   }
 }

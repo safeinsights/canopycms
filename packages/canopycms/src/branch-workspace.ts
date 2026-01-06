@@ -7,6 +7,9 @@ import { getBranchMetadataFileManager } from './branch-metadata'
 import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
 import type { BranchMode } from './paths'
 import { GitManager } from './git-manager'
+import { createDebugLogger } from './utils/debug'
+
+const log = createDebugLogger({ prefix: 'BranchWorkspace' })
 
 export interface OpenBranchOptions {
   branchName: string
@@ -36,8 +39,14 @@ export class BranchWorkspaceManager {
     mode: BranchMode
     remoteUrl?: string
   }) {
-    const baseBranch = this.config.defaultBaseBranch ?? 'main'
-    const remoteUrl = await GitManager.resolveRemoteUrl({
+    return log.timed('workspace', 'ensureGitWorkspace', async () => {
+      log.debug('workspace', 'Ensuring git workspace', {
+        branchName: options.branchName,
+        mode: options.mode,
+      })
+
+      const baseBranch = this.config.defaultBaseBranch ?? 'main'
+      const remoteUrl = await GitManager.resolveRemoteUrl({
       mode: options.mode,
       remoteUrl: options.remoteUrl,
       defaultRemoteUrl: this.config.defaultRemoteUrl,
@@ -61,27 +70,30 @@ export class BranchWorkspaceManager {
       }
     }
 
-    const repoExists = await hasGit()
-    if (!repoExists) {
-      if (options.mode === 'local-simple') {
-        throw new Error(`CanopyCMS: expected git repo at ${options.branchRoot}`)
+      const repoExists = await hasGit()
+      if (!repoExists) {
+        if (options.mode === 'local-simple') {
+          throw new Error(`CanopyCMS: expected git repo at ${options.branchRoot}`)
+        }
+        if (!remoteUrl) {
+          throw new Error('CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to init branch workspaces')
+        }
+        log.debug('workspace', 'Cloning repository')
+        await GitManager.cloneRepo(remoteUrl, options.branchRoot, baseBranch)
+        log.debug('workspace', 'Clone complete')
       }
-      if (!remoteUrl) {
-        throw new Error('CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to init branch workspaces')
-      }
-      await GitManager.cloneRepo(remoteUrl, options.branchRoot, baseBranch)
-    }
 
-    const git = new GitManager({
-      repoPath: options.branchRoot,
-      baseBranch,
-      remote: remoteName,
+      const git = new GitManager({
+        repoPath: options.branchRoot,
+        baseBranch,
+        remote: remoteName,
+      })
+      if (remoteUrl) {
+        await git.ensureRemote(remoteUrl)
+      }
+      await git.ensureAuthor({ name: authorName, email: authorEmail })
+      await git.checkoutBranch(options.branchName)
     })
-    if (remoteUrl) {
-      await git.ensureRemote(remoteUrl)
-    }
-    await git.ensureAuthor({ name: authorName, email: authorEmail })
-    await git.checkoutBranch(options.branchName)
   }
 
   async openOrCreateBranch(options: OpenBranchOptions): Promise<BranchContext> {

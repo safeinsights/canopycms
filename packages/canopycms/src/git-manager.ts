@@ -4,6 +4,9 @@ import path from 'node:path'
 import { simpleGit, type ConfigListSummary, type SimpleGit, type SimpleGitOptions, type StatusResult } from 'simple-git'
 
 import type { BranchMode } from './paths'
+import { createDebugLogger } from './utils/debug'
+
+const log = createDebugLogger({ prefix: 'GitManager' })
 
 export interface GitManagerOptions {
   repoPath: string
@@ -35,8 +38,10 @@ export class GitManager {
   }
 
   static async cloneRepo(remoteUrl: string, targetPath: string, baseBranch = 'main'): Promise<void> {
+    log.debug('git', 'Cloning repository', { remoteUrl, targetPath, baseBranch })
     const git = simpleGit()
     await git.clone(remoteUrl, targetPath, ['--branch', baseBranch, '--single-branch'])
+    log.debug('git', 'Clone complete')
   }
 
   /**
@@ -56,13 +61,22 @@ export class GitManager {
     baseBranch: string
     subdirectory?: string
   }): Promise<void> {
-    // Check if already exists (idempotent)
-    try {
-      const stat = await fs.stat(options.remotePath)
-      if (stat.isDirectory()) return
-    } catch (err: any) {
-      if (err?.code !== 'ENOENT') throw err
-    }
+    return log.timed('git', 'ensureLocalSimulatedRemote', async () => {
+      log.debug('git', 'Initializing local simulated remote', {
+        remotePath: options.remotePath,
+        baseBranch: options.baseBranch,
+      })
+
+      // Check if already exists (idempotent)
+      try {
+        const stat = await fs.stat(options.remotePath)
+        if (stat.isDirectory()) {
+          log.debug('git', 'Remote already exists, skipping')
+          return
+        }
+      } catch (err: any) {
+        if (err?.code !== 'ENOENT') throw err
+      }
 
     // Find the actual git root directory
     // git subtree requires being run from the toplevel of the working tree
@@ -114,43 +128,47 @@ export class GitManager {
       )
     }
 
-    // Create bare remote
-    await fs.mkdir(path.dirname(options.remotePath), { recursive: true })
-    await simpleGit().raw(['init', '--bare', options.remotePath])
+      // Create bare remote
+      log.debug('git', 'Creating bare remote repository')
+      await fs.mkdir(path.dirname(options.remotePath), { recursive: true })
+      await simpleGit().raw(['init', '--bare', options.remotePath])
 
-    // Push baseBranch to remote (not current HEAD)
-    const tempRemoteName = `__canopycms_init_${Date.now()}__`
-    try {
-      await sourceGit.addRemote(tempRemoteName, options.remotePath)
-
-      if (options.subdirectory) {
-        // For subdirectory pushes, use git subtree split
-        // This creates a synthetic history with only the subdirectory content
-        const splitBranch = `__canopycms_split_${Date.now()}__`
-        try {
-          await sourceGit.raw(['subtree', 'split', '--prefix', options.subdirectory, '-b', splitBranch])
-          await sourceGit.push(tempRemoteName, `${splitBranch}:${options.baseBranch}`)
-          await sourceGit.raw(['branch', '-D', splitBranch])
-        } catch (err) {
-          // Clean up split branch if it exists
-          try {
-            await sourceGit.raw(['branch', '-D', splitBranch])
-          } catch {
-            // ignore
-          }
-          throw err
-        }
-      } else {
-        // Normal push of entire repo
-        await sourceGit.push(tempRemoteName, `${options.baseBranch}:${options.baseBranch}`)
-      }
-    } finally {
+      // Push baseBranch to remote (not current HEAD)
+      const tempRemoteName = `__canopycms_init_${Date.now()}__`
       try {
-        await sourceGit.removeRemote(tempRemoteName)
-      } catch {
-        // ignore cleanup errors
+        await sourceGit.addRemote(tempRemoteName, options.remotePath)
+
+        if (options.subdirectory) {
+          // For subdirectory pushes, use git subtree split
+          // This creates a synthetic history with only the subdirectory content
+          const splitBranch = `__canopycms_split_${Date.now()}__`
+          try {
+            await sourceGit.raw(['subtree', 'split', '--prefix', options.subdirectory, '-b', splitBranch])
+            await sourceGit.push(tempRemoteName, `${splitBranch}:${options.baseBranch}`)
+            await sourceGit.raw(['branch', '-D', splitBranch])
+          } catch (err) {
+            // Clean up split branch if it exists
+            try {
+              await sourceGit.raw(['branch', '-D', splitBranch])
+            } catch {
+              // ignore
+            }
+            throw err
+          }
+        } else {
+          // Normal push of entire repo
+          await sourceGit.push(tempRemoteName, `${options.baseBranch}:${options.baseBranch}`)
+        }
+      } finally {
+        try {
+          await sourceGit.removeRemote(tempRemoteName)
+        } catch {
+          // ignore cleanup errors
+        }
       }
-    }
+
+      log.debug('git', 'Remote initialization complete')
+    })
   }
 
   /**

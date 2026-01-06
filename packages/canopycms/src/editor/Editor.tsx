@@ -19,7 +19,7 @@ import { GroupManager } from './GroupManager'
 import { PermissionManager } from './PermissionManager'
 import type { CommentThread } from '../comment-store'
 import { buildPreviewSrc } from './editor-utils'
-import { useEditorLayout, useDraftManager, useEntryManager, useGroupManager, usePermissionManager, useCommentSystem, useBranchManager } from './hooks'
+import { useEditorLayout, useDraftManager, useEntryManager, useGroupManager, usePermissionManager, useCommentSystem, useBranchManager, useUserContext } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 
@@ -103,6 +103,9 @@ export const Editor: React.FC<EditorProps> = ({
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
+
+  // Fetch current user context for permission checks
+  const { userContext } = useUserContext()
 
   // Use custom hooks for layout, entry, draft, group, permission, comment, and branch management
   const { layout, setLayout, highlightEnabled, setHighlightEnabled, headerRef, headerHeight } = useEditorLayout()
@@ -469,6 +472,7 @@ export const Editor: React.FC<EditorProps> = ({
           <BranchManager
             branches={branchSummaries}
             mode={branchMode}
+            user={userContext}
             onSelect={async (name) => {
               try {
                 await handleBranchChange(name)

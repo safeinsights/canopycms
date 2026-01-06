@@ -14,6 +14,7 @@ import type { EntriesResponse } from './entries'
 import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse } from './assets'
 import type { ListGroupsResponse, PermissionsResponse, SearchUsersResponse } from './permissions'
 import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsResponse } from './groups'
+import type { UserInfoResponse } from './user'
 import type { CreateBranchBody, UpdateBranchAccessBody } from './branch'
 
 /**
@@ -279,6 +280,18 @@ export class CanopyApiClient {
      */
     searchExternal: (params: Record<string, string>): Promise<ExternalGroupsResponse> => {
       return this.request('GET', this.buildPath('/groups/search', params))
+    },
+  }
+
+  /**
+   * user - Auto-generated methods
+   */
+  readonly user = {
+    /**
+     * whoami - GET /whoami
+     */
+    whoami: (): Promise<UserInfoResponse> => {
+      return this.request('GET', '/whoami')
     },
   }
 

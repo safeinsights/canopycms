@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { EditorEntry } from '../Editor'
 import type { FormValue } from '../FormRenderer'
+import { getNotificationDuration } from '../utils/env'
 
 export interface UseDraftManagerOptions {
   branchName: string
@@ -128,10 +129,20 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       const saved = await options.saveEntry(options.currentEntry, effectiveValue)
       setDrafts((prev) => ({ ...prev, [options.selectedId]: saved }))
       setLoadedValues((prev) => ({ ...prev, [options.selectedId]: saved }))
-      notifications.show({ message: 'Saved', color: 'green' })
+      notifications.show({
+        message: 'Saved',
+        color: 'green',
+        autoClose: getNotificationDuration(4000),
+        withCloseButton: true,
+      })
     } catch (err) {
       console.error(err)
-      notifications.show({ message: 'Save failed', color: 'red' })
+      notifications.show({
+        message: 'Save failed',
+        color: 'red',
+        autoClose: getNotificationDuration(6000),
+        withCloseButton: true,
+      })
     } finally {
       options.setBusy(false)
     }
@@ -146,7 +157,12 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     } catch (err) {
       console.warn('Failed to clear drafts', err)
     }
-    notifications.show({ message: 'Drafts cleared', color: 'blue' })
+    notifications.show({
+      message: 'Drafts cleared',
+      color: 'blue',
+      autoClose: getNotificationDuration(3000),
+      withCloseButton: true,
+    })
   }
 
   const handleDiscardFileDraft = () => {
@@ -168,7 +184,12 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     } catch (err) {
       console.warn('Failed to clear draft for file', err)
     }
-    notifications.show({ message: 'Draft cleared for file', color: 'blue' })
+    notifications.show({
+      message: 'Draft cleared for file',
+      color: 'blue',
+      autoClose: getNotificationDuration(3000),
+      withCloseButton: true,
+    })
   }
 
   const handleReload = async () => {
@@ -178,10 +199,20 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       const loaded = await options.loadEntry(options.currentEntry)
       setLoadedValues((prev) => ({ ...prev, [options.selectedId]: loaded }))
       setDrafts((prev) => ({ ...prev, [options.selectedId]: loaded }))
-      notifications.show({ message: 'Reloaded', color: 'blue' })
+      notifications.show({
+        message: 'Reloaded',
+        color: 'blue',
+        autoClose: getNotificationDuration(3000),
+        withCloseButton: true,
+      })
     } catch (err) {
       console.error(err)
-      notifications.show({ message: 'Reload failed', color: 'red' })
+      notifications.show({
+        message: 'Reload failed',
+        color: 'red',
+        autoClose: getNotificationDuration(6000),
+        withCloseButton: true,
+      })
     } finally {
       options.setBusy(false)
     }
