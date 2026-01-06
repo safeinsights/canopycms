@@ -10,7 +10,16 @@ const ADMINS = 'Admins'
 export const createMockAuthPlugin = (
   user: AuthenticatedUser = { type: 'authenticated', userId: 'test-user', groups: [ADMINS] }
 ): AuthPlugin => ({
-  verifyToken: async () => ({ valid: true, user }),
+  authenticate: async () => ({
+    success: true,
+    user: {
+      userId: user.userId,
+      email: user.email,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+      externalGroups: user.groups,
+    },
+  }),
   searchUsers: async () => [],
   getUserMetadata: async () => null,
   getGroupMetadata: async () => null,
@@ -21,7 +30,7 @@ export const createMockAuthPlugin = (
  * Create a mock AuthPlugin that rejects all authentication.
  */
 export const createRejectingAuthPlugin = (error = 'Unauthorized'): AuthPlugin => ({
-  verifyToken: async () => ({ valid: false, error }),
+  authenticate: async () => ({ success: false, error }),
   searchUsers: async () => [],
   getUserMetadata: async () => null,
   getGroupMetadata: async () => null,

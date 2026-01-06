@@ -1,5 +1,4 @@
 import type { CanopyUserId, CanopyGroupId } from '../types'
-import type { AuthenticatedUser } from '../user'
 
 /**
  * User search result for permission UI
@@ -22,11 +21,18 @@ export interface GroupMetadata {
 }
 
 /**
- * Token verification result from auth plugins.
- * Returns an AuthenticatedUser on success.
+ * Authentication result from auth plugins.
+ * Returns user identity (without final groups) on success.
  */
-export interface TokenVerificationResult {
-  valid: boolean
-  user?: AuthenticatedUser
+export interface AuthenticationResult {
+  success: boolean
+  user?: {
+    userId: CanopyUserId
+    email?: string
+    name?: string
+    avatarUrl?: string
+    /** Groups from external auth provider (e.g., Clerk organizations) */
+    externalGroups?: CanopyGroupId[]
+  }
   error?: string
 }

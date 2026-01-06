@@ -158,7 +158,7 @@ To test build mode behavior:
 it('bypasses permissions during build', () => {
   process.env.CANOPY_BUILD_MODE = 'true'
   try {
-    const context = createCanopyContext({ config, getUser: mockGetUser })
+    const context = createCanopyContext({ config, extractUser: mockExtractUser })
     const canopy = await context.getContext()
     expect(canopy.user).toEqual(BUILD_USER)
   } finally {

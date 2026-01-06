@@ -1,8 +1,10 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 import { defineCanopyTestConfig } from './config-test'
-import { createCanopyServices, getBootstrapAdminIds, getEffectiveGroups } from './services'
+import { createCanopyServices, getBootstrapAdminIds } from './services'
+import { authResultToCanopyUser } from './user'
 import { RESERVED_GROUPS } from './reserved-groups'
+import type { AuthenticationResult } from './auth/types'
 
 vi.mock('simple-git', () => {
   const stub = vi.fn(() => ({
@@ -115,35 +117,99 @@ describe('getBootstrapAdminIds', () => {
   })
 })
 
-describe('getEffectiveGroups', () => {
-  it('returns original groups when user not in bootstrap set', () => {
+describe('authResultToCanopyUser with bootstrap admins', () => {
+  it('returns ANONYMOUS_USER when auth fails', () => {
     const bootstrapAdminIds = new Set(['admin_1'])
-    const groups = getEffectiveGroups('user_1', ['group_a', 'group_b'], bootstrapAdminIds)
-    expect(groups).toEqual(['group_a', 'group_b'])
+    const authResult: AuthenticationResult = { success: false }
+    const user = authResultToCanopyUser(authResult, bootstrapAdminIds)
+
+    expect(user.type).toBe('anonymous')
+    expect(user.userId).toBe('anonymous')
+  })
+
+  it('returns user with original groups when not in bootstrap set', () => {
+    const bootstrapAdminIds = new Set(['admin_1'])
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user_1',
+        externalGroups: ['group_a', 'group_b'],
+      },
+    }
+    const user = authResultToCanopyUser(authResult, bootstrapAdminIds)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(user.userId).toBe('user_1')
+      expect(user.groups).toEqual(['group_a', 'group_b'])
+    }
   })
 
   it('adds Admins group when user is in bootstrap set', () => {
     const bootstrapAdminIds = new Set(['admin_1'])
-    const groups = getEffectiveGroups('admin_1', ['group_a'], bootstrapAdminIds)
-    expect(groups).toContain(RESERVED_GROUPS.ADMINS)
-    expect(groups).toContain('group_a')
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'admin_1',
+        externalGroups: ['group_a'],
+      },
+    }
+    const user = authResultToCanopyUser(authResult, bootstrapAdminIds)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(user.groups).toContain(RESERVED_GROUPS.ADMINS)
+      expect(user.groups).toContain('group_a')
+    }
   })
 
   it('does not duplicate Admins group if already present', () => {
     const bootstrapAdminIds = new Set(['admin_1'])
-    const groups = getEffectiveGroups('admin_1', [RESERVED_GROUPS.ADMINS], bootstrapAdminIds)
-    expect(groups.filter((g) => g === RESERVED_GROUPS.ADMINS).length).toBe(1)
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'admin_1',
+        externalGroups: [RESERVED_GROUPS.ADMINS],
+      },
+    }
+    const user = authResultToCanopyUser(authResult, bootstrapAdminIds)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      const adminCount = user.groups.filter((g) => g === RESERVED_GROUPS.ADMINS).length
+      expect(adminCount).toBe(1)
+    }
   })
 
-  it('handles undefined groups', () => {
+  it('handles undefined external groups', () => {
     const bootstrapAdminIds = new Set(['admin_1'])
-    const groups = getEffectiveGroups('admin_1', undefined, bootstrapAdminIds)
-    expect(groups).toEqual([RESERVED_GROUPS.ADMINS])
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'admin_1',
+      },
+    }
+    const user = authResultToCanopyUser(authResult, bootstrapAdminIds)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(user.groups).toEqual([RESERVED_GROUPS.ADMINS])
+    }
   })
 
-  it('returns empty array for non-bootstrap user with no groups', () => {
+  it('handles non-bootstrap user with no groups', () => {
     const bootstrapAdminIds = new Set(['admin_1'])
-    const groups = getEffectiveGroups('user_1', undefined, bootstrapAdminIds)
-    expect(groups).toEqual([])
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user_1',
+      },
+    }
+    const user = authResultToCanopyUser(authResult, bootstrapAdminIds)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(user.groups).toEqual([])
+    }
   })
 })

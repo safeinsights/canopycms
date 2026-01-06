@@ -1,8 +1,7 @@
 import { createClerkClient, verifyToken as clerkVerifyToken } from '@clerk/backend'
-import type { CanopyRequest } from 'canopycms/http'
 import type { AuthPlugin, AuthPluginFactory } from 'canopycms/auth'
-import type { UserSearchResult, GroupMetadata, TokenVerificationResult } from 'canopycms/auth'
-import type { AuthenticatedUser } from 'canopycms'
+import type { UserSearchResult, GroupMetadata, AuthenticationResult } from 'canopycms/auth'
+import { extractHeaders, type HeadersLike } from 'canopycms/auth'
 
 export interface ClerkAuthConfig {
   /**
@@ -29,39 +28,87 @@ export interface ClerkAuthConfig {
   authorizedParties?: string[]
 }
 
+// Clerk API Response Types
+// These handle both camelCase and snake_case variants from different Clerk SDK versions
+
+interface ClerkUserData {
+  id: string
+  username?: string
+  fullName?: string | null
+  full_name?: string | null
+  imageUrl?: string | null
+  image_url?: string | null
+  primaryEmailAddress?: { emailAddress: string } | null
+  email_addresses?: Array<{ email_address: string }> | null
+}
+
+interface ClerkOrganization {
+  id: string
+  name: string
+  membersCount?: number
+  members_count?: number
+}
+
+interface ClerkOrganizationMembership {
+  organization: ClerkOrganization
+}
+
+interface ClerkPaginatedResponse<T> {
+  data: T[]
+  totalCount?: number
+}
+
+type ClerkResponse<T> = T[] | ClerkPaginatedResponse<T>
+
 /**
- * Map Clerk user to CanopyCMS AuthenticatedUser.
- *
- * Note: CanopyCMS no longer uses roles from auth providers. Instead, permissions
- * are managed through internal groups (Admins, Reviewers) within CanopyCMS.
- * Organizations from Clerk are passed through as groups for ACL matching.
+ * Unwrap Clerk paginated response to array.
+ * Clerk SDK sometimes returns arrays directly, sometimes paginated objects.
  */
-const mapClerkUser = (
-  clerkUser: any,
-  organizationIds?: string[]
-): AuthenticatedUser => {
+function unwrapClerkResponse<T>(response: ClerkResponse<T>): T[] {
+  return Array.isArray(response) ? response : response.data
+}
+
+/**
+ * Map Clerk user data to Canopy user metadata.
+ * Handles both camelCase and snake_case property variants.
+ */
+function mapClerkUserData(clerkUser: ClerkUserData): {
+  email?: string
+  name: string
+  avatarUrl?: string
+} {
+  const avatarUrl = clerkUser.imageUrl ?? clerkUser.image_url
   return {
-    type: 'authenticated',
-    userId: clerkUser.id,
-    email: clerkUser.primaryEmailAddress?.emailAddress ?? clerkUser.email_addresses?.[0]?.email_address,
-    name: clerkUser.fullName ?? clerkUser.full_name ?? clerkUser.username ?? clerkUser.id,
-    groups: organizationIds ?? [],
+    email: clerkUser.primaryEmailAddress?.emailAddress
+      ?? clerkUser.email_addresses?.[0]?.email_address,
+    name: clerkUser.fullName
+      ?? clerkUser.full_name
+      ?? clerkUser.username
+      ?? clerkUser.id,
+    avatarUrl: avatarUrl ?? undefined,
   }
 }
 
 /**
- * Extract token from request headers.
+ * Get member count from organization, handling property name variants.
+ */
+function getOrgMemberCount(org: ClerkOrganization): number | undefined {
+  return org.membersCount ?? org.members_count
+}
+
+/**
+ * Extract token from headers.
  * Looks for Bearer token in Authorization header or __session cookie.
  */
-const extractToken = (req: CanopyRequest): string | null => {
+const extractToken = (headers: HeadersLike): string | null => {
   // Try Authorization header first
-  const authHeader = req.header('Authorization')
+  const authHeader = headers.get('Authorization')
   if (authHeader?.startsWith('Bearer ')) {
     return authHeader.slice(7)
   }
 
   // Try __session cookie
-  const cookie = req.header('Cookie')
+  const cookie = headers.get('Cookie')
   if (cookie) {
     const match = cookie.match(/__session=([^;]+)/)
     if (match) {
@@ -103,11 +150,21 @@ export class ClerkAuthPlugin implements AuthPlugin {
     this.clerkClient = createClerkClient({ secretKey })
   }
 
-  async verifyToken(req: CanopyRequest): Promise<TokenVerificationResult> {
+  async authenticate(context: unknown): Promise<AuthenticationResult> {
     try {
-      const token = extractToken(req)
+      // Extract headers from context (supports CanopyRequest and Headers)
+      const headers = extractHeaders(context)
+      if (!headers) {
+        return {
+          success: false,
+          error: 'Invalid context: expected CanopyRequest or Headers object',
+        }
+      }
+
+      // Extract token from headers
+      const token = extractToken(headers)
       if (!token) {
-        return { valid: false, error: 'No authentication token found' }
+        return { success: false, error: 'No authentication token found' }
       }
 
       // Verify the token
@@ -126,31 +183,40 @@ export class ClerkAuthPlugin implements AuthPlugin {
       const payload = await clerkVerifyToken(token, verifyOptions)
 
       if (!payload || !payload.sub) {
-        return { valid: false, error: 'Invalid token payload' }
+        return { success: false, error: 'Invalid token payload' }
       }
 
       const userId = payload.sub
 
-      // Get user details
-      const clerkUser = await this.clerkClient.users.getUser(userId)
+      // Get user details from Clerk
+      const clerkUser = await this.clerkClient.users.getUser(userId) as ClerkUserData
 
-      // Get organizations if enabled - these become the user's groups
-      let organizationIds: string[] | undefined
+      // Get organizations as external groups
+      let externalGroups: string[] | undefined
       if (this.config.useOrganizationsAsGroups) {
         const orgs = await this.clerkClient.users.getOrganizationMembershipList({
           userId: clerkUser.id,
-        })
-        const orgList = Array.isArray(orgs) ? orgs : orgs.data
-        organizationIds = orgList.map((m: any) => m.organization.id)
+        }) as ClerkResponse<ClerkOrganizationMembership>
+
+        const memberships = unwrapClerkResponse(orgs)
+        externalGroups = memberships.map((m) => m.organization.id)
       }
 
-      const user = mapClerkUser(clerkUser, organizationIds)
+      const userData = mapClerkUserData(clerkUser)
 
-      return { valid: true, user }
+      // Return identity only - core will apply bootstrap admins
+      return {
+        success: true,
+        user: {
+          userId: clerkUser.id,
+          ...userData,
+          externalGroups,
+        },
+      }
     } catch (error) {
       return {
-        valid: false,
-        error: error instanceof Error ? error.message : 'Token verification failed',
+        success: false,
+        error: error instanceof Error ? error.message : 'Authentication failed',
       }
     }
   }
@@ -160,15 +226,18 @@ export class ClerkAuthPlugin implements AuthPlugin {
       const response = await this.clerkClient.users.getUserList({
         query,
         limit,
-      })
+      }) as ClerkResponse<ClerkUserData>
 
-      const users = Array.isArray(response) ? response : response.data
-      return users.map((u: any) => ({
-        id: u.id,
-        name: u.fullName ?? u.full_name ?? u.username ?? u.id,
-        email: u.primaryEmailAddress?.emailAddress ?? u.email_addresses?.[0]?.email_address ?? '',
-        avatarUrl: u.imageUrl ?? u.image_url,
-      }))
+      const users = unwrapClerkResponse(response)
+      return users.map((u) => {
+        const mapped = mapClerkUserData(u)
+        return {
+          id: u.id,
+          name: mapped.name,
+          email: mapped.email ?? '',
+          avatarUrl: mapped.avatarUrl,
+        }
+      })
     } catch (error) {
       console.error('ClerkAuthPlugin: searchUsers failed', error)
       return []
@@ -177,12 +246,13 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
   async getUserMetadata(userId: string): Promise<UserSearchResult | null> {
     try {
-      const user = await this.clerkClient.users.getUser(userId)
+      const user = await this.clerkClient.users.getUser(userId) as ClerkUserData
+      const mapped = mapClerkUserData(user)
       return {
         id: user.id,
-        name: user.fullName ?? (user as any).full_name ?? user.username ?? user.id,
-        email: user.primaryEmailAddress?.emailAddress ?? (user as any).email_addresses?.[0]?.email_address ?? '',
-        avatarUrl: user.imageUrl ?? (user as any).image_url,
+        name: mapped.name,
+        email: mapped.email ?? '',
+        avatarUrl: mapped.avatarUrl,
       }
     } catch (error) {
       console.error('ClerkAuthPlugin: getUserMetadata failed', error)
@@ -198,12 +268,12 @@ export class ClerkAuthPlugin implements AuthPlugin {
     try {
       const org = await this.clerkClient.organizations.getOrganization({
         organizationId: groupId,
-      })
+      }) as ClerkOrganization
 
       return {
         id: org.id,
         name: org.name,
-        memberCount: org.membersCount ?? (org as any).members_count,
+        memberCount: getOrgMemberCount(org),
       }
     } catch (error) {
       console.error('ClerkAuthPlugin: getGroupMetadata failed', error)
@@ -217,12 +287,15 @@ export class ClerkAuthPlugin implements AuthPlugin {
     }
 
     try {
-      const response = await this.clerkClient.organizations.getOrganizationList({ limit })
-      const orgs = Array.isArray(response) ? response : response.data
-      return orgs.map((o: any) => ({
+      const response = await this.clerkClient.organizations.getOrganizationList({
+        limit
+      }) as ClerkResponse<ClerkOrganization>
+
+      const orgs = unwrapClerkResponse(response)
+      return orgs.map((o) => ({
         id: o.id,
         name: o.name,
-        memberCount: o.membersCount ?? o.members_count,
+        memberCount: getOrgMemberCount(o),
       }))
     } catch (error) {
       console.error('ClerkAuthPlugin: listGroups failed', error)

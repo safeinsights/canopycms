@@ -26,7 +26,7 @@ describe('permissions API', () => {
 
   beforeEach(() => {
     mockAuthPlugin = {
-      verifyToken: vi.fn(),
+      authenticate: vi.fn(),
       searchUsers: vi.fn(),
       getUserMetadata: vi.fn(),
       getGroupMetadata: vi.fn(),

@@ -1,6 +1,5 @@
-import type { UserSearchResult, GroupMetadata, TokenVerificationResult } from './types'
+import type { UserSearchResult, GroupMetadata, AuthenticationResult } from './types'
 import type { CanopyUserId, CanopyGroupId } from '../types'
-import type { CanopyRequest } from '../http/types'
 
 /**
  * Abstract auth provider interface.
@@ -8,10 +7,13 @@ import type { CanopyRequest } from '../http/types'
  */
 export interface AuthPlugin {
   /**
-   * Verify token from request and return user context.
-   * @param req - Framework-agnostic request object
+   * Authenticate user from request context.
+   * Returns user identity (without final groups) - core will apply bootstrap admins.
+   *
+   * @param context - Framework-specific context (CanopyRequest, headers, etc.)
+   * @returns AuthenticationResult with user identity or error
    */
-  verifyToken(req: CanopyRequest): Promise<TokenVerificationResult>
+  authenticate(context: unknown): Promise<AuthenticationResult>
 
   /**
    * Search for users (for permission management UI)
