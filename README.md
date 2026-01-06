@@ -50,21 +50,32 @@ export default defineCanopyConfig({
 })
 ```
 
-### 3. Add the API route handler
+### 3. Create the Canopy context (one-time setup)
 
-Create `app/api/canopycms/[...canopycms]/route.ts`:
+Create `app/lib/canopy.ts`:
 
 ```typescript
-import { createCanopyCatchAllHandler } from 'canopycms-next'
+import { createNextCanopyContext } from 'canopycms-next'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
-import config from '../../../../canopycms.config'
+import config from '../../canopycms.config'
 
-const handler = createCanopyCatchAllHandler({
+const canopyContext = createNextCanopyContext({
   config: config.server,
   authPlugin: createClerkAuthPlugin({
     useOrganizationsAsGroups: true,
   }),
 })
+
+export const getCanopy = canopyContext.getCanopy // For server components
+export const handler = canopyContext.handler // For API routes
+```
+
+### 4. Add the API route handler
+
+Create `app/api/canopycms/[...canopycms]/route.ts`:
+
+```typescript
+import { handler } from '../../../lib/canopy'
 
 export const GET = handler
 export const POST = handler
@@ -72,7 +83,7 @@ export const PUT = handler
 export const DELETE = handler
 ```
 
-### 4. Create the editor page
+### 5. Create the editor page
 
 Create `app/edit/page.tsx`:
 
@@ -91,7 +102,7 @@ export default function EditPage() {
 }
 ```
 
-### 5. Protect editor routes with middleware
+### 6. Protect editor routes with middleware
 
 Create `middleware.ts`:
 
@@ -112,6 +123,71 @@ export const config = {
   ],
 }
 ```
+
+## Migrating from Old API
+
+If you're upgrading from a previous version, here's how to migrate to the new simplified API:
+
+### Before (verbose approach)
+
+```typescript
+// Every page had to repeat this boilerplate
+import { createContentReader } from 'canopycms/server'
+import { ANONYMOUS_USER } from 'canopycms'
+import config from '../canopycms.config'
+
+const contentReader = createContentReader({ config: config.server })
+
+const Page = async ({ searchParams }) => {
+  const { data } = await contentReader.read({
+    entryPath: 'content/home',
+    branch: searchParams?.branch,
+    user: ANONYMOUS_USER,  // No auth
+  })
+  return <HomeView data={data} />
+}
+```
+
+### After (clean approach)
+
+**One-time setup** in `app/lib/canopy.ts`:
+
+```typescript
+import { createNextCanopyContext } from 'canopycms-next'
+import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
+import config from '../../canopycms.config'
+
+const canopyContext = createNextCanopyContext({
+  config: config.server,
+  authPlugin: createClerkAuthPlugin({ useOrganizationsAsGroups: true }),
+})
+
+export const getCanopy = canopyContext.getCanopy
+export const handler = canopyContext.handler
+```
+
+**Then in every page**:
+
+```typescript
+import { getCanopy } from './lib/canopy'
+
+const Page = async ({ searchParams }) => {
+  const canopy = await getCanopy()
+  const { data } = await canopy.read({
+    entryPath: 'content/home',
+    branch: searchParams?.branch,  // Optional
+  })
+  return <HomeView data={data} />
+}
+```
+
+### Migration checklist
+
+1. Create `app/lib/canopy.ts` with `createNextCanopyContext()` setup
+2. Replace `createCanopyCatchAllHandler()` in API route with imported `handler`
+3. Replace `createContentReader()` calls in pages with `getCanopy()`
+4. Remove `user` parameter from `read()` calls (now automatic)
+5. Branch parameter is now optional (defaults to main)
 
 ## Configuration Reference
 
@@ -289,28 +365,58 @@ type Post = TypeFromSchema<typeof postSchema>
 
 ## Integration Guide
 
-### Reading Content Server-Side
+### Reading Content in Server Components
 
-Use `createContentReader` to read content from branch workspaces:
+The `getCanopy()` function provides automatic authentication and branch handling in Next.js server components:
 
 ```typescript
 // app/posts/[slug]/page.tsx
-import { createContentReader } from 'canopycms/server'
-import config from '../../../canopycms.config'
-
-const reader = createContentReader({ config: config.server })
+import { getCanopy } from '../lib/canopy'
 
 export default async function PostPage({ params, searchParams }) {
-  const branch = searchParams?.branch ?? 'main'
+  const canopy = await getCanopy()
 
-  const { data } = await reader.read({
+  const { data } = await canopy.read({
     entryPath: 'content/posts',
     slug: params.slug,
-    branch,
+    branch: searchParams?.branch,  // Optional: defaults to main
   })
 
   return <PostView post={data} />
 }
+```
+
+**Key benefits:**
+
+- **Automatic authentication**: Current user extracted from request headers via auth plugin
+- **Bootstrap admin groups**: Admin users automatically get `admins` group membership
+- **Build mode support**: Permissions bypassed during `next build` for static generation
+- **Type-safe**: Full TypeScript support with inferred types from your schema
+- **Per-request caching**: Context is cached using React's `cache()` for the request lifecycle
+
+**The context object provides:**
+
+- `read()`: Read content with automatic auth and branch resolution
+- `user`: Current authenticated user (with bootstrap admin groups applied)
+- `services`: Underlying CanopyCMS services for advanced use cases
+
+### Advanced: Using createContentReader Directly
+
+For cases where you need more control (e.g., reading as a specific user or in non-request contexts), you can use the lower-level `createContentReader`:
+
+```typescript
+import { createContentReader } from 'canopycms/server'
+import { ANONYMOUS_USER } from 'canopycms'
+import config from '../canopycms.config'
+
+const reader = createContentReader({ config: config.server })
+
+const { data } = await reader.read({
+  entryPath: 'content/posts',
+  slug: 'my-post',
+  branch: 'main',
+  user: ANONYMOUS_USER, // Explicit user required
+})
 ```
 
 ### Media Configuration
@@ -361,6 +467,10 @@ Access control uses three layers:
 2. **Path permissions**: Glob patterns restrict who can edit specific content paths
 3. **Reserved groups**: `admins` (full access) and `reviewers` (review branches, approve PRs)
 
+**Bootstrap admin groups**: When using `getCanopy()`, users with IDs matching the `bootstrapAdminIds` configuration automatically receive the `admins` group membership, even before groups are set up in the repository. This makes initial setup easier.
+
+**Build mode bypass**: During `next build`, all permission checks are bypassed to allow static generation of all content, regardless of auth configuration.
+
 Permissions are stored in `.canopycms/groups.json` and `.canopycms/permissions.json` and ARE committed to git for version control and PR-reviewable changes.
 
 ### Live Preview
@@ -372,13 +482,21 @@ The editor shows a live preview of your actual site pages in an iframe. Changes 
 CanopyCMS is designed for minimal integration effort. You need:
 
 1. **Config file** (`canopycms.config.ts`): Schema and settings
-2. **API route** (`/api/canopycms/[...canopycms]`): Single catch-all handler
-3. **Editor page** (`/edit`): Embed the editor component
-4. **Middleware**: Protect editor routes with authentication
+2. **Canopy context** (`app/lib/canopy.ts`): One-time setup with auth plugin
+3. **API route** (`/api/canopycms/[...canopycms]`): Export the handler from context
+4. **Editor page** (`/edit`): Embed the editor component
+5. **Middleware**: Protect editor routes with authentication
+6. **Server components**: Use `getCanopy()` to read content with automatic auth
 
-Everything else (branch management, content storage, permissions, comments) is handled internally by CanopyCMS.
+Everything else (branch management, content storage, permissions, comments, bootstrap admin groups) is handled automatically by CanopyCMS.
 
 ## Environment Variables
+
+For CanopyCMS:
+
+```env
+CANOPY_BOOTSTRAP_ADMIN_IDS=user_123,user_456  # Comma-separated user IDs that get auto-admin access
+```
 
 For Clerk authentication:
 

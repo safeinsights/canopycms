@@ -1,12 +1,7 @@
 import React from 'react'
-
 import PostView from '../../components/PostView'
 import type { PostContent } from '../../schemas'
-import { createContentReader } from 'canopycms/server'
-import { ANONYMOUS_USER } from 'canopycms'
-import config from '../../../canopycms.config'
-
-const contentReader = createContentReader({ config: config.server })
+import { getCanopy } from '../../lib/canopy'
 
 interface Params {
   slug: string
@@ -18,19 +13,14 @@ export const generateStaticParams = async (): Promise<Params[]> => {
   return []
 }
 
-const PostPage = async ({
-  params,
-  searchParams,
-}: {
-  params: Params
-  searchParams?: { branch?: string }
-}) => {
-  const { data } = await contentReader.read<PostContent>({
+const PostPage = async ({ params }: { params: Params }) => {
+  const canopy = await getCanopy()
+
+  const { data } = await canopy.read<PostContent>({
     entryPath: 'content/posts',
     slug: params.slug,
-    branch: searchParams?.branch,
-    user: ANONYMOUS_USER,
   })
+
   return <PostView data={data} />
 }
 

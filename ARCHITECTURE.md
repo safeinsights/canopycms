@@ -19,13 +19,13 @@ Key characteristics:
 
 CanopyCMS is organized as a monorepo with separate packages for extensibility:
 
-- **canopycms** (core): The main library containing content store, branch management, permissions, editor UI, and API handlers. This package is framework-agnostic.
+- **canopycms** (core): The main library containing content store, branch management, permissions, editor UI, and API handlers. This package is framework-agnostic and contains all business logic.
 
-- **canopycms-next**: Next.js adapter that converts Next.js route handlers to work with the core API.
+- **canopycms-next**: Next.js adapter that provides thin integration (~10 lines of user extraction code). Wraps core context with React cache() for per-request memoization.
 
 - **canopycms-auth-clerk**: Authentication plugin using Clerk.
 
-This separation keeps the core framework-agnostic while allowing adopters to use only the adapters they need. Authentication and framework integration are deliberately abstracted so new providers can be added without modifying core code.
+This separation keeps the core framework-agnostic while allowing adapters to be minimal integration layers. All business logic lives in core—adapters only handle framework-specific concerns like extracting user identity from request contexts.
 
 ## Storage Architecture
 
@@ -95,6 +95,99 @@ Simulates production behavior locally. Creates per-branch clones in `.canopycms/
 ### prod
 
 Full production deployment. Branch workspaces live on persistent storage (e.g., EFS on AWS). Integrates with GitHub for PR creation and management. Designed for team collaboration with proper review workflows.
+
+## Context Architecture
+
+CanopyCMS provides a context system that manages authentication, permissions, and content access in a framework-agnostic way.
+
+### Core Context Factory
+
+The core provides `createCanopyContext(options)` which takes:
+
+- **config**: CanopyCMS configuration
+- **getUser**: Framework-specific function to extract current user
+
+Returns:
+
+- **getContext()**: Function that returns authenticated context with `read()` method
+- **services**: Underlying services (branch manager, permissions, etc.)
+
+This factory is framework-agnostic—it doesn't know about Next.js, Express, or any other framework. The framework adapter provides the `getUser` function.
+
+### Authenticated Context
+
+Calling `getContext()` returns a `CanopyContext` with:
+
+- **read()**: Content reader with user already injected, no need to pass user manually
+- **services**: Access to underlying services if needed
+- **user**: Current authenticated user (with bootstrap admin groups applied)
+
+The context automatically handles:
+
+- User extraction via the provided `getUser` function
+- Bootstrap admin group application (designated users get Admins group)
+- Build mode detection (returns BUILD_USER with admin access during static generation)
+- Permission checks during content reading
+
+### Build Mode Support
+
+Build mode allows content to be read during static site generation without authentication:
+
+**Detection**: Checks environment variables in a framework-agnostic way:
+
+- `NEXT_PHASE=phase-production-build` (Next.js builds)
+- `CANOPY_BUILD_MODE=true` (generic builds, other frameworks)
+
+**Behavior**: When build mode is active:
+
+- Context returns `BUILD_USER` (special user with Admins group)
+- Content reader bypasses all permission checks
+- All content becomes readable for static generation
+
+This means you can use the same `read()` calls in both authenticated pages and build-time static generation—the context handles the difference automatically.
+
+### Framework Adapter Pattern
+
+Framework adapters wrap the core context to provide framework-specific integration:
+
+**Adapter responsibilities**:
+
+- Extract user identity from framework-specific request context (Next.js headers, Express req, etc.)
+- Apply framework-specific optimizations (React cache() for Next.js)
+- Provide unified API for both pages and API routes
+
+**What stays in core**:
+
+- All business logic (permissions, content reading, branch management)
+- Bootstrap admin group application
+- Build mode detection and handling
+- Content access control
+
+The Next.js adapter is ~10 lines of user extraction code. The pattern is designed so adapters for Express, Fastify, Hono, or other frameworks would be similarly minimal.
+
+### Developer Experience
+
+Setup is a one-time operation in a central file (e.g., `app/lib/canopy.ts`):
+
+```typescript
+// One-time setup
+const { getCanopy, handler, services } = createNextCanopyContext({
+  config: canopyConfig,
+  authPlugin: clerkAuthPlugin,
+})
+
+export { getCanopy, handler, services }
+```
+
+Then in pages and API routes:
+
+```typescript
+// In a page/component
+const canopy = await getCanopy()
+const { data } = await canopy.read({ entryPath: 'content/posts', slug: params.slug })
+```
+
+No manual user management, no config imports, no auth logic. The context handles everything.
 
 ## The Permission Model
 
@@ -205,9 +298,21 @@ This abstraction means you can use Clerk, Auth0, NextAuth, Supabase Auth, or a c
 
 ### Framework Adapters
 
-The core API handler is framework-agnostic. Framework adapters convert framework-specific request/response objects to the core `CanopyRequest`/`CanopyResponse` types.
+Framework adapters provide thin integration between the framework and CanopyCMS core. They handle two main concerns:
 
-See `canopycms-next` as a reference implementation. Creating an adapter for Express, Fastify, Hono, or other frameworks follows the same pattern.
+1. **User extraction**: Extract user identity from framework-specific request context (Next.js headers, Express req, etc.)
+2. **Request/response adaptation**: Convert framework request/response objects to core `CanopyRequest`/`CanopyResponse` types for API handlers
+
+The `canopycms-next` adapter is ~10 lines for user extraction plus the request/response wrapper. All business logic stays in core—adapters are purely integration code.
+
+**Creating a new adapter**:
+
+- Implement user extraction (read auth headers/cookies, call auth plugin)
+- Wrap core context creation with framework-specific optimizations (like React cache() for Next.js)
+- Provide unified API that works in both pages and API routes
+- Optionally wrap the core API handler for framework-specific routing
+
+See `canopycms-next` as a reference implementation. Creating adapters for Express, Fastify, Hono, or other frameworks follows the same minimal pattern.
 
 ## Key Design Decisions
 
@@ -260,3 +365,69 @@ The branch registry (`branches.json`) is a **read-only cache** for fast branch l
 - **Atomic invalidation**: Prevents race conditions on concurrent updates
 - **Lazy regeneration**: Amortizes the cost of directory scanning across reads
 - **Self-healing**: If the cache becomes corrupted or stale, the next read fixes it
+
+### Why framework-agnostic context creation?
+
+The context architecture centralizes business logic in core while keeping framework adapters minimal.
+
+**Benefits:**
+
+- **Consistency**: Bootstrap admin groups, build mode, and permission checks work identically across all frameworks
+- **Testability**: Core context can be tested without Next.js, Express, or any framework installed
+- **Maintainability**: Bug fixes and features only need to be implemented once in core
+- **Extensibility**: New frameworks require ~10 lines of user extraction code, not reimplementing business logic
+
+The `getUser` function pattern inverts the dependency—core doesn't know about frameworks, frameworks provide core with what it needs.
+
+### Why automatic bootstrap admin group application?
+
+Bootstrap admins are designated in config (e.g., by email or user ID). These users should always have the Admins group, regardless of what the auth provider returns.
+
+Handling this in core context creation ensures:
+
+- **Single application point**: Can't be forgotten or applied inconsistently
+- **Framework-agnostic**: Works the same in Next.js, Express, or any other framework
+- **Early in request lifecycle**: Applied before any content reading or permission checks
+- **Transparent to pages**: Page code doesn't need to know about bootstrap admins
+
+Without this, every page would need to manually apply bootstrap groups or risk inconsistent permissions.
+
+### Why bypass permissions in build mode?
+
+Static site generators need to read all content to pre-render pages. Running permission checks during build would require:
+
+- Mock authentication in the build environment
+- Knowing all possible users ahead of time
+- Risk of incomplete pre-rendering if permission checks fail
+
+Build mode solves this by:
+
+- **Detecting build environment automatically** (via `NEXT_PHASE` or `CANOPY_BUILD_MODE`)
+- **Providing BUILD_USER with admin access** (bypasses all permission checks)
+- **Working with the same `read()` calls** (no special build-specific code paths)
+
+This means you write `await canopy.read(...)` once, and it works in both authenticated runtime requests and build-time static generation.
+
+### Why minimal framework adapters?
+
+Keeping adapters thin (like the ~10 line Next.js user extraction) provides several benefits:
+
+**For core maintainers:**
+
+- Features and fixes only need to be implemented once in core
+- Core can be tested without installing every framework
+- API surface area is small and stable
+
+**For framework adapter authors:**
+
+- Less code to write and maintain
+- Less that can go wrong (minimal surface area for bugs)
+- Easy to understand reference implementations
+
+**For adopters:**
+
+- Consistent behavior across frameworks
+- Easier to switch frameworks (just change the adapter)
+- Confidence that adapters are just thin wrappers, not reimplementations
+
+If adapters contained business logic, we'd risk behavior divergence, duplicate maintenance, and harder-to-debug issues.
