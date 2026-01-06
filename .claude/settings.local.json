@@ -44,7 +44,9 @@
       "Bash(tac:*)",
       "Bash(playwright test:*)",
       "Bash(tee:*)",
-      "Edit(*)"
+      "Edit(*)",
+      "Bash(git show:*)",
+      "Bash(curl:*)"
     ]
   }
 }
