@@ -1,8 +1,7 @@
 import type { AuthPlugin } from '../../auth/plugin'
 import type { AuthenticatedUser } from '../../user'
-import type { UserSearchResult, GroupMetadata, TokenVerificationResult } from '../../auth/types'
+import type { UserSearchResult, GroupMetadata, AuthenticationResult } from '../../auth/types'
 import type { CanopyUserId, CanopyGroupId } from '../../types'
-import type { CanopyRequest } from '../../http/types'
 
 export type TestUserRole = 'admin' | 'reviewer' | 'editor'
 
@@ -63,10 +62,16 @@ export function createMockAuthPlugin(currentRole: TestUserRole): AuthPlugin {
   const currentUser = TEST_USERS[currentRole]
 
   return {
-    async verifyToken(_req: CanopyRequest): Promise<TokenVerificationResult> {
+    async authenticate(_context: unknown): Promise<AuthenticationResult> {
+      const testUser = createTestUser(currentRole)
       return {
-        valid: true,
-        user: createTestUser(currentRole),
+        success: true,
+        user: {
+          userId: testUser.userId,
+          email: testUser.email,
+          name: testUser.name,
+          externalGroups: testUser.groups,
+        },
       }
     },
 

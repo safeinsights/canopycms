@@ -1,4 +1,6 @@
 import type { CanopyUserId, CanopyGroupId } from './types'
+import type { AuthenticationResult } from './auth/types'
+import { RESERVED_GROUPS } from './reserved-groups'
 
 /**
  * Anonymous user - explicitly marked for public/unauthenticated access
@@ -65,3 +67,39 @@ export const createAuthenticatedUser = (data: {
   name: data.name,
   avatarUrl: data.avatarUrl,
 })
+
+/**
+ * Convert authentication result to CanopyUser.
+ * Applies bootstrap admin groups and returns ANONYMOUS_USER if not authenticated.
+ *
+ * This is the SINGLE source of truth for converting external auth to CanopyUser.
+ *
+ * @param authResult - Result from auth plugin's authenticate() method
+ * @param bootstrapAdminIds - Set of user IDs that should always be admins
+ * @returns CanopyUser (either authenticated with groups or ANONYMOUS_USER)
+ */
+export function authResultToCanopyUser(
+  authResult: AuthenticationResult,
+  bootstrapAdminIds: Set<string>,
+): CanopyUser {
+  if (!authResult.success || !authResult.user) {
+    return ANONYMOUS_USER
+  }
+
+  // Start with external groups from auth provider
+  const groups = [...(authResult.user.externalGroups ?? [])]
+
+  // Add Admins group if user is in bootstrap admin list
+  if (bootstrapAdminIds.has(authResult.user.userId) && !groups.includes(RESERVED_GROUPS.ADMINS)) {
+    groups.push(RESERVED_GROUPS.ADMINS)
+  }
+
+  return {
+    type: 'authenticated',
+    userId: authResult.user.userId,
+    email: authResult.user.email,
+    name: authResult.user.name,
+    avatarUrl: authResult.user.avatarUrl,
+    groups,
+  }
+}

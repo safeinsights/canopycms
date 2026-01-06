@@ -2,18 +2,21 @@ import type { CanopyConfig } from './config'
 import type { CanopyUser } from './user'
 import type { CanopyServices } from './services'
 import type { ContentReader, ReadContentInput } from './content-reader'
-import { createCanopyServices, getEffectiveGroups } from './services'
+import { createCanopyServices } from './services'
 import { isBuildMode, BUILD_USER } from './build-mode'
-import { ANONYMOUS_USER } from './user'
 import { createContentReader } from './content-reader'
 
 export interface CanopyContextOptions {
-  config: CanopyConfig
+  /** Either config OR services must be provided */
+  config?: CanopyConfig
+  services?: CanopyServices
   /**
-   * Function to extract the current user.
+   * Extract the current user from framework-specific context.
+   * Should call authResultToCanopyUser() to apply bootstrap admin groups.
+   *
    * Framework adapters provide this (e.g., from Next.js headers, Express req, etc.)
    */
-  getUser: () => Promise<CanopyUser>
+  extractUser: () => Promise<CanopyUser>
 }
 
 export interface CanopyContext {
@@ -33,37 +36,31 @@ export interface CanopyContext {
 
 /**
  * Create a Canopy context that manages auth + content reading.
- * Framework-agnostic - the adapter provides the getUser function.
+ * Framework-agnostic - the adapter provides the extractUser function.
  *
- * This applies bootstrap admin groups automatically and handles build mode.
+ * User extractor should apply bootstrap admin groups (via authResultToCanopyUser).
  */
 export function createCanopyContext(options: CanopyContextOptions) {
-  const services = createCanopyServices(options.config)
+  // Accept either pre-created services or config
+  if (!options.services && !options.config) {
+    throw new Error('CanopyCMS: Either services or config must be provided')
+  }
+
+  const services = options.services ?? createCanopyServices(options.config!)
 
   /**
-   * Get the current user with bootstrap admin groups applied.
+   * Get the current user.
+   * Returns BUILD_USER during static generation, otherwise delegates to adapter.
    */
-  const getUserWithBootstrap = async (): Promise<CanopyUser> => {
-    // Build mode: bypass auth, return admin user
+  const getUser = async (): Promise<CanopyUser> => {
+    // Build mode: static generation gets admin access
     if (isBuildMode()) {
       return BUILD_USER
     }
 
-    // Get user from adapter-provided function
-    const user = await options.getUser()
-
-    // Anonymous user: no groups to apply
-    if (user.type === 'anonymous') {
-      return user
-    }
-
-    // Apply bootstrap admin groups
-    const effectiveGroups = getEffectiveGroups(user.userId, user.groups, services.bootstrapAdminIds)
-
-    return {
-      ...user,
-      groups: effectiveGroups,
-    }
+    // Runtime: delegate to adapter-provided user extractor
+    // (adapter should use authResultToCanopyUser to apply bootstrap admins)
+    return await options.extractUser()
   }
 
   /**
@@ -71,7 +68,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
    * Call this in server components/routes to get auth-aware reader.
    */
   const getContext = async (): Promise<CanopyContext> => {
-    const user = await getUserWithBootstrap()
+    const user = await getUser()
 
     // Create base content reader
     const baseReader = createContentReader({ services })

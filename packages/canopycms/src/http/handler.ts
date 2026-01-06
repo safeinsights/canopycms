@@ -3,11 +3,11 @@ import { jsonResponse } from './types'
 import { createCanopyRouter, type CanopyRouter } from './router'
 import type { ApiContext, ApiResponse } from '../api/types'
 import type { AuthPlugin } from '../auth/plugin'
-import { createCanopyServices, getEffectiveGroups, type CanopyServices } from '../services'
+import { createCanopyServices, type CanopyServices } from '../services'
 import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
 import { loadBranchContext } from '../branch-workspace'
-import type { AuthenticatedUser } from '../user'
+import { authResultToCanopyUser } from '../user'
 
 /**
  * Options for creating a Canopy request handler.
@@ -116,24 +116,16 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     // Get cached context
     const apiCtx = await getContext()
 
-    // Authenticate
-    const authResult = await options.authPlugin.verifyToken(req)
-    if (!authResult.valid || !authResult.user) {
+    // Authenticate and convert to CanopyUser
+    const authResult = await options.authPlugin.authenticate(req)
+    const user = authResultToCanopyUser(authResult, apiCtx.services.bootstrapAdminIds)
+
+    // API routes require authentication - reject anonymous users
+    if (user.type === 'anonymous') {
       return jsonResponse(
         { ok: false, status: 401, error: authResult.error ?? 'Unauthorized' },
         401,
       )
-    }
-
-    // Apply bootstrap admin groups and ensure user is an AuthenticatedUser
-    const user: AuthenticatedUser = {
-      ...authResult.user,
-      type: 'authenticated',
-      groups: getEffectiveGroups(
-        authResult.user.userId,
-        authResult.user.groups,
-        apiCtx.services.bootstrapAdminIds,
-      ),
     }
 
     // Parse query params and merge with route params

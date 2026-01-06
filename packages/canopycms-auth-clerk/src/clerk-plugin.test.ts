@@ -56,22 +56,24 @@ describe('ClerkAuthPlugin', () => {
     })
   })
 
-  describe('verifyToken', () => {
-    it('returns invalid if no token in request', async () => {
+  describe('authenticate', () => {
+    it('returns failure if no token in request', async () => {
       const plugin = new ClerkAuthPlugin()
       const req = {
+        method: 'GET',
         header: vi.fn().mockReturnValue(null),
       } as unknown as CanopyRequest
 
-      const result = await plugin.verifyToken(req)
+      const result = await plugin.authenticate(req)
 
-      expect(result.valid).toBe(false)
+      expect(result.success).toBe(false)
       expect(result.error).toBe('No authentication token found')
     })
 
-    it('returns invalid if token verification fails', async () => {
+    it('returns failure if token verification fails', async () => {
       const plugin = new ClerkAuthPlugin()
       const req = {
+        method: 'GET',
         header: vi.fn().mockImplementation((name: string) => {
           if (name === 'Authorization') return 'Bearer test_token'
           return null
@@ -80,15 +82,16 @@ describe('ClerkAuthPlugin', () => {
 
       mockVerifyToken.mockRejectedValue(new Error('Invalid token'))
 
-      const result = await plugin.verifyToken(req)
+      const result = await plugin.authenticate(req)
 
-      expect(result.valid).toBe(false)
+      expect(result.success).toBe(false)
       expect(result.error).toBe('Invalid token')
     })
 
-    it('verifies valid session and returns user', async () => {
+    it('verifies valid session and returns user identity', async () => {
       const plugin = new ClerkAuthPlugin()
       const req = {
+        method: 'GET',
         header: vi.fn().mockImplementation((name: string) => {
           if (name === 'Authorization') return 'Bearer valid_token'
           return null
@@ -110,21 +113,21 @@ describe('ClerkAuthPlugin', () => {
         data: [{ organization: { id: 'org_1' } }, { organization: { id: 'org_2' } }],
       })
 
-      const result = await plugin.verifyToken(req)
+      const result = await plugin.authenticate(req)
 
-      expect(result.valid).toBe(true)
+      expect(result.success).toBe(true)
       expect(result.user).toEqual({
-        type: 'authenticated',
         userId: 'user_123',
         name: 'John Doe',
         email: 'john@example.com',
-        groups: ['org_1', 'org_2'],
+        externalGroups: ['org_1', 'org_2'],
       })
     })
 
-    it('returns user without groups if organizations disabled', async () => {
+    it('returns user without external groups if organizations disabled', async () => {
       const plugin = new ClerkAuthPlugin({ useOrganizationsAsGroups: false })
       const req = {
+        method: 'GET',
         header: vi.fn().mockImplementation((name: string) => {
           if (name === 'Authorization') return 'Bearer valid_token'
           return null
@@ -142,16 +145,17 @@ describe('ClerkAuthPlugin', () => {
         primaryEmailAddress: { emailAddress: 'jane@example.com' },
       })
 
-      const result = await plugin.verifyToken(req)
+      const result = await plugin.authenticate(req)
 
-      expect(result.valid).toBe(true)
-      expect(result.user?.groups).toEqual([])
+      expect(result.success).toBe(true)
+      expect(result.user?.externalGroups).toBeUndefined()
       expect(mockGetOrganizationMembershipList).not.toHaveBeenCalled()
     })
 
     it('handles errors gracefully', async () => {
       const plugin = new ClerkAuthPlugin()
       const req = {
+        method: 'GET',
         header: vi.fn().mockImplementation((name: string) => {
           if (name === 'Authorization') return 'Bearer valid_token'
           return null
@@ -160,15 +164,16 @@ describe('ClerkAuthPlugin', () => {
 
       mockVerifyToken.mockRejectedValue(new Error('Network error'))
 
-      const result = await plugin.verifyToken(req)
+      const result = await plugin.authenticate(req)
 
-      expect(result.valid).toBe(false)
+      expect(result.success).toBe(false)
       expect(result.error).toBe('Network error')
     })
 
     it('extracts token from __session cookie', async () => {
       const plugin = new ClerkAuthPlugin()
       const req = {
+        method: 'GET',
         header: vi.fn().mockImplementation((name: string) => {
           if (name === 'Cookie') return '__session=cookie_token; other=value'
           return null
@@ -187,9 +192,9 @@ describe('ClerkAuthPlugin', () => {
 
       mockGetOrganizationMembershipList.mockResolvedValue({ data: [] })
 
-      const result = await plugin.verifyToken(req)
+      const result = await plugin.authenticate(req)
 
-      expect(result.valid).toBe(true)
+      expect(result.success).toBe(true)
       expect(mockVerifyToken).toHaveBeenCalledWith('cookie_token', expect.any(Object))
     })
   })

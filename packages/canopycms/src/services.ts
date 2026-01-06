@@ -9,7 +9,6 @@ import { GitManager } from './git-manager'
 import { BranchRegistry } from './branch-registry'
 import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
-import { RESERVED_GROUPS } from './reserved-groups'
 
 /**
  * Parse bootstrap admin IDs from environment variable.
@@ -24,21 +23,6 @@ export const getBootstrapAdminIds = (): Set<string> => {
       .map((id) => id.trim())
       .filter(Boolean),
   )
-}
-
-/**
- * Get effective groups for a user, adding Admins group if they're a bootstrap admin.
- */
-export const getEffectiveGroups = (
-  userId: string,
-  groups: string[] | undefined,
-  bootstrapAdminIds: Set<string>,
-): string[] => {
-  const effectiveGroups = groups ? [...groups] : []
-  if (bootstrapAdminIds.has(userId) && !effectiveGroups.includes(RESERVED_GROUPS.ADMINS)) {
-    effectiveGroups.push(RESERVED_GROUPS.ADMINS)
-  }
-  return effectiveGroups
 }
 
 export interface CanopyServices {

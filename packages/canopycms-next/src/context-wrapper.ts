@@ -1,7 +1,8 @@
 import { cache } from 'react'
-import { createCanopyContext, type CanopyContext } from 'canopycms/server'
-import type { CanopyConfig, AuthPlugin } from 'canopycms'
-import { createNextUserExtractor } from './user-extraction'
+import { headers } from 'next/headers'
+import { createCanopyContext, type CanopyContext, createCanopyServices } from 'canopycms/server'
+import type { CanopyConfig, AuthPlugin, CanopyUser } from 'canopycms'
+import { authResultToCanopyUser } from 'canopycms'
 import { createCanopyCatchAllHandler } from './adapter'
 
 export interface NextCanopyOptions {
@@ -14,10 +15,20 @@ export interface NextCanopyOptions {
  * Adds React cache() for per-request memoization and API handler.
  */
 export function createNextCanopyContext(options: NextCanopyOptions) {
-  // Create core context (framework-agnostic)
+  // Create services ONCE at initialization
+  const services = createCanopyServices(options.config)
+
+  // User extractor: passes Next.js headers to auth plugin, applies authorization
+  const extractUser = async (): Promise<CanopyUser> => {
+    const headersList = await headers()
+    const authResult = await options.authPlugin.authenticate(headersList)
+    return authResultToCanopyUser(authResult, services.bootstrapAdminIds)
+  }
+
+  // Create core context with pre-created services (framework-agnostic)
   const coreContext = createCanopyContext({
-    config: options.config,
-    getUser: createNextUserExtractor(options.authPlugin),
+    services,
+    extractUser,
   })
 
   // Wrap with React cache() for per-request caching
@@ -25,12 +36,15 @@ export function createNextCanopyContext(options: NextCanopyOptions) {
     return coreContext.getContext()
   })
 
-  // Create API handler using same options
-  const handler = createCanopyCatchAllHandler(options)
+  // Create API handler using same services
+  const handler = createCanopyCatchAllHandler({
+    ...options,
+    services,
+  })
 
   return {
     getCanopy,
     handler,
-    services: coreContext.services,
+    services,
   }
 }
