@@ -12,6 +12,11 @@ test.describe('Editor Happy Path', () => {
   let editorPage: EditorPage
 
   test.beforeEach(async ({ page }) => {
+    // Mark window as E2E test environment for environment-aware notifications
+    await page.addInitScript(() => {
+      ;(window as any).__E2E_TEST__ = true
+    })
+
     // Reset workspace and ensure main branch exists before each test for isolation
     await resetWorkspace()
     await ensureMainBranch(BASE_URL)
@@ -84,11 +89,8 @@ test.describe('Editor Happy Path', () => {
     await page.reload()
     await editorPage.waitForReady()
 
-    // Re-select the entry - note: label now matches the edited title
-    await editorPage.openEntryNavigator()
-    await editorPage.selectEntry(testValue)
-
-    // Verify the value persisted
+    // After reload, the current entry should still be loaded
+    // No need to re-select, just verify the field value
     const titleInput = editorPage.getFieldInput('title')
     await expect(titleInput).toHaveValue(testValue)
   })

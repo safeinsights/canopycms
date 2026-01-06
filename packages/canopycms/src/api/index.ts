@@ -22,6 +22,7 @@ export type {
   ListEntriesParams,
 } from './entries'
 export type { PermissionsResponse, UpdatePermissionsBody, SearchUsersParams } from './permissions'
+export type { UserInfoResponse } from './user'
 export type {
   AssetsListResponse,
   AssetUploadResponse,
@@ -37,6 +38,9 @@ export type {
   ExternalGroup,
 } from './groups'
 export type { ReadContentParams, WriteContentBody } from './content'
+
+// Export route definitions
+export { USER_ROUTES } from './user'
 
 // Export client
 export { CanopyApiClient, createApiClient } from './client'

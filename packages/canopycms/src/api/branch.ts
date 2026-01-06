@@ -7,6 +7,9 @@ import { BranchWorkspaceManager } from '../branch-workspace'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
+import { createDebugLogger } from '../utils/debug'
+
+const log = createDebugLogger({ prefix: 'BranchAPI' })
 
 /** Response type for single branch operations (create, update, status) */
 export type BranchResponse = ApiResponse<{ branch: BranchMetadata }>
@@ -106,36 +109,45 @@ export const createBranchHandler = async (
   req: ApiRequest,
   body: z.infer<typeof createBranchBodySchema>,
 ): Promise<BranchResponse> => {
-  const branchName = body.branch
+  return log.timed('api', 'createBranch', async () => {
+    const branchName = body.branch
+    log.debug('api', 'Create branch request', {
+      branchName,
+      userId: req.user.userId,
+    })
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
+    const branchMode = ctx.services.config.mode ?? 'local-simple'
 
-  // Load path permissions from the main branch's JSON file
-  const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-  const mainBranchContext = await ctx.getBranchContext(mainBranch)
+    // Load path permissions from the main branch's JSON file
+    const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
+    const mainBranchContext = await ctx.getBranchContext(mainBranch)
 
-  let pathPermissions: PathPermission[] = []
-  if (mainBranchContext) {
-    const branchPaths = resolveBranchPaths(mainBranchContext, branchMode)
-    pathPermissions = await loadPathPermissions(branchPaths.branchRoot)
-  }
+    let pathPermissions: PathPermission[] = []
+    if (mainBranchContext) {
+      const branchPaths = resolveBranchPaths(mainBranchContext, branchMode)
+      pathPermissions = await loadPathPermissions(branchPaths.branchRoot)
+    }
 
-  // Check if user can create branches
-  const canCreate = canCreateBranch(req.user, pathPermissions)
-  if (!canCreate.allowed) {
-    return { ok: false, status: 403, error: 'You do not have permission to create branches' }
-  }
+    // Check if user can create branches
+    const canCreate = canCreateBranch(req.user, pathPermissions)
+    if (!canCreate.allowed) {
+      log.debug('api', 'Permission denied', { reason: canCreate.reason })
+      return { ok: false, status: 403, error: 'You do not have permission to create branches' }
+    }
 
-  const manager = new BranchWorkspaceManager(ctx.services.config)
-  const context = await manager.openOrCreateBranch({
-    branchName,
-    mode: branchMode,
-    createdBy: req.user.userId,
-    title: body.title,
-    description: body.description,
-    access: body.access,
+    const manager = new BranchWorkspaceManager(ctx.services.config)
+    const context = await manager.openOrCreateBranch({
+      branchName,
+      mode: branchMode,
+      createdBy: req.user.userId,
+      title: body.title,
+      description: body.description,
+      access: body.access,
+    })
+
+    log.debug('api', 'Branch created', { branchName: context.branch.name })
+    return { ok: true, status: 200, data: { branch: context.branch } }
   })
-  return { ok: true, status: 200, data: { branch: context.branch } }
 }
 
 export const listBranchesHandler = async (

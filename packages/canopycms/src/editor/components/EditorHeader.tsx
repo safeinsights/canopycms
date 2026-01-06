@@ -287,11 +287,12 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     leftSection={<GoGitBranch size={16} />}
                     rightSection={<MdKeyboardArrowDown size={14} />}
                     disabled={!branchName}
+                    data-testid="branch-dropdown-button"
                   >
                     {branchName || 'No branch selected'}
                   </Button>
                 </Menu.Target>
-                <Menu.Dropdown>
+                <Menu.Dropdown data-testid="branch-menu">
                   <Menu.Item onClick={onBranchReloadData} disabled={!branchName}>
                     Reload All Files
                   </Menu.Item>
@@ -299,7 +300,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     Discard All File Drafts
                   </Menu.Item>
                   <Menu.Divider />
-                  <Menu.Item onClick={onBranchManagerOpen}>Change / Manage Branches</Menu.Item>
+                  <Menu.Item onClick={onBranchManagerOpen} data-testid="manage-branches-menu-item">
+                    Change / Manage Branches
+                  </Menu.Item>
                   <Menu.Divider />
                   <Menu.Label>{`${modifiedCount} files modified`}</Menu.Label>
                   {editedFiles.length === 0 ? (

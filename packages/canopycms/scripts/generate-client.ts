@@ -30,6 +30,7 @@ import '../src/api/entries.js'
 import '../src/api/assets.js'
 import '../src/api/permissions.js'
 import '../src/api/groups.js'
+import '../src/api/user.js'
 
 // Now we can import the populated registry
 import { getAllRoutes, type RouteMetadata } from '../src/api/route-builder.js'

@@ -20,6 +20,7 @@ import type {
   InternalGroupsResponse,
   UpdateInternalGroupsResponse,
 } from '../groups'
+import type { UserInfoResponse } from '../user'
 import type { CreateBranchBody, UpdateBranchAccessBody } from '../branch'
 
 /**
@@ -191,6 +192,10 @@ export function createMockApiClient(): MockApiClient {
       getInternal: vi.fn().mockResolvedValue(mockSuccess({ groups: [] })),
       updateInternal: vi.fn().mockResolvedValue(mockSuccess({})),
       searchExternal: vi.fn().mockResolvedValue(mockSuccess({ groups: [] })),
+    },
+
+    user: {
+      whoami: vi.fn().mockResolvedValue(mockSuccess({ userId: 'mock-user', groups: [] })),
     },
   } as MockApiClient
 }
@@ -368,4 +373,11 @@ export function mockUpdateInternalGroupsResponse(): UpdateInternalGroupsResponse
  */
 export function mockExternalGroupsResponse(): ExternalGroupsResponse {
   return mockSuccess({ groups: [] })
+}
+
+/**
+ * Create a UserInfoResponse for testing
+ */
+export function mockUserInfoResponse(): UserInfoResponse {
+  return mockSuccess({ userId: 'mock-user', groups: [] })
 }

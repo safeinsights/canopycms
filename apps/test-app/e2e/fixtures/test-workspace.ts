@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { testLogger as log } from '../../../../packages/canopycms/src/utils/debug'
 
 /**
  * Base path for the test-app workspace.
@@ -54,18 +55,33 @@ export async function workspaceExists(): Promise<boolean> {
  * The app will recreate it on next request.
  */
 export async function resetWorkspace(): Promise<void> {
+  log.time('resetWorkspace')
+  log.info('workspace', 'Starting workspace reset')
+
   try {
+    log.debug('workspace', 'Deleting branches directory', { path: BRANCHES_DIR })
     await fs.rm(BRANCHES_DIR, { recursive: true, force: true })
   } catch {
     // Directory may not exist, that's fine
   }
+
   // Also remove the remote.git if it exists (forces fresh initialization)
   const remotePath = path.join(TEST_APP_ROOT, '.canopycms/remote.git')
   try {
+    log.debug('workspace', 'Deleting remote.git', { path: remotePath })
     await fs.rm(remotePath, { recursive: true, force: true })
   } catch {
     // Directory may not exist, that's fine
   }
+
+  // NEW: Clear registry cache files
+  log.debug('workspace', 'Clearing registry cache')
+  const registryPath = path.join(TEST_APP_ROOT, '.canopycms/branches.json')
+  const stalePath = path.join(TEST_APP_ROOT, '.canopycms/branches.stale.json')
+  await fs.rm(registryPath, { force: true }).catch(() => {})
+  await fs.rm(stalePath, { force: true }).catch(() => {})
+
+  log.timeEnd('workspace', 'resetWorkspace')
 }
 
 /**
@@ -74,23 +90,50 @@ export async function resetWorkspace(): Promise<void> {
  * @param baseUrl - Base URL of the test app (e.g., 'http://localhost:5174')
  */
 export async function ensureMainBranch(baseUrl: string): Promise<void> {
-  // Try to create the main branch - this is idempotent
-  const response = await fetch(`${baseUrl}/api/canopycms/branches`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ branch: 'main' }),
-  })
+  return log.timed('workspace', 'ensureMainBranch', async () => {
+    log.info('workspace', 'Ensuring main branch exists', { baseUrl })
 
-  // 200 = created, or branch already exists with appropriate response
-  if (!response.ok) {
-    const body = await response.text()
-    // Ignore if branch already exists (might return different status codes)
-    if (!body.includes('already exists') && response.status !== 409) {
-      console.warn(`Warning: ensureMainBranch got status ${response.status}: ${body}`)
+    // Try to create the main branch - this is idempotent
+    log.debug('workspace', 'Calling create branch API')
+    const response = await fetch(`${baseUrl}/api/canopycms/branches`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ branch: 'main' }),
+    })
+
+    log.debug('workspace', 'API response received', {
+      ok: response.ok,
+      status: response.status,
+    })
+
+    // 200 = created, or branch already exists with appropriate response
+    if (!response.ok) {
+      const body = await response.text()
+      // Ignore if branch already exists (might return different status codes)
+      if (body.includes('already exists') || response.status === 409) {
+        log.debug('workspace', 'Branch already exists (idempotent)')
+        // Continue to wait for workspace - it may still be initializing
+      } else {
+        // Non-idempotent failure: throw error
+        log.error('workspace', 'Failed to create main branch', {
+          status: response.status,
+          body,
+        })
+        throw new Error(`Failed to ensure main branch: ${response.status} ${body}`)
+      }
     }
-  }
+
+    // NEW: Wait for workspace to be fully initialized (whether created or already exists)
+    log.debug('workspace', 'Waiting for workspace initialization')
+    await waitForWorkspace()
+
+    log.debug('workspace', 'Verifying workspace readiness')
+    await verifyWorkspaceReady()
+
+    log.info('workspace', 'Main branch ready')
+  })
 }
 
 /**
@@ -98,12 +141,325 @@ export async function ensureMainBranch(baseUrl: string): Promise<void> {
  * Useful after resetWorkspace() when the app needs to recreate it.
  */
 export async function waitForWorkspace(timeoutMs = 30000): Promise<void> {
+  log.debug('workspace', 'Waiting for workspace', { timeoutMs })
   const start = Date.now()
+  let attempts = 0
+
   while (Date.now() - start < timeoutMs) {
+    attempts++
     if (await workspaceExists()) {
+      log.debug('workspace', 'Workspace ready', {
+        attempts,
+        durationMs: Date.now() - start,
+      })
       return
     }
     await new Promise((resolve) => setTimeout(resolve, 500))
   }
+
+  log.error('workspace', 'Workspace initialization timeout', {
+    timeoutMs,
+    attempts,
+  })
   throw new Error(`Workspace not initialized after ${timeoutMs}ms`)
+}
+
+/**
+ * Verify workspace is in a valid, ready state before tests proceed.
+ */
+export async function verifyWorkspaceReady(): Promise<void> {
+  // Check 1: Main branch directory exists
+  const mainPath = getMainBranchPath()
+  try {
+    await fs.access(mainPath)
+  } catch {
+    throw new Error(`Main branch directory does not exist: ${mainPath}`)
+  }
+
+  // Check 2: Git repo initialized in main branch
+  const gitPath = path.join(mainPath, '.git')
+  try {
+    await fs.access(gitPath)
+  } catch {
+    throw new Error(`Git repository not initialized in main branch: ${gitPath}`)
+  }
+
+  // Check 3: Remote.git exists and is valid
+  const remotePath = path.join(TEST_APP_ROOT, '.canopycms/remote.git')
+  try {
+    await fs.access(path.join(remotePath, 'config'))
+    await fs.access(path.join(remotePath, 'HEAD'))
+  } catch {
+    throw new Error(`Remote.git not properly initialized: ${remotePath}`)
+  }
+}
+
+/**
+ * Wait for a specific branch workspace to be fully initialized.
+ * Useful after creating a branch via API.
+ */
+export async function waitForBranchWorkspace(branchName: string, timeoutMs = 10000): Promise<void> {
+  log.debug('workspace', 'Waiting for branch workspace', { branchName, timeoutMs })
+  const branchPath = path.join(BRANCHES_DIR, branchName)
+  const start = Date.now()
+  let attempts = 0
+
+  while (Date.now() - start < timeoutMs) {
+    attempts++
+    try {
+      // Check branch directory exists
+      await fs.access(branchPath)
+      // Check .git directory exists
+      await fs.access(path.join(branchPath, '.git'))
+      // Check branch metadata exists
+      await fs.access(path.join(branchPath, '.canopycms', 'branch.json'))
+
+      log.debug('workspace', 'Branch workspace ready', {
+        branchName,
+        attempts,
+        durationMs: Date.now() - start,
+      })
+      return
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+  }
+
+  log.error('workspace', 'Branch workspace timeout', {
+    branchName,
+    timeoutMs,
+    attempts,
+  })
+  throw new Error(`Branch workspace not ready after ${timeoutMs}ms: ${branchName}`)
+}
+
+/**
+ * Create a branch via API.
+ * @param baseUrl - Base URL of the test app
+ * @param branchName - Name of the branch to create
+ * @param userId - User ID to make the request as (via X-Test-User header)
+ * @param options - Optional branch metadata (title, description, access control)
+ */
+export async function createBranchViaAPI(
+  baseUrl: string,
+  branchName: string,
+  userId: string,
+  options?: {
+    title?: string
+    description?: string
+    access?: {
+      allowedUsers?: string[]
+      allowedGroups?: string[]
+    }
+  },
+): Promise<Response> {
+  log.debug('api', 'Creating branch via API', { branchName, userId })
+
+  const response = await fetch(`${baseUrl}/api/canopycms/branches`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Test-User': userId,
+    },
+    body: JSON.stringify({
+      branch: branchName,
+      ...options,
+    }),
+  })
+
+  // NEW: Wait for branch workspace to be initialized
+  if (response.ok) {
+    await waitForBranchWorkspace(branchName)
+  }
+
+  return response
+}
+
+/**
+ * Delete a branch via API.
+ * @param baseUrl - Base URL of the test app
+ * @param branchName - Name of the branch to delete
+ * @param userId - User ID to make the request as
+ */
+export async function deleteBranchViaAPI(
+  baseUrl: string,
+  branchName: string,
+  userId: string,
+): Promise<Response> {
+  const response = await fetch(`${baseUrl}/api/canopycms/branches/${branchName}`, {
+    method: 'DELETE',
+    headers: {
+      'X-Test-User': userId,
+    },
+  })
+  return response
+}
+
+/**
+ * Get branch status and metadata via API.
+ * @param baseUrl - Base URL of the test app
+ * @param branchName - Name of the branch
+ * @param userId - User ID to make the request as
+ */
+export async function getBranchViaAPI(
+  baseUrl: string,
+  branchName: string,
+  userId: string,
+): Promise<any> {
+  const response = await fetch(`${baseUrl}/api/canopycms/${branchName}`, {
+    method: 'GET',
+    headers: {
+      'X-Test-User': userId,
+    },
+  })
+  if (!response.ok) {
+    throw new Error(`Failed to get branch: ${response.status} ${await response.text()}`)
+  }
+  return await response.json()
+}
+
+/**
+ * List all branches via API.
+ * @param baseUrl - Base URL of the test app
+ * @param userId - User ID to make the request as
+ */
+export async function listBranchesViaAPI(baseUrl: string, userId: string): Promise<any[]> {
+  const response = await fetch(`${baseUrl}/api/canopycms/branches`, {
+    method: 'GET',
+    headers: {
+      'X-Test-User': userId,
+    },
+  })
+  if (!response.ok) {
+    throw new Error(`Failed to list branches: ${response.status}`)
+  }
+  return await response.json()
+}
+
+/**
+ * Submit a branch for review (creates PR) via API.
+ * @param baseUrl - Base URL of the test app
+ * @param branchName - Name of the branch to submit
+ * @param userId - User ID to make the request as
+ */
+export async function submitBranchViaAPI(
+  baseUrl: string,
+  branchName: string,
+  userId: string,
+): Promise<Response> {
+  log.debug('api', 'Submitting branch via API', { branchName, userId })
+  const response = await fetch(`${baseUrl}/api/canopycms/${branchName}/submit`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Test-User': userId,
+    },
+    body: JSON.stringify({}),
+  })
+
+  if (!response.ok) {
+    const body = await response.text()
+    log.error('api', 'Submit failed', {
+      branchName,
+      status: response.status,
+      body,
+    })
+  } else {
+    log.debug('api', 'Submit successful', { branchName })
+  }
+
+  return response
+}
+
+/**
+ * Withdraw a submitted branch via API.
+ * @param baseUrl - Base URL of the test app
+ * @param branchName - Name of the branch to withdraw
+ * @param userId - User ID to make the request as
+ */
+export async function withdrawBranchViaAPI(
+  baseUrl: string,
+  branchName: string,
+  userId: string,
+): Promise<Response> {
+  const response = await fetch(`${baseUrl}/api/canopycms/${branchName}/withdraw`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Test-User': userId,
+    },
+    body: JSON.stringify({}),
+  })
+  return response
+}
+
+/**
+ * Approve a branch (reviewer action) via API.
+ * @param baseUrl - Base URL of the test app
+ * @param branchName - Name of the branch to approve
+ * @param userId - User ID to make the request as (should be reviewer or admin)
+ */
+export async function approveBranchViaAPI(
+  baseUrl: string,
+  branchName: string,
+  userId: string,
+): Promise<Response> {
+  const response = await fetch(`${baseUrl}/api/canopycms/${branchName}/approve`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Test-User': userId,
+    },
+    body: JSON.stringify({}),
+  })
+  return response
+}
+
+/**
+ * Request changes on a branch (reviewer action) via API.
+ * @param baseUrl - Base URL of the test app
+ * @param branchName - Name of the branch
+ * @param userId - User ID to make the request as (should be reviewer or admin)
+ */
+export async function requestChangesViaAPI(
+  baseUrl: string,
+  branchName: string,
+  userId: string,
+): Promise<Response> {
+  const response = await fetch(`${baseUrl}/api/canopycms/${branchName}/request-changes`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Test-User': userId,
+    },
+    body: JSON.stringify({}),
+  })
+  return response
+}
+
+/**
+ * Update branch access control via API.
+ * @param baseUrl - Base URL of the test app
+ * @param branchName - Name of the branch
+ * @param userId - User ID to make the request as
+ * @param access - Access control configuration
+ */
+export async function updateBranchAccessViaAPI(
+  baseUrl: string,
+  branchName: string,
+  userId: string,
+  access: {
+    allowedUsers?: string[]
+    allowedGroups?: string[]
+  },
+): Promise<Response> {
+  const response = await fetch(`${baseUrl}/api/canopycms/${branchName}/access`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Test-User': userId,
+    },
+    body: JSON.stringify(access),
+  })
+  return response
 }

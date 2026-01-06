@@ -7,6 +7,7 @@ import { ENTRY_ROUTES } from '../api/entries'
 import { ASSET_ROUTES } from '../api/assets'
 import { PERMISSION_ROUTES } from '../api/permissions'
 import { GROUP_ROUTES } from '../api/groups'
+import { USER_ROUTES } from '../api/user'
 
 /**
  * Handler function signature for Canopy API routes.
@@ -76,6 +77,7 @@ function buildCanopyRoutes(): RouteDefinition[] {
     ...Object.values(ASSET_ROUTES),
     ...Object.values(PERMISSION_ROUTES),
     ...Object.values(GROUP_ROUTES),
+    ...Object.values(USER_ROUTES),
   ].map(
     (route): RouteDefinition => ({
       method: route.method,
