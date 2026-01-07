@@ -106,28 +106,30 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   )
 
   const loadEntry = async (entry: EditorEntry) => {
-    if (!entry.collectionId || entry.slug == null) {
-      throw new Error('Entry missing collectionId or slug')
+    if (!entry.collectionId) {
+      throw new Error('Entry missing collectionId')
     }
+    // Build path from collectionId and slug (if it's a collection entry)
+    const path = entry.slug ? `${entry.collectionId}/${entry.slug}` : entry.collectionId
     const result = await getApiClient().content.read({
       branch: options.branchName,
-      collection: entry.collectionId,
-      slug: entry.slug,
+      path,
     })
     if (!result.ok) throw new Error(`Load failed: ${result.status}`)
     return normalizeContentPayload(result.data)
   }
 
   const saveEntry = async (entry: EditorEntry, value: FormValue) => {
-    if (!entry.collectionId || entry.slug == null) {
-      throw new Error('Entry missing collectionId or slug')
+    if (!entry.collectionId) {
+      throw new Error('Entry missing collectionId')
     }
     const payload = buildWritePayload(entry, value)
+    // Build path from collectionId and slug (if it's a collection entry)
+    const path = entry.slug ? `${entry.collectionId}/${entry.slug}` : entry.collectionId
     const result = await getApiClient().content.write(
       {
         branch: options.branchName,
-        collection: entry.collectionId,
-        slug: entry.slug,
+        path,
       },
       payload as any // buildWritePayload returns the correct shape
     )
@@ -164,13 +166,13 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     try {
       const payload =
         col.format === 'json'
-          ? { collection: collectionId, slug, format: 'json' as const, data: {} }
-          : { collection: collectionId, slug, format: col.format, data: {}, body: '' }
+          ? { format: 'json' as const, data: {} }
+          : { format: col.format, data: {}, body: '' }
+      const path = `${collectionId}/${slug}`
       const result = await getApiClient().content.write(
         {
           branch: options.branchName,
-          collection: collectionId,
-          slug,
+          path,
         },
         payload as any
       )

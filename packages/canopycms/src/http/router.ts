@@ -101,8 +101,9 @@ const matchPattern = (
 
   for (const part of pattern) {
     // Catch-all: consume remaining segments
-    if (part === '...slug') {
-      params.slug = actualCopy.join('/')
+    if (part.startsWith('...')) {
+      const paramName = part.slice(3) // Remove '...' prefix
+      params[paramName] = actualCopy.join('/')
       actualCopy.length = 0
       break
     }

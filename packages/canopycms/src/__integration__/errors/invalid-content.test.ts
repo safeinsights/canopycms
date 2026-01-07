@@ -40,8 +40,6 @@ describe('Invalid Content Errors', () => {
 
     // Try to write content missing required fields
     const response = await editorClient.put('/api/canopycms/feature-validation-test/content/posts/invalid-post', {
-      collection: 'posts',
-      slug: 'invalid-post',
       format: 'mdx',
       data: {
         // Missing required fields: title, author, date
@@ -66,8 +64,6 @@ describe('Invalid Content Errors', () => {
     const response = await editorClient.put(
       '/api/canopycms/feature-invalid-collection/content/nonexistent/test',
       {
-        collection: 'nonexistent',
-        slug: 'test',
         format: 'mdx',
         data: {
           title: 'Test',
@@ -90,8 +86,6 @@ describe('Invalid Content Errors', () => {
 
     // Try to write with invalid data structure
     const response = await editorClient.put('/api/canopycms/feature-malformed-test/content/posts/malformed', {
-      collection: 'posts',
-      slug: 'malformed',
       format: 'json',
       data: 'not an object', // Invalid: should be object, not string
     })
@@ -181,8 +175,6 @@ describe('Invalid Content Errors', () => {
 
     // Try to write with invalid format
     const response = await editorClient.put('/api/canopycms/feature-invalid-format/content/posts/test', {
-      collection: 'posts',
-      slug: 'test',
       format: 'invalid-format', // Not a valid ContentFormat
       data: { title: 'Test' },
       body: 'Content',
@@ -225,8 +217,6 @@ describe('Invalid Content Errors', () => {
 
     // Try to write with wrong data types
     const response = await editorClient.put('/api/canopycms/feature-type-validation/content/posts/test', {
-      collection: 'posts',
-      slug: 'test',
       format: 'mdx',
       data: {
         title: 'Test',

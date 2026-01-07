@@ -57,19 +57,15 @@ export const normalizeContentPayload = (raw: unknown): FormValue => {
 }
 
 export const buildWritePayload = (entry: { collectionId?: string; slug?: string; format?: ContentFormat }, value: FormValue) => {
-  if (!entry.collectionId || !entry.format) return value
+  if (!entry.format) return value
   if (entry.format === 'json') {
     return {
-      collection: entry.collectionId,
-      slug: entry.slug,
       format: 'json' as const,
       data: value,
     }
   }
   const { body, ...rest } = value
   return {
-    collection: entry.collectionId,
-    slug: entry.slug,
     format: entry.format,
     data: rest,
     body: typeof body === 'string' ? body : '',
