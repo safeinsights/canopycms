@@ -26,6 +26,7 @@ import '../src/api/branch.js'
 import '../src/api/branch-status.js'
 import '../src/api/comments.js'
 import '../src/api/content.js'
+import '../src/api/reference-options.js'
 import '../src/api/entries.js'
 import '../src/api/assets.js'
 import '../src/api/permissions.js'
@@ -134,6 +135,7 @@ function namespaceToModule(namespace: string): string {
     'workflow': 'branch-status',
     'comments': 'comments',
     'content': 'content',
+    'referenceOptions': 'reference-options',
     'entries': 'entries',
     'assets': 'assets',
     'permissions': 'permissions',

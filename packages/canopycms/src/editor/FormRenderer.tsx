@@ -47,6 +47,7 @@ export interface FormRendererProps {
   value: FormValue
   onChange: (next: FormValue) => void
   customRenderers?: CustomFieldRenderers
+  branch?: string  // Current branch for loading reference options
   // Comment integration
   comments?: CommentThread[]
   currentEntryId?: string
@@ -63,6 +64,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   value,
   onChange,
   customRenderers,
+  branch = 'main',
   comments = [],
   currentEntryId,
   currentUserId,
@@ -208,17 +210,20 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         }
         case 'reference': {
           const referenceField = field as ReferenceFieldConfig
-          const options = normalizeOptions(referenceField.options)
+          const staticOptions = referenceField.options ? normalizeOptions(referenceField.options) : undefined
           const isMulti = Boolean(referenceField.list)
           return wrapWithComments(
             <ReferenceField
               key={fieldKey(path)}
               id={fieldId}
               label={label}
-              options={options.map((opt) => ({
+              options={staticOptions?.map((opt) => ({
                 label: opt.label,
                 value: opt.value,
               }))}
+              collections={referenceField.collections}
+              displayField={referenceField.displayField}
+              branch={branch}
               value={
                 isMulti
                   ? Array.isArray(currentValue)
@@ -338,7 +343,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           )
       }
     },
-    [customRenderers, comments, currentEntryId, currentUserId, canResolve, focusedFieldPath, highlightThreadId, onAddComment, onResolveThread]
+    [customRenderers, branch, comments, currentEntryId, currentUserId, canResolve, focusedFieldPath, highlightThreadId, onAddComment, onResolveThread]
   )
 
   return (

@@ -9,7 +9,7 @@
 import type { BranchDeleteResponse, BranchListResponse, BranchResponse } from './branch'
 import type { BranchMergeResponse } from './branch-status'
 import type { AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
-import type { ContentReadResponse, ContentWriteResponse } from './content'
+import type { ContentReadResponse, ContentWriteResponse, ReferenceOptionsResponse, ReferenceValidationResponse } from './content'
 import type { EntriesResponse } from './entries'
 import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse } from './assets'
 import type { ListGroupsResponse, PermissionsResponse, SearchUsersResponse } from './permissions'
@@ -183,6 +183,20 @@ export class CanopyApiClient {
      */
     write: (params: Record<string, string>, body: unknown): Promise<ContentWriteResponse> => {
       return this.request('PUT', this.buildPath('/:branch/content/...path', params), body)
+    },
+
+    /**
+     * validateReferences - POST /:branch/validate-references/...path
+     */
+    validateReferences: (params: Record<string, string>, body: unknown): Promise<ReferenceValidationResponse> => {
+      return this.request('POST', this.buildPath('/:branch/validate-references/...path', params), body)
+    },
+
+    /**
+     * getReferenceOptions - GET /:branch/reference-options
+     */
+    getReferenceOptions: (params: Record<string, string>): Promise<ReferenceOptionsResponse> => {
+      return this.request('GET', this.buildPath('/:branch/reference-options', params))
     },
   }
 

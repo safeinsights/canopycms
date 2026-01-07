@@ -270,7 +270,7 @@ const config = defineCanopyConfig({
 | `image` | Image upload/selection | - |
 | `code` | Code editor with syntax highlighting | - |
 | `select` | Dropdown selection | `options: string[] \| {label, value}[]` |
-| `reference` | Reference to another collection | `collections: string[]`, `displayField?: string` |
+| `reference` | Reference to another content entry (UUID-based) | `collections: string[]`, `displayField?: string` |
 | `object` | Nested object | `fields: FieldConfig[]` |
 | `block` | Block-based content | `templates: BlockTemplate[]` |
 
@@ -284,6 +284,30 @@ const config = defineCanopyConfig({
   required: true,         // Optional: validation requirement
   list: true,             // Optional: allow multiple values
 }
+```
+
+**Example with reference field:**
+
+```typescript
+const schema = defineSchema([
+  { name: 'title', type: 'string', label: 'Title', required: true },
+  { name: 'body', type: 'markdown', label: 'Content' },
+  {
+    name: 'author',
+    type: 'reference',
+    label: 'Author',
+    collections: ['authors'],        // Load options from 'authors' collection
+    displayField: 'name',             // Show the author's name in the dropdown
+  },
+  {
+    name: 'relatedPosts',
+    type: 'reference',
+    label: 'Related Posts',
+    collections: ['posts'],
+    displayField: 'title',
+    list: true,                       // Allow multiple references
+  },
+])
 ```
 
 **Example with all field types:**
@@ -342,6 +366,76 @@ const schema = defineSchema([
     ],
   },
 ])
+```
+
+## Content Identification & References
+
+### UUID-Based IDs
+
+Every entry in your content automatically receives a unique, stable identifier. CanopyCMS uses 22-character UUIDs (Base58-encoded) that are:
+
+- **Stable across renames and moves**: When you rename a file or move it to a different directory, the ID never changes
+- **Globally unique**: IDs are automatically generated and guaranteed unique across your entire site
+- **Git-friendly**: IDs are stored as symlinks in `content/_ids_/` (e.g., `content/_ids_/abc123DEF456ghi789`), making them visible in git diff
+- **Automatic**: You never manually create or manage IDs - they're generated when entries are created
+
+### Reference Fields
+
+Reference fields let you create typed relationships between content entries. Unlike brittle string links or file paths, references use UUIDs to create robust, move-safe links:
+
+```typescript
+const schema = defineSchema([
+  { name: 'title', type: 'string', label: 'Title' },
+  {
+    name: 'category',
+    type: 'reference',
+    label: 'Category',
+    collections: ['categories'],      // Only allow references to entries in 'categories'
+    displayField: 'name',              // Show the category name (not the ID) in the UI
+  },
+  {
+    name: 'tags',
+    type: 'reference',
+    label: 'Tags',
+    collections: ['tags'],
+    displayField: 'label',
+    list: true,                        // Allow multiple references
+  },
+])
+```
+
+**Key benefits:**
+- **Type safety**: The editor validates that references always point to valid entries
+- **Dynamic options**: The reference field automatically loads available options from the specified collections
+- **Move-safe**: References survive file renames and directory moves - the ID is permanent
+- **No broken links**: If you delete an entry, you'll see validation errors on any entries referencing it
+- **Display flexibility**: Show any field from the referenced entry (title, name, slug, etc.) in dropdowns
+
+### How References Work in the Editor
+
+When editing a reference field:
+1. Click the dropdown to see all available entries from the configured collections
+2. Search by the display field value (e.g., search for author names)
+3. Select an entry - CanopyCMS stores the UUID internally
+4. When reading content, the UUID is resolved to the actual entry data
+
+### Using References in Your Code
+
+When you read content with references, CanopyCMS stores the UUIDs. To resolve them back to data:
+
+```typescript
+// In your server component
+const { data } = await canopy.read({
+  entryPath: 'content/posts',
+  slug: 'my-post',
+})
+
+// data.author is a UUID string (e.g., "abc123DEF456ghi789")
+// You would need to separately load the author entry if needed
+const author = await canopy.read({
+  entryPath: 'content/authors',
+  id: data.author,
+})
 ```
 
 ### Type Inference
@@ -435,6 +529,10 @@ editor: {
 ```
 
 ## Features
+
+### Robust Content Relationships
+
+Every entry gets an automatic UUID that stays the same even when you rename or move files. Reference fields use these IDs to create type-safe relationships that never break. The editor shows human-readable labels while storing stable identifiers, optimizing both for user experience and data integrity.
 
 ### Branch-Based Editing Workflow
 

@@ -5,6 +5,7 @@ import { ContentStore, ContentStoreError } from '../content-store'
 import type { ContentFormat } from '../config'
 import { resolveBranchPaths } from '../paths'
 import { defineEndpoint } from './route-builder'
+import { ReferenceValidator } from '../validation/reference-validator'
 
 /** Response type for content read operations */
 export type ContentReadResponse = ApiResponse<{
@@ -19,6 +20,20 @@ export type ContentWriteResponse = ApiResponse<{
   data: Record<string, unknown>
   body?: string
 }>
+
+/** Response type for reference validation */
+export type ReferenceValidationResponse = ApiResponse<{
+  valid: boolean
+  errors?: Array<{
+    field: string
+    fieldPath: string
+    id: string
+    error: string
+  }>
+}>
+
+/** Response type for reference options - re-exported for convenience */
+export type { ReferenceOptionsResponse } from './reference-options'
 
 // ============================================================================
 // Zod Schemas for Validation
@@ -38,6 +53,15 @@ const writeContentBodySchema = z.object({
   format: z.enum(['json', 'md', 'mdx']),
   data: z.record(z.unknown()).optional(),
   body: z.string().optional(),
+})
+
+const validateReferencesParamsSchema = z.object({
+  branch: z.string().min(1),
+  path: z.string().min(1),
+})
+
+const validateReferencesBodySchema = z.object({
+  data: z.record(z.unknown()),
 })
 
 const readContentHandler = async (
@@ -150,6 +174,63 @@ const writeContentHandler = async (
   }
 }
 
+const validateReferencesHandler = async (
+  ctx: ApiContext,
+  req: ApiRequest,
+  params: z.infer<typeof validateReferencesParamsSchema>,
+  body: z.infer<typeof validateReferencesBodySchema>
+): Promise<ReferenceValidationResponse> => {
+  const context = await ctx.getBranchContext(params.branch)
+  if (!context) {
+    return { ok: false, status: 404, error: 'Branch not found' }
+  }
+
+  const branchMode = ctx.services.config.mode ?? 'local-simple'
+  const branchPaths = resolveBranchPaths(context, branchMode)
+  const store = new ContentStore(branchPaths.branchRoot, ctx.services.config)
+
+  // Parse path segments to get collection/schema info
+  const contentRoot = ctx.services.config.contentRoot || 'content'
+  const pathSegments = params.path.split('/').filter(Boolean)
+
+  const fullPathSegments = pathSegments[0] === contentRoot
+    ? pathSegments
+    : [contentRoot, ...pathSegments]
+
+  let schemaItem: any
+  let relativePath: string
+  try {
+    const resolved = store.resolvePath(fullPathSegments)
+    schemaItem = resolved.schemaItem
+    const slug = resolved.slug
+    relativePath = store.resolveDocumentPath(schemaItem.fullPath, slug).relativePath
+  } catch (err) {
+    const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
+    return { ok: false, status: 400, error: message }
+  }
+
+  const access = await ctx.services.checkContentAccess(context, branchPaths.branchRoot, relativePath, req.user, 'read')
+  if (!access.allowed) {
+    return { ok: false, status: 403, error: 'Forbidden' }
+  }
+
+  // Get ID index (automatically loads if needed)
+  const idIndex = await store.idIndex()
+
+  // Validate references
+  const validator = new ReferenceValidator(idIndex, schemaItem.fields || [])
+  const result = await validator.validate(body.data)
+
+  return {
+    ok: true,
+    status: 200,
+    data: {
+      valid: result.valid,
+      errors: result.errors.length > 0 ? result.errors : undefined
+    }
+  }
+}
+
 // ============================================================================
 // Route Definitions with defineEndpoint
 // ============================================================================
@@ -190,9 +271,28 @@ const writeContent = defineEndpoint({
 })
 
 /**
+ * Validate references in content data
+ * POST /:branch/validate-references/:path*
+ * Example: /main/validate-references/content/posts/hello
+ */
+const validateReferences = defineEndpoint({
+  namespace: 'content',
+  name: 'validateReferences',
+  method: 'POST',
+  path: '/:branch/validate-references/...path',
+  params: validateReferencesParamsSchema,
+  body: validateReferencesBodySchema,
+  responseType: 'ReferenceValidationResponse',
+  response: {} as ReferenceValidationResponse,
+  defaultMockData: { valid: true },
+  handler: validateReferencesHandler,
+})
+
+/**
  * Exported routes for router registration
  */
 export const CONTENT_ROUTES = {
   read: readContent,
   write: writeContent,
+  validateReferences,
 } as const

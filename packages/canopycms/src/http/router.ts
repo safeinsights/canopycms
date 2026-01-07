@@ -3,6 +3,7 @@ import { BRANCH_ROUTES } from '../api/branch'
 import { WORKFLOW_ROUTES } from '../api/branch-status'
 import { COMMENT_ROUTES } from '../api/comments'
 import { CONTENT_ROUTES } from '../api/content'
+import { REFERENCE_OPTIONS_ROUTES } from '../api/reference-options'
 import { ENTRY_ROUTES } from '../api/entries'
 import { ASSET_ROUTES } from '../api/assets'
 import { PERMISSION_ROUTES } from '../api/permissions'
@@ -74,6 +75,7 @@ function buildCanopyRoutes(): RouteDefinition[] {
     ...Object.values(WORKFLOW_ROUTES),
     ...Object.values(COMMENT_ROUTES),
     ...Object.values(CONTENT_ROUTES),
+    ...Object.values(REFERENCE_OPTIONS_ROUTES),
     ...Object.values(ENTRY_ROUTES),
     ...Object.values(ASSET_ROUTES),
     ...Object.values(PERMISSION_ROUTES),
