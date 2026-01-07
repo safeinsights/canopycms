@@ -1,0 +1,5 @@
+{
+  "title": "Authentication (v1)",
+  "description": "How to authenticate with API v1",
+  "body": "# Authentication - v1\n\n## API Keys\n\nAuthenticate your API requests by including your secret key in the Authorization header:\n\n```\nAuthorization: Bearer YOUR_API_KEY\n```"
+}

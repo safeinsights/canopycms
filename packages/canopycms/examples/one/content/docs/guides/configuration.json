@@ -1,0 +1,5 @@
+{
+  "title": "Configuration Guide",
+  "description": "How to configure your application",
+  "body": "# Configuration\n\nLearn how to configure your application for different environments.\n\n## Environment Variables\n\nSet these environment variables:\n\n- `API_KEY` - Your API key\n- `BASE_URL` - The base URL for API requests"
+}

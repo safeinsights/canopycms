@@ -1,0 +1,5 @@
+{
+  "title": "Users API (v1)",
+  "description": "User management endpoints for v1",
+  "body": "# Users API - v1\n\n## List Users\n\n```http\nGET /v1/users\n```\n\nReturns a list of users.\n\n## Get User\n\n```http\nGET /v1/users/:id\n```\n\nReturns a single user by ID."
+}

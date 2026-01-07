@@ -1,0 +1,5 @@
+{
+  "title": "Authentication (v2)",
+  "description": "How to authenticate with API v2",
+  "body": "# Authentication - v2\n\n## OAuth 2.0\n\nAPI v2 uses OAuth 2.0 for authentication. Follow these steps:\n\n1. Register your application\n2. Request an authorization code\n3. Exchange the code for an access token\n4. Include the token in your requests"
+}

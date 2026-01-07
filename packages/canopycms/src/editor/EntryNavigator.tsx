@@ -65,11 +65,15 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             nodeProps: { status: entry.status, isEntry: true },
           })) ?? []
         const childNodes = col.children?.map(toTree) ?? []
+        const allChildren = [...entryNodes, ...childNodes]
+
+        // Collections should always have children array (even if empty) to show chevron
+        // This matches standard file tree UI behavior where folders always show expand/collapse
         return {
           value: `collection:${col.id}`,
           label: col.label,
           nodeProps: { onAdd: col.onAdd, isCollection: true, type: col.type },
-          children: [...entryNodes, ...childNodes],
+          children: allChildren,
         }
       }
       return collections.map(toTree)
@@ -103,8 +107,14 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   const renderNode = ({ node, elementProps, hasChildren, expanded, level }: RenderTreeNodePayload) => {
     const status = node.nodeProps?.status as string | undefined
     const onAdd = node.nodeProps?.onAdd as (() => void) | undefined
+    const isCollection = node.nodeProps?.isCollection as boolean | undefined
     const isLeaf = !hasChildren || node.nodeProps?.isEntry
     const selected = node.value === selectedId
+
+    // For collections, always show chevron (even if empty) to match standard tree UI
+    // Mantine only provides hasChildren=true if children.length > 0, but we want
+    // collections to always be expandable
+    const showChevron = hasChildren || Boolean(isCollection)
 
     return (
       <Box
@@ -131,13 +141,13 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         <Group gap="xs" justify="space-between" wrap="nowrap">
           <Group gap={6} wrap="nowrap">
             <Box w={18} h={18} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Chevron expanded={expanded} visible={hasChildren} />
+              <Chevron expanded={expanded} visible={showChevron} />
             </Box>
             <Text size="sm" fw={selected ? 600 : 500} truncate="end">
               {node.label}
             </Text>
           </Group>
-          {hasChildren && onAdd ? (
+          {isCollection && onAdd ? (
             <Button
               size="compact-xs"
               variant="light"

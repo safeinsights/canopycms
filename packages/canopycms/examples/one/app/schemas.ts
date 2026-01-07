@@ -70,3 +70,11 @@ export const postSchema = defineSchema([
 ])
 
 export type PostContent = TypeFromSchema<typeof postSchema> & { slug: string }
+
+export const docSchema = defineSchema([
+  { name: 'title', type: 'string', label: 'Title' },
+  { name: 'description', type: 'string', label: 'Description' },
+  { name: 'body', type: 'markdown', label: 'Body' },
+])
+
+export type DocContent = TypeFromSchema<typeof docSchema> & { slug: string }
