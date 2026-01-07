@@ -49,6 +49,7 @@
     "react-dom": "^18.3.1",
     "react-icons": "^5.5.0",
     "react-split-pane": "^0.1.92",
+    "short-uuid": "^6.0.3",
     "simple-git": "^3.22.0",
     "storybook": "^8.6.14",
     "zod": "^3.23.8"

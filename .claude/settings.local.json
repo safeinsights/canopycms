@@ -50,7 +50,9 @@
       "Bash(pkill:*)",
       "Bash(timeout 10 npm run dev:*)",
       "Bash(E2E_DEBUG=true npx playwright test:*)",
-      "Bash(E2E_DEBUG=true CANOPYCMS_DEBUG=true npx playwright test:*)"
+      "Bash(E2E_DEBUG=true CANOPYCMS_DEBUG=true npx playwright test:*)",
+      "Bash(chmod:*)",
+      "Bash(readlink:*)"
     ]
   }
 }
