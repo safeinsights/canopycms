@@ -49,7 +49,7 @@ function validateSlug(slug: string): void {
 export class ContentStore {
   private readonly root: string
   private readonly schemaIndex: Map<string, FlatCollection>
-  private readonly idIndex: ContentIdIndex
+  private readonly _idIndex: ContentIdIndex
   private indexLoaded: boolean = false
 
   constructor(root: string, config: CanopyConfig) {
@@ -57,13 +57,19 @@ export class ContentStore {
     const resolved = resolveSchema(config.schema, config.contentRoot ?? 'content')
     const flat = flattenSchema(resolved)
     this.schemaIndex = new Map(flat.map((c) => [c.fullPath, c]))
-    this.idIndex = new ContentIdIndex(this.root)
+    this._idIndex = new ContentIdIndex(this.root)
   }
 
-  private async ensureIndexLoaded(): Promise<void> {
-    if (this.indexLoaded) return
-    await this.idIndex.buildFromSymlinks('content')
-    this.indexLoaded = true
+  /**
+   * Get the ID index, ensuring it's loaded first.
+   * This getter automatically loads the index on first access.
+   */
+  public async idIndex(): Promise<ContentIdIndex> {
+    if (!this.indexLoaded) {
+      await this._idIndex.buildFromSymlinks('content')
+      this.indexLoaded = true
+    }
+    return this._idIndex
   }
 
   private assertCollection(collectionPath: string): FlatCollection {
@@ -197,7 +203,7 @@ export class ContentStore {
   }
 
   async write(collectionPath: string, slug = '', input: WriteInput): Promise<ContentDocument> {
-    await this.ensureIndexLoaded()
+    const idIndex = await this.idIndex()
     const collection = this.assertCollection(collectionPath)
     if (collection.format !== input.format) {
       throw new ContentStoreError(
@@ -212,7 +218,7 @@ export class ContentStore {
       await fs.writeFile(absolutePath, `${json}\n`, 'utf8')
 
       // Assign ID (index.add() will check if ID already exists and return early)
-      await this.idIndex.add({
+      await idIndex.add({
         type: 'entry',
         relativePath,
         collection: collectionPath,
@@ -233,7 +239,7 @@ export class ContentStore {
     await fs.writeFile(absolutePath, file, 'utf8')
 
     // Assign ID (index.add() will check if ID already exists and return early)
-    await this.idIndex.add({
+    await idIndex.add({
       type: 'entry',
       relativePath,
       collection: collectionPath,
@@ -256,8 +262,8 @@ export class ContentStore {
    * Returns null if the ID doesn't exist or points to a collection.
    */
   async readById(id: string): Promise<ContentDocument | null> {
-    await this.ensureIndexLoaded()
-    const location = this.idIndex.findById(id)
+    const idIndex = await this.idIndex()
+    const location = idIndex.findById(id)
     if (!location || location.type !== 'entry') return null
     return this.read(location.collection!, location.slug!)
   }
@@ -265,30 +271,30 @@ export class ContentStore {
   /**
    * Get the ID for an entry given its collection and slug.
    * Returns null if no ID exists yet.
-   * Note: Caller must ensure index is loaded first.
    */
-  getIdForEntry(collectionPath: string, slug: string): string | null {
+  async getIdForEntry(collectionPath: string, slug: string): Promise<string | null> {
+    const idIndex = await this.idIndex()
     const { relativePath } = this.buildPaths(this.assertCollection(collectionPath), slug)
-    return this.idIndex.findByPath(relativePath)
+    return idIndex.findByPath(relativePath)
   }
 
   /**
    * Delete an entry and its associated ID symlink.
    */
   async delete(collectionPath: string, slug: string): Promise<void> {
-    await this.ensureIndexLoaded()
+    const idIndex = await this.idIndex()
     const collection = this.assertCollection(collectionPath)
     const { absolutePath, relativePath } = this.buildPaths(collection, slug)
 
     // Get ID before deleting
-    const id = this.idIndex.findByPath(relativePath)
+    const id = idIndex.findByPath(relativePath)
 
     // Delete file
     await fs.unlink(absolutePath)
 
     // Remove symlink
     if (id) {
-      await this.idIndex.remove(id)
+      await idIndex.remove(id)
     }
   }
 }

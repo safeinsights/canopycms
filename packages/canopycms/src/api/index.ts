@@ -37,6 +37,7 @@ export type {
   SearchExternalGroupsParams,
   ExternalGroup,
 } from './groups'
+export type { ReferenceOptionsResponse } from './reference-options'
 // Content API uses path-based routing now - no separate params/body types exported
 
 // Export route definitions

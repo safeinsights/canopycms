@@ -219,6 +219,164 @@ To add support for a new framework (Express, Fastify, SvelteKit, etc.):
 4. **Export unified API** - hide framework details from adopters
 5. **Add framework-specific optimizations** - caching, middleware, etc.
 
+## Working with Content IDs
+
+### Using the ID Index
+
+Content entries are identified by stable, content-addressed IDs (22-character short UUIDs). These IDs are managed by the `ContentIdIndex` through symlinks stored in the `_ids_/` directory.
+
+When working with content IDs, use the async `idIndex()` getter to access the index:
+
+```typescript
+// Get the ID index - it loads lazily on first access
+const idIndex = await store.idIndex()
+
+// Find a location by ID
+const location = idIndex.findById('abc123def456ghi789jkl')
+if (location) {
+  console.log(`Entry is at: ${location.relativePath}`)
+}
+
+// Find an ID by file path
+const id = idIndex.findByPath('content/posts/hello-world.md')
+
+// Add a new entry to the index (returns generated ID)
+const newId = await idIndex.add({
+  type: 'entry',
+  relativePath: 'content/pages/about.json',
+  collection: 'pages',
+  slug: 'about',
+})
+
+// Remove an entry from the index
+await idIndex.remove(newId)
+```
+
+**Why use the getter:** The `idIndex()` getter automatically handles lazy loading on first access. Calling it multiple times is safe - the index is loaded only once and subsequent calls return the already-loaded index. Never access `_idIndex` directly - always use the public getter.
+
+**Pattern:**
+
+```typescript
+// Always await the getter
+const idIndex = await store.idIndex()
+
+// Not this:
+// const idIndex = store._idIndex  // Wrong!
+```
+
+## Reference Field Configuration
+
+Reference fields link entries together. Configure them with collection constraints and optional custom display fields:
+
+**Field Schema:**
+
+```typescript
+const referenceFieldSchema = z.object({
+  type: z.literal('reference'),
+  name: z.string().min(1),
+  label: z.string().optional(),
+  required: z.boolean().optional(),
+  list: z.boolean().optional(),
+  collections: z.array(z.string().min(1)).min(1), // Which collections to reference
+  displayField: z.string().min(1).optional(), // Field to show as label
+  options: z.array(referenceOptionSchema).optional(), // For backward compatibility
+})
+```
+
+**Example: Dynamic References with Collections**
+
+```typescript
+// Schema defining which collections can be referenced
+const schema = [
+  {
+    type: 'collection',
+    name: 'posts',
+    fields: [
+      {
+        type: 'reference',
+        name: 'author',
+        label: 'Post Author',
+        collections: ['authors'], // Can only reference authors collection
+        displayField: 'name', // Show author's name field as label
+      },
+      {
+        type: 'reference',
+        name: 'relatedPosts',
+        label: 'Related Posts',
+        collections: ['posts'], // Self-reference for related content
+        displayField: 'title', // Show post titles
+        list: true, // Can reference multiple posts
+      },
+    ],
+  },
+  {
+    type: 'collection',
+    name: 'authors',
+    fields: [{ type: 'string', name: 'name', label: 'Author Name' }],
+  },
+]
+```
+
+**Using Optional Properties:**
+
+- `displayField`: Field name from the referenced entry to show as a label (e.g., `title`, `name`, `headline`)
+- `options`: Static list of options for backward compatibility - if provided alongside `collections`, the UI can use it as a fallback
+
+**Validation:** The `ReferenceValidator` ensures:
+
+1. Referenced IDs are valid format
+2. Referenced entries actually exist
+3. Referenced entries are in allowed collections
+4. Referenced entries are not collections themselves
+
+## Testing Content IDs and Symlinks
+
+When testing code that uses content IDs, set up a temporary directory with symlinks:
+
+```typescript
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { ContentIdIndex } from './content-id-index'
+
+describe('Content with IDs', () => {
+  let tempDir: string
+  let index: ContentIdIndex
+
+  beforeEach(async () => {
+    // Create isolated temp directory
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-test-'))
+    await fs.mkdir(path.join(tempDir, 'content'), { recursive: true })
+    index = new ContentIdIndex(tempDir)
+  })
+
+  afterEach(async () => {
+    // Clean up
+    await fs.rm(tempDir, { recursive: true, force: true })
+  })
+
+  it('indexes entries with IDs', async () => {
+    // Create a test file
+    const filePath = path.join(tempDir, 'content/test.json')
+    await fs.writeFile(filePath, '{"title": "Test"}')
+
+    // Create symlink in _ids_/ directory
+    await fs.mkdir(path.join(tempDir, 'content/_ids_'), { recursive: true })
+    const testId = 'test123ABC456def789ghi'
+    await fs.symlink('../test.json', path.join(tempDir, 'content/_ids_', testId), 'file')
+
+    // Build index from symlinks
+    await index.buildFromSymlinks('content')
+
+    // Verify
+    const location = index.findById(testId)
+    expect(location?.relativePath).toBe('content/test.json')
+  })
+})
+```
+
+**Key pattern:** Symlinks point from `_ids_/ID` to the actual content file (e.g., `_ids_/abc123 -> ../test.json`). The `buildFromSymlinks()` method reads these symlinks to populate the in-memory index.
+
 ## Testing
 
 ### Running Tests
@@ -396,6 +554,71 @@ it('handles anonymous users correctly', async () => {
   expect(canopy.user.groups).toEqual([])
 })
 ```
+
+### API Client Generation
+
+The TypeScript API client is auto-generated from the route registry. When you add new API endpoints:
+
+**1. Define the endpoint with `defineEndpoint()`**
+
+In your API module (e.g., `packages/canopycms/src/api/my-module.ts`):
+
+```typescript
+import { defineEndpoint } from './route-builder'
+
+defineEndpoint({
+  namespace: 'myModule',
+  name: 'getSettings',
+  method: 'GET',
+  path: '/settings/:id',
+  paramsSchema: z.object({ id: z.string() }),
+  responseTypeName: 'SettingsResponse',
+  defaultMockData: { ok: true, status: 200, data: { id: '123', name: 'Default' } },
+})
+```
+
+**2. Add the module import to the generator script**
+
+In `packages/canopycms/scripts/generate-client.ts`, add the module import:
+
+```typescript
+// Import all API modules to populate ROUTE_REGISTRY
+import '../src/api/my-module.js' // Add this line
+```
+
+**3. Add namespace mapping (if needed)**
+
+If your namespace doesn't match the filename, add a mapping in `namespaceToModule()`:
+
+```typescript
+function namespaceToModule(namespace: string): string {
+  const mapping: Record<string, string> = {
+    // ... existing mappings
+    myModule: 'my-module', // Add this
+  }
+  return mapping[namespace] || namespace
+}
+```
+
+**4. Generate the client**
+
+```bash
+npm run generate:client
+```
+
+This creates typed methods in `src/api/client.ts` and mock helpers in `src/api/__test__/mock-client.ts`.
+
+**Usage in client code:**
+
+```typescript
+// Auto-generated and type-safe
+const response = await client.myModule.getSettings({ id: '123' })
+if (response.ok) {
+  console.log(response.data) // Type: SettingsResponse
+}
+```
+
+**Why this pattern:** The route registry eliminates regex parsing and keeps endpoint definitions close to implementations. All metadata (params, response types, mock data) flows through the registry into the generated client.
 
 ### Integration Testing with Framework Adapters
 
