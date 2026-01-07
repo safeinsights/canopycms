@@ -136,11 +136,6 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             <Text size="sm" fw={selected ? 600 : 500} truncate="end">
               {node.label}
             </Text>
-            {status ? (
-              <Badge size="xs" variant="light" color="neutral">
-                {status}
-              </Badge>
-            ) : null}
           </Group>
           {hasChildren && onAdd ? (
             <Button

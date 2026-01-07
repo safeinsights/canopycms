@@ -260,4 +260,143 @@ describe('ContentStore', () => {
     expect(result.schemaItem.type).toBe('collection')
     expect(result.slug).toBe('getting-started')
   })
+
+  it('resolves 3-level nested collection paths', async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({
+      schema: [
+        {
+          type: 'collection',
+          name: 'docs',
+          path: 'docs',
+          format: 'md',
+          fields: [{ name: 'title', type: 'string' }],
+          children: [
+            {
+              type: 'collection',
+              name: 'api',
+              path: 'api',
+              format: 'md',
+              fields: [{ name: 'title', type: 'string' }],
+              children: [
+                {
+                  type: 'collection',
+                  name: 'v2',
+                  path: 'v2',
+                  format: 'md',
+                  fields: [{ name: 'title', type: 'string' }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const store = new ContentStore(root, config)
+
+    // Path: content/docs/api/v2/authentication
+    // -> collection=content/docs/api/v2, slug=authentication
+    const result = store.resolvePath(['content', 'docs', 'api', 'v2', 'authentication'])
+    expect(result.schemaItem.fullPath).toBe('content/docs/api/v2')
+    expect(result.schemaItem.type).toBe('collection')
+    expect(result.slug).toBe('authentication')
+  })
+
+  it('resolves 4-level nested collection paths', async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({
+      schema: [
+        {
+          type: 'collection',
+          name: 'docs',
+          path: 'docs',
+          format: 'md',
+          fields: [{ name: 'title', type: 'string' }],
+          children: [
+            {
+              type: 'collection',
+              name: 'api',
+              path: 'api',
+              format: 'md',
+              fields: [{ name: 'title', type: 'string' }],
+              children: [
+                {
+                  type: 'collection',
+                  name: 'v2',
+                  path: 'v2',
+                  format: 'md',
+                  fields: [{ name: 'title', type: 'string' }],
+                  children: [
+                    {
+                      type: 'collection',
+                      name: 'endpoints',
+                      path: 'endpoints',
+                      format: 'md',
+                      fields: [{ name: 'title', type: 'string' }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const store = new ContentStore(root, config)
+
+    // Path: content/docs/api/v2/endpoints/users
+    // -> collection=content/docs/api/v2/endpoints, slug=users
+    const result = store.resolvePath(['content', 'docs', 'api', 'v2', 'endpoints', 'users'])
+    expect(result.schemaItem.fullPath).toBe('content/docs/api/v2/endpoints')
+    expect(result.schemaItem.type).toBe('collection')
+    expect(result.slug).toBe('users')
+  })
+
+  it('writes and reads content in deeply nested collections', async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({
+      schema: [
+        {
+          type: 'collection',
+          name: 'docs',
+          path: 'docs',
+          format: 'md',
+          fields: [{ name: 'title', type: 'string' }],
+          children: [
+            {
+              type: 'collection',
+              name: 'api',
+              path: 'api',
+              format: 'md',
+              fields: [{ name: 'title', type: 'string' }],
+              children: [
+                {
+                  type: 'collection',
+                  name: 'v2',
+                  path: 'v2',
+                  format: 'md',
+                  fields: [{ name: 'title', type: 'string' }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+    const store = new ContentStore(root, config)
+
+    // Write to 3-level nested collection
+    await store.write('content/docs/api/v2', 'authentication', {
+      format: 'md',
+      data: { title: 'Authentication Guide' },
+      body: '# Authentication\n\nHow to authenticate.',
+    })
+
+    // Read it back
+    const doc = await store.read('content/docs/api/v2', 'authentication')
+    if (doc.format === 'json') throw new Error('expected markdown')
+    expect(doc.data.title).toBe('Authentication Guide')
+    expect(doc.body).toContain('How to authenticate')
+    expect(doc.relativePath).toBe('content/docs/api/v2/authentication.md')
+  })
 })

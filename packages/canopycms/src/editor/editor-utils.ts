@@ -106,7 +106,7 @@ export const buildEntriesFromListResponse = ({
       []
     return {
       id: entry.id,
-      label: entry.title ?? entry.slug ?? entry.collectionName ?? entry.collectionId,
+      label: entry.title || entry.slug || entry.collectionName || entry.collectionId,
       status: entry.exists === false ? 'missing' : entry.type ?? 'entry',
       schema,
       apiPath:
