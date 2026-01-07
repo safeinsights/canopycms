@@ -1,0 +1,5 @@
+{
+  "title": "Webhooks (v2)",
+  "description": "Real-time event notifications",
+  "body": "# Webhooks - v2\n\nWebhooks allow you to receive real-time notifications when events occur.\n\n## Available Events\n\n- `user.created`\n- `user.updated`\n- `user.deleted`\n\n## Setup\n\nConfigure your webhook endpoint in the dashboard."
+}

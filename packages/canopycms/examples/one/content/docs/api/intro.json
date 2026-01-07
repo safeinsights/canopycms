@@ -1,0 +1,5 @@
+{
+  "title": "API Introduction",
+  "description": "Introduction to our API",
+  "body": "# API Documentation\n\nOur API is organized around REST. We have two versions available:\n\n- **v1** - Stable, production-ready\n- **v2** - Latest features, recommended for new projects"
+}

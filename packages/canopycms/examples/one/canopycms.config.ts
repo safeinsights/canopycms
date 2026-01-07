@@ -1,6 +1,6 @@
 import { defineCanopyConfig } from 'canopycms'
 
-import { homeSchema, postSchema } from './app/schemas'
+import { homeSchema, postSchema, docSchema } from './app/schemas'
 
 export default defineCanopyConfig({
   defaultBranchAccess: 'allow',
@@ -27,6 +27,50 @@ export default defineCanopyConfig({
       path: 'posts',
       format: 'json',
       fields: postSchema,
+    },
+    {
+      type: 'collection',
+      name: 'docs',
+      label: 'Documentation',
+      path: 'docs',
+      format: 'json',
+      fields: docSchema,
+      children: [
+        {
+          type: 'collection',
+          name: 'guides',
+          label: 'Guides',
+          path: 'guides',
+          format: 'json',
+          fields: docSchema,
+        },
+        {
+          type: 'collection',
+          name: 'api',
+          label: 'API Reference',
+          path: 'api',
+          format: 'json',
+          fields: docSchema,
+          children: [
+            {
+              type: 'collection',
+              name: 'v1',
+              label: 'v1',
+              path: 'v1',
+              format: 'json',
+              fields: docSchema,
+            },
+            {
+              type: 'collection',
+              name: 'v2',
+              label: 'v2',
+              path: 'v2',
+              format: 'json',
+              fields: docSchema,
+            },
+          ],
+        },
+      ],
     },
     {
       type: 'entry',

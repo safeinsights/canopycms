@@ -1,0 +1,5 @@
+{
+  "title": "Users API (v2)",
+  "description": "Enhanced user management endpoints for v2",
+  "body": "# Users API - v2\n\n## List Users\n\n```http\nGET /v2/users?page=1&limit=10\n```\n\nReturns a paginated list of users with enhanced filtering.\n\n## Get User\n\n```http\nGET /v2/users/:id\n```\n\nReturns detailed user information including metadata.\n\n## Create User\n\n```http\nPOST /v2/users\n```\n\nCreate a new user account."
+}
