@@ -292,25 +292,25 @@ describe('useEntryManager', () => {
     expect(mockClient.content.write).not.toHaveBeenCalled()
   })
 
-  it('does not create entry for singleton collection', async () => {
-    const singletonCollections: EditorCollection[] = [
+  it('does not create entry for entry collection', async () => {
+    const entryCollections: EditorCollection[] = [
       {
         id: 'config',
         name: 'config',
-        type: 'singleton',
+        type: 'entry',
         format: 'json',
       },
     ]
 
     const { result } = renderHook(() =>
-      useEntryManager({ ...defaultOptions, collections: singletonCollections })
+      useEntryManager({ ...defaultOptions, collections: entryCollections })
     )
 
     await act(async () => {
       await result.current.handleCreateEntry('config')
     })
 
-    // Should not call content.write for singleton
+    // Should not call content.write for entry
     expect(mockClient.content.write).not.toHaveBeenCalled()
   })
 

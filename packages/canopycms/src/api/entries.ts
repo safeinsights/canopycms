@@ -12,7 +12,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { resolveBranchPaths } from '../paths'
 import { defineEndpoint } from './route-builder'
 
-type CollectionKind = 'collection' | 'singleton'
+type CollectionKind = 'collection' | 'entry'
 
 export interface EntryCollectionSummary {
   id: string
@@ -32,7 +32,7 @@ export interface EntryListItem {
   collectionId: string
   collectionName: string
   format: ContentFormat
-  type: 'entry' | 'singleton'
+  type: 'entry' | 'standalone'
   path: string
   title?: string
   updatedAt?: string
@@ -140,7 +140,7 @@ const listCollectionEntries = async (root: string, collection: FlatCollection): 
   return entries
 }
 
-const singletonEntry = async (root: string, collection: FlatCollection): Promise<EntryListItem> => {
+const entry = async (root: string, collection: FlatCollection): Promise<EntryListItem> => {
   const ext = extensionFor(collection.format)
   const absolutePath = path.resolve(root, `${collection.fullPath}${ext}`)
   const relativePath = normalizePath(root, absolutePath)
@@ -157,14 +157,13 @@ const singletonEntry = async (root: string, collection: FlatCollection): Promise
     }
   }
   const title = exists ? await readTitle(absolutePath, collection.format) : undefined
-  const slug = collection.fullPath.split('/').pop() ?? collection.name
   return {
-    id: `${collection.fullPath}/singleton`,
-    slug,
+    id: `${collection.fullPath}`,
+    slug: '',
     collectionId: collection.fullPath,
     collectionName: collection.name,
     format: collection.format,
-    type: 'singleton',
+    type: 'standalone',
     path: relativePath,
     title,
     updatedAt,
@@ -251,14 +250,14 @@ export const listEntriesHandler = async (
   for (const collection of targetCollections) {
     try {
       const items =
-        collection.type === 'singleton'
-          ? [await singletonEntry(root, collection)]
+        collection.type === 'entry'
+          ? [await entry(root, collection)]
           : await listCollectionEntries(root, collection)
       items.sort((a, b) => a.slug.localeCompare(b.slug))
       for (const item of items) {
         const normalized = store.resolveDocumentPath(
           item.collectionId,
-          item.type === 'singleton' ? '' : item.slug
+          item.type === 'standalone' ? '' : item.slug
         )
         const access = await ctx.services.checkContentAccess(context, root, normalized.relativePath, req.user, 'read')
         if (!access.allowed) continue

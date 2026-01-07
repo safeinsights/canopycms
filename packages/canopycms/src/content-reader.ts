@@ -114,7 +114,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const collect = (nodes: ResolvedSchemaItem[]) => {
       nodes.forEach((n) => {
         const base = stripRoot(n.fullPath)
-        baseMap.set(n.fullPath, n.type === 'singleton' ? '/' : base ? `/${base}` : '/')
+        baseMap.set(n.fullPath, n.type === 'entry' ? '/' : base ? `/${base}` : '/')
         if (n.children) collect(n.children)
       })
     }
@@ -123,7 +123,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const base = baseMap.get(baseResolvedPath) ?? '/'
     const appendBranch = (url: string) =>
       opts.branch ? `${url}${url.includes('?') ? '&' : '?'}branch=${encodeURIComponent(opts.branch)}` : url
-    if (node?.type === 'singleton') {
+    if (node?.type === 'entry') {
       return appendBranch(base || '/')
     }
     const trimmed = base.endsWith('/') ? base.slice(0, -1) : base

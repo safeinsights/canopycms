@@ -434,7 +434,7 @@ describe('PR Workflow Integration', () => {
       gitBotAuthorEmail: 'bot@test.com',
       schema: [
         {
-          type: 'singleton',
+          type: 'entry',
           name: 'home',
           path: 'home',
           format: 'json',

@@ -29,13 +29,13 @@ export const buildPreviewSrc = (
     (entry.collectionId && previewBaseByCollection?.[entry.collectionId]) ??
     (entry.collectionName && previewBaseByCollection?.[entry.collectionName])
   if (!base) {
-    if (entry.type === 'singleton') return '/'
+    if (entry.type === 'standalone') return '/'
     const encoded = encodeSlug(entry.slug)
     const url = encoded ? `/${encoded}` : '/'
     return appendBranch(url)
   }
   const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
-  if (entry.type === 'singleton') return appendBranch(trimmed || '/')
+  if (entry.type === 'standalone') return appendBranch(trimmed || '/')
   const encoded = encodeSlug(entry.slug)
   const url = encoded ? `${trimmed}/${encoded}` : trimmed || '/'
   return appendBranch(url)
@@ -114,13 +114,13 @@ export const buildEntriesFromListResponse = ({
       status: entry.exists === false ? 'missing' : entry.type ?? 'entry',
       schema,
       apiPath:
-        entry.type === 'singleton'
+        entry.type === 'standalone'
           ? `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionId)}`
           : `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionId)}/${encodeURIComponent(entry.slug)}`,
       previewSrc: resolvePreviewSrc(entry),
       collectionId: entry.collectionId,
       collectionName: entry.collectionName,
-      slug: entry.type === 'singleton' ? '' : entry.slug,
+      slug: entry.type === 'standalone' ? '' : entry.slug,
       format: entry.format,
       type: entry.type,
     }

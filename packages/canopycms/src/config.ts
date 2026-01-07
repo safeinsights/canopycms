@@ -180,8 +180,8 @@ const collectionSchema = schemaBase.extend({
   children: z.array(z.lazy(() => schemaItemSchema)).optional(),
 })
 
-const singletonSchema = schemaBase.extend({
-  type: z.literal('singleton'),
+const entrySchema = schemaBase.extend({
+  type: z.literal('entry'),
   children: z.never().optional(),
 })
 
@@ -197,7 +197,7 @@ const editorConfigSchema = z.object({
   AccountComponent: z.custom<React.ComponentType>().optional(),
 })
 
-schemaItemSchema = z.discriminatedUnion('type', [collectionSchema, singletonSchema])
+schemaItemSchema = z.discriminatedUnion('type', [collectionSchema, entrySchema])
 
 export const CanopyConfigSchema = z
   .object({
@@ -221,7 +221,7 @@ export const CanopyConfigSchema = z
     if (!data.schema?.length) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'At least one collection or singleton is required',
+        message: 'At least one collection or entry is required',
       })
     }
   })
@@ -236,7 +236,7 @@ export type ReferenceFieldConfig = Extract<FieldConfig, { type: 'reference' }>
 export type ObjectFieldConfig = Extract<FieldConfig, { type: 'object' }>
 export type CustomFieldConfig = Exclude<FieldConfig, { type: FieldType }>
 export type CollectionConfig = z.infer<typeof collectionSchema>
-export type SingletonCollectionConfig = z.infer<typeof singletonSchema>
+export type EntryCollectionConfig = z.infer<typeof entrySchema>
 export type SchemaItemConfig = z.infer<typeof schemaItemSchema>
 export type PathPermission = z.infer<typeof pathPermissionSchema>
 export type MediaConfig = z.infer<typeof mediaSchema>
@@ -278,13 +278,13 @@ export type SourceRoot = z.infer<typeof sourceRootSchema>
 
 export type CanopyConfigFragment = Partial<CanopyConfigInput>
 
-export type ResolvedSchemaItem = (CollectionConfig | SingletonCollectionConfig) & {
+export type ResolvedSchemaItem = (CollectionConfig | EntryCollectionConfig) & {
   fullPath: string
   parentPath?: string
   children?: ResolvedSchemaItem[]
 }
 
-export type FlatCollection = Omit<ResolvedSchemaItem, 'children'> & { type: 'collection' | 'singleton' }
+export type FlatCollection = Omit<ResolvedSchemaItem, 'children'> & { type: 'collection' | 'entry' }
 
 const ensureSelectFieldsHaveOptions = (config: any) => {
   const checkFields = (fields: any[] | undefined) => {

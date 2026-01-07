@@ -50,7 +50,7 @@ export interface PermissionManagerProps {
   onClose?: () => void
   /** Loading state */
   loading?: boolean
-  /** Optional: actual filesystem content tree (for singletons not in schema) */
+  /** Optional: actual filesystem content tree (for entries not in schema) */
   contentTree?: ContentNode
 }
 
@@ -937,14 +937,14 @@ function buildTree(schema: CanopyConfig['schema'], contentTree?: ContentNode): T
         children: [],
       }
       root.children.push(collectionNode)
-    } else if (item.type === 'singleton') {
-      const singletonNode: TreeNode = {
+    } else if (item.type === 'entry') {
+      const entryNode: TreeNode = {
         path: `content/${item.path}`,
         name: item.path,
         type: 'file',
         children: [],
       }
-      root.children.push(singletonNode)
+      root.children.push(entryNode)
     }
   })
 
@@ -966,7 +966,7 @@ function mergeContentTree(schemaNode: TreeNode, contentNode: ContentNode) {
         mergeContentTree(existing, child)
       }
     } else if (child.type === 'file') {
-      // Add file not in schema (e.g., singleton created via filesystem)
+      // Add file not in schema (e.g., entry created via filesystem)
       schemaNode.children.push({
         path: child.path,
         name: child.name,

@@ -15,7 +15,7 @@ const posts = [
   { id: 'posts/mermaid-demo', label: 'Mermaid Demo', collection: 'posts' },
 ]
 
-const singletons = [{ id: 'home/singleton', label: 'Home', collection: 'home' }]
+const entries = [{ id: 'home', label: 'Home', collection: 'home' }]
 
 export const Grouped: Story = {
   render: () => (
@@ -24,7 +24,7 @@ export const Grouped: Story = {
         selectedId="posts/hello-world"
         onSelect={(id) => alert(`Select ${id}`)}
         collections={[
-          { id: 'home', label: 'Home', type: 'singleton', entries: singletons },
+          { id: 'home', label: 'Home', type: 'entry', entries: entries },
           {
             id: 'posts',
             label: 'Posts',
@@ -42,8 +42,8 @@ export const FlatList: Story = {
   render: () => (
     <div className="w-80">
       <EntryNavigator
-        items={[...singletons, ...posts]}
-        selectedId="home/singleton"
+        items={[...entries, ...posts]}
+        selectedId="home"
         onSelect={(id) => alert(`Select ${id}`)}
       />
     </div>

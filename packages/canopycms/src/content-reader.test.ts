@@ -42,7 +42,7 @@ describe('createContentReader', () => {
       defaultPathAccess: 'allow',
       schema: [
         {
-          type: 'singleton',
+          type: 'entry',
           name: 'home',
           path: 'home',
           format: 'json',
@@ -86,7 +86,7 @@ describe('createContentReader', () => {
       defaultPathAccess: 'allow',
       schema: [
         {
-          type: 'singleton',
+          type: 'entry',
           name: 'home',
           path: 'home',
           format: 'json',
@@ -125,7 +125,7 @@ describe('createContentReader', () => {
       defaultBranchAccess: 'deny',
       schema: [
         {
-          type: 'singleton',
+          type: 'entry',
           name: 'home',
           path: 'home',
           format: 'json',
@@ -164,7 +164,7 @@ describe('createContentReader', () => {
           fields: [{ name: 'title', type: 'string' }],
         },
         {
-          type: 'singleton',
+          type: 'entry',
           name: 'home',
           path: 'home',
           format: 'json',
@@ -215,7 +215,7 @@ describe('createContentReader', () => {
       mode: 'local-simple',
       schema: [
         {
-          type: 'singleton',
+          type: 'entry',
           name: 'home',
           path: 'home',
           format: 'json',

@@ -236,14 +236,14 @@ describe('Path Permission Integration', () => {
     expect(editorReviewAccess.allowed).toBe(false)
   })
 
-  it('allows singleton access with specific path rules', async () => {
+  it('allows entry access with specific path rules', async () => {
     const editor = createTestUser('editor')
     const manager = new BranchWorkspaceManager(workspace.config)
 
     const branch = await manager.openOrCreateBranch({
-      branchName: 'test-singleton-perms',
+      branchName: 'test-entry-perms',
       mode: 'local-prod-sim',
-      title: 'Singleton Permission Test',
+      title: 'Entry Permission Test',
       createdBy: editor.userId,
       remoteUrl: workspace.remotePath,
     })

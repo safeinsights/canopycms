@@ -39,7 +39,7 @@ export const buildPreviewBaseByCollection = (
     nodes.forEach((node) => {
       const base = stripContentRoot(node.fullPath, contentRoot)
       const normalizedBase = base ? `/${base}` : '/'
-      map[node.fullPath] = node.type === 'singleton' ? '/' : normalizedBase
+      map[node.fullPath] = node.type === 'entry' ? '/' : normalizedBase
       if (node.children) walk(node.children)
     })
   }

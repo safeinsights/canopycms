@@ -35,7 +35,7 @@ const mockSchema: CanopyConfig['schema'] = [
     ],
   },
   {
-    type: 'singleton',
+    type: 'entry',
     name: 'About',
     path: 'about.md',
     format: 'mdx',
@@ -45,7 +45,7 @@ const mockSchema: CanopyConfig['schema'] = [
     ],
   },
   {
-    type: 'singleton',
+    type: 'entry',
     name: 'Settings',
     path: 'settings.json',
     format: 'json',
@@ -250,21 +250,21 @@ export const LargeSchema: Story = {
         fields: [{ name: 'name', type: 'string' }],
       },
       {
-        type: 'singleton',
+        type: 'entry',
         name: 'About',
         path: 'about.md',
         format: 'mdx',
         fields: [{ name: 'title', type: 'string' }],
       },
       {
-        type: 'singleton',
+        type: 'entry',
         name: 'Contact',
         path: 'contact.md',
         format: 'mdx',
         fields: [{ name: 'title', type: 'string' }],
       },
       {
-        type: 'singleton',
+        type: 'entry',
         name: 'Settings',
         path: 'settings.json',
         format: 'json',

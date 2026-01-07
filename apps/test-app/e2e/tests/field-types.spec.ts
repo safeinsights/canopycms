@@ -32,7 +32,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
 
-    // Open Home Page singleton
+    // Open Home Page entry
     await editorPage.openEntryNavigator()
     await editorPage.selectEntry('Home Page')
 
@@ -61,7 +61,7 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.waitForReady()
 
     // Open a post entry (assuming Posts collection exists)
-    // For now, test with the home singleton's textarea if available
+    // For now, test with the home entry's textarea if available
     await editorPage.openEntryNavigator()
     await editorPage.selectEntry('Home Page')
 
