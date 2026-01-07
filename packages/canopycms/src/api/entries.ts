@@ -45,6 +45,7 @@ export interface ListEntriesParams {
   limit?: number
   cursor?: string
   q?: string
+  recursive?: boolean
 }
 
 export interface ListEntriesResponse {
@@ -70,6 +71,7 @@ const listEntriesParamsSchema = z.object({
   limit: z.number().optional(),
   cursor: z.string().optional(),
   q: z.string().optional(),
+  recursive: z.boolean().optional(),
 })
 
 const extensionFor = (format: ContentFormat): string => {
@@ -142,6 +144,39 @@ const listCollectionEntries = async (
       exists: true,
     })
   }
+  return entries
+}
+
+/**
+ * Recursively list entries from a collection and all its nested child collections
+ */
+const listCollectionEntriesRecursive = async (
+  root: string,
+  collection: ResolvedSchemaItem,
+  flatCollections: FlatCollection[],
+): Promise<EntryListItem[]> => {
+  const entries: EntryListItem[] = []
+
+  // Find the flat collection for this schema item
+  const flatCollection = flatCollections.find((c) => c.fullPath === collection.fullPath)
+  if (!flatCollection) {
+    return entries
+  }
+
+  // List entries in current collection (only if it's a collection type, not entry)
+  if (collection.type === 'collection') {
+    const currentEntries = await listCollectionEntries(root, flatCollection)
+    entries.push(...currentEntries)
+  }
+
+  // Recursively list entries in child collections
+  if (collection.children) {
+    for (const child of collection.children) {
+      const childEntries = await listCollectionEntriesRecursive(root, child, flatCollections)
+      entries.push(...childEntries)
+    }
+  }
+
   return entries
 }
 
@@ -235,54 +270,112 @@ export const listEntriesHandler = async (
 
   const targetId = params.collection ? normalizeCollectionId(params.collection) : undefined
   let targetCollections = flatCollections
+  let targetSchemaNodes = resolvedSchema
+
   if (targetId) {
     const match = flatCollections.find((c) => c.fullPath === targetId)
     if (!match) {
       return { ok: false, status: 404, error: 'Collection not found' }
     }
     targetCollections = [match]
+
+    // Also find the schema node for recursive mode
+    const findSchemaNode = (nodes: ResolvedSchemaItem[]): ResolvedSchemaItem | null => {
+      for (const node of nodes) {
+        if (node.fullPath === targetId) return node
+        if (node.children) {
+          const found = findSchemaNode(node.children)
+          if (found) return found
+        }
+      }
+      return null
+    }
+    const targetNode = findSchemaNode(resolvedSchema)
+    if (targetNode) {
+      targetSchemaNodes = [targetNode]
+    }
   }
 
   const maxLimit = 200
   const limit = Math.min(Math.max(params.limit ?? 50, 1), maxLimit)
   const offset = Number.isFinite(Number(params.cursor)) ? Number(params.cursor) : 0
   const search = params.q?.toLowerCase()
+  const recursive = params.recursive ?? false
 
   const entries: EntryListItem[] = []
-  for (const collection of targetCollections) {
-    try {
-      const items =
-        collection.type === 'entry'
-          ? [await entry(root, collection)]
-          : await listCollectionEntries(root, collection)
-      items.sort((a, b) => a.slug.localeCompare(b.slug))
-      for (const item of items) {
-        const normalized = store.resolveDocumentPath(
-          item.collectionId,
-          item.type === 'standalone' ? '' : item.slug,
-        )
-        const access = await ctx.services.checkContentAccess(
-          context,
-          root,
-          normalized.relativePath,
-          req.user,
-          'read',
-        )
-        if (!access.allowed) continue
-        if (search) {
-          const haystack =
-            `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
-          if (!haystack.includes(search)) {
-            continue
+
+  if (recursive && targetId) {
+    // Recursive mode: list entries from target collection and all its children
+    for (const schemaNode of targetSchemaNodes) {
+      try {
+        const items = await listCollectionEntriesRecursive(root, schemaNode, flatCollections)
+        items.sort((a, b) => a.slug.localeCompare(b.slug))
+        for (const item of items) {
+          const normalized = store.resolveDocumentPath(
+            item.collectionId,
+            item.type === 'standalone' ? '' : item.slug,
+          )
+          const access = await ctx.services.checkContentAccess(
+            context,
+            root,
+            normalized.relativePath,
+            req.user,
+            'read',
+          )
+          if (!access.allowed) continue
+          if (search) {
+            const haystack =
+              `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
+            if (!haystack.includes(search)) {
+              continue
+            }
           }
+          entries.push(item)
         }
-        entries.push(item)
+      } catch (err) {
+        if (err instanceof ContentStoreError) {
+          return { ok: false, status: 400, error: err.message }
+        }
+        throw err
       }
-    } catch (err) {
-      if (err instanceof ContentStoreError) {
-        return { ok: false, status: 400, error: err.message }
+    }
+  } else {
+    // Non-recursive mode: list entries from target collections only (existing behavior)
+    for (const collection of targetCollections) {
+      try {
+        const items =
+          collection.type === 'entry'
+            ? [await entry(root, collection)]
+            : await listCollectionEntries(root, collection)
+        items.sort((a, b) => a.slug.localeCompare(b.slug))
+        for (const item of items) {
+          const normalized = store.resolveDocumentPath(
+            item.collectionId,
+            item.type === 'standalone' ? '' : item.slug,
+          )
+          const access = await ctx.services.checkContentAccess(
+            context,
+            root,
+            normalized.relativePath,
+            req.user,
+            'read',
+          )
+          if (!access.allowed) continue
+          if (search) {
+            const haystack =
+              `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
+            if (!haystack.includes(search)) {
+              continue
+            }
+          }
+          entries.push(item)
+        }
+      } catch (err) {
+        if (err instanceof ContentStoreError) {
+          return { ok: false, status: 400, error: err.message }
+        }
+        throw err
       }
-      throw err
     }
   }
 

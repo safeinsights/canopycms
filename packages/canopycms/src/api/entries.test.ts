@@ -123,4 +123,154 @@ describe('listEntries', () => {
     expect(res.status).toBe(404)
     expect(res.ok).toBe(false)
   })
+
+  it('lists entries recursively from deeply nested collections', async () => {
+    const root = await tmpDir()
+
+    // Create 3-level nested structure: docs/api/v2
+    await fs.mkdir(path.join(root, 'content/docs'), { recursive: true })
+    await fs.mkdir(path.join(root, 'content/docs/api'), { recursive: true })
+    await fs.mkdir(path.join(root, 'content/docs/api/v2'), { recursive: true })
+
+    // Create entries at each level
+    await fs.writeFile(
+      path.join(root, 'content/docs/overview.json'),
+      JSON.stringify({ title: 'Overview' }),
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(root, 'content/docs/api/intro.json'),
+      JSON.stringify({ title: 'API Introduction' }),
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(root, 'content/docs/api/v2/auth.json'),
+      JSON.stringify({ title: 'Authentication' }),
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(root, 'content/docs/api/v2/users.json'),
+      JSON.stringify({ title: 'Users API' }),
+      'utf8',
+    )
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      schema: [
+        {
+          type: 'collection',
+          name: 'docs',
+          path: 'docs',
+          format: 'json',
+          fields: [{ name: 'title', type: 'string' }],
+          children: [
+            {
+              type: 'collection',
+              name: 'api',
+              path: 'api',
+              format: 'json',
+              fields: [{ name: 'title', type: 'string' }],
+              children: [
+                {
+                  type: 'collection',
+                  name: 'v2',
+                  path: 'v2',
+                  format: 'json',
+                  fields: [{ name: 'title', type: 'string' }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+    })
+
+    const ctx: ApiContext = {
+      services: {
+        config,
+        checkBranchAccess,
+        checkContentAccess,
+        bootstrapAdminIds: new Set<string>(),
+        registry: undefined as any,
+      },
+      getBranchContext: vi.fn().mockResolvedValue({
+        baseRoot: root,
+        branchRoot: root,
+        branch: {
+          name: 'main',
+          status: 'editing',
+          access: {},
+          createdBy: 'u1',
+          createdAt: 'now',
+          updatedAt: 'now',
+        },
+      }),
+    }
+
+    // Test 1: Without collectionId - lists entries from all collections (flat list)
+    const allEntriesRes = await listEntriesHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main' },
+    )
+
+    expect(allEntriesRes.ok).toBe(true)
+    expect(allEntriesRes.data?.entries.length).toBe(4) // All entries from all collections
+    expect(allEntriesRes.data?.entries.some((e) => e.slug === 'overview')).toBe(true)
+    expect(allEntriesRes.data?.entries.some((e) => e.slug === 'intro')).toBe(true)
+    expect(allEntriesRes.data?.entries.some((e) => e.slug === 'auth')).toBe(true)
+    expect(allEntriesRes.data?.entries.some((e) => e.slug === 'users')).toBe(true)
+
+    // Test 2: With collectionId, non-recursive - only gets entries from 'content/docs' collection (no children)
+    const docsNonRecursiveRes = await listEntriesHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main', collection: 'content/docs' },
+    )
+
+    expect(docsNonRecursiveRes.ok).toBe(true)
+    expect(docsNonRecursiveRes.data?.entries.length).toBe(1) // Only 'overview' from docs
+    expect(docsNonRecursiveRes.data?.entries.some((e) => e.slug === 'overview')).toBe(true)
+    expect(docsNonRecursiveRes.data?.entries.some((e) => e.slug === 'intro')).toBe(false) // From child collection
+    expect(docsNonRecursiveRes.data?.entries.some((e) => e.slug === 'auth')).toBe(false) // From grandchild collection
+
+    // Test 3: With collectionId and recursive flag - gets entries from 'content/docs' and all children
+    const docsRecursiveRes = await listEntriesHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main', collection: 'content/docs', recursive: true },
+    )
+
+    expect(docsRecursiveRes.ok).toBe(true)
+    expect(docsRecursiveRes.data?.entries.length).toBe(4) // All entries from docs tree
+    expect(docsRecursiveRes.data?.entries.some((e) => e.slug === 'overview')).toBe(true)
+    expect(docsRecursiveRes.data?.entries.some((e) => e.slug === 'intro')).toBe(true)
+    expect(docsRecursiveRes.data?.entries.some((e) => e.slug === 'auth')).toBe(true)
+    expect(docsRecursiveRes.data?.entries.some((e) => e.slug === 'users')).toBe(true)
+
+    // Test 4: Nested collection with recursive - gets entries from 'content/docs/api' and its children
+    const apiRecursiveRes = await listEntriesHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main', collection: 'content/docs/api', recursive: true },
+    )
+
+    expect(apiRecursiveRes.ok).toBe(true)
+    expect(apiRecursiveRes.data?.entries.length).toBe(3) // intro, auth, users (not overview)
+    expect(apiRecursiveRes.data?.entries.some((e) => e.slug === 'overview')).toBe(false) // From parent
+    expect(apiRecursiveRes.data?.entries.some((e) => e.slug === 'intro')).toBe(true)
+    expect(apiRecursiveRes.data?.entries.some((e) => e.slug === 'auth')).toBe(true)
+    expect(apiRecursiveRes.data?.entries.some((e) => e.slug === 'users')).toBe(true)
+
+    // Verify collectionIds match the nested structure
+    const authEntry = docsRecursiveRes.data?.entries.find((e) => e.slug === 'auth')
+    expect(authEntry?.collectionId).toBe('content/docs/api/v2')
+  })
 })
