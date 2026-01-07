@@ -43,7 +43,7 @@ export interface EditorEntry {
   collectionName?: string
   slug?: string
   format?: ContentFormat
-  type?: 'entry' | 'singleton'
+  type?: 'entry' | 'standalone'
 }
 
 export interface EditorCollection {
@@ -51,7 +51,7 @@ export interface EditorCollection {
   name: string
   label?: string
   format: ContentFormat
-  type: 'collection' | 'singleton'
+  type: 'collection' | 'entry'
   children?: EditorCollection[]
 }
 
@@ -295,7 +295,7 @@ export const Editor: React.FC<EditorProps> = ({
       entries: grouped.get(node.id),
       children: node.children?.map((child) => build(child)),
       onAdd:
-        node.type !== 'singleton'
+        node.type !== 'entry'
           ? () => (onCreateEntry ? onCreateEntry(node.id) : handleCreateEntry(node.id))
           : undefined,
     })
@@ -335,7 +335,7 @@ export const Editor: React.FC<EditorProps> = ({
   const breadcrumbSegments = useMemo(() => {
     if (!currentEntry) return ['All Files']
     const segments = ['All Files']
-    if (currentEntry.type !== 'singleton' && currentEntry.collectionId) {
+    if (currentEntry.type !== 'entry' && currentEntry.collectionId) {
       segments.push(collectionLabels.get(currentEntry.collectionId) ?? currentEntry.collectionId)
     }
     const slugSegments = (currentEntry.slug ?? '').split('/').filter(Boolean)

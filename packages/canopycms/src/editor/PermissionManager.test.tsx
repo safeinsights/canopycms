@@ -72,7 +72,7 @@ describe('PermissionManager', () => {
       ],
     },
     {
-      type: 'singleton' as const,
+      type: 'entry' as const,
       name: 'About',
       path: 'about.md',
       format: 'mdx' as const,

@@ -32,7 +32,7 @@ const postFields: FieldConfig[] = [
 
 const baseEntries: EditorEntry[] = [
   {
-    id: 'home/singleton',
+    id: 'home',
     label: 'Home',
     status: 'page',
     schema: homeFields,
@@ -41,7 +41,7 @@ const baseEntries: EditorEntry[] = [
     collectionId: 'home',
     collectionName: 'home',
     format: 'json',
-    type: 'singleton',
+    type: 'entry',
   },
   {
     id: 'posts/hello-world',
@@ -61,13 +61,7 @@ export const WithCollections: Story = {
   render: () => {
     const [entries, setEntries] = useState<EditorEntry[]>(baseEntries)
     const collections = [
-      {
-        id: 'home',
-        name: 'home',
-        label: 'Home',
-        format: 'json' as const,
-        type: 'singleton' as const,
-      },
+      { id: 'home', name: 'home', label: 'Home', format: 'json' as const, type: 'entry' as const },
       {
         id: 'posts',
         name: 'posts',
@@ -91,7 +85,7 @@ export const WithCollections: Story = {
         collectionName: collectionId,
         slug,
         format: 'json',
-        type: collectionId === 'home' ? 'singleton' : 'entry',
+        type: collectionId === 'home' ? 'entry' : 'entry',
       }
       setEntries((prev) => [...prev, newEntry])
     }

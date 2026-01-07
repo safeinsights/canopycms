@@ -14,7 +14,7 @@ const baseConfig = {
       fields: [],
     },
     {
-      type: 'singleton',
+      type: 'entry',
       name: 'home',
       path: 'home',
       format: 'json',

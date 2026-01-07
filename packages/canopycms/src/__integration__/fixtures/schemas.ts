@@ -2,7 +2,7 @@ import type { CanopyConfig } from '../../config'
 
 /**
  * Blog schema for testing content workflows
- * Contains posts (collection) and about (singleton)
+ * Contains posts (collection) and about (entry)
  */
 export const BLOG_SCHEMA: CanopyConfig['schema'] = [
   {
@@ -19,7 +19,7 @@ export const BLOG_SCHEMA: CanopyConfig['schema'] = [
     ],
   },
   {
-    type: 'singleton',
+    type: 'entry',
     name: 'about',
     path: 'about.md',
     format: 'mdx',

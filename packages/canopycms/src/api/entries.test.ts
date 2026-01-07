@@ -44,7 +44,7 @@ describe('listEntries', () => {
           fields: [{ name: 'title', type: 'string' }],
         },
         {
-          type: 'singleton',
+          type: 'entry',
           name: 'settings',
           path: 'settings',
           format: 'json',
@@ -100,7 +100,7 @@ describe('listEntries', () => {
     const summaries = res.data?.collections ?? []
     const flat = (nodes: typeof summaries): typeof summaries =>
       nodes.flatMap((n) => [n, ...(n.children ? flat(n.children) : [])])
-    expect(flat(summaries).find((c) => c.name === 'settings')?.type).toBe('singleton')
+    expect(flat(summaries).find((c) => c.name === 'settings')?.type).toBe('entry')
     expect(res.data?.pagination.hasMore).toBe(true)
   })
 

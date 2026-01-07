@@ -41,7 +41,7 @@ describe('config validation', () => {
           ],
           children: [
             {
-              type: 'singleton' as const,
+              type: 'entry' as const,
               name: 'landing',
               path: 'landing',
               format: 'json' as const,
@@ -54,7 +54,7 @@ describe('config validation', () => {
     })
 
     expect(configBundle.server.schema[0].type).toBe('collection')
-    expect(configBundle.server.schema[0].children?.[0].type).toBe('singleton')
+    expect(configBundle.server.schema[0].children?.[0].type).toBe('entry')
   })
 
   it('rejects select fields without options', () => {
@@ -74,7 +74,7 @@ describe('config validation', () => {
     ).toThrow(/options/i)
   })
 
-  it('requires at least one collection or singleton', () => {
+  it('requires at least one collection or entry', () => {
     expect(() =>
       validateCanopyConfig({
         ...gitAuthor,
@@ -96,11 +96,11 @@ describe('config validation', () => {
         },
       ],
     }
-    const heroSingleton: CanopyConfigFragment = {
+    const heroentry: CanopyConfigFragment = {
       ...gitAuthor,
       schema: [
         {
-          type: 'singleton',
+          type: 'entry',
           name: 'homepage',
           path: 'content/home',
           format: 'json',
@@ -110,7 +110,7 @@ describe('config validation', () => {
       media: { adapter: 'local' as const },
     }
 
-    const config = composeCanopyConfig(posts, heroSingleton)
+    const config = composeCanopyConfig(posts, heroentry)
 
     expect(config.schema[0].name).toBe('posts')
     expect(config.schema[1].name).toBe('homepage')

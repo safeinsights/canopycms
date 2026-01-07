@@ -115,12 +115,12 @@ describe('ContentStore', () => {
     ).rejects.toBeInstanceOf(ContentStoreError)
   })
 
-  it('reads and writes singleton entries at a fixed path', async () => {
+  it('reads and writes entry items at a fixed path', async () => {
     const root = await tmpDir()
     const config = defineCanopyTestConfig({
       schema: [
         {
-          type: 'singleton',
+          type: 'entry',
           name: 'settings',
           path: 'settings',
           format: 'json',
@@ -139,5 +139,129 @@ describe('ContentStore', () => {
     expect(doc.format).toBe('json')
     expect(doc.data.siteName).toBe('CanopyCMS')
     expect(doc.relativePath).toBe('content/settings.json')
+  })
+
+  it('rejects slugs with forward slashes', async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({
+      schema: [
+        {
+          type: 'collection',
+          name: 'posts',
+          path: 'posts',
+          format: 'md',
+          fields: [{ name: 'title', type: 'string' }],
+        },
+      ],
+    })
+    const store = new ContentStore(root, config)
+
+    await expect(
+      store.write('content/posts', '2024/hello', {
+        format: 'md',
+        data: { title: 'Bad Slug' },
+        body: 'Content',
+      }),
+    ).rejects.toThrow('Slugs cannot contain forward slashes')
+  })
+
+  it('rejects slugs with backslashes', async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({
+      schema: [
+        {
+          type: 'collection',
+          name: 'posts',
+          path: 'posts',
+          format: 'md',
+          fields: [{ name: 'title', type: 'string' }],
+        },
+      ],
+    })
+    const store = new ContentStore(root, config)
+
+    await expect(
+      store.write('content/posts', 'bad\\slug', {
+        format: 'md',
+        data: { title: 'Bad Slug' },
+        body: 'Content',
+      }),
+    ).rejects.toThrow('Slugs cannot contain backslashes')
+  })
+
+  it('resolves paths using trivial algorithm: collection + slug', async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({
+      schema: [
+        {
+          type: 'collection',
+          name: 'posts',
+          path: 'posts',
+          format: 'md',
+          fields: [{ name: 'title', type: 'string' }],
+        },
+      ],
+    })
+    const store = new ContentStore(root, config)
+
+    // Path: content/posts/hello -> collection=content/posts, slug=hello
+    const result = store.resolvePath(['content', 'posts', 'hello'])
+    expect(result.schemaItem.fullPath).toBe('content/posts')
+    expect(result.schemaItem.type).toBe('collection')
+    expect(result.slug).toBe('hello')
+  })
+
+  it('resolves paths for entry types (no slug)', async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({
+      schema: [
+        {
+          type: 'entry',
+          name: 'settings',
+          path: 'settings',
+          format: 'json',
+          fields: [{ name: 'siteName', type: 'string' }],
+        },
+      ],
+    })
+    const store = new ContentStore(root, config)
+
+    // Path: content/settings -> entry, no slug
+    const result = store.resolvePath(['content', 'settings'])
+    expect(result.schemaItem.fullPath).toBe('content/settings')
+    expect(result.schemaItem.type).toBe('entry')
+    expect(result.slug).toBe('')
+  })
+
+  it('resolves nested collection paths', async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({
+      schema: [
+        {
+          type: 'collection',
+          name: 'docs',
+          path: 'docs',
+          format: 'md',
+          fields: [{ name: 'title', type: 'string' }],
+          children: [
+            {
+              type: 'collection',
+              name: 'guides',
+              path: 'guides',
+              format: 'md',
+              fields: [{ name: 'title', type: 'string' }],
+            },
+          ],
+        },
+      ],
+    })
+    const store = new ContentStore(root, config)
+
+    // Path: content/docs/guides/getting-started
+    // -> collection=content/docs/guides, slug=getting-started
+    const result = store.resolvePath(['content', 'docs', 'guides', 'getting-started'])
+    expect(result.schemaItem.fullPath).toBe('content/docs/guides')
+    expect(result.schemaItem.type).toBe('collection')
+    expect(result.slug).toBe('getting-started')
   })
 })

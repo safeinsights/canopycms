@@ -29,7 +29,7 @@ export default defineCanopyConfig({
       fields: postSchema,
     },
     {
-      type: 'singleton',
+      type: 'entry',
       name: 'home',
       label: 'Home',
       path: 'home',

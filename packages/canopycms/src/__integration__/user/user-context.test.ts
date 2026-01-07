@@ -157,7 +157,7 @@ describe('User Context API Integration', () => {
     expect(createResponse.status).toBe(200)
 
     // Verify the branch was created by the correct user
-    const branchData = await createResponse.json()
+    const branchData = await createResponse.json<any>()
     expect(branchData.data?.branch.createdBy).toBe('test-editor')
 
     // Get user info to confirm it matches

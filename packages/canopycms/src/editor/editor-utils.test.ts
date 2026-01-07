@@ -19,9 +19,9 @@ describe('buildPreviewSrc', () => {
     expect(result).toBe('/custom-preview')
   })
 
-  it('applies preview base and branch for singletons', () => {
+  it('applies preview base and branch for entries', () => {
     const result = buildPreviewSrc(
-      { collectionId: 'home', collectionName: 'home', type: 'singleton' },
+      { collectionId: 'home', collectionName: 'home', type: 'entry' },
       { branchName: 'feature/nested', previewBaseByCollection: { home: '/preview/' } },
     )
     expect(result).toBe('/preview?branch=feature%2Fnested')
@@ -122,7 +122,7 @@ describe('buildEntriesFromListResponse', () => {
 
   const existingEntries: EditorEntry[] = [
     {
-      id: 'home/singleton',
+      id: 'home',
       label: 'Home',
       status: 'entry',
       schema: fallbackSchema,
@@ -132,7 +132,7 @@ describe('buildEntriesFromListResponse', () => {
       collectionName: 'Home',
       slug: '',
       format: 'json',
-      type: 'singleton',
+      type: 'standalone',
     },
   ]
 
@@ -151,7 +151,7 @@ describe('buildEntriesFromListResponse', () => {
         name: 'Home',
         path: 'home',
         format: 'json',
-        type: 'singleton',
+        type: 'entry',
         schema: [],
       },
     ],
@@ -168,12 +168,12 @@ describe('buildEntriesFromListResponse', () => {
         exists: true,
       },
       {
-        id: 'home/singleton',
-        slug: 'home',
+        id: 'home',
+        slug: '',
         collectionId: 'home',
         collectionName: 'Home',
         format: 'json',
-        type: 'singleton',
+        type: 'standalone',
         path: 'content/home.json',
         exists: false,
       },

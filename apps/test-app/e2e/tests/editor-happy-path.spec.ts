@@ -41,7 +41,7 @@ test.describe('Editor Happy Path', () => {
     await editorPage.openEntryNavigator()
     await expect(editorPage.entryNavigator).toBeVisible()
 
-    // Should show Home Page singleton in the tree (label comes from content title)
+    // Should show Home Page entry in the tree (label comes from content title)
     await expect(editorPage.entryNavigator.locator('text="Home Page"')).toBeVisible()
 
     // Check the data-testid matches the label
@@ -54,7 +54,7 @@ test.describe('Editor Happy Path', () => {
     await editorPage.goto()
     await editorPage.waitForReady()
 
-    // Step 2: Open entry navigator and select Home Page singleton
+    // Step 2: Open entry navigator and select Home Page entry
     await editorPage.openEntryNavigator()
     await editorPage.selectEntry('Home Page')
 

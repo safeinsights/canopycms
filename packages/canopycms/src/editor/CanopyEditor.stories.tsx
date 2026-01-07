@@ -23,7 +23,7 @@ const config: CanopyConfig = {
       fields: [{ name: 'title', type: 'string' }],
     },
     {
-      type: 'singleton',
+      type: 'entry',
       name: 'home',
       label: 'Home',
       path: 'home',
@@ -44,7 +44,7 @@ const config: CanopyConfig = {
 
 const entries = [
   {
-    id: 'content/home/singleton',
+    id: 'content/home',
     label: 'Home',
     status: 'page',
     schema: config.schema[1].fields,
@@ -53,7 +53,7 @@ const entries = [
     collectionName: 'home',
     slug: '',
     format: 'json' as const,
-    type: 'singleton' as const,
+    type: 'entry' as const,
   },
 ]
 

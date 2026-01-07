@@ -27,7 +27,7 @@ export interface EntryNavItem {
 export interface EntryNavCollection {
   id: string
   label: string
-  type: 'collection' | 'singleton'
+  type: 'collection' | 'entry'
   entries?: EntryNavItem[]
   children?: EntryNavCollection[]
   onAdd?: () => void
@@ -49,7 +49,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   const treeData = useMemo<TreeNodeData[]>(() => {
     if (collections?.length) {
       const toTree = (col: EntryNavCollection): TreeNodeData => {
-        if (col.type === 'singleton') {
+        if (col.type === 'entry') {
           const entry = col.entries?.[0]
           return {
             value: entry?.id ?? `collection:${col.id}`,
