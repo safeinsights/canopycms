@@ -45,7 +45,7 @@ describe('CanopyApiClient', () => {
       })
 
       const client = new CanopyApiClient({ fetch: mockFetch })
-      await client.content.read({ branch: 'main', collection: 'my collection', slug: 'my slug' })
+      await client.content.read({ branch: 'main', path: 'my collection/my slug' })
 
       expect(mockFetch).toHaveBeenCalledWith(
         '/api/canopycms/main/content/my%20collection/my%20slug',
@@ -60,7 +60,7 @@ describe('CanopyApiClient', () => {
       })
 
       const client = new CanopyApiClient({ fetch: mockFetch })
-      await client.content.read({ branch: 'main', collection: 'コンテンツ', slug: '文書' })
+      await client.content.read({ branch: 'main', path: 'コンテンツ/文書' })
 
       expect(mockFetch).toHaveBeenCalledWith(
         '/api/canopycms/main/content/%E3%82%B3%E3%83%B3%E3%83%86%E3%83%B3%E3%83%84/%E6%96%87%E6%9B%B8',
@@ -75,14 +75,10 @@ describe('CanopyApiClient', () => {
       })
 
       const client = new CanopyApiClient({ fetch: mockFetch })
-      await client.content.read({
-        branch: 'main',
-        collection: 'col/lection?test',
-        slug: 'slug&special',
-      })
+      await client.content.read({ branch: 'main', path: 'col/lection?test/slug&special' })
 
       expect(mockFetch).toHaveBeenCalledWith(
-        '/api/canopycms/main/content/col%2Flection%3Ftest/slug%26special',
+        '/api/canopycms/main/content/col/lection%3Ftest/slug%26special',
         expect.anything(),
       )
     })
@@ -249,9 +245,8 @@ describe('CanopyApiClient', () => {
     it('should send PUT requests with JSON body', async () => {
       const client = new CanopyApiClient({ fetch: mockFetch })
       await client.content.write(
-        { branch: 'main', collection: 'posts', slug: 'hello' },
+        { branch: 'main', path: 'posts/hello' },
         {
-          collection: 'posts',
           format: 'json',
           data: { title: 'Hello' },
         },

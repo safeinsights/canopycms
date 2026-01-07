@@ -266,7 +266,9 @@ ${namespacesCode}
       if (result.includes(pathParamPattern)) {
         result = result.replace(pathParamPattern, encodeURIComponent(String(value)))
       } else if (result.includes(restParamPattern)) {
-        result = result.replace(restParamPattern, encodeURIComponent(String(value)))
+        // For rest parameters, encode each segment separately to preserve slashes
+        const encoded = String(value).split('/').map(segment => encodeURIComponent(segment)).join('/')
+        result = result.replace(restParamPattern, encoded)
       } else {
         // Not in path template, so it's a query param
         queryParams[key] = value

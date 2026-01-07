@@ -165,9 +165,9 @@ describe('Editor integration', () => {
     )
     expect(saveCall).toBeTruthy()
     const body = JSON.parse((saveCall?.[1] as RequestInit).body as string)
+    // With path-based routing, collection and slug are in the URL, not the body
     expect(body).toMatchObject({
-      collection: 'posts',
-      slug: 'hello',
+      format: 'json',
       data: { title: 'Loaded title' },
     })
   })

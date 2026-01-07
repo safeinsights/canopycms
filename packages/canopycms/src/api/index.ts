@@ -37,7 +37,7 @@ export type {
   SearchExternalGroupsParams,
   ExternalGroup,
 } from './groups'
-export type { ReadContentParams, WriteContentBody } from './content'
+// Content API uses path-based routing now - no separate params/body types exported
 
 // Export route definitions
 export { USER_ROUTES } from './user'

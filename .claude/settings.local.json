@@ -40,7 +40,7 @@
       "Bash(npx tsx:*)",
       "Bash(npm run generate:client:*)",
       "Bash(npx playwright show-report:*)",
-      "Bash((npx playwright:*)",
+      "Bash(npx playwright:*)",
       "Bash(node -e:*)",
       "Bash(tac:*)",
       "Bash(playwright test:*)",

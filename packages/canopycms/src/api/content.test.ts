@@ -10,6 +10,10 @@ const writeContent = CONTENT_ROUTES.write.handler
 vi.mock('../content-store', () => {
   return {
     ContentStore: vi.fn().mockImplementation(() => ({
+      resolvePath: vi.fn().mockReturnValue({
+        schemaItem: { fullPath: 'content/posts', type: 'collection' },
+        slug: 'hello',
+      }),
       resolveDocumentPath: vi
         .fn()
         .mockReturnValue({
@@ -74,7 +78,7 @@ describe('content api', () => {
     const res = await readContent(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x', collection: 'posts', slug: 'hello' },
+      { branch: 'feature/x', path: 'posts/hello' },
     )
     expect(res.status).toBe(403)
     expect(res.ok).toBe(false)
@@ -85,7 +89,7 @@ describe('content api', () => {
     const res = await readContent(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x', collection: 'posts', slug: 'hello' },
+      { branch: 'feature/x', path: 'posts/hello' },
     )
     expect(res.ok).toBe(true)
   })
@@ -95,7 +99,7 @@ describe('content api', () => {
     const res = await writeContent(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x', collection: 'posts', slug: 'hello' },
+      { branch: 'feature/x', path: 'posts/hello' },
       { format: 'json', data: { title: 'hi' } },
     )
     expect(res.ok).toBe(true)

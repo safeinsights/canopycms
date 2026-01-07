@@ -73,8 +73,6 @@ describe('Permission Denied Errors', () => {
 
     // Write content as admin
     await adminClient.put('/api/canopycms/restricted-paths/content/posts/admin-post', {
-      collection: 'posts',
-      slug: 'admin-post',
       format: 'mdx',
       data: {
         title: 'Admin Post',
@@ -184,8 +182,6 @@ describe('Permission Denied Errors', () => {
     })
 
     await editorClient.put('/api/canopycms/feature-reviewer-test/content/posts/test-post', {
-      collection: 'posts',
-      slug: 'test-post',
       format: 'mdx',
       data: {
         title: 'Test Post',
@@ -207,8 +203,6 @@ describe('Permission Denied Errors', () => {
     const writeResponse = await reviewerClient.put(
       '/api/canopycms/feature-reviewer-test/content/posts/test-post',
       {
-        collection: 'posts',
-        slug: 'test-post',
         format: 'mdx',
         data: {
           title: 'Modified by Reviewer',

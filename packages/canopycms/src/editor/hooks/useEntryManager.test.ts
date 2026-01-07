@@ -121,11 +121,7 @@ describe('useEntryManager', () => {
     const loaded = await result.current.loadEntry(mockEntry)
 
     expect(loaded).toEqual({ slug: 'test', title: 'Test Entry', body: 'Content' })
-    expect(mockClient.content.read).toHaveBeenCalledWith({
-      branch: 'main',
-      collection: 'posts',
-      slug: 'test',
-    })
+    expect(mockClient.content.read).toHaveBeenCalledWith({ branch: 'main', path: 'posts/test' })
   })
 
   it('handles load entry error', async () => {
@@ -154,10 +150,8 @@ describe('useEntryManager', () => {
 
     expect(saved).toEqual({ title: 'Updated Title', body: 'Updated Content' })
     expect(mockClient.content.write).toHaveBeenCalledWith(
-      { branch: 'main', collection: 'posts', slug: 'test' },
+      { branch: 'main', path: 'posts/test' },
       {
-        collection: 'posts',
-        slug: 'test',
         format: 'mdx',
         data: { title: 'Updated Title' }, // body is extracted
         body: 'Updated Content',
@@ -291,9 +285,8 @@ describe('useEntryManager', () => {
 
     expect(window.prompt).toHaveBeenCalledWith('New Posts slug?', 'untitled')
     expect(mockClient.content.write).toHaveBeenCalledWith(
-      { branch: 'main', collection: 'posts', slug: 'new-post' },
+      { branch: 'main', path: 'posts/new-post' },
       expect.objectContaining({
-        collection: 'posts',
         format: 'mdx',
       }),
     )

@@ -26,14 +26,12 @@ export type ContentWriteResponse = ApiResponse<{
 
 const readContentParamsSchema = z.object({
   branch: z.string().min(1),
-  collection: z.string().min(1),
-  slug: z.string().optional(),
+  path: z.string().min(1), // Will be split into segments in handler
 })
 
 const writeContentParamsSchema = z.object({
   branch: z.string().min(1),
-  collection: z.string().min(1),
-  slug: z.string().optional(),
+  path: z.string().min(1), // Will be split into segments in handler
 })
 
 const writeContentBodySchema = z.object({
@@ -41,12 +39,6 @@ const writeContentBodySchema = z.object({
   data: z.record(z.unknown()).optional(),
   body: z.string().optional(),
 })
-
-export interface ReadContentParams {
-  branch: string
-  collection: string
-  slug?: string
-}
 
 const readContentHandler = async (
   ctx: ApiContext,
@@ -62,15 +54,23 @@ const readContentHandler = async (
   const branchPaths = resolveBranchPaths(context, branchMode)
   const store = new ContentStore(branchPaths.branchRoot, ctx.services.config)
 
-  // Prepend contentRoot to collection if not already present
+  // Parse path segments: params.path is like "content/posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
-  const fullCollection = params.collection.startsWith(contentRoot + '/')
-    ? params.collection
-    : `${contentRoot}/${params.collection}`
+  const pathSegments = params.path.split('/').filter(Boolean)
 
+  // Prepend contentRoot if not already present
+  const fullPathSegments =
+    pathSegments[0] === contentRoot ? pathSegments : [contentRoot, ...pathSegments]
+
+  // Use trivial path resolution
+  let schemaItem: any
+  let slug: string
   let relativePath: string
   try {
-    relativePath = store.resolveDocumentPath(fullCollection, params.slug ?? '').relativePath
+    const resolved = store.resolvePath(fullPathSegments)
+    schemaItem = resolved.schemaItem
+    slug = resolved.slug
+    relativePath = store.resolveDocumentPath(schemaItem.fullPath, slug).relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: message }
@@ -87,16 +87,8 @@ const readContentHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
-  const doc = await store.read(fullCollection, params.slug ?? '')
+  const doc = await store.read(schemaItem.fullPath, slug)
   return { ok: true, status: 200, data: doc }
-}
-
-export interface WriteContentBody {
-  collection: string
-  slug?: string
-  format: ContentFormat
-  data?: Record<string, unknown>
-  body?: string
 }
 
 const writeContentHandler = async (
@@ -114,15 +106,23 @@ const writeContentHandler = async (
   const branchPaths = resolveBranchPaths(context, branchMode)
   const store = new ContentStore(branchPaths.branchRoot, ctx.services.config)
 
-  // Prepend contentRoot to collection if not already present
+  // Parse path segments: params.path is like "content/posts/hello" or "posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
-  const fullCollection = params.collection.startsWith(contentRoot + '/')
-    ? params.collection
-    : `${contentRoot}/${params.collection}`
+  const pathSegments = params.path.split('/').filter(Boolean)
 
+  // Prepend contentRoot if not already present
+  const fullPathSegments =
+    pathSegments[0] === contentRoot ? pathSegments : [contentRoot, ...pathSegments]
+
+  // Use trivial path resolution
+  let schemaItem: any
+  let slug: string
   let relativePath: string
   try {
-    relativePath = store.resolveDocumentPath(fullCollection, params.slug ?? '').relativePath
+    const resolved = store.resolvePath(fullPathSegments)
+    schemaItem = resolved.schemaItem
+    slug = resolved.slug
+    relativePath = store.resolveDocumentPath(schemaItem.fullPath, slug).relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: message }
@@ -142,11 +142,11 @@ const writeContentHandler = async (
   try {
     const result =
       body.format === 'json'
-        ? await store.write(fullCollection, params.slug ?? '', {
+        ? await store.write(schemaItem.fullPath, slug, {
             format: 'json',
             data: body.data ?? {},
           })
-        : await store.write(fullCollection, params.slug ?? '', {
+        : await store.write(schemaItem.fullPath, slug, {
             format: body.format,
             data: body.data,
             body: body.body ?? '',
@@ -164,14 +164,15 @@ const writeContentHandler = async (
 // ============================================================================
 
 /**
- * Read content from a collection
- * GET /:branch/content/:collection/:slug
+ * Read content using path-based routing
+ * GET /:branch/content/:path*
+ * Example: /main/content/posts/hello or /main/content/books/1995/biography
  */
 const readContent = defineEndpoint({
   namespace: 'content',
   name: 'read',
   method: 'GET',
-  path: '/:branch/content/:collection/...slug',
+  path: '/:branch/content/...path',
   params: readContentParamsSchema,
   responseType: 'ContentReadResponse',
   response: {} as ContentReadResponse,
@@ -180,14 +181,15 @@ const readContent = defineEndpoint({
 })
 
 /**
- * Write content to a collection
- * PUT /:branch/content/:collection/:slug
+ * Write content using path-based routing
+ * PUT /:branch/content/:path*
+ * Example: /main/content/posts/hello or /main/content/settings
  */
 const writeContent = defineEndpoint({
   namespace: 'content',
   name: 'write',
   method: 'PUT',
-  path: '/:branch/content/:collection/...slug',
+  path: '/:branch/content/...path',
   params: writeContentParamsSchema,
   body: writeContentBodySchema,
   responseType: 'ContentWriteResponse',

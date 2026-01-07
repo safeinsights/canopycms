@@ -176,21 +176,17 @@ export class CanopyApiClient {
    */
   readonly content = {
     /**
-     * read - GET /:branch/content/:collection/...slug
+     * read - GET /:branch/content/...path
      */
     read: (params: Record<string, string>): Promise<ContentReadResponse> => {
-      return this.request('GET', this.buildPath('/:branch/content/:collection/...slug', params))
+      return this.request('GET', this.buildPath('/:branch/content/...path', params))
     },
 
     /**
-     * write - PUT /:branch/content/:collection/...slug
+     * write - PUT /:branch/content/...path
      */
     write: (params: Record<string, string>, body: unknown): Promise<ContentWriteResponse> => {
-      return this.request(
-        'PUT',
-        this.buildPath('/:branch/content/:collection/...slug', params),
-        body,
-      )
+      return this.request('PUT', this.buildPath('/:branch/content/...path', params), body)
     },
   }
 
@@ -324,7 +320,12 @@ export class CanopyApiClient {
       if (result.includes(pathParamPattern)) {
         result = result.replace(pathParamPattern, encodeURIComponent(String(value)))
       } else if (result.includes(restParamPattern)) {
-        result = result.replace(restParamPattern, encodeURIComponent(String(value)))
+        // For rest parameters, encode each segment separately to preserve slashes
+        const encoded = String(value)
+          .split('/')
+          .map((segment) => encodeURIComponent(segment))
+          .join('/')
+        result = result.replace(restParamPattern, encoded)
       } else {
         // Not in path template, so it's a query param
         queryParams[key] = value

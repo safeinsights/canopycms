@@ -80,8 +80,6 @@ describe('buildWritePayload', () => {
     expect(
       buildWritePayload({ collectionId: 'posts', slug: 'hello', format: 'json' }, { title: 'Hi' }),
     ).toEqual({
-      collection: 'posts',
-      slug: 'hello',
       format: 'json',
       data: { title: 'Hi' },
     })
@@ -94,8 +92,6 @@ describe('buildWritePayload', () => {
         { title: 'Hi', body: 'Copy' },
       ),
     ).toEqual({
-      collection: 'posts',
-      slug: 'hello',
       format: 'mdx',
       data: { title: 'Hi' },
       body: 'Copy',
@@ -107,8 +103,6 @@ describe('buildWritePayload', () => {
         { title: 'Hi', body: 42 },
       ),
     ).toEqual({
-      collection: 'posts',
-      slug: 'hello',
       format: 'md',
       data: { title: 'Hi' },
       body: '',

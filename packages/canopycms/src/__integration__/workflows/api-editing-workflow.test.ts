@@ -52,12 +52,10 @@ describe('API Editing Workflow Integration', () => {
     expect(createData.data?.branch.name).toBe('feature-new-post')
     expect(createData.data?.branch.status).toBe('editing')
 
-    // STEP 2: Write content via API
+    // STEP 2: Write content via API (path-based routing)
     const writeResponse = await editorClient.put(
       '/api/canopycms/feature-new-post/content/posts/hello-world',
       {
-        collection: 'posts',
-        slug: 'hello-world',
         format: 'mdx',
         data: {
           title: 'Hello World',
@@ -156,11 +154,9 @@ describe('API Editing Workflow Integration', () => {
     expect(adminBranchResponse.status).toBe(200)
     expect(editorBranchResponse.status).toBe(200)
 
-    // Both users write content to their own branches
+    // Both users write content to their own branches (path-based routing)
     const [adminWriteResponse, editorWriteResponse] = await Promise.all([
       adminClient.put('/api/canopycms/admin-feature/content/posts/admin-post', {
-        collection: 'content/posts',
-        slug: 'admin-post',
         format: 'mdx',
         data: {
           title: 'Admin Post',
@@ -171,8 +167,6 @@ describe('API Editing Workflow Integration', () => {
         body: 'Admin content',
       }),
       editorClient.put('/api/canopycms/editor-feature/content/posts/editor-post', {
-        collection: 'content/posts',
-        slug: 'editor-post',
         format: 'mdx',
         data: {
           title: 'Editor Post',

@@ -52,8 +52,6 @@ describe('Conflict Resolution Integration', () => {
     })
 
     await editor1Client.put('/api/canopycms/feature-conflict-test/content/posts/shared-post', {
-      collection: 'posts',
-      slug: 'shared-post',
       format: 'mdx',
       data: {
         title: 'Shared Post',
@@ -71,8 +69,6 @@ describe('Conflict Resolution Integration', () => {
     })
 
     await editor2Client.put('/api/canopycms/feature-conflict-test-2/content/posts/shared-post', {
-      collection: 'posts',
-      slug: 'shared-post',
       format: 'mdx',
       data: {
         title: 'Shared Post',
@@ -98,8 +94,6 @@ describe('Conflict Resolution Integration', () => {
     // Two editors write different files simultaneously
     const [response1, response2] = await Promise.all([
       editor1Client.put('/api/canopycms/feature-concurrent-edits/content/posts/post-1', {
-        collection: 'posts',
-        slug: 'post-1',
         format: 'mdx',
         data: {
           title: 'Post 1',
@@ -110,8 +104,6 @@ describe('Conflict Resolution Integration', () => {
         body: 'Content 1',
       }),
       editor1Client.put('/api/canopycms/feature-concurrent-edits/content/posts/post-2', {
-        collection: 'posts',
-        slug: 'post-2',
         format: 'mdx',
         data: {
           title: 'Post 2',
@@ -148,8 +140,6 @@ describe('Conflict Resolution Integration', () => {
     const write1 = await editor1Client.put(
       '/api/canopycms/feature-uncommitted-test/content/posts/test-post',
       {
-        collection: 'posts',
-        slug: 'test-post',
         format: 'mdx',
         data: {
           title: 'Test Post',
@@ -167,8 +157,6 @@ describe('Conflict Resolution Integration', () => {
     const write2 = await editor1Client.put(
       '/api/canopycms/feature-uncommitted-test/content/posts/test-post',
       {
-        collection: 'posts',
-        slug: 'test-post',
         format: 'mdx',
         data: {
           title: 'Test Post Updated',
@@ -205,8 +193,6 @@ describe('Conflict Resolution Integration', () => {
     const writeResponse = await editor1Client.put(
       '/api/canopycms/feature-git-error-test/content/posts/test-post',
       {
-        collection: 'posts',
-        slug: 'test-post',
         format: 'mdx',
         data: {
           title: 'Test Post',
@@ -253,8 +239,6 @@ describe('Conflict Resolution Integration', () => {
 
     // Write content
     await editor1Client.put('/api/canopycms/feature-stale-state/content/posts/test-post', {
-      collection: 'posts',
-      slug: 'test-post',
       format: 'mdx',
       data: {
         title: 'Test Post',
