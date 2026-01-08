@@ -8,5 +8,6 @@ export default defineConfig({
     environmentMatchGlobs: [
       ['src/editor/**', 'jsdom'],
     ],
+    setupFiles: ['src/editor/test-setup.ts'],
   },
 })
