@@ -10,6 +10,7 @@ import { AuthorCard } from './AuthorCard'
 export const PostView: React.FC<{ data: PostContent }> = ({ data }) => {
   const {
     data: liveData,
+    isLoading,
     highlightEnabled,
     fieldProps,
   } = useCanopyPreview<PostContent>({
@@ -27,7 +28,7 @@ export const PostView: React.FC<{ data: PostContent }> = ({ data }) => {
             {liveData.title}
           </h1>
           <div className="flex items-center gap-2">
-            <AuthorCard author={liveData.author} />
+            <AuthorCard author={liveData.author} isLoading={isLoading.author} />
             <span className="text-xs text-slate-500">
               {liveData.published ? 'Published' : 'Draft'}
             </span>

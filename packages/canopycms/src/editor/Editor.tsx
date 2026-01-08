@@ -113,6 +113,10 @@ export const Editor: React.FC<EditorProps> = ({
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
 
+  // Preview data with resolved references for live preview
+  const [previewData, setPreviewData] = useState<FormValue>({})
+  const [previewLoadingState, setPreviewLoadingState] = useState<FormValue>({})
+
   // Fetch current user context for permission checks
   const { userContext } = useUserContext()
 
@@ -302,31 +306,35 @@ export const Editor: React.FC<EditorProps> = ({
     return collections.map((node) => build(node))
   }, [collections, entriesState, onCreateEntry, handleCreateEntry])
 
-  const defaultPreview = currentEntry?.previewSrc ? (
-    <PreviewFrame
-      src={currentEntry.previewSrc}
-      path={currentEntry.previewSrc}
-      data={effectiveValue}
-      style={{
-        width: '100%',
-        height: '100%',
-        border: '1px solid var(--mantine-color-gray-3)',
-      }}
-      highlightEnabled={highlightEnabled}
-    />
-  ) : (
-    <Paper
-      withBorder
-      shadow="xs"
-      h="100%"
-      bg="white"
-      style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-    >
-      <Text size="sm" c="dimmed">
-        Select an item to start editing.
-      </Text>
-    </Paper>
-  )
+  const previewFrameData = Object.keys(previewData).length > 0 ? previewData : effectiveValue
+
+  const defaultPreview =
+    currentEntry?.previewSrc && previewFrameData ? (
+      <PreviewFrame
+        src={currentEntry.previewSrc}
+        path={currentEntry.previewSrc}
+        data={previewFrameData}
+        isLoading={previewLoadingState}
+        style={{
+          width: '100%',
+          height: '100%',
+          border: '1px solid var(--mantine-color-gray-3)',
+        }}
+        highlightEnabled={highlightEnabled}
+      />
+    ) : (
+      <Paper
+        withBorder
+        shadow="xs"
+        h="100%"
+        bg="white"
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+      >
+        <Text size="sm" c="dimmed">
+          Select an item to start editing.
+        </Text>
+      </Paper>
+    )
 
   const sidebarWidth = 64
   const footerHeight = 40
@@ -400,11 +408,14 @@ export const Editor: React.FC<EditorProps> = ({
                     : defaultPreview
                 }
                 form={
-                  schema.length > 0 ? (
+                  schema.length > 0 && effectiveValue ? (
                     <FormRenderer
                       fields={schema}
-                      value={effectiveValue ?? {}}
+                      value={effectiveValue}
                       onChange={(next) => setDrafts((prev) => ({ ...prev, [selectedId]: next }))}
+                      branch={branchNameState}
+                      onResolvedValueChange={setPreviewData}
+                      onLoadingStateChange={setPreviewLoadingState}
                       comments={comments}
                       currentEntryId={selectedId}
                       currentUserId={currentUser}

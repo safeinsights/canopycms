@@ -189,6 +189,98 @@ _TODO_ show real examples of what to do
 - For public static builds, omit/ignore the branch param; this pattern is only for the editor/preview environment.
 - Likewise, include `branch` in your editor route (e.g., `/edit?branch=feature-foo`) and have your editor page pass it to `<Editor>` so reloads/links preserve the selected branch. The `Editor` will also reflect branch switches back into the query string.
 
+### Live preview with `useCanopyPreview`
+
+The `useCanopyPreview` hook provides live updates to your preview components as content is edited in the CMS. It automatically receives draft changes from the editor iframe and returns updated data in real-time.
+
+**Basic usage:**
+
+```tsx
+'use client'
+
+import { useCanopyPreview } from 'canopycms/client'
+import type { PostContent } from './schemas'
+
+export function PostView({ data }: { data: PostContent }) {
+  const {
+    data: liveData,
+    isLoading,
+    highlightEnabled,
+    fieldProps,
+  } = useCanopyPreview<PostContent>({
+    initialData: data,
+  })
+
+  return (
+    <article>
+      <h1 {...fieldProps('title')}>{liveData.title}</h1>
+      <p {...fieldProps('body')}>{liveData.body}</p>
+    </article>
+  )
+}
+```
+
+**Return values:**
+
+- `data`: The current content data (initial data on first render, then live updates from editor)
+- `isLoading`: Object mirroring your data structure with boolean loading states for reference fields
+- `highlightEnabled`: Boolean indicating if field highlighting is active in the editor
+- `fieldProps`: Helper function to add `data-canopy-path` attributes for editor integration
+
+**Reference fields and loading states:**
+
+When using reference fields (foreign key relationships to other content), the editor resolves these references asynchronously. Use the `isLoading` object to show loading states for reference fields:
+
+```tsx
+'use client'
+
+import { useCanopyPreview } from 'canopycms/client'
+
+export function PostView({ data }: { data: PostContent }) {
+  const { data: liveData, isLoading } = useCanopyPreview<PostContent>({
+    initialData: data,
+  })
+
+  return (
+    <article>
+      <h1>{liveData.title}</h1>
+      <AuthorCard author={liveData.author} isLoading={isLoading.author} />
+    </article>
+  )
+}
+
+// Component receives clean types - no framework coupling
+interface AuthorCardProps {
+  author: AuthorContent | null
+  isLoading?: boolean // Optional - only needed if you want loading UI
+}
+
+function AuthorCard({ author, isLoading }: AuthorCardProps) {
+  if (isLoading) {
+    return <p>Loading author...</p>
+  }
+  if (!author) {
+    return null // Render nothing when no author
+  }
+  return <p>By {author.name}</p>
+}
+```
+
+**Loading state structure:**
+
+The `isLoading` object mirrors your data structure:
+
+- Single reference field: `isLoading.author` is a `boolean`
+- Array of references: `isLoading.relatedPosts` is an array of `boolean[]` values
+- Non-reference fields: Always `false` (no loading state needed)
+
+**Benefits:**
+
+- ✅ Zero framework types in your components - just your content types + optional `isLoading: boolean`
+- ✅ Works for nested reference fields at any depth
+- ✅ Optional - only check loading state if you want to show loading UI
+- ✅ Familiar pattern - mirrors React Query's `{ data, isLoading }` API
+
 ## Modes (pick per environment)
 
 - **`local-simple`** (default): Work in the current repo checkout; fastest to start. No remote required.

@@ -422,6 +422,59 @@ The editor provides a rich editing experience with schema-driven forms, block-ba
 
 **Live preview**: The editor can show a live preview of content changes. The preview is an iframe that loads your actual site pages, and the editor communicates with it via postMessage. When you edit a field, the preview updates immediately. Clicking on elements in the preview focuses the corresponding form field. This preview bridge enables real-time feedback without page reloads.
 
+### Live Preview Reference Resolution
+
+The live preview needs to display full referenced content (e.g., author names/data) instead of just reference IDs. This is accomplished through a synchronous resolution system with background caching.
+
+**The Challenge:**
+
+When a user selects a reference (e.g., choosing "Alice" as the post author), the form stores just the ID (`5NVkkrB1MJUvnLqEDqDkRN`). But the preview needs the full author object with `name`, `bio`, etc. to render properly. Naively fetching this data asynchronously creates race conditions during state transitions (like "Discard All Drafts").
+
+**The Solution: Synchronous Resolution with Background Caching**
+
+The system uses a two-phase approach:
+
+1. **Synchronous Transform (useMemo):**
+   - When form data changes, immediately compute a "resolved value" by applying cached reference data
+   - If a reference ID is in cache, substitute the full object; otherwise, keep the ID
+   - This happens synchronously during render, so there are no async gaps
+   - The preview always receives complete, valid data
+
+2. **Background Async Resolution (useEffect):**
+   - Identify which reference IDs aren't in cache yet
+   - After a 300ms debounce, fetch those IDs from the API endpoint
+   - Update the cache with resolved objects
+   - Trigger a re-computation of the synchronous transform
+   - The preview updates again, now with full data
+
+**Key Architectural Decisions:**
+
+- **Single source of truth**: The resolved value is computed from `form data + cache`, not maintained as separate state
+- **No race conditions**: The synchronous transform guarantees the preview never receives partial/empty data
+- **Progressive enhancement**: Preview shows IDs initially (loading state), then full objects after resolution
+- **Persistent cache**: Cache survives across edits, so subsequent renders are instant
+- **Branch-scoped cache**: Cache clears when switching branches to avoid stale cross-branch data
+
+**Implementation Files:**
+
+- `src/api/resolve-references.ts` - API endpoint that resolves reference IDs to full objects
+- `src/editor/client-reference-resolver.ts` - Client-side utility for incremental resolution
+- `src/editor/FormRenderer.tsx` - Synchronous resolution logic using useMemo + background caching
+
+**Example Flow:**
+
+1. User selects "Alice" as author → form stores ID `5NVkkrB1MJUvnLqEDqDkRN`
+2. useMemo runs: cache is empty, so resolvedValue has `author: "5NVkkrB1MJUvnLqEDqDkRN"` (ID)
+3. Preview renders with ID (AuthorCard shows loading state)
+4. After 300ms, useEffect fetches Alice's full data from API
+5. Cache updated with `{"5NVkkrB1MJUvnLqEDqDkRN": {id: "...", name: "Alice", bio: "..."}}`
+6. useMemo re-runs: now resolvedValue has full author object
+7. Preview updates, AuthorCard shows "Alice" with bio
+
+**Why This Approach:**
+
+Alternative approaches (async state, callbacks, separate resolution state) create synchronization problems between two state trees (form data + resolved data). By computing resolved data synchronously from a single source (form data + cache), we eliminate timing issues and race conditions entirely.
+
 ## Extensibility Points
 
 ### Authentication

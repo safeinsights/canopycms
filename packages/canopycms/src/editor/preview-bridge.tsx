@@ -15,6 +15,7 @@ export interface DraftUpdateMessage {
   type: typeof CANOPY_PREVIEW_MESSAGE
   path: string
   data?: unknown
+  isLoading?: unknown
 }
 
 export const sendDraftUpdate = (iframe: HTMLIFrameElement | null, message: DraftUpdateMessage) => {
@@ -45,7 +46,7 @@ const resolvePreviewPath = (explicit?: string): string => {
 
 export const useCanopyPreview = <T,>(opts: { path?: string; initialData: T }) => {
   const resolvedPath = resolvePreviewPath(opts.path)
-  const data = usePreviewData<T>(resolvedPath, opts.initialData)
+  const { data, isLoading } = usePreviewData<T>(resolvedPath, opts.initialData)
   const highlightEnabled = usePreviewHighlight()
   usePreviewFocusEmitter(resolvedPath)
 
@@ -53,26 +54,31 @@ export const useCanopyPreview = <T,>(opts: { path?: string; initialData: T }) =>
     'data-canopy-path': Array.isArray(canopyPath) ? formatCanopyPath(canopyPath) : canopyPath,
   })
 
-  return { data, highlightEnabled, fieldProps }
+  return { data, isLoading, highlightEnabled, fieldProps }
 }
 
 /**
  * Hook for preview pages to listen for draft updates from the parent editor.
+ * Returns both data and loading state.
  */
-export const usePreviewData = <T,>(path: string, initialData: T): T => {
+export const usePreviewData = <T,>(path: string, initialData: T): { data: T; isLoading: any } => {
   const [data, setData] = useState<T>(initialData)
+  const [isLoading, setIsLoading] = useState<any>({})
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
       const msg = event.data as DraftUpdateMessage
       if (!msg || msg.type !== CANOPY_PREVIEW_MESSAGE || msg.path !== path) return
       setData(msg.data as T)
+      if (msg.isLoading !== undefined) {
+        setIsLoading(msg.isLoading)
+      }
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
   }, [path])
 
-  return data
+  return { data, isLoading }
 }
 
 /**
@@ -142,6 +148,7 @@ export const PreviewFrame = ({
   src,
   path,
   data,
+  isLoading,
   className,
   style,
   highlightEnabled,
@@ -149,6 +156,7 @@ export const PreviewFrame = ({
   src: string
   path: string
   data?: unknown
+  isLoading?: unknown
   className?: string
   style?: CSSProperties
   highlightEnabled?: boolean
@@ -157,7 +165,7 @@ export const PreviewFrame = ({
 
   const post = () => {
     if (data === undefined) return
-    sendDraftUpdate(iframeRef.current, { type: CANOPY_PREVIEW_MESSAGE, path, data })
+    sendDraftUpdate(iframeRef.current, { type: CANOPY_PREVIEW_MESSAGE, path, data, isLoading })
   }
   const postHighlight = () => {
     if (!iframeRef.current?.contentWindow) return
@@ -170,7 +178,7 @@ export const PreviewFrame = ({
 
   useEffect(() => {
     post()
-  }, [data])
+  }, [data, isLoading])
 
   useEffect(() => {
     postHighlight()
