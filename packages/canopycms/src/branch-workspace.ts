@@ -11,6 +11,9 @@ import { createDebugLogger } from './utils/debug'
 
 const log = createDebugLogger({ prefix: 'BranchWorkspace' })
 
+// In-memory lock to prevent concurrent workspace initialization
+const workspaceInitLocks = new Map<string, Promise<void>>()
+
 export interface OpenBranchOptions {
   branchName: string
   mode: BranchMode
@@ -40,59 +43,80 @@ export class BranchWorkspaceManager {
     remoteUrl?: string
   }) {
     return log.timed('workspace', 'ensureGitWorkspace', async () => {
-      log.debug('workspace', 'Ensuring git workspace', {
-        branchName: options.branchName,
-        mode: options.mode,
-      })
-
-      const baseBranch = this.config.defaultBaseBranch ?? 'main'
-      const remoteUrl = await GitManager.resolveRemoteUrl({
-      mode: options.mode,
-      remoteUrl: options.remoteUrl,
-      defaultRemoteUrl: this.config.defaultRemoteUrl,
-      baseBranch,
-      sourceRoot: this.config.sourceRoot,
-    })
-    const remoteName = this.config.defaultRemoteName ?? 'origin'
-    const authorName = this.config.gitBotAuthorName
-    const authorEmail = this.config.gitBotAuthorEmail
-    if (!authorName || !authorEmail) {
-      throw new Error('CanopyCMS: gitBotAuthorName and gitBotAuthorEmail are required')
-    }
-
-    const hasGit = async () => {
-      try {
-        const stat = await fs.stat(path.join(options.branchRoot, '.git'))
-        return stat.isDirectory()
-      } catch (err: any) {
-        if (err?.code === 'ENOENT') return false
-        throw err
+      // Serialize access per branch workspace to prevent race conditions
+      const existingLock = workspaceInitLocks.get(options.branchRoot)
+      if (existingLock) {
+        await existingLock
+        return
       }
-    }
 
-      const repoExists = await hasGit()
-      if (!repoExists) {
-        if (options.mode === 'local-simple') {
-          throw new Error(`CanopyCMS: expected git repo at ${options.branchRoot}`)
+      // Create new lock promise
+      const lockPromise = (async () => {
+        try {
+          log.debug('workspace', 'Ensuring git workspace', {
+            branchName: options.branchName,
+            mode: options.mode,
+          })
+
+          const baseBranch = this.config.defaultBaseBranch ?? 'main'
+          const remoteUrl = await GitManager.resolveRemoteUrl({
+            mode: options.mode,
+            remoteUrl: options.remoteUrl,
+            defaultRemoteUrl: this.config.defaultRemoteUrl,
+            baseBranch,
+            sourceRoot: this.config.sourceRoot,
+          })
+          const remoteName = this.config.defaultRemoteName ?? 'origin'
+          const authorName = this.config.gitBotAuthorName
+          const authorEmail = this.config.gitBotAuthorEmail
+          if (!authorName || !authorEmail) {
+            throw new Error('CanopyCMS: gitBotAuthorName and gitBotAuthorEmail are required')
+          }
+
+          const hasGit = async () => {
+            try {
+              const stat = await fs.stat(path.join(options.branchRoot, '.git'))
+              return stat.isDirectory()
+            } catch (err: any) {
+              if (err?.code === 'ENOENT') return false
+              throw err
+            }
+          }
+
+          const repoExists = await hasGit()
+          if (!repoExists) {
+            if (options.mode === 'local-simple') {
+              throw new Error(`CanopyCMS: expected git repo at ${options.branchRoot}`)
+            }
+            if (!remoteUrl) {
+              throw new Error('CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to init branch workspaces')
+            }
+            log.debug('workspace', 'Cloning repository')
+            await GitManager.cloneRepo(remoteUrl, options.branchRoot, baseBranch)
+            log.debug('workspace', 'Clone complete')
+          }
+
+          const git = new GitManager({
+            repoPath: options.branchRoot,
+            baseBranch,
+            remote: remoteName,
+          })
+          if (remoteUrl) {
+            await git.ensureRemote(remoteUrl)
+          }
+          await git.ensureAuthor({ name: authorName, email: authorEmail })
+          await git.checkoutBranch(options.branchName)
+        } finally {
+          // Always clean up the lock when done (success or failure)
+          workspaceInitLocks.delete(options.branchRoot)
         }
-        if (!remoteUrl) {
-          throw new Error('CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to init branch workspaces')
-        }
-        log.debug('workspace', 'Cloning repository')
-        await GitManager.cloneRepo(remoteUrl, options.branchRoot, baseBranch)
-        log.debug('workspace', 'Clone complete')
-      }
+      })()
 
-      const git = new GitManager({
-        repoPath: options.branchRoot,
-        baseBranch,
-        remote: remoteName,
-      })
-      if (remoteUrl) {
-        await git.ensureRemote(remoteUrl)
-      }
-      await git.ensureAuthor({ name: authorName, email: authorEmail })
-      await git.checkoutBranch(options.branchName)
+      // Store the lock promise
+      workspaceInitLocks.set(options.branchRoot, lockPromise)
+
+      // Wait for initialization to complete
+      await lockPromise
     })
   }
 

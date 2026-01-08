@@ -6,7 +6,7 @@ import type { AuthPlugin } from '../auth/plugin'
 import { createCanopyServices, type CanopyServices } from '../services'
 import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
-import { loadBranchContext } from '../branch-workspace'
+import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { authResultToCanopyUser } from '../user'
 
 /**
@@ -32,10 +32,31 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     throw new Error('CanopyCMS: config or services is required')
   }
   const branchMode = services.config.mode ?? 'local-simple'
+  const baseBranch = services.config.defaultBaseBranch ?? 'main'
+
   const getBranchContext =
     options.getBranchContext ??
-    (async (branch: string) =>
-      (await loadBranchContext({ branchName: branch, mode: branchMode })) ?? null)
+    (async (branch: string): Promise<BranchContext | null> => {
+      // Try to load existing branch
+      const existing = await loadBranchContext({ branchName: branch, mode: branchMode })
+      if (existing) {
+        return existing
+      }
+
+      // In local-prod-sim mode, auto-create the base branch (main) if it doesn't exist
+      if (branchMode === 'local-prod-sim' && branch === baseBranch) {
+        const manager = new BranchWorkspaceManager(services.config)
+        const context = await manager.openOrCreateBranch({
+          branchName: branch,
+          mode: branchMode,
+          createdBy: 'canopycms-system',
+        })
+        return context
+      }
+
+      return null
+    })
+
   return {
     services,
     assetStore: options.assetStore,

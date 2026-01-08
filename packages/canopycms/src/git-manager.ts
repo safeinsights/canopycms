@@ -8,6 +8,10 @@ import { createDebugLogger } from './utils/debug'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
 
+// In-memory lock to prevent concurrent remote.git initialization
+// Maps remotePath -> Promise<void> to serialize access
+const remoteInitLocks = new Map<string, Promise<void>>()
+
 export interface GitManagerOptions {
   repoPath: string
   baseBranch?: string
@@ -61,22 +65,47 @@ export class GitManager {
     baseBranch: string
     subdirectory?: string
   }): Promise<void> {
-    return log.timed('git', 'ensureLocalSimulatedRemote', async () => {
-      log.debug('git', 'Initializing local simulated remote', {
+    // Serialize access per remote path to prevent race conditions
+    // when multiple requests try to initialize the same remote simultaneously
+    const existingLock = remoteInitLocks.get(options.remotePath)
+    if (existingLock) {
+      log.debug('git', 'Waiting for existing remote initialization', {
         remotePath: options.remotePath,
-        baseBranch: options.baseBranch,
       })
-
-      // Check if already exists (idempotent)
+      await existingLock
+      // After waiting, verify the remote was created successfully
+      // If not, fall through to try again (the lock was cleaned up)
       try {
         const stat = await fs.stat(options.remotePath)
         if (stat.isDirectory()) {
-          log.debug('git', 'Remote already exists, skipping')
+          log.debug('git', 'Remote exists after waiting for lock')
           return
         }
       } catch (err: any) {
         if (err?.code !== 'ENOENT') throw err
+        // Remote doesn't exist, fall through to create it
+        log.debug('git', 'Remote does not exist after lock, will retry initialization')
       }
+    }
+
+    // Create new lock promise
+    const lockPromise = log.timed('git', 'ensureLocalSimulatedRemote', async () => {
+      try {
+        log.debug('git', 'Initializing local simulated remote', {
+          remotePath: options.remotePath,
+          baseBranch: options.baseBranch,
+        })
+
+        // Check if already exists (idempotent)
+        try {
+          const stat = await fs.stat(options.remotePath)
+          if (stat.isDirectory()) {
+            log.debug('git', 'Remote already exists, skipping')
+            return
+          }
+        } catch (err: any) {
+          if (err?.code !== 'ENOENT') throw err
+        }
 
     // Find the actual git root directory
     // git subtree requires being run from the toplevel of the working tree
@@ -167,8 +196,18 @@ export class GitManager {
         }
       }
 
-      log.debug('git', 'Remote initialization complete')
+        log.debug('git', 'Remote initialization complete')
+      } finally {
+        // Always clean up the lock when done (success or failure)
+        remoteInitLocks.delete(options.remotePath)
+      }
     })
+
+    // Store the lock promise
+    remoteInitLocks.set(options.remotePath, lockPromise)
+
+    // Wait for initialization to complete
+    await lockPromise
   }
 
   /**
