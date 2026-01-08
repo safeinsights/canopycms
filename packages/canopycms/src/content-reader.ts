@@ -58,7 +58,9 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const existing = options.getBranchContext
       ? await options.getBranchContext(branchName)
       : await loadBranchContext({ branchName, mode: branchMode, basePathOverride })
-    if (existing) return existing
+    if (existing) {
+      return existing
+    }
     if (!allowCreateBranch) {
       throw new ContentStoreError(`Branch not found: ${branchName}`)
     }

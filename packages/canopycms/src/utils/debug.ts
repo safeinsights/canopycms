@@ -19,26 +19,26 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 }
 
 export class DebugLogger {
-  private options: Required<DebugOptions>
+  private options: DebugOptions
   private timers: Map<string, number> = new Map()
 
   constructor(options: DebugOptions = {}) {
-    this.options = {
-      enabled: options.enabled ?? process.env.CANOPYCMS_DEBUG === 'true',
-      minLevel: options.minLevel ?? 'DEBUG',
-      prefix: options.prefix ?? 'CanopyCMS',
-      throwOnError: options.throwOnError ?? false,
-    }
+    this.options = options
   }
 
   private shouldLog(level: LogLevel): boolean {
-    if (!this.options.enabled) return false
-    return LOG_LEVELS[level] >= LOG_LEVELS[this.options.minLevel]
+    // Check enabled at call time to support runtime env var changes
+    const enabled = this.options.enabled ?? process.env.CANOPYCMS_DEBUG === 'true'
+    if (!enabled) return false
+
+    const minLevel = this.options.minLevel ?? 'DEBUG'
+    return LOG_LEVELS[level] >= LOG_LEVELS[minLevel]
   }
 
   private formatMessage(level: LogLevel, category: string, message: string): string {
     const timestamp = new Date().toISOString()
-    return `[${timestamp}] [${this.options.prefix}:${category}] [${level}] ${message}`
+    const prefix = this.options.prefix ?? 'CanopyCMS'
+    return `[${timestamp}] [${prefix}:${category}] [${level}] ${message}`
   }
 
   debug(category: string, message: string, data?: any) {
@@ -66,7 +66,8 @@ export class DebugLogger {
       console.error(msg, data ?? '')
     }
 
-    if (this.options.throwOnError) {
+    const throwOnError = this.options.throwOnError ?? false
+    if (throwOnError) {
       const errorMsg = data ? `${message}: ${JSON.stringify(data)}` : message
       throw new Error(errorMsg)
     }
