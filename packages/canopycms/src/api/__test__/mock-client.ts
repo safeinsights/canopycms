@@ -11,7 +11,9 @@ import type { ApiResponse } from '../types'
 import type { BranchDeleteResponse, BranchListResponse, BranchResponse } from '../branch'
 import type { BranchMergeResponse } from '../branch-status'
 import type { AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
-import type { ContentReadResponse, ContentWriteResponse, ReferenceOptionsResponse, ReferenceValidationResponse } from '../content'
+import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse } from '../content'
+import type { ReferenceOptionsResponse } from '../reference-options'
+import type { ResolveReferencesResponse } from '../resolve-references'
 import type { EntriesResponse } from '../entries'
 import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse } from '../assets'
 import type { ListGroupsResponse, PermissionsResponse, SearchUsersResponse } from '../permissions'
@@ -64,6 +66,7 @@ export function createMockApiClient(): MockApiClient {
     write: vi.fn().mockResolvedValue(mockSuccess({"format":"json","data":{}})),
     validateReferences: vi.fn().mockResolvedValue(mockSuccess({"valid":true})),
     getReferenceOptions: vi.fn().mockResolvedValue(mockSuccess({"options":[]})),
+    resolveReferences: vi.fn().mockResolvedValue(mockSuccess({"resolved":{}})),
   },
 
   entries: {
@@ -203,6 +206,13 @@ export function mockReferenceValidationResponse(): ReferenceValidationResponse {
  */
 export function mockReferenceOptionsResponse(): ReferenceOptionsResponse {
   return mockSuccess({"options":[]})
+}
+
+/**
+ * Create a ResolveReferencesResponse for testing
+ */
+export function mockResolveReferencesResponse(): ResolveReferencesResponse {
+  return mockSuccess({"resolved":{}})
 }
 
 /**

@@ -9,7 +9,9 @@
 import type { BranchDeleteResponse, BranchListResponse, BranchResponse } from './branch'
 import type { BranchMergeResponse } from './branch-status'
 import type { AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
-import type { ContentReadResponse, ContentWriteResponse, ReferenceOptionsResponse, ReferenceValidationResponse } from './content'
+import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse } from './content'
+import type { ReferenceOptionsResponse } from './reference-options'
+import type { ResolveReferencesResponse } from './resolve-references'
 import type { EntriesResponse } from './entries'
 import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse } from './assets'
 import type { ListGroupsResponse, PermissionsResponse, SearchUsersResponse } from './permissions'
@@ -197,6 +199,13 @@ export class CanopyApiClient {
      */
     getReferenceOptions: (params: Record<string, string>): Promise<ReferenceOptionsResponse> => {
       return this.request('GET', this.buildPath('/:branch/reference-options', params))
+    },
+
+    /**
+     * resolveReferences - POST /:branch/resolve-references
+     */
+    resolveReferences: (params: Record<string, string>, body: unknown): Promise<ResolveReferencesResponse> => {
+      return this.request('POST', this.buildPath('/:branch/resolve-references', params), body)
     },
   }
 

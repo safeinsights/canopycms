@@ -52,7 +52,11 @@
       "Bash(E2E_DEBUG=true npx playwright test:*)",
       "Bash(E2E_DEBUG=true CANOPYCMS_DEBUG=true npx playwright test:*)",
       "Bash(chmod:*)",
-      "Bash(readlink:*)"
+      "Bash(readlink:*)",
+      "Bash(cut:*)",
+      "Bash(node --experimental-vm-modules -e:*)",
+      "Bash(DEBUG='vitest:*' npx vitest:*)",
+      "Bash(NODE_OPTIONS='--trace-warnings' npx vitest:*)"
     ]
   }
 }

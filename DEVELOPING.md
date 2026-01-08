@@ -311,6 +311,128 @@ const schema = [
 3. Referenced entries are in allowed collections
 4. Referenced entries are not collections themselves
 
+### Implementing Live Reference Resolution in Editor
+
+The editor's live preview needs to display full referenced content (not just IDs). This is implemented through a synchronous resolution system with background caching in `FormRenderer.tsx`.
+
+**Core Implementation Pattern:**
+
+```typescript
+// 1. Cache for resolved references (persists across renders)
+const resolvedCache = useRef<Map<string, any>>(new Map())
+const [resolutionTrigger, setResolutionTrigger] = useState(0)
+
+// 2. Synchronous resolution using useMemo (runs during render)
+const resolvedValue = useMemo(() => {
+  const result = { ...value }
+
+  // For each reference field, apply cached data if available
+  for (const fieldName of referenceFieldNames) {
+    const fieldValue = value[fieldName]
+    if (fieldValue && typeof fieldValue === 'string') {
+      const cached = resolvedCache.current.get(`${branch}:${fieldValue}`)
+      result[fieldName] = cached || fieldValue  // Use cache or keep ID
+    }
+  }
+
+  return result
+}, [value, fields, branch, resolutionTrigger])
+
+// 3. Background async resolution (updates cache)
+useEffect(() => {
+  // Find IDs not in cache
+  const uncachedIds = findUncachedIds(value, referenceFieldNames, resolvedCache.current, branch)
+
+  if (uncachedIds.length === 0) return
+
+  // Debounce API calls
+  const timeout = setTimeout(async () => {
+    const resolved = await apiClient.content.resolveReferences({ branch }, { ids: uncachedIds })
+
+    // Update cache
+    for (const [id, data] of Object.entries(resolved.data.resolved)) {
+      resolvedCache.current.set(`${branch}:${id}`, data)
+    }
+
+    // Trigger useMemo re-run
+    setResolutionTrigger(prev => prev + 1)
+  }, 300)
+
+  return () => clearTimeout(timeout)
+}, [value, fields, branch])
+```
+
+**Key Implementation Details:**
+
+1. **Cache Structure:** `Map<string, any>` with keys like `"main:5NVkkrB1MJUvnLqEDqDkRN"` (branch:id)
+   - Scoped by branch to prevent stale cross-branch data
+   - Cleared when branch changes
+   - Persists across form edits for instant re-renders
+
+2. **Synchronous Transform:** `useMemo` computes resolved value during render
+   - Always returns complete, valid data (never empty objects)
+   - Uses cache when available, otherwise keeps ID
+   - No async gaps means no race conditions
+
+3. **Background Resolution:** `useEffect` fills cache asynchronously
+   - 300ms debounce prevents excessive API calls while typing
+   - Only fetches IDs not already in cache (incremental)
+   - Triggers useMemo re-run via `resolutionTrigger` state
+
+4. **Parent Notification:** Pass resolved value to parent with infinite loop prevention
+   ```typescript
+   useEffect(() => {
+     const serialized = JSON.stringify(resolvedValue)
+     if (serialized !== lastNotifiedValueRef.current) {
+       lastNotifiedValueRef.current = serialized
+       onResolvedValueChange?.(resolvedValue)
+     }
+   }, [resolvedValue, onResolvedValueChange])
+   ```
+
+**Critical Gotcha: Never Pass Empty Objects**
+
+The parent component must guard against rendering when data is undefined:
+
+```typescript
+// BAD: Will cause errors during transitions
+<FormRenderer value={effectiveValue ?? {}} />
+
+// GOOD: Only render when data exists
+{effectiveValue && <FormRenderer value={effectiveValue} />}
+```
+
+**API Endpoint:**
+
+The resolution endpoint (`POST /:branch/resolve-references`) accepts an array of IDs and returns full entry objects:
+
+```typescript
+// Request
+{ ids: ["5NVkkrB1MJUvnLqEDqDkRN", "abc123"] }
+
+// Response
+{
+  ok: true,
+  data: {
+    resolved: {
+      "5NVkkrB1MJUvnLqEDqDkRN": { id: "...", name: "Alice", bio: "..." },
+      "abc123": { id: "...", name: "Bob", bio: "..." }
+    }
+  }
+}
+```
+
+**Testing:**
+
+Test the resolution flow by:
+1. Selecting a reference in the editor
+2. Verifying preview shows loading state initially (ID rendered)
+3. After 300ms, verify preview shows full data (name, bio, etc.)
+4. Change selection and verify cache is used (instant update for previously-selected references)
+5. Click "Discard All Drafts" and verify no errors (data remains complete)
+
+See `FormRenderer.test.tsx` for examples.
+
 ## Testing Content IDs and Symlinks
 
 When testing code that uses content IDs, set up a temporary directory with symlinks:

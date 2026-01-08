@@ -38,6 +38,7 @@ export type {
   ExternalGroup,
 } from './groups'
 export type { ReferenceOptionsResponse } from './reference-options'
+export type { ResolveReferencesResponse } from './resolve-references'
 // Content API uses path-based routing now - no separate params/body types exported
 
 // Export route definitions
