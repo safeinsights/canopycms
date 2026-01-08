@@ -36,7 +36,17 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
 }) => {
   const [options, setOptions] = useState<ReferenceOption[]>(staticOptions || [])
   const [loading, setLoading] = useState(false)
-  const normalizedValue = multiple ? (Array.isArray(value) ? value : []) : typeof value === 'string' ? value : ''
+
+  // Extract ID from value - handle both string IDs and resolved objects
+  const extractId = (val: unknown): string => {
+    if (typeof val === 'string') return val
+    if (val && typeof val === 'object' && 'id' in val && typeof val.id === 'string') return val.id
+    return ''
+  }
+
+  const normalizedValue = multiple
+    ? (Array.isArray(value) ? value.map(extractId) : [])
+    : extractId(value)
   const inputId = id ?? useId()
 
   // Load options from API if collections are provided and no static options
@@ -53,10 +63,11 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
         })
         .then((response) => {
           if (response.ok && response.data?.options) {
-            setOptions(response.data.options.map((opt: { id: string; label: string }) => ({
+            const mappedOptions = response.data.options.map((opt: { id: string; label: string }) => ({
               value: opt.id,
               label: opt.label,
-            })))
+            }))
+            setOptions(mappedOptions)
           }
         })
         .catch((err) => {

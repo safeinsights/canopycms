@@ -63,6 +63,7 @@ const SortableBlock: React.FC<{
     <Paper ref={setNodeRef} withBorder radius="md" p="sm" shadow="xs" style={style}>
       <Group align="flex-start" gap="sm">
         <ActionIcon
+          key="drag-handle"
           variant="subtle"
           aria-label="Drag to reorder"
           {...attributes}
@@ -71,7 +72,7 @@ const SortableBlock: React.FC<{
         >
           ⇅
         </ActionIcon>
-        <div style={{ flex: 1, minWidth: 0, width: '100%' }}>{children}</div>
+        <div key="content" style={{ flex: 1, minWidth: 0, width: '100%' }}>{children}</div>
       </Group>
     </Paper>
   )
@@ -216,14 +217,16 @@ export const BlockField: React.FC<BlockFieldProps> = ({
 
                       {template ? (
                         <Stack gap="sm">
-                          {template.fields.map((f: FieldConfig) =>
-                            renderField(
-                              f,
-                              block.value?.[f.name],
-                              (next) => updateBlockValue(idx, { ...block.value, [f.name]: next }),
-                              [...currentPath, f.name]
-                            )
-                          )}
+                          {template.fields.map((f: FieldConfig) => (
+                            <React.Fragment key={f.name}>
+                              {renderField(
+                                f,
+                                block.value?.[f.name],
+                                (next) => updateBlockValue(idx, { ...block.value, [f.name]: next }),
+                                [...currentPath, f.name]
+                              )}
+                            </React.Fragment>
+                          ))}
                         </Stack>
                       ) : (
                         <Text size="xs" c="red">

@@ -27,7 +27,8 @@ export interface ReferenceOption {
 export class ReferenceResolver {
   constructor(
     private store: ContentStore,
-    private idIndex: ContentIdIndex
+    private idIndex: ContentIdIndex,
+    private contentRoot: string = 'content'
   ) {}
 
   /**
@@ -135,17 +136,26 @@ export class ReferenceResolver {
     // TODO: Add a proper listCollectionEntries method to ContentStore
     const allLocations = Array.from((this.idIndex as any).idToLocation.values()) as IdLocation[]
 
+    // Normalize collection path - ID index stores full paths like "content/authors"
+    // but schema specifies just "authors", so we need to try both
+    const normalizedPaths = [
+      collectionPath,
+      `${this.contentRoot}/${collectionPath}`,
+    ]
+
     for (const location of allLocations) {
       if (location.type === 'entry') {
-        // Check if this entry is in the target collection
-        if (
-          location.collection === collectionPath ||
-          location.collection?.startsWith(collectionPath + '/')
-        ) {
+        // Check if this entry is in the target collection (try all normalized paths)
+        const matches = normalizedPaths.some(normalized =>
+          location.collection === normalized ||
+          location.collection?.startsWith(normalized + '/')
+        )
+
+        if (matches && location.slug) {
           entries.push({
             relativePath: location.relativePath,
-            collection: location.collection,
-            slug: location.slug!
+            collection: location.collection!,
+            slug: location.slug
           })
         }
       }

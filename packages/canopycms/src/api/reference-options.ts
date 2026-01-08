@@ -53,7 +53,8 @@ const getReferenceOptionsHandler = async (
   const collections = collectionsParam.split(',').map((c) => c.trim()).filter(Boolean)
 
   // Load reference options
-  const resolver = new ReferenceResolver(store, idIndex)
+  const contentRoot = ctx.services.config.contentRoot ?? 'content'
+  const resolver = new ReferenceResolver(store, idIndex, contentRoot)
   const options = await resolver.loadReferenceOptions(
     collections,
     displayField,

@@ -162,7 +162,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
 
     // Build API request
     const branch = (mergedParams as any)?.branch ?? (body as any)?.branch
-    const apiReq = { user, body, branch }
+    const apiReq = { user, body, branch, query: queryParams }
 
     // Validate params and body using the route's validation function (if available)
     if (match.validate) {
