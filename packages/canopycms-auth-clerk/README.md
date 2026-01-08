@@ -74,7 +74,7 @@ When `useOrganizationsAsGroups` is enabled (default), Clerk organizations are au
 
 ## Example App Integration
 
-See the [example app](../../examples/one) for a complete integration example.
+See the [example app](../../apps/example1) for a complete integration example.
 
 ## License
 

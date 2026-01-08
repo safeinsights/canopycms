@@ -1,5 +1,5 @@
 {
-  "extends": "../../../../tsconfig.base.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "module": "esnext",
     "moduleResolution": "bundler",
@@ -11,8 +11,8 @@
     "incremental": true,
     "types": ["@types/node", "@types/react", "@types/react-dom"],
     "paths": {
-      "canopycms": ["../../src/index.ts"],
-      "canopycms/*": ["../../src/*"]
+      "canopycms": ["../../packages/canopycms/src/index.ts"],
+      "canopycms/*": ["../../packages/canopycms/src/*"]
     },
     "lib": ["dom", "dom.iterable", "esnext"],
     "isolatedModules": true,
