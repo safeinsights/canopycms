@@ -20,7 +20,7 @@ export default function SignUpPage() {
         routing="path"
         path="/auth/sign-up"
         signInUrl="/auth/sign-in"
-        afterSignUpUrl="/edit"
+        fallbackRedirectUrl="/edit"
       />
     </div>
   )

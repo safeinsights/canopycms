@@ -67,7 +67,11 @@ export class ContentIdIndex {
       for (const entry of entries) {
         // Symlink IDs are 22-char alphanumeric strings (short UUIDs)
         if (entry.isSymbolicLink() && isValidId(entry.name)) {
-          await this.processSymlink(entry)
+          try {
+            await this.processSymlink(idsDir, entry)
+          } catch (err) {
+            // Skip entries that fail to process (e.g., broken symlinks)
+          }
         }
       }
     } catch (err) {
@@ -75,9 +79,9 @@ export class ContentIdIndex {
     }
   }
 
-  private async processSymlink(entry: Dirent): Promise<void> {
+  private async processSymlink(idsDir: string, entry: Dirent): Promise<void> {
     const id = entry.name // The symlink name IS the ID
-    const symlinkPath = path.join(this.root, 'content/_ids_', entry.name)
+    const symlinkPath = path.join(idsDir, entry.name)
     const target = await fs.readlink(symlinkPath)
     const absoluteTarget = path.resolve(path.dirname(symlinkPath), target)
     const relativePath = path.relative(this.root, absoluteTarget)
@@ -98,7 +102,9 @@ export class ContentIdIndex {
       const parts = relativePath.split(path.sep)
       const filename = parts[parts.length - 1]
       location.slug = path.basename(filename, path.extname(filename))
-      location.collection = parts.slice(1, -1).join('/') // Remove 'content/' prefix
+      // Keep the full collection path (e.g., 'content/authors' not 'authors')
+      // This matches what ContentStore expects
+      location.collection = parts.slice(0, -1).join('/')
     }
 
     // Update BOTH maps (keep in sync)
