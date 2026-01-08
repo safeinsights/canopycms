@@ -17,7 +17,7 @@ import { generateId } from '../packages/canopycms/src/id'
  *
  * Example:
  *   npx tsx scripts/create-id-symlinks.ts apps/test-app/content
- *   npx tsx scripts/create-id-symlinks.ts packages/canopycms/examples/one/content
+ *   npx tsx scripts/create-id-symlinks.ts apps/example1/content
  */
 
 interface MigrationStats {
@@ -109,7 +109,7 @@ async function main() {
     console.error('')
     console.error('Example:')
     console.error('  npx tsx scripts/create-id-symlinks.ts apps/test-app/content')
-    console.error('  npx tsx scripts/create-id-symlinks.ts packages/canopycms/examples/one/content')
+    console.error('  npx tsx scripts/create-id-symlinks.ts apps/example1/content')
     process.exit(1)
   }
 

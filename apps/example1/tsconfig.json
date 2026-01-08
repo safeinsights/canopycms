@@ -1,5 +1,5 @@
 {
-  "extends": "../../../../tsconfig.base.json",
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "module": "esnext",
     "moduleResolution": "bundler",
@@ -16,10 +16,10 @@
     ],
     "paths": {
       "canopycms": [
-        "../../src/index.ts"
+        "../../packages/canopycms/src/index.ts"
       ],
       "canopycms/*": [
-        "../../src/*"
+        "../../packages/canopycms/src/*"
       ]
     },
     "lib": [

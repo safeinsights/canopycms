@@ -56,7 +56,8 @@
       "Bash(cut:*)",
       "Bash(node --experimental-vm-modules -e:*)",
       "Bash(DEBUG='vitest:*' npx vitest:*)",
-      "Bash(NODE_OPTIONS='--trace-warnings' npx vitest:*)"
+      "Bash(NODE_OPTIONS='--trace-warnings' npx vitest:*)",
+      "Bash(git mv:*)"
     ]
   }
 }
