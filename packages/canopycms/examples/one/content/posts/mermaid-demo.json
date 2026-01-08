@@ -1,7 +1,7 @@
 {
   "slug": "mermaid-demo",
   "title": "Mermaid Demo",
-  "author": "Bob",
+  "author": "jm6FYVAtJie8huisWyLZ3J",
   "tags": ["diagram", "mdx"],
   "published": true,
   "body": "Render a Mermaid diagram in the host preview.",

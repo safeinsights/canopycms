@@ -5,6 +5,7 @@ import React from 'react'
 import { useCanopyPreview } from 'canopycms/client'
 
 import type { PostContent } from '../schemas'
+import { AuthorCard } from './AuthorCard'
 
 export const PostView: React.FC<{ data: PostContent }> = ({ data }) => {
   const { data: liveData, highlightEnabled, fieldProps } = useCanopyPreview<PostContent>({
@@ -21,13 +22,12 @@ export const PostView: React.FC<{ data: PostContent }> = ({ data }) => {
           <h1 className="text-3xl font-semibold text-slate-900" {...fieldProps('title')}>
             {liveData.title}
           </h1>
-          <p className="text-sm text-slate-600">
-            By{' '}
-            <span className="font-medium text-slate-800" {...fieldProps('author')}>
-              {liveData.author}
-            </span>{' '}
-            · {liveData.published ? 'Published' : 'Draft'}
-          </p>
+          <div className="flex items-center gap-2">
+            <AuthorCard author={liveData.author} />
+            <span className="text-xs text-slate-500">
+              {liveData.published ? 'Published' : 'Draft'}
+            </span>
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             {liveData.tags.map((tag, idx) => (
               <span

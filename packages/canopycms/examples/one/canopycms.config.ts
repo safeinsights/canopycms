@@ -1,6 +1,6 @@
 import { defineCanopyConfig } from 'canopycms'
 
-import { homeSchema, postSchema, docSchema } from './app/schemas'
+import { homeSchema, postSchema, docSchema, authorSchema } from './app/schemas'
 
 export default defineCanopyConfig({
   defaultBranchAccess: 'allow',
@@ -27,6 +27,14 @@ export default defineCanopyConfig({
       path: 'posts',
       format: 'json',
       fields: postSchema,
+    },
+    {
+      type: 'collection',
+      name: 'authors',
+      label: 'Authors',
+      path: 'authors',
+      format: 'json',
+      fields: authorSchema,
     },
     {
       type: 'collection',
