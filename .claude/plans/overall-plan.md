@@ -1,9 +1,9 @@
 # CanopyCMS Overall Plan
 
 **Created**: 2024-12-21
-**Last Updated**: 2026-01-05
+**Last Updated**: 2026-01-08
 **Status**: Active
-**Current Phase**: Schema & Assets (Phase 2)
+**Current Phase**: Asset Adapters (Phase 2)
 
 ---
 
@@ -33,7 +33,7 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 - Entry navigator and branch manager
 - Draft persistence in localStorage
 - Comment system (field/entry/branch level) with thread resolution
-- 602/606 tests passing (98.3%)
+- 657/661 tests passing (98.9%)
 
 **GitHub PR Workflow** (Complete):
 - PR creation, withdraw, request changes, merge flows
@@ -70,48 +70,90 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 ## Prioritized Backlog
 
 ### 1. Schema Updates & Utilities
-**Estimated**: 2-3 sessions
-**Status**: Next immediate priority
+**Estimated**: 2-3 sessions (mostly complete)
+**Status**: 75% COMPLETE (updated 2026-01-08)
 
-**Scope**:
-1. **Navigation & ToC Generation**:
-   - Utilities for table of contents generation from schema
-   - Navigation tree builders from schema ordering
-   - Static site generation helpers
+**Completed** ✅:
+1. ✅ **Relational Data** (90% complete):
+   - Reference validation system ([reference-validator.ts](../../packages/canopycms/src/validation/reference-validator.ts))
+   - Reference resolution utilities ([reference-resolver.ts](../../packages/canopycms/src/reference-resolver.ts))
+   - API endpoints: `POST /:branch/resolve-references` and `GET /:branch/reference-options`
+   - Live preview integration with two-phase resolution (synchronous + background caching)
+   - Content store integration with automatic reference resolution
+   - Form renderer with reference field support
 
-2. **Nested Collections Support**:
-   - Handle more than one level of nested collections in APIs
-   - Update schema types to support arbitrary nesting depth
-   - Extend content loading/saving for nested structures
-   - Update editor UI to navigate nested collections
+2. ✅ **Nested Collections Support** (85% complete):
+   - Schema types support arbitrary nesting depth (`children?: SchemaItemConfig[]`)
+   - Recursive schema resolution with `parentPath` tracking
+   - API support for recursive listing (`recursive?: boolean` parameter)
+   - `listCollectionEntriesRecursive()` function
+   - EntryNavigator UI with full nested hierarchy display using Mantine Tree component
+   - Content store path resolution for nested structures
 
-3. **Singleton Route Clarification**:
-   - Clarify routes for singletons that currently require collectionId but not slug
-   - Update route patterns to distinguish singleton vs collection routes
-   - Simplify API calls for singleton content
+3. ⚠️ **Singleton Route Clarification** (80% complete):
+   - Schema distinguishes `type: 'entry'` (singleton) vs `type: 'collection'`
+   - API handles both entry type patterns
+   - Content store properly handles entry types (no slug required)
+   - ⚠️ **CLEANUP NEEDED**: Remove/clarify "standalone" terminology (appears in API, likely legacy)
 
-4. **Relational Data**:
-   - Better support for references (author references, related content, etc.)
-   - Reference validation and resolution utilities
-   - Type-safe reference fields in schema DSL
+4. **Entry sorting/reordering within collections**
+     - Manual drag-and-drop reordering UI
+     - Sort by field values (date, title, etc.)
+     - Collection metadata for entry order storage
+     - API support for updating order
+     - UI integration in EntryNavigator
 
-**Files to create/modify**:
-- New: [packages/canopycms/src/schema-utils.ts](../../packages/canopycms/src/schema-utils.ts) - Navigation/ToC utilities
-- Update: [packages/canopycms/src/schema/types.ts](../../packages/canopycms/src/schema/types.ts) - Nested collection types
-- Update: [packages/canopycms/src/content-loader.ts](../../packages/canopycms/src/content-loader.ts) - Nested content loading
-- Update: [packages/canopycms/src/api/content.ts](../../packages/canopycms/src/api/content.ts) - Singleton route handling
-- Update: [packages/canopycms/src/editor/Navigator.tsx](../../packages/canopycms/src/editor/Navigator.tsx) - Nested UI support
+**Files modified**:
+- New: [reference-resolver.ts](../../packages/canopycms/src/reference-resolver.ts)
+- New: [validation/reference-validator.ts](../../packages/canopycms/src/validation/reference-validator.ts)
+- New: [api/reference-options.ts](../../packages/canopycms/src/api/reference-options.ts)
+- Updated: [config.ts](../../packages/canopycms/src/config.ts) - Nested collections support
+- Updated: [api/entries.ts](../../packages/canopycms/src/api/entries.ts) - Recursive listing
+- Updated: [editor/EntryNavigator.tsx](../../packages/canopycms/src/editor/EntryNavigator.tsx) - Tree UI
+- Updated: [editor/FormRenderer.tsx](../../packages/canopycms/src/editor/FormRenderer.tsx) - Reference resolution
 
 ### 2. Asset Adapters
 **Estimated**: 2-3 sessions
-**Status**: Foundation work needed
+**Status**: 40% COMPLETE (updated 2026-01-08) - **CURRENT PRIORITY**
 
-**Scope**:
-- S3 adapter with presigned uploads
-- Git LFS adapter surface
-- Media manager UI with browsing/search
-- Permission-aware uploads (Admins/Reviewers only)
-- Public URL building with configurable base paths
+⚠️ **CAVEAT**: The initial asset infrastructure was implemented long ago and needs careful review before extending. Verify assumptions and test thoroughly.
+
+**Completed** ✅:
+- ✅ Asset store interface and LocalAssetStore implementation
+- ✅ All API endpoints (list, upload, delete) with permission gating
+- ✅ Permission-aware uploads (Reviewers+) and deletes (Admins only)
+- ✅ Public URL building with configurable base paths
+- ✅ Config schema for local, S3, LFS, and custom adapters
+
+**Remaining Work**:
+1. **Review & Verify Existing Infrastructure** (~0.5 sessions):
+   - Review LocalAssetStore implementation and test coverage
+   - Verify API endpoint edge cases
+   - Ensure permission checks are thorough
+
+2. **S3 Adapter Implementation** (~1 session):
+   - Presigned upload URL generation
+   - S3 client integration
+   - PUT upload flow
+   - Error handling and validation
+   - Write comprehensive tests
+
+3. **Media Manager UI** (~1-2 sessions):
+   - Image field renderer in FormRenderer (missing `case 'image'`)
+   - Media browsing/search component
+   - Upload progress UI
+   - Image preview and selection
+   - Integration with asset store API
+
+4. **Git LFS Adapter** (~0.5 sessions):
+   - LFS pointer file creation
+   - Upload flow integration
+
+**Files to create/modify**:
+- New: [asset-store-s3.ts](../../packages/canopycms/src/asset-store-s3.ts) - S3 implementation
+- New: [asset-store-lfs.ts](../../packages/canopycms/src/asset-store-lfs.ts) - LFS implementation
+- New: [editor/MediaManager.tsx](../../packages/canopycms/src/editor/MediaManager.tsx) - UI component
+- Update: [editor/FormRenderer.tsx](../../packages/canopycms/src/editor/FormRenderer.tsx) - Add image field case
 
 ### 3. Sync & Conflict Handling
 **Estimated**: 3-4 sessions
@@ -142,6 +184,21 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 - [packages/canopycms/src/http/handler.ts](../../packages/canopycms/src/http/handler.ts) - Validate query params
 - [packages/canopycms/src/api/permissions.ts](../../packages/canopycms/src/api/permissions.ts) - Use Zod for searchUsers query validation
 - [packages/canopycms/src/api/assets.ts](../../packages/canopycms/src/api/assets.ts) - Use Zod for asset query validation
+
+### 4.5. Code Cleanup & Framework Abstraction
+1. **Navigation & ToC Generation**:
+   - Table of contents generation from schema
+   - Navigation tree builders for static sites
+
+2. **Documentation**:
+   - Reference field API documentation
+   - Singleton vs collection route patterns
+   - Nested collection examples and best practices
+
+3. **Cleanup Tasks**:
+   - Remove or clarify "standalone" terminology (likely legacy naming)
+   - Ensure consistent use of "entry" type for singletons throughout codebase
+
 
 ### 5. Code Cleanup & Framework Abstraction
 **Estimated**: 1-2 sessions
@@ -334,13 +391,15 @@ All plans are stored in `.claude/plans/` within the workspace to keep them versi
 - ✅ Zod validation for params and body
 - ✅ 602 tests passing (+105 tests, 98.3% coverage)
 
-**Phase 2 Complete (Schema & Assets)** - IN PROGRESS:
-- 🔲 Schema utilities for SSG (Priority 1)
-- 🔲 Nested collection support (Priority 1)
-- 🔲 Singleton route clarification (Priority 1)
-- 🔲 Relational data improvements (Priority 1)
-- 🔲 S3 asset adapter working (Priority 2)
-- 🔲 Media manager UI functional (Priority 2)
+**Phase 2 Progress (Schema & Assets)** - 60% COMPLETE:
+- ✅ Relational data improvements (90% done - Priority 1)
+- ✅ Nested collection support (85% done - Priority 1)
+- ⚠️ Singleton route clarification (80% done - needs cleanup - Priority 1)
+- ⏳ Schema utilities for SSG (ToC/navigation - DEFERRED to Priority 5+)
+- ⏳ **NEW: Entry sorting within collections (DEFERRED to Priority 5+)**
+- ✅ Asset store foundation (40% done - Priority 2)
+- 🔲 S3 asset adapter (CURRENT PRIORITY - Priority 2)
+- 🔲 Media manager UI (CURRENT PRIORITY - Priority 2)
 
 **Phase 3 Complete (Polish & Sync)** - NOT STARTED:
 - 🔲 Sync and conflict detection working (Priority 3)
