@@ -6,5 +6,6 @@ export default defineConfig({
     globals: false,
     include: ['src/**/*.test.{ts,tsx}'],
     environmentMatchGlobs: [['src/editor/**', 'jsdom']],
+    setupFiles: ['src/editor/test-setup.ts'],
   },
 })
