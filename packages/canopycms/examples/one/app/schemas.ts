@@ -33,9 +33,22 @@ export const homeSchema = defineSchema([
 
 export type HomeContent = TypeFromSchema<typeof homeSchema>
 
+export const authorSchema = defineSchema([
+  { name: 'name', type: 'string', label: 'Name' },
+  { name: 'bio', type: 'string', label: 'Bio' },
+])
+
+export type AuthorContent = TypeFromSchema<typeof authorSchema>
+
 export const postSchema = defineSchema([
   { name: 'title', type: 'string', label: 'Title' },
-  { name: 'author', type: 'string', label: 'Author' },
+  {
+    name: 'author',
+    type: 'reference',
+    label: 'Author',
+    collections: ['authors'],
+    displayField: 'name',
+  },
   {
     name: 'tags',
     type: 'select',
@@ -69,7 +82,10 @@ export const postSchema = defineSchema([
   },
 ])
 
-export type PostContent = TypeFromSchema<typeof postSchema> & { slug: string }
+export type PostContent = TypeFromSchema<typeof postSchema> & {
+  slug: string
+  author: AuthorContent | null
+}
 
 export const docSchema = defineSchema([
   { name: 'title', type: 'string', label: 'Title' },

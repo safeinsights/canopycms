@@ -26,6 +26,8 @@ export interface ReadContentInput {
   branch?: string
   /** User making the request. Required - use ANONYMOUS_USER for public access. */
   user: CanopyUser
+  /** Whether to automatically resolve reference fields. Defaults to true. */
+  resolveReferences?: boolean
 }
 
 export interface ContentReader {
@@ -166,7 +168,9 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     }
 
     try {
-      return await store.read(entryPath, slug ?? '')
+      return await store.read(entryPath, slug ?? '', {
+        resolveReferences: input.resolveReferences ?? true,
+      })
     } catch (err: any) {
       if (err?.code === 'ENOENT') return null
       throw err

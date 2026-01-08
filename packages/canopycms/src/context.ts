@@ -25,6 +25,7 @@ export interface CanopyContext {
     entryPath: string
     slug?: string
     branch?: string
+    resolveReferences?: boolean
   }) => Promise<{ data: T; path: string }>
 
   /** Underlying services */
@@ -78,10 +79,12 @@ export function createCanopyContext(options: CanopyContextOptions) {
       entryPath: string
       slug?: string
       branch?: string
+      resolveReferences?: boolean
     }) => {
       const readInput: ReadContentInput = {
         ...input,
         user,
+        resolveReferences: input.resolveReferences ?? true,
       }
       return baseReader.read<T>(readInput)
     }

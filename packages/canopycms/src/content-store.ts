@@ -173,14 +173,20 @@ export class ContentStore {
     return this.buildPaths(collection, slug)
   }
 
-  async read(collectionPath: string, slug = ''): Promise<ContentDocument> {
+  async read(
+    collectionPath: string,
+    slug = '',
+    options: { resolveReferences?: boolean } = {},
+  ): Promise<ContentDocument> {
     const collection = this.assertCollection(collectionPath)
     const { absolutePath, relativePath } = this.buildPaths(collection, slug)
     const raw = await fs.readFile(absolutePath, 'utf8')
 
+    let doc: ContentDocument
+
     if (collection.format === 'json') {
       const data = JSON.parse(raw) as Record<string, unknown>
-      return {
+      doc = {
         collection: collection.fullPath,
         collectionName: collection.name,
         format: 'json',
@@ -188,18 +194,25 @@ export class ContentStore {
         relativePath,
         absolutePath,
       }
+    } else {
+      const parsed = matter(raw)
+      doc = {
+        collection: collection.fullPath,
+        collectionName: collection.name,
+        format: collection.format,
+        data: (parsed.data as Record<string, unknown>) ?? {},
+        body: parsed.content,
+        relativePath,
+        absolutePath,
+      }
     }
 
-    const parsed = matter(raw)
-    return {
-      collection: collection.fullPath,
-      collectionName: collection.name,
-      format: collection.format,
-      data: (parsed.data as Record<string, unknown>) ?? {},
-      body: parsed.content,
-      relativePath,
-      absolutePath,
+    // Automatic reference resolution (defaults to true)
+    if (options.resolveReferences !== false) {
+      doc.data = await this.resolveReferencesInData(doc.data, collection.fields)
     }
+
+    return doc
   }
 
   async write(collectionPath: string, slug = '', input: WriteInput): Promise<ContentDocument> {
@@ -295,6 +308,102 @@ export class ContentStore {
     // Remove symlink
     if (id) {
       await idIndex.remove(id)
+    }
+  }
+
+  /**
+   * Recursively resolve reference fields in data.
+   * This traverses objects, arrays, and blocks to find and resolve all reference fields.
+   */
+  private async resolveReferencesInData(
+    data: Record<string, unknown>,
+    fields: any[],
+  ): Promise<Record<string, unknown>> {
+    const resolved = { ...data }
+    const idIndex = await this.idIndex()
+
+    for (const field of fields) {
+      const value = data[field.name]
+
+      if (field.type === 'reference') {
+        // Single reference
+        if (typeof value === 'string' && value) {
+          resolved[field.name] = await this.resolveSingleReference(value, idIndex)
+        }
+        // Array of references (list: true)
+        else if (field.list && Array.isArray(value)) {
+          resolved[field.name] = await Promise.all(
+            value.map((id) =>
+              typeof id === 'string' ? this.resolveSingleReference(id, idIndex) : null,
+            ),
+          )
+        }
+      }
+      // Recursively handle nested objects
+      else if (field.type === 'object' && field.fields && value) {
+        if (field.list && Array.isArray(value)) {
+          resolved[field.name] = await Promise.all(
+            value.map((item) =>
+              typeof item === 'object' && item !== null
+                ? this.resolveReferencesInData(item as Record<string, unknown>, field.fields!)
+                : item,
+            ),
+          )
+        } else if (typeof value === 'object') {
+          resolved[field.name] = await this.resolveReferencesInData(
+            value as Record<string, unknown>,
+            field.fields,
+          )
+        }
+      }
+      // Recursively handle blocks
+      else if (field.type === 'block' && field.templates && Array.isArray(value)) {
+        resolved[field.name] = await Promise.all(
+          value.map(async (block: any) => {
+            if (!block || typeof block.value !== 'object') return block
+            const template = field.templates!.find((t: any) => t.name === block.template)
+            if (!template) return block
+
+            return {
+              ...block,
+              value: await this.resolveReferencesInData(block.value, template.fields),
+            }
+          }),
+        )
+      }
+    }
+
+    return resolved
+  }
+
+  /**
+   * Resolve a single reference ID to full entry data.
+   * Returns null if the reference is invalid or missing.
+   * Includes id, slug, and collection fields for debugging.
+   */
+  private async resolveSingleReference(
+    id: string,
+    idIndex: ContentIdIndex,
+  ): Promise<Record<string, unknown> | null> {
+    try {
+      const location = idIndex.findById(id)
+
+      if (!location || location.type !== 'entry' || !location.collection || !location.slug) {
+        return null
+      }
+
+      // Read the referenced entry WITHOUT resolving its references (prevent infinite loops)
+      const doc = await this.read(location.collection, location.slug, { resolveReferences: false })
+
+      return {
+        id,
+        slug: location.slug,
+        collection: location.collection,
+        ...doc.data,
+      }
+    } catch (error) {
+      console.error(`Failed to resolve reference ${id}:`, error)
+      return null
     }
   }
 }

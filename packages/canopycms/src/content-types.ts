@@ -45,7 +45,7 @@ type FieldValue<F extends InferableField> = F extends { type: 'object'; fields: 
     : F extends { type: 'select' }
       ? ScalarValue<F, string | number>
       : F extends { type: 'reference' }
-        ? ScalarValue<F, string>
+        ? ScalarValue<F, Record<string, unknown> | null>
         : F extends { type: 'boolean' }
           ? ScalarValue<F, boolean>
           : F extends { type: 'number' }
