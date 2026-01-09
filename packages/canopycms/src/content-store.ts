@@ -3,8 +3,8 @@ import path from 'node:path'
 
 import matter from 'gray-matter'
 
-import type { ContentFormat, CanopyConfig, FlatCollection } from './config'
-import { flattenSchema, resolveSchema } from './config'
+import type { ContentFormat, CanopyConfig, FlatSchemaItem } from './config'
+import { flattenSchema } from './config'
 import { ContentIdIndex } from './content-id-index'
 
 export type MarkdownDocument = {
@@ -48,15 +48,14 @@ function validateSlug(slug: string): void {
 
 export class ContentStore {
   private readonly root: string
-  private readonly schemaIndex: Map<string, FlatCollection>
+  private readonly schemaIndex: Map<string, FlatSchemaItem>
   private readonly _idIndex: ContentIdIndex
   private indexLoaded: boolean = false
 
   constructor(root: string, config: CanopyConfig) {
     this.root = path.resolve(root)
-    const resolved = resolveSchema(config.schema, config.contentRoot ?? 'content')
-    const flat = flattenSchema(resolved)
-    this.schemaIndex = new Map(flat.map((c) => [c.fullPath, c]))
+    const flat = flattenSchema(config.schema, config.contentRoot ?? 'content')
+    this.schemaIndex = new Map(flat.map((item) => [item.fullPath, item]))
     this._idIndex = new ContentIdIndex(this.root)
   }
 
@@ -72,16 +71,24 @@ export class ContentStore {
     return this._idIndex
   }
 
-  private assertCollection(collectionPath: string): FlatCollection {
-    const normalized = collectionPath
+  private assertSchemaItem(path: string): FlatSchemaItem {
+    const normalized = path
       .split(/[\\/]+/)
       .filter(Boolean)
       .join('/')
-    const collection = this.schemaIndex.get(normalized)
-    if (!collection) {
-      throw new ContentStoreError(`Unknown collection: ${collectionPath}`)
+    const item = this.schemaIndex.get(normalized)
+    if (!item) {
+      throw new ContentStoreError(`Unknown schema item: ${path}`)
     }
-    return collection
+    return item
+  }
+
+  private assertCollection(collectionPath: string): FlatSchemaItem & { type: 'collection' } {
+    const item = this.assertSchemaItem(collectionPath)
+    if (item.type !== 'collection') {
+      throw new ContentStoreError(`Path is not a collection: ${collectionPath}`)
+    }
+    return item
   }
 
   private extensionFor(format: ContentFormat): string {
@@ -90,87 +97,112 @@ export class ContentStore {
     return '.json'
   }
 
-  private buildPaths(collection: FlatCollection, slug: string) {
-    const ext = this.extensionFor(collection.format)
+  private buildPaths(schemaItem: FlatSchemaItem, slug: string) {
     const rootWithSep = this.root.endsWith(path.sep) ? this.root : `${this.root}${path.sep}`
 
-    if (collection.type === 'entry') {
-      const resolvedEntryPath = path.resolve(this.root, `${collection.fullPath}${ext}`)
-      if (!resolvedEntryPath.startsWith(rootWithSep)) {
+    // Singletons: fullPath includes complete path
+    if (schemaItem.type === 'singleton') {
+      const format = schemaItem.format
+      const ext = this.extensionFor(format)
+      const resolvedPath = path.resolve(this.root, `${schemaItem.fullPath}${ext}`)
+
+      if (!resolvedPath.startsWith(rootWithSep)) {
         throw new ContentStoreError('Path traversal detected')
       }
+
       return {
-        absolutePath: resolvedEntryPath,
-        relativePath: path.relative(this.root, resolvedEntryPath),
+        absolutePath: resolvedPath,
+        relativePath: path.relative(this.root, resolvedPath),
       }
     }
 
-    const safeSlug = slug.replace(/^\/+/, '')
-    if (!safeSlug) {
-      throw new ContentStoreError('Slug is required for collection entries')
+    // Collection entries: append slug to collection path
+    if (schemaItem.type === 'collection') {
+      const safeSlug = slug.replace(/^\/+/, '')
+      if (!safeSlug) {
+        throw new ContentStoreError('Slug is required for collection entries')
+      }
+      validateSlug(safeSlug)
+
+      const format = schemaItem.entries?.format || 'json'
+      const ext = this.extensionFor(format)
+      const collectionRoot = path.resolve(this.root, schemaItem.fullPath)
+
+      if (!collectionRoot.startsWith(rootWithSep)) {
+        throw new ContentStoreError('Path traversal detected')
+      }
+
+      const resolved = path.resolve(collectionRoot, `${safeSlug}${ext}`)
+      const collectionRootWithSep = collectionRoot.endsWith(path.sep)
+        ? collectionRoot
+        : `${collectionRoot}${path.sep}`
+
+      if (!resolved.startsWith(collectionRootWithSep)) {
+        throw new ContentStoreError('Path traversal detected')
+      }
+
+      return {
+        absolutePath: resolved,
+        relativePath: path.relative(this.root, resolved),
+      }
     }
-    // Validate slug doesn't contain path separators
-    validateSlug(safeSlug)
-    const collectionRoot = path.resolve(this.root, collection.fullPath)
-    if (!collectionRoot.startsWith(rootWithSep)) {
-      throw new ContentStoreError('Path traversal detected')
-    }
-    const resolved = path.resolve(collectionRoot, `${safeSlug}${ext}`)
-    const collectionRootWithSep = collectionRoot.endsWith(path.sep)
-      ? collectionRoot
-      : `${collectionRoot}${path.sep}`
-    if (!resolved.startsWith(collectionRootWithSep)) {
-      throw new ContentStoreError('Path traversal detected')
-    }
-    return {
-      absolutePath: resolved,
-      relativePath: path.relative(this.root, resolved),
-    }
+
+    throw new ContentStoreError('Invalid schema item type')
   }
 
   /**
-   * Trivial path resolution: last segment = slug, rest = collection path
-   * This enables clean URLs like /content/books/1995/biography where:
-   * - Collection path: books/1995
-   * - Slug: biography
-   * OR entry path: books/1995/biography (if it's an entry type)
+   * Path resolution: resolves a URL path to a schema item
+   * - Try as singleton first (full path match)
+   * - Then try as collection + slug (last segment = slug)
    */
-  resolvePath(pathSegments: string[]): { schemaItem: FlatCollection; slug: string } {
+  resolvePath(pathSegments: string[]): {
+    schemaItem: FlatSchemaItem
+    slug: string
+    itemType: 'entry' | 'singleton'
+  } {
     if (pathSegments.length === 0) {
       throw new ContentStoreError('Empty path')
     }
 
-    // Last segment is the slug (or entry name)
-    const slug = pathSegments[pathSegments.length - 1]
-    const collectionPath = pathSegments.slice(0, -1).join('/')
-
-    // Try as collection + slug
-    const normalized = collectionPath
+    const fullPath = pathSegments.join('/')
+    const normalized = fullPath
       .split(/[\\/]+/)
       .filter(Boolean)
       .join('/')
-    const collection = this.schemaIndex.get(normalized)
-    if (collection?.type === 'collection') {
-      return { schemaItem: collection, slug }
+
+    // Try as singleton first
+    const singleton = this.schemaIndex.get(normalized)
+    if (singleton?.type === 'singleton') {
+      return {
+        schemaItem: singleton,
+        slug: '',
+        itemType: 'singleton',
+      }
     }
 
-    // Try as entry (full path, no slug)
-    const fullPath = pathSegments.join('/')
-    const normalizedFull = fullPath
+    // Try as collection + slug
+    const slug = pathSegments[pathSegments.length - 1]
+    const collectionPath = pathSegments.slice(0, -1).join('/')
+    const normalizedCollection = collectionPath
       .split(/[\\/]+/)
       .filter(Boolean)
       .join('/')
-    const entry = this.schemaIndex.get(normalizedFull)
-    if (entry?.type === 'entry') {
-      return { schemaItem: entry, slug: '' }
+    const collection = this.schemaIndex.get(normalizedCollection)
+
+    if (collection?.type === 'collection' && collection.entries) {
+      return {
+        schemaItem: collection,
+        slug,
+        itemType: 'entry',
+      }
     }
 
     throw new ContentStoreError(`No schema item found for path: ${fullPath}`)
   }
 
-  resolveDocumentPath(collectionPath: string, slug = '') {
-    const collection = this.assertCollection(collectionPath)
-    return this.buildPaths(collection, slug)
+  resolveDocumentPath(schemaPath: string, slug = '') {
+    const schemaItem = this.assertSchemaItem(schemaPath)
+    return this.buildPaths(schemaItem, slug)
   }
 
   async read(
@@ -178,17 +210,28 @@ export class ContentStore {
     slug = '',
     options: { resolveReferences?: boolean } = {},
   ): Promise<ContentDocument> {
-    const collection = this.assertCollection(collectionPath)
-    const { absolutePath, relativePath } = this.buildPaths(collection, slug)
+    const schemaItem = this.assertSchemaItem(collectionPath)
+    const { absolutePath, relativePath } = this.buildPaths(schemaItem, slug)
     const raw = await fs.readFile(absolutePath, 'utf8')
 
     let doc: ContentDocument
+    let format: ContentFormat
+    let fields: any[]
 
-    if (collection.format === 'json') {
+    if (schemaItem.type === 'singleton') {
+      format = schemaItem.format
+      fields = schemaItem.fields
+    } else {
+      // Collection entry
+      format = schemaItem.entries?.format || 'json'
+      fields = schemaItem.entries?.fields || []
+    }
+
+    if (format === 'json') {
       const data = JSON.parse(raw) as Record<string, unknown>
       doc = {
-        collection: collection.fullPath,
-        collectionName: collection.name,
+        collection: schemaItem.fullPath,
+        collectionName: schemaItem.name,
         format: 'json',
         data,
         relativePath,
@@ -197,9 +240,9 @@ export class ContentStore {
     } else {
       const parsed = matter(raw)
       doc = {
-        collection: collection.fullPath,
-        collectionName: collection.name,
-        format: collection.format,
+        collection: schemaItem.fullPath,
+        collectionName: schemaItem.name,
+        format: format,
         data: (parsed.data as Record<string, unknown>) ?? {},
         body: parsed.content,
         relativePath,
@@ -209,7 +252,7 @@ export class ContentStore {
 
     // Automatic reference resolution (defaults to true)
     if (options.resolveReferences !== false) {
-      doc.data = await this.resolveReferencesInData(doc.data, collection.fields)
+      doc.data = await this.resolveReferencesInData(doc.data, fields)
     }
 
     return doc
@@ -217,13 +260,15 @@ export class ContentStore {
 
   async write(collectionPath: string, slug = '', input: WriteInput): Promise<ContentDocument> {
     const idIndex = await this.idIndex()
-    const collection = this.assertCollection(collectionPath)
-    if (collection.format !== input.format) {
-      throw new ContentStoreError(
-        `Format mismatch: collection expects ${collection.format}, got ${input.format}`,
-      )
+    const schemaItem = this.assertSchemaItem(collectionPath)
+
+    const expectedFormat =
+      schemaItem.type === 'singleton' ? schemaItem.format : schemaItem.entries?.format || 'json'
+
+    if (expectedFormat !== input.format) {
+      throw new ContentStoreError(`Format mismatch: expects ${expectedFormat}, got ${input.format}`)
     }
-    const { absolutePath, relativePath } = this.buildPaths(collection, slug)
+    const { absolutePath, relativePath } = this.buildPaths(schemaItem, slug)
     await fs.mkdir(path.dirname(absolutePath), { recursive: true })
 
     if (input.format === 'json') {
@@ -239,8 +284,8 @@ export class ContentStore {
       })
 
       return {
-        collection: collection.fullPath,
-        collectionName: collection.name,
+        collection: schemaItem.fullPath,
+        collectionName: schemaItem.name,
         format: 'json',
         data: input.data ?? {},
         relativePath,
@@ -260,8 +305,8 @@ export class ContentStore {
     })
 
     return {
-      collection: collection.fullPath,
-      collectionName: collection.name,
+      collection: schemaItem.fullPath,
+      collectionName: schemaItem.name,
       format: input.format,
       data: input.data ?? {},
       body: input.body,

@@ -19,74 +19,84 @@ export default defineCanopyConfig({
       },
     },
   },
-  schema: [
-    {
-      type: 'collection',
-      name: 'posts',
-      label: 'Posts',
-      path: 'posts',
-      format: 'json',
-      fields: postSchema,
-    },
-    {
-      type: 'collection',
-      name: 'authors',
-      label: 'Authors',
-      path: 'authors',
-      format: 'json',
-      fields: authorSchema,
-    },
-    {
-      type: 'collection',
-      name: 'docs',
-      label: 'Documentation',
-      path: 'docs',
-      format: 'json',
-      fields: docSchema,
-      children: [
-        {
-          type: 'collection',
-          name: 'guides',
-          label: 'Guides',
-          path: 'guides',
+  schema: {
+    collections: [
+      {
+        name: 'posts',
+        label: 'Posts',
+        path: 'posts',
+        entries: {
+          format: 'json',
+          fields: postSchema,
+        },
+      },
+      {
+        name: 'authors',
+        label: 'Authors',
+        path: 'authors',
+        entries: {
+          format: 'json',
+          fields: authorSchema,
+        },
+      },
+      {
+        name: 'docs',
+        label: 'Documentation',
+        path: 'docs',
+        entries: {
           format: 'json',
           fields: docSchema,
         },
-        {
-          type: 'collection',
-          name: 'api',
-          label: 'API Reference',
-          path: 'api',
-          format: 'json',
-          fields: docSchema,
-          children: [
-            {
-              type: 'collection',
-              name: 'v1',
-              label: 'v1',
-              path: 'v1',
+        collections: [
+          {
+            name: 'guides',
+            label: 'Guides',
+            path: 'guides',
+            entries: {
               format: 'json',
               fields: docSchema,
             },
-            {
-              type: 'collection',
-              name: 'v2',
-              label: 'v2',
-              path: 'v2',
+          },
+          {
+            name: 'api',
+            label: 'API Reference',
+            path: 'api',
+            entries: {
               format: 'json',
               fields: docSchema,
             },
-          ],
-        },
-      ],
-    },
-    {
-      type: 'entry',
-      name: 'home',
-      label: 'Home',
-      path: 'home',
-      format: 'json',
-      fields: homeSchema,
-    },
-  ],
+            collections: [
+              {
+                name: 'v1',
+                label: 'v1',
+                path: 'v1',
+                entries: {
+                  format: 'json',
+                  fields: docSchema,
+                },
+              },
+              {
+                name: 'v2',
+                label: 'v2',
+                path: 'v2',
+                entries: {
+                  format: 'json',
+                  fields: docSchema,
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    singletons: [
+      {
+        name: 'home',
+        label: 'Home',
+        path: 'home',
+        format: 'json',
+        fields: homeSchema,
+      },
+    ],
+  },
 })

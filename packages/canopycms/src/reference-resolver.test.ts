@@ -46,15 +46,18 @@ describe('ReferenceResolver', () => {
       contentRoot: 'content',
       gitBotAuthorName: 'Test Bot',
       gitBotAuthorEmail: 'test@example.com',
-      schema: [
-        {
-          type: 'collection',
-          name: 'authors',
-          path: 'authors',
-          format: 'json',
-          fields: [{ name: 'name', type: 'string', label: 'Name' }],
-        },
-      ],
+      schema: {
+        collections: [
+          {
+            name: 'authors',
+            path: 'authors',
+            entries: {
+              format: 'json',
+              fields: [{ name: 'name', type: 'string', label: 'Name' }],
+            },
+          },
+        ],
+      },
     }
 
     store = new ContentStore(tempDir, config)

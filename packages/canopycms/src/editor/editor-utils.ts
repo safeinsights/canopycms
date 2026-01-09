@@ -1,4 +1,4 @@
-import type { EntryListItem, ListEntriesResponse } from '../api/entries'
+import type { CollectionItem, ListEntriesResponse } from '../api/entries'
 import type { ContentFormat, FieldConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import type { EditorEntry } from './Editor'
@@ -20,7 +20,7 @@ export const buildPreviewSrc = (
     collectionId?: string
     collectionName?: string
     slug?: string
-    type?: string
+    itemType?: string
     previewSrc?: string
   },
   { branchName, previewBaseByCollection }: PreviewContext,
@@ -35,13 +35,13 @@ export const buildPreviewSrc = (
     (entry.collectionId && previewBaseByCollection?.[entry.collectionId]) ??
     (entry.collectionName && previewBaseByCollection?.[entry.collectionName])
   if (!base) {
-    if (entry.type === 'standalone') return '/'
+    if (entry.itemType === 'singleton') return '/'
     const encoded = encodeSlug(entry.slug)
     const url = encoded ? `/${encoded}` : '/'
     return appendBranch(url)
   }
   const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
-  if (entry.type === 'standalone') return appendBranch(trimmed || '/')
+  if (entry.itemType === 'singleton') return appendBranch(trimmed || '/')
   const encoded = encodeSlug(entry.slug)
   const url = encoded ? `${trimmed}/${encoded}` : trimmed || '/'
   return appendBranch(url)
@@ -85,7 +85,7 @@ interface BuildEntriesFromListParams {
   response: ListEntriesResponse
   branchName: string
   resolvePreviewSrc: (
-    entry: Pick<EntryListItem, 'collectionId' | 'collectionName' | 'slug' | 'type'>,
+    entry: Pick<CollectionItem, 'collectionId' | 'collectionName' | 'slug' | 'itemType'>,
   ) => string
   existingEntries: EditorEntry[]
   initialEntries: EditorEntry[]
@@ -118,18 +118,18 @@ export const buildEntriesFromListResponse = ({
     return {
       id: entry.id,
       label: entry.title || entry.slug || entry.collectionName || entry.collectionId,
-      status: entry.exists === false ? 'missing' : (entry.type ?? 'entry'),
+      status: entry.exists === false ? 'missing' : (entry.itemType ?? 'entry'),
       schema,
       apiPath:
-        entry.type === 'standalone'
+        entry.itemType === 'singleton'
           ? `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionId)}`
           : `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionId)}/${encodeURIComponent(entry.slug)}`,
       previewSrc: resolvePreviewSrc(entry),
       collectionId: entry.collectionId,
       collectionName: entry.collectionName,
-      slug: entry.type === 'standalone' ? '' : entry.slug,
+      slug: entry.itemType === 'singleton' ? '' : entry.slug,
       format: entry.format,
-      type: entry.type,
+      type: entry.itemType,
     }
   })
 }

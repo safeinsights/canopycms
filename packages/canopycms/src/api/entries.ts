@@ -5,9 +5,9 @@ import { z } from 'zod'
 
 import matter from 'gray-matter'
 
-import type { FieldConfig, ContentFormat, FlatCollection, ResolvedSchemaItem } from '../config'
-import { ContentStore, ContentStoreError } from '../content-store'
-import { flattenSchema, resolveSchema } from '../config'
+import type { FieldConfig, ContentFormat, FlatSchemaItem } from '../config'
+import { ContentStoreError } from '../content-store'
+import { flattenSchema } from '../config'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { resolveBranchPaths } from '../paths'
 import { defineEndpoint } from './route-builder'
@@ -26,13 +26,13 @@ export interface EntryCollectionSummary {
   children?: EntryCollectionSummary[]
 }
 
-export interface EntryListItem {
+export interface CollectionItem {
   id: string
   slug: string
   collectionId: string
   collectionName: string
   format: ContentFormat
-  type: 'entry' | 'standalone'
+  itemType: 'entry' | 'singleton'
   path: string
   title?: string
   updatedAt?: string
@@ -50,7 +50,7 @@ export interface ListEntriesParams {
 
 export interface ListEntriesResponse {
   collections: EntryCollectionSummary[]
-  entries: EntryListItem[]
+  entries: CollectionItem[]
   pagination: {
     cursor?: string
     hasMore: boolean
@@ -108,12 +108,18 @@ const readTitle = async (filePath: string, format: ContentFormat): Promise<strin
 
 const listCollectionEntries = async (
   root: string,
-  collection: FlatCollection,
-): Promise<EntryListItem[]> => {
-  const ext = extensionFor(collection.format)
+  collection: FlatSchemaItem,
+): Promise<CollectionItem[]> => {
+  // Only collections with entries can be listed
+  if (collection.type !== 'collection' || !collection.entries) {
+    return []
+  }
+
+  const format = collection.entries.format || 'json'
+  const ext = extensionFor(format)
   const collectionRoot = path.resolve(root, collection.fullPath)
   normalizePath(root, collectionRoot)
-  const entries: EntryListItem[] = []
+  const entries: CollectionItem[] = []
   let dirents: Dirent[]
   try {
     dirents = await fs.readdir(collectionRoot, { withFileTypes: true })
@@ -130,14 +136,14 @@ const listCollectionEntries = async (
     const relativePath = normalizePath(root, absolutePath)
     const slug = file.name.slice(0, -ext.length)
     const stats = await fs.stat(absolutePath)
-    const title = await readTitle(absolutePath, collection.format)
+    const title = await readTitle(absolutePath, format)
     entries.push({
       id: `${collection.fullPath}/${slug}`,
       slug,
       collectionId: collection.fullPath,
       collectionName: collection.name,
-      format: collection.format,
-      type: 'entry',
+      format,
+      itemType: 'entry',
       path: relativePath,
       title,
       updatedAt: stats.mtime.toISOString(),
@@ -148,67 +154,29 @@ const listCollectionEntries = async (
 }
 
 /**
- * Recursively list entries from a collection and all its nested child collections
+ * List entries from a collection and all its nested child collections
  */
 const listCollectionEntriesRecursive = async (
   root: string,
-  collection: ResolvedSchemaItem,
-  flatCollections: FlatCollection[],
-): Promise<EntryListItem[]> => {
-  const entries: EntryListItem[] = []
+  targetPath: string,
+  flatCollections: FlatSchemaItem[],
+): Promise<CollectionItem[]> => {
+  const entries: CollectionItem[] = []
 
-  // Find the flat collection for this schema item
-  const flatCollection = flatCollections.find((c) => c.fullPath === collection.fullPath)
-  if (!flatCollection) {
-    return entries
-  }
+  // Find all collections that are descendants of the target path
+  const descendants = flatCollections.filter((item) => {
+    return item.fullPath === targetPath || item.fullPath.startsWith(`${targetPath}/`)
+  })
 
-  // List entries in current collection (only if it's a collection type, not entry)
-  if (collection.type === 'collection') {
-    const currentEntries = await listCollectionEntries(root, flatCollection)
-    entries.push(...currentEntries)
-  }
-
-  // Recursively list entries in child collections
-  if (collection.children) {
-    for (const child of collection.children) {
-      const childEntries = await listCollectionEntriesRecursive(root, child, flatCollections)
-      entries.push(...childEntries)
+  // List entries from all descendant collections
+  for (const item of descendants) {
+    if (item.type === 'collection' && item.entries) {
+      const collectionEntries = await listCollectionEntries(root, item)
+      entries.push(...collectionEntries)
     }
   }
 
   return entries
-}
-
-const entry = async (root: string, collection: FlatCollection): Promise<EntryListItem> => {
-  const ext = extensionFor(collection.format)
-  const absolutePath = path.resolve(root, `${collection.fullPath}${ext}`)
-  const relativePath = normalizePath(root, absolutePath)
-  let exists = true
-  let updatedAt: string | undefined
-  try {
-    const stats = await fs.stat(absolutePath)
-    updatedAt = stats.mtime.toISOString()
-  } catch (err: any) {
-    if (err?.code === 'ENOENT') {
-      exists = false
-    } else {
-      throw err
-    }
-  }
-  const title = exists ? await readTitle(absolutePath, collection.format) : undefined
-  return {
-    id: `${collection.fullPath}`,
-    slug: '',
-    collectionId: collection.fullPath,
-    collectionName: collection.name,
-    format: collection.format,
-    type: 'standalone',
-    path: relativePath,
-    title,
-    updatedAt,
-    exists,
-  }
 }
 
 const normalizeCollectionId = (value: string): string =>
@@ -217,34 +185,48 @@ const normalizeCollectionId = (value: string): string =>
     .filter(Boolean)
     .join('/')
 
-const toSummary = (node: ResolvedSchemaItem): EntryCollectionSummary => ({
-  id: node.fullPath,
-  name: node.name,
-  label: node.label,
-  path: node.fullPath,
-  format: node.format,
-  type: node.type,
-  schema: node.fields,
-  parentId: node.parentPath,
-  children: node.children?.map(toSummary),
-})
+/**
+ * Build collection summaries from flat schema items.
+ * Includes both collections and singletons.
+ */
+const buildCollectionSummaries = (
+  flatCollections: FlatSchemaItem[],
+  targetId?: string,
+): EntryCollectionSummary[] => {
+  // Filter to target collection and its descendants if targetId is provided
+  const filtered = targetId
+    ? flatCollections.filter(
+        (item) => item.fullPath === targetId || item.fullPath.startsWith(`${targetId}/`),
+      )
+    : flatCollections
 
-const filterSchemaTree = (nodes: ResolvedSchemaItem[], targetId?: string): ResolvedSchemaItem[] => {
-  if (!targetId) return nodes
-  const filtered: ResolvedSchemaItem[] = []
-  for (const node of nodes) {
-    if (node.fullPath === targetId) {
-      filtered.push(node)
-      continue
-    }
-    if (node.children) {
-      const childMatches = filterSchemaTree(node.children, targetId)
-      if (childMatches.length > 0) {
-        filtered.push({ ...node, children: childMatches })
+  // Convert to summaries
+  return filtered.map((item) => {
+    if (item.type === 'collection') {
+      return {
+        id: item.fullPath,
+        name: item.name,
+        label: item.label,
+        path: item.fullPath,
+        format: item.entries?.format || 'json',
+        type: 'collection' as const,
+        schema: item.entries?.fields || [],
+        parentId: item.parentPath,
+      }
+    } else {
+      // Singleton - use old 'entry' terminology for backward compatibility in API
+      return {
+        id: item.fullPath,
+        name: item.name,
+        label: item.label,
+        path: item.fullPath,
+        format: item.format,
+        type: 'entry' as const, // Old terminology for singletons
+        schema: item.fields,
+        parentId: item.parentPath,
       }
     }
-  }
-  return filtered
+  })
 }
 
 export const listEntriesHandler = async (
@@ -264,13 +246,10 @@ export const listEntriesHandler = async (
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchPaths(context, branchMode)
   const root = branchPaths.branchRoot
-  const store = new ContentStore(root, ctx.services.config)
-  const resolvedSchema = resolveSchema(ctx.services.config.schema, ctx.services.config.contentRoot)
-  const flatCollections = flattenSchema(resolvedSchema)
+  const flatCollections = flattenSchema(ctx.services.config.schema, ctx.services.config.contentRoot)
 
   const targetId = params.collection ? normalizeCollectionId(params.collection) : undefined
   let targetCollections = flatCollections
-  let targetSchemaNodes = resolvedSchema
 
   if (targetId) {
     const match = flatCollections.find((c) => c.fullPath === targetId)
@@ -278,22 +257,6 @@ export const listEntriesHandler = async (
       return { ok: false, status: 404, error: 'Collection not found' }
     }
     targetCollections = [match]
-
-    // Also find the schema node for recursive mode
-    const findSchemaNode = (nodes: ResolvedSchemaItem[]): ResolvedSchemaItem | null => {
-      for (const node of nodes) {
-        if (node.fullPath === targetId) return node
-        if (node.children) {
-          const found = findSchemaNode(node.children)
-          if (found) return found
-        }
-      }
-      return null
-    }
-    const targetNode = findSchemaNode(resolvedSchema)
-    if (targetNode) {
-      targetSchemaNodes = [targetNode]
-    }
   }
 
   const maxLimit = 200
@@ -302,73 +265,121 @@ export const listEntriesHandler = async (
   const search = params.q?.toLowerCase()
   const recursive = params.recursive ?? false
 
-  const entries: EntryListItem[] = []
+  const entries: CollectionItem[] = []
 
   if (recursive && targetId) {
     // Recursive mode: list entries from target collection and all its children
-    for (const schemaNode of targetSchemaNodes) {
-      try {
-        const items = await listCollectionEntriesRecursive(root, schemaNode, flatCollections)
-        items.sort((a, b) => a.slug.localeCompare(b.slug))
-        for (const item of items) {
-          const normalized = store.resolveDocumentPath(
-            item.collectionId,
-            item.type === 'standalone' ? '' : item.slug,
-          )
-          const access = await ctx.services.checkContentAccess(
-            context,
-            root,
-            normalized.relativePath,
-            req.user,
-            'read',
-          )
-          if (!access.allowed) continue
-          if (search) {
-            const haystack =
-              `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
-            if (!haystack.includes(search)) {
-              continue
-            }
+    try {
+      const items = await listCollectionEntriesRecursive(root, targetId, flatCollections)
+      items.sort((a, b) => a.slug.localeCompare(b.slug))
+      for (const item of items) {
+        // Use the path already included in the item
+        const access = await ctx.services.checkContentAccess(
+          context,
+          root,
+          item.path,
+          req.user,
+          'read',
+        )
+        if (!access.allowed) continue
+        if (search) {
+          const haystack =
+            `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
+          if (!haystack.includes(search)) {
+            continue
           }
-          entries.push(item)
         }
-      } catch (err) {
-        if (err instanceof ContentStoreError) {
-          return { ok: false, status: 400, error: err.message }
-        }
-        throw err
+        entries.push(item)
       }
+    } catch (err) {
+      if (err instanceof ContentStoreError) {
+        return { ok: false, status: 400, error: err.message }
+      }
+      throw err
     }
   } else {
-    // Non-recursive mode: list entries from target collections only (existing behavior)
-    for (const collection of targetCollections) {
-      try {
-        const items =
-          collection.type === 'entry'
-            ? [await entry(root, collection)]
-            : await listCollectionEntries(root, collection)
-        items.sort((a, b) => a.slug.localeCompare(b.slug))
-        for (const item of items) {
-          const normalized = store.resolveDocumentPath(
-            item.collectionId,
-            item.type === 'standalone' ? '' : item.slug,
-          )
+    // Non-recursive mode: list entries from target collections and singletons
+    for (const item of targetCollections) {
+      // Handle singletons
+      if (item.type === 'singleton') {
+        try {
+          // Try to read the singleton file to get its title
+          const format = item.format
+          const ext = extensionFor(format)
+          const singletonPath = path.resolve(root, `${item.fullPath}${ext}`)
+
+          let title: string | undefined
+          let exists = false
+          try {
+            await fs.readFile(singletonPath, 'utf8')
+            exists = true
+            title = await readTitle(singletonPath, format)
+          } catch (err: any) {
+            if (err?.code !== 'ENOENT') throw err
+            // File doesn't exist yet - that's okay for singletons
+          }
+
+          // Check permissions
+          const relativePath = path.relative(root, singletonPath)
           const access = await ctx.services.checkContentAccess(
             context,
             root,
-            normalized.relativePath,
+            relativePath,
+            req.user,
+            'read',
+          )
+          if (!access.allowed) continue
+
+          // Apply search filter
+          if (search) {
+            const haystack = `${item.name} ${title ?? ''} ${item.label ?? ''}`.toLowerCase()
+            if (!haystack.includes(search)) {
+              continue
+            }
+          }
+
+          entries.push({
+            id: item.fullPath,
+            slug: '',
+            collectionId: item.fullPath,
+            collectionName: item.name,
+            format,
+            itemType: 'singleton',
+            path: relativePath,
+            title: title || item.label || item.name,
+            exists,
+          })
+        } catch (err) {
+          if (err instanceof ContentStoreError) {
+            return { ok: false, status: 400, error: err.message }
+          }
+          throw err
+        }
+        continue
+      }
+
+      // Handle collections
+      try {
+        const items = await listCollectionEntries(root, item)
+        items.sort((a, b) => a.slug.localeCompare(b.slug))
+        for (const entry of items) {
+          // Use the path already included in the item
+          const access = await ctx.services.checkContentAccess(
+            context,
+            root,
+            entry.path,
             req.user,
             'read',
           )
           if (!access.allowed) continue
           if (search) {
             const haystack =
-              `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
+              `${entry.slug} ${entry.title ?? ''} ${entry.collectionName ?? ''}`.toLowerCase()
             if (!haystack.includes(search)) {
               continue
             }
           }
-          entries.push(item)
+          entries.push(entry)
         }
       } catch (err) {
         if (err instanceof ContentStoreError) {
@@ -382,8 +393,7 @@ export const listEntriesHandler = async (
   const paged = entries.slice(offset, offset + limit)
   const nextCursor = offset + limit < entries.length ? String(offset + limit) : undefined
 
-  const filteredSchema = filterSchemaTree(resolvedSchema, targetId)
-  const collections: EntryCollectionSummary[] = filteredSchema.map(toSummary)
+  const collections = buildCollectionSummaries(flatCollections, targetId)
 
   return {
     ok: true,

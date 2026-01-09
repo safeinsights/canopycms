@@ -147,6 +147,17 @@ function namespaceToModule(namespace: string): string {
 }
 
 /**
+ * Map specific type names to their module location (for exceptions)
+ */
+function typeNameToModule(typeName: string): string | null {
+  const mapping: Record<string, string> = {
+    ResolveReferencesResponse: 'resolve-references',
+    ReferenceOptionsResponse: 'reference-options',
+  }
+  return mapping[typeName] || null
+}
+
+/**
  * Generate import statements for response types grouped by module
  */
 function generateResponseTypeImports(namespaces: NamespaceRoutes[]): string {
@@ -163,9 +174,17 @@ function generateResponseTypeImports(namespaces: NamespaceRoutes[]): string {
       const typeName = route.responseTypeName
       // Skip ApiResponse (it's in types.ts, not a module-specific type)
       if (typeName === 'ApiResponse') continue
+
+      // Check for specific type name overrides first
+      const overrideModule = typeNameToModule(typeName)
+      const targetModule = overrideModule || moduleName
+
       // Only add to first module that uses it (avoid duplicates across modules)
       if (!seenTypes.has(typeName)) {
-        types.add(typeName)
+        if (!typesByModule.has(targetModule)) {
+          typesByModule.set(targetModule, new Set())
+        }
+        typesByModule.get(targetModule)!.add(typeName)
         seenTypes.add(typeName)
       }
     }

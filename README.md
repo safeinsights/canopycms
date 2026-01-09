@@ -25,7 +25,7 @@ Create `canopycms.config.ts` in your project root:
 ```typescript
 import { defineCanopyConfig, defineSchema } from 'canopycms'
 
-// Define your content schema
+// Define your content schemas
 const postSchema = defineSchema([
   { name: 'title', type: 'string', label: 'Title', required: true },
   { name: 'author', type: 'string', label: 'Author' },
@@ -33,20 +33,40 @@ const postSchema = defineSchema([
   { name: 'body', type: 'markdown', label: 'Body' },
 ])
 
+const homeSchema = defineSchema([
+  { name: 'headline', type: 'string', label: 'Headline', required: true },
+  { name: 'tagline', type: 'string', label: 'Tagline' },
+  { name: 'content', type: 'markdown', label: 'Content' },
+])
+
 export default defineCanopyConfig({
   gitBotAuthorName: 'CanopyCMS Bot',
   gitBotAuthorEmail: 'bot@example.com',
   mode: 'local-simple', // or 'local-prod-sim' or 'prod'
-  schema: [
-    {
-      type: 'collection',
-      name: 'posts',
-      label: 'Blog Posts',
-      path: 'posts',
-      format: 'json',
-      fields: postSchema,
-    },
-  ],
+  schema: {
+    // Collections: repeatable entries with shared schema
+    collections: [
+      {
+        name: 'posts',
+        label: 'Blog Posts',
+        path: 'posts', // Files at content/posts/*.json
+        entries: {
+          format: 'json',
+          fields: postSchema,
+        },
+      },
+    ],
+    // Singletons: unique entries with individual schemas
+    singletons: [
+      {
+        name: 'home',
+        label: 'Homepage',
+        path: 'home', // File at content/home.json
+        format: 'json',
+        fields: homeSchema,
+      },
+    ],
+  },
 })
 ```
 
@@ -124,7 +144,68 @@ export const config = {
 }
 ```
 
-## Migrating from Old API
+## Migration Guides
+
+### Migrating to Unified Schema (v0.x to v1.0)
+
+The schema structure has changed from an array-based format to a unified object-based model. Here's how to migrate:
+
+**Old format (array-based):**
+
+```typescript
+schema: [
+  {
+    type: 'collection',
+    name: 'posts',
+    path: 'posts',
+    format: 'json',
+    fields: [...],
+  },
+  {
+    type: 'singleton',  // Previously called "document" in some versions
+    name: 'home',
+    path: 'home',
+    format: 'json',
+    fields: [...],
+  },
+]
+```
+
+**New format (object-based):**
+
+```typescript
+schema: {
+  collections: [
+    {
+      name: 'posts',
+      path: 'posts',
+      entries: {        // New: wrap format and fields in 'entries'
+        format: 'json',
+        fields: [...],
+      },
+    },
+  ],
+  singletons: [        // New: top-level key for singletons
+    {
+      name: 'home',
+      path: 'home',
+      format: 'json',   // No 'entries' wrapper for singletons
+      fields: [...],
+    },
+  ],
+}
+```
+
+**Migration checklist:**
+
+1. Change `schema: [...]` to `schema: { collections: [...], singletons: [...] }`
+2. Remove `type: 'collection'` from collection definitions
+3. Wrap collection `format` and `fields` in an `entries: { ... }` object
+4. Remove `type: 'singleton'` (or `type: 'document'`) from singleton definitions
+5. Move singletons to the `singletons` array
+6. For nested collections, use `collections: [...]` instead of `children: [...]`
+
+### Migrating from Old API
 
 If you're upgrading from a previous version, here's how to migrate to the new simplified API:
 
@@ -193,18 +274,18 @@ const Page = async ({ searchParams }) => {
 
 ### `defineCanopyConfig` Options
 
-| Option                | Type                                           | Required | Default          | Description                                                         |
-| --------------------- | ---------------------------------------------- | -------- | ---------------- | ------------------------------------------------------------------- |
-| `schema`              | `SchemaItem[]`                                 | Yes      | -                | Array of collections and singletons defining your content structure |
-| `gitBotAuthorName`    | `string`                                       | Yes      | -                | Name used for git commits made by CanopyCMS                         |
-| `gitBotAuthorEmail`   | `string`                                       | Yes      | -                | Email used for git commits made by CanopyCMS                        |
-| `mode`                | `'local-simple' \| 'local-prod-sim' \| 'prod'` | No       | `'local-simple'` | Operating mode (see below)                                          |
-| `contentRoot`         | `string`                                       | No       | `'content'`      | Root directory for content files relative to project root           |
-| `defaultBaseBranch`   | `string`                                       | No       | `'main'`         | Default git branch to base edits on                                 |
-| `defaultBranchAccess` | `'allow' \| 'deny'`                            | No       | `'deny'`         | Default access policy for new branches                              |
-| `defaultPathAccess`   | `'allow' \| 'deny'`                            | No       | `'allow'`        | Default access policy for content paths                             |
-| `media`               | `MediaConfig`                                  | No       | -                | Asset storage configuration (local, s3, or lfs)                     |
-| `editor`              | `EditorConfig`                                 | No       | -                | Editor UI customization options                                     |
+| Option                | Type                                           | Required | Default          | Description                                                                       |
+| --------------------- | ---------------------------------------------- | -------- | ---------------- | --------------------------------------------------------------------------------- |
+| `schema`              | `RootCollectionConfig`                         | Yes      | -                | Object with `collections` and `singletons` arrays defining your content structure |
+| `gitBotAuthorName`    | `string`                                       | Yes      | -                | Name used for git commits made by CanopyCMS                                       |
+| `gitBotAuthorEmail`   | `string`                                       | Yes      | -                | Email used for git commits made by CanopyCMS                                      |
+| `mode`                | `'local-simple' \| 'local-prod-sim' \| 'prod'` | No       | `'local-simple'` | Operating mode (see below)                                                        |
+| `contentRoot`         | `string`                                       | No       | `'content'`      | Root directory for content files relative to project root                         |
+| `defaultBaseBranch`   | `string`                                       | No       | `'main'`         | Default git branch to base edits on                                               |
+| `defaultBranchAccess` | `'allow' \| 'deny'`                            | No       | `'deny'`         | Default access policy for new branches                                            |
+| `defaultPathAccess`   | `'allow' \| 'deny'`                            | No       | `'allow'`        | Default access policy for content paths                                           |
+| `media`               | `MediaConfig`                                  | No       | -                | Asset storage configuration (local, s3, or lfs)                                   |
+| `editor`              | `EditorConfig`                                 | No       | -                | Editor UI customization options                                                   |
 
 ### Operating Modes
 
@@ -214,50 +295,72 @@ const Page = async ({ searchParams }) => {
 
 ### Schema Definition
 
-Define collections (multiple entries) and singletons (single entry):
+The schema uses a unified object-based structure. The root can contain `collections` (repeatable entries with shared schema) and `singletons` (unique entries with individual schemas). Collections can be nested and can themselves contain entries, subcollections, and singletons.
 
 ```typescript
 const config = defineCanopyConfig({
   // ...required fields...
-  schema: [
-    // Collection: multiple entries (e.g., blog posts)
-    {
-      type: 'collection',
-      name: 'posts',
-      label: 'Blog Posts',
-      path: 'posts',        // Files at content/posts/*.json
-      format: 'json',       // or 'md', 'mdx'
-      fields: [...],
-    },
-    // Singleton: single entry (e.g., homepage)
-    {
-      type: 'singleton',
-      name: 'home',
-      label: 'Homepage',
-      path: 'home',         // File at content/home.json
-      format: 'json',
-      fields: [...],
-    },
-    // Nested collections
-    {
-      type: 'collection',
-      name: 'categories',
-      label: 'Categories',
-      path: 'categories',
-      format: 'json',
-      fields: [...],
-      children: [
-        {
-          type: 'collection',
-          name: 'subcategories',
-          path: 'sub',      // Files at content/categories/{parent}/sub/*.json
-          // ...
-        }
-      ],
-    },
-  ],
+  schema: {
+    collections: [
+      // Collection with repeatable entries (e.g., blog posts)
+      {
+        name: 'posts',
+        label: 'Blog Posts',
+        path: 'posts',        // Files at content/posts/*.json
+        entries: {
+          format: 'json',     // or 'md', 'mdx'
+          fields: [...],
+        },
+      },
+      // Nested collections example
+      {
+        name: 'docs',
+        label: 'Documentation',
+        path: 'docs',
+        entries: {
+          format: 'json',
+          fields: [...],
+        },
+        collections: [
+          {
+            name: 'guides',
+            path: 'guides',   // Files at content/docs/{parent}/guides/*.json
+            entries: {
+              format: 'json',
+              fields: [...],
+            },
+          },
+        ],
+        singletons: [
+          {
+            name: 'overview',
+            path: 'overview', // File at content/docs/{parent}/overview.json
+            format: 'json',
+            fields: [...],
+          },
+        ],
+      },
+    ],
+    singletons: [
+      // Singleton: single unique entry (e.g., homepage)
+      {
+        name: 'home',
+        label: 'Homepage',
+        path: 'home',         // File at content/home.json
+        format: 'json',
+        fields: [...],
+      },
+    ],
+  },
 })
 ```
+
+**Key concepts:**
+
+- **Collections** define a set of repeatable entries with a shared schema. Use the `entries` property to define the format and fields.
+- **Singletons** define unique, one-off entries with individual schemas. Each singleton has its own `format` and `fields`.
+- **Nesting**: Collections can contain `collections` and `singletons` for hierarchical content structures.
+- **Unified model**: The same structure applies everywhere - root, collections, and nested collections all work the same way.
 
 ### Field Types
 

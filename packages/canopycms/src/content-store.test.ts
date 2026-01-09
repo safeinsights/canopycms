@@ -226,10 +226,10 @@ describe('ContentStore', () => {
     })
     const store = new ContentStore(root, config)
 
-    // Path: content/settings -> entry, no slug
+    // Path: content/settings -> singleton, no slug
     const result = store.resolvePath(['content', 'settings'])
     expect(result.schemaItem.fullPath).toBe('content/settings')
-    expect(result.schemaItem.type).toBe('entry')
+    expect(result.schemaItem.type).toBe('singleton')
     expect(result.slug).toBe('')
   })
 

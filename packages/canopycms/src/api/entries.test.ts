@@ -88,13 +88,18 @@ describe('listEntries', () => {
       }),
     }
 
+    // Request limit=2 to get both the singleton and at least one collection entry
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main', limit: 1 },
+      { branch: 'main', limit: 2 },
     )
 
     expect(res.ok).toBe(true)
+    // Should include the singleton (settings) and the first post
+    expect(
+      res.data?.entries.some((e) => e.collectionName === 'settings' && e.itemType === 'singleton'),
+    ).toBe(true)
     expect(res.data?.entries.some((e) => e.slug === 'first')).toBe(true)
     expect(res.data?.entries.some((e) => e.slug === 'hidden')).toBe(false)
     const summaries = res.data?.collections ?? []
@@ -272,5 +277,85 @@ describe('listEntries', () => {
     // Verify collectionIds match the nested structure
     const authEntry = docsRecursiveRes.data?.entries.find((e) => e.slug === 'auth')
     expect(authEntry?.collectionId).toBe('content/docs/api/v2')
+  })
+
+  it('returns singletons with schemas using new schema format', async () => {
+    const root = await tmpDir()
+    await fs.mkdir(path.join(root, 'content'), { recursive: true })
+    await fs.writeFile(
+      path.join(root, 'content/home.json'),
+      JSON.stringify({ title: 'Home Page', tagline: 'Welcome' }),
+      'utf8',
+    )
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema: {
+        singletons: [
+          {
+            name: 'home',
+            label: 'Home',
+            path: 'home',
+            format: 'json',
+            fields: [
+              { name: 'title', type: 'string' },
+              { name: 'tagline', type: 'string' },
+            ],
+          },
+        ],
+      },
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: async () => [],
+      defaultPathAccess: 'allow',
+    })
+
+    const ctx: ApiContext = {
+      services: {
+        config,
+        checkBranchAccess,
+        checkContentAccess,
+        bootstrapAdminIds: new Set<string>(),
+        registry: undefined as any,
+      },
+      getBranchContext: vi.fn().mockResolvedValue({
+        baseRoot: root,
+        branchRoot: root,
+        branch: {
+          name: 'main',
+          status: 'editing',
+          access: {},
+          createdBy: 'u1',
+          createdAt: 'now',
+          updatedAt: 'now',
+        },
+      }),
+    }
+
+    const res = await listEntriesHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main' },
+    )
+
+    expect(res.ok).toBe(true)
+
+    // Verify singleton entry is returned
+    const homeEntry = res.data?.entries.find((e) => e.collectionId === 'content/home')
+    expect(homeEntry).toBeDefined()
+    expect(homeEntry?.itemType).toBe('singleton')
+    expect(homeEntry?.slug).toBe('')
+
+    // Verify singleton is in collections array with schema
+    const homeCollection = res.data?.collections.find((c) => c.id === 'content/home')
+    expect(homeCollection).toBeDefined()
+    expect(homeCollection?.type).toBe('entry')
+    expect(homeCollection?.schema).toHaveLength(2)
+    expect(homeCollection?.schema[0].name).toBe('title')
+    expect(homeCollection?.schema[1].name).toBe('tagline')
   })
 })

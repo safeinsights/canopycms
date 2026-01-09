@@ -32,10 +32,13 @@ import {
 import type { PathPermission, PermissionLevel, PermissionTarget } from '../config'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
 import type { CanopyConfig } from '../config'
+import { flattenSchema } from '../config'
 
 export interface PermissionManagerProps {
   /** Content schema to build tree from */
   schema: CanopyConfig['schema']
+  /** Content root path (default: 'content') */
+  contentRoot?: string
   /** Current permissions */
   permissions: PathPermission[]
   /** Whether user can edit permissions (admin only) */
@@ -95,6 +98,7 @@ function findTreeNode(node: TreeNode, path: string): TreeNode | null {
 
 export const PermissionManager: React.FC<PermissionManagerProps> = ({
   schema,
+  contentRoot = 'content',
   permissions,
   canEdit,
   onSave,
@@ -191,7 +195,10 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
   }, [userSearchQuery, onSearchUsers, showUserSearch])
 
   // Build tree from schema + contentTree
-  const tree = useMemo(() => buildTree(schema, contentTree), [schema, contentTree])
+  const tree = useMemo(
+    () => buildTree(schema, contentTree, contentRoot),
+    [schema, contentTree, contentRoot],
+  )
 
   // Annotate tree with permissions
   const annotatedTree = useMemo(
@@ -967,28 +974,39 @@ const TreeNodeComponent: React.FC<TreeNodeComponentProps> = ({
 }
 
 // Helper: Build tree from schema and optional contentTree
-function buildTree(schema: CanopyConfig['schema'], contentTree?: ContentNode): TreeNode {
+function buildTree(
+  schema: CanopyConfig['schema'],
+  contentTree?: ContentNode,
+  contentRoot = 'content',
+): TreeNode {
   const root: TreeNode = {
-    path: 'content',
-    name: 'content',
+    path: contentRoot,
+    name: contentRoot,
     type: 'folder',
     children: [],
   }
 
+  // Flatten schema to get all collections and singletons
+  const flatSchema = flattenSchema(schema, contentRoot)
+
   // Add schema items
-  schema.forEach((item) => {
+  flatSchema.forEach((item) => {
+    // Extract display name from fullPath (last segment)
+    const pathSegments = item.fullPath.split('/').filter(Boolean)
+    const displayName = pathSegments[pathSegments.length - 1] || item.name
+
     if (item.type === 'collection') {
       const collectionNode: TreeNode = {
-        path: `content/${item.path}`,
-        name: item.path,
+        path: item.fullPath,
+        name: displayName,
         type: 'folder',
         children: [],
       }
       root.children.push(collectionNode)
-    } else if (item.type === 'entry') {
+    } else if (item.type === 'singleton') {
       const entryNode: TreeNode = {
-        path: `content/${item.path}`,
-        name: item.path,
+        path: item.fullPath,
+        name: displayName,
         type: 'file',
         children: [],
       }

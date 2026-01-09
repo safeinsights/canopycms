@@ -61,7 +61,9 @@
       "Bash(fnm env:*)",
       "Bash(source:*)",
       "Bash(git check-ignore:*)",
-      "Bash(git log:*)"
+      "Bash(git log:*)",
+      "Bash(npm --prefix packages/canopycms test:*)",
+      "Bash(PWDEBUG=console npx playwright test:*)"
     ]
   }
 }
