@@ -35,22 +35,23 @@ describe('listEntries', () => {
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
-      schema: [
-        {
-          type: 'collection',
-          name: 'posts',
-          path: 'posts',
-          format: 'json',
-          fields: [{ name: 'title', type: 'string' }],
-        },
-        {
-          type: 'entry',
-          name: 'settings',
-          path: 'settings',
-          format: 'json',
-          fields: [{ name: 'siteName', type: 'string' }],
-        },
-      ],
+      schema: {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+          },
+        ],
+        singletons: [
+          {
+            name: 'settings',
+            path: 'settings',
+            format: 'json',
+            fields: [{ name: 'siteName', type: 'string' }],
+          },
+        ],
+      },
     })
 
     // Mock loadPathPermissions to return rules that hide 'hidden.json' from user 'u1'
@@ -161,33 +162,30 @@ describe('listEntries', () => {
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
-      schema: [
-        {
-          type: 'collection',
-          name: 'docs',
-          path: 'docs',
-          format: 'json',
-          fields: [{ name: 'title', type: 'string' }],
-          children: [
-            {
-              type: 'collection',
-              name: 'api',
-              path: 'api',
-              format: 'json',
-              fields: [{ name: 'title', type: 'string' }],
-              children: [
-                {
-                  type: 'collection',
-                  name: 'v2',
-                  path: 'v2',
-                  format: 'json',
-                  fields: [{ name: 'title', type: 'string' }],
-                },
-              ],
-            },
-          ],
-        },
-      ],
+      schema: {
+        collections: [
+          {
+            name: 'docs',
+            path: 'docs',
+            entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+            collections: [
+              {
+                name: 'api',
+                path: 'api',
+                entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+                collections: [
+                  {
+                    name: 'v2',
+                    path: 'v2',
+                    entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        singletons: [],
+      },
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')

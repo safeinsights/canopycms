@@ -19,15 +19,16 @@ describe('BranchWorkspaceManager', () => {
     await git.init()
     const manager = new BranchWorkspaceManager(
       defineCanopyTestConfig({
-        schema: [
-          {
-            type: 'collection',
-            name: 'posts',
-            path: 'posts',
-            format: 'md',
-            fields: [{ name: 'title', type: 'string' }],
-          },
-        ],
+        schema: {
+          collections: [
+            {
+              name: 'posts',
+              path: 'posts',
+              entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            },
+          ],
+          singletons: [],
+        },
       }),
     )
 
@@ -72,15 +73,16 @@ describe('BranchWorkspaceManager', () => {
       defineCanopyTestConfig({
         defaultBaseBranch: 'main',
         defaultRemoteUrl: remotePath,
-        schema: [
-          {
-            type: 'collection',
-            name: 'posts',
-            path: 'posts',
-            format: 'md',
-            fields: [{ name: 'title', type: 'string' }],
-          },
-        ],
+        schema: {
+          collections: [
+            {
+              name: 'posts',
+              path: 'posts',
+              entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            },
+          ],
+          singletons: [],
+        },
       }),
     )
 
@@ -126,15 +128,16 @@ describe('BranchWorkspaceManager', () => {
       defineCanopyTestConfig({
         defaultBaseBranch: 'main',
         defaultRemoteUrl: remotePath,
-        schema: [
-          {
-            type: 'collection',
-            name: 'posts',
-            path: 'posts',
-            format: 'md',
-            fields: [{ name: 'title', type: 'string' }],
-          },
-        ],
+        schema: {
+          collections: [
+            {
+              name: 'posts',
+              path: 'posts',
+              entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            },
+          ],
+          singletons: [],
+        },
       }),
     )
 
@@ -158,15 +161,16 @@ describe('BranchWorkspaceManager', () => {
     await git.init()
     const manager = new BranchWorkspaceManager(
       defineCanopyTestConfig({
-        schema: [
-          {
-            type: 'collection',
-            name: 'pages',
-            path: 'pages',
-            format: 'md',
-            fields: [{ name: 'title', type: 'string' }],
-          },
-        ],
+        schema: {
+          collections: [
+            {
+              name: 'pages',
+              path: 'pages',
+              entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            },
+          ],
+          singletons: [],
+        },
       }),
     )
 

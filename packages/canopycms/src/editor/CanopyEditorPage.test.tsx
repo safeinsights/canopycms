@@ -18,15 +18,19 @@ vi.mock('./CanopyEditor', () => {
 })
 
 const baseConfig = {
-  schema: [
-    {
-      type: 'collection',
-      name: 'posts',
-      path: 'posts',
-      format: 'json',
-      fields: [{ name: 'title', type: 'string' }],
-    },
-  ],
+  schema: {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: {
+          format: 'json',
+          fields: [{ name: 'title', type: 'string' }],
+        },
+      },
+    ],
+    singletons: [],
+  },
   contentRoot: 'content',
   gitBotAuthorName: 'Bot',
   gitBotAuthorEmail: 'bot@example.com',

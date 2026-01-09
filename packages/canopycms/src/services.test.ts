@@ -26,15 +26,16 @@ vi.mock('simple-git', () => {
 describe('createCanopyServices', () => {
   it('creates helpers with defaults and reuses config', () => {
     const cfg = defineCanopyTestConfig({
-      schema: [
-        {
-          type: 'collection',
-          name: 'pages',
-          path: 'pages',
-          format: 'md',
-          fields: [{ name: 'title', type: 'string' }],
-        },
-      ],
+      schema: {
+        collections: [
+          {
+            name: 'pages',
+            path: 'pages',
+            entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+          },
+        ],
+        singletons: [],
+      },
       defaultBranchAccess: 'deny',
     })
 
@@ -70,15 +71,16 @@ describe('createCanopyServices', () => {
 
   it('creates git manager using defaults', async () => {
     const cfg = defineCanopyTestConfig({
-      schema: [
-        {
-          type: 'collection',
-          name: 'pages',
-          path: 'pages',
-          format: 'md',
-          fields: [{ name: 'title', type: 'string' }],
-        },
-      ],
+      schema: {
+        collections: [
+          {
+            name: 'pages',
+            path: 'pages',
+            entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+          },
+        ],
+        singletons: [],
+      },
       defaultBaseBranch: 'main',
       defaultRemoteName: 'origin',
     })

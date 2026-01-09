@@ -97,6 +97,17 @@ export class ContentStore {
     return '.json'
   }
 
+  /**
+   * Build absolute and relative paths with security validation.
+   *
+   * SECURITY BOUNDARY: This method prevents path traversal attacks by:
+   * 1. Validating that resolved paths stay within the content root
+   * 2. Checking slugs for malicious patterns (via validateSlug)
+   * 3. Using path.resolve to normalize paths before validation
+   *
+   * This validation is performed BEFORE file I/O in resolveDocumentPath(),
+   * ensuring permission checks happen before any file system access.
+   */
   private buildPaths(schemaItem: FlatSchemaItem, slug: string) {
     const rootWithSep = this.root.endsWith(path.sep) ? this.root : `${this.root}${path.sep}`
 
@@ -106,6 +117,7 @@ export class ContentStore {
       const ext = this.extensionFor(format)
       const resolvedPath = path.resolve(this.root, `${schemaItem.fullPath}${ext}`)
 
+      // Security: Prevent path traversal
       if (!resolvedPath.startsWith(rootWithSep)) {
         throw new ContentStoreError('Path traversal detected')
       }
@@ -122,12 +134,14 @@ export class ContentStore {
       if (!safeSlug) {
         throw new ContentStoreError('Slug is required for collection entries')
       }
+      // Security: Validate slug format (prevents ../../../etc/passwd)
       validateSlug(safeSlug)
 
       const format = schemaItem.entries?.format || 'json'
       const ext = this.extensionFor(format)
       const collectionRoot = path.resolve(this.root, schemaItem.fullPath)
 
+      // Security: Prevent path traversal at collection level
       if (!collectionRoot.startsWith(rootWithSep)) {
         throw new ContentStoreError('Path traversal detected')
       }
@@ -137,6 +151,7 @@ export class ContentStore {
         ? collectionRoot
         : `${collectionRoot}${path.sep}`
 
+      // Security: Prevent path traversal at entry level
       if (!resolved.startsWith(collectionRootWithSep)) {
         throw new ContentStoreError('Path traversal detected')
       }
@@ -223,6 +238,8 @@ export class ContentStore {
       fields = schemaItem.fields
     } else {
       // Collection entry
+      // Note: Collections can exist without entries (e.g., only containing subcollections/singletons)
+      // In such cases, fallback to default format and empty fields
       format = schemaItem.entries?.format || 'json'
       fields = schemaItem.entries?.fields || []
     }

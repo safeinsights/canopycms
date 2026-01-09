@@ -165,4 +165,61 @@ describe('config validation', () => {
     expect(pagesCollection?.type).toBe('collection')
     expect(pagesCollection?.parentPath).toBe('content/content')
   })
+
+  it('handles deeply nested singletons with correct paths', () => {
+    const configBundle = defineCanopyConfig({
+      ...gitAuthor,
+      schema: {
+        collections: [
+          {
+            name: 'docs',
+            path: 'docs',
+            entries: {
+              format: 'md',
+              fields: [{ name: 'title', type: 'string' }],
+            },
+            collections: [
+              {
+                name: 'api',
+                path: 'api',
+                entries: {
+                  format: 'md',
+                  fields: [{ name: 'title', type: 'string' }],
+                },
+                singletons: [
+                  {
+                    name: 'intro',
+                    path: 'intro',
+                    format: 'md',
+                    fields: [{ name: 'content', type: 'markdown' }],
+                  },
+                ],
+              },
+            ],
+            singletons: [
+              {
+                name: 'overview',
+                path: 'overview',
+                format: 'md',
+                fields: [{ name: 'content', type: 'markdown' }],
+              },
+            ],
+          },
+        ],
+      },
+    })
+    const cfg = configBundle.server
+    const flat = flattenSchema(cfg.schema, cfg.contentRoot || 'content')
+
+    const docsOverview = flat.find((item) => item.fullPath === 'content/docs/overview')
+    const apiIntro = flat.find((item) => item.fullPath === 'content/docs/api/intro')
+
+    expect(docsOverview).toBeDefined()
+    expect(docsOverview?.type).toBe('singleton')
+    expect(docsOverview?.parentPath).toBe('content/docs')
+
+    expect(apiIntro).toBeDefined()
+    expect(apiIntro?.type).toBe('singleton')
+    expect(apiIntro?.parentPath).toBe('content/docs/api')
+  })
 })

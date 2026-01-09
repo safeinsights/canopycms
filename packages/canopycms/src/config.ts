@@ -332,9 +332,6 @@ export type FlatSchemaItem =
       fields: FieldConfig[]
     }
 
-// Legacy type alias for backward compatibility during transition
-export type FlatCollection = FlatSchemaItem
-
 const ensureSelectFieldsHaveOptions = (config: any) => {
   const checkFields = (fields: any[] | undefined) => {
     if (!Array.isArray(fields)) return
