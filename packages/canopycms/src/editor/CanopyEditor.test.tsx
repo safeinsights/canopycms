@@ -18,15 +18,18 @@ vi.mock('./Editor', () => {
 })
 
 const baseConfig = {
-  schema: [
-    {
-      type: 'collection',
-      name: 'posts',
-      path: 'posts',
-      format: 'json',
-      fields: [{ name: 'title', type: 'string' }],
-    },
-  ],
+  schema: {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: {
+          format: 'json',
+          fields: [{ name: 'title', type: 'string' }],
+        },
+      },
+    ],
+  },
   contentRoot: 'content',
   gitBotAuthorName: 'Bot',
   gitBotAuthorEmail: 'bot@example.com',

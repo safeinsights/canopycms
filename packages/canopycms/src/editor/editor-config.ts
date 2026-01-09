@@ -1,15 +1,6 @@
-import type { CanopyConfig, ResolvedSchemaItem } from '../config'
-import { resolveSchema } from '../config'
+import type { CanopyConfig, FlatSchemaItem } from '../config'
+import { flattenSchema } from '../config'
 import type { EditorCollection } from './Editor'
-
-const toEditorCollection = (node: ResolvedSchemaItem): EditorCollection => ({
-  id: node.fullPath,
-  name: node.name,
-  label: node.label,
-  format: node.format,
-  type: node.type,
-  children: node.children?.map(toEditorCollection),
-})
 
 const normalizeContentRoot = (value?: string): string => {
   const trimmed = (value ?? 'content').replace(/^\/+|\/+$/g, '')
@@ -24,25 +15,57 @@ const stripContentRoot = (fullPath: string, contentRoot: string): string => {
   return fullPath
 }
 
+/**
+ * Build hierarchical editor collections from the flattened schema.
+ * Uses fullPath as IDs to match API responses. Includes both collections and singletons.
+ */
 export const buildEditorCollections = (config: Pick<CanopyConfig, 'schema' | 'contentRoot'>): EditorCollection[] => {
-  const resolved = resolveSchema(config.schema, config.contentRoot)
-  return resolved.map(toEditorCollection)
+  const flat = flattenSchema(config.schema, config.contentRoot)
+
+  // Build a tree from flat items
+  const buildTree = (parentPath?: string): EditorCollection[] => {
+    // Find all items that are direct children of this parent
+    const children = flat.filter(item => item.parentPath === parentPath)
+
+    return children.map(item => {
+      if (item.type === 'collection') {
+        return {
+          id: item.fullPath,
+          name: item.name,
+          label: item.label,
+          format: item.entries?.format || 'json',
+          type: 'collection' as const,
+          children: buildTree(item.fullPath), // Recursively build children
+        }
+      } else {
+        // Singleton
+        return {
+          id: item.fullPath,
+          name: item.name,
+          label: item.label,
+          format: item.format,
+          type: 'entry' as const,
+          children: [], // Singletons have no children
+        }
+      }
+    })
+  }
+
+  return buildTree(undefined) // Start with root-level items
 }
 
 export const buildPreviewBaseByCollection = (
   config: Pick<CanopyConfig, 'schema' | 'contentRoot'>
 ): Record<string, string> => {
   const contentRoot = normalizeContentRoot(config.contentRoot)
-  const resolved = resolveSchema(config.schema, config.contentRoot)
+  const flat = flattenSchema(config.schema, config.contentRoot)
   const map: Record<string, string> = {}
-  const walk = (nodes: ResolvedSchemaItem[]) => {
-    nodes.forEach((node) => {
-      const base = stripContentRoot(node.fullPath, contentRoot)
-      const normalizedBase = base ? `/${base}` : '/'
-      map[node.fullPath] = node.type === 'entry' ? '/' : normalizedBase
-      if (node.children) walk(node.children)
-    })
+
+  for (const item of flat) {
+    const base = stripContentRoot(item.fullPath, contentRoot)
+    const normalizedBase = base ? `/${base}` : '/'
+    map[item.fullPath] = item.type === 'singleton' ? '/' : normalizedBase
   }
-  walk(resolved)
+
   return map
 }

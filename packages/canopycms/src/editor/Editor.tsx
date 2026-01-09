@@ -34,7 +34,7 @@ export interface EditorEntry {
   collectionName?: string
   slug?: string
   format?: ContentFormat
-  type?: 'entry' | 'standalone'
+  type?: 'entry' | 'singleton'
 }
 
 export interface EditorCollection {

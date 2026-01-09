@@ -19,22 +19,26 @@ export default defineCanopyConfig({
       },
     },
   },
-  schema: [
-    {
-      type: 'collection',
-      name: 'posts',
-      label: 'Posts',
-      path: 'posts',
-      format: 'json',
-      fields: postSchema,
-    },
-    {
-      type: 'entry',
-      name: 'home',
-      label: 'Home',
-      path: 'home',
-      format: 'json',
-      fields: homeSchema,
-    },
-  ],
+  schema: {
+    collections: [
+      {
+        name: 'posts',
+        label: 'Posts',
+        path: 'posts',
+        entries: {
+          format: 'json',
+          fields: postSchema,
+        },
+      },
+    ],
+    singletons: [
+      {
+        name: 'home',
+        label: 'Home',
+        path: 'home',
+        format: 'json',
+        fields: homeSchema,
+      },
+    ],
+  },
 })

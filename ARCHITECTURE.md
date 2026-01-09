@@ -108,6 +108,98 @@ The index is NOT thread-safe, but the system is designed for eventual consistenc
 
 In most CMS use cases (where editors work at human speeds), race conditions are rare and eventual consistency is sufficient.
 
+## Schema-Driven Content Model
+
+CanopyCMS uses a unified schema model where all content is defined through a hierarchical structure of collections and singletons.
+
+### Unified Schema Structure
+
+The schema is defined as a `RootCollectionConfig` with three optional properties:
+- **entries**: Repeatable content items (e.g., blog posts, products)
+- **collections**: Nested collection hierarchies
+- **singletons**: Single-instance content items (e.g., site settings, about page)
+
+This unified approach treats the root as a collection itself, eliminating special cases. Collections can be arbitrarily nested, and each collection can contain any combination of entries, child collections, and singletons.
+
+**Key design principle**: No discriminator field is needed. The structure itself determines what something is:
+- If it has `entries`, you can create repeatable items in it
+- If it has `collections`, it contains nested collections
+- If it has `singletons`, it contains single-instance items
+
+### Schema Flattening
+
+At initialization, the hierarchical schema is flattened into a `Map<path, FlatSchemaItem>` for O(1) lookups. Each flattened item is a discriminated union:
+
+**Collection item**:
+- `type: 'collection'`
+- `fullPath`: Complete path from content root (e.g., "content/blog")
+- `entries`: Optional entries configuration with format and fields
+- `collections` and `singletons`: Optional nested items
+
+**Singleton item**:
+- `type: 'singleton'`
+- `fullPath`: Complete path including filename (e.g., "content/settings")
+- `fields`: Field definitions
+- `format`: Content format (md, mdx, json)
+
+All items include `name`, `label`, and `parentPath` for navigation and display.
+
+### Content Store Integration
+
+The `ContentStore` uses the flat schema index instead of traversing a hierarchical tree:
+
+**Path resolution** (`resolvePath`):
+1. Try to match the full path as a singleton
+2. If no singleton matches, try to split the last segment as a slug and match the rest as a collection
+3. Return the schema item, slug, and item type (singleton or entry)
+
+**Reading and writing**:
+- `read()` and `write()` accept a collection path and slug
+- For singletons, the slug is empty string
+- For entries, the slug identifies the specific item
+- The schema item type determines format, fields, and file extension
+
+**Path building**:
+- Singletons: Use the full path directly
+- Entries: Join collection path with slug
+
+This design means the same APIs work for both singletons and entries without special-casing.
+
+### API Layer
+
+The API exposes collections and singletons through a unified interface:
+
+**Collection summaries** (`buildCollectionSummaries`):
+- Both collections and singletons appear in the summaries list
+- Singletons use `type: 'entry'` for backward compatibility (different from internal `type: 'singleton'`)
+- Collections have `type: 'collection'`
+
+**Entries list** (`listCollectionEntries`):
+- Only returns actual entries (repeatable items)
+- Singletons are excluded from the entries list
+- They appear in summaries only, as they don't have a slug
+
+**CollectionItem** type:
+- `itemType`: Distinguishes 'singleton' from 'entry'
+- Entries have a `slug`; singletons use empty string
+- Both have a `collectionId` pointing to their parent collection or path
+
+### Editor Integration
+
+The editor uses simplified collection IDs (just the path, not including contentRoot):
+
+**Navigation**:
+- Collections and singletons appear side-by-side in the content navigator
+- Singletons are visually distinguished (no entry count, different icon)
+
+**Preview URLs**:
+- Singletons: Use full path as preview URL
+- Entries: Append slug to collection path
+
+**Form rendering**:
+- Both use the same field rendering infrastructure
+- Schema fields determine the form structure
+
 ## Core Mental Model
 
 Content in CanopyCMS flows through a predictable lifecycle:
@@ -619,3 +711,131 @@ The index is per-process, not globally synchronized. This design choice accepts 
 - **Suitable for CMS workflows**: Editors work at human speeds; millisecond-level race conditions don't materialize in practice
 
 For a system handling hundreds of concurrent API requests (serverless autoscaling), process-local indexes with eventual consistency is simpler and more scalable than a shared, synchronized index.
+
+### Why unified schema model (collections + singletons)?
+
+The unified schema model treats the root as a collection with three optional properties: `entries`, `collections`, and `singletons`. This design provides several advantages over array-based or discriminated schemas:
+
+**Eliminates special cases:**
+- Root and nested collections have identical structure
+- No need for separate root-level handling logic
+- Recursive traversal becomes straightforward
+
+**Structural detection instead of discriminators:**
+- No `type` field required to distinguish collections from singletons
+- The presence of `entries`, `collections`, or `singletons` determines capabilities
+- A collection can have any combination of these properties
+
+**Flexible composition:**
+- Collections can contain both entries and singletons
+- Singletons can be nested at any level
+- Collections can be infinitely nested
+
+**Type safety:**
+- `FlatSchemaItem` is a discriminated union with `type: 'collection' | 'singleton'`
+- TypeScript enforces correct access to fields based on type
+- Compile-time detection of invalid schema operations
+
+### Why flatten schema into a Map?
+
+The flattening process converts the hierarchical schema into `Map<path, FlatSchemaItem>` for performance:
+
+**O(1) lookups:**
+- Path resolution is a single Map lookup, not tree traversal
+- Critical for request-path latency in serverless environments
+- Scales to thousands of collections without performance degradation
+
+**Precomputed paths:**
+- Full paths are computed once at initialization
+- No repeated path joining or normalization during requests
+- Eliminates path traversal vulnerability checks from hot path
+
+**Validation at init time:**
+- Invalid paths or structure detected during startup
+- Fast failure instead of runtime errors
+- All collections verified reachable and non-conflicting
+
+**Memory tradeoff:**
+- Small memory overhead (few KB per collection)
+- Flat map is much faster than hierarchical tree traversal
+- Index is shared across all requests (not duplicated per-request)
+
+The alternative (traversing the tree on every request) would add milliseconds to every content access, making serverless deployments impractical.
+
+### Why try singleton-first in path resolution?
+
+The `resolvePath` method tries to match the full path as a singleton before attempting collection+slug splitting:
+
+**Predictable resolution order:**
+- Singletons have priority over entries with matching paths
+- Prevents ambiguity when paths overlap
+- Clear mental model for schema authors
+
+**Avoids false matches:**
+- Without singleton-first, "content/settings" might incorrectly match as collection "content" + slug "settings"
+- Singleton-first ensures exact matches take precedence
+- Only falls back to collection+slug if no singleton exists
+
+**Consistent with file system:**
+- Files (singletons) are naturally distinct from directories (collections)
+- The resolution logic mirrors filesystem semantics
+- Editors intuitively understand the hierarchy
+
+**Performance:**
+- Map lookups are fast (O(1))
+- Trying singleton first adds negligible overhead
+- Single lookup for singletons, two lookups for entries (still fast)
+
+This design means you can have both a singleton at "content/about" and a collection at "content/blog" without conflicts or confusion.
+
+### Why use empty string for singleton slugs?
+
+Singletons are represented in the API with an empty string slug instead of using a special value like `null`:
+
+**API consistency:**
+- Both `read(path, slug)` and `write(path, slug, data)` work uniformly
+- No special null checks required in calling code
+- Same validation and permission logic for both types
+
+**URL routing simplicity:**
+- Empty slug naturally produces clean paths
+- No need to filter out "null" or "undefined" in URLs
+- Slug is simply omitted rather than treated specially
+
+**Type safety:**
+- Slug is always a string, never nullable
+- Prevents null-related runtime errors
+- TypeScript enforces string operations uniformly
+
+**Path building:**
+- `join(collectionPath, '')` correctly returns collectionPath
+- No conditional logic needed for singletons vs entries
+- Path construction code works identically
+
+The alternative (nullable slug) would require conditional logic throughout the codebase, adding complexity and error-prone null checks.
+
+### Why expose singletons as type 'entry' in the API?
+
+The internal `FlatSchemaItem` uses `type: 'singleton'`, but the API exposes singletons as `type: 'entry'`:
+
+**Backward compatibility:**
+- Existing editor code expects `type: 'collection' | 'entry'`
+- Avoids breaking changes during schema model evolution
+- Smooth migration path for adopters
+
+**Conceptual simplicity:**
+- To editors, singletons are just "special entries" with one instance
+- The distinction between singleton and entry is implementation detail
+- UI doesn't need to change behavior based on type
+
+**Single code path:**
+- Editor treats both as editable content items
+- Same form rendering, validation, and save logic
+- `itemType` field provides granular distinction when needed
+
+**Future flexibility:**
+- Internal model can evolve without breaking API contracts
+- Can add new item types without changing `type` enum
+- `itemType` provides extension point for future content types
+
+This separation of concerns keeps the API stable while allowing internal improvements to the schema model.

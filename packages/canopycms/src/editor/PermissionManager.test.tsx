@@ -49,38 +49,43 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
 )
 
 describe('PermissionManager', () => {
-  const mockSchema = [
-    {
-      type: 'collection' as const,
-      name: 'Posts',
-      path: 'posts',
-      format: 'mdx' as const,
-      fields: [
-        { name: 'title', type: 'string' as const },
-        { name: 'content', type: 'markdown' as const },
-      ],
-    },
-    {
-      type: 'collection' as const,
-      name: 'Pages',
-      path: 'pages',
-      format: 'mdx' as const,
-      fields: [
-        { name: 'title', type: 'string' as const },
-        { name: 'body', type: 'markdown' as const },
-      ],
-    },
-    {
-      type: 'entry' as const,
-      name: 'About',
-      path: 'about.md',
-      format: 'mdx' as const,
-      fields: [
-        { name: 'title', type: 'string' as const },
-        { name: 'bio', type: 'markdown' as const },
-      ],
-    },
-  ]
+  const mockSchema = {
+    collections: [
+      {
+        name: 'Posts',
+        path: 'posts',
+        entries: {
+          format: 'mdx' as const,
+          fields: [
+            { name: 'title', type: 'string' as const },
+            { name: 'content', type: 'markdown' as const },
+          ],
+        },
+      },
+      {
+        name: 'Pages',
+        path: 'pages',
+        entries: {
+          format: 'mdx' as const,
+          fields: [
+            { name: 'title', type: 'string' as const },
+            { name: 'body', type: 'markdown' as const },
+          ],
+        },
+      },
+    ],
+    singletons: [
+      {
+        name: 'About',
+        path: 'about',
+        format: 'mdx' as const,
+        fields: [
+          { name: 'title', type: 'string' as const },
+          { name: 'bio', type: 'markdown' as const },
+        ],
+      },
+    ],
+  }
 
   const mockPermissions: PathPermission[] = [
     {
@@ -88,7 +93,7 @@ describe('PermissionManager', () => {
       edit: { allowedGroups: ['editors'] },
     },
     {
-      path: 'content/about.md',
+      path: 'content/about',
       edit: { allowedUsers: ['alice'] },
     },
   ]
@@ -199,7 +204,7 @@ describe('PermissionManager', () => {
       // Content is expanded by default, so children should be visible
       expect(screen.getByText('posts')).toBeTruthy()
       expect(screen.getByText('pages')).toBeTruthy()
-      expect(screen.getByText('about.md')).toBeTruthy()
+      expect(screen.getByText('about')).toBeTruthy()
     })
 
     it('expands all nodes when Expand All clicked', async () => {

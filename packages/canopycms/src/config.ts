@@ -165,24 +165,44 @@ const branchModeSchema = z.enum(['prod', 'local-prod-sim', 'local-simple']).defa
 const contentRootSchema = relativePathSchema.default('content')
 const sourceRootSchema = z.string().min(1).optional()
 
-const schemaBase = z.object({
+// Singleton: A single-instance file with unique schema
+const singletonSchema = z.object({
   name: z.string().min(1),
-  label: z.string().optional(),
   path: relativePathSchema,
   format: z.enum(['md', 'mdx', 'json']),
   fields: z.array(z.lazy(() => fieldSchema)).min(1),
+  label: z.string().optional(),
 })
 
-let schemaItemSchema: z.ZodTypeAny
-
-const collectionSchema = schemaBase.extend({
-  type: z.literal('collection'),
-  children: z.array(z.lazy(() => schemaItemSchema)).optional(),
+// Collection entries config: shared schema for repeatable entries
+const collectionEntriesSchema = z.object({
+  format: z.enum(['md', 'mdx', 'json']).optional(),
+  fields: z.array(z.lazy(() => fieldSchema)).min(1),
 })
 
-const entrySchema = schemaBase.extend({
-  type: z.literal('entry'),
-  children: z.never().optional(),
+let collectionSchema: z.ZodTypeAny
+let rootCollectionSchema: z.ZodTypeAny
+
+// Nested collection: must have name and path
+collectionSchema = z.lazy(() =>
+  z.object({
+    name: z.string().min(1),
+    path: relativePathSchema,
+    label: z.string().optional(),
+    entries: collectionEntriesSchema.optional(),
+    collections: z.array(collectionSchema).optional(),
+    singletons: z.array(singletonSchema).optional(),
+  }).refine(
+    (data) => data.entries || data.collections || data.singletons,
+    { message: 'Collection must have entries, collections, or singletons' }
+  )
+)
+
+// Root collection: no name/path required
+rootCollectionSchema = z.object({
+  entries: collectionEntriesSchema.optional(),
+  collections: z.array(collectionSchema).optional(),
+  singletons: z.array(singletonSchema).optional(),
 })
 
 const editorConfigSchema = z.object({
@@ -197,11 +217,9 @@ const editorConfigSchema = z.object({
   AccountComponent: z.custom<React.ComponentType>().optional(),
 })
 
-schemaItemSchema = z.discriminatedUnion('type', [collectionSchema, entrySchema])
-
 export const CanopyConfigSchema = z
   .object({
-    schema: z.array(schemaItemSchema).min(1),
+    schema: rootCollectionSchema,
     media: mediaSchema.optional(),
     defaultBranchAccess: defaultBranchAccessSchema.optional(),
     defaultPathAccess: defaultPathAccessSchema.optional(),
@@ -218,10 +236,10 @@ export const CanopyConfigSchema = z
     authPlugin: z.custom<AuthPlugin>().optional(),
   })
   .superRefine((data, ctx) => {
-    if (!data.schema?.length) {
+    if (!data.schema?.entries && !data.schema?.collections && !data.schema?.singletons) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'At least one collection or entry is required',
+        message: 'Schema must have at least one of: entries, collections, or singletons',
       })
     }
   })
@@ -235,9 +253,10 @@ export type SelectFieldConfig = Extract<FieldConfig, { type: 'select' }>
 export type ReferenceFieldConfig = Extract<FieldConfig, { type: 'reference' }>
 export type ObjectFieldConfig = Extract<FieldConfig, { type: 'object' }>
 export type CustomFieldConfig = Exclude<FieldConfig, { type: FieldType }>
+export type SingletonConfig = z.infer<typeof singletonSchema>
+export type CollectionEntriesConfig = z.infer<typeof collectionEntriesSchema>
 export type CollectionConfig = z.infer<typeof collectionSchema>
-export type EntryCollectionConfig = z.infer<typeof entrySchema>
-export type SchemaItemConfig = z.infer<typeof schemaItemSchema>
+export type RootCollectionConfig = z.infer<typeof rootCollectionSchema>
 export type PathPermission = z.infer<typeof pathPermissionSchema>
 export type MediaConfig = z.infer<typeof mediaSchema>
 export type CanopyConfig = z.infer<typeof CanopyConfigSchema>
@@ -278,13 +297,30 @@ export type SourceRoot = z.infer<typeof sourceRootSchema>
 
 export type CanopyConfigFragment = Partial<CanopyConfigInput>
 
-export type ResolvedSchemaItem = (CollectionConfig | EntryCollectionConfig) & {
-  fullPath: string
-  parentPath?: string
-  children?: ResolvedSchemaItem[]
-}
+// Flattened schema items for indexing
+export type FlatSchemaItem =
+  | {
+      type: 'collection'
+      fullPath: string
+      name: string
+      label?: string
+      parentPath?: string
+      entries?: CollectionEntriesConfig
+      collections?: CollectionConfig[]
+      singletons?: SingletonConfig[]
+    }
+  | {
+      type: 'singleton'
+      fullPath: string
+      name: string
+      label?: string
+      parentPath?: string
+      format: ContentFormat
+      fields: FieldConfig[]
+    }
 
-export type FlatCollection = Omit<ResolvedSchemaItem, 'children'> & { type: 'collection' | 'entry' }
+// Legacy type alias for backward compatibility during transition
+export type FlatCollection = FlatSchemaItem
 
 const ensureSelectFieldsHaveOptions = (config: any) => {
   const checkFields = (fields: any[] | undefined) => {
@@ -305,12 +341,22 @@ const ensureSelectFieldsHaveOptions = (config: any) => {
     }
   }
 
-  const walkSchema = (nodes?: any[]) => {
-    if (!Array.isArray(nodes)) return
-    for (const node of nodes) {
-      checkFields(node?.fields)
-      if (node?.children) {
-        walkSchema(node.children)
+  const walkSchema = (root: any) => {
+    if (!root) return
+    // Check entries fields
+    if (root.entries?.fields) {
+      checkFields(root.entries.fields)
+    }
+    // Check singletons
+    if (Array.isArray(root.singletons)) {
+      for (const singleton of root.singletons) {
+        checkFields(singleton?.fields)
+      }
+    }
+    // Recursively check nested collections
+    if (Array.isArray(root.collections)) {
+      for (const collection of root.collections) {
+        walkSchema(collection)
       }
     }
   }
@@ -318,70 +364,124 @@ const ensureSelectFieldsHaveOptions = (config: any) => {
   walkSchema((config as any)?.schema)
 }
 
-const normalizeSchemaPaths = (items: SchemaItemConfig[], parentPath = ''): SchemaItemConfig[] => {
-  return items.map((item) => {
-    const fullPath = parentPath ? join(parentPath, item.path) : item.path
+/**
+ * Normalize all paths in the root collection schema
+ */
+const normalizeSchemaPathsRoot = (root: RootCollectionConfig): RootCollectionConfig => {
+  const normalizeCollection = (
+    collection: CollectionConfig,
+    parentPath = ''
+  ): CollectionConfig => {
+    const fullPath = parentPath ? join(parentPath, collection.path) : collection.path
     const normalizedFull = normalizePathValue(fullPath)
     if (!normalizedFull || normalizedFull.includes('..')) {
-      throw new Error(`Invalid path for schema item "${item.name}"`)
+      throw new Error(`Invalid path for collection "${collection.name}"`)
     }
-    const normalizedItem = {
-      ...item,
-      path: normalizePathValue(item.path),
-    } as SchemaItemConfig
-    if (item.type === 'collection' && item.children) {
-      return {
-        ...normalizedItem,
-        children: normalizeSchemaPaths(item.children, normalizedFull),
-      }
+
+    return {
+      ...collection,
+      path: normalizePathValue(collection.path),
+      singletons: collection.singletons?.map((s: SingletonConfig) => ({
+        ...s,
+        path: normalizePathValue(s.path),
+      })),
+      collections: collection.collections?.map((c: CollectionConfig) => normalizeCollection(c, normalizedFull)),
     }
-    return normalizedItem
-  })
+  }
+
+  return {
+    ...root,
+    singletons: root.singletons?.map((s: SingletonConfig) => ({
+      ...s,
+      path: normalizePathValue(s.path),
+    })),
+    collections: root.collections?.map((c: CollectionConfig) => normalizeCollection(c)),
+  }
 }
 
-export const resolveSchema = (items: SchemaItemConfig[], basePath = ''): ResolvedSchemaItem[] => {
+/**
+ * Flatten the root collection schema into a Map-friendly structure
+ * Returns an array of FlatSchemaItem (collections and singletons)
+ */
+export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSchemaItem[] => {
+  const flat: FlatSchemaItem[] = []
   const base = normalizePathValue(basePath || '')
-  const walk = (nodes: SchemaItemConfig[], parentPath: string): ResolvedSchemaItem[] => {
-    return nodes.map((item) => {
-      const normalizedItemPath = normalizePathValue(item.path)
-      let fullPath: string
-      if (!parentPath && base) {
-        if (normalizedItemPath === base || normalizedItemPath.startsWith(`${base}/`)) {
-          fullPath = normalizedItemPath
-        } else {
-          fullPath = join(base, normalizedItemPath)
-        }
-      } else if (parentPath) {
-        fullPath = join(parentPath, normalizedItemPath)
-      } else {
-        fullPath = normalizedItemPath
-      }
-      const normalizedFull = normalizePathValue(fullPath)
-      const resolved: ResolvedSchemaItem = {
-        ...item,
-        fullPath: normalizedFull,
-        parentPath: parentPath || undefined,
-      }
-      if (item.type === 'collection' && item.children) {
-        resolved.children = walk(item.children, normalizedFull)
-      }
-      return resolved
+
+  const walkCollection = (
+    collection: CollectionConfig,
+    parentPath: string
+  ) => {
+    const normalizedPath = normalizePathValue(collection.path)
+    // Build fullPath: if we have a parent, join with parent; otherwise use collection path
+    let fullPath: string
+    if (parentPath) {
+      // Child collection: join with parent path
+      fullPath = join(parentPath, normalizedPath)
+    } else {
+      // Root-level collection: prepend base path
+      fullPath = base ? join(base, normalizedPath) : normalizedPath
+    }
+    const normalizedFull = normalizePathValue(fullPath)
+
+    // Add the collection itself
+    flat.push({
+      type: 'collection',
+      fullPath: normalizedFull,
+      name: collection.name,
+      label: collection.label,
+      parentPath: parentPath || undefined,
+      entries: collection.entries,
+      collections: collection.collections,
+      singletons: collection.singletons,
     })
-  }
 
-  return walk(items, '')
-}
+    // Add singletons in this collection
+    if (collection.singletons) {
+      for (const singleton of collection.singletons) {
+        const singletonPath = join(normalizedFull, normalizePathValue(singleton.path))
+        flat.push({
+          type: 'singleton',
+          fullPath: normalizePathValue(singletonPath),
+          name: singleton.name,
+          label: singleton.label,
+          parentPath: normalizedFull,
+          format: singleton.format,
+          fields: singleton.fields,
+        })
+      }
+    }
 
-export const flattenSchema = (items: ResolvedSchemaItem[]): FlatCollection[] => {
-  const flat: FlatCollection[] = []
-  const walk = (node: ResolvedSchemaItem) => {
-    const { children, ...rest } = node
-    flat.push(rest as FlatCollection)
-    if (node.type === 'collection' && children) {
-      children.forEach((child: ResolvedSchemaItem) => walk(child))
+    // Recursively process nested collections
+    if (collection.collections) {
+      for (const child of collection.collections) {
+        walkCollection(child, normalizedFull)
+      }
     }
   }
-  items.forEach((node) => walk(node))
+
+  // Add root-level singletons
+  if (root.singletons) {
+    for (const singleton of root.singletons) {
+      const singletonPath = base ? join(base, normalizePathValue(singleton.path)) : normalizePathValue(singleton.path)
+      flat.push({
+        type: 'singleton',
+        fullPath: normalizePathValue(singletonPath),
+        name: singleton.name,
+        label: singleton.label,
+        parentPath: undefined,
+        format: singleton.format,
+        fields: singleton.fields,
+      })
+    }
+  }
+
+  // Process root-level collections
+  if (root.collections) {
+    for (const collection of root.collections) {
+      walkCollection(collection, '')
+    }
+  }
+
   return flat
 }
 
@@ -391,10 +491,10 @@ export const validateCanopyConfig = (config: unknown): CanopyConfig => {
   const normalized = {
     ...parsed,
     contentRoot: normalizePathValue(parsed.contentRoot ?? 'content'),
-    schema: normalizeSchemaPaths(parsed.schema),
+    schema: normalizeSchemaPathsRoot(parsed.schema),
   }
-  // Ensure paths are resolvable and traversal-safe
-  resolveSchema(normalized.schema, normalized.contentRoot)
+  // Ensure paths are resolvable and traversal-safe by flattening
+  flattenSchema(normalized.schema, normalized.contentRoot)
   return normalized
 }
 
@@ -449,7 +549,8 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
  * Later fragments can override media.
  */
 export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): CanopyConfig => {
-  const schema: SchemaItemConfig[] = []
+  const collections: CollectionConfig[] = []
+  const singletons: SingletonConfig[] = []
   let media: MediaConfig | undefined
   let contentRoot: ContentRoot | undefined
   let sourceRoot: SourceRoot | undefined
@@ -464,7 +565,12 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
 
   for (const fragment of fragments) {
     if (fragment.schema) {
-      schema.push(...fragment.schema)
+      if (fragment.schema.collections) {
+        collections.push(...fragment.schema.collections)
+      }
+      if (fragment.schema.singletons) {
+        singletons.push(...fragment.schema.singletons)
+      }
     }
     if (fragment.media) {
       media = fragment.media
@@ -499,6 +605,11 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     if (fragment.mode) {
       mode = fragment.mode
     }
+  }
+
+  const schema: RootCollectionConfig = {
+    ...(collections.length > 0 ? { collections } : {}),
+    ...(singletons.length > 0 ? { singletons } : {}),
   }
 
   const merged: CanopyConfigInput = {

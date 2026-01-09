@@ -204,6 +204,329 @@ To add support for a new framework (Express, Fastify, SvelteKit, etc.):
 4. **Export unified API** - hide framework details from adopters
 5. **Add framework-specific optimizations** - caching, middleware, etc.
 
+## Schema Architecture
+
+CanopyCMS uses a unified schema model that treats collections and singletons as first-class citizens. Understanding this architecture is essential for working with content.
+
+### Schema Structure
+
+**New Object Format (Current)**
+
+The schema is now defined as an object with separate arrays for collections and singletons:
+
+```typescript
+const config = defineCanopyConfig({
+  schema: {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        label: 'Blog Posts',
+        entries: {
+          format: 'md',
+          fields: [
+            { name: 'title', type: 'string' },
+            { name: 'author', type: 'reference', collections: ['authors'] },
+          ],
+        },
+        // Nested collections and singletons
+        collections: [
+          {
+            name: 'drafts',
+            path: 'drafts',
+            entries: { format: 'md', fields: [...] },
+          },
+        ],
+        singletons: [
+          {
+            name: 'featured',
+            path: 'featured',
+            format: 'json',
+            fields: [{ name: 'postId', type: 'reference', collections: ['posts'] }],
+          },
+        ],
+      },
+    ],
+    singletons: [
+      {
+        name: 'settings',
+        path: 'settings',
+        format: 'json',
+        fields: [{ name: 'siteName', type: 'string' }],
+      },
+    ],
+  },
+})
+```
+
+**Legacy Array Format (Deprecated)**
+
+The old format used a flat array with discriminated types:
+
+```typescript
+// DO NOT use in production - for backward compatibility only
+schema: [
+  { type: 'collection', name: 'posts', path: 'posts', format: 'md', fields: [...] },
+  { type: 'entry', name: 'settings', path: 'settings', format: 'json', fields: [...] },
+]
+```
+
+**Migration:** Use `defineCanopyTestConfig()` in tests for automatic migration from legacy format. Production code should always use the new object format.
+
+### Flattening Schema for Runtime
+
+At runtime, the nested schema is flattened into an indexed structure for O(1) path lookups:
+
+```typescript
+import { flattenSchema } from './config'
+
+// Flatten the schema into a flat array
+const flatItems = flattenSchema(config.schema, config.contentRoot)
+// Returns: FlatSchemaItem[]
+
+// Build an index for fast lookups
+const schemaIndex = new Map(flatItems.map((item) => [item.fullPath, item]))
+
+// Lookup by path
+const item = schemaIndex.get('content/posts')
+if (item?.type === 'collection') {
+  console.log('Collection:', item.name, item.entries?.format)
+} else if (item?.type === 'singleton') {
+  console.log('Singleton:', item.name, item.format)
+}
+```
+
+**FlatSchemaItem Structure**
+
+The flattened schema uses a discriminated union for type safety:
+
+```typescript
+type FlatSchemaItem =
+  | {
+      type: 'collection'
+      fullPath: string          // e.g., "content/posts"
+      name: string              // e.g., "posts"
+      label?: string
+      parentPath?: string       // Path of parent collection
+      entries?: CollectionEntriesConfig
+      collections?: CollectionConfig[]
+      singletons?: SingletonConfig[]
+    }
+  | {
+      type: 'singleton'
+      fullPath: string          // e.g., "content/settings"
+      name: string              // e.g., "settings"
+      label?: string
+      parentPath?: string
+      format: ContentFormat     // 'md' | 'mdx' | 'json'
+      fields: FieldConfig[]
+    }
+```
+
+**Key Properties:**
+- `fullPath`: Absolute path from content root (e.g., `content/posts`, `content/posts/drafts`)
+- `type`: Discriminator field for type narrowing (`'collection'` or `'singleton'`)
+- `parentPath`: For nested items, the parent collection's full path
+- Collections have `entries` config; singletons have `format` and `fields` directly
+
+### Working with ContentStore
+
+The `ContentStore` class uses the flattened schema for all content operations:
+
+**Path Resolution**
+
+```typescript
+// Resolve URL paths to schema items
+const { schemaItem, slug, itemType } = store.resolvePath(['content', 'posts', 'hello'])
+// Returns:
+// - schemaItem: FlatSchemaItem (collection or singleton)
+// - slug: 'hello' for entries, '' for singletons
+// - itemType: 'entry' | 'singleton'
+
+// Try singleton first, then collection+slug
+const singleton = store.resolvePath(['content', 'settings'])
+// { schemaItem: { type: 'singleton', ... }, slug: '', itemType: 'singleton' }
+
+const entry = store.resolvePath(['content', 'posts', 'my-post'])
+// { schemaItem: { type: 'collection', ... }, slug: 'my-post', itemType: 'entry' }
+```
+
+**Reading Content**
+
+```typescript
+// For collection entries: pass collection path and slug
+const doc = await store.read('content/posts', 'hello-world')
+
+// For singletons: pass singleton path, no slug (or empty string)
+const settings = await store.read('content/settings')
+// Equivalent: await store.read('content/settings', '')
+```
+
+**Writing Content**
+
+```typescript
+// Collection entry
+await store.write('content/posts', 'hello-world', {
+  format: 'md',
+  data: { title: 'Hello World' },
+  body: 'Content goes here',
+})
+
+// Singleton
+await store.write('content/settings', '', {
+  format: 'json',
+  data: { siteName: 'My Site' },
+})
+```
+
+**Pattern:** Collections require both path and slug; singletons use path only (empty slug).
+
+### API Response Format
+
+The API distinguishes between entries and singletons using the `itemType` field:
+
+**Collection Items Response**
+
+```typescript
+type CollectionItem = {
+  slug: string
+  itemType: 'entry' | 'singleton'
+  collection: string
+  // ... other fields
+}
+
+// In collections summary
+{
+  collections: [
+    {
+      name: 'posts',
+      type: 'collection',
+      label: 'Blog Posts',
+      path: 'content/posts',
+      children: [
+        // Nested collections and singletons
+        { name: 'featured', type: 'entry', path: 'content/posts/featured' },
+      ],
+    },
+    {
+      name: 'settings',
+      type: 'entry',  // Singletons show as type 'entry'
+      path: 'content/settings',
+    },
+  ],
+  entries: [
+    // Only collection entries appear here
+    { slug: 'hello-world', itemType: 'entry', collection: 'content/posts' },
+  ],
+}
+```
+
+**Key Distinctions:**
+- `itemType: 'entry'`: Regular collection entry with a slug
+- `itemType: 'singleton'`: Single-instance content with a fixed path
+- Singletons appear in the `collections` array with `type: 'entry'`, NOT in the `entries` list
+- Check `itemType` field to distinguish when processing items
+
+### Testing with Schema
+
+**Using defineCanopyTestConfig()**
+
+The test helper handles both old and new formats:
+
+```typescript
+import { defineCanopyTestConfig } from './config-test'
+
+// New format (preferred)
+const config = defineCanopyTestConfig({
+  schema: {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: {
+          format: 'md',
+          fields: [{ name: 'title', type: 'string' }],
+        },
+      },
+    ],
+    singletons: [
+      {
+        name: 'settings',
+        path: 'settings',
+        format: 'json',
+        fields: [{ name: 'siteName', type: 'string' }],
+      },
+    ],
+  },
+})
+
+// Legacy format (auto-migrated)
+const legacyConfig = defineCanopyTestConfig({
+  schema: [
+    { type: 'collection', name: 'posts', path: 'posts', format: 'md', fields: [...] },
+    { type: 'entry', name: 'settings', path: 'settings', format: 'json', fields: [...] },
+  ],
+})
+```
+
+**Testing Schema Resolution**
+
+```typescript
+it('resolves paths to schema items', () => {
+  const config = defineCanopyTestConfig({
+    schema: {
+      collections: [{ name: 'posts', path: 'posts', entries: { fields: [...] } }],
+      singletons: [{ name: 'settings', path: 'settings', format: 'json', fields: [...] }],
+    },
+  })
+
+  const store = new ContentStore(root, config)
+
+  // Test singleton resolution
+  const { schemaItem, slug, itemType } = store.resolvePath(['content', 'settings'])
+  expect(schemaItem.type).toBe('singleton')
+  expect(slug).toBe('')
+  expect(itemType).toBe('singleton')
+
+  // Test collection entry resolution
+  const entry = store.resolvePath(['content', 'posts', 'hello'])
+  expect(entry.schemaItem.type).toBe('collection')
+  expect(entry.slug).toBe('hello')
+  expect(entry.itemType).toBe('entry')
+})
+```
+
+**Common Test Patterns**
+
+```typescript
+// Verify both collections and singletons are indexed
+it('indexes all schema items', () => {
+  const flat = flattenSchema(config.schema, 'content')
+
+  const collections = flat.filter(item => item.type === 'collection')
+  const singletons = flat.filter(item => item.type === 'singleton')
+
+  expect(collections).toHaveLength(1)
+  expect(singletons).toHaveLength(1)
+  expect(flat.find(item => item.name === 'posts')?.fullPath).toBe('content/posts')
+})
+
+// Verify API response format
+it('returns correct itemType in API responses', async () => {
+  const response = await client.entries.list({ branch: 'main' })
+
+  const entries = response.data.entries
+  const collections = response.data.collections
+
+  // Entries should only include collection entries
+  expect(entries.every(e => e.itemType === 'entry')).toBe(true)
+
+  // Singletons appear in collections with type 'entry'
+  const singletons = collections.filter(c => c.type === 'entry')
+  expect(singletons.some(s => s.name === 'settings')).toBe(true)
+})
+```
+
 ## Working with Content IDs
 
 ### Using the ID Index

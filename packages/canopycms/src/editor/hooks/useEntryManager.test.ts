@@ -36,13 +36,13 @@ describe('useEntryManager', () => {
     schema: [],
   }
 
-  const mockEntryListItem = {
+  const mockCollectionItem = {
     id: 'entry1',
     slug: 'test',
     collectionId: 'posts',
     collectionName: 'posts',
     format: 'mdx' as const,
-    type: 'entry' as const,
+    itemType: 'entry' as const,
     path: '/content/posts/test',
   }
 
@@ -172,8 +172,8 @@ describe('useEntryManager', () => {
 
   it('refreshes entries successfully', async () => {
     const mockRefreshed = [
-      mockEntryListItem,
-      { ...mockEntryListItem, id: 'entry2', slug: 'test2', path: '/content/posts/test2' },
+      mockCollectionItem,
+      { ...mockCollectionItem, id: 'entry2', slug: 'test2', path: '/content/posts/test2' },
     ]
     // First call is from useEffect on mount, second is from manual call
     mockClient.entries.list
@@ -206,19 +206,19 @@ describe('useEntryManager', () => {
   })
 
   it('selects newly created entry after refresh', async () => {
-    const newEntry = { ...mockEntryListItem, id: 'new-entry', slug: 'new', path: '/content/posts/new' }
+    const newEntry = { ...mockCollectionItem, id: 'new-entry', slug: 'new', path: '/content/posts/new' }
     // First call is from useEffect on mount, second is from manual call
     mockClient.entries.list
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { entries: [mockEntryListItem], collections: [mockCollectionSummary], pagination: { hasMore: false, limit: 100 } },
+        data: { entries: [mockCollectionItem], collections: [mockCollectionSummary], pagination: { hasMore: false, limit: 100 } },
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
         data: {
-          entries: [mockEntryListItem, newEntry],
+          entries: [mockCollectionItem, newEntry],
           collections: [mockCollectionSummary],
           pagination: { hasMore: false, limit: 100 },
         },
@@ -251,8 +251,8 @@ describe('useEntryManager', () => {
       status: 200,
       data: {
         entries: [
-          mockEntryListItem,
-          { ...mockEntryListItem, id: 'new-post', slug: 'new-post', path: '/content/posts/new-post' },
+          mockCollectionItem,
+          { ...mockCollectionItem, id: 'new-post', slug: 'new-post', path: '/content/posts/new-post' },
         ],
         collections: [mockCollectionSummary],
         pagination: { hasMore: false, limit: 100 },

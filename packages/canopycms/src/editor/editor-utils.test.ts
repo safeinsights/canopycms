@@ -13,7 +13,7 @@ import {
 describe('buildPreviewSrc', () => {
   it('returns the provided preview without modification', () => {
     const result = buildPreviewSrc(
-      { previewSrc: '/custom-preview', type: 'entry' },
+      { previewSrc: '/custom-preview', itemType: 'entry' },
       { branchName: 'feature/test', previewBaseByCollection: { posts: '/posts' } }
     )
     expect(result).toBe('/custom-preview')
@@ -21,7 +21,7 @@ describe('buildPreviewSrc', () => {
 
   it('applies preview base and branch for entries', () => {
     const result = buildPreviewSrc(
-      { collectionId: 'home', collectionName: 'home', type: 'entry' },
+      { collectionId: 'home', collectionName: 'home', itemType: 'entry' },
       { branchName: 'feature/nested', previewBaseByCollection: { home: '/preview/' } }
     )
     expect(result).toBe('/preview?branch=feature%2Fnested')
@@ -29,7 +29,7 @@ describe('buildPreviewSrc', () => {
 
   it('falls back to slug-based URLs and encodes branch parameters', () => {
     const result = buildPreviewSrc(
-      { slug: 'nested path/post', type: 'entry' },
+      { slug: 'nested path/post', itemType: 'entry' },
       { branchName: 'feature-1', previewBaseByCollection: undefined }
     )
     expect(result).toBe('/nested%20path/post?branch=feature-1')
@@ -120,7 +120,7 @@ describe('buildEntriesFromListResponse', () => {
       collectionName: 'Home',
       slug: '',
       format: 'json',
-      type: 'standalone',
+      type: 'singleton',
     },
   ]
 
@@ -150,7 +150,7 @@ describe('buildEntriesFromListResponse', () => {
         collectionId: 'posts',
         collectionName: 'Posts',
         format: 'mdx',
-        type: 'entry',
+        itemType: 'entry',
         path: 'content/posts/hello-world',
         title: 'Hello Title',
         exists: true,
@@ -161,7 +161,7 @@ describe('buildEntriesFromListResponse', () => {
         collectionId: 'home',
         collectionName: 'Home',
         format: 'json',
-        type: 'standalone',
+        itemType: 'singleton',
         path: 'content/home.json',
         exists: false,
       },
@@ -171,7 +171,7 @@ describe('buildEntriesFromListResponse', () => {
 
   it('maps entries with schema, status, preview, and api paths', () => {
     const resolvePreviewSrc = vi.fn(
-      (entry: { collectionId?: string; collectionName?: string; slug?: string; type?: string }) =>
+      (entry: { collectionId?: string; collectionName?: string; slug?: string; itemType?: string }) =>
         `preview-${entry.slug ?? 'home'}`
     )
     const result = buildEntriesFromListResponse({
