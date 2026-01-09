@@ -1,5 +1,5 @@
 import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
-import { ContentStore, ContentStoreError, type ContentDocument } from './content-store'
+import { ContentStore, ContentStoreError } from './content-store'
 import type { CanopyConfig, FlatSchemaItem } from './config'
 import { resolveBranchPaths, type BranchMode } from './paths'
 import { createCanopyServices, type CanopyServices } from './services'
@@ -89,6 +89,10 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     return { entryPath, slug: input.slug, branchName, user: input.user }
   }
 
+  // Cache flattened schema for O(1) lookups
+  const flatSchema = flattenSchema(services.config.schema, services.config.contentRoot)
+  const schemaMap = new Map(flatSchema.map((item) => [item.fullPath, item]))
+
   const encodeSlug = (value?: string): string =>
     (value ?? '')
       .split('/')
@@ -97,23 +101,21 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       .join('/')
 
   const findSchemaNode = (fullPath: string): FlatSchemaItem | undefined => {
-    const flat = flattenSchema(services.config.schema, services.config.contentRoot)
-    return flat.find((item) => item.fullPath === fullPath)
+    return schemaMap.get(fullPath)
   }
+
+  // Build preview path mapping once (uses cached flatSchema)
+  const contentRoot = (services.config.contentRoot ?? 'content').replace(/^\/+|\/+$/g, '')
+  const stripRoot = (val: string) => (contentRoot && val.startsWith(`${contentRoot}/`) ? val.slice(contentRoot.length + 1) : val)
+  const baseMap = new Map<string, string>()
+  flatSchema.forEach((item) => {
+    const base = stripRoot(item.fullPath)
+    baseMap.set(item.fullPath, item.type === 'singleton' ? '/' : base ? `/${base}` : '/')
+  })
 
   const buildEntryPath = (opts: { collectionPath: string; slug?: string; branch?: string }) => {
     const baseResolvedPath = opts.collectionPath
     const node = findSchemaNode(baseResolvedPath)
-    const contentRoot = (services.config.contentRoot ?? 'content').replace(/^\/+|\/+$/g, '')
-    const stripRoot = (val: string) => (contentRoot && val.startsWith(`${contentRoot}/`) ? val.slice(contentRoot.length + 1) : val)
-    const baseMap = new Map<string, string>()
-
-    const flatSchema = flattenSchema(services.config.schema, services.config.contentRoot)
-    flatSchema.forEach((item) => {
-      const base = stripRoot(item.fullPath)
-      baseMap.set(item.fullPath, item.type === 'singleton' ? '/' : base ? `/${base}` : '/')
-    })
-
     const base = baseMap.get(baseResolvedPath) ?? '/'
     const appendBranch = (url: string) =>
       opts.branch ? `${url}${url.includes('?') ? '&' : '?'}branch=${encodeURIComponent(opts.branch)}` : url
@@ -130,33 +132,33 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const { entryPath, slug, branchName, user } = resolveTarget(input)
     const { context, branchRoot, store } = await resolveStore(branchName)
 
-    // Get the document first to determine its path
-    let doc: ContentDocument | null
+    // Get the path WITHOUT reading the file
+    let relativePath: string
     try {
-      doc = await store.read(entryPath, slug ?? '', {
+      relativePath = store.resolveDocumentPath(entryPath, slug ?? '').relativePath
+    } catch (err) {
+      const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
+      throw new ContentStoreError(message)
+    }
+
+    // Check permissions BEFORE reading the file (security)
+    const shouldCheckPermissions = !isBuildMode()
+    if (shouldCheckPermissions) {
+      const access = await services.checkContentAccess(context, branchRoot, relativePath, user, 'read')
+      if (!access.allowed) {
+        throw new ContentStoreError('Forbidden')
+      }
+    }
+
+    // ONLY if permissions pass, read the file
+    try {
+      return await store.read(entryPath, slug ?? '', {
         resolveReferences: input.resolveReferences ?? true,
       })
     } catch (err: any) {
-      if (err?.code === 'ENOENT') {
-        doc = null
-      } else {
-        const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
-        throw new ContentStoreError(message)
-      }
+      if (err?.code === 'ENOENT') return null
+      throw err
     }
-
-    // Check permissions if we have a document
-    if (doc) {
-      const shouldCheckPermissions = !isBuildMode()
-      if (shouldCheckPermissions) {
-        const access = await services.checkContentAccess(context, branchRoot, doc.relativePath, user, 'read')
-        if (!access.allowed) {
-          throw new ContentStoreError('Forbidden')
-        }
-      }
-    }
-
-    return doc
   }
 
   const read: ContentReader['read'] = async <T = unknown>(

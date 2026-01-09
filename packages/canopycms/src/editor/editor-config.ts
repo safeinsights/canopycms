@@ -18,14 +18,24 @@ const stripContentRoot = (fullPath: string, contentRoot: string): string => {
 /**
  * Build hierarchical editor collections from the flattened schema.
  * Uses fullPath as IDs to match API responses. Includes both collections and singletons.
+ * Optimized to O(n) using Map-based grouping.
  */
 export const buildEditorCollections = (config: Pick<CanopyConfig, 'schema' | 'contentRoot'>): EditorCollection[] => {
   const flat = flattenSchema(config.schema, config.contentRoot)
 
-  // Build a tree from flat items
+  // Group items by parentPath for O(1) lookup - O(n) total
+  const childrenByParent = new Map<string | undefined, FlatSchemaItem[]>()
+  for (const item of flat) {
+    const key = item.parentPath
+    if (!childrenByParent.has(key)) {
+      childrenByParent.set(key, [])
+    }
+    childrenByParent.get(key)!.push(item)
+  }
+
+  // Build tree recursively using the grouped map
   const buildTree = (parentPath?: string): EditorCollection[] => {
-    // Find all items that are direct children of this parent
-    const children = flat.filter(item => item.parentPath === parentPath)
+    const children = childrenByParent.get(parentPath) || []
 
     return children.map(item => {
       if (item.type === 'collection') {

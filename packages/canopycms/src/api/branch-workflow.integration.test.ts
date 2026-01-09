@@ -139,18 +139,22 @@ describe('PR Workflow Integration', () => {
       defaultRemoteUrl: remotePath,
       gitBotAuthorName: 'Test Bot',
       gitBotAuthorEmail: 'bot@example.com',
-      schema: [
-        {
-          type: 'collection',
-          name: 'posts',
-          path: 'posts',
-          format: 'json',
-          fields: [
-            { name: 'title', type: 'string' },
-            { name: 'content', type: 'markdown' },
-          ],
-        },
-      ],
+      schema: {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: {
+              format: 'json',
+              fields: [
+                { name: 'title', type: 'string' },
+                { name: 'content', type: 'markdown' },
+              ],
+            },
+          },
+        ],
+        singletons: [],
+      },
     })
 
     const githubService = new GitHubService({
@@ -432,15 +436,17 @@ describe('PR Workflow Integration', () => {
       defaultRemoteUrl: remotePath,
       gitBotAuthorName: 'Bot',
       gitBotAuthorEmail: 'bot@test.com',
-      schema: [
-        {
-          type: 'entry',
-          name: 'home',
-          path: 'home',
-          format: 'json',
-          fields: [{ name: 'title', type: 'string' }],
-        },
-      ],
+      schema: {
+        collections: [],
+        singletons: [
+          {
+            name: 'home',
+            path: 'home',
+            format: 'json',
+            fields: [{ name: 'title', type: 'string' }],
+          },
+        ],
+      },
     })
 
     const githubService = new GitHubService({

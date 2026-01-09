@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
 import { createContentReader } from './content-reader'
@@ -40,24 +40,25 @@ describe('createContentReader', () => {
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
-      schema: [
-        {
-          type: 'entry',
-          name: 'home',
-          path: 'home',
-          format: 'json',
-          fields: [
-            { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
-          ],
-        },
-        {
-          type: 'collection',
-          name: 'posts',
-          path: 'posts',
-          format: 'json',
-          fields: [{ name: 'title', type: 'string' }],
-        },
-      ],
+      schema: {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+          },
+        ],
+        singletons: [
+          {
+            name: 'home',
+            path: 'home',
+            format: 'json',
+            fields: [
+              { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+            ],
+          },
+        ],
+      },
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
@@ -84,24 +85,25 @@ describe('createContentReader', () => {
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
-      schema: [
-        {
-          type: 'entry',
-          name: 'home',
-          path: 'home',
-          format: 'json',
-          fields: [
-            { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
-          ],
-        },
-        {
-          type: 'collection',
-          name: 'posts',
-          path: 'posts',
-          format: 'json',
-          fields: [{ name: 'title', type: 'string' }],
-        },
-      ],
+      schema: {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+          },
+        ],
+        singletons: [
+          {
+            name: 'home',
+            path: 'home',
+            format: 'json',
+            fields: [
+              { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+            ],
+          },
+        ],
+      },
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
@@ -123,15 +125,17 @@ describe('createContentReader', () => {
     await fs.mkdir(path.join(root, 'content'), { recursive: true })
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'deny',
-      schema: [
-        {
-          type: 'entry',
-          name: 'home',
-          path: 'home',
-          format: 'json',
-          fields: [{ name: 'title', type: 'string' }],
-        },
-      ],
+      schema: {
+        collections: [],
+        singletons: [
+          {
+            name: 'home',
+            path: 'home',
+            format: 'json',
+            fields: [{ name: 'title', type: 'string' }],
+          },
+        ],
+      },
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
@@ -155,22 +159,23 @@ describe('createContentReader', () => {
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
-      schema: [
-        {
-          type: 'collection',
-          name: 'posts',
-          path: 'posts',
-          format: 'json',
-          fields: [{ name: 'title', type: 'string' }],
-        },
-        {
-          type: 'entry',
-          name: 'home',
-          path: 'home',
-          format: 'json',
-          fields: [{ name: 'title', type: 'string' }],
-        },
-      ],
+      schema: {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+          },
+        ],
+        singletons: [
+          {
+            name: 'home',
+            path: 'home',
+            format: 'json',
+            fields: [{ name: 'title', type: 'string' }],
+          },
+        ],
+      },
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
@@ -213,17 +218,19 @@ describe('createContentReader', () => {
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
       mode: 'local-simple',
-      schema: [
-        {
-          type: 'entry',
-          name: 'home',
-          path: 'home',
-          format: 'json',
-          fields: [
-            { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
-          ],
-        },
-      ],
+      schema: {
+        collections: [],
+        singletons: [
+          {
+            name: 'home',
+            path: 'home',
+            format: 'json',
+            fields: [
+              { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+            ],
+          },
+        ],
+      },
     })
 
     const reader = createContentReader({ config, basePathOverride: root })
@@ -236,5 +243,51 @@ describe('createContentReader', () => {
     const meta = JSON.parse(metaRaw)
     expect(meta.branch.name).toBe('main')
     expect(meta.branch.createdBy).toBe('canopycms-content-reader')
+  })
+
+  it('checks permissions BEFORE reading file (security)', async () => {
+    const root = await tmpDir()
+    const homePath = path.join(root, 'content/home.json')
+    await fs.mkdir(path.dirname(homePath), { recursive: true })
+    await fs.writeFile(homePath, JSON.stringify({ title: 'Secret' }, null, 2), 'utf8')
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      defaultPathAccess: 'deny', // Deny by default
+      schema: {
+        collections: [],
+        singletons: [
+          {
+            name: 'home',
+            path: 'home',
+            format: 'json',
+            fields: [{ name: 'title', type: 'string' }],
+          },
+        ],
+      },
+    })
+
+    const branchContext = buildBranchContext(root)
+    const reader = createContentReader({
+      config,
+      allowCreateBranch: false,
+      getBranchContext: async () => branchContext,
+    })
+
+    // Spy on fs.readFile to verify content file is NOT read when permission is denied
+    const readFileSpy = vi.spyOn(fs, 'readFile')
+
+    // Attempt unauthorized read
+    await expect(
+      reader.read({ entryPath: 'content/home', user: { type: 'authenticated', userId: 'unauthorized', groups: [] } })
+    ).rejects.toThrow(/Forbidden/)
+
+    // CRITICAL: Content file should NOT have been accessed (permissions.json is OK)
+    const contentFileCalls = readFileSpy.mock.calls.filter((call) =>
+      call[0].toString().includes('content/home.json')
+    )
+    expect(contentFileCalls).toHaveLength(0)
+
+    readFileSpy.mockRestore()
   })
 })

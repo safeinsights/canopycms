@@ -260,6 +260,75 @@ describe('PermissionManager', () => {
         expect(screen.getByText('content')).toBeTruthy()
       })
     })
+
+    it('preserves nested collection hierarchy in tree', async () => {
+      // Schema with nested collections
+      const nestedSchema = {
+        collections: [
+          {
+            name: 'docs',
+            path: 'docs',
+            entries: {
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+            collections: [
+              {
+                name: 'api',
+                path: 'api',
+                entries: {
+                  format: 'md' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              },
+            ],
+            singletons: [
+              {
+                name: 'overview',
+                path: 'overview',
+                format: 'md' as const,
+                fields: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
+          },
+        ],
+      }
+
+      render(
+        <PermissionManager
+          schema={nestedSchema}
+          permissions={[]}
+          canEdit={true}
+          onSave={mockOnSave}
+          onSearchUsers={mockOnSearchUsers}
+          onListGroups={mockOnListGroups}
+        />,
+        { wrapper }
+      )
+
+      // Expand the content root
+      const contentNode = screen.getByText('content')
+      fireEvent.click(contentNode)
+
+      await waitFor(() => {
+        expect(screen.getByText('docs')).toBeTruthy()
+      })
+
+      // Expand the docs collection
+      const docsNode = screen.getByText('docs')
+      fireEvent.click(docsNode)
+
+      // Wait for nested items to appear
+      await waitFor(() => {
+        // CRITICAL: Nested items should appear under 'docs', not at root level
+        const apiNode = screen.queryByText('api')
+        const overviewNode = screen.queryByText('overview')
+
+        // These items should exist when docs is expanded
+        expect(apiNode).not.toBeNull()
+        expect(overviewNode).not.toBeNull()
+      }, { timeout: 3000 })
+    })
   })
 
   describe('node selection', () => {

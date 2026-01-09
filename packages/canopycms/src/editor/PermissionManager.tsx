@@ -934,28 +934,39 @@ function buildTree(schema: CanopyConfig['schema'], contentTree?: ContentNode, co
   // Flatten schema to get all collections and singletons
   const flatSchema = flattenSchema(schema, contentRoot)
 
-  // Add schema items
+  // Create a map of path -> TreeNode for fast lookup
+  const nodeMap = new Map<string, TreeNode>()
+  nodeMap.set(contentRoot, root)
+
+  // First pass: Create all nodes
   flatSchema.forEach((item) => {
-    // Extract display name from fullPath (last segment)
     const pathSegments = item.fullPath.split('/').filter(Boolean)
     const displayName = pathSegments[pathSegments.length - 1] || item.name
 
-    if (item.type === 'collection') {
-      const collectionNode: TreeNode = {
-        path: item.fullPath,
-        name: displayName,
-        type: 'folder',
-        children: [],
-      }
-      root.children.push(collectionNode)
-    } else if (item.type === 'singleton') {
-      const entryNode: TreeNode = {
-        path: item.fullPath,
-        name: displayName,
-        type: 'file',
-        children: [],
-      }
-      root.children.push(entryNode)
+    const node: TreeNode = {
+      path: item.fullPath,
+      name: displayName,
+      type: item.type === 'collection' ? 'folder' : 'file',
+      children: [],
+    }
+
+    nodeMap.set(item.fullPath, node)
+  })
+
+  // Second pass: Build hierarchy using parentPath
+  flatSchema.forEach((item) => {
+    const node = nodeMap.get(item.fullPath)
+    if (!node) return
+
+    // Determine parent path (or use root if no parent)
+    const parentPath = item.parentPath || contentRoot
+    const parentNode = nodeMap.get(parentPath)
+
+    if (parentNode) {
+      parentNode.children.push(node)
+    } else {
+      // Fallback: add to root if parent not found
+      root.children.push(node)
     }
   })
 
