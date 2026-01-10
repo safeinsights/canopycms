@@ -3,7 +3,6 @@ import { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { InternalGroup } from '../groups-file'
 import { loadInternalGroups, saveInternalGroups } from '../groups-loader'
-import { resolveBranchPaths } from '../paths'
 import type { CanopyGroupId } from '../types'
 import { isAdmin, RESERVED_GROUPS, isReservedGroup } from '../reserved-groups'
 import { defineEndpoint } from './route-builder'
@@ -106,9 +105,7 @@ const getInternalGroupsHandler = async (
       return { ok: false, status: 500, error: 'Main branch not found' }
     }
 
-    const branchMode = ctx.services.config.mode ?? 'local-simple'
-    const branchPaths = resolveBranchPaths(context, branchMode)
-    const groups = await loadInternalGroups(branchPaths.branchRoot)
+    const groups = await loadInternalGroups(context.branchRoot)
 
     return {
       ok: true,
@@ -166,21 +163,14 @@ const updateInternalGroupsHandler = async (
       return { ok: false, status: 500, error: 'Main branch not found' }
     }
 
-    const branchMode = ctx.services.config.mode ?? 'local-simple'
-    const branchPaths = resolveBranchPaths(context, branchMode)
-
-    await saveInternalGroups(branchPaths.branchRoot, body.groups, req.user.userId)
+    await saveInternalGroups(context.branchRoot, body.groups, req.user.userId)
 
     // Commit the change
-    if (ctx.services.createGitManagerFor) {
-      const git = ctx.services.createGitManagerFor(branchPaths.branchRoot)
-      await git.ensureAuthor({
-        name: ctx.services.config.gitBotAuthorName,
-        email: ctx.services.config.gitBotAuthorEmail,
-      })
-      await git.add(['.canopycms/groups.json'])
-      await git.commit('Update internal groups')
-    }
+    await ctx.services.commitFiles({
+      context,
+      files: '.canopycms/groups.json',
+      message: 'Update internal groups',
+    })
 
     return { ok: true, status: 200 }
   } catch (error) {

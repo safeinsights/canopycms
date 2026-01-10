@@ -34,6 +34,12 @@ You are a codebase guide for CanopyCMS. Your job is to help navigate the project
 
 **Key Types**: ApiContext (services, user, branch), ApiRequest, ApiResponse
 
+**Git Operations Pattern**: API handlers use service methods for git operations:
+
+- permissions.ts, groups.ts → Use `ctx.services.commitFiles()` for admin config changes
+- branch-status.ts → Uses `ctx.services.submitBranch()` for full submit workflow
+- All handlers access paths via `context.branchRoot` and `context.baseRoot` (BranchContext extends BranchPaths)
+
 ## Authentication & Permissions
 
 **Location**: packages/canopycms/src/auth/, packages/canopycms/src/
@@ -179,6 +185,41 @@ defineCanopyConfig({
 - .canopycms/branch.json - Per-branch metadata
 - .canopycms/branches.json - Branch registry
 - .canopycms/comments.json - Comment threads
+
+### Git Operations (Service Methods)
+
+**Location**: packages/canopycms/src/services.ts
+
+Two high-level service methods handle git operations with automatic author handling:
+
+| Method           | Purpose               | Usage                                                  |
+| ---------------- | --------------------- | ------------------------------------------------------ |
+| `commitFiles()`  | Commit specific files | Admin changes (permissions, groups)                    |
+| `submitBranch()` | Full submit workflow  | Branch submission (checkout, status, commit all, push) |
+
+**Pattern**: Use `context.branchRoot` directly instead of `resolveBranchPaths()`. BranchContext extends BranchPaths, so it already has `branchRoot` and `baseRoot` properties.
+
+**commitFiles Example** (permissions.ts, groups.ts):
+
+```typescript
+await ctx.services.commitFiles({
+  context,
+  files: '.canopycms/permissions.json',
+  message: 'Update permissions',
+})
+```
+
+**submitBranch Example** (branch-status.ts):
+
+```typescript
+await ctx.services.submitBranch({ context })
+```
+
+**Git Author Handling**: Both methods automatically call `git.ensureAuthor()` using `gitBotAuthorName` and `gitBotAuthorEmail` from config. No manual author setup needed.
+
+**GitManager.add()**: Now accepts `string | string[]` instead of just `string[]` for convenience.
+
+**Testing**: Use `createMockGitServices()` from `packages/canopycms/src/test-utils/mock-git-services.ts` to mock git operations in tests.
 
 ## Example App
 

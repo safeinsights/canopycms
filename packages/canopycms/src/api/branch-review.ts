@@ -2,7 +2,6 @@ import { z } from 'zod'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
-import { resolveBranchPaths } from '../paths'
 import { isReviewer } from '../reserved-groups'
 import { defineEndpoint } from './route-builder'
 
@@ -56,9 +55,7 @@ const requestChangesHandler = async (
   }
 
   // Update branch status to 'editing'
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const meta = getBranchMetadataFileManager(branchPaths.branchRoot, branchPaths.baseRoot)
+  const meta = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)
 
   const updated = await meta.save({
     branch: { name: context.branch.name, status: 'editing' },
@@ -98,9 +95,7 @@ const approveBranchHandler = async (
   }
 
   // Update branch status to 'approved'
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const meta = getBranchMetadataFileManager(branchPaths.branchRoot, branchPaths.baseRoot)
+  const meta = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)
 
   const updated = await meta.save({
     branch: { name: context.branch.name, status: 'approved' },

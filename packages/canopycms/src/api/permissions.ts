@@ -3,7 +3,6 @@ import { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { PathPermission } from '../config'
 import { loadPathPermissions, savePathPermissions } from '../permissions-loader'
-import { resolveBranchPaths } from '../paths'
 import { isAdmin, isReviewer } from '../reserved-groups'
 import { defineEndpoint } from './route-builder'
 
@@ -48,9 +47,7 @@ const getPermissionsHandler = async (
       return { ok: false, status: 500, error: 'Main branch not found' }
     }
 
-    const branchMode = ctx.services.config.mode ?? 'local-simple'
-    const branchPaths = resolveBranchPaths(context, branchMode)
-    const permissions = await loadPathPermissions(branchPaths.branchRoot)
+    const permissions = await loadPathPermissions(context.branchRoot)
 
     return {
       ok: true,
@@ -92,21 +89,14 @@ const updatePermissionsHandler = async (
       return { ok: false, status: 500, error: 'Main branch not found' }
     }
 
-    const branchMode = ctx.services.config.mode ?? 'local-simple'
-    const branchPaths = resolveBranchPaths(context, branchMode)
-
-    await savePathPermissions(branchPaths.branchRoot, body.permissions, req.user.userId)
+    await savePathPermissions(context.branchRoot, body.permissions, req.user.userId)
 
     // Commit the change
-    if (ctx.services.createGitManagerFor) {
-      const git = ctx.services.createGitManagerFor(branchPaths.branchRoot)
-      await git.ensureAuthor({
-        name: ctx.services.config.gitBotAuthorName,
-        email: ctx.services.config.gitBotAuthorEmail,
-      })
-      await git.add(['.canopycms/permissions.json'])
-      await git.commit('Update permissions')
-    }
+    await ctx.services.commitFiles({
+      context,
+      files: '.canopycms/permissions.json',
+      message: 'Update permissions',
+    })
 
     return { ok: true, status: 200 }
   } catch (error) {

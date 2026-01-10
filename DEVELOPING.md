@@ -840,6 +840,140 @@ cd packages/canopycms && npm test
 cd packages/canopycms && npx vitest run src/github-service.test.ts
 ```
 
+### Mocking Git Operations
+
+After a major refactoring, CanopyCMS tests now mock high-level git service methods instead of low-level git operations. This makes tests more maintainable and focused on API behavior.
+
+**New Pattern: Use `createMockGitServices()`**
+
+Import the test utility:
+
+```typescript
+import { createMockGitServices } from '../test-utils/mock-git-services'
+```
+
+Create mock services in your test setup:
+
+```typescript
+const mockGitServices = createMockGitServices()
+
+const mockContext: ApiContext = {
+  services: {
+    config: testConfig,
+    flatSchema: [],
+    // ... other services
+    commitFiles: mockGitServices.commitFiles,
+    submitBranch: mockGitServices.submitBranch,
+  },
+  getBranchContext: vi.fn().mockResolvedValue({
+    baseRoot: '/test/repo',
+    branchRoot: '/test/repo',
+    branch: {
+      name: 'main',
+      status: 'editing',
+      // ... branch metadata
+    },
+  }),
+}
+```
+
+**Verify Git Operations in Tests**
+
+After calling an API handler, verify that `commitFiles` or `submitBranch` was called with the correct arguments:
+
+```typescript
+it('commits files when updating permissions', async () => {
+  const req: ApiRequest = {
+    method: 'POST',
+    url: '/main/permissions',
+    json: async () => ({
+      path: 'content/posts',
+      groups: { Editors: ['read', 'write'] },
+    }),
+  }
+
+  const result = await updatePermissionsHandler(
+    mockContext,
+    { user: adminUser },
+    { branch: 'main' },
+  )
+
+  expect(result.ok).toBe(true)
+
+  // Verify commitFiles was called with correct arguments
+  expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
+    context: {
+      baseRoot: '/test/repo',
+      branchRoot: '/test/repo',
+      branch: {
+        name: 'main',
+        status: 'editing',
+        access: { allowedUsers: [], allowedGroups: [] },
+        createdBy: 'admin-1',
+        createdAt: '2024-01-01T00:00:00Z',
+        updatedAt: '2024-01-01T00:00:00Z',
+      },
+    },
+    files: '.canopycms/permissions.json',
+    message: 'Update permissions',
+  })
+})
+```
+
+**What Changed**
+
+**Old Pattern (Deprecated):**
+
+```typescript
+// DON'T DO THIS - old pattern
+const mockGitManager = {
+  ensureAuthor: vi.fn(),
+  add: vi.fn(),
+  commit: vi.fn(),
+}
+
+// Verify individual git operations
+expect(mockGitManager.ensureAuthor).toHaveBeenCalled()
+expect(mockGitManager.add).toHaveBeenCalledWith('.canopycms/permissions.json')
+expect(mockGitManager.commit).toHaveBeenCalledWith('Update permissions')
+```
+
+**New Pattern (Current):**
+
+```typescript
+// DO THIS - new pattern
+import { createMockGitServices } from '../test-utils/mock-git-services'
+
+const mockGitServices = createMockGitServices()
+
+// Include in ApiContext
+services: {
+  commitFiles: mockGitServices.commitFiles,
+  submitBranch: mockGitServices.submitBranch,
+}
+
+// Verify high-level service calls
+expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
+  context: branchContext,
+  files: '.canopycms/permissions.json',
+  message: 'Update permissions',
+})
+```
+
+**When to Use Each Method**
+
+- `commitFiles`: For operations that modify content or metadata files (permissions, groups, content updates)
+- `submitBranch`: For workflow operations that transition a branch to merge (submit for review, approve merge)
+
+**Benefits of the New Pattern**
+
+1. **Higher-level abstractions** - Test the service interface, not git internals
+2. **Cleaner test setup** - `createMockGitServices()` creates both mocks at once
+3. **Easier maintenance** - Changes to git implementation don't break tests
+4. **More focused tests** - Verify what the API does, not how git works
+
+See `/packages/canopycms/src/api/permissions.test.ts` (lines 169-185) and `/packages/canopycms/src/api/groups.test.ts` (lines 195-210) for complete examples.
+
 ### Expecting Console Messages
 
 When testing code that intentionally logs to `console.error`, `console.warn`, or `console.log`, use the `mockConsole()` utility to:

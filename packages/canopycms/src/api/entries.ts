@@ -8,7 +8,6 @@ import matter from 'gray-matter'
 import type { FieldConfig, ContentFormat, FlatSchemaItem } from '../config'
 import { ContentStoreError } from '../content-store'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import { resolveBranchPaths } from '../paths'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
 
@@ -237,9 +236,7 @@ export const listEntriesHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const root = branchPaths.branchRoot
+  const root = context.branchRoot
   const flatCollections = ctx.services.flatSchema
 
   const targetId = params.collection ? normalizeCollectionId(params.collection) : undefined

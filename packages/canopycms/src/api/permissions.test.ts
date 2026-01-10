@@ -61,6 +61,8 @@ describe('permissions API', () => {
         createGitManagerFor: vi.fn(() => mockGit) as any,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
+        commitFiles: vi.fn(),
+        submitBranch: vi.fn(),
       },
       authPlugin: mockAuthPlugin,
       getBranchContext: vi.fn(),
@@ -164,12 +166,24 @@ describe('permissions API', () => {
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-      expect(localMockGit.ensureAuthor).toHaveBeenCalledWith({
-        name: 'Test Bot',
-        email: 'bot@test.com',
+
+      // Verify commitFiles was called with the correct arguments
+      expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
+        context: {
+          baseRoot: '/test/repo',
+          branchRoot: '/test/repo',
+          branch: {
+            name: 'main',
+            status: 'editing',
+            access: { allowedUsers: [], allowedGroups: [] },
+            createdBy: 'admin-1',
+            createdAt: '2024-01-01T00:00:00Z',
+            updatedAt: '2024-01-01T00:00:00Z',
+          },
+        },
+        files: '.canopycms/permissions.json',
+        message: 'Update permissions',
       })
-      expect(localMockGit.add).toHaveBeenCalledWith(['.canopycms/permissions.json'])
-      expect(localMockGit.commit).toHaveBeenCalledWith('Update permissions')
     })
 
     it('denies access for non-admin users', async () => {

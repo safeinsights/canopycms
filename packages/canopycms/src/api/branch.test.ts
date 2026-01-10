@@ -140,6 +140,8 @@ const baseCtx: ApiContext = {
     checkContentAccess: vi.fn(),
     createGitManagerFor: undefined as any,
     registry: mockRegistry as any,
+    commitFiles: vi.fn(),
+    submitBranch: vi.fn(),
     bootstrapAdminIds: new Set<string>(),
   },
   getBranchContext: vi.fn().mockResolvedValue(makeBranchContextForMain()),

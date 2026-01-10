@@ -3,7 +3,6 @@ import { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { ContentStore, ContentStoreError } from '../content-store'
 import type { ContentFormat } from '../config'
-import { resolveBranchPaths } from '../paths'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 
@@ -74,9 +73,7 @@ const readContentHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const store = new ContentStore(branchPaths.branchRoot, ctx.services.flatSchema)
+  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
 
   // Parse path segments: params.path is like "content/posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -102,7 +99,7 @@ const readContentHandler = async (
 
   const access = await ctx.services.checkContentAccess(
     context,
-    branchPaths.branchRoot,
+    context.branchRoot,
     relativePath,
     req.user,
     'read',
@@ -126,9 +123,7 @@ const writeContentHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const store = new ContentStore(branchPaths.branchRoot, ctx.services.flatSchema)
+  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
 
   // Parse path segments: params.path is like "content/posts/hello" or "posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -154,7 +149,7 @@ const writeContentHandler = async (
 
   const access = await ctx.services.checkContentAccess(
     context,
-    branchPaths.branchRoot,
+    context.branchRoot,
     relativePath,
     req.user,
     'edit',
@@ -194,9 +189,7 @@ const validateReferencesHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const store = new ContentStore(branchPaths.branchRoot, ctx.services.flatSchema)
+  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
 
   // Parse path segments to get collection/schema info
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -219,7 +212,7 @@ const validateReferencesHandler = async (
 
   const access = await ctx.services.checkContentAccess(
     context,
-    branchPaths.branchRoot,
+    context.branchRoot,
     relativePath,
     req.user,
     'read',
