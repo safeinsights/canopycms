@@ -106,8 +106,11 @@ const mockRegistry = {
 const baseCtx: ApiContext = {
   services: {
     config: { schema: [], defaultBaseBranch: 'main', mode: 'local-simple' } as any,
+    flatSchema: [],
     checkBranchAccess: vi.fn(),
+    checkPathAccess: undefined as any,
     checkContentAccess: vi.fn(),
+    createGitManagerFor: undefined as any,
     registry: mockRegistry as any,
     bootstrapAdminIds: new Set<string>(),
   },

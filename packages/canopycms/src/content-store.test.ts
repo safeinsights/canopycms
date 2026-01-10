@@ -5,6 +5,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { defineCanopyTestConfig } from './config-test'
+import { flattenSchema } from './config'
 import { ContentStore, ContentStoreError } from './content-store'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
@@ -24,7 +25,7 @@ describe('ContentStore', () => {
         singletons: [],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     await store.write('content/posts', 'hello-world', {
       format: 'md',
@@ -53,7 +54,7 @@ describe('ContentStore', () => {
         singletons: [],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     await store.write('content/pages', 'landing', {
       format: 'mdx',
@@ -82,7 +83,7 @@ describe('ContentStore', () => {
         singletons: [],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     await store.write('content/config', 'site', {
       format: 'json',
@@ -108,7 +109,7 @@ describe('ContentStore', () => {
         singletons: [],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     await expect(
       store.write('content/posts', '../escape', { format: 'md', data: { title: 'bad' }, body: 'x' })
@@ -130,7 +131,7 @@ describe('ContentStore', () => {
         ],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     await store.write('content/settings', '', {
       format: 'json',
@@ -157,7 +158,7 @@ describe('ContentStore', () => {
         singletons: [],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     await expect(
       store.write('content/posts', '2024/hello', {
@@ -182,7 +183,7 @@ describe('ContentStore', () => {
         singletons: [],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     await expect(
       store.write('content/posts', 'bad\\slug', {
@@ -207,7 +208,7 @@ describe('ContentStore', () => {
         singletons: [],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     // Path: content/posts/hello -> collection=content/posts, slug=hello
     const result = store.resolvePath(['content', 'posts', 'hello'])
@@ -231,7 +232,7 @@ describe('ContentStore', () => {
         ],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     // Path: content/settings -> singleton, no slug
     const result = store.resolvePath(['content', 'settings'])
@@ -261,7 +262,7 @@ describe('ContentStore', () => {
         singletons: [],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     // Path: content/docs/guides/getting-started
     // -> collection=content/docs/guides, slug=getting-started
@@ -299,7 +300,7 @@ describe('ContentStore', () => {
         singletons: [],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     // Path: content/docs/api/v2/authentication
     // -> collection=content/docs/api/v2, slug=authentication
@@ -344,7 +345,7 @@ describe('ContentStore', () => {
         singletons: [],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     // Path: content/docs/api/v2/endpoints/users
     // -> collection=content/docs/api/v2/endpoints, slug=users
@@ -382,7 +383,7 @@ describe('ContentStore', () => {
         singletons: [],
       },
     })
-    const store = new ContentStore(root, config)
+    const store = new ContentStore(root, flattenSchema(config.schema, config.contentRoot))
 
     // Write to 3-level nested collection
     await store.write('content/docs/api/v2', 'authentication', {

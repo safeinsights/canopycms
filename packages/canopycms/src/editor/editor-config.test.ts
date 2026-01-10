@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import { flattenSchema } from '../config'
 import { buildEditorCollections, buildPreviewBaseByCollection } from './editor-config'
 
 const baseConfig = {
@@ -47,7 +48,7 @@ const baseConfig = {
 
 describe('editor-config helpers', () => {
   it('builds editor collections from schema/config including singletons', () => {
-    const collections = buildEditorCollections(baseConfig)
+    const collections = buildEditorCollections(flattenSchema(baseConfig.schema, baseConfig.contentRoot))
     expect(collections).toHaveLength(3)  // 2 collections + 1 singleton
     expect(collections.map((c) => c.id).sort()).toEqual(['content/home', 'content/nested', 'content/posts'])
 
@@ -64,17 +65,18 @@ describe('editor-config helpers', () => {
   })
 
   it('derives preview bases from content root and schema paths', () => {
-    const previewBase = buildPreviewBaseByCollection(baseConfig)
+    const previewBase = buildPreviewBaseByCollection(baseConfig, flattenSchema(baseConfig.schema, baseConfig.contentRoot))
     expect(previewBase['content/posts']).toBe('/posts')
     expect(previewBase['content/home']).toBe('/')  // Singleton gets root
     expect(previewBase['content/nested/child']).toBe('/nested/child')
   })
 
   it('trims content root slashes when building preview bases', () => {
-    const previewBase = buildPreviewBaseByCollection({
+    const config = {
       ...baseConfig,
       contentRoot: '/site/content/',
-    })
+    }
+    const previewBase = buildPreviewBaseByCollection(config, flattenSchema(config.schema, config.contentRoot))
     expect(previewBase['site/content/posts']).toBe('/posts')
   })
 
@@ -103,7 +105,7 @@ describe('editor-config helpers', () => {
       },
     }
 
-    const collections = buildEditorCollections(config)
+    const collections = buildEditorCollections(flattenSchema(config.schema, config.contentRoot))
     expect(collections).toHaveLength(1)
 
     const docs = collections[0]

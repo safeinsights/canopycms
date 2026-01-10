@@ -1,6 +1,6 @@
 import type { ContentStore } from '../content-store'
 import type { ContentIdIndex, IdLocation } from '../content-id-index'
-import type { FieldConfig } from '../config'
+import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig } from '../config'
 
 export interface ReferenceInfo {
   entryId: string
@@ -139,7 +139,7 @@ export class DeletionChecker {
         }
       } else if (field.type === 'object') {
         // Recurse into object fields
-        const objectField = field as any
+        const objectField = field as ObjectFieldConfig
         if (objectField.fields && typeof value === 'object' && !Array.isArray(value)) {
           found.push(
             ...this.findIdInData(
@@ -152,12 +152,12 @@ export class DeletionChecker {
         }
       } else if (field.type === 'block') {
         // Handle block fields
-        const blockField = field as any
+        const blockField = field as BlockFieldConfig
         if (Array.isArray(value)) {
           value.forEach((item, index) => {
             if (typeof item === 'object' && item !== null) {
               const blockType = (item as any)._type
-              const blockDef = blockField.blocks?.find((b: any) => b.name === blockType)
+              const blockDef = blockField.templates?.find((b: any) => b.name === blockType)
               if (blockDef && blockDef.fields) {
                 found.push(
                   ...this.findIdInData(
@@ -204,8 +204,8 @@ export class DeletionChecker {
   ): Array<{ relativePath: string; collection: string; slug: string }> {
     const entries: Array<{ relativePath: string; collection: string; slug: string }> = []
 
-    // Access the internal map (this is a temporary solution)
-    const allLocations = Array.from((this.idIndex as any).idToLocation.values()) as IdLocation[]
+    // Get all locations from the index
+    const allLocations = this.idIndex.getAllLocations()
 
     for (const location of allLocations) {
       if (location.type === 'entry') {

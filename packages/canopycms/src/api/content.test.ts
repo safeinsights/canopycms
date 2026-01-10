@@ -24,8 +24,11 @@ vi.mock('../content-store', () => {
 const allowedCtx = (): ApiContext => ({
   services: {
     config: { schema: [] } as any,
+    flatSchema: [],
     checkBranchAccess: vi.fn(),
+    checkPathAccess: undefined as any,
     checkContentAccess: vi.fn().mockReturnValue({ allowed: true, branch: {}, path: {} }),
+    createGitManagerFor: undefined as any,
     bootstrapAdminIds: new Set<string>(),
     registry: undefined as any,
   },
@@ -41,8 +44,11 @@ describe('content api', () => {
     const ctx: ApiContext = {
       services: {
         config: { schema: [] } as any,
+        flatSchema: [],
         checkBranchAccess: vi.fn(),
+        checkPathAccess: undefined as any,
         checkContentAccess: vi.fn().mockReturnValue({ allowed: false, branch: {}, path: {} }),
+        createGitManagerFor: undefined as any,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
       },

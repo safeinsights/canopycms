@@ -50,8 +50,11 @@ const baseContext = {
 const makeCtx = (githubService?: any): ApiContext => ({
   services: {
     config: { schema: [] } as any,
+    flatSchema: [],
     checkBranchAccess: vi.fn(),
+    checkPathAccess: undefined as any,
     checkContentAccess: vi.fn(),
+    createGitManagerFor: undefined as any,
     githubService,
     bootstrapAdminIds: new Set<string>(),
     registry: undefined as any,

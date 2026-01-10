@@ -5,6 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type { CanopyConfig } from './config'
+import { flattenSchema } from './config'
 import { ContentIdIndex } from './content-id-index'
 import { ContentStore } from './content-store'
 import { ReferenceResolver } from './reference-resolver'
@@ -70,7 +71,7 @@ describe('ReferenceResolver', () => {
       },
     }
 
-    store = new ContentStore(tempDir, config)
+    store = new ContentStore(tempDir, flattenSchema(config.schema, config.contentRoot))
     idIndex = await store.idIndex()
     const contentRoot = config.contentRoot ?? 'content'
     resolver = new ReferenceResolver(store, idIndex, contentRoot)

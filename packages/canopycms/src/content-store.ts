@@ -3,9 +3,9 @@ import path from 'node:path'
 
 import matter from 'gray-matter'
 
-import type { ContentFormat, CanopyConfig, FlatSchemaItem } from './config'
-import { flattenSchema } from './config'
+import type { ContentFormat, FlatSchemaItem } from './config'
 import { ContentIdIndex } from './content-id-index'
+import { getFormatExtension } from './utils/format'
 
 export type MarkdownDocument = {
   format: 'md' | 'mdx'
@@ -54,10 +54,9 @@ export class ContentStore {
   private readonly _idIndex: ContentIdIndex
   private indexLoaded: boolean = false
 
-  constructor(root: string, config: CanopyConfig) {
+  constructor(root: string, flatSchema: FlatSchemaItem[]) {
     this.root = path.resolve(root)
-    const flat = flattenSchema(config.schema, config.contentRoot ?? 'content')
-    this.schemaIndex = new Map(flat.map((item) => [item.fullPath, item]))
+    this.schemaIndex = new Map(flatSchema.map((item) => [item.fullPath, item]))
     this._idIndex = new ContentIdIndex(this.root)
   }
 
@@ -90,12 +89,6 @@ export class ContentStore {
     return item
   }
 
-  private extensionFor(format: ContentFormat): string {
-    if (format === 'md') return '.md'
-    if (format === 'mdx') return '.mdx'
-    return '.json'
-  }
-
   /**
    * Build absolute and relative paths with security validation.
    *
@@ -113,7 +106,7 @@ export class ContentStore {
     // Singletons: fullPath includes complete path
     if (schemaItem.type === 'singleton') {
       const format = schemaItem.format
-      const ext = this.extensionFor(format)
+      const ext = getFormatExtension(format)
       const resolvedPath = path.resolve(this.root, `${schemaItem.fullPath}${ext}`)
 
       // Security: Prevent path traversal
@@ -137,7 +130,7 @@ export class ContentStore {
       validateSlug(safeSlug)
 
       const format = schemaItem.entries?.format || 'json'
-      const ext = this.extensionFor(format)
+      const ext = getFormatExtension(format)
       const collectionRoot = path.resolve(this.root, schemaItem.fullPath)
 
       // Security: Prevent path traversal at collection level

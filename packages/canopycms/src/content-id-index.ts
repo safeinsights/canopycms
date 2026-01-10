@@ -127,6 +127,14 @@ export class ContentIdIndex {
   }
 
   /**
+   * Get all ID locations in the index.
+   * Useful for validation and checking references.
+   */
+  getAllLocations(): IdLocation[] {
+    return Array.from(this.idToLocation.values())
+  }
+
+  /**
    * Add a new entry or collection.
    * Generates a new ID, creates the symlink in content/_ids_/, and updates the index.
    * Returns the generated ID.

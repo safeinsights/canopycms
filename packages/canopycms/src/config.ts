@@ -256,18 +256,31 @@ export type CustomFieldConfig = Exclude<FieldConfig, { type: FieldType }>
 export type SingletonConfig = z.infer<typeof singletonSchema>
 export type CollectionEntriesConfig = z.infer<typeof collectionEntriesSchema>
 export type CollectionConfig = z.infer<typeof collectionSchema>
+/**
+ * Root schema configuration for CanopyCMS.
+ * Contains top-level collections and singletons arrays.
+ * Can be nested recursively with collections containing sub-collections and singletons.
+ */
 export type RootCollectionConfig = z.infer<typeof rootCollectionSchema>
 export type PathPermission = z.infer<typeof pathPermissionSchema>
 export type MediaConfig = z.infer<typeof mediaSchema>
+/**
+ * Validated CanopyConfig.
+ */
 export type CanopyConfig = z.infer<typeof CanopyConfigSchema>
 export type CanopyConfigInput = z.input<typeof CanopyConfigSchema>
 export type CanopyEditorConfig = z.infer<typeof editorConfigSchema>
 
-// Client config - subset safe for browser (DRY - derived from CanopyConfig)
+/**
+ * Client config - subset safe for browser (DRY - derived from CanopyConfig)
+ * Use services.flatSchema for O(1) cached access to the flattened schema structure.
+ */
 export type CanopyClientConfig = Pick<
   CanopyConfig,
   'schema' | 'defaultBaseBranch' | 'contentRoot' | 'editor' | 'mode'
->
+> & {
+  flatSchema: FlatSchemaItem[]
+}
 
 // Client-only fields that can be provided as overrides (e.g., from auth providers)
 export interface ClientOnlyFields {
@@ -278,11 +291,6 @@ export interface ClientOnlyFields {
   }
 }
 
-// Helper to extract client config from server config (deprecated - use config.client() instead)
-export function extractClientConfig(serverConfig: CanopyConfig): CanopyClientConfig {
-  const { schema, defaultBaseBranch, contentRoot, editor, mode } = serverConfig
-  return { schema, defaultBaseBranch, contentRoot, editor, mode }
-}
 export type DefaultBranchAccess = z.infer<typeof defaultBranchAccessSchema>
 export type DefaultPathAccess = z.infer<typeof defaultPathAccessSchema>
 export type DefaultBaseBranch = z.infer<typeof defaultBaseBranchSchema>
@@ -297,7 +305,11 @@ export type SourceRoot = z.infer<typeof sourceRootSchema>
 
 export type CanopyConfigFragment = Partial<CanopyConfigInput>
 
-// Flattened schema items for indexing
+/**
+ * Flattened schema item for efficient lookups.
+ * Discriminated union of collection or singleton with full path resolved.
+ * Used for O(1) schema lookups via Map<fullPath, FlatSchemaItem>.
+ */
 export type FlatSchemaItem =
   | {
       type: 'collection'
@@ -397,8 +409,18 @@ const normalizeSchemaPathsRoot = (root: RootCollectionConfig): RootCollectionCon
 }
 
 /**
- * Flatten the root collection schema into a Map-friendly structure
- * Returns an array of FlatSchemaItem (collections and singletons)
+ * Flatten the root collection schema into a flat array for O(1) lookups.
+ * Traverses the nested schema structure and returns all collections and singletons
+ * with their full paths resolved.
+ *
+ * @param root - The root collection configuration
+ * @param basePath - Optional base path to prepend (e.g., 'content')
+ * @returns Array of flattened schema items with full paths
+ *
+ * @example
+ * const flat = flattenSchema(config.schema, 'content')
+ * const map = new Map(flat.map(item => [item.fullPath, item]))
+ * const item = map.get('content/posts') // O(1) lookup
  */
 export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSchemaItem[] => {
   const flat: FlatSchemaItem[] = []
@@ -490,9 +512,8 @@ export const validateCanopyConfig = (config: unknown): CanopyConfig => {
     contentRoot: normalizePathValue(parsed.contentRoot ?? 'content'),
     schema: normalizeSchemaPathsRoot(parsed.schema),
   }
-  // Ensure paths are resolvable and traversal-safe by flattening
-  flattenSchema(normalized.schema, normalized.contentRoot)
-  return normalized
+
+  return normalized as CanopyConfig
 }
 
 /**
@@ -526,6 +547,7 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
         contentRoot,
         editor,
         mode,
+        flatSchema: flattenSchema(schema, contentRoot),
       }
 
       // Merge client overrides (e.g., auth handlers from useClerkAuthConfig)

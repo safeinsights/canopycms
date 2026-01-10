@@ -100,11 +100,12 @@ const updatePermissionsHandler = async (
     // Commit the change
     if (ctx.services.createGitManagerFor) {
       const git = ctx.services.createGitManagerFor(branchPaths.branchRoot)
-      await git.add('.canopycms/permissions.json')
-      await git.commit('Update permissions', {
+      await git.ensureAuthor({
         name: ctx.services.config.gitBotAuthorName,
         email: ctx.services.config.gitBotAuthorEmail,
       })
+      await git.add(['.canopycms/permissions.json'])
+      await git.commit('Update permissions')
     }
 
     return { ok: true, status: 200 }

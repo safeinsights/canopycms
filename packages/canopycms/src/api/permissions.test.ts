@@ -23,6 +23,11 @@ const listGroups = PERMISSION_ROUTES.listGroups.handler
 describe('permissions API', () => {
   let mockContext: ApiContext
   let mockAuthPlugin: AuthPlugin
+  let mockGit: {
+    add: ReturnType<typeof vi.fn>
+    commit: ReturnType<typeof vi.fn>
+    ensureAuthor: ReturnType<typeof vi.fn>
+  }
 
   beforeEach(() => {
     mockAuthPlugin = {
@@ -31,6 +36,12 @@ describe('permissions API', () => {
       getUserMetadata: vi.fn(),
       getGroupMetadata: vi.fn(),
       listGroups: vi.fn(),
+    }
+
+    mockGit = {
+      add: vi.fn(),
+      commit: vi.fn(),
+      ensureAuthor: vi.fn(),
     }
 
     const mockConfig: Partial<CanopyConfig> = {
@@ -43,12 +54,11 @@ describe('permissions API', () => {
     mockContext = {
       services: {
         config: mockConfig as CanopyConfig,
+        flatSchema: [],
         checkBranchAccess: vi.fn(),
+        checkPathAccess: undefined as any,
         checkContentAccess: vi.fn(),
-        createGitManagerFor: vi.fn(() => ({
-          add: vi.fn(),
-          commit: vi.fn(),
-        })),
+        createGitManagerFor: vi.fn(() => mockGit) as any,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
       },
@@ -139,11 +149,12 @@ describe('permissions API', () => {
       })
       mockContext.getBranchContext = mockGetBranchContext
 
-      const mockGit = {
+      const localMockGit = {
         add: vi.fn(),
         commit: vi.fn(),
+        ensureAuthor: vi.fn(),
       }
-      mockContext.services.createGitManagerFor = vi.fn().mockReturnValue(mockGit)
+      mockContext.services.createGitManagerFor = vi.fn().mockReturnValue(localMockGit)
 
       const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
@@ -153,11 +164,12 @@ describe('permissions API', () => {
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-      expect(mockGit.add).toHaveBeenCalledWith('.canopycms/permissions.json')
-      expect(mockGit.commit).toHaveBeenCalledWith('Update permissions', expect.objectContaining({
+      expect(localMockGit.ensureAuthor).toHaveBeenCalledWith({
         name: 'Test Bot',
         email: 'bot@test.com',
-      }))
+      })
+      expect(localMockGit.add).toHaveBeenCalledWith(['.canopycms/permissions.json'])
+      expect(localMockGit.commit).toHaveBeenCalledWith('Update permissions')
     })
 
     it('denies access for non-admin users', async () => {

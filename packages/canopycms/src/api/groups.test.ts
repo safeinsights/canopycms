@@ -29,12 +29,14 @@ describe('groups API', () => {
   let mockGit: {
     add: ReturnType<typeof vi.fn>
     commit: ReturnType<typeof vi.fn>
+    ensureAuthor: ReturnType<typeof vi.fn>
   }
 
   beforeEach(() => {
     mockGit = {
       add: vi.fn(),
       commit: vi.fn(),
+      ensureAuthor: vi.fn(),
     }
 
     mockContext = {
@@ -189,11 +191,12 @@ describe('groups API', () => {
       )
 
       // Verify git operations
-      expect(mockGit.add).toHaveBeenCalledWith('.canopycms/groups.json')
-      expect(mockGit.commit).toHaveBeenCalledWith('Update internal groups', {
+      expect(mockGit.ensureAuthor).toHaveBeenCalledWith({
         name: 'Canopy Bot',
         email: 'bot@example.com',
       })
+      expect(mockGit.add).toHaveBeenCalledWith(['.canopycms/groups.json'])
+      expect(mockGit.commit).toHaveBeenCalledWith('Update internal groups')
     })
   })
 

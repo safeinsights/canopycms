@@ -5,7 +5,6 @@ import { resolveBranchPaths, type BranchMode } from './paths'
 import { createCanopyServices, type CanopyServices } from './services'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
-import { flattenSchema } from './config'
 import { isBuildMode } from './build-mode'
 
 export interface ContentReaderOptions {
@@ -76,7 +75,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     return {
       context,
       branchRoot,
-      store: new ContentStore(branchRoot, services.config),
+      store: new ContentStore(branchRoot, services.flatSchema),
     }
   }
 
@@ -90,7 +89,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   }
 
   // Cache flattened schema for O(1) lookups
-  const flatSchema = flattenSchema(services.config.schema, services.config.contentRoot)
+  const flatSchema = services.flatSchema
   const schemaMap = new Map(flatSchema.map((item) => [item.fullPath, item]))
 
   const encodeSlug = (value?: string): string =>
