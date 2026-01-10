@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import React, { useEffect } from 'react'
 
-import type { CanopyConfig } from '../config'
+import { defineCanopyConfig } from '../config'
 import { CanopyEditor } from './CanopyEditor'
 
 const meta: Meta<typeof CanopyEditor> = {
@@ -12,25 +12,29 @@ const meta: Meta<typeof CanopyEditor> = {
 export default meta
 type Story = StoryObj<typeof CanopyEditor>
 
-const config: CanopyConfig = {
-  schema: [
-    {
-      type: 'collection',
-      name: 'posts',
-      label: 'Posts',
-      path: 'posts',
-      format: 'json',
-      fields: [{ name: 'title', type: 'string' }],
-    },
-    {
-      type: 'entry',
-      name: 'home',
-      label: 'Home',
-      path: 'home',
-      format: 'json',
-      fields: [{ name: 'hero', type: 'string' }],
-    },
-  ],
+const configBundle = defineCanopyConfig({
+  schema: {
+    collections: [
+      {
+        name: 'posts',
+        label: 'Posts',
+        path: 'posts',
+        entries: {
+          format: 'json',
+          fields: [{ name: 'title', type: 'string' }],
+        },
+      },
+    ],
+    singletons: [
+      {
+        name: 'home',
+        label: 'Home',
+        path: 'home',
+        format: 'json',
+        fields: [{ name: 'hero', type: 'string' }],
+      },
+    ],
+  },
   contentRoot: 'content',
   defaultBaseBranch: 'main',
   gitBotAuthorName: 'Canopy Bot',
@@ -40,14 +44,16 @@ const config: CanopyConfig = {
     subtitle: 'Config-driven wrapper',
     theme: { colors: { brand: '#4f46e5' } },
   },
-}
+})
+
+const config = configBundle.client()
 
 const entries = [
   {
     id: 'content/home',
     label: 'Home',
     status: 'page',
-    schema: config.schema[1].fields,
+    schema: configBundle.server.schema.singletons![0].fields,
     apiPath: '/api/canopycms/main/content/home',
     collectionId: 'content/home',
     collectionName: 'home',

@@ -174,11 +174,12 @@ const updateInternalGroupsHandler = async (
     // Commit the change
     if (ctx.services.createGitManagerFor) {
       const git = ctx.services.createGitManagerFor(branchPaths.branchRoot)
-      await git.add('.canopycms/groups.json')
-      await git.commit('Update internal groups', {
+      await git.ensureAuthor({
         name: ctx.services.config.gitBotAuthorName,
         email: ctx.services.config.gitBotAuthorEmail,
       })
+      await git.add(['.canopycms/groups.json'])
+      await git.commit('Update internal groups')
     }
 
     return { ok: true, status: 200 }

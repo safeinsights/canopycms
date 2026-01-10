@@ -1,4 +1,5 @@
-import type { CanopyConfig } from './config'
+import type { CanopyConfig, FlatSchemaItem } from './config'
+import { flattenSchema } from './config'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
 import { createCheckPathAccess } from './path-permissions'
@@ -27,6 +28,8 @@ export const getBootstrapAdminIds = (): Set<string> => {
 
 export interface CanopyServices {
   config: CanopyConfig
+  /** Cached flattened schema for O(1) lookups */
+  flatSchema: FlatSchemaItem[]
   checkBranchAccess: (
     context: BranchContext,
     user: CanopyUser,
@@ -55,6 +58,9 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
 
   // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
+
+  // Flatten schema once for O(1) lookups throughout the app
+  const flatSchema = flattenSchema(config.schema, config.contentRoot)
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
   // Path permissions are loaded dynamically from .canopycms/permissions.json at request time.
@@ -96,6 +102,7 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
 
   return {
     config,
+    flatSchema,
     checkBranchAccess,
     checkPathAccess,
     checkContentAccess,

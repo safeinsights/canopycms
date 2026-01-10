@@ -60,7 +60,8 @@ export class ReferenceResolver {
         collection: location.collection,
         slug: location.slug,
       }
-    } catch {
+    } catch (error) {
+      console.log('Failed to resolve reference:', { id, error })
       return {
         id,
         exists: false,
@@ -110,8 +111,13 @@ export class ReferenceResolver {
             label,
             collection: entry.collection,
           })
-        } catch {
+        } catch (error) {
           // Skip entries that can't be read
+          console.log('Failed to read entry for reference options:', {
+            collection: entry.collection,
+            slug: entry.slug,
+            error,
+          })
           continue
         }
       }

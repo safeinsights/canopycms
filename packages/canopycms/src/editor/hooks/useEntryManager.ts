@@ -159,7 +159,10 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   const handleCreateEntry = async (collectionId: string) => {
     const col = collectionById.get(collectionId)
-    if (!col || col.type === 'entry') return
+    if (!col || col.type === 'entry') {
+      console.log('Collection not found or is singleton:', { collectionId })
+      return
+    }
     const slug = window.prompt(`New ${col.label ?? col.name} slug?`, 'untitled')
     if (!slug) return
     options.setBusy(true)

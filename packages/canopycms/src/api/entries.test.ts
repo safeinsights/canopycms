@@ -5,6 +5,7 @@ import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from '../config-test'
+import { flattenSchema } from '../config'
 import { createCheckBranchAccess } from '../authz'
 import { createCheckContentAccess } from '../content-access'
 import type { PathPermission } from '../config'
@@ -70,10 +71,13 @@ describe('listEntries', () => {
     const ctx: ApiContext = {
       services: {
         config,
+        flatSchema: flattenSchema(config.schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
+        checkPathAccess: undefined as any,
+        createGitManagerFor: undefined as any,
       },
       getBranchContext: vi.fn().mockResolvedValue({
         baseRoot: root,
@@ -114,8 +118,11 @@ describe('listEntries', () => {
     const ctx: ApiContext = {
       services: {
         config: { schema: [] } as any,
+        flatSchema: [],
         checkBranchAccess: vi.fn(),
+        checkPathAccess: undefined as any,
         checkContentAccess: vi.fn().mockResolvedValue({ allowed: true, branch: {}, path: {} }),
+        createGitManagerFor: undefined as any,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
       },
@@ -198,10 +205,13 @@ describe('listEntries', () => {
     const ctx: ApiContext = {
       services: {
         config,
+        flatSchema: flattenSchema(config.schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
+        checkPathAccess: undefined as any,
+        createGitManagerFor: undefined as any,
       },
       getBranchContext: vi.fn().mockResolvedValue({
         baseRoot: root,
@@ -315,10 +325,13 @@ describe('listEntries', () => {
     const ctx: ApiContext = {
       services: {
         config,
+        flatSchema: flattenSchema(config.schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
+        checkPathAccess: undefined as any,
+        createGitManagerFor: undefined as any,
       },
       getBranchContext: vi.fn().mockResolvedValue({
         baseRoot: root,

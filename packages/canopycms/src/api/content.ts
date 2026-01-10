@@ -76,7 +76,7 @@ const readContentHandler = async (
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchPaths(context, branchMode)
-  const store = new ContentStore(branchPaths.branchRoot, ctx.services.config)
+  const store = new ContentStore(branchPaths.branchRoot, ctx.services.flatSchema)
 
   // Parse path segments: params.path is like "content/posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -128,7 +128,7 @@ const writeContentHandler = async (
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchPaths(context, branchMode)
-  const store = new ContentStore(branchPaths.branchRoot, ctx.services.config)
+  const store = new ContentStore(branchPaths.branchRoot, ctx.services.flatSchema)
 
   // Parse path segments: params.path is like "content/posts/hello" or "posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -196,7 +196,7 @@ const validateReferencesHandler = async (
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchPaths(context, branchMode)
-  const store = new ContentStore(branchPaths.branchRoot, ctx.services.config)
+  const store = new ContentStore(branchPaths.branchRoot, ctx.services.flatSchema)
 
   // Parse path segments to get collection/schema info
   const contentRoot = ctx.services.config.contentRoot || 'content'

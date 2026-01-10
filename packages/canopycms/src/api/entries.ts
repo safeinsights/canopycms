@@ -7,10 +7,10 @@ import matter from 'gray-matter'
 
 import type { FieldConfig, ContentFormat, FlatSchemaItem } from '../config'
 import { ContentStoreError } from '../content-store'
-import { flattenSchema } from '../config'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { resolveBranchPaths } from '../paths'
 import { defineEndpoint } from './route-builder'
+import { getFormatExtension } from '../utils/format'
 
 type CollectionKind = 'collection' | 'entry'
 
@@ -74,12 +74,6 @@ const listEntriesParamsSchema = z.object({
   recursive: z.boolean().optional(),
 })
 
-const extensionFor = (format: ContentFormat): string => {
-  if (format === 'md') return '.md'
-  if (format === 'mdx') return '.mdx'
-  return '.json'
-}
-
 const normalizePath = (root: string, target: string): string => {
   const resolvedRoot = path.resolve(root)
   const withSep = resolvedRoot.endsWith(path.sep) ? resolvedRoot : `${resolvedRoot}${path.sep}`
@@ -116,7 +110,7 @@ const listCollectionEntries = async (
   }
 
   const format = collection.entries.format || 'json'
-  const ext = extensionFor(format)
+  const ext = getFormatExtension(format)
   const collectionRoot = path.resolve(root, collection.fullPath)
   normalizePath(root, collectionRoot)
   const entries: CollectionItem[] = []
@@ -246,7 +240,7 @@ export const listEntriesHandler = async (
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchPaths(context, branchMode)
   const root = branchPaths.branchRoot
-  const flatCollections = flattenSchema(ctx.services.config.schema, ctx.services.config.contentRoot)
+  const flatCollections = ctx.services.flatSchema
 
   const targetId = params.collection ? normalizeCollectionId(params.collection) : undefined
   let targetCollections = flatCollections
@@ -305,7 +299,7 @@ export const listEntriesHandler = async (
         try {
           // Try to read the singleton file to get its title
           const format = item.format
-          const ext = extensionFor(format)
+          const ext = getFormatExtension(format)
           const singletonPath = path.resolve(root, `${item.fullPath}${ext}`)
 
           let title: string | undefined

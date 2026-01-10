@@ -44,7 +44,7 @@ const getReferenceOptionsHandler = async (
 
   const branchMode = ctx.services.config.mode ?? 'local-simple'
   const branchPaths = resolveBranchPaths(context, branchMode)
-  const store = new ContentStore(branchPaths.branchRoot, ctx.services.config)
+  const store = new ContentStore(branchPaths.branchRoot, ctx.services.flatSchema)
 
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()

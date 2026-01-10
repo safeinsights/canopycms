@@ -63,8 +63,11 @@ const baseContext = {
 const makeCtx = (allowed = true): ApiContext => ({
   services: {
     config: { schema: [], mode: 'local-simple' } as any,
+    flatSchema: [],
     checkBranchAccess: vi.fn().mockReturnValue({ allowed, reason: allowed ? 'allowed' : 'denied' }),
+    checkPathAccess: undefined as any,
     checkContentAccess: vi.fn(),
+    createGitManagerFor: undefined as any,
     bootstrapAdminIds: new Set<string>(),
     registry: undefined as any,
   },

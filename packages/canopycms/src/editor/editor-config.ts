@@ -1,5 +1,4 @@
 import type { CanopyConfig, FlatSchemaItem } from '../config'
-import { flattenSchema } from '../config'
 import type { EditorCollection } from './Editor'
 
 const normalizeContentRoot = (value?: string): string => {
@@ -20,10 +19,8 @@ const stripContentRoot = (fullPath: string, contentRoot: string): string => {
  * Uses fullPath as IDs to match API responses. Includes both collections and singletons.
  * Optimized to O(n) using Map-based grouping.
  */
-export const buildEditorCollections = (
-  config: Pick<CanopyConfig, 'schema' | 'contentRoot'>,
-): EditorCollection[] => {
-  const flat = flattenSchema(config.schema, config.contentRoot)
+export const buildEditorCollections = (flatSchema: FlatSchemaItem[]): EditorCollection[] => {
+  const flat = flatSchema
 
   // Group items by parentPath for O(1) lookup - O(n) total
   const childrenByParent = new Map<string | undefined, FlatSchemaItem[]>()
@@ -67,10 +64,11 @@ export const buildEditorCollections = (
 }
 
 export const buildPreviewBaseByCollection = (
-  config: Pick<CanopyConfig, 'schema' | 'contentRoot'>,
+  config: Pick<CanopyConfig, 'contentRoot'>,
+  flatSchema: FlatSchemaItem[],
 ): Record<string, string> => {
   const contentRoot = normalizeContentRoot(config.contentRoot)
-  const flat = flattenSchema(config.schema, config.contentRoot)
+  const flat = flatSchema
   const map: Record<string, string> = {}
 
   for (const item of flat) {

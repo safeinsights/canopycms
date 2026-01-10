@@ -2,6 +2,7 @@ import React from 'react'
 
 import { describe, expect, it, vi } from 'vitest'
 
+import { flattenSchema } from '../config'
 import type { EditorProps } from './Editor'
 import { CanopyEditor } from './CanopyEditor'
 
@@ -67,5 +68,9 @@ function renderComponent(
   extraProps: Partial<Omit<React.ComponentProps<typeof CanopyEditor>, 'config'>> = {},
 ) {
   const { render } = require('@testing-library/react') as typeof import('@testing-library/react')
-  return render(<CanopyEditor config={baseConfig as any} entries={[]} {...extraProps} />)
+  const configWithFlat = {
+    ...baseConfig,
+    flatSchema: flattenSchema(baseConfig.schema, baseConfig.contentRoot),
+  }
+  return render(<CanopyEditor config={configWithFlat as any} entries={[]} {...extraProps} />)
 }

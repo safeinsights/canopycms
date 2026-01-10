@@ -26,10 +26,10 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
   branchName,
   branchMode,
 }) => {
-  const collections = useMemo(() => buildEditorCollections(config), [config])
+  const collections = useMemo(() => buildEditorCollections(config.flatSchema), [config.flatSchema])
   const previewBase = useMemo(
     () => ({
-      ...buildPreviewBaseByCollection(config),
+      ...buildPreviewBaseByCollection(config, config.flatSchema),
       ...(config.editor?.previewBase ?? {}),
     }),
     [config],

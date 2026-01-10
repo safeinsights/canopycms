@@ -1,31 +1,10 @@
 import type { BranchContext } from '../types'
-import type { CanopyConfig, PermissionLevel } from '../config'
-import type { GitHubService } from '../github-service'
+import type { PermissionLevel } from '../config'
+import type { CanopyServices } from '../services'
 import type { CanopyUser } from '../user'
-import type { BranchRegistry } from '../branch-registry'
 
 export interface ApiContext {
-  // TODO DRY this services entry up by using a Partial<CanopyServices> or similar
-  services: {
-    config: CanopyConfig
-    checkBranchAccess: (
-      context: BranchContext,
-      user: CanopyUser,
-    ) => { allowed: boolean; reason: string }
-    checkContentAccess: (
-      branchContext: BranchContext,
-      branchRoot: string,
-      relativePath: string,
-      user: CanopyUser,
-      level: PermissionLevel,
-    ) => Promise<{ allowed: boolean; branch: any; path: any }>
-    createGitManagerFor?: (repoPath: string, opts?: { baseBranch?: string; remote?: string }) => any
-    githubService?: GitHubService
-    /** Branch registry for listing/caching branches */
-    registry: BranchRegistry
-    /** Bootstrap admin user IDs that are always treated as Admins */
-    bootstrapAdminIds: Set<string>
-  }
+  services: CanopyServices
   // TODO DRY this definition up in terms of AssetStore interface
   assetStore?: {
     list(prefix?: string): Promise<{ key: string; url?: string }[]>

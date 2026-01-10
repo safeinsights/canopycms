@@ -12,8 +12,15 @@ const deleteAsset = ASSET_ROUTES.delete.handler
 const makeCtx = (): ApiContext => ({
   services: {
     config: { schema: [] } as any,
+    flatSchema: [],
     checkBranchAccess: () => ({ allowed: true, reason: 'no_acl' }),
-    checkContentAccess: async () => ({ allowed: true, branch: {}, path: {} }),
+    checkPathAccess: undefined as any,
+    checkContentAccess: async () => ({
+      allowed: true,
+      branch: { allowed: true, reason: 'no_acl' },
+      path: { allowed: true, reason: 'no_acl' },
+    }),
+    createGitManagerFor: undefined as any,
     bootstrapAdminIds: new Set<string>(),
     registry: undefined as any,
   },
