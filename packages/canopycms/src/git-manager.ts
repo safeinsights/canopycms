@@ -312,8 +312,9 @@ export class GitManager {
     await this.git.rebase([`${this.remote}/${this.baseBranch}`])
   }
 
-  async add(files: string[]): Promise<void> {
-    await this.git.add(files)
+  async add(files: string | string[]): Promise<void> {
+    const fileArray = Array.isArray(files) ? files : [files]
+    await this.git.add(fileArray)
   }
 
   async commit(message: string): Promise<void> {

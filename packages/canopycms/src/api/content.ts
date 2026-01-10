@@ -3,7 +3,6 @@ import { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { ContentStore, ContentStoreError } from '../content-store'
 import type { ContentFormat } from '../config'
-import { resolveBranchPaths } from '../paths'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 
@@ -74,9 +73,7 @@ const readContentHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const store = new ContentStore(branchPaths.branchRoot, ctx.services.flatSchema)
+  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
 
   // Parse path segments: params.path is like "content/posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -101,7 +98,7 @@ const readContentHandler = async (
     return { ok: false, status: 400, error: message }
   }
 
-  const access = await ctx.services.checkContentAccess(context, branchPaths.branchRoot, relativePath, req.user, 'read')
+  const access = await ctx.services.checkContentAccess(context, context.branchRoot, relativePath, req.user, 'read')
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
@@ -122,9 +119,7 @@ const writeContentHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const store = new ContentStore(branchPaths.branchRoot, ctx.services.flatSchema)
+  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
 
   // Parse path segments: params.path is like "content/posts/hello" or "posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -149,7 +144,7 @@ const writeContentHandler = async (
     return { ok: false, status: 400, error: message }
   }
 
-  const access = await ctx.services.checkContentAccess(context, branchPaths.branchRoot, relativePath, req.user, 'edit')
+  const access = await ctx.services.checkContentAccess(context, context.branchRoot, relativePath, req.user, 'edit')
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
@@ -185,9 +180,7 @@ const validateReferencesHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const store = new ContentStore(branchPaths.branchRoot, ctx.services.flatSchema)
+  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
 
   // Parse path segments to get collection/schema info
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -209,7 +202,7 @@ const validateReferencesHandler = async (
     return { ok: false, status: 400, error: message }
   }
 
-  const access = await ctx.services.checkContentAccess(context, branchPaths.branchRoot, relativePath, req.user, 'read')
+  const access = await ctx.services.checkContentAccess(context, context.branchRoot, relativePath, req.user, 'read')
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }

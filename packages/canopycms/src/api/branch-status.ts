@@ -5,7 +5,6 @@ import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withdrawBranch } from './branch-withdraw'
 import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
-import { resolveBranchPaths } from '../paths'
 import { defineEndpoint } from './route-builder'
 import type { BranchMetadata } from '../types'
 
@@ -50,31 +49,17 @@ const submitBranchForMergeHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const meta = getBranchMetadataFileManager(branchPaths.branchRoot, branchPaths.baseRoot)
-
-  const gitFactory = ctx.services.createGitManagerFor
-  if (!gitFactory) {
-    return { ok: false, status: 500, error: 'Git manager unavailable' }
-  }
+  const meta = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)
 
   // Commit and push changes
   try {
-    const git = gitFactory(branchPaths.branchRoot)
-    await git.checkoutBranch(context.branch.name)
-    const status = await git.status()
-    if (status.files.length > 0) {
-      await git.add(['.'])
-      await git.commit(`Submit ${context.branch.name}`)
-      await git.push(context.branch.name)
-    }
+    await ctx.services.submitBranch({ context })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to push branch changes'
     return {
       ok: false,
       status: 500,
-      error: `Failed to push branch changes (${branchPaths.branchRoot}): ${message}`,
+      error: `Failed to push branch changes (${context.branchRoot}): ${message}`,
     }
   }
 
@@ -83,6 +68,7 @@ const submitBranchForMergeHandler = async (
   let prUrl = context.branch.pullRequestUrl
   let prNumber = context.branch.pullRequestNumber
 
+  const branchMode = ctx.services.config.mode ?? 'local-simple'
   if (githubService && branchMode !== 'local-simple') {
     try {
       const prTitle = context.branch.title || `Submit ${context.branch.name}`

@@ -59,7 +59,8 @@ const makeCtx = (allowed = true): ApiContext => ({
     }),
     bootstrapAdminIds: new Set<string>(),
     registry: undefined as any,
-  },
+    commitFiles: vi.fn(),
+    submitBranch: vi.fn(),  },
   getBranchContext: vi.fn().mockResolvedValue(baseContext),
 })
 

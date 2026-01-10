@@ -3,7 +3,6 @@ import { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { CommentThread, CommentType } from '../comment-store'
 import { CommentStore } from '../comment-store'
-import { resolveBranchPaths } from '../paths'
 import { isReviewer } from '../reserved-groups'
 import { defineEndpoint } from './route-builder'
 
@@ -64,9 +63,7 @@ const listCommentsHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const commentStore = new CommentStore(branchPaths.branchRoot)
+  const commentStore = new CommentStore(context.branchRoot)
 
   const threads = await commentStore.listThreads({ includeResolved: true })
 
@@ -98,9 +95,7 @@ const addCommentHandler = async (
     return { ok: false, status: 400, error: 'entryId required for field/entry comments' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const commentStore = new CommentStore(branchPaths.branchRoot)
+  const commentStore = new CommentStore(context.branchRoot)
 
   const result = await commentStore.addComment({
     userId: req.user.userId,
@@ -124,9 +119,7 @@ const resolveCommentHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const commentStore = new CommentStore(branchPaths.branchRoot)
+  const commentStore = new CommentStore(context.branchRoot)
 
   // Get the thread to check permissions
   const thread = await commentStore.getThread(params.threadId)

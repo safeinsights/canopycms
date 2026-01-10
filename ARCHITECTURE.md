@@ -357,6 +357,77 @@ Combines branch and path checks into a single decision. Returns detailed denial 
 - These files ARE committed to git, providing version history and PR-reviewable changes
 - Branch ACLs are stored in each branch's metadata file
 
+## Git Operations Architecture
+
+CanopyCMS uses a layered approach to Git operations, separating low-level primitives from high-level business logic.
+
+### Three-Layer Architecture
+
+**Layer 1: GitManager (Low-level primitives)**
+- Wraps simple-git library with basic git operations
+- Methods: `status()`, `add()`, `commit()`, `push()`, `checkout()`, etc.
+- No knowledge of CanopyCMS concepts (branches, authors, context)
+- Pure git operations that could be used outside of CanopyCMS
+
+**Layer 2: CanopyServices git methods (High-level operations)**
+- Provides context-aware git operations with automatic author handling
+- `commitFiles({ context, files, message })` - Commits files with automatic git author injection
+- `submitBranch({ context, message? })` - Full submission workflow (status check, commit, push)
+- Encapsulates common patterns: create GitManager, configure author, perform operations
+- Uses BranchContext which contains all necessary path information
+
+**Layer 3: API handlers (Business workflows)**
+- Call service methods to perform git operations
+- Focus on workflow logic (permissions, metadata updates, PR creation)
+- No direct git author configuration or path resolution needed
+
+### Design Rationale
+
+**Why separate primitives from business logic?**
+- GitManager can be tested independently of CanopyCMS concepts
+- Service methods centralize author configuration (no forgotten credentials)
+- API handlers stay focused on workflow, not git mechanics
+
+**Why automatic author handling in service methods?**
+- Eliminates boilerplate: reduces 8-12 lines to 1 line per operation
+- Prevents bugs from forgotten `ensureAuthor()` calls
+- Author credentials come from config, injected automatically
+
+**Why use named arguments?**
+- Better API ergonomics: `commitFiles({ context, files, message })` is clearer than positional arguments
+- Extensible: can add optional parameters without breaking existing calls
+- Self-documenting: parameter names visible at call site
+
+**Why BranchContext contains path information?**
+- Context already has `branchRoot` and `baseRoot` from branch resolution
+- No need to re-derive paths or use intermediate `branchPaths` objects
+- Single source of truth for branch-related paths
+
+### Code Reduction Impact
+
+The refactoring eliminated the `branchMode` + `resolveBranchPaths` pattern across 18 API handler instances. Previously, handlers would:
+
+```
+const branchMode = ctx.services.config.mode ?? 'local-simple'
+const branchPaths = resolveBranchPaths(branchMode, context.branch.name)
+const git = ctx.services.createGitManagerFor(branchPaths.branchRoot)
+await git.ensureAuthor({
+  name: ctx.services.config.gitBotAuthorName,
+  email: ctx.services.config.gitBotAuthorEmail,
+})
+await git.add('.')
+await git.commit(message)
+await git.push(context.branch.name)
+```
+
+Now handlers simply:
+
+```
+await ctx.services.submitBranch({ context })
+```
+
+This reduces complexity, improves readability, and ensures consistent author handling across all git operations.
+
 ## Content Workflow
 
 ### Creating and Editing
@@ -368,7 +439,7 @@ Combines branch and path checks into a single decision. Returns detailed denial 
 
 ### Submitting for Review
 1. User clicks "Submit"
-2. System commits all changes and pushes to remote
+2. Service layer commits all changes and pushes to remote (via `submitBranch()`)
 3. GitHub PR is created (if GitHub integration configured)
 4. Branch status changes to "submitted"
 
@@ -584,6 +655,58 @@ Keeps the core framework-agnostic. Adopters only install what they need. Testing
 
 ### Why do git operations in the request cycle (no worker)?
 Simplicity. Git operations (clone, commit, push) happen synchronously during API requests rather than being queued to a separate worker process. This avoids the complexity of job queues, worker coordination, and eventual consistency. For most content editing use cases, git operations complete fast enough. If this becomes a bottleneck, a worker architecture could be added later.
+
+### Why layer git operations (GitManager vs service methods)?
+
+The three-layer architecture separates concerns and improves maintainability:
+
+**GitManager (primitives):**
+- Pure git operations without CanopyCMS knowledge
+- Can be tested independently
+- Reusable in contexts outside CanopyCMS
+
+**Service methods (business logic):**
+- Encapsulate common patterns: author configuration, context handling
+- Provide single-line operations for complex workflows
+- Centralize author credential management (prevents forgotten `ensureAuthor()` calls)
+- Use BranchContext which already contains all necessary path information
+
+**API handlers (workflows):**
+- Focus on business logic: permissions, metadata, PR creation
+- No direct git mechanics or path resolution needed
+- Cleaner, more readable code (8-12 lines reduced to 1)
+
+**Why automatic author injection in service methods?**
+
+Git commits require author information. Without centralization, each handler would need:
+
+```
+const git = createGitManagerFor(...)
+await git.ensureAuthor({
+  name: config.gitBotAuthorName,
+  email: config.gitBotAuthorEmail,
+})
+```
+
+This pattern appeared in 18+ handlers. Forgetting it causes cryptic git errors. Service methods like `commitFiles()` and `submitBranch()` handle this automatically, pulling credentials from config. This is a form of dependency injection—handlers declare what operation they want, the service layer provides the dependencies.
+
+**Why named arguments in service methods?**
+
+Compare positional vs named:
+
+```
+// Positional (unclear, rigid)
+await commitFiles(context, ['file.json'], 'Save content')
+
+// Named (self-documenting, extensible)
+await commitFiles({ context, files: ['file.json'], message: 'Save content' })
+```
+
+Named arguments:
+- Make call sites self-documenting (no need to check parameter order)
+- Allow adding optional parameters without breaking existing calls
+- Prevent argument order mistakes
+- Align with modern JavaScript/TypeScript patterns
 
 ### Why "Publish Branch" doesn't actually publish?
 Separation of concerns. CanopyCMS handles content editing and PR creation. The actual publication (merging the PR and deploying the site) is handled by GitHub and your CI/CD pipeline. This makes the system more flexible—you can have any merge/deploy workflow you want, and CanopyCMS doesn't need credentials to actually push to production.

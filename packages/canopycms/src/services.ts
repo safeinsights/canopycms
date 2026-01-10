@@ -38,6 +38,10 @@ export interface CanopyServices {
   githubService?: GitHubService
   /** Bootstrap admin user IDs that are always treated as Admins */
   bootstrapAdminIds: Set<string>
+  /** Commit files to git with automatic author handling */
+  commitFiles: (options: { context: BranchContext; files: string | string[]; message: string }) => Promise<void>
+  /** Submit branch: commit all changes and push to remote */
+  submitBranch: (options: { context: BranchContext; message?: string }) => Promise<void>
 }
 
 /**
@@ -73,6 +77,36 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
       baseBranch: opts?.baseBranch ?? config.defaultBaseBranch ?? 'main',
       remote: opts?.remote ?? config.defaultRemoteName ?? 'origin',
     })
+
+  const commitFiles = async (options: {
+    context: BranchContext
+    files: string | string[]
+    message: string
+  }): Promise<void> => {
+    const git = createGitManagerFor(options.context.branchRoot)
+    await git.ensureAuthor({
+      name: config.gitBotAuthorName,
+      email: config.gitBotAuthorEmail,
+    })
+    await git.add(options.files)
+    await git.commit(options.message)
+  }
+
+  const submitBranch = async (options: { context: BranchContext; message?: string }): Promise<void> => {
+    const git = createGitManagerFor(options.context.branchRoot)
+    await git.ensureAuthor({
+      name: config.gitBotAuthorName,
+      email: config.gitBotAuthorEmail,
+    })
+    await git.checkoutBranch(options.context.branch.name)
+    const status = await git.status()
+    if (status.files.length > 0) {
+      await git.add('.')
+      await git.commit(options.message ?? `Submit ${options.context.branch.name}`)
+      await git.push(options.context.branch.name)
+    }
+  }
+
   const branchMode = config.mode ?? 'local-simple'
   const registry = new BranchRegistry(getDefaultBranchBase(branchMode))
 
@@ -104,5 +138,7 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
     registry,
     githubService,
     bootstrapAdminIds,
+    commitFiles,
+    submitBranch,
   }
 }

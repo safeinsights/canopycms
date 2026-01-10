@@ -49,7 +49,8 @@ describe('groups API', () => {
         },
         createGitManagerFor: vi.fn(() => mockGit),
         bootstrapAdminIds: new Set<string>(),
-      },
+    commitFiles: vi.fn(),
+    submitBranch: vi.fn(),      },
       getBranchContext: vi.fn(async () => ({
         baseRoot: '/test',
         branchRoot: '/test/main',
@@ -190,13 +191,23 @@ describe('groups API', () => {
         'admin-1'
       )
 
-      // Verify git operations
-      expect(mockGit.ensureAuthor).toHaveBeenCalledWith({
-        name: 'Canopy Bot',
-        email: 'bot@example.com',
+      // Verify git operations via commitFiles
+      expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
+        context: {
+          baseRoot: '/test',
+          branchRoot: '/test/main',
+          branch: {
+            name: 'main',
+            status: 'editing',
+            access: {},
+            createdBy: 'admin-1',
+            createdAt: '2024-01-01T00:00:00.000Z',
+            updatedAt: '2024-01-01T00:00:00.000Z',
+          },
+        },
+        files: '.canopycms/groups.json',
+        message: 'Update internal groups',
       })
-      expect(mockGit.add).toHaveBeenCalledWith(['.canopycms/groups.json'])
-      expect(mockGit.commit).toHaveBeenCalledWith('Update internal groups')
     })
   })
 

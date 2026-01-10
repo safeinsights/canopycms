@@ -2,7 +2,6 @@ import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { ContentStore } from '../content-store'
-import { resolveBranchPaths } from '../paths'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
 
@@ -42,9 +41,7 @@ const getReferenceOptionsHandler = async (
   const displayField = (req.query?.displayField as string) || 'title'
   const search = req.query?.search as string | undefined
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  const branchPaths = resolveBranchPaths(context, branchMode)
-  const store = new ContentStore(branchPaths.branchRoot, ctx.services.flatSchema)
+  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
 
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()

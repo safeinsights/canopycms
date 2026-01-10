@@ -43,7 +43,6 @@ const updateBranchAccessBodySchema = z.object({
   allowedGroups: z.array(z.string()).optional()
 })
 
-import { resolveBranchPaths } from '../paths'
 import { isPrivileged, isAdmin } from '../reserved-groups'
 import type { PathPermission } from '../config'
 import { loadPathPermissions } from '../permissions-loader'
@@ -114,16 +113,13 @@ export const createBranchHandler = async (
       userId: req.user.userId,
     })
 
-    const branchMode = ctx.services.config.mode ?? 'local-simple'
-
     // Load path permissions from the main branch's JSON file
     const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
     const mainBranchContext = await ctx.getBranchContext(mainBranch)
 
     let pathPermissions: PathPermission[] = []
     if (mainBranchContext) {
-      const branchPaths = resolveBranchPaths(mainBranchContext, branchMode)
-      pathPermissions = await loadPathPermissions(branchPaths.branchRoot)
+      pathPermissions = await loadPathPermissions(mainBranchContext.branchRoot)
     }
 
     // Check if user can create branches
@@ -134,6 +130,7 @@ export const createBranchHandler = async (
     }
 
     const manager = new BranchWorkspaceManager(ctx.services.config)
+    const branchMode = ctx.services.config.mode ?? 'local-simple'
     const context = await manager.openOrCreateBranch({
       branchName,
       mode: branchMode,
@@ -233,10 +230,8 @@ export const deleteBranchHandler = async (
     return { ok: false, status: 400, error: 'Cannot delete branch with open pull request' }
   }
 
-  const branchPaths = resolveBranchPaths(branchContext, branchMode)
-
   // Delete branch metadata file so it disappears from registry scans
-  const metadataFile = path.join(branchPaths.branchRoot, '.canopycms', 'branch.json')
+  const metadataFile = path.join(branchContext.branchRoot, '.canopycms', 'branch.json')
   try {
     await fs.unlink(metadataFile)
   } catch (err: any) {
@@ -246,9 +241,9 @@ export const deleteBranchHandler = async (
   }
 
   // In multi-branch modes, also delete the entire branch directory
-  if (branchPaths.branchRoot !== branchPaths.baseRoot) {
+  if (branchContext.branchRoot !== branchContext.baseRoot) {
     try {
-      await fs.rm(branchPaths.branchRoot, { recursive: true, force: true })
+      await fs.rm(branchContext.branchRoot, { recursive: true, force: true })
     } catch (err: any) {
       console.error(`CanopyCMS: Failed to delete branch directory for ${branchName}:`, err.message)
     }

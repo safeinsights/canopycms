@@ -20,7 +20,8 @@ describe('user API', () => {
         checkContentAccess: vi.fn(),
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
-      },
+    commitFiles: vi.fn(),
+    submitBranch: vi.fn(),      },
       getBranchContext: vi.fn(),
     } as unknown as ApiContext
   })

@@ -74,7 +74,8 @@ describe('listEntries', () => {
         checkContentAccess,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
-        checkPathAccess: undefined as any,
+    commitFiles: vi.fn(),
+    submitBranch: vi.fn(),        checkPathAccess: undefined as any,
         createGitManagerFor: undefined as any,
       },
       getBranchContext: vi.fn().mockResolvedValue({
@@ -110,7 +111,8 @@ describe('listEntries', () => {
         createGitManagerFor: undefined as any,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
-      },
+    commitFiles: vi.fn(),
+    submitBranch: vi.fn(),      },
       getBranchContext: vi.fn().mockResolvedValue(null),
     }
     const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'missing' })
@@ -191,7 +193,8 @@ describe('listEntries', () => {
         checkContentAccess,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
-        checkPathAccess: undefined as any,
+    commitFiles: vi.fn(),
+    submitBranch: vi.fn(),        checkPathAccess: undefined as any,
         createGitManagerFor: undefined as any,
       },
       getBranchContext: vi.fn().mockResolvedValue({
@@ -304,7 +307,8 @@ describe('listEntries', () => {
         checkContentAccess,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
-        checkPathAccess: undefined as any,
+    commitFiles: vi.fn(),
+    submitBranch: vi.fn(),        checkPathAccess: undefined as any,
         createGitManagerFor: undefined as any,
       },
       getBranchContext: vi.fn().mockResolvedValue({

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { ASSET_ROUTES } from './assets'
 import type { ApiContext } from './types'
@@ -19,6 +19,8 @@ const makeCtx = (): ApiContext => ({
     createGitManagerFor: undefined as any,
     bootstrapAdminIds: new Set<string>(),
     registry: undefined as any,
+    commitFiles: vi.fn(),
+    submitBranch: vi.fn(),
   },
   getBranchContext: async () => null,
   assetStore: {

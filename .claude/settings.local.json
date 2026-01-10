@@ -63,7 +63,9 @@
       "Bash(git check-ignore:*)",
       "Bash(git log:*)",
       "Bash(npm --prefix packages/canopycms test:*)",
-      "Bash(PWDEBUG=console npx playwright test:*)"
+      "Bash(PWDEBUG=console npx playwright test:*)",
+      "Bash(for file in branch-review.ts comments.ts content.ts reference-options.ts entries.ts resolve-references.ts branch.ts)",
+      "Bash(do grep -l \"resolveBranchPaths\" \"$file\")"
     ]
   }
 }

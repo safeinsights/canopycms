@@ -62,7 +62,8 @@ const makeCtx = (allowed = true): ApiContext => ({
     createGitManagerFor: undefined as any,
     bootstrapAdminIds: new Set<string>(),
     registry: undefined as any,
-  },
+    commitFiles: vi.fn(),
+    submitBranch: vi.fn(),  },
   getBranchContext: vi.fn().mockResolvedValue(baseContext),
 })
 
