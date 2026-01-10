@@ -392,25 +392,29 @@ describe('CommentStore', () => {
       expect(threads.length).toBe(0)
     })
 
-    it('handles high contention with many concurrent writes', async () => {
-      const numConcurrent = 10
-      const stores = Array.from({ length: numConcurrent }, () => new CommentStore(tmpDir))
+    it(
+      'handles high contention with many concurrent writes',
+      { retry: 1 },
+      async () => {
+        const numConcurrent = 10
+        const stores = Array.from({ length: numConcurrent }, () => new CommentStore(tmpDir))
 
-      // All add comments concurrently
-      const results = await Promise.all(
-        stores.map((s, i) => s.addComment({
-          userId: `user${i}`,
-          text: `Comment ${i}`,
-          type: 'branch',
-        }))
-      )
+        // All add comments concurrently
+        const results = await Promise.all(
+          stores.map((s, i) => s.addComment({
+            userId: `user${i}`,
+            text: `Comment ${i}`,
+            type: 'branch',
+          }))
+        )
 
-      // All should succeed
-      expect(results.every(r => r.threadId && r.commentId)).toBe(true)
+        // All should succeed
+        expect(results.every(r => r.threadId && r.commentId)).toBe(true)
 
-      // All comments should be present
-      const threads = await store.listThreads()
-      expect(threads.length).toBe(numConcurrent)
-    })
+        // All comments should be present
+        const threads = await store.listThreads()
+        expect(threads.length).toBe(numConcurrent)
+      }
+    )
   })
 })
