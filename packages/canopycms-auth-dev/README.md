@@ -2,366 +2,323 @@
 
 Development-only authentication provider for CanopyCMS that allows testing the CMS without setting up a real auth provider like Clerk.
 
-> **Status**: This package is a placeholder with an implementation spec. See below for details on what needs to be built.
+**⚠️ Development Only**: This package throws an error if `NODE_ENV === 'production'`. Never use it in production.
 
-## Purpose
+## Features
 
-This package provides a mock authentication plugin for local development and testing. It allows developers to:
+- **Zero configuration**: Works out of the box with 5 default users
+- **UI-based user switching**: Click avatar to switch between users in the editor
+- **Test compatibility**: Supports `X-Test-User` header for Playwright tests
+- **Group-based permissions**: Test team-based access control with external groups
+- **Internal groups**: Configure reserved groups (Admins, Reviewers) via `.canopycms/groups.json`
 
-- Test CanopyCMS features without configuring a real auth provider
-- Switch between different mock users with different roles
-- Test permission-based features with various role/group combinations
-
-## Installation (Future)
+## Installation
 
 ```bash
 npm install canopycms-auth-dev
 ```
 
-## Usage (Future)
+## Quick Start
 
-### Server-side (API route)
+### 1. Server-side Setup
+
+Replace your auth plugin in the API route:
 
 ```ts
-// app/api/canopycms/[...canopycms]/route.ts
-import { createCanopyHandler } from 'canopycms/next'
+// app/lib/canopy.ts
+import { createNextCanopyContext } from 'canopycms-next'
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
-import configBundle from '../../../../canopycms.config'
+import configBundle from '../../canopycms.config'
 
-const handler = createCanopyHandler({
+const { handler } = createNextCanopyContext({
   config: configBundle.server,
   authPlugin: createDevAuthPlugin(),
 })
 
-export const GET = handler
-export const POST = handler
-export const PUT = handler
-export const DELETE = handler
+export { handler }
 ```
 
-### Client-side (Edit page)
+### 2. Client-side Setup
+
+Use the dev auth hook in your edit page:
 
 ```tsx
-// app/edit/[[...slug]]/page.tsx
+// app/edit/page.tsx
+'use client'
+
 import { useDevAuthConfig } from 'canopycms-auth-dev/client'
-import { CanopyEditorPage } from 'canopycms/client'
-import config from '../../../canopycms.config'
+import { NextCanopyEditorPage } from 'canopycms-next/client'
+import config from '../../canopycms.config'
 
 export default function EditPage() {
   const devAuth = useDevAuthConfig()
-  const editorConfig = config.client(devAuth)
-  return <CanopyEditorPage config={editorConfig} />
+  const clientConfig = config.client(devAuth)
+  const EditorPage = NextCanopyEditorPage(clientConfig)
+  return <EditorPage />
 }
 ```
 
----
+### 3. Configure Bootstrap Admins
 
-## Implementation Spec
-
-### Server Plugin (`src/dev-plugin.ts`)
-
-#### Factory Function
+Add admin1's user ID to your config:
 
 ```ts
-export function createDevAuthPlugin(config?: DevAuthConfig): AuthPlugin
+// canopycms.config.ts
+export default defineCanopyConfig({
+  // ... other config
+  bootstrapAdminIds: ['devuser_3xY6zW1qR5'], // admin1
+})
 ```
 
-#### Production Guard
+### 4. Create Internal Groups (Optional)
 
-The plugin MUST throw an error on instantiation if `NODE_ENV === 'production'`:
-
-```ts
-if (process.env.NODE_ENV === 'production') {
-  throw new Error(
-    'canopycms-auth-dev: This plugin is for development only and cannot be used in production',
-  )
-}
-```
-
-#### Configuration
-
-```ts
-interface DevAuthConfig {
-  /**
-   * Custom mock users. If not provided, uses default users.
-   */
-  users?: Array<{
-    userId: string
-    name: string
-    email: string
-    role: 'admin' | 'manager' | 'editor'
-    groups?: string[]
-  }>
-
-  /**
-   * Custom mock groups. If not provided, uses default groups.
-   */
-  groups?: Array<{
-    id: string
-    name: string
-    description?: string
-  }>
-
-  /**
-   * Default user ID when no user is selected.
-   * @default 'dev-admin'
-   */
-  defaultUserId?: string
-}
-```
-
-#### Default Users
-
-```ts
-const DEFAULT_USERS = [
-  {
-    userId: 'dev-admin',
-    name: 'Dev Admin',
-    email: 'admin@localhost',
-    role: 'admin',
-    groups: ['engineering', 'marketing', 'content'],
-  },
-  {
-    userId: 'dev-manager',
-    name: 'Dev Manager',
-    email: 'manager@localhost',
-    role: 'manager',
-    groups: ['engineering'],
-  },
-  {
-    userId: 'dev-editor',
-    name: 'Dev Editor',
-    email: 'editor@localhost',
-    role: 'editor',
-    groups: ['content'],
-  },
-]
-```
-
-#### Default Groups
-
-```ts
-const DEFAULT_GROUPS = [
-  { id: 'engineering', name: 'Engineering', description: 'Engineering team' },
-  { id: 'marketing', name: 'Marketing', description: 'Marketing team' },
-  { id: 'content', name: 'Content', description: 'Content team' },
-]
-```
-
-#### AuthPlugin Implementation
-
-The plugin must implement the `AuthPlugin` interface from `canopycms/auth`:
-
-```ts
-interface AuthPlugin {
-  verifyToken(req: NextRequest): Promise<TokenVerificationResult>
-  searchUsers(query: string, limit?: number): Promise<UserSearchResult[]>
-  getUserMetadata(userId: string): Promise<UserSearchResult | null>
-  getGroupMetadata(groupId: string): Promise<GroupMetadata | null>
-  listGroups(limit?: number): Promise<GroupMetadata[]>
-}
-```
-
-##### `verifyToken(req: NextRequest)`
-
-1. Read user ID from `x-dev-user-id` header OR `canopy-dev-user` cookie
-2. If no user specified, use `defaultUserId`
-3. Find user in configured users list
-4. Return `{ valid: true, user: AuthUser }` or `{ valid: false, error: 'User not found' }`
-
-```ts
-async verifyToken(req: NextRequest): Promise<TokenVerificationResult> {
-  const userId = req.headers.get('x-dev-user-id')
-    ?? req.cookies.get('canopy-dev-user')?.value
-    ?? this.config.defaultUserId
-    ?? 'dev-admin'
-
-  const user = this.users.find(u => u.userId === userId)
-  if (!user) {
-    return { valid: false, error: `Dev user not found: ${userId}` }
-  }
-
-  return {
-    valid: true,
-    user: {
-      userId: user.userId,
-      role: user.role,
-      groups: user.groups,
-      email: user.email,
-      name: user.name,
-    },
-  }
-}
-```
-
-##### `searchUsers(query: string, limit?: number)`
-
-Filter mock users by name or email containing the query string (case-insensitive).
-
-##### `getUserMetadata(userId: string)`
-
-Return mock user by ID, or null if not found.
-
-##### `getGroupMetadata(groupId: string)`
-
-Return mock group by ID, or null if not found.
-
-##### `listGroups(limit?: number)`
-
-Return all mock groups (apply limit if specified).
-
----
-
-### Client Component (`src/client.ts`)
-
-#### Hook
-
-```ts
-'use client'
-
-export function useDevAuthConfig(): Pick<CanopyClientConfig, 'editor'>
-```
-
-Returns configuration for the CanopyCMS editor with:
-
-- `AccountComponent`: A React component that renders a user avatar/button that opens a user-switcher modal
-- `onLogoutClick`: Function that resets to the default user
-
-#### AccountComponent
-
-The account component should:
-
-1. Display current user's avatar or initials
-2. On click, open a Mantine modal with the user switcher
-
-#### User Switcher Modal
-
-Using Mantine components, the modal should display:
-
-- Title: "Switch User"
-- List of available mock users with:
-  - User name and email
-  - Role badge (admin/manager/editor with appropriate colors)
-  - Group chips
-  - Checkmark or highlight for current user
-- Click on a user to switch (sets `canopy-dev-user` cookie)
-- Close button
-
-```tsx
-// Pseudocode structure
-<Modal title="Switch User" opened={opened} onClose={close}>
-  <Stack>
-    {users.map((user) => (
-      <Paper
-        key={user.userId}
-        onClick={() => switchUser(user.userId)}
-        style={{ cursor: 'pointer' }}
-      >
-        <Group>
-          <Avatar>{user.name[0]}</Avatar>
-          <div>
-            <Text>{user.name}</Text>
-            <Text size="sm" c="dimmed">
-              {user.email}
-            </Text>
-          </div>
-          <Badge color={roleColor(user.role)}>{user.role}</Badge>
-          {user.userId === currentUserId && <IconCheck />}
-        </Group>
-        <Group gap="xs">
-          {user.groups?.map((g) => (
-            <Badge key={g} variant="outline" size="sm">
-              {g}
-            </Badge>
-          ))}
-        </Group>
-      </Paper>
-    ))}
-  </Stack>
-</Modal>
-```
-
-#### Cookie Management
-
-```ts
-function switchUser(userId: string) {
-  document.cookie = `canopy-dev-user=${userId}; path=/; max-age=${60 * 60 * 24 * 7}` // 7 days
-  window.location.reload() // Refresh to apply new user
-}
-
-function resetToDefault() {
-  document.cookie = 'canopy-dev-user=; path=/; max-age=0'
-  window.location.reload()
-}
-```
-
----
-
-## Package Structure (To Be Created)
-
-```
-packages/canopycms-auth-dev/
-├── package.json
-├── tsconfig.json
-├── tsconfig.build.json
-├── README.md              # This file
-└── src/
-    ├── index.ts           # Server exports: createDevAuthPlugin, DevAuthConfig
-    ├── dev-plugin.ts      # AuthPlugin implementation
-    ├── client.ts          # Client exports: useDevAuthConfig
-    └── UserSwitcher.tsx   # Mantine modal component
-```
-
-## package.json (To Be Created)
+For Reviewers and other internal groups, create `.canopycms/groups.json`:
 
 ```json
 {
-  "name": "canopycms-auth-dev",
-  "version": "0.0.0",
-  "description": "Development authentication provider for CanopyCMS",
-  "license": "MIT",
-  "private": false,
-  "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "exports": {
-    ".": "./src/index.ts",
-    "./client": "./src/client.ts"
-  },
-  "peerDependencies": {
-    "canopycms": "*",
-    "react": "^18.0.0",
-    "@mantine/core": "^7.0.0",
-    "@mantine/hooks": "^7.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.9.0",
-    "@types/react": "^18.0.0",
-    "typescript": "^5.6.3",
-    "vitest": "^1.6.0"
-  }
+  "version": 1,
+  "updatedAt": "2024-01-01T00:00:00.000Z",
+  "updatedBy": "canopycms-system",
+  "groups": [
+    {
+      "id": "Reviewers",
+      "name": "Reviewers",
+      "description": "Users who can review and approve branches",
+      "members": ["devuser_9aB4cD2eF7"]
+    }
+  ]
 }
 ```
 
----
+## Default Users
 
-## Testing Recommendations
+The plugin comes with 5 pre-configured users:
 
-1. **Unit tests for dev-plugin.ts**:
-   - Production guard throws error
-   - verifyToken returns correct user from header
-   - verifyToken returns correct user from cookie
-   - verifyToken returns default user when none specified
-   - searchUsers filters correctly
-   - getUserMetadata returns user or null
-   - listGroups returns all groups
+| User         | ID                   | Email                   | External Groups        |
+| ------------ | -------------------- | ----------------------- | ---------------------- |
+| User One     | `devuser_2nK8mP4xL9` | user1@localhost.dev     | team-a, team-b         |
+| User Two     | `devuser_7qR3tY6wN2` | user2@localhost.dev     | team-b                 |
+| User Three   | `devuser_5vS1pM8kJ4` | user3@localhost.dev     | team-c                 |
+| Reviewer One | `devuser_9aB4cD2eF7` | reviewer1@localhost.dev | team-a                 |
+| Admin One    | `devuser_3xY6zW1qR5` | admin1@localhost.dev    | team-a, team-b, team-c |
 
-2. **Component tests for UserSwitcher.tsx**:
-   - Renders list of users
-   - Highlights current user
-   - Calls switchUser on click
-   - Sets cookie correctly
+**Note**: admin1 gets the 'Admins' group via `bootstrapAdminIds` config, not from external groups.
 
-3. **Integration tests**:
-   - Plugin works with createCanopyHandler
-   - User switching persists across requests
+## User Switching
+
+### In the UI
+
+1. Open the editor (`/edit`)
+2. Click the avatar button in the top-right
+3. Select a user from the modal
+4. Page reloads with the new user
+
+### In Tests (Playwright)
+
+Send the `X-Test-User` header with one of these values:
+
+```ts
+// In your test
+await page.setExtraHTTPHeaders({
+  'X-Test-User': 'admin', // Maps to admin1 (devuser_3xY6zW1qR5)
+})
+```
+
+Test user mappings:
+
+- `admin` → admin1 (devuser_3xY6zW1qR5)
+- `editor` → user1 (devuser_2nK8mP4xL9)
+- `viewer` → user2 (devuser_7qR3tY6wN2)
+- `reviewer` → reviewer1 (devuser_9aB4cD2eF7)
+
+## Configuration
+
+Customize users and groups:
+
+```ts
+import { createDevAuthPlugin } from 'canopycms-auth-dev'
+
+const authPlugin = createDevAuthPlugin({
+  defaultUserId: 'devuser_2nK8mP4xL9', // user1
+  users: [
+    {
+      userId: 'custom_user1',
+      name: 'Custom User',
+      email: 'custom@example.com',
+      externalGroups: ['team-x'],
+    },
+  ],
+  groups: [{ id: 'team-x', name: 'Team X', description: 'Custom team' }],
+})
+```
+
+## How It Works
+
+### Authentication Flow
+
+1. **Request arrives** → Plugin checks for user identifier
+2. **Priority order**:
+   - `X-Test-User` header (for tests)
+   - `x-dev-user-id` header (custom)
+   - `canopy-dev-user` cookie (from UI)
+   - Default user (user1)
+3. **User lookup** → Find user in config
+4. **Groups assigned**:
+   - External groups (from auth plugin)
+   - Bootstrap admin groups (from config)
+   - Internal groups (from `.canopycms/groups.json`)
+
+### Group Types
+
+- **External groups**: Returned by auth plugin (e.g., team-a, team-b, team-c)
+- **Bootstrap admins**: Added automatically from `bootstrapAdminIds` config
+- **Internal groups**: Loaded from `.canopycms/groups.json` (managed by admins via UI)
+
+### Reserved Groups
+
+- **`Admins`**: Full access to all CMS operations
+- **`Reviewers`**: Can review branches, request changes, approve PRs
+
+## API
+
+### `createDevAuthPlugin(config?)`
+
+Factory function that creates a dev auth plugin.
+
+**Parameters:**
+
+- `config.users?` - Custom user list
+- `config.groups?` - Custom group list
+- `config.defaultUserId?` - Default user when none specified
+
+**Returns:** `AuthPlugin`
+
+### `useDevAuthConfig()`
+
+React hook that provides editor configuration with user switcher.
+
+**Returns:** `Pick<CanopyClientConfig, 'editor'>`
+
+### Exports
+
+```ts
+// Server-side
+export { createDevAuthPlugin, DevAuthPlugin, DEFAULT_USERS, DEFAULT_GROUPS }
+export type { DevAuthConfig, DevUser, DevGroup }
+
+// Client-side (import from 'canopycms-auth-dev/client')
+export { useDevAuthConfig }
+```
+
+## Switching Between Auth Providers
+
+You can configure your app to switch between dev auth and production auth (like Clerk) using environment variables:
+
+### Server-side (app/lib/canopy.ts)
+
+```ts
+import { createNextCanopyContext } from 'canopycms-next'
+import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
+import { createDevAuthPlugin } from 'canopycms-auth-dev'
+import type { AuthPlugin } from 'canopycms/auth'
+import config from '../../canopycms.config'
+
+function getAuthPlugin(): AuthPlugin {
+  const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
+
+  if (authMode === 'dev') {
+    return createDevAuthPlugin()
+  }
+
+  if (authMode === 'clerk') {
+    return createClerkAuthPlugin({
+      useOrganizationsAsGroups: true,
+    })
+  }
+
+  throw new Error(`Invalid CANOPY_AUTH_MODE: "${authMode}". Must be "dev" or "clerk".`)
+}
+
+const canopyContext = createNextCanopyContext({
+  config: config.server,
+  authPlugin: getAuthPlugin(),
+})
+
+export const getCanopy = canopyContext.getCanopy
+export const handler = canopyContext.handler
+```
+
+### Client-side (app/edit/page.tsx)
+
+```tsx
+'use client'
+
+import { useClerkAuthConfig } from 'canopycms-auth-clerk/client'
+import { useDevAuthConfig } from 'canopycms-auth-dev/client'
+import { NextCanopyEditorPage } from 'canopycms-next/client'
+import config from '../../canopycms.config'
+
+function useAuthConfig() {
+  const authMode = process.env.NEXT_PUBLIC_CANOPY_AUTH_MODE || 'dev'
+
+  if (authMode === 'dev') {
+    return useDevAuthConfig()
+  }
+
+  if (authMode === 'clerk') {
+    return useClerkAuthConfig()
+  }
+
+  throw new Error(`Invalid NEXT_PUBLIC_CANOPY_AUTH_MODE: "${authMode}". Must be "dev" or "clerk".`)
+}
+
+export default function EditPage() {
+  const authConfig = useAuthConfig()
+  const clientConfig = config.client(authConfig)
+  const EditorPage = NextCanopyEditorPage(clientConfig)
+  return <EditorPage />
+}
+```
+
+### Environment Configuration
+
+**Default: Dev auth is enabled by default** (no configuration needed)
+
+To switch to Clerk, create `.env.local`:
+
+```bash
+# Use Clerk authentication
+CANOPY_AUTH_MODE=clerk
+NEXT_PUBLIC_CANOPY_AUTH_MODE=clerk
+
+# Clerk configuration
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_key
+CLERK_SECRET_KEY=your_secret
+
+# Bootstrap admin (use your Clerk user ID)
+CANOPY_BOOTSTRAP_ADMIN_IDS=user_xxxxxxxxxxxxx
+```
+
+To switch back to dev auth, just remove `.env.local` or set the mode to `dev`.
+
+**Optional dev auth configuration** (`.env.local`):
+
+```bash
+# Bootstrap admin for dev mode
+CANOPY_BOOTSTRAP_ADMIN_IDS=devuser_3xY6zW1qR5
+```
+
+### Benefits
+
+- **No code changes**: Switch auth modes by changing environment variables
+- **Team flexibility**: Developers can use dev auth locally while staging/production uses Clerk
+- **Easy testing**: Quickly test features without auth provider setup
+- **Clean separation**: Same codebase works with multiple auth providers
+
+## Production Safety
+
+⚠️ **WARNING**: This plugin is for development and testing only. Do not use in production environments.
+
+## License
+
+MIT
