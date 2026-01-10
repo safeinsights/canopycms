@@ -112,7 +112,6 @@ const listCollectionEntries = async (
   const ext = getFormatExtension(format)
   const collectionRoot = path.resolve(root, collection.fullPath)
   normalizePath(root, collectionRoot)
-  const entries: CollectionItem[] = []
   let dirents: Dirent[]
   try {
     dirents = await fs.readdir(collectionRoot, { withFileTypes: true })
@@ -124,25 +123,31 @@ const listCollectionEntries = async (
   const files = dirents
     .filter((d) => d.isFile() && d.name.endsWith(ext))
     .sort((a, b) => a.name.localeCompare(b.name))
-  for (const file of files) {
-    const absolutePath = path.join(collectionRoot, file.name)
-    const relativePath = normalizePath(root, absolutePath)
-    const slug = file.name.slice(0, -ext.length)
-    const stats = await fs.stat(absolutePath)
-    const title = await readTitle(absolutePath, format)
-    entries.push({
-      id: `${collection.fullPath}/${slug}`,
-      slug,
-      collectionId: collection.fullPath,
-      collectionName: collection.name,
-      format,
-      itemType: 'entry',
-      path: relativePath,
-      title,
-      updatedAt: stats.mtime.toISOString(),
-      exists: true,
-    })
-  }
+
+  // Parallelize file stats and title reads for better performance
+  const entries = await Promise.all(
+    files.map(async (file) => {
+      const absolutePath = path.join(collectionRoot, file.name)
+      const relativePath = normalizePath(root, absolutePath)
+      const slug = file.name.slice(0, -ext.length)
+      const [stats, title] = await Promise.all([
+        fs.stat(absolutePath),
+        readTitle(absolutePath, format),
+      ])
+      return {
+        id: `${collection.fullPath}/${slug}`,
+        slug,
+        collectionId: collection.fullPath,
+        collectionName: collection.name,
+        format,
+        itemType: 'entry' as const,
+        path: relativePath,
+        title,
+        updatedAt: stats.mtime.toISOString(),
+        exists: true,
+      }
+    }),
+  )
   return entries
 }
 
@@ -154,22 +159,20 @@ const listCollectionEntriesRecursive = async (
   targetPath: string,
   flatCollections: FlatSchemaItem[],
 ): Promise<CollectionItem[]> => {
-  const entries: CollectionItem[] = []
-
   // Find all collections that are descendants of the target path
   const descendants = flatCollections.filter((item) => {
     return item.fullPath === targetPath || item.fullPath.startsWith(`${targetPath}/`)
   })
 
-  // List entries from all descendant collections
-  for (const item of descendants) {
-    if (item.type === 'collection' && item.entries) {
-      const collectionEntries = await listCollectionEntries(root, item)
-      entries.push(...collectionEntries)
-    }
-  }
+  // Parallelize listing entries from all descendant collections
+  const collectionsWithEntries = descendants.filter(
+    (item) => item.type === 'collection' && item.entries,
+  )
+  const results = await Promise.all(
+    collectionsWithEntries.map((item) => listCollectionEntries(root, item)),
+  )
 
-  return entries
+  return results.flat()
 }
 
 const normalizeCollectionId = (value: string): string =>
