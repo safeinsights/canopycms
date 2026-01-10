@@ -56,24 +56,61 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.verifyFieldValue('title', testValue)
   })
 
-  test('textarea/MDX field: multi-line content', async () => {
+  test('textarea/MDX field: multi-line content', async ({ page }) => {
+    // Create a test post file manually since "+ Add" UI might not be fully implemented
+    const fs = await import('node:fs/promises')
+    const path = await import('node:path')
+    const testPostPath = path.join(
+      process.cwd(),
+      'apps/test-app/.canopycms/branches/main/content/posts/test-mdx-post.json',
+    )
+
+    // Ensure posts directory exists
+    await fs.mkdir(path.dirname(testPostPath), { recursive: true })
+
+    // Create initial post content
+    await fs.writeFile(
+      testPostPath,
+      JSON.stringify(
+        {
+          title: 'Test MDX Post',
+          author: 'Test Author',
+          date: '2026-01-10',
+          tags: [],
+          body: 'Initial content',
+        },
+        null,
+        2,
+      ),
+    )
+
     await editorPage.goto()
     await editorPage.waitForReady()
 
-    // Open a post entry (assuming Posts collection exists)
-    // For now, test with the home entry's textarea if available
+    // Open the test post
     await editorPage.openEntryNavigator()
-    await editorPage.selectEntry('Home Page')
 
-    // Edit tagline field (string field)
+    // Expand Posts collection and select the test post
+    const postsNode = page.locator('[data-testid="entry-nav-item-posts"]')
+    await postsNode.click()
+
+    // Wait for posts to expand
+    await page.waitForTimeout(300)
+
+    // Select the test post
+    await editorPage.selectEntry('Test MDX Post')
+
+    // Edit body field (MDX field - textarea) with multi-line content
     const multiLineContent = `Multi-line test\nSecond line\nThird line with **markdown**`
-    await editorPage.fillTextField('tagline', multiLineContent)
+    await editorPage.fillTextareaField('body', multiLineContent)
 
     await editorPage.saveAndVerify()
 
     // Verify persistence
-    const content = await readContentFile<{ tagline: string }>('home.json')
-    expect(content.tagline).toBe(multiLineContent)
+    const content = await readContentFile<{ title: string; body: string }>(
+      'posts/test-mdx-post.json',
+    )
+    expect(content.body).toBe(multiLineContent)
   })
 
   test('list field: add/remove items', async () => {

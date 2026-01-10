@@ -18,7 +18,7 @@ import { CommentsPanel } from './CommentsPanel'
 import { GroupManager } from './GroupManager'
 import { PermissionManager } from './PermissionManager'
 import type { CommentThread } from '../comment-store'
-import { buildPreviewSrc } from './editor-utils'
+import { buildPreviewSrc, buildCollectionLabels, buildBreadcrumbSegments } from './editor-utils'
 import {
   useEditorLayout,
   useDraftManager,
@@ -252,11 +252,7 @@ export const Editor: React.FC<EditorProps> = ({
     walk(collections)
     return all
   }, [collections])
-  const collectionLabels = useMemo(() => {
-    const map = new Map<string, string>()
-    flattenedCollections.forEach((c) => map.set(c.id, c.label ?? c.name))
-    return map
-  }, [flattenedCollections])
+  const collectionLabels = useMemo(() => buildCollectionLabels(collections), [collections])
   const schema = currentEntry?.schema ?? []
   const previewKey = currentEntry?.previewSrc ?? currentEntry?.id
 
@@ -340,18 +336,10 @@ export const Editor: React.FC<EditorProps> = ({
   const footerHeight = 40
 
   const headerTitle = currentEntry?.label ?? currentEntry?.slug ?? title
-  const breadcrumbSegments = useMemo(() => {
-    if (!currentEntry) return ['All Files']
-    const segments = ['All Files']
-    if (currentEntry.type !== 'entry' && currentEntry.collectionId) {
-      segments.push(collectionLabels.get(currentEntry.collectionId) ?? currentEntry.collectionId)
-    }
-    const slugSegments = (currentEntry.slug ?? '').split('/').filter(Boolean)
-    if (slugSegments.length > 1) {
-      segments.push(...slugSegments.slice(0, -1))
-    }
-    return segments
-  }, [collectionLabels, currentEntry])
+  const breadcrumbSegments = useMemo(
+    () => buildBreadcrumbSegments(currentEntry, collectionLabels),
+    [collectionLabels, currentEntry],
+  )
 
   return (
     <CanopyCMSProvider {...(themeOptions ?? {})}>

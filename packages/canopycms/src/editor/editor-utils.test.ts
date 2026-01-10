@@ -8,7 +8,10 @@ import {
   buildPreviewSrc,
   buildWritePayload,
   normalizeContentPayload,
+  buildCollectionLabels,
+  buildBreadcrumbSegments,
 } from './editor-utils'
+import type { EditorCollection } from './Editor'
 
 describe('buildPreviewSrc', () => {
   it('returns the provided preview without modification', () => {
@@ -221,5 +224,211 @@ describe('buildEntriesFromListResponse', () => {
 
     const home = result.find((item) => item.collectionId === 'home')
     expect(home?.schema).toEqual(fallbackSchema)
+  })
+})
+
+describe('buildCollectionLabels', () => {
+  it('returns empty map when no collections provided', () => {
+    expect(buildCollectionLabels(undefined)).toEqual(new Map())
+    expect(buildCollectionLabels([])).toEqual(new Map())
+  })
+
+  it('builds flat map of collection IDs to labels', () => {
+    const collections: EditorCollection[] = [
+      { id: 'posts', name: 'posts', label: 'Posts', type: 'collection', format: 'mdx' },
+      { id: 'pages', name: 'pages', type: 'collection', format: 'mdx' },
+    ]
+
+    const result = buildCollectionLabels(collections)
+
+    expect(result.get('posts')).toBe('Posts')
+    expect(result.get('pages')).toBe('pages') // Falls back to name when label is missing
+  })
+
+  it('handles nested collections', () => {
+    const collections: EditorCollection[] = [
+      {
+        id: 'content',
+        name: 'content',
+        label: 'Content',
+        type: 'collection',
+        format: 'mdx',
+        children: [
+          {
+            id: 'content/docs',
+            name: 'docs',
+            label: 'Documentation',
+            type: 'collection',
+            format: 'mdx',
+            children: [
+              {
+                id: 'content/docs/guides',
+                name: 'guides',
+                label: 'Guides',
+                type: 'collection',
+                format: 'mdx',
+              },
+            ],
+          },
+        ],
+      },
+    ]
+
+    const result = buildCollectionLabels(collections)
+
+    expect(result.get('content')).toBe('Content')
+    expect(result.get('content/docs')).toBe('Documentation')
+    expect(result.get('content/docs/guides')).toBe('Guides')
+  })
+})
+
+describe('buildBreadcrumbSegments', () => {
+  it('returns only "All Files" when no entry is provided', () => {
+    const labels = new Map<string, string>()
+    expect(buildBreadcrumbSegments(undefined, labels)).toEqual(['All Files'])
+  })
+
+  it('returns only "All Files" for entry without collectionId', () => {
+    const entry: EditorEntry = {
+      id: 'test',
+      label: 'Test',
+      schema: [],
+      apiPath: '/api/test',
+    }
+    const labels = new Map<string, string>()
+    expect(buildBreadcrumbSegments(entry, labels)).toEqual(['All Files'])
+  })
+
+  it('returns "All Files" for single-level collection (root level)', () => {
+    const entry: EditorEntry = {
+      id: 'posts/hello',
+      label: 'Hello',
+      schema: [],
+      apiPath: '/api/test',
+      collectionId: 'posts',
+      slug: 'hello',
+    }
+    const labels = new Map([['posts', 'Posts']])
+    // Single-level collection: parts = ['posts'], loop starts at i=1 which is >= length, so no segments added
+    expect(buildBreadcrumbSegments(entry, labels)).toEqual(['All Files'])
+  })
+
+  it('shows hierarchy for nested collections', () => {
+    const entry: EditorEntry = {
+      id: 'content/docs/guides/config',
+      label: 'Configuration Guide',
+      schema: [],
+      apiPath: '/api/test',
+      collectionId: 'content/docs/guides',
+      slug: 'config',
+    }
+    const labels = new Map([
+      ['content', 'Content'],
+      ['content/docs', 'Documentation'],
+      ['content/docs/guides', 'Guides'],
+    ])
+
+    const result = buildBreadcrumbSegments(entry, labels)
+
+    // Should include: All Files, Documentation, Guides (skips 'Content' which is the root)
+    expect(result).toEqual(['All Files', 'Documentation', 'Guides'])
+  })
+
+  it('shows hierarchy for deeply nested collections', () => {
+    const entry: EditorEntry = {
+      id: 'content/docs/api/v2/endpoint',
+      label: 'Endpoint',
+      schema: [],
+      apiPath: '/api/test',
+      collectionId: 'content/docs/api/v2',
+      slug: 'endpoint',
+    }
+    const labels = new Map([
+      ['content', 'Content'],
+      ['content/docs', 'Documentation'],
+      ['content/docs/api', 'API Reference'],
+      ['content/docs/api/v2', 'Version 2'],
+    ])
+
+    const result = buildBreadcrumbSegments(entry, labels)
+
+    expect(result).toEqual(['All Files', 'Documentation', 'API Reference', 'Version 2'])
+  })
+
+  it('skips missing labels in hierarchy', () => {
+    const entry: EditorEntry = {
+      id: 'content/docs/guides/config',
+      label: 'Configuration Guide',
+      schema: [],
+      apiPath: '/api/test',
+      collectionId: 'content/docs/guides',
+      slug: 'config',
+    }
+    const labels = new Map([
+      ['content', 'Content'],
+      // 'content/docs' is missing
+      ['content/docs/guides', 'Guides'],
+    ])
+
+    const result = buildBreadcrumbSegments(entry, labels)
+
+    // Should skip the missing 'Documentation' segment
+    expect(result).toEqual(['All Files', 'Guides'])
+  })
+
+  it('includes slug path segments for nested slugs', () => {
+    const entry: EditorEntry = {
+      id: 'posts/2024/01/new-year',
+      label: 'New Year Post',
+      schema: [],
+      apiPath: '/api/test',
+      collectionId: 'posts',
+      slug: '2024/01/new-year',
+    }
+    const labels = new Map([['posts', 'Posts']])
+
+    const result = buildBreadcrumbSegments(entry, labels)
+
+    // Should include slug path segments (minus the last one which is the file name)
+    expect(result).toEqual(['All Files', '2024', '01'])
+  })
+
+  it('combines collection hierarchy and slug segments', () => {
+    const entry: EditorEntry = {
+      id: 'content/posts/2024/01/new-year',
+      label: 'New Year Post',
+      schema: [],
+      apiPath: '/api/test',
+      collectionId: 'content/posts',
+      slug: '2024/01/new-year',
+    }
+    const labels = new Map([
+      ['content', 'Content'],
+      ['content/posts', 'Blog Posts'],
+    ])
+
+    const result = buildBreadcrumbSegments(entry, labels)
+
+    // Collection hierarchy + slug segments
+    expect(result).toEqual(['All Files', 'Blog Posts', '2024', '01'])
+  })
+
+  it('works for singleton entries with collection', () => {
+    const entry: EditorEntry = {
+      id: 'content/settings',
+      label: 'Site Settings',
+      schema: [],
+      apiPath: '/api/test',
+      collectionId: 'content/settings',
+      type: 'singleton',
+    }
+    const labels = new Map([
+      ['content', 'Content'],
+      ['content/settings', 'Settings'],
+    ])
+
+    const result = buildBreadcrumbSegments(entry, labels)
+
+    expect(result).toEqual(['All Files', 'Settings'])
   })
 })

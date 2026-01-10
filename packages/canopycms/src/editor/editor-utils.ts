@@ -1,7 +1,7 @@
 import type { CollectionItem, ListEntriesResponse } from '../api/entries'
 import type { ContentFormat, FieldConfig } from '../config'
 import type { FormValue } from './FormRenderer'
-import type { EditorEntry } from './Editor'
+import type { EditorEntry, EditorCollection } from './Editor'
 
 export interface PreviewContext {
   branchName?: string
@@ -132,4 +132,77 @@ export const buildEntriesFromListResponse = ({
       type: entry.itemType,
     }
   })
+}
+
+/**
+ * Builds a map of collection IDs to their labels for breadcrumb display.
+ * Recursively walks through nested collections to build a flat map.
+ *
+ * @param collections - The collection tree structure
+ * @returns A Map where keys are collection IDs (paths) and values are labels
+ */
+export const buildCollectionLabels = (collections?: EditorCollection[]): Map<string, string> => {
+  const map = new Map<string, string>()
+  if (!collections) return map
+
+  const walk = (nodes: EditorCollection[]) => {
+    for (const c of nodes) {
+      map.set(c.id, c.label ?? c.name)
+      if (c.children) {
+        walk(c.children)
+      }
+    }
+  }
+  walk(collections)
+  return map
+}
+
+/**
+ * Builds breadcrumb segments for an entry based on its collection hierarchy.
+ *
+ * @param currentEntry - The entry to build breadcrumbs for (or undefined for root)
+ * @param collectionLabels - Map of collection IDs to labels
+ * @returns Array of breadcrumb segment strings, starting with 'All Files'
+ *
+ * @example
+ * ```ts
+ * // Entry in nested collection
+ * const entry = { collectionId: 'content/docs/guides', slug: 'config' }
+ * const labels = new Map([
+ *   ['content', 'Content'],
+ *   ['content/docs', 'Documentation'],
+ *   ['content/docs/guides', 'Guides']
+ * ])
+ * buildBreadcrumbSegments(entry, labels)
+ * // Returns: ['All Files', 'Documentation', 'Guides']
+ * ```
+ */
+export const buildBreadcrumbSegments = (
+  currentEntry: EditorEntry | undefined,
+  collectionLabels: Map<string, string>,
+): string[] => {
+  if (!currentEntry) return ['All Files']
+  const segments = ['All Files']
+
+  // Show collection hierarchy for entries and singletons that belong to a collection
+  if (currentEntry.collectionId) {
+    // Split the collectionId into path parts and build cumulative paths
+    // e.g., "content/documentation/guides" -> ["content/documentation", "content/documentation/guides"]
+    const parts = currentEntry.collectionId.split('/').filter(Boolean)
+    for (let i = 1; i < parts.length; i++) {
+      const pathUpToHere = parts.slice(0, i + 1).join('/')
+      const label = collectionLabels.get(pathUpToHere)
+      if (label) {
+        segments.push(label)
+      }
+    }
+  }
+
+  // Add slug path segments (for nested slugs like "folder/file")
+  const slugSegments = (currentEntry.slug ?? '').split('/').filter(Boolean)
+  if (slugSegments.length > 1) {
+    segments.push(...slugSegments.slice(0, -1))
+  }
+
+  return segments
 }

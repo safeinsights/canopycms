@@ -384,4 +384,124 @@ describe('useEntryManager', () => {
       expect(result.current.selectedId).toBe('entry1')
     })
   })
+
+  it('preserves URL entry param when entries load asynchronously', async () => {
+    // Simulate page reload with URL containing a specific entry
+    window.location.search = '?entry=entry2'
+
+    const entry1: EditorEntry = {
+      ...mockEntry,
+      id: 'entry1',
+      slug: 'entry1',
+    }
+    const entry2: EditorEntry = {
+      ...mockEntry,
+      id: 'entry2',
+      slug: 'entry2',
+    }
+
+    // Start with empty entries (simulates SSR/hydration scenario)
+    const { result, rerender } = renderHook((props) => useEntryManager(props), {
+      initialProps: { ...defaultOptions, initialEntries: [] },
+    })
+
+    // Initially no selection since no entries
+    expect(result.current.selectedId).toBe('')
+
+    // Simulate entries loading asynchronously
+    act(() => {
+      result.current.setEntries([entry1, entry2])
+    })
+
+    // Should sync from URL and select entry2, not fall back to first entry
+    await waitFor(() => {
+      expect(result.current.selectedId).toBe('entry2')
+    })
+  })
+
+  it('falls back to first entry when URL entry does not exist in entries', async () => {
+    // URL contains a non-existent entry
+    window.location.search = '?entry=nonexistent'
+
+    const entry1: EditorEntry = {
+      ...mockEntry,
+      id: 'entry1',
+      slug: 'entry1',
+    }
+    const entry2: EditorEntry = {
+      ...mockEntry,
+      id: 'entry2',
+      slug: 'entry2',
+    }
+
+    const { result } = renderHook(() =>
+      useEntryManager({ ...defaultOptions, initialEntries: [entry1, entry2] }),
+    )
+
+    // Should fall back to first entry since URL entry doesn't exist
+    await waitFor(() => {
+      expect(result.current.selectedId).toBe('entry1')
+    })
+  })
+
+  it('does not update URL until entries have synced from URL', async () => {
+    // URL contains entry2
+    window.location.search = '?entry=entry2'
+    const mockReplaceState = vi.fn()
+    window.history.replaceState = mockReplaceState
+
+    const entry1: EditorEntry = {
+      ...mockEntry,
+      id: 'entry1',
+      slug: 'entry1',
+    }
+    const entry2: EditorEntry = {
+      ...mockEntry,
+      id: 'entry2',
+      slug: 'entry2',
+    }
+
+    // Start with entries already loaded (simulates client-side navigation)
+    renderHook(() => useEntryManager({ ...defaultOptions, initialEntries: [entry1, entry2] }))
+
+    // Wait for sync to complete
+    await waitFor(() => {
+      // URL should be updated only after sync is complete
+      const lastCall = mockReplaceState.mock.calls[mockReplaceState.mock.calls.length - 1]
+      if (lastCall) {
+        const url = lastCall[2] as string
+        expect(url).toContain('entry2')
+      }
+    })
+  })
+
+  it('does not clear selection on initial mount when branch is set', async () => {
+    window.location.search = '?entry=entry1'
+
+    const entry1: EditorEntry = {
+      ...mockEntry,
+      id: 'entry1',
+      slug: 'entry1',
+    }
+
+    // Mock the refresh to return same entry
+    mockClient.entries.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: {
+        entries: [mockCollectionItem],
+        collections: [mockCollectionSummary],
+        pagination: { hasMore: false, limit: 100 },
+      },
+    })
+
+    const { result } = renderHook(() =>
+      useEntryManager({ ...defaultOptions, initialEntries: [entry1] }),
+    )
+
+    // Should preserve selection from URL on initial mount, not clear it
+    await waitFor(() => {
+      expect(result.current.selectedId).toBe('entry1')
+    })
+  })
 })

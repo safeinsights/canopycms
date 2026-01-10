@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { ListEntriesResponse } from '../../api/entries'
 import type { EditorEntry, EditorCollection } from '../Editor'
@@ -80,10 +80,19 @@ export interface UseEntryManagerReturn {
  */
 export function useEntryManager(options: UseEntryManagerOptions): UseEntryManagerReturn {
   const [entriesState, setEntriesState] = useState<EditorEntry[]>(options.initialEntries)
-  const [selectedId, setSelectedId] = useState<string>(
-    options.initialSelectedId ?? entriesState[0]?.id ?? '',
-  )
+
+  // Initialize with prop value or empty (URL sync happens in effect after mount)
+  const [selectedId, setSelectedId] = useState<string>(options.initialSelectedId ?? '')
   const [navigatorOpen, setNavigatorOpen] = useState(false)
+  const isInitialMount = useRef(true)
+  const hasSyncedFromUrl = useRef(false)
+
+  // Store the URL entry param on mount (before any effects change the URL)
+  const initialUrlEntry = useRef<string | null>(null)
+  if (typeof window !== 'undefined' && initialUrlEntry.current === null) {
+    const params = new URLSearchParams(window.location.search)
+    initialUrlEntry.current = params.get('entry')
+  }
 
   const collectionById = useMemo(() => {
     const map = new Map<string, EditorCollection>()
@@ -151,9 +160,13 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       initialEntries: options.initialEntries,
     })
     setEntriesState(refreshed)
-    const newlyCreated = refreshed.find((e) => !entriesState.find((old) => old.id === e.id))
-    if (newlyCreated) {
-      setSelectedId(newlyCreated.id)
+    // Only auto-select newly created entry if there were already entries before
+    // (i.e., this is a true refresh after user action, not initial load)
+    if (entriesState.length > 0) {
+      const newlyCreated = refreshed.find((e) => !entriesState.find((old) => old.id === e.id))
+      if (newlyCreated) {
+        setSelectedId(newlyCreated.id)
+      }
     }
   }
 
@@ -193,8 +206,13 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   // Clear selection and refresh entries when branch changes (reactive pattern)
   useEffect(() => {
     if (options.branchName) {
-      // Clear selection when branch changes
-      setSelectedId('')
+      // On initial mount, preserve the initial selection from URL
+      // On subsequent branch changes, clear selection
+      if (isInitialMount.current) {
+        isInitialMount.current = false
+      } else {
+        setSelectedId('')
+      }
 
       // Refresh entries for new branch
       options.setBusy(true)
@@ -206,24 +224,31 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   // Validate selected entry when entries change
   useEffect(() => {
-    if (!entriesState.find((e) => e.id === selectedId)) {
-      setSelectedId(entriesState[0]?.id ?? '')
+    // Skip validation if entries haven't loaded yet
+    if (entriesState.length === 0) return
+
+    // On first load with entries, sync from URL if we haven't already
+    if (!hasSyncedFromUrl.current) {
+      hasSyncedFromUrl.current = true
+      // If there's an entry in the URL that exists in entries, select it
+      if (initialUrlEntry.current && entriesState.find((e) => e.id === initialUrlEntry.current)) {
+        setSelectedId(initialUrlEntry.current!)
+        return
+      }
     }
+
+    // If the selected entry exists, keep it
+    if (entriesState.find((e) => e.id === selectedId)) return
+
+    // Fall back to first entry
+    setSelectedId(entriesState[0]?.id ?? '')
   }, [entriesState, selectedId])
 
-  // Sync entry selection with URL parameter
+  // Update URL when selection changes (skip until URL sync has happened)
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const params = new URLSearchParams(window.location.search)
-    const entryParam = params.get('entry')
-    if (entryParam && entriesState.find((e) => e.id === entryParam)) {
-      setSelectedId(entryParam)
-    }
-  }, [entriesState])
-
-  // Update URL when selection changes
-  useEffect(() => {
-    if (typeof window === 'undefined') return
+    // Don't update URL until we've synced from it first
+    if (!hasSyncedFromUrl.current) return
     const url = new URL(window.location.href)
     if (selectedId) {
       url.searchParams.set('entry', selectedId)
