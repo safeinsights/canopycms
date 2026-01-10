@@ -1,11 +1,11 @@
 'use client'
 
-import { CanopyEditorPage } from 'canopycms/client'
+import { NextCanopyEditorPage } from 'canopycms-next/client'
 import config from '../../canopycms.config'
 
 export default function EditPage() {
   const clientConfig = config.client()
 
-  const EditorPage = CanopyEditorPage(clientConfig)
-  return <EditorPage searchParams={{}} />
+  const EditorPage = NextCanopyEditorPage(clientConfig)
+  return <EditorPage />
 }
