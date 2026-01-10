@@ -1,6 +1,7 @@
 import type { CanopyUserId, CanopyGroupId } from './types'
 import type { AuthenticationResult } from './auth/types'
 import { RESERVED_GROUPS } from './reserved-groups'
+import type { InternalGroup } from './groups-file'
 
 /**
  * Anonymous user - explicitly marked for public/unauthenticated access
@@ -70,28 +71,39 @@ export const createAuthenticatedUser = (data: {
 
 /**
  * Convert authentication result to CanopyUser.
- * Applies bootstrap admin groups and returns ANONYMOUS_USER if not authenticated.
+ * Applies bootstrap admin groups, merges internal groups, and returns ANONYMOUS_USER if not authenticated.
  *
  * This is the SINGLE source of truth for converting external auth to CanopyUser.
  *
  * @param authResult - Result from auth plugin's authenticate() method
  * @param bootstrapAdminIds - Set of user IDs that should always be admins
+ * @param internalGroups - Optional internal groups from .canopycms/groups.json (loaded by caller)
  * @returns CanopyUser (either authenticated with groups or ANONYMOUS_USER)
  */
 export function authResultToCanopyUser(
   authResult: AuthenticationResult,
-  bootstrapAdminIds: Set<string>
+  bootstrapAdminIds: Set<string>,
+  internalGroups?: InternalGroup[]
 ): CanopyUser {
   if (!authResult.success || !authResult.user) {
     return ANONYMOUS_USER
   }
 
-  // Start with external groups from auth provider
+  // Step 1: Start with external groups from auth provider
   const groups = [...(authResult.user.externalGroups ?? [])]
 
-  // Add Admins group if user is in bootstrap admin list
+  // Step 2: Add Admins group if user is in bootstrap admin list
   if (bootstrapAdminIds.has(authResult.user.userId) && !groups.includes(RESERVED_GROUPS.ADMINS)) {
     groups.push(RESERVED_GROUPS.ADMINS)
+  }
+
+  // Step 3: Merge internal groups from .canopycms/groups.json
+  if (internalGroups) {
+    for (const group of internalGroups) {
+      if (group.members.includes(authResult.user.userId) && !groups.includes(group.id)) {
+        groups.push(group.id)
+      }
+    }
   }
 
   return {

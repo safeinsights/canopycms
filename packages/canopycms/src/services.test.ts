@@ -5,6 +5,7 @@ import { createCanopyServices, getBootstrapAdminIds } from './services'
 import { authResultToCanopyUser } from './user'
 import { RESERVED_GROUPS } from './reserved-groups'
 import type { AuthenticationResult } from './auth/types'
+import type { InternalGroup } from './groups-file'
 
 vi.mock('simple-git', () => {
   const stub = vi.fn(() => ({
@@ -216,6 +217,115 @@ describe('authResultToCanopyUser with bootstrap admins', () => {
     expect(user.type).toBe('authenticated')
     if (user.type === 'authenticated') {
       expect(user.groups).toEqual([])
+    }
+  })
+})
+
+describe('authResultToCanopyUser with internal groups', () => {
+  it('merges internal group memberships', () => {
+    const bootstrapAdminIds = new Set<string>()
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user-1',
+        externalGroups: ['team-a'],
+      },
+    }
+    const internalGroups: InternalGroup[] = [
+      { id: 'Reviewers', name: 'Reviewers', members: ['user-1', 'user-2'] },
+      { id: 'Editors', name: 'Editors', members: ['user-2'] },
+    ]
+
+    const user = authResultToCanopyUser(authResult, bootstrapAdminIds, internalGroups)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(user.groups).toEqual(['team-a', 'Reviewers'])
+    }
+  })
+
+  it('does not duplicate groups from both external and internal', () => {
+    const bootstrapAdminIds = new Set<string>()
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user-1',
+        externalGroups: ['Reviewers'], // Already in external
+      },
+    }
+    const internalGroups: InternalGroup[] = [
+      { id: 'Reviewers', name: 'Reviewers', members: ['user-1'] },
+    ]
+
+    const user = authResultToCanopyUser(authResult, bootstrapAdminIds, internalGroups)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(user.groups).toEqual(['Reviewers']) // Not duplicated
+    }
+  })
+
+  it('combines bootstrap admins, external groups, and internal groups', () => {
+    const bootstrapAdminIds = new Set(['user-1'])
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user-1',
+        externalGroups: ['team-a', 'team-b'],
+      },
+    }
+    const internalGroups: InternalGroup[] = [
+      { id: 'Reviewers', name: 'Reviewers', members: ['user-1'] },
+      { id: 'Editors', name: 'Editors', members: ['user-2'] },
+    ]
+
+    const user = authResultToCanopyUser(authResult, bootstrapAdminIds, internalGroups)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(user.groups).toContain(RESERVED_GROUPS.ADMINS) // From bootstrap
+      expect(user.groups).toContain('team-a') // From external
+      expect(user.groups).toContain('team-b') // From external
+      expect(user.groups).toContain('Reviewers') // From internal
+      expect(user.groups).not.toContain('Editors') // Not a member
+      expect(user.groups.length).toBe(4)
+    }
+  })
+
+  it('works without internal groups parameter (backward compat)', () => {
+    const bootstrapAdminIds = new Set<string>()
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user-1',
+        externalGroups: ['team-a'],
+      },
+    }
+
+    const user = authResultToCanopyUser(authResult, bootstrapAdminIds)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(user.groups).toEqual(['team-a'])
+    }
+  })
+
+  it('handles empty internal groups array', () => {
+    const bootstrapAdminIds = new Set<string>()
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user-1',
+        externalGroups: ['team-a'],
+      },
+    }
+    const internalGroups: InternalGroup[] = []
+
+    const user = authResultToCanopyUser(authResult, bootstrapAdminIds, internalGroups)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(user.groups).toEqual(['team-a'])
     }
   })
 })

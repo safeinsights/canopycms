@@ -1,2 +1,6 @@
 tsconfig.tsbuildinfo
 .canopycms
+.clerk
+
+# clerk configuration (can include secrets)
+/.clerk/

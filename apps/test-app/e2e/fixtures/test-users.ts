@@ -60,7 +60,7 @@ export function getTestUser(userId: TestUserId) {
  * @returns True if user is in Admins group
  */
 export function isAdmin(userId: TestUserId): boolean {
-  return TEST_USERS[userId].groups.includes('Admins')
+  return (TEST_USERS[userId].groups as readonly string[]).includes('Admins')
 }
 
 /**
@@ -70,7 +70,7 @@ export function isAdmin(userId: TestUserId): boolean {
  * @returns True if user is in Reviewers group
  */
 export function isReviewer(userId: TestUserId): boolean {
-  return TEST_USERS[userId].groups.includes('Reviewers')
+  return (TEST_USERS[userId].groups as readonly string[]).includes('Reviewers')
 }
 
 /**

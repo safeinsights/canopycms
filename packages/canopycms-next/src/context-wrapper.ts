@@ -3,6 +3,7 @@ import { headers } from 'next/headers'
 import { createCanopyContext, type CanopyContext, createCanopyServices } from 'canopycms/server'
 import type { CanopyConfig, AuthPlugin, CanopyUser } from 'canopycms'
 import { authResultToCanopyUser } from 'canopycms'
+import { loadInternalGroups, loadBranchContext } from 'canopycms/server'
 import { createCanopyCatchAllHandler } from './adapter'
 
 export interface NextCanopyOptions {
@@ -18,11 +19,20 @@ export function createNextCanopyContext(options: NextCanopyOptions) {
   // Create services ONCE at initialization
   const services = createCanopyServices(options.config)
 
-  // User extractor: passes Next.js headers to auth plugin, applies authorization
+  // User extractor: passes Next.js headers to auth plugin, loads internal groups, applies authorization
   const extractUser = async (): Promise<CanopyUser> => {
     const headersList = await headers()
     const authResult = await options.authPlugin.authenticate(headersList)
-    return authResultToCanopyUser(authResult, services.bootstrapAdminIds)
+
+    // Load internal groups from main branch
+    const baseBranch = services.config.defaultBaseBranch ?? 'main'
+    const branchMode = services.config.mode ?? 'local-simple'
+    const mainBranchContext = await loadBranchContext({ branchName: baseBranch, mode: branchMode })
+    const internalGroups = mainBranchContext
+      ? await loadInternalGroups(mainBranchContext.branchRoot).catch(() => [])
+      : []
+
+    return authResultToCanopyUser(authResult, services.bootstrapAdminIds, internalGroups)
   }
 
   // Create core context with pre-created services (framework-agnostic)

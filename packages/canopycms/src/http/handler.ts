@@ -8,6 +8,7 @@ import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
 import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { authResultToCanopyUser } from '../user'
+import { loadInternalGroups } from '../groups-loader'
 
 /**
  * Options for creating a Canopy request handler.
@@ -136,7 +137,15 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
 
     // Authenticate and convert to CanopyUser
     const authResult = await options.authPlugin.authenticate(req)
-    const user = authResultToCanopyUser(authResult, apiCtx.services.bootstrapAdminIds)
+
+    // Load internal groups from main branch and merge with user groups
+    const baseBranch = apiCtx.services.config.defaultBaseBranch ?? 'main'
+    const mainBranchContext = await apiCtx.getBranchContext(baseBranch)
+    const internalGroups = mainBranchContext
+      ? await loadInternalGroups(mainBranchContext.branchRoot).catch(() => [])
+      : []
+
+    const user = authResultToCanopyUser(authResult, apiCtx.services.bootstrapAdminIds, internalGroups)
 
     // API routes require authentication - reject anonymous users
     if (user.type === 'anonymous') {
