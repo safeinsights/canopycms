@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mockConsole } from '../../canopycms/src/test-utils/console-spy.js'
 
 // Create mock objects
 const mockGetUser = vi.fn()
@@ -245,6 +246,7 @@ describe('ClerkAuthPlugin', () => {
     })
 
     it('returns empty array on error', async () => {
+      const consoleSpy = mockConsole()
       const plugin = new ClerkAuthPlugin()
 
       mockGetUserList.mockRejectedValue(new Error('API error'))
@@ -252,6 +254,7 @@ describe('ClerkAuthPlugin', () => {
       const results = await plugin.searchUsers('test')
 
       expect(results).toEqual([])
+      consoleSpy.restore()
     })
   })
 
@@ -277,6 +280,7 @@ describe('ClerkAuthPlugin', () => {
     })
 
     it('returns null on error', async () => {
+      const consoleSpy = mockConsole()
       const plugin = new ClerkAuthPlugin()
 
       mockGetUser.mockRejectedValue(new Error('User not found'))
@@ -284,6 +288,7 @@ describe('ClerkAuthPlugin', () => {
       const result = await plugin.getUserMetadata('user_123')
 
       expect(result).toBeNull()
+      consoleSpy.restore()
     })
   })
 
@@ -316,6 +321,7 @@ describe('ClerkAuthPlugin', () => {
     })
 
     it('returns null on error', async () => {
+      const consoleSpy = mockConsole()
       const plugin = new ClerkAuthPlugin({ useOrganizationsAsGroups: true })
 
       mockGetOrganization.mockRejectedValue(new Error('Org not found'))
@@ -323,6 +329,7 @@ describe('ClerkAuthPlugin', () => {
       const result = await plugin.getGroupMetadata('org_123')
 
       expect(result).toBeNull()
+      consoleSpy.restore()
     })
   })
 
@@ -358,6 +365,7 @@ describe('ClerkAuthPlugin', () => {
     })
 
     it('returns empty array on error', async () => {
+      const consoleSpy = mockConsole()
       const plugin = new ClerkAuthPlugin({ useOrganizationsAsGroups: true })
 
       mockGetOrganizationList.mockRejectedValue(new Error('API error'))
@@ -365,6 +373,7 @@ describe('ClerkAuthPlugin', () => {
       const results = await plugin.listGroups()
 
       expect(results).toEqual([])
+      consoleSpy.restore()
     })
   })
 
