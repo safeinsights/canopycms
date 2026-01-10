@@ -1,14 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { requestChanges, approveBranch } from './branch-review'
-import type { ApiContext } from './types'
-import { RESERVED_GROUPS } from '../reserved-groups'
-import { mockConsole } from '../test-utils/console-spy.js'
-
-// Extract handlers for testing
-const requestChangesHandler = requestChanges.handler
-const approveBranchHandler = approveBranch.handler
-
 const mockMetadataSave = vi.fn().mockResolvedValue({
   schemaVersion: 1,
   branch: {
@@ -21,47 +12,35 @@ const mockMetadataSave = vi.fn().mockResolvedValue({
   },
 })
 
-vi.mock('../branch-metadata', () => {
-  return {
-    BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-      save: mockMetadataSave,
-    })),
-    getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-      save: mockMetadataSave,
-    })),
-  }
+vi.mock('../branch-metadata', () => ({
+  BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
+    save: mockMetadataSave,
+  })),
+  getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
+    save: mockMetadataSave,
+  })),
+}))
+
+import { requestChanges, approveBranch } from './branch-review'
+import { RESERVED_GROUPS } from '../reserved-groups'
+import { mockConsole, createMockApiContext, createMockBranchContext } from '../test-utils'
+
+// Extract handlers for testing
+const requestChangesHandler = requestChanges.handler
+const approveBranchHandler = approveBranch.handler
+
+const baseContext = createMockBranchContext({
+  branchName: 'feature/x',
+  status: 'submitted',
+  pullRequestNumber: 123,
+  pullRequestUrl: 'https://github.com/owner/repo/pull/123',
 })
 
-const baseContext = {
-  baseRoot: '/tmp/base',
-  branchRoot: '/tmp/base/feature-x',
-  branch: {
-    name: 'feature/x',
-    status: 'submitted' as const,
-    access: {},
-    createdBy: 'u1',
-    createdAt: 'now',
-    updatedAt: 'now',
-    pullRequestNumber: 123,
-    pullRequestUrl: 'https://github.com/owner/repo/pull/123',
-  },
-}
-
-const makeCtx = (githubService?: any): ApiContext => ({
-  services: {
-    config: { schema: [] } as any,
-    flatSchema: [],
-    checkBranchAccess: vi.fn(),
-    checkPathAccess: undefined as any,
-    checkContentAccess: vi.fn(),
-    createGitManagerFor: undefined as any,
-    githubService,
-    bootstrapAdminIds: new Set<string>(),
-    registry: undefined as any,
-    commitFiles: vi.fn(),
-    submitBranch: vi.fn(),  },
-  getBranchContext: vi.fn().mockResolvedValue(baseContext),
-})
+const makeCtx = (githubService?: any) =>
+  createMockApiContext({
+    branchContext: baseContext,
+    services: githubService ? { githubService } : undefined,
+  })
 
 describe('branch review api - requestChanges', () => {
   it('returns 404 if branch not found', async () => {

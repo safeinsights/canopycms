@@ -3,6 +3,7 @@ import type { ApiContext, ApiRequest } from './types'
 import type { InternalGroup } from '../groups-file'
 import type { CanopyGroupId, CanopyUserId } from '../types'
 import { RESERVED_GROUPS } from '../reserved-groups'
+import { createMockApiContext, createMockBranchContext, createMockGitManager } from '../test-utils'
 
 // Mock groups loader
 vi.mock('../groups-loader', () => ({
@@ -26,44 +27,30 @@ const searchExternalGroups = GROUP_ROUTES.searchExternal.handler
 
 describe('groups API', () => {
   let mockContext: ApiContext
-  let mockGit: {
-    add: ReturnType<typeof vi.fn>
-    commit: ReturnType<typeof vi.fn>
-    ensureAuthor: ReturnType<typeof vi.fn>
-  }
+  let mockGit: ReturnType<typeof createMockGitManager>
 
   beforeEach(() => {
-    mockGit = {
-      add: vi.fn(),
-      commit: vi.fn(),
-      ensureAuthor: vi.fn(),
-    }
+    mockGit = createMockGitManager()
 
-    mockContext = {
+    mockContext = createMockApiContext({
       services: {
         config: {
           defaultBaseBranch: 'main',
           mode: 'local-simple',
           gitBotAuthorName: 'Canopy Bot',
           gitBotAuthorEmail: 'bot@example.com',
-        },
-        createGitManagerFor: vi.fn(() => mockGit),
-        bootstrapAdminIds: new Set<string>(),
-    commitFiles: vi.fn(),
-    submitBranch: vi.fn(),      },
-      getBranchContext: vi.fn(async () => ({
+        } as any,
+        createGitManagerFor: vi.fn(() => mockGit) as any,
+      },
+      branchContext: createMockBranchContext({
+        branchName: 'main',
+        createdBy: 'admin-1' as CanopyUserId,
         baseRoot: '/test',
         branchRoot: '/test/main',
-        branch: {
-          name: 'main',
-          status: 'editing' as const,
-          access: {},
-          createdBy: 'admin-1' as CanopyUserId,
-          createdAt: '2024-01-01T00:00:00.000Z',
-          updatedAt: '2024-01-01T00:00:00.000Z',
-        },
-      })),
-    } as unknown as ApiContext
+        createdAt: '2024-01-01T00:00:00.000Z',
+        updatedAt: '2024-01-01T00:00:00.000Z',
+      }),
+    })
   })
 
   describe('getInternalGroups', () => {

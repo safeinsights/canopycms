@@ -4,12 +4,15 @@ import type { PathPermission, CanopyConfig } from '../config'
 import type { AuthPlugin } from '../auth/plugin'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
 import { RESERVED_GROUPS } from '../reserved-groups'
+import {
+  createMockApiContext,
+  createMockBranchContext,
+  createMockGitManager,
+  createMockPermissionsLoader,
+} from '../test-utils'
 
 // Mock permissions loader
-vi.mock('../permissions-loader', () => ({
-  loadPathPermissions: vi.fn(),
-  savePathPermissions: vi.fn(),
-}))
+vi.mock('../permissions-loader', () => createMockPermissionsLoader())
 
 import { PERMISSION_ROUTES } from './permissions'
 import * as permissionsLoader from '../permissions-loader'
@@ -23,11 +26,7 @@ const listGroups = PERMISSION_ROUTES.listGroups.handler
 describe('permissions API', () => {
   let mockContext: ApiContext
   let mockAuthPlugin: AuthPlugin
-  let mockGit: {
-    add: ReturnType<typeof vi.fn>
-    commit: ReturnType<typeof vi.fn>
-    ensureAuthor: ReturnType<typeof vi.fn>
-  }
+  let mockGit: ReturnType<typeof createMockGitManager>
 
   beforeEach(() => {
     mockAuthPlugin = {
@@ -38,11 +37,7 @@ describe('permissions API', () => {
       listGroups: vi.fn(),
     }
 
-    mockGit = {
-      add: vi.fn(),
-      commit: vi.fn(),
-      ensureAuthor: vi.fn(),
-    }
+    mockGit = createMockGitManager()
 
     const mockConfig: Partial<CanopyConfig> = {
       defaultBaseBranch: 'main',
@@ -51,21 +46,13 @@ describe('permissions API', () => {
       gitBotAuthorEmail: 'bot@test.com',
     }
 
-    mockContext = {
+    mockContext = createMockApiContext({
       services: {
         config: mockConfig as CanopyConfig,
-        flatSchema: [],
-        checkBranchAccess: vi.fn(),
-        checkPathAccess: undefined as any,
-        checkContentAccess: vi.fn(),
         createGitManagerFor: vi.fn(() => mockGit) as any,
-        bootstrapAdminIds: new Set<string>(),
-        registry: undefined as any,
-    commitFiles: vi.fn(),
-    submitBranch: vi.fn(),      },
+      },
       authPlugin: mockAuthPlugin,
-      getBranchContext: vi.fn(),
-    }
+    })
   })
 
   describe('getPermissions', () => {
@@ -75,19 +62,17 @@ describe('permissions API', () => {
         { path: 'content/public/**', edit: { allowedUsers: ['user-1'] } },
       ]
 
-      const mockGetBranchContext = vi.fn().mockResolvedValue({
-        baseRoot: '/test/repo',
-        branchRoot: '/test/repo',
-        branch: {
-          name: 'main',
-          status: 'editing' as const,
-          access: { allowedUsers: [], allowedGroups: [] },
+      mockContext.getBranchContext = vi.fn().mockResolvedValue(
+        createMockBranchContext({
+          branchName: 'main',
           createdBy: 'admin-1',
+          access: { allowedUsers: [], allowedGroups: [] },
+          baseRoot: '/test/repo',
+          branchRoot: '/test/repo',
           createdAt: '2024-01-01T00:00:00Z',
           updatedAt: '2024-01-01T00:00:00Z',
-        },
-      })
-      mockContext.getBranchContext = mockGetBranchContext
+        })
+      )
 
       vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue(mockPermissions)
 
@@ -136,19 +121,17 @@ describe('permissions API', () => {
         { path: 'content/updated/**', edit: { allowedGroups: ['new-group'] } },
       ]
 
-      const mockGetBranchContext = vi.fn().mockResolvedValue({
-        baseRoot: '/test/repo',
-        branchRoot: '/test/repo',
-        branch: {
-          name: 'main',
-          status: 'editing' as const,
-          access: { allowedUsers: [], allowedGroups: [] },
+      mockContext.getBranchContext = vi.fn().mockResolvedValue(
+        createMockBranchContext({
+          branchName: 'main',
           createdBy: 'admin-1',
+          access: { allowedUsers: [], allowedGroups: [] },
+          baseRoot: '/test/repo',
+          branchRoot: '/test/repo',
           createdAt: '2024-01-01T00:00:00Z',
           updatedAt: '2024-01-01T00:00:00Z',
-        },
-      })
-      mockContext.getBranchContext = mockGetBranchContext
+        })
+      )
 
       const localMockGit = {
         add: vi.fn(),

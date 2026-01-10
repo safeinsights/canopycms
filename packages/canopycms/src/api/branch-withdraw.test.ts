@@ -1,12 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { withdrawBranch } from './branch-withdraw'
-import type { ApiContext } from './types'
-import { mockConsole } from '../test-utils/console-spy.js'
-
-// Extract handler for testing
-const withdrawHandler = withdrawBranch.handler
-
 const mockMetadataSave = vi.fn().mockResolvedValue({
   schemaVersion: 1,
   branch: {
@@ -21,47 +14,34 @@ const mockMetadataSave = vi.fn().mockResolvedValue({
   },
 })
 
-vi.mock('../branch-metadata', () => {
-  return {
-    BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-      save: mockMetadataSave,
-    })),
-    getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-      save: mockMetadataSave,
-    })),
-  }
+vi.mock('../branch-metadata', () => ({
+  BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
+    save: mockMetadataSave,
+  })),
+  getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
+    save: mockMetadataSave,
+  })),
+}))
+
+import { withdrawBranch } from './branch-withdraw'
+import { mockConsole, createMockApiContext, createMockBranchContext } from '../test-utils'
+
+// Extract handler for testing
+const withdrawHandler = withdrawBranch.handler
+
+const baseContext = createMockBranchContext({
+  branchName: 'feature/x',
+  status: 'submitted',
+  pullRequestNumber: 123,
+  pullRequestUrl: 'https://github.com/owner/repo/pull/123',
 })
 
-const baseContext = {
-  baseRoot: '/tmp/base',
-  branchRoot: '/tmp/base/feature-x',
-  branch: {
-    name: 'feature/x',
-    status: 'submitted' as const,
-    access: {},
-    createdBy: 'u1',
-    createdAt: 'now',
-    updatedAt: 'now',
-    pullRequestNumber: 123,
-    pullRequestUrl: 'https://github.com/owner/repo/pull/123',
-  },
-}
-
-const makeCtx = (allowed = true, githubService?: any): ApiContext => ({
-  services: {
-    config: { schema: [] } as any,
-    flatSchema: [],
-    checkBranchAccess: vi.fn().mockReturnValue({ allowed, reason: allowed ? 'allowed_by_acl' : 'denied_by_acl' }),
-    checkPathAccess: undefined as any,
-    checkContentAccess: vi.fn(),
-    createGitManagerFor: undefined as any,
-    githubService,
-    bootstrapAdminIds: new Set<string>(),
-    registry: undefined as any,
-    commitFiles: vi.fn(),
-    submitBranch: vi.fn(),  },
-  getBranchContext: vi.fn().mockResolvedValue(baseContext),
-})
+const makeCtx = (allowed = true, githubService?: any) =>
+  createMockApiContext({
+    branchContext: baseContext,
+    allowBranchAccess: allowed,
+    services: githubService ? { githubService } : undefined,
+  })
 
 describe('branch withdraw api', () => {
   it('returns 404 if branch not found', async () => {
