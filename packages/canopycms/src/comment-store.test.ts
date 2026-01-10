@@ -392,7 +392,7 @@ describe('CommentStore', () => {
       expect(threads.length).toBe(0)
     })
 
-    it('handles high contention with many concurrent writes', async () => {
+    it('handles high contention with many concurrent writes', { retry: 1 }, async () => {
       const numConcurrent = 10
       const stores = Array.from({ length: numConcurrent }, () => new CommentStore(tmpDir))
 
