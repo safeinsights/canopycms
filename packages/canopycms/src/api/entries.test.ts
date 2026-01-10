@@ -9,8 +9,8 @@ import { flattenSchema } from '../config'
 import { createCheckBranchAccess } from '../authz'
 import { createCheckContentAccess } from '../content-access'
 import type { PathPermission } from '../config'
-import type { ApiContext } from './types'
 import { listEntriesHandler } from './entries'
+import { createMockApiContext, createMockBranchContext } from '../test-utils'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-entries-'))
 
@@ -68,32 +68,20 @@ describe('listEntries', () => {
       defaultPathAccess: 'allow',
     })
 
-    const ctx: ApiContext = {
+    const ctx = createMockApiContext({
       services: {
         config,
         flatSchema: flattenSchema(config.schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
-        bootstrapAdminIds: new Set<string>(),
-        registry: undefined as any,
-        commitFiles: vi.fn(),
-        submitBranch: vi.fn(),
-        checkPathAccess: undefined as any,
-        createGitManagerFor: undefined as any,
       },
-      getBranchContext: vi.fn().mockResolvedValue({
+      branchContext: createMockBranchContext({
+        branchName: 'main',
         baseRoot: root,
         branchRoot: root,
-        branch: {
-          name: 'main',
-          status: 'editing',
-          access: {},
-          createdBy: 'u1',
-          createdAt: 'now',
-          updatedAt: 'now',
-        },
+        createdBy: 'u1',
       }),
-    }
+    })
 
     // Request limit=2 to get both the singleton and at least one collection entry
     const res = await listEntriesHandler(
@@ -117,21 +105,7 @@ describe('listEntries', () => {
   })
 
   it('returns 404 when branch is missing', async () => {
-    const ctx: ApiContext = {
-      services: {
-        config: { schema: [] } as any,
-        flatSchema: [],
-        checkBranchAccess: vi.fn(),
-        checkPathAccess: undefined as any,
-        checkContentAccess: vi.fn().mockResolvedValue({ allowed: true, branch: {}, path: {} }),
-        createGitManagerFor: undefined as any,
-        bootstrapAdminIds: new Set<string>(),
-        registry: undefined as any,
-        commitFiles: vi.fn(),
-        submitBranch: vi.fn(),
-      },
-      getBranchContext: vi.fn().mockResolvedValue(null),
-    }
+    const ctx = createMockApiContext({ branchContext: null })
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -206,32 +180,20 @@ describe('listEntries', () => {
       defaultPathAccess: 'allow',
     })
 
-    const ctx: ApiContext = {
+    const ctx = createMockApiContext({
       services: {
         config,
         flatSchema: flattenSchema(config.schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
-        bootstrapAdminIds: new Set<string>(),
-        registry: undefined as any,
-        commitFiles: vi.fn(),
-        submitBranch: vi.fn(),
-        checkPathAccess: undefined as any,
-        createGitManagerFor: undefined as any,
       },
-      getBranchContext: vi.fn().mockResolvedValue({
+      branchContext: createMockBranchContext({
+        branchName: 'main',
         baseRoot: root,
         branchRoot: root,
-        branch: {
-          name: 'main',
-          status: 'editing',
-          access: {},
-          createdBy: 'u1',
-          createdAt: 'now',
-          updatedAt: 'now',
-        },
+        createdBy: 'u1',
       }),
-    }
+    })
 
     // Test 1: Without collectionId - lists entries from all collections (flat list)
     const allEntriesRes = await listEntriesHandler(
@@ -328,32 +290,20 @@ describe('listEntries', () => {
       defaultPathAccess: 'allow',
     })
 
-    const ctx: ApiContext = {
+    const ctx = createMockApiContext({
       services: {
         config,
         flatSchema: flattenSchema(config.schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
-        bootstrapAdminIds: new Set<string>(),
-        registry: undefined as any,
-        commitFiles: vi.fn(),
-        submitBranch: vi.fn(),
-        checkPathAccess: undefined as any,
-        createGitManagerFor: undefined as any,
       },
-      getBranchContext: vi.fn().mockResolvedValue({
+      branchContext: createMockBranchContext({
+        branchName: 'main',
         baseRoot: root,
         branchRoot: root,
-        branch: {
-          name: 'main',
-          status: 'editing',
-          access: {},
-          createdBy: 'u1',
-          createdAt: 'now',
-          updatedAt: 'now',
-        },
+        createdBy: 'u1',
       }),
-    }
+    })
 
     const res = await listEntriesHandler(
       ctx,

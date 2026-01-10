@@ -1,42 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
-import {
-  createBranchHandler as createBranch,
-  listBranchesHandler as listBranches,
-  deleteBranchHandler as deleteBranch,
-  updateBranchAccessHandler as updateBranchAccess,
-  canCreateBranch,
-  canDeleteBranch,
-  canModifyBranchAccess,
-} from './branch'
-import type { ApiContext } from './types'
-import { RESERVED_GROUPS } from '../reserved-groups'
-
 // Mock permissions loader
 vi.mock('../permissions-loader', () => ({
   loadPathPermissions: vi.fn(),
 }))
-
-import * as permissionsLoader from '../permissions-loader'
-
-vi.mock('../branch-workspace', () => {
-  return {
-    BranchWorkspaceManager: vi.fn().mockImplementation(() => ({
-      openOrCreateBranch: vi.fn().mockResolvedValue({
-        baseRoot: '/tmp/base',
-        branchRoot: '/tmp/base/feature-test',
-        branch: {
-          name: 'feature/test',
-          status: 'editing',
-          access: {},
-          createdBy: 'user-1',
-          createdAt: 'now',
-          updatedAt: 'now',
-        },
-      }),
-    })),
-  }
-})
 
 const mockMetadataUpdate = vi.fn().mockImplementation((updates: { branch?: { access?: any } }) => {
   return Promise.resolve({
@@ -52,100 +19,74 @@ const mockMetadataUpdate = vi.fn().mockImplementation((updates: { branch?: { acc
   })
 })
 
-vi.mock('../branch-metadata', () => {
-  return {
-    BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-      save: mockMetadataUpdate,
-    })),
-    getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-      save: mockMetadataUpdate,
-    })),
-  }
-})
+vi.mock('../branch-metadata', () => ({
+  BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
+    save: mockMetadataUpdate,
+  })),
+  getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
+    save: mockMetadataUpdate,
+  })),
+}))
 
-const makeBranchContextForMain = () => ({
-  baseRoot: '/test/repo',
-  branchRoot: '/test/repo',
-  branch: {
-    name: 'main',
-    status: 'editing' as const,
-    access: {},
+vi.mock('../branch-workspace', () => ({
+  BranchWorkspaceManager: vi.fn().mockImplementation(() => ({
+    openOrCreateBranch: vi.fn().mockResolvedValue({
+      baseRoot: '/tmp/base',
+      branchRoot: '/tmp/base/feature-test',
+      branch: {
+        name: 'feature/test',
+        status: 'editing',
+        access: {},
+        createdBy: 'user-1',
+        createdAt: 'now',
+        updatedAt: 'now',
+      },
+    }),
+  })),
+}))
+
+import {
+  createBranchHandler as createBranch,
+  listBranchesHandler as listBranches,
+  deleteBranchHandler as deleteBranch,
+  updateBranchAccessHandler as updateBranchAccess,
+  canCreateBranch,
+  canDeleteBranch,
+  canModifyBranchAccess,
+} from './branch'
+import type { ApiContext } from './types'
+import { RESERVED_GROUPS } from '../reserved-groups'
+import { createMockApiContext, createMockBranchContext, createMockRegistry } from '../test-utils'
+import * as permissionsLoader from '../permissions-loader'
+
+const mockRegistry = createMockRegistry([
+  createMockBranchContext({ branchName: 'feature/a', createdBy: 'u1', baseRoot: '/test/base' }),
+  createMockBranchContext({ branchName: 'feature/b', createdBy: 'u2', baseRoot: '/test/base' }),
+  createMockBranchContext({
+    branchName: 'feature/c',
+    createdBy: 'u3',
+    access: { allowedUsers: ['u1'] },
+    baseRoot: '/test/base',
+  }),
+  createMockBranchContext({
+    branchName: 'feature/d',
+    createdBy: 'u3',
+    access: { allowedGroups: ['editors'] },
+    baseRoot: '/test/base',
+  }),
+])
+
+const baseCtx = createMockApiContext({
+  branchContext: createMockBranchContext({
+    branchName: 'main',
     createdBy: 'system',
-    createdAt: 'now',
-    updatedAt: 'now',
+    baseRoot: '/test/repo',
+    branchRoot: '/test/repo',
+  }),
+  services: {
+    registry: mockRegistry as any,
   },
 })
-
-const mockRegistry = {
-  list: vi.fn().mockResolvedValue([
-    {
-      baseRoot: '/test/base',
-      branchRoot: '/test/base/feature-a',
-      branch: {
-        name: 'feature/a',
-        status: 'editing',
-        access: {},
-        createdBy: 'u1',
-        createdAt: 'now',
-        updatedAt: 'now',
-      },
-    },
-    {
-      baseRoot: '/test/base',
-      branchRoot: '/test/base/feature-b',
-      branch: {
-        name: 'feature/b',
-        status: 'editing',
-        access: {},
-        createdBy: 'u2',
-        createdAt: 'now',
-        updatedAt: 'now',
-      },
-    },
-    {
-      baseRoot: '/test/base',
-      branchRoot: '/test/base/feature-c',
-      branch: {
-        name: 'feature/c',
-        status: 'editing',
-        access: { allowedUsers: ['u1'] },
-        createdBy: 'u3',
-        createdAt: 'now',
-        updatedAt: 'now',
-      },
-    },
-    {
-      baseRoot: '/test/base',
-      branchRoot: '/test/base/feature-d',
-      branch: {
-        name: 'feature/d',
-        status: 'editing',
-        access: { allowedGroups: ['editors'] },
-        createdBy: 'u3',
-        createdAt: 'now',
-        updatedAt: 'now',
-      },
-    },
-  ]),
-  get: vi.fn().mockResolvedValue(undefined),
-  invalidate: vi.fn().mockResolvedValue(undefined),
-}
-
-const baseCtx: ApiContext = {
-  services: {
-    config: { schema: [], defaultBaseBranch: 'main', mode: 'local-simple' } as any,
-    flatSchema: [],
-    checkBranchAccess: vi.fn(),
-    checkPathAccess: undefined as any,
-    checkContentAccess: vi.fn(),
-    createGitManagerFor: undefined as any,
-    registry: mockRegistry as any,
-    commitFiles: vi.fn(),
-    submitBranch: vi.fn(),
-    bootstrapAdminIds: new Set<string>(),
-  },
-  getBranchContext: vi.fn().mockResolvedValue(makeBranchContextForMain()),
-}
 
 beforeEach(() => {
   // Default: no path permissions (open access)
@@ -333,18 +274,8 @@ describe('branch api', () => {
 })
 
 describe('canDeleteBranch', () => {
-  const makeBranchContext = (createdBy: string, status = 'editing' as const) => ({
-    baseRoot: '/tmp/base',
-    branchRoot: '/tmp/base/feature-x',
-    branch: {
-      name: 'feature/x',
-      status,
-      access: {},
-      createdBy,
-      createdAt: 'now',
-      updatedAt: 'now',
-    },
-  })
+  const makeBranchContext = (createdBy: string, status = 'editing' as const) =>
+    createMockBranchContext({ branchName: 'feature/x', createdBy, status })
 
   it('allows admins to delete any branch', () => {
     const result = canDeleteBranch(
@@ -384,18 +315,8 @@ describe('canDeleteBranch', () => {
 })
 
 describe('deleteBranch api', () => {
-  const makeBranchContext = (createdBy: string, status: 'editing' | 'submitted' = 'editing') => ({
-    baseRoot: '/tmp/base',
-    branchRoot: '/tmp/base/feature-x',
-    branch: {
-      name: 'feature/x',
-      status,
-      access: {},
-      createdBy,
-      createdAt: 'now',
-      updatedAt: 'now',
-    },
-  })
+  const makeBranchContext = (createdBy: string, status: 'editing' | 'submitted' = 'editing') =>
+    createMockBranchContext({ branchName: 'feature/x', createdBy, status })
 
   // Context with mode that allows deletion
   const deleteCtx: ApiContext = {
@@ -484,18 +405,8 @@ describe('deleteBranch api', () => {
 })
 
 describe('canModifyBranchAccess', () => {
-  const makeBranchContext = (createdBy: string) => ({
-    baseRoot: '/tmp/base',
-    branchRoot: '/tmp/base/feature-x',
-    branch: {
-      name: 'feature/x',
-      status: 'editing' as const,
-      access: {},
-      createdBy,
-      createdAt: 'now',
-      updatedAt: 'now',
-    },
-  })
+  const makeBranchContext = (createdBy: string) =>
+    createMockBranchContext({ branchName: 'feature/x', createdBy })
 
   it('allows admins to modify any branch', () => {
     const result = canModifyBranchAccess(
@@ -535,18 +446,8 @@ describe('canModifyBranchAccess', () => {
 })
 
 describe('updateBranchAccess api', () => {
-  const makeBranchContext = (createdBy: string) => ({
-    baseRoot: '/tmp/base',
-    branchRoot: '/tmp/base/feature-x',
-    branch: {
-      name: 'feature/x',
-      status: 'editing' as const,
-      access: {},
-      createdBy,
-      createdAt: 'now',
-      updatedAt: 'now',
-    },
-  })
+  const makeBranchContext = (createdBy: string) =>
+    createMockBranchContext({ branchName: 'feature/x', createdBy })
 
   it('returns 404 if branch not found', async () => {
     const ctx = { ...baseCtx, getBranchContext: vi.fn().mockResolvedValue(null) }

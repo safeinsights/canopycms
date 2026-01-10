@@ -1,80 +1,58 @@
 import { describe, expect, it, vi } from 'vitest'
-import { COMMENT_ROUTES } from './comments'
-import type { ApiContext } from './types'
-import { RESERVED_GROUPS } from '../reserved-groups'
 
-// Extract handlers for testing
-const listComments = COMMENT_ROUTES.list.handler
-const addComment = COMMENT_ROUTES.add.handler
-const resolveComment = COMMENT_ROUTES.resolve.handler
-
-vi.mock('../comment-store', () => {
-  return {
-    CommentStore: vi.fn().mockImplementation(() => ({
-      listThreads: vi.fn().mockResolvedValue([
-        {
-          id: 'thread1',
-          comments: [
-            {
-              id: 'c1',
-              text: 'Test comment',
-              userId: 'u1',
-              threadId: 'thread1',
-              timestamp: '2024-01-01',
-            },
-          ],
-          resolved: false,
-          type: 'field',
-          entryId: 'posts/hello',
-          canopyPath: 'title',
-          authorId: 'u1',
-          createdAt: '2024-01-01',
-        },
-      ]),
-      addComment: vi.fn().mockResolvedValue({ threadId: 'thread1', commentId: 'c1' }),
-      getThread: vi.fn().mockResolvedValue({
+vi.mock('../comment-store', () => ({
+  CommentStore: vi.fn().mockImplementation(() => ({
+    listThreads: vi.fn().mockResolvedValue([
+      {
         id: 'thread1',
-        comments: [],
+        comments: [
+          {
+            id: 'c1',
+            text: 'Test comment',
+            userId: 'u1',
+            threadId: 'thread1',
+            timestamp: '2024-01-01',
+          },
+        ],
         resolved: false,
         type: 'field',
         entryId: 'posts/hello',
         canopyPath: 'title',
         authorId: 'u1',
         createdAt: '2024-01-01',
-      }),
-      resolveThread: vi.fn().mockResolvedValue(true),
-    })),
-  }
-})
+      },
+    ]),
+    addComment: vi.fn().mockResolvedValue({ threadId: 'thread1', commentId: 'c1' }),
+    getThread: vi.fn().mockResolvedValue({
+      id: 'thread1',
+      comments: [],
+      resolved: false,
+      type: 'field',
+      entryId: 'posts/hello',
+      canopyPath: 'title',
+      authorId: 'u1',
+      createdAt: '2024-01-01',
+    }),
+    resolveThread: vi.fn().mockResolvedValue(true),
+  })),
+}))
 
-const baseContext = {
-  baseRoot: '/tmp/base',
-  branchRoot: '/tmp/base/feature-x',
-  branch: {
-    name: 'feature/x',
-    status: 'editing' as const,
-    access: {},
-    createdBy: 'u1',
-    createdAt: 'now',
-    updatedAt: 'now',
-  },
-}
+import { COMMENT_ROUTES } from './comments'
+import { RESERVED_GROUPS } from '../reserved-groups'
+import { createMockApiContext, createMockBranchContext } from '../test-utils'
 
-const makeCtx = (allowed = true): ApiContext => ({
-  services: {
-    config: { schema: [], mode: 'local-simple' } as any,
-    flatSchema: [],
-    checkBranchAccess: vi.fn().mockReturnValue({ allowed, reason: allowed ? 'allowed' : 'denied' }),
-    checkPathAccess: undefined as any,
-    checkContentAccess: vi.fn(),
-    createGitManagerFor: undefined as any,
-    bootstrapAdminIds: new Set<string>(),
-    registry: undefined as any,
-    commitFiles: vi.fn(),
-    submitBranch: vi.fn(),
-  },
-  getBranchContext: vi.fn().mockResolvedValue(baseContext),
-})
+// Extract handlers for testing
+const listComments = COMMENT_ROUTES.list.handler
+const addComment = COMMENT_ROUTES.add.handler
+const resolveComment = COMMENT_ROUTES.resolve.handler
+
+const baseContext = createMockBranchContext({ branchName: 'feature/x' })
+
+const makeCtx = (allowed = true) =>
+  createMockApiContext({
+    branchContext: baseContext,
+    allowBranchAccess: allowed,
+  })
 
 describe('comments api - listComments', () => {
   it('returns 404 if branch not found', async () => {
