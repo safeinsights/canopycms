@@ -23,8 +23,13 @@ const updatePermissionsBodySchema = z.object({
   permissions: z.array(z.any()) // PathPermission type is complex, using any for now
 })
 
+const searchUsersParamsSchema = z.object({
+  q: z.string(),
+  limit: z.string().optional()
+})
+
 export type UpdatePermissionsBody = z.infer<typeof updatePermissionsBodySchema>
-export type SearchUsersParams = { query: string; limit?: number }
+export type SearchUsersParams = z.infer<typeof searchUsersParamsSchema>
 
 /**
  * Get current permissions (admin only)
@@ -113,7 +118,8 @@ const updatePermissionsHandler = async (
  */
 const searchUsersHandler = async (
   ctx: ApiContext,
-  req: ApiRequest
+  req: ApiRequest,
+  params: z.infer<typeof searchUsersParamsSchema>
 ): Promise<SearchUsersResponse> => {
   // Require admin or reviewer for user search
   if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
@@ -125,13 +131,8 @@ const searchUsersHandler = async (
     return { ok: false, status: 501, error: 'Auth plugin not configured' }
   }
 
-  const query = req.query?.q as string | undefined
-  if (!query) {
-    return { ok: false, status: 400, error: 'Query parameter "q" is required' }
-  }
-
-  const limitStr = req.query?.limit as string | undefined
-  const limit = limitStr ? parseInt(limitStr, 10) : undefined
+  const query = params.q
+  const limit = params.limit ? parseInt(params.limit, 10) : undefined
 
   try {
     const users = await authPlugin.searchUsers(query, limit)
@@ -218,6 +219,7 @@ const searchUsers = defineEndpoint({
   name: 'searchUsers',
   method: 'GET',
   path: '/users/search',
+  params: searchUsersParamsSchema,
   responseType: 'SearchUsersResponse',
   response: {} as SearchUsersResponse,
   defaultMockData: { users: [] },

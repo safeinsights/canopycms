@@ -305,6 +305,23 @@ describe('CanopyApiClient', () => {
     })
   })
 
+  describe('Query parameters', () => {
+    it('should build query parameters for searchUsers', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, status: 200, data: { users: [] } }),
+      })
+
+      const client = new CanopyApiClient({ fetch: mockFetch })
+      await client.permissions.searchUsers({ q: 'john', limit: '10' })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/canopycms/users/search?q=john&limit=10',
+        expect.anything()
+      )
+    })
+  })
+
   describe('createApiClient factory', () => {
     it('should create a CanopyApiClient instance', () => {
       const client = createApiClient()
