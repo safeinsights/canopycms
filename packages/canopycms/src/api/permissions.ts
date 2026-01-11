@@ -201,6 +201,7 @@ const updatePermissions = defineEndpoint({
   method: 'PUT',
   path: '/permissions',
   body: updatePermissionsBodySchema,
+  bodyType: 'UpdatePermissionsBody',
   responseType: 'PermissionsResponse',
   response: {} as PermissionsResponse,
   defaultMockData: { permissions: [] },

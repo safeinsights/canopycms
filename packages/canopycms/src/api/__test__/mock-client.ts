@@ -8,26 +8,50 @@
 import { vi, type Mock } from 'vitest'
 import type { CanopyApiClient } from '../client'
 import type { ApiResponse } from '../types'
-import type { BranchDeleteResponse, BranchListResponse, BranchResponse } from '../branch'
+import type {
+  BranchDeleteResponse,
+  BranchListResponse,
+  BranchResponse,
+  CreateBranchBody,
+  UpdateBranchAccessBody,
+} from '../branch'
 import type { BranchMergeResponse } from '../branch-status'
-import type { AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
+import type { RequestChangesBody } from '../branch-review'
+import type {
+  AddCommentBody,
+  AddCommentResponse,
+  CommentsResponse,
+  ResolveCommentResponse,
+} from '../comments'
 import type {
   ContentReadResponse,
   ContentWriteResponse,
   ReferenceValidationResponse,
+  ValidateReferencesBody,
+  WriteContentBody,
 } from '../content'
 import type { ReferenceOptionsResponse } from '../reference-options'
-import type { ResolveReferencesResponse } from '../resolve-references'
+import type { ResolveReferencesBody, ResolveReferencesResponse } from '../resolve-references'
 import type { EntriesResponse } from '../entries'
-import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse } from '../assets'
-import type { ListGroupsResponse, PermissionsResponse, SearchUsersResponse } from '../permissions'
+import type {
+  AssetDeleteResponse,
+  AssetUploadResponse,
+  AssetsListResponse,
+  UploadAssetBody,
+} from '../assets'
+import type {
+  ListGroupsResponse,
+  PermissionsResponse,
+  SearchUsersResponse,
+  UpdatePermissionsBody,
+} from '../permissions'
 import type {
   ExternalGroupsResponse,
   InternalGroupsResponse,
+  UpdateInternalGroupsBody,
   UpdateInternalGroupsResponse,
 } from '../groups'
 import type { UserInfoResponse } from '../user'
-import type { CreateBranchBody, UpdateBranchAccessBody } from '../branch'
 
 /**
  * Type utility to convert CanopyApiClient methods to Vitest mocks.

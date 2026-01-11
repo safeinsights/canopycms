@@ -100,7 +100,7 @@ export const buildEntriesFromListResponse = ({
   currentEntry,
   initialEntries,
 }: BuildEntriesFromListParams): EditorEntry[] => {
-  const schemaByCollection = new Map<string, FieldConfig[]>()
+  const schemaByCollection = new Map<string, readonly FieldConfig[]>()
   const collectSchemas = (nodes: ListEntriesResponse['collections']) => {
     nodes.forEach((node) => {
       schemaByCollection.set(node.id, node.schema)

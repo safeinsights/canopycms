@@ -6,26 +6,50 @@
  */
 
 // Type imports
-import type { BranchDeleteResponse, BranchListResponse, BranchResponse } from './branch'
+import type {
+  BranchDeleteResponse,
+  BranchListResponse,
+  BranchResponse,
+  CreateBranchBody,
+  UpdateBranchAccessBody,
+} from './branch'
 import type { BranchMergeResponse } from './branch-status'
-import type { AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
+import type { RequestChangesBody } from './branch-review'
+import type {
+  AddCommentBody,
+  AddCommentResponse,
+  CommentsResponse,
+  ResolveCommentResponse,
+} from './comments'
 import type {
   ContentReadResponse,
   ContentWriteResponse,
   ReferenceValidationResponse,
+  ValidateReferencesBody,
+  WriteContentBody,
 } from './content'
 import type { ReferenceOptionsResponse } from './reference-options'
-import type { ResolveReferencesResponse } from './resolve-references'
+import type { ResolveReferencesBody, ResolveReferencesResponse } from './resolve-references'
 import type { EntriesResponse } from './entries'
-import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse } from './assets'
-import type { ListGroupsResponse, PermissionsResponse, SearchUsersResponse } from './permissions'
+import type {
+  AssetDeleteResponse,
+  AssetUploadResponse,
+  AssetsListResponse,
+  UploadAssetBody,
+} from './assets'
+import type {
+  ListGroupsResponse,
+  PermissionsResponse,
+  SearchUsersResponse,
+  UpdatePermissionsBody,
+} from './permissions'
 import type {
   ExternalGroupsResponse,
   InternalGroupsResponse,
+  UpdateInternalGroupsBody,
   UpdateInternalGroupsResponse,
 } from './groups'
 import type { UserInfoResponse } from './user'
-import type { CreateBranchBody, UpdateBranchAccessBody } from './branch'
 
 /**
  * Options for creating an ApiClient
@@ -85,7 +109,7 @@ export class CanopyApiClient {
     /**
      * create - POST /branches
      */
-    create: (body: unknown): Promise<BranchResponse> => {
+    create: (body: CreateBranchBody): Promise<BranchResponse> => {
       return this.request('POST', '/branches', body)
     },
 
@@ -99,7 +123,10 @@ export class CanopyApiClient {
     /**
      * updateAccess - PATCH /:branch/access
      */
-    updateAccess: (params: Record<string, string>, body: unknown): Promise<BranchResponse> => {
+    updateAccess: (
+      params: Record<string, string>,
+      body: UpdateBranchAccessBody,
+    ): Promise<BranchResponse> => {
       return this.request('PATCH', this.buildPath('/:branch/access', params), body)
     },
   }
@@ -118,7 +145,10 @@ export class CanopyApiClient {
     /**
      * requestChanges - POST /:branch/request-changes
      */
-    requestChanges: (params: Record<string, string>, body: unknown): Promise<BranchResponse> => {
+    requestChanges: (
+      params: Record<string, string>,
+      body: RequestChangesBody,
+    ): Promise<BranchResponse> => {
       return this.request('POST', this.buildPath('/:branch/request-changes', params), body)
     },
 
@@ -165,7 +195,7 @@ export class CanopyApiClient {
     /**
      * add - POST /:branch/comments
      */
-    add: (params: Record<string, string>, body: unknown): Promise<AddCommentResponse> => {
+    add: (params: Record<string, string>, body: AddCommentBody): Promise<AddCommentResponse> => {
       return this.request('POST', this.buildPath('/:branch/comments', params), body)
     },
 
@@ -191,7 +221,10 @@ export class CanopyApiClient {
     /**
      * write - PUT /:branch/content/...path
      */
-    write: (params: Record<string, string>, body: unknown): Promise<ContentWriteResponse> => {
+    write: (
+      params: Record<string, string>,
+      body: WriteContentBody,
+    ): Promise<ContentWriteResponse> => {
       return this.request('PUT', this.buildPath('/:branch/content/...path', params), body)
     },
 
@@ -200,7 +233,7 @@ export class CanopyApiClient {
      */
     validateReferences: (
       params: Record<string, string>,
-      body: unknown,
+      body: ValidateReferencesBody,
     ): Promise<ReferenceValidationResponse> => {
       return this.request(
         'POST',
@@ -221,7 +254,7 @@ export class CanopyApiClient {
      */
     resolveReferences: (
       params: Record<string, string>,
-      body: unknown,
+      body: ResolveReferencesBody,
     ): Promise<ResolveReferencesResponse> => {
       return this.request('POST', this.buildPath('/:branch/resolve-references', params), body)
     },
@@ -253,7 +286,7 @@ export class CanopyApiClient {
     /**
      * upload - POST /assets
      */
-    upload: (body: unknown): Promise<AssetUploadResponse> => {
+    upload: (body: UploadAssetBody): Promise<AssetUploadResponse> => {
       return this.request('POST', '/assets', body)
     },
 
@@ -279,7 +312,7 @@ export class CanopyApiClient {
     /**
      * update - PUT /permissions
      */
-    update: (body: unknown): Promise<PermissionsResponse> => {
+    update: (body: UpdatePermissionsBody): Promise<PermissionsResponse> => {
       return this.request('PUT', '/permissions', body)
     },
 
@@ -312,7 +345,7 @@ export class CanopyApiClient {
     /**
      * updateInternal - PUT /groups/internal
      */
-    updateInternal: (body: unknown): Promise<UpdateInternalGroupsResponse> => {
+    updateInternal: (body: UpdateInternalGroupsBody): Promise<UpdateInternalGroupsResponse> => {
       return this.request('PUT', '/groups/internal', body)
     },
 

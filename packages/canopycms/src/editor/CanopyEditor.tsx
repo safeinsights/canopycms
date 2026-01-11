@@ -10,7 +10,14 @@ import { buildEditorCollections, buildPreviewBaseByCollection } from './editor-c
 
 export interface CanopyEditorProps extends Omit<
   EditorProps,
-  'collections' | 'previewBaseByCollection' | 'title' | 'subtitle' | 'themeOptions' | 'entries'
+  | 'collections'
+  | 'previewBaseByCollection'
+  | 'title'
+  | 'subtitle'
+  | 'themeOptions'
+  | 'entries'
+  | 'configSchema'
+  | 'contentRoot'
 > {
   config: CanopyClientConfig
   entries?: EditorProps['entries']
@@ -52,6 +59,8 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
       renderPreview={renderPreview}
       onCreateEntry={onCreateEntry}
       collections={collections}
+      configSchema={config.schema}
+      contentRoot={config.contentRoot}
       previewBaseByCollection={previewBase}
       themeOptions={resolvedTheme}
       AccountComponent={config.editor?.AccountComponent}

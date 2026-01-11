@@ -135,6 +135,7 @@ describe('Editor integration', () => {
         branchName="main"
         branchMode="local-simple"
         themeOptions={{}}
+        configSchema={{ collections: [], singletons: [] }}
       />,
     )
 

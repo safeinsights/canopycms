@@ -77,7 +77,7 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
 
   const handleSaveGroups = async (groups: InternalGroup[]) => {
     try {
-      const result = await getApiClient().groups.updateInternal(groups)
+      const result = await getApiClient().groups.updateInternal({ groups })
       if (!result.ok) {
         throw new Error(result.error || 'Failed to save groups')
       }

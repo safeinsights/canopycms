@@ -354,6 +354,7 @@ const createBranch = defineEndpoint({
   method: 'POST',
   path: '/branches',
   body: createBranchBodySchema,
+  bodyType: 'CreateBranchBody',
   responseType: 'BranchResponse',
   response: {} as BranchResponse,
   defaultMockData: {
@@ -396,6 +397,7 @@ const updateBranchAccess = defineEndpoint({
   path: '/:branch/access',
   params: branchParamSchema,
   body: updateBranchAccessBodySchema,
+  bodyType: 'UpdateBranchAccessBody',
   responseType: 'BranchResponse',
   response: {} as BranchResponse,
   defaultMockData: {

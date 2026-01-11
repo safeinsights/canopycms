@@ -230,14 +230,14 @@ describe('CanopyApiClient', () => {
 
     it('should send POST requests with JSON body', async () => {
       const client = new CanopyApiClient({ fetch: mockFetch })
-      await client.branches.create({ name: 'test-branch' })
+      await client.branches.create({ branch: 'test-branch' })
 
       expect(mockFetch).toHaveBeenCalledWith(
         '/api/canopycms/branches',
         expect.objectContaining({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: 'test-branch' }),
+          body: JSON.stringify({ branch: 'test-branch' }),
         }),
       )
     })
@@ -263,7 +263,7 @@ describe('CanopyApiClient', () => {
 
     it('should send PATCH requests with JSON body', async () => {
       const client = new CanopyApiClient({ fetch: mockFetch })
-      await client.branches.updateAccess({ branch: 'test-branch' }, { access: 'private' })
+      await client.branches.updateAccess({ branch: 'test-branch' }, { allowedUsers: ['user-1'] })
 
       expect(mockFetch).toHaveBeenCalledWith(
         expect.any(String),
@@ -287,19 +287,17 @@ describe('CanopyApiClient', () => {
       )
     })
 
-    it('should send FormData without Content-Type header', async () => {
+    it('should send asset upload with proper body', async () => {
       const client = new CanopyApiClient({ fetch: mockFetch })
-      const formData = new FormData()
-      formData.append('file', new Blob(['test']))
+      const data = new Uint8Array([1, 2, 3, 4])
 
-      await client.assets.upload(formData)
+      await client.assets.upload({ key: 'test.jpg', data, contentType: 'image/jpeg' })
 
       expect(mockFetch).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({
           method: 'POST',
-          body: formData,
-          headers: {}, // No Content-Type - browser sets it with boundary
+          headers: { 'Content-Type': 'application/json' },
         }),
       )
     })

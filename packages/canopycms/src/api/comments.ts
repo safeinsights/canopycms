@@ -6,7 +6,7 @@ import { CommentStore } from '../comment-store'
 import { isReviewer } from '../reserved-groups'
 import { defineEndpoint } from './route-builder'
 
-interface AddCommentRequest {
+export interface AddCommentBody {
   text: string
   threadId?: string
   type: CommentType
@@ -178,6 +178,7 @@ const addComment = defineEndpoint({
   path: '/:branch/comments',
   params: branchParamSchema,
   body: addCommentBodySchema,
+  bodyType: 'AddCommentBody',
   responseType: 'AddCommentResponse',
   response: {} as AddCommentResponse,
   defaultMockData: { threadId: 'mock-thread-id', commentId: 'mock-comment-id' },

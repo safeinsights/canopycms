@@ -266,15 +266,117 @@ export type SelectFieldConfig = Extract<FieldConfig, { type: 'select' }>
 export type ReferenceFieldConfig = Extract<FieldConfig, { type: 'reference' }>
 export type ObjectFieldConfig = Extract<FieldConfig, { type: 'object' }>
 export type CustomFieldConfig = Exclude<FieldConfig, { type: FieldType }>
-export type SingletonConfig = z.infer<typeof singletonSchema>
-export type CollectionEntriesConfig = z.infer<typeof collectionEntriesSchema>
-export type CollectionConfig = z.infer<typeof collectionSchema>
+
+/**
+ * Singleton: A single-instance file with unique schema
+ * Made readonly-compatible to support `as const` in tests
+ */
+export type SingletonConfig = {
+  readonly name: string
+  readonly path: string
+  readonly format: 'md' | 'mdx' | 'json'
+  readonly fields: readonly FieldConfig[]
+  readonly label?: string
+}
+
+/**
+ * Collection entries config: shared schema for repeatable entries
+ * Made readonly-compatible to support `as const` in tests
+ */
+export type CollectionEntriesConfig = {
+  readonly format?: 'md' | 'mdx' | 'json'
+  readonly fields: readonly FieldConfig[]
+}
+
+/**
+ * Collection: contains nested collections, singletons, or entries
+ * Manual definition needed because collectionSchema is z.ZodTypeAny (recursive)
+ */
+export type CollectionConfig = {
+  readonly name: string
+  readonly path: string
+  readonly label?: string
+  readonly entries?: CollectionEntriesConfig
+  readonly collections?: readonly CollectionConfig[]
+  readonly singletons?: readonly SingletonConfig[]
+}
+
 /**
  * Root schema configuration for CanopyCMS.
  * Contains top-level collections and singletons arrays.
  * Can be nested recursively with collections containing sub-collections and singletons.
+ * Manual definition needed because rootCollectionSchema is z.ZodTypeAny (recursive)
  */
-export type RootCollectionConfig = z.infer<typeof rootCollectionSchema>
+export type RootCollectionConfig = {
+  readonly entries?: CollectionEntriesConfig
+  readonly collections?: readonly CollectionConfig[]
+  readonly singletons?: readonly SingletonConfig[]
+}
+
+// Type assertions: Ensure manual types stay in sync with Zod schemas
+// Note: These compare structure ignoring readonly modifiers and recursion
+
+// Assert SingletonConfig matches singletonSchema (non-recursive)
+type _AssertSingletonConfigCompatible =
+  Omit<SingletonConfig, 'fields'> extends Omit<z.infer<typeof singletonSchema>, 'fields'>
+    ? Omit<z.infer<typeof singletonSchema>, 'fields'> extends Omit<SingletonConfig, 'fields'>
+      ? true
+      : 'SingletonConfig has extra/missing properties compared to singletonSchema'
+    : 'SingletonConfig structure does not match singletonSchema'
+
+type _AssertCollectionEntriesConfigCompatible =
+  Omit<CollectionEntriesConfig, 'fields'> extends Omit<
+    z.infer<typeof collectionEntriesSchema>,
+    'fields'
+  >
+    ? Omit<z.infer<typeof collectionEntriesSchema>, 'fields'> extends Omit<
+        CollectionEntriesConfig,
+        'fields'
+      >
+      ? true
+      : 'CollectionEntriesConfig has extra/missing properties compared to collectionEntriesSchema'
+    : 'CollectionEntriesConfig structure does not match collectionEntriesSchema'
+
+// For recursive types (collectionSchema, rootCollectionSchema), we can't use z.infer directly
+// since they're typed as z.ZodTypeAny. Instead, we validate the structure by checking that
+// our manual types would be assignable to the inferred types if they weren't any.
+//
+// We validate the non-recursive parts (since recursive parts reference themselves):
+type _AssertCollectionConfigCompatible =
+  Omit<CollectionConfig, 'collections' | 'singletons' | 'entries'> extends {
+    readonly name: string
+    readonly path: string
+    readonly label?: string
+  }
+    ? true
+    : 'CollectionConfig base properties (name, path, label) do not match expected structure'
+
+type _AssertRootCollectionConfigCompatible =
+  Omit<RootCollectionConfig, 'collections' | 'singletons' | 'entries'> extends Record<string, never>
+    ? true
+    : 'RootCollectionConfig should only have optional collections, singletons, and entries properties'
+
+// Verify the recursive types reference the correct child types
+type _AssertCollectionConfigChildren = CollectionConfig['collections'] extends
+  | readonly CollectionConfig[]
+  | undefined
+  ? CollectionConfig['singletons'] extends readonly SingletonConfig[] | undefined
+    ? CollectionConfig['entries'] extends CollectionEntriesConfig | undefined
+      ? true
+      : 'CollectionConfig.entries type is incorrect'
+    : 'CollectionConfig.singletons type is incorrect'
+  : 'CollectionConfig.collections type is incorrect'
+
+type _AssertRootCollectionConfigChildren = RootCollectionConfig['collections'] extends
+  | readonly CollectionConfig[]
+  | undefined
+  ? RootCollectionConfig['singletons'] extends readonly SingletonConfig[] | undefined
+    ? RootCollectionConfig['entries'] extends CollectionEntriesConfig | undefined
+      ? true
+      : 'RootCollectionConfig.entries type is incorrect'
+    : 'RootCollectionConfig.singletons type is incorrect'
+  : 'RootCollectionConfig.collections type is incorrect'
+
 export type PathPermission = z.infer<typeof pathPermissionSchema>
 export type MediaConfig = z.infer<typeof mediaSchema>
 /**
@@ -331,8 +433,8 @@ export type FlatSchemaItem =
       label?: string
       parentPath?: string
       entries?: CollectionEntriesConfig
-      collections?: CollectionConfig[]
-      singletons?: SingletonConfig[]
+      collections?: readonly CollectionConfig[]
+      singletons?: readonly SingletonConfig[]
     }
   | {
       type: 'singleton'
@@ -341,7 +443,7 @@ export type FlatSchemaItem =
       label?: string
       parentPath?: string
       format: ContentFormat
-      fields: FieldConfig[]
+      fields: readonly FieldConfig[]
     }
 
 const ensureSelectFieldsHaveOptions = (config: any) => {

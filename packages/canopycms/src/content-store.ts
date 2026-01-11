@@ -224,7 +224,7 @@ export class ContentStore {
 
     let doc: ContentDocument
     let format: ContentFormat
-    let fields: any[]
+    let fields: readonly any[]
 
     if (schemaItem.type === 'singleton') {
       format = schemaItem.format
@@ -372,7 +372,7 @@ export class ContentStore {
    */
   private async resolveReferencesInData(
     data: Record<string, unknown>,
-    fields: any[],
+    fields: readonly any[],
   ): Promise<Record<string, unknown>> {
     const resolved = { ...data }
     const idIndex = await this.idIndex()

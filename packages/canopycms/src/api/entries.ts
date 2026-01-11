@@ -20,7 +20,7 @@ export interface EntryCollectionSummary {
   path: string
   format: ContentFormat
   type: CollectionKind
-  schema: FieldConfig[]
+  schema: readonly FieldConfig[]
   parentId?: string
   children?: EntryCollectionSummary[]
 }
