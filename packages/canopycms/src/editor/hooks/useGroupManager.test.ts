@@ -148,7 +148,26 @@ describe('useGroupManager', () => {
     const users = await result.current.handleSearchUsers('john', 10)
 
     expect(users).toEqual(mockUsers)
-    expect(mockClient.permissions.searchUsers).toHaveBeenCalledWith()
+    // This assertion will fail until we fix the implementation
+    expect(mockClient.permissions.searchUsers).toHaveBeenCalledWith({ q: 'john', limit: '10' })
+  })
+
+  it('searches users without limit parameter', async () => {
+    const mockUsers = [{ id: 'user1', name: 'John Doe' }]
+
+    mockClient.permissions.searchUsers.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { users: mockUsers },
+    })
+
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }))
+
+    const users = await result.current.handleSearchUsers('john')
+
+    expect(users).toEqual(mockUsers)
+    // This assertion will fail until we fix the implementation
+    expect(mockClient.permissions.searchUsers).toHaveBeenCalledWith({ q: 'john' })
   })
 
   it('handles user search error', async () => {

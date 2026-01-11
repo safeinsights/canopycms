@@ -96,7 +96,11 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
 
   const handleSearchUsers = async (query: string, limit?: number) => {
     try {
-      const result = await getApiClient().permissions.searchUsers()
+      const params: Record<string, string> = { q: query }
+      if (limit) {
+        params.limit = String(limit)
+      }
+      const result = await getApiClient().permissions.searchUsers(params)
       if (!result.ok) return []
       return result.data?.users ?? []
     } catch (err) {

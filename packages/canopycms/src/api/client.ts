@@ -286,8 +286,8 @@ export class CanopyApiClient {
     /**
      * searchUsers - GET /users/search
      */
-    searchUsers: (): Promise<SearchUsersResponse> => {
-      return this.request('GET', '/users/search')
+    searchUsers: (params: Record<string, string>): Promise<SearchUsersResponse> => {
+      return this.request('GET', this.buildPath('/users/search', params))
     },
 
     /**

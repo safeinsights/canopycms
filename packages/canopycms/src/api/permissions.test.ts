@@ -223,7 +223,7 @@ describe('permissions API', () => {
         query: { q: 'alice' },
       }
 
-      const result = await searchUsers(mockContext, req)
+      const result = await searchUsers(mockContext, req, { q: 'alice' })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
@@ -242,7 +242,7 @@ describe('permissions API', () => {
         query: { q: 'test', limit: '5' },
       }
 
-      const result = await searchUsers(mockContext, req)
+      const result = await searchUsers(mockContext, req, { q: 'test', limit: '5' })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
@@ -285,24 +285,22 @@ describe('permissions API', () => {
         query: { q: 'test' },
       }
 
-      const result = await searchUsers(mockContext, req)
+      const result = await searchUsers(mockContext, req, { q: 'test' })
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(500)
       expect(result.error).toBe('API error')
     })
 
-    it('returns 400 when query parameter is missing', async () => {
-      const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
-        query: {}, // Missing 'q' parameter
-      }
+    it('validates that q parameter is required', () => {
+      // Test that the endpoint has proper validation schema
+      const endpoint = PERMISSION_ROUTES.searchUsers
 
-      const result = await searchUsers(mockContext, req)
+      // Validate with missing 'q' parameter
+      const validationResult = endpoint.validate({ params: {} })
 
-      expect(result.ok).toBe(false)
-      expect(result.status).toBe(400)
-      expect(result.error).toBe('Query parameter "q" is required')
+      expect(validationResult.ok).toBe(false)
+      expect(validationResult.error).toContain('q')
     })
   })
 
