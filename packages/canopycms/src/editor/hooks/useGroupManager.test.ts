@@ -116,7 +116,7 @@ describe('useGroupManager', () => {
       expect(result.current.groupsData).toEqual(mockGroups)
     })
 
-    expect(mockClient.groups.updateInternal).toHaveBeenCalledWith(mockGroups)
+    expect(mockClient.groups.updateInternal).toHaveBeenCalledWith({ groups: mockGroups })
   })
 
   it('handles save groups error', async () => {

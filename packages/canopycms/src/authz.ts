@@ -43,3 +43,44 @@ export const createCheckBranchAccess = (defaultAccess: DefaultBranchAccess = 'de
   return (context: BranchContext, user: CanopyUser): BranchAccessResult =>
     checkBranchAccessWithDefault(context, user, defaultAccess)
 }
+
+/**
+ * Check if user can perform workflow actions (submit/withdraw) on a branch.
+ * Allowed if: user is creator OR user has ACL access OR (system branch AND user has general access).
+ *
+ * This implements a hybrid permission model:
+ * - Branch creators can always submit/withdraw their branches
+ * - Users explicitly listed in branch ACLs can also submit/withdraw
+ * - For system branches (createdBy: 'canopycms-system'), anyone with general access can submit/withdraw
+ * - Admins and Reviewers always have access (via checkBranchAccess)
+ */
+export const canPerformWorkflowAction = (
+  context: BranchContext,
+  user: CanopyUser,
+  defaultAccess: DefaultBranchAccess = 'deny'
+): boolean => {
+  // Check if user has general branch access (handles admins, reviewers, ACLs)
+  const accessResult = checkBranchAccessWithDefault(context, user, defaultAccess)
+
+  // If user doesn't have basic branch access, deny immediately
+  if (!accessResult.allowed) {
+    return false
+  }
+
+  // Check if user is the branch creator
+  const userIsCreator = context.branch.createdBy === user.userId
+
+  // Check if this is a system-created branch
+  const isSystemBranch = context.branch.createdBy === 'canopycms-system'
+
+  // Allow if:
+  // 1. User is the creator, OR
+  // 2. User has ACL access (reason: 'privileged' or 'allowed_by_acl'), OR
+  // 3. System branch with general access
+  return (
+    userIsCreator ||
+    accessResult.reason === 'privileged' ||
+    accessResult.reason === 'allowed_by_acl' ||
+    (isSystemBranch && accessResult.allowed)
+  )
+}

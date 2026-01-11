@@ -7,6 +7,7 @@ import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
 import { defineEndpoint } from './route-builder'
 import type { BranchMetadata } from '../types'
+import { canPerformWorkflowAction } from '../authz'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -44,9 +45,16 @@ const submitBranchForMergeHandler = async (
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
-  const access = ctx.services.checkBranchAccess(context, req.user)
-  if (!access.allowed) {
-    return { ok: false, status: 403, error: 'Forbidden' }
+
+  // Check if user can perform workflow actions (creator OR ACL access)
+  const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'
+  const canSubmit = canPerformWorkflowAction(context, req.user, defaultAccess)
+  if (!canSubmit) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'Only the branch creator or users with explicit branch access can submit this branch',
+    }
   }
 
   const meta = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)

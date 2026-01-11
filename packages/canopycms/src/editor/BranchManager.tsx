@@ -28,7 +28,12 @@ export interface UserContext {
 }
 
 /**
- * Compute what actions the current user can perform on a branch
+ * Compute what actions the current user can perform on a branch.
+ * Uses the same hybrid permission model as the backend:
+ * - Creator can always submit/withdraw
+ * - Users in branch ACL can submit/withdraw
+ * - System branches can be submitted/withdrawn by anyone with access
+ * - Admins/Reviewers always have access
  */
 export const getBranchPermissions = (
   branch: BranchSummary,
@@ -46,12 +51,23 @@ export const getBranchPermissions = (
   const userIsAdmin = isAdmin(user.groups)
   const userIsReviewer = isReviewer(user.groups)
   const userIsCreator = branch.createdBy === user.userId
+  const isSystemBranch = branch.createdBy === 'canopycms-system'
 
-  // Submit: Only creator can submit their branch
-  const canSubmit = userIsCreator && branch.status === 'editing'
+  // Check if user is in branch ACL
+  const userInACL =
+    (branch.access?.users?.includes(user.userId) ||
+      user.groups?.some((g) => branch.access?.groups?.includes(g))) ??
+    false
 
-  // Withdraw: Only creator can withdraw their submitted branch
-  const canWithdraw = userIsCreator && branch.status === 'submitted'
+  // Can perform workflow actions if: creator OR in ACL OR (system branch AND has basic access) OR privileged
+  const canPerformWorkflowActions =
+    userIsCreator || userInACL || isSystemBranch || userIsAdmin || userIsReviewer
+
+  // Submit: Can perform workflow actions AND branch is in editing status
+  const canSubmit = canPerformWorkflowActions && branch.status === 'editing'
+
+  // Withdraw: Can perform workflow actions AND branch is in submitted status
+  const canWithdraw = canPerformWorkflowActions && branch.status === 'submitted'
 
   // Delete: Admin or creator (but not if submitted)
   const canDelete = (userIsAdmin || userIsCreator) && branch.status !== 'submitted'

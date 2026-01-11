@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { Text } from '@mantine/core'
+import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
 import type { BranchMetadata } from '../../types'
 import type { BranchMode } from '../../paths'
@@ -17,6 +19,42 @@ function getApiClient() {
 // For testing: reset the singleton to pick up new fetch mocks
 export function resetApiClient() {
   apiClient = null
+}
+
+/**
+ * Helper function to show confirmation modal for branch submit action.
+ */
+const showSubmitConfirmation = (branchName: string, onConfirm: () => Promise<void>, onCancel: () => void) => {
+  modals.openConfirmModal({
+    title: 'Submit Branch for Review',
+    children: (
+      <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
+        {`Are you sure you want to submit "${branchName}" for review?\n\nThis will:\n• Create a pull request for review\n• Change the branch status to "submitted"\n• Notify reviewers of pending changes`}
+      </Text>
+    ),
+    labels: { confirm: 'Submit Branch', cancel: 'Cancel' },
+    confirmProps: { color: 'brand' },
+    onCancel,
+    onConfirm,
+  })
+}
+
+/**
+ * Helper function to show confirmation modal for branch withdraw action.
+ */
+const showWithdrawConfirmation = (branchName: string, onConfirm: () => Promise<void>, onCancel: () => void) => {
+  modals.openConfirmModal({
+    title: 'Withdraw Branch from Review',
+    children: (
+      <Text size="sm" style={{ whiteSpace: 'pre-line' }}>
+        {`Are you sure you want to withdraw "${branchName}" from review?\n\nThis will:\n• Convert the pull request to a draft\n• Change the branch status back to "editing"\n• Remove from review queue`}
+      </Text>
+    ),
+    labels: { confirm: 'Withdraw Branch', cancel: 'Cancel' },
+    confirmProps: { color: 'orange' },
+    onCancel,
+    onConfirm,
+  })
 }
 
 /**
@@ -156,37 +194,57 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   }
 
   const handleSubmit = async (branchNameToSubmit: string) => {
-    options.setBusy(true)
-    try {
-      const result = await getApiClient().workflow.submit({ branch: branchNameToSubmit })
-      if (!result.ok) {
-        throw new Error(result.error || 'Failed to submit branch')
-      }
-      notifications.show({ message: 'Branch submitted for review', color: 'green' })
-      await loadBranches()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to submit branch'
-      notifications.show({ message, color: 'red' })
-    } finally {
-      options.setBusy(false)
-    }
+    return new Promise<void>((resolve, reject) => {
+      showSubmitConfirmation(
+        branchNameToSubmit,
+        async () => {
+          options.setBusy(true)
+          try {
+            const result = await getApiClient().workflow.submit({ branch: branchNameToSubmit })
+            if (!result.ok) {
+              throw new Error(result.error || 'Failed to submit branch')
+            }
+            notifications.show({ message: 'Branch submitted for review', color: 'green' })
+            await loadBranches()
+            resolve()
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to submit branch'
+            notifications.show({ message, color: 'red' })
+            reject(err)
+          } finally {
+            options.setBusy(false)
+          }
+        },
+        () => reject(new Error('User cancelled submit'))
+      )
+    })
   }
 
   const handleWithdraw = async (branchNameToWithdraw: string) => {
-    options.setBusy(true)
-    try {
-      const result = await getApiClient().workflow.withdraw({ branch: branchNameToWithdraw })
-      if (!result.ok) {
-        throw new Error(result.error || 'Failed to withdraw branch')
-      }
-      notifications.show({ message: 'Branch withdrawn', color: 'blue' })
-      await loadBranches()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to withdraw branch'
-      notifications.show({ message, color: 'red' })
-    } finally {
-      options.setBusy(false)
-    }
+    return new Promise<void>((resolve, reject) => {
+      showWithdrawConfirmation(
+        branchNameToWithdraw,
+        async () => {
+          options.setBusy(true)
+          try {
+            const result = await getApiClient().workflow.withdraw({ branch: branchNameToWithdraw })
+            if (!result.ok) {
+              throw new Error(result.error || 'Failed to withdraw branch')
+            }
+            notifications.show({ message: 'Branch withdrawn', color: 'blue' })
+            await loadBranches()
+            resolve()
+          } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to withdraw branch'
+            notifications.show({ message, color: 'red' })
+            reject(err)
+          } finally {
+            options.setBusy(false)
+          }
+        },
+        () => reject(new Error('User cancelled withdraw'))
+      )
+    })
   }
 
   const handleRequestChanges = async (branchNameForChanges: string) => {

@@ -28,7 +28,7 @@ import { createMockApiContext, createMockBranchContext, createMockGitManager } f
 const getBranchStatus = WORKFLOW_ROUTES.getStatus.handler
 const submitBranchForMerge = WORKFLOW_ROUTES.submit.handler
 
-const baseContext = createMockBranchContext({ branchName: 'feature/x' })
+const baseContext = createMockBranchContext({ branchName: 'feature/x', createdBy: 'u1' })
 
 const makeCtx = (allowed = true) => {
   const mockGit = createMockGitManager()
@@ -44,6 +44,7 @@ const makeCtx = (allowed = true) => {
     allowBranchAccess: allowed,
     services: {
       createGitManagerFor: vi.fn().mockReturnValue(mockGit),
+      config: { defaultBranchAccess: 'allow' } as any,
     },
   })
 }
@@ -56,7 +57,8 @@ describe('branch status api', () => {
   })
 
   it('denies submit when access forbidden', async () => {
-    const res = await submitBranchForMerge(makeCtx(false), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    // User 'u2' is not the creator (u1) and has no ACL access
+    const res = await submitBranchForMerge(makeCtx(false), { user: { type: 'authenticated', userId: 'u2', groups: [] } }, { branch: 'feature/x' })
     expect(res.status).toBe(403)
   })
 

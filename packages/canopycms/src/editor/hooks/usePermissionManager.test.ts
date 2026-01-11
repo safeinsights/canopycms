@@ -116,7 +116,7 @@ describe('usePermissionManager', () => {
       expect(result.current.permissionsData).toEqual(mockPermissions)
     })
 
-    expect(mockClient.permissions.update).toHaveBeenCalledWith(mockPermissions)
+    expect(mockClient.permissions.update).toHaveBeenCalledWith({ permissions: mockPermissions })
   })
 
   it('handles save permissions error', async () => {

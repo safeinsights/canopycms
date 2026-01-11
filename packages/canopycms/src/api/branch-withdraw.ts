@@ -3,6 +3,7 @@ import type { ApiContext, ApiRequest } from './types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
+import { canPerformWorkflowAction } from '../authz'
 
 const branchParamSchema = z.object({
   branch: z.string().min(1)
@@ -18,9 +19,15 @@ const withdrawBranchHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const access = ctx.services.checkBranchAccess(context, req.user)
-  if (!access.allowed) {
-    return { ok: false, status: 403, error: 'Forbidden' }
+  // Check if user can perform workflow actions (creator OR ACL access)
+  const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'
+  const canWithdraw = canPerformWorkflowAction(context, req.user, defaultAccess)
+  if (!canWithdraw) {
+    return {
+      ok: false,
+      status: 403,
+      error: 'Only the branch creator or users with explicit branch access can withdraw this branch',
+    }
   }
 
   // Verify branch is in submitted status

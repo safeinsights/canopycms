@@ -34,13 +34,17 @@ const baseContext = createMockBranchContext({
   status: 'submitted',
   pullRequestNumber: 123,
   pullRequestUrl: 'https://github.com/owner/repo/pull/123',
+  createdBy: 'u1',
 })
 
 const makeCtx = (allowed = true, githubService?: any) =>
   createMockApiContext({
     branchContext: baseContext,
     allowBranchAccess: allowed,
-    services: githubService ? { githubService } : undefined,
+    services: {
+      ...(githubService && { githubService }),
+      config: { defaultBranchAccess: 'allow' } as any,
+    },
   })
 
 describe('branch withdraw api', () => {
@@ -53,9 +57,10 @@ describe('branch withdraw api', () => {
   })
 
   it('returns 403 if access forbidden', async () => {
-    const res = await withdrawHandler(makeCtx(false), { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    // User 'u2' is not the creator (u1) and has no ACL access
+    const res = await withdrawHandler(makeCtx(false), { user: { type: 'authenticated', userId: 'u2', groups: [] } }, { branch: 'feature/x' })
     expect(res.status).toBe(403)
-    expect(res.error).toBe('Forbidden')
+    expect(res.error).toContain('Only the branch creator or users with explicit branch access can withdraw this branch')
   })
 
   it('returns 400 if branch not submitted', async () => {

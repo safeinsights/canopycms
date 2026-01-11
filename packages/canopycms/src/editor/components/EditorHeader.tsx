@@ -1,8 +1,9 @@
 import { forwardRef } from 'react'
-import { Box, Button, Group, Menu, Paper, Stack, Text, Title } from '@mantine/core'
+import { Badge, Box, Button, Group, Menu, Paper, Stack, Text, Title, Tooltip } from '@mantine/core'
 import { MdFolderOpen, MdKeyboardArrowDown } from 'react-icons/md'
 import { GoGitBranch } from 'react-icons/go'
 import type { BranchMode } from '../../paths'
+import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
 
 /**
@@ -118,6 +119,51 @@ export interface EditorHeaderProps {
    * Callback to submit/publish the branch.
    */
   onSubmit: () => void
+
+  /**
+   * Whether the current entry has unsaved changes.
+   */
+  hasUnsavedChanges: boolean
+
+  /**
+   * Current branch status (undefined if unknown).
+   */
+  branchStatus: BranchStatus | undefined
+
+  /**
+   * Callback to withdraw the branch.
+   */
+  onWithdraw: () => void
+
+  /**
+   * Current user context for permission checks.
+   */
+  userContext?: { userId: string; groups?: string[] }
+
+  /**
+   * Branch creator user ID.
+   */
+  branchCreatedBy?: string
+
+  /**
+   * Branch access control lists.
+   */
+  branchAccess?: { allowedUsers?: string[]; allowedGroups?: string[] }
+}
+
+/**
+ * Status color map matching BranchManager.tsx pattern.
+ * Returns the Mantine color string for a given branch status.
+ */
+const getStatusColor = (status: BranchStatus): string => {
+  const statusColorMap: Record<BranchStatus, string> = {
+    editing: 'brand',
+    submitted: 'green',
+    approved: 'teal',
+    locked: 'yellow',
+    archived: 'gray',
+  }
+  return statusColorMap[status] ?? 'gray'
 }
 
 /**
@@ -176,6 +222,12 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
     onCommentsPanelOpen,
     onSave,
     onSubmit,
+    hasUnsavedChanges,
+    branchStatus,
+    onWithdraw,
+    userContext,
+    branchCreatedBy,
+    branchAccess,
   }: EditorHeaderProps,
   ref
 ) {
@@ -316,6 +368,12 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 </Menu.Dropdown>
               </Menu>
 
+              {branchMode !== 'local-simple' && branchName && branchStatus && (
+                <Badge color={getStatusColor(branchStatus)} variant="light" size="sm" data-testid={`header-status-badge-${branchStatus}`}>
+                  {branchStatus}
+                </Badge>
+              )}
+
               {branchMode !== 'local-simple' && branchName && (
                 <Button
                   variant="outline"
@@ -351,12 +409,40 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
             </Group>
           </Stack>
           <Group gap="xs" wrap="nowrap">
-            <Button data-testid="save-button" variant="light" size="sm" onClick={onSave} disabled={!branchName || !currentEntry || busy}>
-              Save File
-            </Button>
-            <Button size="sm" color="brand" onClick={onSubmit} disabled={!branchName || busy}>
-              Publish Branch
-            </Button>
+            <Tooltip label={!hasUnsavedChanges && currentEntry ? 'No changes to save' : ''} disabled={hasUnsavedChanges || !currentEntry}>
+              <Button data-testid="save-button" variant="light" size="sm" onClick={onSave} disabled={!branchName || !currentEntry || busy || !hasUnsavedChanges}>
+                Save File
+              </Button>
+            </Tooltip>
+            {(() => {
+              const isSubmitted = branchStatus === 'submitted'
+              const isEditing = branchStatus === 'editing'
+
+              // Check if user can perform workflow actions (creator OR ACL access OR system branch)
+              const userIsCreator = userContext?.userId === branchCreatedBy
+              const isSystemBranch = branchCreatedBy === 'canopycms-system'
+              const userInACL =
+                userContext &&
+                branchAccess &&
+                (branchAccess.allowedUsers?.includes(userContext.userId) ||
+                  userContext.groups?.some((g) => branchAccess.allowedGroups?.includes(g)))
+
+              const canPerformAction = (userIsCreator || userInACL || isSystemBranch) && (isEditing || isSubmitted)
+
+              return (
+                <Tooltip label={!canPerformAction ? 'You do not have permission to submit or withdraw this branch' : ''} disabled={canPerformAction}>
+                  <Button
+                    size="sm"
+                    color={isSubmitted ? 'orange' : 'brand'}
+                    onClick={isSubmitted ? onWithdraw : onSubmit}
+                    disabled={!branchName || busy || !canPerformAction}
+                    data-testid={isSubmitted ? 'withdraw-button' : 'submit-button'}
+                  >
+                    {isSubmitted ? 'Withdraw Branch...' : 'Submit Branch...'}
+                  </Button>
+                </Tooltip>
+              )
+            })()}
           </Group>
         </Group>
       </Box>
