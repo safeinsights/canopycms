@@ -5,7 +5,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { Box, Drawer, Paper, Text, Title } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 
-import type { ContentFormat, FieldConfig } from '../config'
+import type { ContentFormat, FieldConfig, RootCollectionConfig } from '../config'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
@@ -27,7 +27,7 @@ export interface EditorEntry {
   id: string
   label: string
   status?: string
-  schema: FieldConfig[]
+  schema: readonly FieldConfig[]
   apiPath: string
   previewSrc?: string
   collectionId?: string
@@ -55,6 +55,8 @@ export interface EditorProps {
   branchName?: string
   branchMode?: BranchMode
   collections?: EditorCollection[]
+  configSchema: RootCollectionConfig
+  contentRoot?: string
   initialSelectedId?: string
   initialValues?: Record<string, FormValue>
   renderPreview?: (entry: EditorEntry, value: FormValue | undefined) => React.ReactNode
@@ -81,6 +83,8 @@ export const Editor: React.FC<EditorProps> = ({
   siteSubtitle = subtitle,
   branchName = '',
   collections,
+  configSchema,
+  contentRoot,
   initialSelectedId,
   initialValues,
   renderPreview,
@@ -561,14 +565,8 @@ export const Editor: React.FC<EditorProps> = ({
           overlayProps={{ blur: 2 }}
         >
           <PermissionManager
-            schema={collections?.map(c => ({
-              type: c.type,
-              name: c.name,
-              label: c.label,
-              path: c.id,
-              format: c.format,
-              fields: [],
-            })) ?? []}
+            schema={configSchema}
+            contentRoot={contentRoot}
             permissions={permissionsData}
             loading={permissionsLoading}
             canEdit={true}

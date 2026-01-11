@@ -255,7 +255,7 @@ describe('permissions API', () => {
         query: { q: 'test' },
       }
 
-      const result = await searchUsers(mockContext, req)
+      const result = await searchUsers(mockContext, req, { q: 'test' })
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(403)
@@ -270,7 +270,7 @@ describe('permissions API', () => {
         query: { q: 'test' },
       }
 
-      const result = await searchUsers(mockContext, req)
+      const result = await searchUsers(mockContext, req, { q: 'test' })
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(501)
@@ -300,7 +300,9 @@ describe('permissions API', () => {
       const validationResult = endpoint.validate({ params: {} })
 
       expect(validationResult.ok).toBe(false)
-      expect(validationResult.error).toContain('q')
+      if (!validationResult.ok) {
+        expect(validationResult.error).toContain('q')
+      }
     })
   })
 

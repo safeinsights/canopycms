@@ -75,7 +75,8 @@ function generateClientMethod(route: RouteMetadata): string {
   }
 
   if (hasBody) {
-    bodyType = 'body: unknown'
+    // Use the bodyTypeName if provided, otherwise fall back to unknown
+    bodyType = route.bodyTypeName ? `body: ${route.bodyTypeName}` : 'body: unknown'
   }
 
   const args = [paramType, bodyType].filter(Boolean).join(', ')
@@ -152,13 +153,15 @@ function namespaceToModule(namespace: string): string {
 function typeNameToModule(typeName: string): string | null {
   const mapping: Record<string, string> = {
     'ResolveReferencesResponse': 'resolve-references',
+    'ResolveReferencesBody': 'resolve-references',
     'ReferenceOptionsResponse': 'reference-options',
+    'RequestChangesBody': 'branch-review',
   }
   return mapping[typeName] || null
 }
 
 /**
- * Generate import statements for response types grouped by module
+ * Generate import statements for response and body types grouped by module
  */
 function generateResponseTypeImports(namespaces: NamespaceRoutes[]): string {
   const typesByModule = new Map<string, Set<string>>()
@@ -171,21 +174,31 @@ function generateResponseTypeImports(namespaces: NamespaceRoutes[]): string {
     }
     const types = typesByModule.get(moduleName)!
     for (const route of ns.routes) {
-      const typeName = route.responseTypeName
+      // Collect response types
+      const responseTypeName = route.responseTypeName
       // Skip ApiResponse (it's in types.ts, not a module-specific type)
-      if (typeName === 'ApiResponse') continue
+      if (responseTypeName !== 'ApiResponse' && !seenTypes.has(responseTypeName)) {
+        // Check for specific type name overrides first
+        const overrideModule = typeNameToModule(responseTypeName)
+        const targetModule = overrideModule || moduleName
 
-      // Check for specific type name overrides first
-      const overrideModule = typeNameToModule(typeName)
-      const targetModule = overrideModule || moduleName
-
-      // Only add to first module that uses it (avoid duplicates across modules)
-      if (!seenTypes.has(typeName)) {
         if (!typesByModule.has(targetModule)) {
           typesByModule.set(targetModule, new Set())
         }
-        typesByModule.get(targetModule)!.add(typeName)
-        seenTypes.add(typeName)
+        typesByModule.get(targetModule)!.add(responseTypeName)
+        seenTypes.add(responseTypeName)
+      }
+
+      // Collect body types
+      if (route.bodyTypeName && !seenTypes.has(route.bodyTypeName)) {
+        const overrideModule = typeNameToModule(route.bodyTypeName)
+        const targetModule = overrideModule || moduleName
+
+        if (!typesByModule.has(targetModule)) {
+          typesByModule.set(targetModule, new Set())
+        }
+        typesByModule.get(targetModule)!.add(route.bodyTypeName)
+        seenTypes.add(route.bodyTypeName)
       }
     }
   }
@@ -196,9 +209,6 @@ function generateResponseTypeImports(namespaces: NamespaceRoutes[]): string {
     const sortedTypes = Array.from(types).sort().join(', ')
     imports.push(`import type { ${sortedTypes} } from './${moduleName}'`)
   }
-
-  // Special imports for body types
-  imports.push(`import type { CreateBranchBody, UpdateBranchAccessBody } from './branch'`)
 
   return imports.join('\n')
 }

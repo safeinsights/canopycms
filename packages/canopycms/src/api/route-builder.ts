@@ -21,6 +21,7 @@ export interface RouteMetadata {
   path: string
   paramsSchema?: z.ZodType
   bodySchema?: z.ZodType
+  bodyTypeName?: string
   responseTypeName: string
   defaultMockData?: any
 }
@@ -99,6 +100,7 @@ interface EndpointConfig<
   path: string // e.g., '/:branch' or '/branches' or '/:branch/content/:collection'
   params?: TParams
   body?: TBody
+  bodyType?: string // Optional: Type name for body parameter: 'UpdatePermissionsBody'
   responseType: string // Type name for generation: 'BranchDeleteResponse'
   response: TResponse // Type marker for TypeScript
   defaultMockData?: any // Optional: data inside mockSuccess({ ...here })
@@ -222,6 +224,7 @@ export function defineEndpoint<
     path: config.path,
     paramsSchema: config.params,
     bodySchema: config.body,
+    bodyTypeName: config.bodyType,
     responseTypeName: config.responseType,
     defaultMockData: config.defaultMockData,
   })

@@ -31,6 +31,16 @@ export type ReferenceValidationResponse = ApiResponse<{
   }>
 }>
 
+export interface WriteContentBody {
+  format: 'json' | 'md' | 'mdx'
+  data?: Record<string, unknown>
+  body?: string
+}
+
+export interface ValidateReferencesBody {
+  data: Record<string, unknown>
+}
+
 /** Response type for reference options - re-exported for convenience */
 export type { ReferenceOptionsResponse } from './reference-options'
 
@@ -257,6 +267,7 @@ const writeContent = defineEndpoint({
   path: '/:branch/content/...path',
   params: writeContentParamsSchema,
   body: writeContentBodySchema,
+  bodyType: 'WriteContentBody',
   responseType: 'ContentWriteResponse',
   response: {} as ContentWriteResponse,
   defaultMockData: { format: 'json', data: {} },
@@ -275,6 +286,7 @@ const validateReferences = defineEndpoint({
   path: '/:branch/validate-references/...path',
   params: validateReferencesParamsSchema,
   body: validateReferencesBodySchema,
+  bodyType: 'ValidateReferencesBody',
   responseType: 'ReferenceValidationResponse',
   response: {} as ReferenceValidationResponse,
   defaultMockData: { valid: true },

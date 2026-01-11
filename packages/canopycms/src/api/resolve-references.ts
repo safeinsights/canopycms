@@ -5,6 +5,10 @@ import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
 
+export interface ResolveReferencesBody {
+  ids: string[]
+}
+
 /** Response type for resolved references */
 export type ResolveReferencesResponse = ApiResponse<{
   resolved: Record<string, any>
@@ -97,6 +101,7 @@ const resolveReferences = defineEndpoint({
   path: '/:branch/resolve-references',
   params: resolveReferencesParamsSchema,
   body: resolveReferencesBodySchema,
+  bodyType: 'ResolveReferencesBody',
   responseType: 'ResolveReferencesResponse',
   response: {} as ResolveReferencesResponse,
   defaultMockData: { resolved: {} },

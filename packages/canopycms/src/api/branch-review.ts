@@ -5,6 +5,10 @@ import { getBranchMetadataFileManager } from '../branch-metadata'
 import { isReviewer } from '../reserved-groups'
 import { defineEndpoint } from './route-builder'
 
+export interface RequestChangesBody {
+  comment?: string
+}
+
 const branchParamSchema = z.object({
   branch: z.string().min(1)
 })
@@ -117,6 +121,7 @@ export const requestChanges = defineEndpoint({
   path: '/:branch/request-changes',
   params: branchParamSchema,
   body: requestChangesBodySchema,
+  bodyType: 'RequestChangesBody',
   responseType: 'BranchResponse',
   response: {} as BranchResponse,
   defaultMockData: { branch: { name: 'test-branch', status: 'editing', access: {}, createdBy: 'user-1', createdAt: '2024-01-01', updatedAt: '2024-01-01' } },

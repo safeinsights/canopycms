@@ -77,7 +77,7 @@ export function usePermissionManager(
 
   const handleSavePermissions = async (permissions: PathPermission[]) => {
     try {
-      const result = await getApiClient().permissions.update(permissions)
+      const result = await getApiClient().permissions.update({ permissions })
       if (!result.ok) {
         throw new Error(result.error || 'Failed to save permissions')
       }

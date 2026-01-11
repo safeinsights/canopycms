@@ -121,6 +121,7 @@ const uploadAsset = defineEndpoint({
   method: 'POST',
   path: '/assets',
   body: uploadAssetBodySchema,
+  bodyType: 'UploadAssetBody',
   responseType: 'AssetUploadResponse',
   response: {} as AssetUploadResponse,
   defaultMockData: { asset: { key: '', url: '' } },

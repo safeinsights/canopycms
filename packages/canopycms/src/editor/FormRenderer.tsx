@@ -44,7 +44,7 @@ const normalizeOptions = (
 const fieldKey = (path: Array<string | number>): string => formatCanopyPath(path)
 
 export interface FormRendererProps {
-  fields: FieldConfig[]
+  fields: readonly FieldConfig[]
   value: FormValue
   onChange: (next: FormValue) => void
   customRenderers?: CustomFieldRenderers

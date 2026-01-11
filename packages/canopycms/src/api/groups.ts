@@ -250,6 +250,7 @@ const updateInternal = defineEndpoint({
   method: 'PUT',
   path: '/groups/internal',
   body: updateInternalGroupsBodySchema,
+  bodyType: 'UpdateInternalGroupsBody',
   responseType: 'UpdateInternalGroupsResponse',
   response: {} as UpdateInternalGroupsResponse,
   defaultMockData: {},

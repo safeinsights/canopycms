@@ -92,6 +92,7 @@ export const WithCollections: Story = {
           subtitle="Schema-driven editing with preview"
           branchName="story/branch"
           collections={collections}
+          configSchema={{ collections: [], singletons: [] }}
           initialSelectedId={entries[0]?.id}
           onCreateEntry={handleCreateEntry}
         />
