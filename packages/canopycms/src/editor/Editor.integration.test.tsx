@@ -140,15 +140,26 @@ describe('Editor integration', () => {
     )
 
     // Wait for the entry data to be loaded and form to render with loaded value
+    let input: HTMLInputElement
     await waitFor(() => {
-      const input = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
-      expect(input).not.toBeNull()
-      expect(input?.value).toBe('Loaded title')
+      const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
+      expect(el).not.toBeNull()
+      expect(el?.value).toBe('Loaded title')
+      input = el!
     })
 
-    // Ensure save button is enabled (not disabled due to loading state)
-    const saveButton = await screen.findByRole('button', { name: /save file/i })
-    expect(saveButton.hasAttribute('disabled')).toBe(false)
+    // Verify save button is disabled when there are no unsaved changes
+    let saveButton = await screen.findByRole('button', { name: /save file/i })
+    expect(saveButton.hasAttribute('disabled')).toBe(true)
+
+    // Make a change to the form
+    fireEvent.change(input!, { target: { value: 'Modified title' } })
+
+    // Verify save button becomes enabled after making a change
+    await waitFor(() => {
+      saveButton = screen.getByRole('button', { name: /save file/i })
+      expect(saveButton.hasAttribute('disabled')).toBe(false)
+    })
 
     fireEvent.click(saveButton)
 
@@ -169,7 +180,7 @@ describe('Editor integration', () => {
     // With path-based routing, collection and slug are in the URL, not the body
     expect(body).toMatchObject({
       format: 'json',
-      data: { title: 'Loaded title' },
+      data: { title: 'Modified title' },
     })
   })
 })

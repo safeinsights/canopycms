@@ -26,10 +26,15 @@ vi.mock('@mantine/notifications', () => ({
   },
 }))
 
-// Mock modals
+// Mock modals - auto-confirm by default
 vi.mock('@mantine/modals', () => ({
   modals: {
-    openConfirmModal: vi.fn(),
+    openConfirmModal: vi.fn((options) => {
+      // Automatically call onConfirm to simulate user clicking "Confirm"
+      if (options.onConfirm) {
+        options.onConfirm()
+      }
+    }),
   },
 }))
 
@@ -207,7 +212,14 @@ describe('useBranchManager', () => {
     })
 
     await act(async () => {
-      await result.current.handleSubmit('feature')
+      try {
+        await result.current.handleSubmit('feature')
+        // Should not reach here - expect rejection
+        expect.fail('Expected handleSubmit to reject')
+      } catch (err) {
+        // Expected - error should be rejected
+        expect(err).toBeInstanceOf(Error)
+      }
     })
 
     expect(mockSetBusy).toHaveBeenCalledWith(false)

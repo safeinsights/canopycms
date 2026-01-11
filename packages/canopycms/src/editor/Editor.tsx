@@ -137,6 +137,7 @@ export const Editor: React.FC<EditorProps> = ({
     setBranchName,
     branches,
     branchSummaries,
+    currentBranch,
     handleSubmit,
     handleWithdraw,
     handleRequestChanges,
@@ -356,12 +357,17 @@ export const Editor: React.FC<EditorProps> = ({
           currentEntry={currentEntry}
           branchName={branchNameState}
           branchMode={branchMode}
+          branchStatus={currentBranch?.status}
           busy={busy}
           breadcrumbSegments={breadcrumbSegments}
           editedFiles={editedFiles}
           modifiedCount={modifiedCount}
           unresolvedCommentCount={comments.filter((t) => !t.resolved).length}
           comments={comments}
+          hasUnsavedChanges={isSelectedDirty()}
+          userContext={userContext}
+          branchCreatedBy={currentBranch?.createdBy}
+          branchAccess={currentBranch?.access}
           onNavigatorOpen={() => setNavigatorOpen(true)}
           onFileReload={handleReload}
           onFileDiscardDraft={handleDiscardFileDraft}
@@ -372,6 +378,7 @@ export const Editor: React.FC<EditorProps> = ({
           onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
           onSave={handleSave}
           onSubmit={() => branchNameState && handleSubmit(branchNameState)}
+          onWithdraw={() => branchNameState && handleWithdraw(branchNameState)}
         />
 
         <Box
