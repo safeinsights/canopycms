@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { PathPermission } from '../config'
+import type { UserSearchResult } from '../auth/types'
 import { loadPathPermissions, savePathPermissions } from '../permissions-loader'
 import { isAdmin, isReviewer } from '../reserved-groups'
 import { defineEndpoint } from './route-builder'
@@ -14,6 +15,9 @@ export type SearchUsersResponse = ApiResponse<{ users: any[] }>
 
 /** Response type for list groups */
 export type ListGroupsResponse = ApiResponse<{ groups: any[] }>
+
+/** Response type for get user metadata */
+export type GetUserMetadataResponse = ApiResponse<{ user: UserSearchResult | null }>
 
 // ============================================================================
 // Zod Schemas for Validation
@@ -28,8 +32,13 @@ const searchUsersParamsSchema = z.object({
   limit: z.string().optional(),
 })
 
+const getUserMetadataParamsSchema = z.object({
+  userId: z.string(),
+})
+
 export type UpdatePermissionsBody = z.infer<typeof updatePermissionsBodySchema>
 export type SearchUsersParams = z.infer<typeof searchUsersParamsSchema>
+export type GetUserMetadataParams = z.infer<typeof getUserMetadataParamsSchema>
 
 /**
  * Get current permissions (admin only)
@@ -172,6 +181,36 @@ const listGroupsHandler = async (ctx: ApiContext, req: ApiRequest): Promise<List
   }
 }
 
+/**
+ * Get user metadata by ID (for UI display)
+ */
+const getUserMetadataHandler = async (
+  ctx: ApiContext,
+  req: ApiRequest,
+  params: z.infer<typeof getUserMetadataParamsSchema>,
+): Promise<GetUserMetadataResponse> => {
+  // Require admin or reviewer for user metadata
+  if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
+    return { ok: false, status: 403, error: 'Admin or Reviewer access required' }
+  }
+
+  const authPlugin = ctx.authPlugin
+  if (!authPlugin) {
+    return { ok: false, status: 501, error: 'Auth plugin not configured' }
+  }
+
+  try {
+    const user = await authPlugin.getUserMetadata(params.userId)
+    return { ok: true, status: 200, data: { user } }
+  } catch (error) {
+    return {
+      ok: false,
+      status: 500,
+      error: error instanceof Error ? error.message : 'Failed to get user metadata',
+    }
+  }
+}
+
 // ============================================================================
 // Route Definitions with defineEndpoint
 // ============================================================================
@@ -240,6 +279,22 @@ const listGroups = defineEndpoint({
 })
 
 /**
+ * Get user metadata by ID (admin/reviewer only)
+ * GET /users/:userId
+ */
+const getUserMetadata = defineEndpoint({
+  namespace: 'permissions',
+  name: 'getUserMetadata',
+  method: 'GET',
+  path: '/users/:userId',
+  params: getUserMetadataParamsSchema,
+  responseType: 'GetUserMetadataResponse',
+  response: {} as GetUserMetadataResponse,
+  defaultMockData: { user: null },
+  handler: getUserMetadataHandler,
+})
+
+/**
  * Exported routes for router registration
  */
 export const PERMISSION_ROUTES = {
@@ -247,4 +302,5 @@ export const PERMISSION_ROUTES = {
   update: updatePermissions,
   searchUsers: searchUsers,
   listGroups: listGroups,
+  getUserMetadata: getUserMetadata,
 } as const

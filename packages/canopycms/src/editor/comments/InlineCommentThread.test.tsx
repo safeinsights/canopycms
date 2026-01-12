@@ -133,7 +133,10 @@ describe('InlineCommentThread', () => {
       { wrapper: Wrapper },
     )
 
-    expect(container.textContent).toContain('Resolved by alice')
+    // Check that resolved metadata is present in the DOM
+    // Using container.textContent to check the full text content
+    const text = container.textContent || ''
+    expect(text).toMatch(/Resolved by.*alice/)
   })
 
   // TODO: Fix async interaction with Mantine Button component in tests

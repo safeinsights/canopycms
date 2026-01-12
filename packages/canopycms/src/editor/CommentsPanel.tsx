@@ -15,6 +15,8 @@ import {
   Switch,
 } from '@mantine/core'
 import type { CommentThread } from '../comment-store'
+import type { UserSearchResult } from '../auth/types'
+import { UserBadge } from './components/UserBadge'
 
 export interface CommentsPanelProps {
   branchName: string
@@ -35,6 +37,8 @@ export interface CommentsPanelProps {
   onJumpToEntry?: (entryId: string, threadId: string) => void
   /** Open branch manager */
   onJumpToBranch?: (threadId: string) => void
+  /** Optional function to fetch user metadata for displaying user badges */
+  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
 export const CommentsPanel: React.FC<CommentsPanelProps> = ({
@@ -47,6 +51,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
   onJumpToField,
   onJumpToEntry,
   onJumpToBranch,
+  onGetUserMetadata,
 }) => {
   const [newCommentText, setNewCommentText] = useState('')
   const [replyTo, setReplyTo] = useState<string | null>(null)
@@ -278,9 +283,22 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                         )}
                         <Stack gap={4}>
                           <Group gap="xs">
-                            <Text size="xs" fw={500}>
-                              {comment.userId}
-                            </Text>
+                            {onGetUserMetadata ? (
+                              <UserBadge
+                                userId={comment.userId}
+                                getUserMetadata={onGetUserMetadata}
+                                variant="avatar-name"
+                                size="xs"
+                                showEmailTooltip={true}
+                                showBadge={true}
+                                badgeVariant="light"
+                                color="gray"
+                              />
+                            ) : (
+                              <Text size="xs" fw={500}>
+                                {comment.userId}
+                              </Text>
+                            )}
                             <Text size="xs" c="dimmed">
                               {formatTimestamp(comment.timestamp)}
                             </Text>

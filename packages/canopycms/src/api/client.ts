@@ -38,6 +38,7 @@ import type {
   UploadAssetBody,
 } from './assets'
 import type {
+  GetUserMetadataResponse,
   ListGroupsResponse,
   PermissionsResponse,
   SearchUsersResponse,
@@ -328,6 +329,13 @@ export class CanopyApiClient {
      */
     listGroups: (): Promise<ListGroupsResponse> => {
       return this.request('GET', '/groups')
+    },
+
+    /**
+     * getUserMetadata - GET /users/:userId
+     */
+    getUserMetadata: (params: Record<string, string>): Promise<GetUserMetadataResponse> => {
+      return this.request('GET', this.buildPath('/users/:userId', params))
     },
   }
 

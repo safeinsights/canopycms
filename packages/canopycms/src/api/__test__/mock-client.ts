@@ -40,6 +40,7 @@ import type {
   UploadAssetBody,
 } from '../assets'
 import type {
+  GetUserMetadataResponse,
   ListGroupsResponse,
   PermissionsResponse,
   SearchUsersResponse,
@@ -219,6 +220,7 @@ export function createMockApiClient(): MockApiClient {
       update: vi.fn().mockResolvedValue(mockSuccess({ permissions: [] })),
       searchUsers: vi.fn().mockResolvedValue(mockSuccess({ users: [] })),
       listGroups: vi.fn().mockResolvedValue(mockSuccess({ groups: [] })),
+      getUserMetadata: vi.fn().mockResolvedValue(mockSuccess({ user: null })),
     },
 
     groups: {
@@ -406,6 +408,13 @@ export function mockSearchUsersResponse(): SearchUsersResponse {
  */
 export function mockListGroupsResponse(): ListGroupsResponse {
   return mockSuccess({ groups: [] })
+}
+
+/**
+ * Create a GetUserMetadataResponse for testing
+ */
+export function mockGetUserMetadataResponse(): GetUserMetadataResponse {
+  return mockSuccess({ user: null })
 }
 
 /**

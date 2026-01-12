@@ -4,6 +4,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react'
 import { ActionIcon, Alert, Button, Group, Paper, Stack, Text, Textarea } from '@mantine/core'
 import { IconChevronLeft, IconChevronRight, IconAlertCircle } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
+import type { UserSearchResult } from '../../auth/types'
 import { InlineCommentThread } from './InlineCommentThread'
 
 /**
@@ -109,6 +110,8 @@ export interface ThreadCarouselProps {
   autoOpenNewThread?: boolean
   /** Thread ID to highlight and scroll to */
   highlightThreadId?: string
+  /** Optional function to fetch user metadata for displaying user badges */
+  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   threads,
@@ -121,6 +124,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   autoFocus,
   autoOpenNewThread,
   highlightThreadId,
+  onGetUserMetadata,
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [showNewThreadBox, setShowNewThreadBox] = useState(false)
@@ -426,6 +430,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                       onResolve={() => onResolveThread(thread.id)}
                       currentUserId={currentUserId}
                       canResolve={canResolve}
+                      onGetUserMetadata={onGetUserMetadata}
                     />
                   </div>
                 )

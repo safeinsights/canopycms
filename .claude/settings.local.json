@@ -67,7 +67,9 @@
       "Bash(for file in branch-review.ts comments.ts content.ts reference-options.ts entries.ts resolve-references.ts branch.ts)",
       "Bash(do grep -l \"resolveBranchPaths\" \"$file\")",
       "Bash(npm run dev:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(npm run generate-client:*)",
+      "Bash(npm run:*)"
     ]
   }
 }

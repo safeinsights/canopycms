@@ -236,6 +236,7 @@ export const Editor: React.FC<EditorProps> = ({
     groupsLoading,
     handleSaveGroups,
     handleSearchUsers,
+    handleGetUserMetadata,
     handleSearchExternalGroups,
   } = useGroupManager({ isOpen: groupManagerOpen })
 
@@ -526,6 +527,7 @@ export const Editor: React.FC<EditorProps> = ({
             onAddComment={handleAddComment}
             onResolveThread={handleResolveThread}
             highlightThreadId={highlightThreadId}
+            onGetUserMetadata={handleGetUserMetadata}
           />
         </Drawer>
         {commentsPanelOpen && branchNameState && (
@@ -537,6 +539,7 @@ export const Editor: React.FC<EditorProps> = ({
             onResolveThread={handleResolveThread}
             onClose={() => setCommentsPanelOpen(false)}
             onJumpToField={handleJumpToField}
+            onGetUserMetadata={handleGetUserMetadata}
             onJumpToEntry={handleJumpToEntry}
             onJumpToBranch={handleJumpToBranch}
           />
@@ -565,6 +568,7 @@ export const Editor: React.FC<EditorProps> = ({
             canEdit={true}
             onSave={handleSaveGroups}
             onSearchUsers={handleSearchUsers}
+            onGetUserMetadata={handleGetUserMetadata}
             onSearchExternalGroups={handleSearchExternalGroups}
             onClose={() => setGroupManagerOpen(false)}
           />
@@ -595,6 +599,7 @@ export const Editor: React.FC<EditorProps> = ({
             canEdit={true}
             onSave={handleSavePermissions}
             onSearchUsers={handleSearchUsers}
+            onGetUserMetadata={handleGetUserMetadata}
             onListGroups={handleListGroups}
             onClose={() => setPermissionManagerOpen(false)}
           />

@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from 'react'
 import { Box, Button } from '@mantine/core'
 import type { CommentThread } from '../../comment-store'
+import type { UserSearchResult } from '../../auth/types'
 import { ThreadCarousel } from './ThreadCarousel'
 
 export interface BranchCommentsProps {
@@ -26,6 +27,8 @@ export interface BranchCommentsProps {
   autoFocus?: boolean
   /** Thread ID to highlight and scroll to */
   highlightThreadId?: string
+  /** Optional function to fetch user metadata for displaying user badges */
+  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
 /**
@@ -40,6 +43,7 @@ export const BranchComments: React.FC<BranchCommentsProps> = ({
   onResolveThread,
   autoFocus,
   highlightThreadId,
+  onGetUserMetadata,
 }) => {
   const [showCarousel, setShowCarousel] = useState(false)
 
@@ -83,6 +87,7 @@ export const BranchComments: React.FC<BranchCommentsProps> = ({
       autoFocus={autoFocus}
       autoOpenNewThread={showCarousel && branchThreads.length === 0}
       highlightThreadId={highlightThreadId}
+      onGetUserMetadata={onGetUserMetadata}
     />
   )
 }

@@ -4,6 +4,8 @@ import React, { useState } from 'react'
 import { Alert, Badge, Button, Group, Paper, Stack, Text, Textarea } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
 import type { CommentThread } from '../../comment-store'
+import type { UserSearchResult } from '../../auth/types'
+import { UserBadge } from '../components/UserBadge'
 
 export interface InlineCommentThreadProps {
   /** The thread to display */
@@ -16,6 +18,8 @@ export interface InlineCommentThreadProps {
   currentUserId: string
   /** Whether user can resolve threads */
   canResolve: boolean
+  /** Optional function to fetch user metadata for displaying user badges */
+  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
 /**
@@ -28,6 +32,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
   onResolve,
   currentUserId,
   canResolve,
+  onGetUserMetadata,
 }) => {
   const [replyText, setReplyText] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -129,9 +134,22 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
               )}
               <Stack gap={4}>
                 <Group gap="xs" justify="space-between">
-                  <Text size="xs" fw={600}>
-                    {comment.userId}
-                  </Text>
+                  {onGetUserMetadata ? (
+                    <UserBadge
+                      userId={comment.userId}
+                      getUserMetadata={onGetUserMetadata}
+                      variant="avatar-name"
+                      size="xs"
+                      showEmailTooltip={true}
+                      showBadge={true}
+                      badgeVariant="light"
+                      color="gray"
+                    />
+                  ) : (
+                    <Text size="xs" fw={600}>
+                      {comment.userId}
+                    </Text>
+                  )}
                   <Text size="xs" c="dimmed">
                     {formatTimestamp(comment.timestamp)}
                   </Text>
@@ -193,10 +211,32 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
 
         {/* Resolved info */}
         {thread.resolved && thread.resolvedBy && (
-          <Text size="xs" c="dimmed" fs="italic">
-            Resolved by {thread.resolvedBy}
-            {thread.resolvedAt && ` ${formatTimestamp(thread.resolvedAt)}`}
-          </Text>
+          <Group gap={4}>
+            <Text size="xs" c="dimmed" fs="italic">
+              Resolved by
+            </Text>
+            {onGetUserMetadata ? (
+              <UserBadge
+                userId={thread.resolvedBy}
+                getUserMetadata={onGetUserMetadata}
+                variant="avatar-name"
+                size="xs"
+                showEmailTooltip={true}
+                showBadge={true}
+                badgeVariant="light"
+                color="gray"
+              />
+            ) : (
+              <Text size="xs" c="dimmed" fs="italic">
+                {thread.resolvedBy}
+              </Text>
+            )}
+            {thread.resolvedAt && (
+              <Text size="xs" c="dimmed" fs="italic">
+                {formatTimestamp(thread.resolvedAt)}
+              </Text>
+            )}
+          </Group>
         )}
       </Stack>
     </Paper>
