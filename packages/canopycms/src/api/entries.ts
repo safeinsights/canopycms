@@ -36,6 +36,7 @@ export interface CollectionItem {
   title?: string
   updatedAt?: string
   exists?: boolean
+  canEdit?: boolean
 }
 
 export interface ListEntriesParams {
@@ -263,15 +264,16 @@ export const listEntriesHandler = async (
       items.sort((a, b) => a.slug.localeCompare(b.slug))
       for (const item of items) {
         // Use the path already included in the item
-        const access = await ctx.services.checkContentAccess(context, root, item.path, req.user, 'read')
-        if (!access.allowed) continue
+        const readAccess = await ctx.services.checkContentAccess(context, root, item.path, req.user, 'read')
+        if (!readAccess.allowed) continue
+        const editAccess = await ctx.services.checkContentAccess(context, root, item.path, req.user, 'edit')
         if (search) {
           const haystack = `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
           if (!haystack.includes(search)) {
             continue
           }
         }
-        entries.push(item)
+        entries.push({ ...item, canEdit: editAccess.allowed })
       }
     } catch (err) {
       if (err instanceof ContentStoreError) {
@@ -303,8 +305,9 @@ export const listEntriesHandler = async (
 
           // Check permissions
           const relativePath = path.relative(root, singletonPath)
-          const access = await ctx.services.checkContentAccess(context, root, relativePath, req.user, 'read')
-          if (!access.allowed) continue
+          const readAccess = await ctx.services.checkContentAccess(context, root, relativePath, req.user, 'read')
+          if (!readAccess.allowed) continue
+          const editAccess = await ctx.services.checkContentAccess(context, root, relativePath, req.user, 'edit')
 
           // Apply search filter
           if (search) {
@@ -324,6 +327,7 @@ export const listEntriesHandler = async (
             path: relativePath,
             title: title || item.label || item.name,
             exists,
+            canEdit: editAccess.allowed,
           })
         } catch (err) {
           if (err instanceof ContentStoreError) {
@@ -340,15 +344,16 @@ export const listEntriesHandler = async (
         items.sort((a, b) => a.slug.localeCompare(b.slug))
         for (const entry of items) {
           // Use the path already included in the item
-          const access = await ctx.services.checkContentAccess(context, root, entry.path, req.user, 'read')
-          if (!access.allowed) continue
+          const readAccess = await ctx.services.checkContentAccess(context, root, entry.path, req.user, 'read')
+          if (!readAccess.allowed) continue
+          const editAccess = await ctx.services.checkContentAccess(context, root, entry.path, req.user, 'edit')
           if (search) {
             const haystack = `${entry.slug} ${entry.title ?? ''} ${entry.collectionName ?? ''}`.toLowerCase()
             if (!haystack.includes(search)) {
               continue
             }
           }
-          entries.push(entry)
+          entries.push({ ...entry, canEdit: editAccess.allowed })
         }
       } catch (err) {
         if (err instanceof ContentStoreError) {

@@ -119,6 +119,7 @@ export const buildEntriesFromListResponse = ({
       slug: entry.itemType === 'singleton' ? '' : entry.slug,
       format: entry.format,
       type: entry.itemType,
+      canEdit: entry.canEdit,
     }
   })
 }

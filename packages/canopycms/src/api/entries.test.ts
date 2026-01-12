@@ -311,4 +311,80 @@ describe('listEntries', () => {
     expect(homeCollection?.schema[0].name).toBe('title')
     expect(homeCollection?.schema[1].name).toBe('tagline')
   })
+
+  it('includes canEdit flag based on edit permissions', async () => {
+    const root = await tmpDir()
+    await fs.mkdir(path.join(root, 'content/posts'), { recursive: true })
+    await fs.writeFile(
+      path.join(root, 'content/posts/public.json'),
+      JSON.stringify({ title: 'Public Post' }),
+      'utf8'
+    )
+    await fs.writeFile(
+      path.join(root, 'content/posts/readonly.json'),
+      JSON.stringify({ title: 'Read-Only Post' }),
+      'utf8'
+    )
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      schema: {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+          },
+        ],
+      },
+    })
+
+    // Mock loadPathPermissions: 'readonly.json' is read-only for user 'u1'
+    const pathRules: PathPermission[] = [
+      {
+        path: 'content/posts/readonly.json',
+        read: { allowedUsers: ['u1'] },
+        edit: { allowedUsers: ['admin'] }, // u1 cannot edit
+      },
+    ]
+    const mockLoadPermissions = vi.fn().mockResolvedValue(pathRules)
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: mockLoadPermissions,
+      defaultPathAccess: 'allow',
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        flatSchema: flattenSchema(config.schema, config.contentRoot),
+        checkBranchAccess,
+        checkContentAccess,
+      },
+      branchContext: createMockBranchContext({
+        branchName: 'main',
+        baseRoot: root,
+        branchRoot: root,
+        createdBy: 'u1',
+      }),
+    })
+
+    const res = await listEntriesHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main' }
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.entries).toHaveLength(2)
+
+    // Check canEdit flag on entries
+    const publicEntry = res.data?.entries.find((e) => e.slug === 'public')
+    const readonlyEntry = res.data?.entries.find((e) => e.slug === 'readonly')
+
+    expect(publicEntry?.canEdit).toBe(true) // u1 can edit public post (default allow)
+    expect(readonlyEntry?.canEdit).toBe(false) // u1 cannot edit readonly post (restricted to admin)
+  })
 })
