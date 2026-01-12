@@ -10,8 +10,10 @@ import {
   normalizeContentPayload,
   buildCollectionLabels,
   buildBreadcrumbSegments,
+  calculatePathToEntry,
 } from './editor-utils'
 import type { EditorCollection } from './Editor'
+import type { TreeNodeData } from '@mantine/core'
 
 describe('buildPreviewSrc', () => {
   it('returns the provided preview without modification', () => {
@@ -430,5 +432,207 @@ describe('buildBreadcrumbSegments', () => {
     const result = buildBreadcrumbSegments(entry, labels)
 
     expect(result).toEqual(['All Files', 'Settings'])
+  })
+})
+
+describe('calculatePathToEntry', () => {
+  it('returns empty object when no entry ID is provided', () => {
+    const treeData: TreeNodeData[] = []
+    expect(calculatePathToEntry(undefined, treeData)).toEqual({})
+    expect(calculatePathToEntry('', treeData)).toEqual({})
+  })
+
+  it('returns empty object when entry is not found in tree', () => {
+    const treeData: TreeNodeData[] = [
+      {
+        value: 'collection:posts',
+        label: 'Posts',
+        children: [{ value: 'posts/hello', label: 'Hello' }],
+      },
+    ]
+    expect(calculatePathToEntry('posts/nonexistent', treeData)).toEqual({})
+  })
+
+  it('returns empty object for flat list (no collections)', () => {
+    const treeData: TreeNodeData[] = [
+      { value: 'entry1', label: 'Entry 1' },
+      { value: 'entry2', label: 'Entry 2' },
+    ]
+    expect(calculatePathToEntry('entry1', treeData)).toEqual({})
+  })
+
+  it('expands single parent collection', () => {
+    const treeData: TreeNodeData[] = [
+      {
+        value: 'collection:posts',
+        label: 'Posts',
+        children: [
+          { value: 'posts/hello', label: 'Hello' },
+          { value: 'posts/world', label: 'World' },
+        ],
+      },
+    ]
+
+    const result = calculatePathToEntry('posts/hello', treeData)
+
+    expect(result).toEqual({
+      'collection:posts': true,
+    })
+  })
+
+  it('expands all ancestor collections for deeply nested entry', () => {
+    const treeData: TreeNodeData[] = [
+      {
+        value: 'collection:content',
+        label: 'Content',
+        children: [
+          {
+            value: 'collection:content/docs',
+            label: 'Documentation',
+            children: [
+              {
+                value: 'collection:content/docs/api',
+                label: 'API Reference',
+                children: [
+                  {
+                    value: 'collection:content/docs/api/v1',
+                    label: 'v1',
+                    children: [{ value: 'content/docs/api/v1/endpoint', label: 'Endpoint' }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]
+
+    const result = calculatePathToEntry('content/docs/api/v1/endpoint', treeData)
+
+    expect(result).toEqual({
+      'collection:content': true,
+      'collection:content/docs': true,
+      'collection:content/docs/api': true,
+      'collection:content/docs/api/v1': true,
+    })
+  })
+
+  it('expands path across multiple root collections', () => {
+    const treeData: TreeNodeData[] = [
+      {
+        value: 'collection:posts',
+        label: 'Posts',
+        children: [{ value: 'posts/hello', label: 'Hello' }],
+      },
+      {
+        value: 'collection:content',
+        label: 'Content',
+        children: [
+          {
+            value: 'collection:content/docs',
+            label: 'Documentation',
+            children: [{ value: 'content/docs/guide', label: 'Guide' }],
+          },
+        ],
+      },
+    ]
+
+    const result = calculatePathToEntry('content/docs/guide', treeData)
+
+    // Should only expand collections in the path, not sibling trees
+    expect(result).toEqual({
+      'collection:content': true,
+      'collection:content/docs': true,
+    })
+  })
+
+  it('handles entry at root level within collection', () => {
+    const treeData: TreeNodeData[] = [
+      {
+        value: 'collection:posts',
+        label: 'Posts',
+        children: [
+          { value: 'posts/entry1', label: 'Entry 1' },
+          {
+            value: 'collection:posts/nested',
+            label: 'Nested',
+            children: [{ value: 'posts/nested/entry2', label: 'Entry 2' }],
+          },
+        ],
+      },
+    ]
+
+    const result = calculatePathToEntry('posts/entry1', treeData)
+
+    expect(result).toEqual({
+      'collection:posts': true,
+    })
+  })
+
+  it('does not expand unrelated collections', () => {
+    const treeData: TreeNodeData[] = [
+      {
+        value: 'collection:posts',
+        label: 'Posts',
+        children: [{ value: 'posts/hello', label: 'Hello' }],
+      },
+      {
+        value: 'collection:pages',
+        label: 'Pages',
+        children: [{ value: 'pages/about', label: 'About' }],
+      },
+      {
+        value: 'collection:content',
+        label: 'Content',
+        children: [
+          {
+            value: 'collection:content/docs',
+            label: 'Documentation',
+            children: [{ value: 'content/docs/guide', label: 'Guide' }],
+          },
+        ],
+      },
+    ]
+
+    const result = calculatePathToEntry('pages/about', treeData)
+
+    // Should only expand 'pages', not 'posts' or 'content' or 'content/docs'
+    expect(result).toEqual({
+      'collection:pages': true,
+    })
+  })
+
+  it('handles complex tree with mixed entries and collections', () => {
+    const treeData: TreeNodeData[] = [
+      {
+        value: 'collection:blog',
+        label: 'Blog',
+        children: [
+          { value: 'blog/post1', label: 'Post 1' },
+          {
+            value: 'collection:blog/featured',
+            label: 'Featured',
+            children: [
+              { value: 'blog/featured/post2', label: 'Post 2' },
+              {
+                value: 'collection:blog/featured/archive',
+                label: 'Archive',
+                children: [{ value: 'blog/featured/archive/post3', label: 'Post 3' }],
+              },
+            ],
+          },
+          { value: 'blog/post4', label: 'Post 4' },
+        ],
+      },
+    ]
+
+    // Find entry deep in the tree
+    const result = calculatePathToEntry('blog/featured/archive/post3', treeData)
+
+    expect(result).toEqual({
+      'collection:blog': true,
+      'collection:blog/featured': true,
+      'collection:blog/featured/archive': true,
+    })
   })
 })

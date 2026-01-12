@@ -1,9 +1,13 @@
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState, useRef } from 'react'
 
-import { Box, Drawer, Paper, Text, Title } from '@mantine/core'
+import { ActionIcon, Box, Drawer, Group, Paper, Text, Title, useTree } from '@mantine/core'
+import { IconChevronDown, IconChevronUp } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
+
+// TreeController type from Mantine's useTree hook
+type TreeController = ReturnType<typeof useTree>
 
 import type { ContentFormat, FieldConfig, RootCollectionConfig } from '../config'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
@@ -309,6 +313,32 @@ export const Editor: React.FC<EditorProps> = ({
     return collections.map((node) => build(node))
   }, [collections, entriesState, onCreateEntry, handleCreateEntry])
 
+  // Tree expansion state - persists across drawer close/open
+  const treeExpandedStateRef = useRef<Record<string, boolean>>({})
+
+  // Tree controller ref for collapse/expand all functionality
+  const treeControllerRef = useRef<TreeController | null>(null)
+
+  const handleTreeControllerReady = (controller: TreeController) => {
+    treeControllerRef.current = controller
+  }
+
+  const handleExpandedStateChange = (state: Record<string, boolean>) => {
+    treeExpandedStateRef.current = state
+  }
+
+  const handleCollapseAll = () => {
+    treeControllerRef.current?.collapseAllNodes()
+    // Sync the ref to empty state
+    treeExpandedStateRef.current = {}
+  }
+
+  const handleExpandAll = () => {
+    treeControllerRef.current?.expandAllNodes()
+    // Sync the ref with all expanded nodes from controller
+    treeExpandedStateRef.current = treeControllerRef.current?.expandedState ?? {}
+  }
+
   const previewFrameData = Object.keys(previewData).length > 0 ? previewData : effectiveValue
 
   // Helper component for centered messages
@@ -473,33 +503,64 @@ export const Editor: React.FC<EditorProps> = ({
 
         <EditorFooter />
 
-        <Drawer
+        <Drawer.Root
           opened={navigatorOpen}
           onClose={() => setNavigatorOpen(false)}
           position="left"
-          title={
-            <div>
-              <Title order={4}>Content</Title>
-            </div>
-          }
-          padding="md"
           size={360}
-          overlayProps={{ blur: 2 }}
         >
-          <EntryNavigator
-            collections={navCollections}
-            items={
-              navCollections
-                ? undefined
-                : entriesState.map((e) => ({ id: e.id, label: e.label, status: e.status }))
-            }
-            selectedId={selectedId}
-            onSelect={(id) => {
-              setSelectedId(id)
-              setNavigatorOpen(false)
-            }}
-          />
-        </Drawer>
+          <Drawer.Overlay blur={2} />
+          <Drawer.Content>
+            <Drawer.Header>
+              <Drawer.Title>
+                <Title order={4}>Content</Title>
+              </Drawer.Title>
+              <Group gap="xs">
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  size="sm"
+                  onClick={handleCollapseAll}
+                  title="Collapse all folders"
+                  aria-label="Collapse all folders"
+                >
+                  <IconChevronUp size={16} />
+                </ActionIcon>
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  size="sm"
+                  onClick={handleExpandAll}
+                  title="Expand all folders"
+                  aria-label="Expand all folders"
+                >
+                  <IconChevronDown size={16} />
+                </ActionIcon>
+                <Drawer.CloseButton />
+              </Group>
+            </Drawer.Header>
+            <Drawer.Body p={0}>
+              <Box px="md">
+                <EntryNavigator
+                  collections={navCollections}
+                  items={
+                    navCollections
+                      ? undefined
+                      : entriesState.map((e) => ({ id: e.id, label: e.label, status: e.status }))
+                  }
+                  selectedId={selectedId}
+                  onSelect={(id) => {
+                    setSelectedId(id)
+                    setNavigatorOpen(false)
+                  }}
+                  onTreeControllerReady={handleTreeControllerReady}
+                  expandedStateRef={treeExpandedStateRef}
+                  onExpandedStateChange={handleExpandedStateChange}
+                />
+              </Box>
+            </Drawer.Body>
+          </Drawer.Content>
+        </Drawer.Root>
         <Drawer
           opened={branchManagerOpen}
           onClose={() => setBranchManagerOpen(false)}

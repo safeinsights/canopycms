@@ -2,6 +2,7 @@ import type { CollectionItem, ListEntriesResponse } from '../api/entries'
 import type { ContentFormat, FieldConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import type { EditorEntry, EditorCollection } from './Editor'
+import type { TreeNodeData } from '@mantine/core'
 
 export interface PreviewContext {
   branchName?: string
@@ -206,4 +207,75 @@ export const buildBreadcrumbSegments = (
   }
 
   return segments
+}
+
+/**
+ * Calculates which collection nodes need to be expanded to show the path to a specific entry.
+ * Recursively walks the tree to find the target entry and marks all ancestor collections as expanded.
+ *
+ * @param entryId - The entry ID to find (e.g., "blog/my-post")
+ * @param treeData - The tree data structure from Mantine Tree
+ * @returns Record<string, boolean> - Expanded state object where keys are collection node values
+ *
+ * @example
+ * ```ts
+ * const treeData = [
+ *   {
+ *     value: 'collection:blog',
+ *     children: [
+ *       { value: 'blog/post-1' },
+ *       {
+ *         value: 'collection:blog/featured',
+ *         children: [{ value: 'blog/featured/my-post' }]
+ *       }
+ *     ]
+ *   }
+ * ]
+ * calculatePathToEntry('blog/featured/my-post', treeData)
+ * // Returns: { 'collection:blog': true, 'collection:blog/featured': true }
+ * ```
+ */
+export const calculatePathToEntry = (
+  entryId: string | undefined,
+  treeData: TreeNodeData[],
+): Record<string, boolean> => {
+  if (!entryId) return {}
+
+  const pathToExpand: Record<string, boolean> = {}
+
+  /**
+   * Recursive function to find entry and mark parent collections as expanded.
+   * @param nodes - Current level of tree nodes to search
+   * @param ancestors - Accumulated ancestor node values (collection IDs) from root to current position
+   * @returns true if the target entry was found in this subtree
+   */
+  const findAndMarkPath = (nodes: TreeNodeData[], ancestors: string[]): boolean => {
+    for (const node of nodes) {
+      // Found the target entry
+      if (node.value === entryId) {
+        // Mark all ancestors as expanded
+        for (const ancestor of ancestors) {
+          pathToExpand[ancestor] = true
+        }
+        return true
+      }
+
+      // Search children recursively if they exist
+      if (node.children && node.children.length > 0) {
+        const currentPath = [...ancestors, node.value]
+        const found = findAndMarkPath(node.children, currentPath)
+
+        if (found) {
+          // Mark this node as expanded since the target was found in its subtree
+          pathToExpand[node.value] = true
+          return true
+        }
+      }
+    }
+
+    return false
+  }
+
+  findAndMarkPath(treeData, [])
+  return pathToExpand
 }

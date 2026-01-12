@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useMemo } from 'react'
+import React, { useMemo, useRef, useEffect } from 'react'
 
 import {
   Badge,
@@ -12,10 +12,16 @@ import {
   Stack,
   Text,
   Tree,
+  useTree,
   type RenderTreeNodePayload,
   type TreeNodeData,
   rem,
 } from '@mantine/core'
+
+import { calculatePathToEntry } from './editor-utils'
+
+// TreeController type from Mantine's useTree hook
+type TreeController = ReturnType<typeof useTree>
 
 export interface EntryNavItem {
   id: string
@@ -38,6 +44,9 @@ export interface EntryNavigatorProps {
   collections?: EntryNavCollection[]
   selectedId?: string
   onSelect: (id: string) => void
+  onTreeControllerReady?: (controller: TreeController) => void
+  expandedStateRef?: React.MutableRefObject<Record<string, boolean>>
+  onExpandedStateChange?: (state: Record<string, boolean>) => void
 }
 
 export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
@@ -45,7 +54,14 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   collections,
   selectedId,
   onSelect,
+  onTreeControllerReady,
+  expandedStateRef,
+  onExpandedStateChange,
 }) => {
+  const selectedNodeRef = useRef<HTMLDivElement>(null)
+  const hasScrolledRef = useRef(false)
+  // Track expanded state synchronously to avoid race conditions on unmount
+  const localExpandedStateRef = useRef<Record<string, boolean>>(expandedStateRef?.current ?? {})
   const treeData = useMemo<TreeNodeData[]>(() => {
     if (collections?.length) {
       const toTree = (col: EntryNavCollection): TreeNodeData => {
@@ -87,6 +103,88 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     }))
   }, [collections, items])
 
+  // Initialize tree controller
+  const tree = useTree({
+    initialExpandedState: expandedStateRef?.current ?? {},
+    onNodeExpand: (value) => {
+      // Update local state synchronously
+      localExpandedStateRef.current = {
+        ...localExpandedStateRef.current,
+        [value]: true,
+      }
+      // Notify parent immediately
+      onExpandedStateChange?.(localExpandedStateRef.current)
+    },
+    onNodeCollapse: (value) => {
+      // Update local state synchronously
+      localExpandedStateRef.current = {
+        ...localExpandedStateRef.current,
+        [value]: false,
+      }
+      // Notify parent immediately
+      onExpandedStateChange?.(localExpandedStateRef.current)
+    },
+  })
+
+  // Forward tree controller to parent for collapse/expand all functionality
+  useEffect(() => {
+    onTreeControllerReady?.(tree)
+  }, [onTreeControllerReady])
+
+  // Cleanup: save current state when component unmounts
+  // Empty dependency array ensures this only runs on mount/unmount, not on re-renders
+  useEffect(() => {
+    return () => {
+      onExpandedStateChange?.(localExpandedStateRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Restore state on mount and when selectedId changes
+  useEffect(() => {
+    if (!selectedId || !treeData) return
+
+    const savedState = expandedStateRef?.current ?? {}
+
+    // Calculate path to current entry and merge with saved state
+    const pathToEntry = calculatePathToEntry(selectedId, treeData)
+    const baseState = { ...savedState, ...pathToEntry }
+
+    // Only update if state actually changed to avoid infinite loops
+    const currentStateJson = JSON.stringify(tree.expandedState)
+    const newStateJson = JSON.stringify(baseState)
+    if (currentStateJson !== newStateJson) {
+      tree.setExpandedState(baseState)
+      localExpandedStateRef.current = baseState
+      // Notify parent of the merged state
+      onExpandedStateChange?.(baseState)
+    }
+    // Dependencies limited to data changes only to prevent infinite update loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, treeData])
+
+  // Auto-scroll to selected entry when drawer opens
+  useEffect(() => {
+    if (selectedId && selectedNodeRef.current && !hasScrolledRef.current) {
+      // Small delay to ensure tree expansion completes first
+      const timeoutId = setTimeout(() => {
+        selectedNodeRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+          inline: 'nearest',
+        })
+        hasScrolledRef.current = true
+      }, 100)
+
+      return () => clearTimeout(timeoutId)
+    }
+  }, [selectedId, tree.expandedState])
+
+  // Reset scroll flag when component mounts (drawer opens)
+  useEffect(() => {
+    hasScrolledRef.current = false
+  }, [])
+
   const Chevron = ({ expanded, visible }: { expanded: boolean; visible: boolean }) => (
     <svg
       width="18"
@@ -125,6 +223,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     return (
       <Box
         {...elementProps}
+        ref={selected ? selectedNodeRef : undefined}
         data-testid={`entry-nav-item-${String(node.label ?? '')
           .toLowerCase()
           .replace(/\s+/g, '-')}`}
@@ -191,7 +290,13 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           </Text>
         ) : (
           <Box py="sm">
-            <Tree data={treeData} renderNode={renderNode} selectOnClick={false} levelOffset="sm" />
+            <Tree
+              data={treeData}
+              tree={tree}
+              renderNode={renderNode}
+              selectOnClick={false}
+              levelOffset="sm"
+            />
           </Box>
         )}
       </ScrollArea>
