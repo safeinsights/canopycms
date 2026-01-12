@@ -44,6 +44,7 @@ export interface EditorEntry {
   slug?: string
   format?: ContentFormat
   type?: 'entry' | 'singleton'
+  canEdit?: boolean
 }
 
 export interface EditorCollection {
@@ -310,6 +311,22 @@ export const Editor: React.FC<EditorProps> = ({
 
   const previewFrameData = Object.keys(previewData).length > 0 ? previewData : effectiveValue
 
+  // Helper component for centered messages
+  const CenteredMessage = ({ children }: { children: React.ReactNode }) => (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '100%',
+      }}
+    >
+      <Text size="sm" c="dimmed">
+        {children}
+      </Text>
+    </div>
+  )
+
   const defaultPreview =
     currentEntry?.previewSrc && previewFrameData ? (
       <PreviewFrame
@@ -408,7 +425,13 @@ export const Editor: React.FC<EditorProps> = ({
                     : defaultPreview
                 }
                 form={
-                  schema.length > 0 && effectiveValue ? (
+                  !currentEntry ? (
+                    <CenteredMessage>Select an item to start editing.</CenteredMessage>
+                  ) : currentEntry.canEdit === false ? (
+                    <CenteredMessage>
+                      You don't have permission to edit this content.
+                    </CenteredMessage>
+                  ) : schema.length > 0 && effectiveValue ? (
                     <FormRenderer
                       fields={schema}
                       value={effectiveValue}
@@ -426,9 +449,7 @@ export const Editor: React.FC<EditorProps> = ({
                       onResolveThread={handleResolveThread}
                     />
                   ) : (
-                    <Text size="sm" c="dimmed">
-                      No fields to edit.
-                    </Text>
+                    <CenteredMessage>No fields to edit.</CenteredMessage>
                   )
                 }
               />
