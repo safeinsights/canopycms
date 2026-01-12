@@ -32,6 +32,7 @@ import type { GroupMetadata, UserSearchResult } from '../auth/types'
 import type { CanopyGroupId, CanopyUserId } from '../types'
 import type { InternalGroup } from '../groups-file'
 import type { ExternalGroup } from '../api/groups'
+import { UserBadge } from './components/UserBadge'
 
 export interface GroupManagerProps {
   internalGroups: InternalGroup[]
@@ -39,6 +40,7 @@ export interface GroupManagerProps {
   canEdit: boolean
   onSave?: (groups: InternalGroup[]) => Promise<void>
   onSearchUsers?: (query: string, limit?: number) => Promise<UserSearchResult[]>
+  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   onSearchExternalGroups?: (query: string) => Promise<ExternalGroup[]>
   onClose?: () => void
 }
@@ -49,6 +51,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   canEdit,
   onSave,
   onSearchUsers,
+  onGetUserMetadata,
   onSearchExternalGroups,
   onClose,
 }) => {
@@ -418,27 +421,41 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                         </Text>
                         <Group gap="xs" mb="xs">
                           {group.members && group.members.length > 0 ? (
-                            group.members.map((userId) => (
-                              <Badge
-                                key={userId}
-                                variant="filled"
-                                color="blue"
-                                pr={3}
-                                rightSection={
-                                  <ActionIcon
-                                    size="xs"
-                                    color="blue"
-                                    radius="xl"
-                                    variant="transparent"
-                                    onClick={() => handleRemoveMember(group.id, userId)}
-                                  >
-                                    <IconX size={10} style={{ color: 'white' }} />
-                                  </ActionIcon>
-                                }
-                              >
-                                {userId}
-                              </Badge>
-                            ))
+                            group.members.map((userId) =>
+                              onGetUserMetadata ? (
+                                <UserBadge
+                                  key={userId}
+                                  userId={userId}
+                                  getUserMetadata={onGetUserMetadata}
+                                  variant="avatar-name"
+                                  size="xs"
+                                  badgeVariant="filled"
+                                  color="blue"
+                                  onRemove={() => handleRemoveMember(group.id, userId)}
+                                  showEmailTooltip={true}
+                                />
+                              ) : (
+                                <Badge
+                                  key={userId}
+                                  variant="filled"
+                                  color="blue"
+                                  pr={3}
+                                  rightSection={
+                                    <ActionIcon
+                                      size="xs"
+                                      color="blue"
+                                      radius="xl"
+                                      variant="transparent"
+                                      onClick={() => handleRemoveMember(group.id, userId)}
+                                    >
+                                      <IconX size={10} style={{ color: 'white' }} />
+                                    </ActionIcon>
+                                  }
+                                >
+                                  {userId}
+                                </Badge>
+                              )
+                            )
                           ) : (
                             <Text size="xs" c="dimmed">
                               No members
@@ -469,12 +486,25 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
                                       style={{ cursor: 'pointer' }}
                                       onClick={() => handleAddMember(group.id, user.id)}
                                     >
-                                      <Text size="sm" fw={500}>
-                                        {user.name}
-                                      </Text>
-                                      <Text size="xs" c="dimmed">
-                                        {user.email}
-                                      </Text>
+                                      {onGetUserMetadata ? (
+                                        <UserBadge
+                                          userId={user.id}
+                                          getUserMetadata={onGetUserMetadata}
+                                          variant="full"
+                                          size="sm"
+                                          cachedUser={user}
+                                          showEmailTooltip={false}
+                                        />
+                                      ) : (
+                                        <>
+                                          <Text size="sm" fw={500}>
+                                            {user.name}
+                                          </Text>
+                                          <Text size="xs" c="dimmed">
+                                            {user.email}
+                                          </Text>
+                                        </>
+                                      )}
                                     </Paper>
                                   ))}
                                 </Stack>

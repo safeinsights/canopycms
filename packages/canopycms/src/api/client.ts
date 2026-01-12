@@ -15,7 +15,7 @@ import type { ReferenceOptionsResponse } from './reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from './resolve-references'
 import type { EntriesResponse } from './entries'
 import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse, UploadAssetBody } from './assets'
-import type { ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from './permissions'
+import type { GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from './permissions'
 import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from './groups'
 import type { UserInfoResponse } from './user'
 
@@ -277,6 +277,13 @@ export class CanopyApiClient {
      */
     listGroups: (): Promise<ListGroupsResponse> => {
       return this.request('GET', '/groups')
+    },
+
+    /**
+     * getUserMetadata - GET /users/:userId
+     */
+    getUserMetadata: (params: Record<string, string>): Promise<GetUserMetadataResponse> => {
+      return this.request('GET', this.buildPath('/users/:userId', params))
     },
   }
 

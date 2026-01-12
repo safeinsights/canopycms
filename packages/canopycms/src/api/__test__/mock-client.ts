@@ -17,7 +17,7 @@ import type { ReferenceOptionsResponse } from '../reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from '../resolve-references'
 import type { EntriesResponse } from '../entries'
 import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse, UploadAssetBody } from '../assets'
-import type { ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from '../permissions'
+import type { GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from '../permissions'
 import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from '../groups'
 import type { UserInfoResponse } from '../user'
 
@@ -84,6 +84,7 @@ export function createMockApiClient(): MockApiClient {
     update: vi.fn().mockResolvedValue(mockSuccess({"permissions":[]})),
     searchUsers: vi.fn().mockResolvedValue(mockSuccess({"users":[]})),
     listGroups: vi.fn().mockResolvedValue(mockSuccess({"groups":[]})),
+    getUserMetadata: vi.fn().mockResolvedValue(mockSuccess({"user":null})),
   },
 
   groups: {
@@ -262,6 +263,13 @@ export function mockSearchUsersResponse(): SearchUsersResponse {
  */
 export function mockListGroupsResponse(): ListGroupsResponse {
   return mockSuccess({"groups":[]})
+}
+
+/**
+ * Create a GetUserMetadataResponse for testing
+ */
+export function mockGetUserMetadataResponse(): GetUserMetadataResponse {
+  return mockSuccess({"user":null})
 }
 
 /**

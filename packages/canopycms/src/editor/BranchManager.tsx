@@ -5,7 +5,9 @@ import React, { useState } from 'react'
 import { Badge, Button, Group, Paper, ScrollArea, Stack, Text, TextInput, Textarea, Collapse, Tooltip } from '@mantine/core'
 import type { BranchMode } from '../paths'
 import type { CommentThread } from '../comment-store'
+import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
+import { UserBadge } from './components/UserBadge'
 import { isAdmin, isReviewer } from '../reserved-groups'
 
 export interface BranchSummary {
@@ -103,6 +105,8 @@ export interface BranchManagerProps {
   onAddComment?: (text: string, type: 'field' | 'entry' | 'branch', entryId?: string, canopyPath?: string, threadId?: string) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
   highlightThreadId?: string
+  /** Optional function to fetch user metadata for displaying user badges */
+  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
 }
 
 export const BranchManager: React.FC<BranchManagerProps> = ({
@@ -122,6 +126,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   onAddComment,
   onResolveThread,
   highlightThreadId,
+  onGetUserMetadata,
 }) => {
   const isLocalSimple = mode === 'local-simple'
   const [showCreateForm, setShowCreateForm] = useState(false)
@@ -154,6 +159,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
             onAddComment={onAddComment}
             onResolveThread={onResolveThread}
             highlightThreadId={highlightThreadId}
+            onGetUserMetadata={onGetUserMetadata}
           />
         </Stack>
       )}
@@ -243,10 +249,31 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         )}
                       </Group>
                       <Group gap="xs" align="center">
-                        <Text size="xs" c="dimmed">
-                          {b.updatedAt ? `Updated ${b.updatedAt}` : ''}
-                          {b.createdBy ? ` • Owner: ${b.createdBy}` : ''}
-                        </Text>
+                        {b.updatedAt && (
+                          <Text size="xs" c="dimmed">
+                            Updated {b.updatedAt}
+                          </Text>
+                        )}
+                        {b.createdBy && (
+                          <>
+                            <Text size="xs" c="dimmed">•</Text>
+                            <Text size="xs" c="dimmed">Owner:</Text>
+                            {onGetUserMetadata ? (
+                              <UserBadge
+                                userId={b.createdBy}
+                                getUserMetadata={onGetUserMetadata}
+                                variant="avatar-name"
+                                size="xs"
+                                showEmailTooltip={true}
+                                showBadge={true}
+                                badgeVariant="light"
+                                color="gray"
+                              />
+                            ) : (
+                              <Text size="xs" c="dimmed">{b.createdBy}</Text>
+                            )}
+                          </>
+                        )}
                         {b.pullRequestUrl && (
                           <>
                             <Text size="xs" c="dimmed">•</Text>
@@ -266,11 +293,22 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                       </Group>
                       {b.access && (
                         <Group gap={6}>
-                          {b.access.users?.map((u) => (
-                            <Badge key={u} variant="outline" color="neutral">
-                              {u}
-                            </Badge>
-                          ))}
+                          {b.access.users?.map((u) =>
+                            onGetUserMetadata ? (
+                              <UserBadge
+                                key={u}
+                                userId={u}
+                                getUserMetadata={onGetUserMetadata}
+                                variant="avatar-only"
+                                size="xs"
+                                showEmailTooltip={true}
+                              />
+                            ) : (
+                              <Badge key={u} variant="outline" color="neutral">
+                                {u}
+                              </Badge>
+                            )
+                          )}
                           {b.access.groups?.map((g) => (
                             <Badge key={g} variant="outline" color="neutral">
                               {g}

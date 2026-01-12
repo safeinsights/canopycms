@@ -22,6 +22,7 @@ const getPermissions = PERMISSION_ROUTES.get.handler
 const updatePermissions = PERMISSION_ROUTES.update.handler
 const searchUsers = PERMISSION_ROUTES.searchUsers.handler
 const listGroups = PERMISSION_ROUTES.listGroups.handler
+const getUserMetadata = PERMISSION_ROUTES.getUserMetadata.handler
 
 describe('permissions API', () => {
   let mockContext: ApiContext
@@ -381,6 +382,110 @@ describe('permissions API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(500)
       expect(result.error).toBe('Network error')
+    })
+  })
+
+  describe('getUserMetadata', () => {
+    it('gets user metadata for admin', async () => {
+      const mockUser: UserSearchResult = {
+        id: 'user-1',
+        name: 'Alice Smith',
+        email: 'alice@example.com',
+        avatarUrl: 'https://example.com/avatar.jpg',
+      }
+
+      vi.mocked(mockAuthPlugin.getUserMetadata).mockResolvedValue(mockUser)
+
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await getUserMetadata(mockContext, req, { userId: 'user-1' })
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+      if (result.ok && result.data) {
+        expect((result.data as { user: UserSearchResult }).user).toEqual(mockUser)
+      }
+      expect(mockAuthPlugin.getUserMetadata).toHaveBeenCalledWith('user-1')
+    })
+
+    it('gets user metadata for reviewer', async () => {
+      const mockUser: UserSearchResult = {
+        id: 'user-2',
+        name: 'Bob Jones',
+        email: 'bob@example.com',
+      }
+
+      vi.mocked(mockAuthPlugin.getUserMetadata).mockResolvedValue(mockUser)
+
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'reviewer-1', groups: [RESERVED_GROUPS.REVIEWERS] },
+      }
+
+      const result = await getUserMetadata(mockContext, req, { userId: 'user-2' })
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+      expect(mockAuthPlugin.getUserMetadata).toHaveBeenCalledWith('user-2')
+    })
+
+    it('denies access for regular users', async () => {
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'user-1', groups: [] },
+      }
+
+      const result = await getUserMetadata(mockContext, req, { userId: 'user-2' })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(403)
+      expect(result.error).toBe('Admin or Reviewer access required')
+      expect(mockAuthPlugin.getUserMetadata).not.toHaveBeenCalled()
+    })
+
+    it('returns error when auth plugin not configured', async () => {
+      mockContext.authPlugin = undefined
+
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await getUserMetadata(mockContext, req, { userId: 'user-1' })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(501)
+      expect(result.error).toBe('Auth plugin not configured')
+    })
+
+    it('handles errors gracefully', async () => {
+      vi.mocked(mockAuthPlugin.getUserMetadata).mockRejectedValue(new Error('Database error'))
+
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await getUserMetadata(mockContext, req, { userId: 'user-1' })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(500)
+      expect(result.error).toBe('Database error')
+    })
+
+    it('returns null for non-existent user', async () => {
+      vi.mocked(mockAuthPlugin.getUserMetadata).mockResolvedValue(null)
+
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await getUserMetadata(mockContext, req, { userId: 'non-existent' })
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+      if (result.ok && result.data) {
+        expect((result.data as { user: UserSearchResult | null }).user).toBeNull()
+      }
+      expect(mockAuthPlugin.getUserMetadata).toHaveBeenCalledWith('non-existent')
     })
   })
 })

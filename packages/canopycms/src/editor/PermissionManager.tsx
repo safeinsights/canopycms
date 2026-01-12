@@ -33,6 +33,7 @@ import type { PathPermission, PermissionLevel, PermissionTarget } from '../confi
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
 import type { CanopyConfig } from '../config'
 import { flattenSchema } from '../config'
+import { UserBadge } from './components/UserBadge'
 
 export interface PermissionManagerProps {
   /** Content schema to build tree from */
@@ -47,6 +48,8 @@ export interface PermissionManagerProps {
   onSave?: (permissions: PathPermission[]) => Promise<void>
   /** Handler to search users */
   onSearchUsers?: (query: string, limit?: number) => Promise<UserSearchResult[]>
+  /** Handler to get user metadata by ID */
+  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   /** Handler to list groups */
   onListGroups?: () => Promise<GroupMetadata[]>
   /** Close handler */
@@ -100,6 +103,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
   canEdit,
   onSave,
   onSearchUsers,
+  onGetUserMetadata,
   onListGroups,
   onClose,
   loading = false,
@@ -451,6 +455,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
             onSetActiveLevel={setActiveLevel}
             onUpdatePermission={updateNodePermission}
             onSearchUsers={setUserSearchQuery}
+            onGetUserMetadata={onGetUserMetadata}
             onToggleUserSearch={handleToggleUserSearch}
             onAddUser={handleAddUser}
             onRemoveUser={handleRemoveUser}
@@ -505,6 +510,7 @@ interface TreeNodeComponentProps {
   onSetActiveLevel: (level: PermissionLevel) => void
   onUpdatePermission: (path: string, level: PermissionLevel, updates: Partial<PermissionTarget>) => void
   onSearchUsers: (query: string) => void
+  onGetUserMetadata?: (userId: string) => Promise<UserSearchResult | null>
   onToggleUserSearch: (show: boolean) => void
   onAddUser: (path: string, level: PermissionLevel, userId: string) => void
   onRemoveUser: (path: string, level: PermissionLevel, userId: string) => void
@@ -534,6 +540,7 @@ const TreeNodeComponent: React.FC<TreeNodeComponentProps> = ({
   onSetActiveLevel,
   onUpdatePermission,
   onSearchUsers,
+  onGetUserMetadata,
   onToggleUserSearch,
   onAddUser,
   onRemoveUser,
@@ -660,17 +667,31 @@ const TreeNodeComponent: React.FC<TreeNodeComponentProps> = ({
                               </Badge>
                             )
                           })}
-                          {inheritedTarget.allowedUsers?.map((userId) => (
-                            <Badge
-                              key={`inherited-user-${userId}`}
-                              variant="outline"
-                              color={userId === 'anonymous' ? 'orange' : 'gray'}
-                              size="xs"
-                              leftSection={userId === 'anonymous' ? <IconUserOff size={10} /> : undefined}
-                            >
-                              {userId === 'anonymous' ? 'Anonymous (Public)' : userId}
-                            </Badge>
-                          ))}
+                          {inheritedTarget.allowedUsers?.map((userId) =>
+                            onGetUserMetadata ? (
+                              <UserBadge
+                                key={`inherited-user-${userId}`}
+                                userId={userId}
+                                getUserMetadata={onGetUserMetadata}
+                                variant="avatar-name"
+                                size="xs"
+                                badgeVariant="outline"
+                                color="gray"
+                                showEmailTooltip={true}
+                                showBadge={true}
+                              />
+                            ) : (
+                              <Badge
+                                key={`inherited-user-${userId}`}
+                                variant="outline"
+                                color={userId === 'anonymous' ? 'orange' : 'gray'}
+                                size="xs"
+                                leftSection={userId === 'anonymous' ? <IconUserOff size={10} /> : undefined}
+                              >
+                                {userId === 'anonymous' ? 'Anonymous (Public)' : userId}
+                              </Badge>
+                            )
+                          )}
                         </Group>
                       </div>
                     )}
@@ -699,7 +720,7 @@ const TreeNodeComponent: React.FC<TreeNodeComponentProps> = ({
                                     variant="transparent"
                                     onClick={() => onRemoveGroup(node.path, level, groupId)}
                                   >
-                                    <IconX size={10} style={{ color: 'white' }} />
+                                    <IconX size={12} stroke={2.5} style={{ color: 'white' }} />
                                   </ActionIcon>
                                 }
                               >
@@ -708,28 +729,42 @@ const TreeNodeComponent: React.FC<TreeNodeComponentProps> = ({
                             )
                           })}
 
-                          {(directTarget?.allowedUsers ?? []).map((userId) => (
-                            <Badge
-                              key={`user-${userId}`}
-                              variant="filled"
-                              color={userId === 'anonymous' ? 'orange' : LEVEL_CONFIG[level].color}
-                              pr={3}
-                              leftSection={userId === 'anonymous' ? <IconUserOff size={12} /> : undefined}
-                              rightSection={
-                                <ActionIcon
-                                  size="xs"
-                                  color={userId === 'anonymous' ? 'orange' : LEVEL_CONFIG[level].color}
-                                  radius="xl"
-                                  variant="transparent"
-                                  onClick={() => onRemoveUser(node.path, level, userId)}
-                                >
-                                  <IconX size={10} style={{ color: 'white' }} />
-                                </ActionIcon>
-                              }
-                            >
-                              {userId === 'anonymous' ? 'Anonymous (Public)' : userId}
-                            </Badge>
-                          ))}
+                          {(directTarget?.allowedUsers ?? []).map((userId) =>
+                            onGetUserMetadata ? (
+                              <UserBadge
+                                key={`user-${userId}`}
+                                userId={userId}
+                                getUserMetadata={onGetUserMetadata}
+                                variant="avatar-name"
+                                size="xs"
+                                badgeVariant="filled"
+                                color={userId === 'anonymous' ? 'orange' : LEVEL_CONFIG[level].color}
+                                onRemove={() => onRemoveUser(node.path, level, userId)}
+                                showEmailTooltip={true}
+                              />
+                            ) : (
+                              <Badge
+                                key={`user-${userId}`}
+                                variant="filled"
+                                color={userId === 'anonymous' ? 'orange' : LEVEL_CONFIG[level].color}
+                                pr={3}
+                                leftSection={userId === 'anonymous' ? <IconUserOff size={12} /> : undefined}
+                                rightSection={
+                                  <ActionIcon
+                                    size="xs"
+                                    color={userId === 'anonymous' ? 'orange' : LEVEL_CONFIG[level].color}
+                                    radius="xl"
+                                    variant="transparent"
+                                    onClick={() => onRemoveUser(node.path, level, userId)}
+                                  >
+                                    <IconX size={12} stroke={2.5} style={{ color: 'white' }} />
+                                  </ActionIcon>
+                                }
+                              >
+                                {userId === 'anonymous' ? 'Anonymous (Public)' : userId}
+                              </Badge>
+                            )
+                          )}
 
                           {(!directTarget?.allowedGroups || directTarget.allowedGroups.length === 0) &&
                             (!directTarget?.allowedUsers || directTarget.allowedUsers.length === 0) && (
@@ -854,8 +889,21 @@ const TreeNodeComponent: React.FC<TreeNodeComponentProps> = ({
                                       style={{ cursor: 'pointer' }}
                                       onClick={() => onAddUser(node.path, level, user.id)}
                                     >
-                                      <Text size="sm" fw={500}>{user.name}</Text>
-                                      <Text size="xs" c="dimmed">{user.email}</Text>
+                                      {onGetUserMetadata ? (
+                                        <UserBadge
+                                          userId={user.id}
+                                          getUserMetadata={onGetUserMetadata}
+                                          variant="full"
+                                          size="sm"
+                                          cachedUser={user}
+                                          showEmailTooltip={false}
+                                        />
+                                      ) : (
+                                        <>
+                                          <Text size="sm" fw={500}>{user.name}</Text>
+                                          <Text size="xs" c="dimmed">{user.email}</Text>
+                                        </>
+                                      )}
                                     </Paper>
                                   ))}
                                 </Stack>
@@ -906,6 +954,7 @@ const TreeNodeComponent: React.FC<TreeNodeComponentProps> = ({
                 onSetActiveLevel={onSetActiveLevel}
                 onUpdatePermission={onUpdatePermission}
                 onSearchUsers={onSearchUsers}
+                onGetUserMetadata={onGetUserMetadata}
                 onToggleUserSearch={onToggleUserSearch}
                 onAddUser={onAddUser}
                 onRemoveUser={onRemoveUser}

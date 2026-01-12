@@ -6,13 +6,8 @@ Little
 
 Let's fix these issues and add tests for them
 
-1. [ ] User search from group UI hits search API and gets {"ok":false,"status":400,"error":"Query parameter \"q\" is required"}
 2. [ ] Admins and Reviewers groups should be autocreated if they don't exist. (can we simply check in empty to groups.json?)
-3. [ ] Permissions UI is only showing content folder, nothing underneath
-4. [ ] When a file is saved and there are no unsaved changes, should Save File be disabled (maybe used to be, now isn't)
-5. [ ] When published, no visual indication of status to user. Publish Branch button still there enabled. Change to withdraw?
 6. [ ] Content drawer tree always collapsed when opened. Can its expanded folders always include those above the current entry?
-7. [ ] User (clerk) data caching, like for 5 mins (keep name and such)
 8. [ ] Lambda-friendly initialization storage in memory outside of request
 9. [ ] When a user doesn't have access, tell them that instead of showing "no items" messages
 10. [ ] Is content navigator filtered by permission?
@@ -22,6 +17,8 @@ Let's fix these issues and add tests for them
 
 Bigger not listed in master plan
 
+
+1. [ ] Branch ACLs (how we share branches)
 1. [ ] SEO
 12. [ ] Ordering of collection entries
 3. [ ] GitHub build, deploy (to environment based on branch)
@@ -34,6 +31,7 @@ Bigger not listed in master plan
      - think through all the scenarios and plan them out
      - this will lead into the synchronization work
      - separately planner to scour all old plans in case we already thought about this
+7. [ ] User (clerk) data caching, like for 5 mins (keep name and such)
 
 
 ----

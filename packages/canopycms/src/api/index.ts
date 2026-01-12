@@ -21,7 +21,13 @@ export type {
   EntryCollectionSummary,
   ListEntriesParams,
 } from './entries'
-export type { PermissionsResponse, UpdatePermissionsBody, SearchUsersParams } from './permissions'
+export type {
+  PermissionsResponse,
+  UpdatePermissionsBody,
+  SearchUsersParams,
+  GetUserMetadataResponse,
+  GetUserMetadataParams,
+} from './permissions'
 export type { UserInfoResponse } from './user'
 export type {
   AssetsListResponse,

@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { InternalGroup } from '../../groups-file'
+import type { UserSearchResult, GroupMetadata } from '../../auth/types'
 import { createApiClient } from '../../api'
 
 // Lazy singleton - created on first access to pick up any fetch mocks in tests
@@ -29,8 +30,9 @@ export interface UseGroupManagerReturn {
   groupsData: InternalGroup[]
   groupsLoading: boolean
   handleSaveGroups: (groups: InternalGroup[]) => Promise<void>
-  handleSearchUsers: (query: string, limit?: number) => Promise<any[]>
-  handleSearchExternalGroups: (query: string) => Promise<any[]>
+  handleSearchUsers: (query: string, limit?: number) => Promise<UserSearchResult[]>
+  handleGetUserMetadata: (userId: string) => Promise<UserSearchResult | null>
+  handleSearchExternalGroups: (query: string) => Promise<GroupMetadata[]>
   loadGroups: () => Promise<void>
 }
 
@@ -75,7 +77,7 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
     }
   }
 
-  const handleSaveGroups = async (groups: InternalGroup[]) => {
+  const handleSaveGroups = useCallback(async (groups: InternalGroup[]) => {
     try {
       const result = await getApiClient().groups.updateInternal({ groups })
       if (!result.ok) {
@@ -92,9 +94,9 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
       notifications.show({ message, color: 'red' })
       throw err
     }
-  }
+  }, [])
 
-  const handleSearchUsers = async (query: string, limit?: number) => {
+  const handleSearchUsers = useCallback(async (query: string, limit?: number) => {
     try {
       const params: Record<string, string> = { q: query }
       if (limit) {
@@ -107,9 +109,20 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
       console.error('User search failed:', err)
       return []
     }
-  }
+  }, [])
 
-  const handleSearchExternalGroups = async (query: string) => {
+  const handleGetUserMetadata = useCallback(async (userId: string) => {
+    try {
+      const result = await getApiClient().permissions.getUserMetadata({ userId })
+      if (!result.ok) return null
+      return result.data?.user ?? null
+    } catch (err) {
+      console.error('Get user metadata failed:', err)
+      return null
+    }
+  }, [])
+
+  const handleSearchExternalGroups = useCallback(async (query: string) => {
     try {
       const result = await getApiClient().groups.searchExternal({ q: query })
       if (!result.ok) return []
@@ -118,7 +131,7 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
       console.error('External group search failed:', err)
       return []
     }
-  }
+  }, [])
 
   // Load groups when group manager opens
   useEffect(() => {
@@ -132,6 +145,7 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
     groupsLoading,
     handleSaveGroups,
     handleSearchUsers,
+    handleGetUserMetadata,
     handleSearchExternalGroups,
     loadGroups,
   }
