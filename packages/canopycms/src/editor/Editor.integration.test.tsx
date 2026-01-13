@@ -130,7 +130,7 @@ describe('Editor integration', () => {
         entries={[entry]}
         title="Test Editor"
         branchName="main"
-        branchMode="local-simple"
+        operatingMode="local-simple"
         themeOptions={{}}
         configSchema={{ collections: [], singletons: [] }}
       />

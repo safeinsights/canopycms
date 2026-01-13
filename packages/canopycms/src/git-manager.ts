@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import { simpleGit, type ConfigListSummary, type SimpleGit, type SimpleGitOptions, type StatusResult } from 'simple-git'
 
-import type { BranchMode } from './paths'
+import type { OperatingMode } from './paths'
 import { createDebugLogger } from './utils/debug'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -21,7 +21,7 @@ export interface GitManagerOptions {
 export interface GitStatus extends Pick<StatusResult, 'files' | 'ahead' | 'behind' | 'current' | 'tracking'> {}
 
 export interface ResolveRemoteUrlOptions {
-  mode: BranchMode
+  mode: OperatingMode
   remoteUrl?: string
   defaultRemoteUrl?: string
   baseBranch: string

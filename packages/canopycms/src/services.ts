@@ -222,8 +222,8 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
     }
   }
 
-  const branchMode = config.mode ?? 'local-simple'
-  const registry = new BranchRegistry(getDefaultBranchBase(branchMode))
+  const operatingMode = config.mode ?? 'local-simple'
+  const registry = new BranchRegistry(getDefaultBranchBase(operatingMode))
 
   // Create GitHub service if applicable (only for prod/local-prod-sim modes)
   let githubService: GitHubService | undefined

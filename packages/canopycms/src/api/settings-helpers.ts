@@ -1,5 +1,5 @@
 import type { ApiContext } from './types'
-import type { BranchMode } from '../paths'
+import type { OperatingMode } from '../paths'
 
 /**
  * Get the appropriate branch context for settings (permissions/groups).
@@ -9,7 +9,7 @@ import type { BranchMode } from '../paths'
  */
 export async function getSettingsBranchContext(
   ctx: ApiContext
-): Promise<{ context: any; mode: BranchMode; branchName: string } | { error: string; status: number }> {
+): Promise<{ context: any; mode: OperatingMode; branchName: string } | { error: string; status: number }> {
   const mode = ctx.services.config.mode ?? 'local-simple'
 
   // Determine which branch to use
@@ -44,7 +44,7 @@ export async function commitSettings(
     branchRoot: string
     fileName: string
     message: string
-    mode: BranchMode
+    mode: OperatingMode
   }
 ): Promise<void> {
   // No git operations in local-simple

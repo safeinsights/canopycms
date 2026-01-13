@@ -2,7 +2,7 @@ import { forwardRef } from 'react'
 import { Badge, Box, Button, Group, Menu, Paper, Stack, Text, Title, Tooltip } from '@mantine/core'
 import { MdFolderOpen, MdKeyboardArrowDown } from 'react-icons/md'
 import { GoGitBranch } from 'react-icons/go'
-import type { BranchMode } from '../../paths'
+import type { OperatingMode } from '../../paths'
 import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
 
@@ -36,9 +36,9 @@ export interface EditorHeaderProps {
   branchName: string
 
   /**
-   * Branch mode (collaboration, local-simple, etc.).
+   * Operating mode.
    */
-  branchMode: BranchMode
+  operatingMode: OperatingMode
 
   /**
    * Whether operations are currently in progress.
@@ -178,7 +178,7 @@ const getStatusColor = (status: BranchStatus): string => {
  *   headerTitle="Edit Content"
  *   currentEntry={currentEntry}
  *   branchName="main"
- *   branchMode="collaboration"
+ *   operatingMode="collaboration"
  *   busy={false}
  *   breadcrumbSegments={['Posts', 'My Post']}
  *   editedFiles={[]}
@@ -205,7 +205,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
     headerTitle,
     currentEntry,
     branchName,
-    branchMode,
+    operatingMode,
     busy,
     breadcrumbSegments,
     editedFiles,
@@ -368,13 +368,13 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 </Menu.Dropdown>
               </Menu>
 
-              {branchMode !== 'local-simple' && branchName && branchStatus && (
+              {operatingMode !== 'local-simple' && branchName && branchStatus && (
                 <Badge color={getStatusColor(branchStatus)} variant="light" size="sm" data-testid={`header-status-badge-${branchStatus}`}>
                   {branchStatus}
                 </Badge>
               )}
 
-              {branchMode !== 'local-simple' && branchName && (
+              {operatingMode !== 'local-simple' && branchName && (
                 <Button
                   variant="outline"
                   color="gray"

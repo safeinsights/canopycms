@@ -130,10 +130,10 @@ export const createBranchHandler = async (
     }
 
     const manager = new BranchWorkspaceManager(ctx.services.config)
-    const branchMode = ctx.services.config.mode ?? 'local-simple'
+    const operatingMode = ctx.services.config.mode ?? 'local-simple'
     const context = await manager.openOrCreateBranch({
       branchName,
-      mode: branchMode,
+      mode: operatingMode,
       createdBy: req.user.userId,
       title: body.title,
       description: body.description,
@@ -208,8 +208,8 @@ export const deleteBranchHandler = async (
   const branchName = params.branch
 
   // Disallow delete in local-simple mode (branch = developer's git checkout)
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  if (branchMode === 'local-simple') {
+  const operatingMode = ctx.services.config.mode ?? 'local-simple'
+  if (operatingMode === 'local-simple') {
     return { ok: false, status: 400, error: 'Cannot delete branches in local-simple mode' }
   }
 

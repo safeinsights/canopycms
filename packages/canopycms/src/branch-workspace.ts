@@ -5,7 +5,7 @@ import type { CanopyConfig } from './config'
 import { ensureBranchRoot } from './paths'
 import { getBranchMetadataFileManager } from './branch-metadata'
 import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
-import type { BranchMode } from './paths'
+import type { OperatingMode } from './paths'
 import { GitManager } from './git-manager'
 import { createDebugLogger } from './utils/debug'
 
@@ -16,7 +16,7 @@ const workspaceInitLocks = new Map<string, Promise<void>>()
 
 export interface OpenBranchOptions {
   branchName: string
-  mode: BranchMode
+  mode: OperatingMode
   basePathOverride?: string
   title?: string
   description?: string
@@ -39,7 +39,7 @@ export class BranchWorkspaceManager {
   private async ensureGitWorkspace(options: {
     branchRoot: string
     branchName: string
-    mode: BranchMode
+    mode: OperatingMode
     remoteUrl?: string
   }) {
     return log.timed('workspace', 'ensureGitWorkspace', async () => {

@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { PathPermission } from './config'
 import type { PermissionsFile } from './permissions-file'
 import { PermissionsFileSchema } from './permissions-file'
-import type { BranchMode } from './paths'
+import type { OperatingMode } from './paths'
 
 const PERMISSIONS_FILE_PATH = '.canopycms/permissions.json'
 const PERMISSIONS_LOCAL_FILE_PATH = '.canopycms/permissions.local.json'
@@ -11,7 +11,7 @@ const PERMISSIONS_LOCAL_FILE_PATH = '.canopycms/permissions.local.json'
 /**
  * Get the appropriate permissions file path based on mode
  */
-function getPermissionsFilePath(repoRoot: string, mode?: BranchMode): string {
+function getPermissionsFilePath(repoRoot: string, mode?: OperatingMode): string {
   if (mode === 'local-simple') {
     return path.join(repoRoot, PERMISSIONS_LOCAL_FILE_PATH)
   }
@@ -23,11 +23,11 @@ function getPermissionsFilePath(repoRoot: string, mode?: BranchMode): string {
  * Returns null if file doesn't exist.
  *
  * @param repoRoot - Repository root directory
- * @param mode - Branch mode (determines file path)
+ * @param mode - Operating mode (determines file path)
  */
 export const loadPermissionsFile = async (
   repoRoot: string,
-  mode?: BranchMode
+  mode?: OperatingMode
 ): Promise<PermissionsFile | null> => {
   const permissionsPath = getPermissionsFilePath(repoRoot, mode)
 
@@ -69,11 +69,11 @@ export const loadPermissionsFile = async (
  * Returns empty array if file doesn't exist (no restrictions).
  *
  * @param repoRoot - Repository root directory
- * @param mode - Branch mode (determines file path)
+ * @param mode - Operating mode (determines file path)
  */
 export const loadPathPermissions = async (
   repoRoot: string,
-  mode?: BranchMode
+  mode?: OperatingMode
 ): Promise<PathPermission[]> => {
   const file = await loadPermissionsFile(repoRoot, mode)
   return file?.pathPermissions ?? []
@@ -86,7 +86,7 @@ export const savePathPermissions = async (
   repoRoot: string,
   permissions: PathPermission[],
   updatedBy: string,
-  mode?: BranchMode,
+  mode?: OperatingMode,
   contentVersion?: number
 ): Promise<void> => {
   const permissionsPath = getPermissionsFilePath(repoRoot, mode)
@@ -115,7 +115,7 @@ export const savePathPermissions = async (
 export const ensurePermissionsFile = async (
   repoRoot: string,
   userId: string,
-  mode?: BranchMode
+  mode?: OperatingMode
 ): Promise<void> => {
   const permissionsPath = getPermissionsFilePath(repoRoot, mode)
 

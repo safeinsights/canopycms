@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import type { BranchContext, BranchMetadata, BranchStatus } from './types'
 import { BranchRegistry } from './branch-registry'
-import { resolveBranchPath, type BranchMode } from './paths'
+import { resolveBranchPath, type OperatingMode } from './paths'
 
 const BRANCH_META_DIR = '.canopycms'
 const BRANCH_META_FILE = 'branch.json'
@@ -143,7 +143,7 @@ export const getBranchMetadataFileManager = (
  */
 export const loadBranchContext = async (options: {
   branchName: string
-  mode: BranchMode
+  mode: OperatingMode
   basePathOverride?: string
 }): Promise<BranchContext | null> => {
   const { branchRoot, baseRoot } = resolveBranchPath({

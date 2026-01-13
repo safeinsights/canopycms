@@ -3,7 +3,7 @@ import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
 import type { BranchMetadata } from '../../types'
-import type { BranchMode } from '../../paths'
+import type { OperatingMode } from '../../paths'
 import type { CommentThread } from '../../comment-store'
 import { createApiClient } from '../../api'
 
@@ -81,9 +81,9 @@ export interface UseBranchManagerOptions {
   initialBranch: string
 
   /**
-   * Branch mode (local-simple, collaboration, etc.).
+   * Operating mode (local-simple, etc.).
    */
-  branchMode: BranchMode
+  operatingMode: OperatingMode
 
   /**
    * Callback to set busy state.
@@ -131,7 +131,7 @@ export interface UseBranchManagerReturn {
  *   handleSubmit
  * } = useBranchManager({
  *   initialBranch: 'main',
- *   branchMode: 'collaboration',
+ *   operatingMode: 'collaboration',
  *   selectedId,
  *   drafts,
  *   loadedValues,

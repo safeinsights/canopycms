@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 
 import { Badge, Button, Group, Paper, ScrollArea, Stack, Text, TextInput, Textarea, Collapse, Tooltip } from '@mantine/core'
-import type { BranchMode } from '../paths'
+import type { OperatingMode } from '../paths'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
@@ -88,7 +88,7 @@ const statusColorMap: Record<string, { color: string; variant?: 'light' | 'fille
 
 export interface BranchManagerProps {
   branches: BranchSummary[]
-  mode?: BranchMode
+  mode?: OperatingMode
   /** Current user context for permission checks */
   user?: UserContext
   onSelect?: (name: string) => void

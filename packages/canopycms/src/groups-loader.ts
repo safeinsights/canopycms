@@ -2,7 +2,7 @@ import { promises as fs } from 'fs'
 import { join } from 'path'
 import type { CanopyUserId } from './types'
 import { GroupsFileSchema, createDefaultGroupsFile, type InternalGroup, type GroupsFile } from './groups-file'
-import type { BranchMode } from './paths'
+import type { OperatingMode } from './paths'
 
 const GROUPS_FILE_PATH = '.canopycms/groups.json'
 const GROUPS_LOCAL_FILE_PATH = '.canopycms/groups.local.json'
@@ -10,7 +10,7 @@ const GROUPS_LOCAL_FILE_PATH = '.canopycms/groups.local.json'
 /**
  * Get the appropriate groups file path based on mode
  */
-function getGroupsFilePath(branchRoot: string, mode?: BranchMode): string {
+function getGroupsFilePath(branchRoot: string, mode?: OperatingMode): string {
   if (mode === 'local-simple') {
     return join(branchRoot, GROUPS_LOCAL_FILE_PATH)
   }
@@ -23,7 +23,7 @@ function getGroupsFilePath(branchRoot: string, mode?: BranchMode): string {
  */
 export const loadGroupsFile = async (
   branchRoot: string,
-  mode?: BranchMode
+  mode?: OperatingMode
 ): Promise<GroupsFile | null> => {
   const groupsPath = getGroupsFilePath(branchRoot, mode)
 
@@ -60,7 +60,7 @@ export const loadGroupsFile = async (
  */
 export const loadInternalGroups = async (
   branchRoot: string,
-  mode?: BranchMode
+  mode?: OperatingMode
 ): Promise<InternalGroup[]> => {
   const file = await loadGroupsFile(branchRoot, mode)
   return file?.groups ?? []
@@ -73,7 +73,7 @@ export const saveInternalGroups = async (
   branchRoot: string,
   groups: InternalGroup[],
   updatedBy: CanopyUserId,
-  mode?: BranchMode,
+  mode?: OperatingMode,
   contentVersion?: number
 ): Promise<void> => {
   const groupsPath = getGroupsFilePath(branchRoot, mode)
