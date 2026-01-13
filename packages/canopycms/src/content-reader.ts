@@ -1,7 +1,7 @@
 import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
 import type { CanopyConfig, FlatSchemaItem } from './config'
-import { resolveBranchPaths, type BranchMode } from './paths'
+import { resolveBranchPaths, type OperatingMode } from './paths'
 import { createCanopyServices, type CanopyServices } from './services'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
@@ -46,7 +46,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   }
 
   const services = options.services ?? createCanopyServices(options.config!)
-  const branchMode: BranchMode = services.config.mode ?? 'local-simple'
+  const operatingMode: OperatingMode = services.config.mode ?? 'local-simple'
   const basePathOverride = options.basePathOverride
   const workspaceManager = options.workspaceManager ?? new BranchWorkspaceManager(services.config)
   const defaultBranch = options.defaultBranch ?? services.config.defaultBaseBranch ?? 'main'
@@ -56,7 +56,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const resolveBranchContext = async (branchName: string): Promise<BranchContext> => {
     const existing = options.getBranchContext
       ? await options.getBranchContext(branchName)
-      : await loadBranchContext({ branchName, mode: branchMode, basePathOverride })
+      : await loadBranchContext({ branchName, mode: operatingMode, basePathOverride })
     if (existing) {
       return existing
     }
@@ -65,7 +65,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     }
     return await workspaceManager.openOrCreateBranch({
       branchName,
-      mode: branchMode,
+      mode: operatingMode,
       basePathOverride,
       createdBy,
       remoteUrl: services.config.defaultRemoteUrl,
@@ -74,7 +74,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
 
   const resolveStore = async (branchName: string) => {
     const context = await resolveBranchContext(branchName)
-    const { branchRoot } = resolveBranchPaths(context, branchMode, basePathOverride)
+    const { branchRoot } = resolveBranchPaths(context, operatingMode, basePathOverride)
     return {
       context,
       branchRoot,

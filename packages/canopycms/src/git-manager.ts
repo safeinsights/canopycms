@@ -9,7 +9,7 @@ import {
   type StatusResult,
 } from 'simple-git'
 
-import type { BranchMode } from './paths'
+import type { OperatingMode } from './paths'
 import { createDebugLogger } from './utils/debug'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -30,7 +30,7 @@ export interface GitStatus extends Pick<
 > {}
 
 export interface ResolveRemoteUrlOptions {
-  mode: BranchMode
+  mode: OperatingMode
   remoteUrl?: string
   defaultRemoteUrl?: string
   baseBranch: string

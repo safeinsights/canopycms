@@ -76,8 +76,8 @@ const submitBranchForMergeHandler = async (
   let prUrl = context.branch.pullRequestUrl
   let prNumber = context.branch.pullRequestNumber
 
-  const branchMode = ctx.services.config.mode ?? 'local-simple'
-  if (githubService && branchMode !== 'local-simple') {
+  const operatingMode = ctx.services.config.mode ?? 'local-simple'
+  if (githubService && operatingMode !== 'local-simple') {
     try {
       const prTitle = context.branch.title || `Submit ${context.branch.name}`
       const prBody = context.branch.description || ''

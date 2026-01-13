@@ -3,10 +3,10 @@ import path from 'node:path'
 
 import type { BranchContext } from './types'
 
-export type BranchMode = 'prod' | 'local-prod-sim' | 'local-simple'
+export type OperatingMode = 'prod' | 'local-prod-sim' | 'local-simple'
 
 export interface BranchPathOptions {
-  mode: BranchMode
+  mode: OperatingMode
   branchName: string
   basePathOverride?: string
 }
@@ -28,7 +28,7 @@ const sanitizeBranchName = (branchName: string): string => {
   return trimmedDots || 'branch'
 }
 
-const resolveBaseRoot = (mode: BranchMode, override?: string): string => {
+const resolveBaseRoot = (mode: OperatingMode, override?: string): string => {
   if (override) return path.resolve(override)
   if (mode === 'prod') {
     const envBase = process.env.CANOPYCMS_BRANCH_ROOT
@@ -71,12 +71,12 @@ export const ensureBranchRoot = async (options: BranchPathOptions): Promise<Bran
   return result
 }
 
-export const getDefaultBranchBase = (mode: BranchMode, override?: string): string =>
+export const getDefaultBranchBase = (mode: OperatingMode, override?: string): string =>
   resolveBaseRoot(mode, override)
 
 export const resolveBranchPaths = (
   branchContext: BranchContext,
-  mode: BranchMode,
+  mode: OperatingMode,
   basePathOverride?: string,
 ): BranchPathResult => {
   if (branchContext.branchRoot || branchContext.baseRoot) {

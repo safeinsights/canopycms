@@ -2,7 +2,7 @@ import type { BranchContext } from './types'
 import type { BranchAccessResult } from './authz'
 import type { PathPermissionResult } from './path-permissions'
 import type { PathPermission, DefaultPathAccess, PermissionLevel } from './config'
-import type { BranchMode } from './paths'
+import type { OperatingMode } from './paths'
 import { createCheckPathAccess } from './path-permissions'
 import type { CanopyUser } from './user'
 
@@ -14,9 +14,9 @@ export interface ContentAccessResult {
 
 export interface ContentAccessDeps {
   checkBranchAccess: (context: BranchContext, user: CanopyUser) => BranchAccessResult
-  loadPathPermissions: (branchRoot: string, mode?: BranchMode) => Promise<PathPermission[]>
+  loadPathPermissions: (branchRoot: string, mode?: OperatingMode) => Promise<PathPermission[]>
   defaultPathAccess: DefaultPathAccess
-  mode?: BranchMode
+  mode?: OperatingMode
   /**
    * Get the settings branch root path for loading centralized permissions.
    * Only used in prod/local-prod-sim modes.

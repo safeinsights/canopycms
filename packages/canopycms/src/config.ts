@@ -3,7 +3,7 @@ import { isAbsolute, join, normalize } from 'pathe'
 import { z } from 'zod'
 
 import type { CanopyGroupId, CanopyUserId } from './types'
-import type { BranchMode } from './paths'
+import type { OperatingMode } from './paths'
 import type { AuthPlugin } from './auth/plugin'
 
 export const primitiveFieldTypes = [
@@ -173,7 +173,9 @@ const defaultRemoteUrlSchema = z.string().min(1)
 const gitBotAuthorNameSchema = z.string().min(1)
 const gitBotAuthorEmailSchema = z.string().email()
 const githubTokenEnvVarSchema = z.string().default('GITHUB_BOT_TOKEN')
-const branchModeSchema = z.enum(['prod', 'local-prod-sim', 'local-simple']).default('local-simple')
+const operatingModeSchema = z
+  .enum(['prod', 'local-prod-sim', 'local-simple'])
+  .default('local-simple')
 const contentRootSchema = relativePathSchema.default('content')
 const sourceRootSchema = z.string().min(1).optional()
 
@@ -242,7 +244,7 @@ export const CanopyConfigSchema = z
     gitBotAuthorName: gitBotAuthorNameSchema,
     gitBotAuthorEmail: gitBotAuthorEmailSchema,
     githubTokenEnvVar: githubTokenEnvVarSchema.optional(),
-    mode: branchModeSchema.optional(),
+    mode: operatingModeSchema.optional(),
     settingsBranch: z.string().optional(),
     autoCreatePermissionsPR: z.boolean().optional(),
     contentRoot: contentRootSchema.default('content'),
@@ -416,7 +418,7 @@ export type DefaultRemoteUrl = z.infer<typeof defaultRemoteUrlSchema>
 export type GitBotAuthorName = z.infer<typeof gitBotAuthorNameSchema>
 export type GitBotAuthorEmail = z.infer<typeof gitBotAuthorEmailSchema>
 export type GithubTokenEnvVar = z.infer<typeof githubTokenEnvVarSchema>
-export type CanopyBranchMode = BranchMode
+export type CanopyOperatingMode = OperatingMode
 export type ContentRoot = z.infer<typeof contentRootSchema>
 export type SourceRoot = z.infer<typeof sourceRootSchema>
 
@@ -698,7 +700,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
   let defaultRemoteUrl: DefaultRemoteUrl | undefined
   let gitBotAuthorName: GitBotAuthorName | undefined
   let gitBotAuthorEmail: GitBotAuthorEmail | undefined
-  let mode: CanopyBranchMode | undefined
+  let mode: CanopyOperatingMode | undefined
 
   for (const fragment of fragments) {
     if (fragment.schema) {

@@ -66,7 +66,7 @@ describe('useBranchManager', () => {
 
   const defaultOptions: UseBranchManagerOptions = {
     initialBranch: 'main',
-    branchMode: 'local-simple' as const,
+    operatingMode: 'local-simple' as const,
     setBusy: mockSetBusy,
     comments: [],
   }

@@ -14,7 +14,7 @@ import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
 import { PreviewFrame } from './preview-bridge'
-import type { BranchMode } from '../paths'
+import type { OperatingMode } from '../paths'
 import { EditorPanes } from './EditorPanes'
 import { CanopyCMSProvider, type CanopyThemeOptions } from './theme'
 import { BranchManager } from './BranchManager'
@@ -67,7 +67,7 @@ export interface EditorProps {
   siteTitle?: string
   siteSubtitle?: string
   branchName?: string
-  branchMode?: BranchMode
+  operatingMode?: OperatingMode
   collections?: EditorCollection[]
   configSchema: RootCollectionConfig
   contentRoot?: string
@@ -104,7 +104,7 @@ export const Editor: React.FC<EditorProps> = ({
   renderPreview,
   onCreateEntry,
   themeOptions,
-  branchMode = 'local-simple',
+  operatingMode = 'local-simple',
   previewBaseByCollection,
   currentUser = 'current-user',
   canResolveComments = true,
@@ -150,7 +150,7 @@ export const Editor: React.FC<EditorProps> = ({
     loadBranches,
   } = useBranchManager({
     initialBranch: branchName,
-    branchMode,
+    operatingMode,
     setBusy: setBranchesLoading,
     comments: commentsForBranchSummaries,
   })
@@ -404,7 +404,7 @@ export const Editor: React.FC<EditorProps> = ({
           headerTitle={headerTitle}
           currentEntry={currentEntry}
           branchName={branchNameState}
-          branchMode={branchMode}
+          operatingMode={operatingMode}
           branchStatus={currentBranch?.status}
           busy={busy}
           breadcrumbSegments={breadcrumbSegments}
@@ -579,7 +579,7 @@ export const Editor: React.FC<EditorProps> = ({
         >
           <BranchManager
             branches={branchSummaries}
-            mode={branchMode}
+            mode={operatingMode}
             user={userContext}
             onSelect={async (name) => {
               try {
