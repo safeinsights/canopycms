@@ -37,7 +37,7 @@ describe('groups API', () => {
       services: {
         config: {
           defaultBaseBranch: 'main',
-          mode: 'local-simple',
+          mode: 'dev',
           gitBotAuthorName: 'Canopy Bot',
           gitBotAuthorEmail: 'bot@example.com',
         } as any,
@@ -177,11 +177,11 @@ describe('groups API', () => {
         '/test/main',
         groups,
         'admin-1',
-        'local-simple',
+        'dev',
         1 // contentVersion starts at 1 when file doesn't exist
       )
 
-      // In local-simple mode (default), no git operations are performed
+      // In dev mode (default), no git operations are performed
       expect(mockContext.services.commitFiles).not.toHaveBeenCalled()
     })
   })
@@ -499,7 +499,7 @@ describe('groups API', () => {
         expect.any(String), // branchRoot varies by test context
         [{ id: RESERVED_GROUPS.ADMINS, name: 'Admins', members: ['admin-1'] }],
         'admin-1',
-        'local-simple',
+        'dev',
         6 // Should be 5 + 1
       )
     })
@@ -557,7 +557,7 @@ describe('groups API', () => {
         expect.any(String), // branchRoot varies by test context
         [{ id: RESERVED_GROUPS.ADMINS, name: 'Admins', members: ['admin-1'] }],
         'admin-1',
-        'local-simple',
+        'dev',
         1
       )
     })

@@ -161,7 +161,7 @@ const defaultRemoteUrlSchema = z.string().min(1)
 const gitBotAuthorNameSchema = z.string().min(1)
 const gitBotAuthorEmailSchema = z.string().email()
 const githubTokenEnvVarSchema = z.string().default('GITHUB_BOT_TOKEN')
-const operatingModeSchema = z.enum(['prod', 'local-prod-sim', 'local-simple']).default('local-simple')
+const operatingModeSchema = z.enum(['prod', 'prod-sim', 'dev']).default('dev')
 const contentRootSchema = relativePathSchema.default('content')
 const sourceRootSchema = z.string().min(1).optional()
 

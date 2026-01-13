@@ -60,7 +60,7 @@ export const loadPermissionsFile = async (
 }
 
 /**
- * Load path permissions from .canopycms/permissions.json (or .local.json in local-simple mode)
+ * Load path permissions from .canopycms/permissions.json (or .local.json in dev mode)
  * Returns empty array if file doesn't exist (no restrictions).
  *
  * @param repoRoot - Repository root directory
@@ -75,7 +75,7 @@ export const loadPathPermissions = async (
 }
 
 /**
- * Save path permissions to .canopycms/permissions.json (or .local.json in local-simple mode)
+ * Save path permissions to .canopycms/permissions.json (or .local.json in dev mode)
  */
 export const savePathPermissions = async (
   repoRoot: string,

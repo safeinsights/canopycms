@@ -165,7 +165,7 @@ class LocalProdSimStrategy
   }
 
   validateConfig(_config: Partial<CanopyConfig>): void {
-    // No special validation for local-prod-sim
+    // No special validation for prod-sim
   }
 
   shouldCreateSettingsPR(_config: { autoCreateSettingsPR?: boolean }): boolean {
@@ -189,7 +189,7 @@ class LocalSimpleStrategy
   }
 
   getBranchRoot(baseRoot: string, _branchName: string): string {
-    // In local-simple, branch root is always the base root (no subdirectories)
+    // In dev, branch root is always the base root (no subdirectories)
     return baseRoot
   }
 
@@ -227,7 +227,7 @@ class LocalSimpleStrategy
     settingsBranch?: string
     defaultBaseBranch?: string
   }): string {
-    // Use main branch for settings in local-simple
+    // Use main branch for settings in dev
     return config.defaultBaseBranch ?? 'main'
   }
 
@@ -244,11 +244,11 @@ class LocalSimpleStrategy
   }
 
   validateConfig(_config: Partial<CanopyConfig>): void {
-    // No special validation for local-simple
+    // No special validation for dev
   }
 
   shouldCreateSettingsPR(_config: { autoCreateSettingsPR?: boolean }): boolean {
-    return false // No GitHub in local-simple
+    return false // No GitHub in dev
   }
 }
 
@@ -278,10 +278,10 @@ export function operatingStrategy(mode: OperatingMode): ClientUnsafeStrategy {
     case 'prod':
       strategy = new ProdStrategy()
       break
-    case 'local-prod-sim':
+    case 'prod-sim':
       strategy = new LocalProdSimStrategy()
       break
-    case 'local-simple':
+    case 'dev':
       strategy = new LocalSimpleStrategy()
       break
     default:

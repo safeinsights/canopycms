@@ -9,7 +9,7 @@ import { testLogger as log } from '../../../../packages/canopycms/src/utils/debu
 const TEST_APP_ROOT = path.resolve(process.cwd(), 'apps/test-app')
 
 /**
- * Path to the .canopycms/branches directory where local-prod-sim mode stores branches.
+ * Path to the .canopycms/branches directory where prod-sim mode stores branches.
  */
 const BRANCHES_DIR = path.join(TEST_APP_ROOT, '.canopycms/branches')
 

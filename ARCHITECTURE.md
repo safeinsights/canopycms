@@ -239,12 +239,12 @@ Users can work on main branch too—there's nothing preventing it. The branch mo
 
 ## Operating Modes
 
-CanopyCMS supports three operating modes to fit different environments. The mode is configured in `canopycms.config.ts` and defaults to `'local-simple'` if not specified. After Zod validation, `config.mode` is always defined and can be used throughout the codebase without fallback checks.
+CanopyCMS supports three operating modes to fit different environments. The mode is configured in `canopycms.config.ts` and defaults to `'dev'` if not specified. After Zod validation, `config.mode` is always defined and can be used throughout the codebase without fallback checks.
 
-### local-simple
+### dev
 Direct file editing in the current checkout. No git cloning occurs. Best for solo development where the developer manages their own branch via git commands.
 
-### local-prod-sim
+### prod-sim
 Simulates production behavior locally. Creates per-branch clones in `.canopycms/branches/` and maintains a local git remote at `.canopycms/remote.git`. Use this for testing the full branch workflow without deploying.
 
 ### prod
@@ -252,7 +252,7 @@ Full production deployment. Branch workspaces live on persistent storage (e.g., 
 
 Settings (groups and permissions) are stored on a separate `settingsBranch` (default: 'canopycms-settings') in prod mode, with changes creating PRs for review before merging to main. This ensures permission changes go through the same review process as content changes.
 
-**Security**: In prod/local-prod-sim modes, the system will throw an error if the settings branch cannot be loaded, ensuring permissions are never accidentally read from a content branch. Settings files also include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
+**Security**: In prod/prod-sim modes, the system will throw an error if the settings branch cannot be loaded, ensuring permissions are never accidentally read from a content branch. Settings files also include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
 
 ### Mode Strategy Pattern
 
@@ -441,7 +441,7 @@ This separation ensures strategies remain simple value objects while GitManager 
 The refactoring eliminated the `branchMode` + `resolveBranchPaths` pattern across 18 API handler instances. Previously, handlers would:
 
 ```
-const branchMode = ctx.services.config.mode ?? 'local-simple'
+const branchMode = ctx.services.config.mode ?? 'dev'
 const branchPaths = resolveBranchPaths(branchMode, context.branch.name)
 const git = ctx.services.createGitManagerFor(branchPaths.branchRoot)
 await git.ensureAuthor({
@@ -468,8 +468,8 @@ Groups and permissions (collectively "settings") have unique git operation requi
 **Why separate helpers for settings?**
 
 Settings files (`.canopycms/groups.json` and `.canopycms/permissions.json`) need different branch handling in production vs local modes:
-- **local-simple**: Settings stored on main branch, no git operations
-- **local-prod-sim**: Settings stored on main branch, regular git operations
+- **dev**: Settings stored on main branch, no git operations
+- **prod-sim**: Settings stored on main branch, regular git operations
 - **prod**: Settings stored on separate settings branch, creates PR for review
 
 Content operations always work on the current branch. Settings operations need to route to the appropriate branch based on mode.
@@ -481,11 +481,11 @@ Content operations always work on the current branch. Settings operations need t
 - In `prod` mode: Uses `settingsBranch` config (default: 'canopycms-settings')
 - In local modes: Uses `defaultBaseBranch` (default: 'main')
 - Returns both the context and mode for downstream operations
-- **Security**: Throws error if settings branch cannot be loaded in prod/local-prod-sim modes
+- **Security**: Throws error if settings branch cannot be loaded in prod/prod-sim modes
 
 **`commitSettings()`**: Commits and pushes settings changes with mode-specific logic
-- **local-simple**: No-op (no git operations)
-- **local-prod-sim**: Regular `commitFiles()` call
+- **dev**: No-op (no git operations)
+- **prod-sim**: Regular `commitFiles()` call
 - **prod**: Uses `commitToSettingsBranch()` with optional PR creation
 
 **Configuration:**
@@ -498,7 +498,7 @@ Before settings-helpers, both `permissions.ts` and `groups.ts` contained ~20 lin
 
 Handler code before:
 ```
-const mode = ctx.services.config.mode ?? 'local-simple'
+const mode = ctx.services.config.mode ?? 'dev'
 let branchName: string
 if (mode === 'prod') {
   branchName = ctx.services.config.settingsBranch ?? 'settings'
@@ -764,7 +764,7 @@ In production, permission and group changes are stored on a dedicated settings b
 - Can diff settings branch against main to see current vs proposed state
 
 **Local modes use main branch:**
-- In `local-simple` and `local-prod-sim`, settings are stored on main for simplicity
+- In `dev` and `prod-sim`, settings are stored on main for simplicity
 - No separate branch management needed for local development
 - Settings changes are immediate (no PR workflow needed)
 

@@ -56,7 +56,7 @@ export class ProdClientSafeStrategy implements ClientSafeStrategy {
 // ============================================================================
 
 export class LocalProdSimClientSafeStrategy implements ClientSafeStrategy {
-  readonly mode: OperatingMode = 'local-prod-sim'
+  readonly mode: OperatingMode = 'prod-sim'
 
   // UI Feature Flags
   supportsBranching(): boolean {
@@ -98,7 +98,7 @@ export class LocalProdSimClientSafeStrategy implements ClientSafeStrategy {
 // ============================================================================
 
 export class LocalSimpleClientSafeStrategy implements ClientSafeStrategy {
-  readonly mode: OperatingMode = 'local-simple'
+  readonly mode: OperatingMode = 'dev'
 
   // UI Feature Flags
   supportsBranching(): boolean {
@@ -159,10 +159,10 @@ export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy
     case 'prod':
       strategy = new ProdClientSafeStrategy()
       break
-    case 'local-prod-sim':
+    case 'prod-sim':
       strategy = new LocalProdSimClientSafeStrategy()
       break
-    case 'local-simple':
+    case 'dev':
       strategy = new LocalSimpleClientSafeStrategy()
       break
     default:

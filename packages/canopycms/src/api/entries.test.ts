@@ -64,7 +64,7 @@ describe('listEntries', () => {
       checkBranchAccess,
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
-      mode: 'local-simple',
+      mode: 'dev',
     })
 
     const ctx = createMockApiContext({
@@ -167,7 +167,7 @@ describe('listEntries', () => {
       checkBranchAccess,
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
-      mode: 'local-simple',
+      mode: 'dev',
     })
 
     const ctx = createMockApiContext({
@@ -278,7 +278,7 @@ describe('listEntries', () => {
       checkBranchAccess,
       loadPathPermissions: async () => [],
       defaultPathAccess: 'allow',
-      mode: 'local-simple',
+      mode: 'dev',
     })
 
     const ctx = createMockApiContext({
@@ -357,7 +357,7 @@ describe('listEntries', () => {
       checkBranchAccess,
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
-      mode: 'local-simple',
+      mode: 'dev',
     })
 
     const ctx = createMockApiContext({

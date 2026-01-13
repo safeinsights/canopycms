@@ -270,7 +270,7 @@ describe('deleteBranch api', () => {
     ...baseCtx,
     services: {
       ...baseCtx.services,
-      config: { ...baseCtx.services.config, mode: 'local-prod-sim' } as any,
+      config: { ...baseCtx.services.config, mode: 'prod-sim' } as any,
     },
   }
 

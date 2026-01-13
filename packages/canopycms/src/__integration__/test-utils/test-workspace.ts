@@ -85,7 +85,7 @@ export async function createTestWorkspace(
 
     // Create config
     const config = defineCanopyTestConfig({
-      mode: 'local-prod-sim',
+      mode: 'prod-sim',
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
       defaultBaseBranch: 'main',

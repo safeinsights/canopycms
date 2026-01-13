@@ -14,7 +14,7 @@ describe('user API', () => {
       services: {
         config: {
           defaultBaseBranch: 'main',
-          mode: 'local-simple',
+          mode: 'dev',
         },
         checkBranchAccess: vi.fn(),
         checkContentAccess: vi.fn(),

@@ -51,7 +51,7 @@ export const loadGroupsFile = async (
 }
 
 /**
- * Load internal groups from .canopycms/groups.json (or .local.json in local-simple mode)
+ * Load internal groups from .canopycms/groups.json (or .local.json in dev mode)
  */
 export const loadInternalGroups = async (
   branchRoot: string,
@@ -62,7 +62,7 @@ export const loadInternalGroups = async (
 }
 
 /**
- * Save internal groups to .canopycms/groups.json (or .local.json in local-simple mode)
+ * Save internal groups to .canopycms/groups.json (or .local.json in dev mode)
  */
 export const saveInternalGroups = async (
   branchRoot: string,

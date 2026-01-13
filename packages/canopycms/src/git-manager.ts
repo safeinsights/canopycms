@@ -49,7 +49,7 @@ export class GitManager {
   }
 
   /**
-   * Initializes a local bare git repository to simulate a remote for local-prod-sim mode.
+   * Initializes a local bare git repository to simulate a remote for prod-sim mode.
    *
    * This is idempotent - if the remote already exists, it will not be recreated.
    *
@@ -250,8 +250,8 @@ export class GitManager {
    * 1. Explicit remoteUrl parameter
    * 2. Config defaultRemoteUrl
    * 3. Environment variable (mode-specific)
-   * 4. Auto-initialized local remote (for local-prod-sim mode)
-   * 5. undefined (for local-simple mode)
+   * 4. Auto-initialized local remote (for prod-sim mode)
+   * 5. undefined (for dev mode)
    *
    * Uses strategy flags to determine behavior, GitManager executes the logic.
    *

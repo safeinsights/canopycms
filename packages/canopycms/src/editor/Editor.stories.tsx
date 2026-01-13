@@ -95,7 +95,7 @@ export const WithCollections: Story = {
           configSchema={{ collections: [], singletons: [] }}
           initialSelectedId={entries[0]?.id}
           onCreateEntry={handleCreateEntry}
-          operatingMode="local-simple"
+          operatingMode="dev"
         />
       </div>
     )

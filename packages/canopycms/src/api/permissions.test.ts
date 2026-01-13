@@ -44,7 +44,7 @@ describe('permissions API', () => {
 
     const mockConfig: Partial<CanopyConfig> = {
       defaultBaseBranch: 'main',
-      mode: 'local-simple',
+      mode: 'dev',
       gitBotAuthorName: 'Test Bot',
       gitBotAuthorEmail: 'bot@test.com',
     }
@@ -152,7 +152,7 @@ describe('permissions API', () => {
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
 
-      // In local-simple mode (default), no git operations are performed
+      // In dev mode (default), no git operations are performed
       expect(mockContext.services.commitFiles).not.toHaveBeenCalled()
     })
 
@@ -478,8 +478,8 @@ describe('permissions API', () => {
 
   describe('settings branch auto-creation', () => {
     it('should auto-create settings branch in prod mode when it does not exist', async () => {
-      // Note: In prod and local-prod-sim modes, settings use a separate settings branch
-      // In local-simple mode, settings use the main branch
+      // Note: In prod and prod-sim modes, settings use a separate settings branch
+      // In dev mode, settings use the main branch
 
       // Create a new context with prod mode
       const prodConfig: Partial<CanopyConfig> = {
@@ -526,11 +526,11 @@ describe('permissions API', () => {
       expect(prodContext.getBranchContext).toHaveBeenCalledWith('canopycms-settings')
     })
 
-    it('should auto-create settings branch in local-prod-sim mode when it does not exist', async () => {
-      // Create a new context with local-prod-sim mode
+    it('should auto-create settings branch in prod-sim mode when it does not exist', async () => {
+      // Create a new context with prod-sim mode
       const localProdSimConfig: Partial<CanopyConfig> = {
         defaultBaseBranch: 'main',
-        mode: 'local-prod-sim',
+        mode: 'prod-sim',
         settingsBranch: 'canopycms-settings',
         gitBotAuthorName: 'Test Bot',
         gitBotAuthorEmail: 'bot@test.com',
@@ -629,7 +629,7 @@ describe('permissions API', () => {
         expect.any(String), // branchRoot varies by test context
         [],
         'admin-1',
-        'local-simple',
+        'dev',
         6 // Should be 5 + 1
       )
     })
@@ -681,7 +681,7 @@ describe('permissions API', () => {
         expect.any(String), // branchRoot varies by test context
         [],
         'admin-1',
-        'local-simple',
+        'dev',
         1
       )
     })

@@ -81,7 +81,7 @@ export interface UseBranchManagerOptions {
   initialBranch: string
 
   /**
-   * Operating mode (local-simple, etc.).
+   * Operating mode (dev, etc.).
    */
   operatingMode: OperatingMode
 

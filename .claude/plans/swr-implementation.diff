@@ -7,7 +7,7 @@ index 35bc4af..6d7a15e 100644
  - Keep the styling of the host app separate from that of the CanopyCMS editing interface. CanopyCMS uses Mantine, but host apps/examples can use whatever they want.
  - Keep docs current: update `PROMPT.md`, `README.md`, and AGENTS when behavior or workflows change.
 +- Follow architectural patterns documented in `packages/canopycms/ARCHITECTURE.md`.
- - Always honor branch modes (prod/local-prod-sim/local-simple) and path traversal guards. Branch metadata/registry live under `.canopycms/`.
+ - Always honor branch modes (prod/prod-sim/dev) and path traversal guards. Branch metadata/registry live under `.canopycms/`.
  - Run `npm run typecheck --workspaces` and `npm test --workspaces` before handoff when changes are made.
  - Update Storybook stories when UI changes.
 diff --git a/package-lock.json b/package-lock.json
@@ -43,11 +43,11 @@ index 3efd2ce..5591b6e 100644
  import { useBranchActions } from './hooks/useBranchActions'
  import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 +import { EditorSWRProvider } from './api'
- 
+
  export interface EditorEntry {
    id: string
 @@ -333,6 +334,7 @@ export const Editor: React.FC<EditorProps> = ({
- 
+
    return (
      <CanopyCMSProvider {...(themeOptions ?? {})}>
 +      <EditorSWRProvider>
@@ -86,7 +86,7 @@ index 82dd664..2b42734 100644
 -import type { ApiResponse } from '../../api/types'
  import type { CommentThread } from '../../comment-store'
 +import { useBranchesData } from './useBranchesData'
- 
+
  /**
   * Branch summary for display in BranchManager component.
 @@ -95,7 +95,14 @@ export interface UseBranchManagerReturn {
@@ -102,13 +102,13 @@ index 82dd664..2b42734 100644
 +  useEffect(() => {
 +    options.setBusy(branchesLoading)
 +  }, [branchesLoading, options.setBusy])
- 
+
    const currentBranch = branches.find((b) => b.branch.name === branchName)
    const branchStatus = currentBranch?.branch.status ?? 'editing'
 @@ -121,25 +128,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
      })
    }, [branches, branchName, options.comments])
- 
+
 +  // Wrapper for revalidation that matches the old loadBranches signature
    const loadBranches = async () => {
 -    options.setBusy(true)
@@ -131,7 +131,7 @@ index 82dd664..2b42734 100644
 -    }
 +    await revalidateBranches()
    }
- 
+
    const handleSubmit = async (branchNameToSubmit: string) => {
 @@ -151,7 +142,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
          throw new Error(payload.error || 'Failed to submit branch')
@@ -162,12 +162,12 @@ index 82dd664..2b42734 100644
        notifications.show({ message, color: 'red' })
 @@ -199,14 +190,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
    }
- 
+
    const handleReloadBranchData = async () => {
 -    await loadBranches()
 +    await revalidateBranches()
    }
- 
+
 -  // Load branches on mount and when branchName changes
 -  useEffect(() => {
 -    loadBranches().catch(console.error)
@@ -186,7 +186,7 @@ index fd395f8..2ae1357 100644
  import { normalizeCanopyPath } from '../canopy-path'
 -import type { ApiResponse } from '../../api/types'
 +import { useCommentsData } from './useCommentsData'
- 
+
  export interface UseCommentSystemOptions {
    /**
 @@ -106,7 +106,6 @@ export interface UseCommentSystemReturn {
@@ -200,7 +200,7 @@ index fd395f8..2ae1357 100644
 @@ -116,21 +115,17 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
      canopyPath?: string
    } | null>(null)
- 
+
 -  const loadComments = async (branch: string) => {
 -    if (!branch) return
 -    try {
@@ -228,7 +228,7 @@ index fd395f8..2ae1357 100644
 +  const loadComments = async (_branch: string) => {
 +    await revalidateComments()
    }
- 
+
    const handleAddComment = async (
 @@ -142,7 +137,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
    ) => {
@@ -236,7 +236,7 @@ index fd395f8..2ae1357 100644
      try {
 -      const body: any = { text, threadId, type }
 +      const body: Record<string, unknown> = { text, threadId, type }
- 
+
        // Add entryId for field/entry comments
        if (entryId && (type === 'field' || type === 'entry')) {
 @@ -160,7 +155,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
@@ -260,7 +260,7 @@ index fd395f8..2ae1357 100644
 @@ -220,15 +215,6 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
      return ''
    }, [activeCommentContext, options.selectedId, options.branchName])
- 
+
 -  // Load comments when branch changes
 -  useEffect(() => {
 -    if (options.branchName) {
@@ -291,13 +291,13 @@ index e69fc96..5fe76ff 100644
    normalizeContentPayload,
  } from '../editor-utils'
 +import { useEntriesData } from './useEntriesData'
- 
+
  export interface UseEntryManagerOptions {
    initialEntries: EditorEntry[]
 @@ -71,6 +71,45 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
    )
    const [navigatorOpen, setNavigatorOpen] = useState(false)
- 
+
 +  // Use SWR for entries data - automatic deduplication and caching
 +  const { entriesData, isLoading: entriesLoading, revalidate: revalidateEntries } = useEntriesData(options.branchName)
 +
@@ -343,7 +343,7 @@ index e69fc96..5fe76ff 100644
 @@ -111,25 +150,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
      return normalizeContentPayload(content)
    }
- 
+
 -  const refreshEntries = async (branch: string = options.branchName) => {
 -    if (!branch) return
 -    const res = await fetch(`/api/canopycms/${branch}/entries`)
@@ -367,7 +367,7 @@ index e69fc96..5fe76ff 100644
 +  const refreshEntries = async (_branch?: string) => {
 +    await revalidateEntries()
    }
- 
+
    const handleCreateEntry = async (collectionId: string) => {
 @@ -152,7 +175,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
          }
@@ -381,7 +381,7 @@ index e69fc96..5fe76ff 100644
 @@ -162,20 +185,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
      }
    }
- 
+
 -  // Clear selection and refresh entries when branch changes (reactive pattern)
 -  useEffect(() => {
 -    if (options.branchName) {

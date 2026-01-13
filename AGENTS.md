@@ -20,7 +20,7 @@ Purpose: CanopyCMS is a schema-driven, branch-aware CMS for a team of users to e
   Both read/write the same repo content. The static public site is rebuilt (fully or partially) on published edit.
 - External auth via Clerk (pluggable in code), with roles admin/manager/editor. AuthZ enforces branch ACLs and per-path permissions (users/groups).
 - Live editing UX: schema-driven forms, custom field components, block-based page building, live preview via preview bridge (draft updates + click-to-focus/highlight).
-- Branch-first workflow: every edit happens on a branch backed by a filesystem clone. Creating/choosing a branch provisions/resolves a clone (prod/local-prod-sim/local-simple). Editors see branch-specific content everywhere.
+- Branch-first workflow: every edit happens on a branch backed by a filesystem clone. Creating/choosing a branch provisions/resolves a clone (prod/prod-sim/dev). Editors see branch-specific content everywhere.
 - Git/branch UX: UI for switching/creating branches, setting branch ACLs, saving (writes files, no commit), and submitting for merge. Users do not see raw Git commands.
 - Save vs publish: “Save” writes to the branch working tree only. “Publish” commits and pushes the branch via bot, opens/updates a PR, and updates branch status. Review flow supports comments/threads (stored in branch clone), request-changes unlock, and admin visibility of diffs on GitHub. Admins can see all branches; editors only see authorized branches.
 - Sync with upstream: when upstream changes (other PRs), branch clones must be updated/rebased; surface conflicts to editors without destroying local edits.
@@ -30,8 +30,8 @@ Purpose: CanopyCMS is a schema-driven, branch-aware CMS for a team of users to e
 ## Operating Modes
 See [ARCHITECTURE.md](ARCHITECTURE.md#operating-modes) for detailed mode behavior. All three modes must work:
 - `prod`: Branch clones on persistent filesystem (e.g., EFS)
-- `local-prod-sim`: Simulates prod locally in `.canopycms/branches/`
-- `local-simple`: Direct editing in current checkout, no cloning
+- `prod-sim`: Simulates prod locally in `.canopycms/branches/`
+- `dev`: Direct editing in current checkout, no cloning
 
 ## Development Guidelines
 
@@ -47,7 +47,7 @@ See [DEVELOPING.md](DEVELOPING.md) for detailed development patterns and practic
 - Use extensionless local imports.
 - Keep the styling of the host app separate from that of the CanopyCMS editing interface. CanopyCMS uses Mantine, but host apps/examples can use whatever they want.
 - Keep docs current: update `BACKLOG.md`, `README.md`, and AGENTS when behavior or workflows change.
-- Always honor branch modes (prod/local-prod-sim/local-simple) and path traversal guards. Branch metadata/registry live under `.canopycms/`.
+- Always honor branch modes (prod/prod-sim/dev) and path traversal guards. Branch metadata/registry live under `.canopycms/`.
 - Keep as much code in the package as possible so adopters do less work; avoid new package entrypoints without intent.
 - Expose client-only React via `canopycms/client` with `use client`; keep server-only deps out of browser bundles.
 - Propose next work at the end of each iteration.

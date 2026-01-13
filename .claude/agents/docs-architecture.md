@@ -35,7 +35,7 @@ It sits between:
 - Schema-driven content
 
 ### Operating Modes
-- Changes to local-simple, local-prod-sim, or prod modes
+- Changes to dev, prod-sim, or prod modes
 - New deployment patterns
 
 ### Permission Model
