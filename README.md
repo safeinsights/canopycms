@@ -690,7 +690,7 @@ Access control uses three layers:
 
 **Build mode bypass**: During `next build`, all permission checks are bypassed to allow static generation of all content, regardless of auth configuration.
 
-Permissions are stored in `.canopycms/groups.json` and `.canopycms/permissions.json` and ARE committed to git for version control and PR-reviewable changes.
+Permissions are stored in `.canopycms/groups.json` and `.canopycms/permissions.json` and ARE committed to git for version control and PR-reviewable changes. In production mode, these files are stored on a separate `canopycms-settings` branch. Files include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
 
 ### Live Preview
 
