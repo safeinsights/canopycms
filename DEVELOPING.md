@@ -933,13 +933,15 @@ git status  # .canopycms/ should not appear
 
 In production (`mode: 'prod'`), permission and group changes follow a special workflow:
 
-1. **Settings Branch:** Changes are committed to a long-running `settings` branch (configurable via `settingsBranch`, defaults to `"settings"`)
+1. **Settings Branch:** Changes are committed to a long-running `canopycms-settings` branch (configurable via `settingsBranch`, defaults to `"canopycms-settings"`)
 
-2. **Auto-PR Creation:** When `autoCreatePermissionsPR` is enabled (default: `true`), CanopyCMS automatically creates or updates a PR from `settings` → `main`
+2. **Auto-PR Creation:** When `autoCreatePermissionsPR` is enabled (default: `true`), CanopyCMS automatically creates or updates a PR from `canopycms-settings` → `main`
 
-3. **Immediate Effect:** Changes are active in the CMS immediately (read from the `settings` branch)
+3. **Immediate Effect:** Changes are active in the CMS immediately (read from the `canopycms-settings` branch)
 
 4. **Persistence:** When the PR is merged, changes become part of the main branch history
+
+5. **Optimistic Locking:** Settings files include a `contentVersion` field that prevents concurrent admin updates from overwriting each other. If a version conflict is detected, the API returns a 409 status code.
 
 **Configuration:**
 
@@ -947,7 +949,7 @@ In production (`mode: 'prod'`), permission and group changes follow a special wo
 // canopycms.config.ts
 export default defineCanopyConfig({
   mode: 'prod',
-  settingsBranch: 'settings', // Optional, defaults to 'settings'
+  settingsBranch: 'canopycms-settings', // Optional, defaults to 'canopycms-settings'
   autoCreatePermissionsPR: true, // Optional, defaults to true
   defaultRemoteUrl: 'https://github.com/your-org/your-repo.git',
   // ... other config
@@ -958,22 +960,33 @@ export default defineCanopyConfig({
 
 ```typescript
 // Internal flow when updating permissions in prod mode
-// 1. commitToSettingsBranch() creates/checks out settings branch
-await git.checkoutBranch('settings')
+// 1. Check current contentVersion for optimistic locking
+const currentFile = await loadPermissionsFile(branchRoot, mode)
+if (
+  expectedContentVersion !== undefined &&
+  currentFile?.contentVersion !== expectedContentVersion
+) {
+  return { status: 409, error: 'Permissions were modified by another user' }
+}
 
-// 2. Pulls latest (if remote exists)
+// 2. commitToSettingsBranch() creates/checks out settings branch
+await git.checkoutBranch('canopycms-settings')
+
+// 3. Pulls latest (if remote exists)
 await git.pullBase()
 
-// 3. Commits changes
+// 4. Commits changes with incremented version
+const newContentVersion = (currentFile?.contentVersion ?? 0) + 1
+await savePermissions(branchRoot, permissions, userId, mode, newContentVersion)
 await git.add('.canopycms/permissions.json')
 await git.commit('Update permissions')
 
-// 4. Pushes to remote settings branch
-await git.push('settings')
+// 5. Pushes to remote settings branch
+await git.push('canopycms-settings')
 
-// 5. Creates/updates PR if autoCreatePermissionsPR is true
+// 6. Creates/updates PR if autoCreatePermissionsPR is true
 await githubService.createOrUpdatePR({
-  head: 'settings',
+  head: 'canopycms-settings',
   base: 'main',
   title: 'Update permissions and groups',
   body: 'Automated PR for permission and group changes...',

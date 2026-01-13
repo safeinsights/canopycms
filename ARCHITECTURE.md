@@ -273,7 +273,9 @@ Simulates production behavior locally. Creates per-branch clones in `.canopycms/
 
 Full production deployment. Branch workspaces live on persistent storage (e.g., EFS on AWS). Integrates with GitHub for PR creation and management. Designed for team collaboration with proper review workflows.
 
-Settings (groups and permissions) are stored on a separate `settingsBranch` (default: 'settings') in prod mode, with changes creating PRs for review before merging to main. This ensures permission changes go through the same review process as content changes.
+Settings (groups and permissions) are stored on a separate `settingsBranch` (default: 'canopycms-settings') in prod mode, with changes creating PRs for review before merging to main. This ensures permission changes go through the same review process as content changes.
+
+**Security**: In prod/local-prod-sim modes, the system will throw an error if the settings branch cannot be loaded, ensuring permissions are never accidentally read from a content branch. Settings files also include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
 
 ## Context Architecture
 
@@ -492,9 +494,10 @@ Content operations always work on the current branch. Settings operations need t
 **`getSettingsBranchContext()`**: Determines which branch to use for settings
 
 - Returns appropriate branch context based on operating mode
-- In `prod` mode: Uses `settingsBranch` config (default: 'settings')
+- In `prod` mode: Uses `settingsBranch` config (default: 'canopycms-settings')
 - In local modes: Uses `defaultBaseBranch` (default: 'main')
 - Returns both the context and mode for downstream operations
+- **Security**: Throws error if settings branch cannot be loaded in prod/local-prod-sim modes
 
 **`commitSettings()`**: Commits and pushes settings changes with mode-specific logic
 
@@ -504,7 +507,7 @@ Content operations always work on the current branch. Settings operations need t
 
 **Configuration:**
 
-- `settingsBranch`: Branch name for settings in prod mode (default: 'settings')
+- `settingsBranch`: Branch name for settings in prod mode (default: 'canopycms-settings')
 - `autoCreatePermissionsPR`: Whether to create PR automatically in prod (default: true)
 
 **Code reduction impact:**
