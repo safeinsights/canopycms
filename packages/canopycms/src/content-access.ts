@@ -5,6 +5,7 @@ import type { PathPermission, DefaultPathAccess, PermissionLevel } from './confi
 import type { OperatingMode } from './paths'
 import { createCheckPathAccess } from './path-permissions'
 import type { CanopyUser } from './user'
+import { operatingStrategy } from './operating-mode'
 
 export interface ContentAccessResult {
   allowed: boolean
@@ -14,9 +15,9 @@ export interface ContentAccessResult {
 
 export interface ContentAccessDeps {
   checkBranchAccess: (context: BranchContext, user: CanopyUser) => BranchAccessResult
-  loadPathPermissions: (branchRoot: string, mode?: OperatingMode) => Promise<PathPermission[]>
+  loadPathPermissions: (branchRoot: string, mode: OperatingMode) => Promise<PathPermission[]>
   defaultPathAccess: DefaultPathAccess
-  mode?: OperatingMode
+  mode: OperatingMode
   /**
    * Get the settings branch root path for loading centralized permissions.
    * Only used in prod/local-prod-sim modes.
@@ -39,12 +40,16 @@ export const checkContentAccess = async (
 ): Promise<ContentAccessResult> => {
   const branch = deps.checkBranchAccess(context, user)
 
-  // In prod/local-prod-sim modes, load permissions from settings branch
-  // In local-simple mode, load from the current branch
+  // Load permissions from appropriate location based on operating mode
+  // Modes with separate settings branch: load from settings branch
+  // Other modes: load from the current branch
   let permissionsRoot = branchRoot
-  if (deps.mode === 'prod' || deps.mode === 'local-prod-sim') {
+  const mode = deps.mode
+  const strategy = operatingStrategy(mode)
+
+  if (strategy.usesSeparateSettingsBranch()) {
     if (!deps.getSettingsBranchRoot) {
-      throw new Error('getSettingsBranchRoot is required in prod/local-prod-sim mode')
+      throw new Error('getSettingsBranchRoot is required for modes that use separate settings branch')
     }
     // getSettingsBranchRoot must throw if it cannot load the settings branch
     // This ensures we never fall back to reading permissions from the current branch

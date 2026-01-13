@@ -225,44 +225,8 @@ export class GitManager {
    * @returns Remote URL or undefined if no remote is needed
    */
   static async resolveRemoteUrl(options: ResolveRemoteUrlOptions): Promise<string | undefined> {
-    // 1. Explicit remoteUrl
-    if (options.remoteUrl) return options.remoteUrl
-
-    // 2. Config default
-    if (options.defaultRemoteUrl) return options.defaultRemoteUrl
-
-    // 3. Environment variable
-    if (process.env.CANOPYCMS_REMOTE_URL) return process.env.CANOPYCMS_REMOTE_URL
-
-    // 4. For local-prod-sim, auto-init local remote
-    if (options.mode === 'local-prod-sim') {
-      // Find the actual git root directory
-      let gitRoot = process.cwd()
-      try {
-        const git = simpleGit({ baseDir: process.cwd() })
-        const result = await git.raw(['rev-parse', '--show-toplevel'])
-        gitRoot = result.trim()
-      } catch {
-        // If we can't find git root, use cwd
-        gitRoot = process.cwd()
-      }
-
-      const sourceRoot = options.sourceRoot
-      const sourcePath = sourceRoot ? path.resolve(gitRoot, sourceRoot) : gitRoot
-
-      const localRemotePath = path.join(sourcePath, '.canopycms/remote.git')
-
-      await GitManager.ensureLocalSimulatedRemote({
-        remotePath: localRemotePath,
-        sourcePath: gitRoot, // Always use git root for operations
-        baseBranch: options.baseBranch,
-        subdirectory: sourceRoot, // If set, extract only this subdirectory
-      })
-      return localRemotePath
-    }
-
-    // 5. No remote needed for local-simple
-    return undefined
+    const { operatingStrategy } = await import('./operating-mode')
+    return operatingStrategy(options.mode).resolveRemoteUrl(options)
   }
 
   async status(): Promise<GitStatus> {

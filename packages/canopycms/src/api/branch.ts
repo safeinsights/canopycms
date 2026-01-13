@@ -8,6 +8,7 @@ import { getBranchMetadataFileManager } from '../branch-metadata'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
+import { clientOperatingStrategy } from '../operating-mode'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
 
@@ -119,7 +120,8 @@ export const createBranchHandler = async (
 
     let pathPermissions: PathPermission[] = []
     if (mainBranchContext) {
-      pathPermissions = await loadPathPermissions(mainBranchContext.branchRoot)
+      const operatingMode = ctx.services.config.mode
+      pathPermissions = await loadPathPermissions(mainBranchContext.branchRoot, operatingMode)
     }
 
     // Check if user can create branches
@@ -130,7 +132,7 @@ export const createBranchHandler = async (
     }
 
     const manager = new BranchWorkspaceManager(ctx.services.config)
-    const operatingMode = ctx.services.config.mode ?? 'local-simple'
+    const operatingMode = ctx.services.config.mode
     const context = await manager.openOrCreateBranch({
       branchName,
       mode: operatingMode,
@@ -207,10 +209,10 @@ export const deleteBranchHandler = async (
 ): Promise<BranchDeleteResponse> => {
   const branchName = params.branch
 
-  // Disallow delete in local-simple mode (branch = developer's git checkout)
-  const operatingMode = ctx.services.config.mode ?? 'local-simple'
-  if (operatingMode === 'local-simple') {
-    return { ok: false, status: 400, error: 'Cannot delete branches in local-simple mode' }
+  // Disallow delete in modes that don't support branching (branch = developer's git checkout)
+  const operatingMode = ctx.services.config.mode
+  if (!clientOperatingStrategy(operatingMode).supportsBranching()) {
+    return { ok: false, status: 400, error: 'Cannot delete branches in this operating mode' }
   }
 
   // Get branch context

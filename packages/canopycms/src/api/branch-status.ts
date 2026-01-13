@@ -8,6 +8,7 @@ import { markAsMerged } from './branch-merge'
 import { defineEndpoint } from './route-builder'
 import type { BranchMetadata } from '../types'
 import { canPerformWorkflowAction } from '../authz'
+import { clientOperatingStrategy } from '../operating-mode'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -76,8 +77,8 @@ const submitBranchForMergeHandler = async (
   let prUrl = context.branch.pullRequestUrl
   let prNumber = context.branch.pullRequestNumber
 
-  const operatingMode = ctx.services.config.mode ?? 'local-simple'
-  if (githubService && operatingMode !== 'local-simple') {
+  const operatingMode = ctx.services.config.mode
+  if (githubService && clientOperatingStrategy(operatingMode).supportsPullRequests()) {
     try {
       const prTitle = context.branch.title || `Submit ${context.branch.name}`
       const prBody = context.branch.description || ''

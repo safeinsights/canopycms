@@ -9,6 +9,7 @@ import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
 import { UserBadge } from './components/UserBadge'
 import { isAdmin, isReviewer } from '../reserved-groups'
+import { clientOperatingStrategy } from '../operating-mode/client'
 
 export interface BranchSummary {
   name: string
@@ -88,7 +89,7 @@ const statusColorMap: Record<string, { color: string; variant?: 'light' | 'fille
 
 export interface BranchManagerProps {
   branches: BranchSummary[]
-  mode?: OperatingMode
+  mode: OperatingMode
   /** Current user context for permission checks */
   user?: UserContext
   onSelect?: (name: string) => void
@@ -128,7 +129,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   highlightThreadId,
   onGetUserMetadata,
 }) => {
-  const isLocalSimple = mode === 'local-simple'
+  const supportsBranching = clientOperatingStrategy(mode).supportsBranching()
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [newBranchName, setNewBranchName] = useState('')
   const [newBranchTitle, setNewBranchTitle] = useState('')
@@ -164,7 +165,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
         </Stack>
       )}
 
-      {!isLocalSimple && (
+      {!!supportsBranching && (
         <Stack gap="sm" pt="sm">
           <Button
             variant="light"
@@ -219,7 +220,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
       <ScrollArea style={{ flex: 1 }} pb="md">
         {branches.length === 0 ? (
           <Text size="sm" c="dimmed" py="md">
-            {isLocalSimple
+            {!supportsBranching
               ? 'Branch management is disabled in local-simple mode.'
               : 'No branches available.'}
           </Text>

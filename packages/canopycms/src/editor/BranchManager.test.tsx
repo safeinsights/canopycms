@@ -121,13 +121,13 @@ describe('BranchManager', () => {
   ]
 
   it('renders branch list', () => {
-    renderBranchManager({ branches: baseBranches })
+    renderBranchManager({ branches: baseBranches, mode: 'prod' })
     expect(screen.getByText('main')).toBeDefined()
     expect(screen.getByText('feature/test')).toBeDefined()
   })
 
   it('shows PR status and link when present', () => {
-    renderBranchManager({ branches: baseBranches })
+    renderBranchManager({ branches: baseBranches, mode: 'prod' })
     const prBadge = screen.getByText(/PR #1/)
     expect(prBadge).toBeDefined()
 
@@ -137,14 +137,14 @@ describe('BranchManager', () => {
   })
 
   it('shows comment count badge when present', () => {
-    renderBranchManager({ branches: baseBranches })
+    renderBranchManager({ branches: baseBranches, mode: 'prod' })
     expect(screen.getByText(/3 comments/)).toBeDefined()
   })
 
   it('calls onSubmit when Submit button clicked', async () => {
     const onSubmit = vi.fn()
     // Use creator user so they can submit their own branch
-    renderBranchManager({ branches: baseBranches, onSubmit, user: creatorUser })
+    renderBranchManager({ branches: baseBranches, onSubmit, user: creatorUser, mode: 'prod' })
 
     const submitButton = screen.getByRole('button', { name: /submit/i })
     await userEvent.click(submitButton)
@@ -155,7 +155,7 @@ describe('BranchManager', () => {
   it('calls onWithdraw when Withdraw button clicked', async () => {
     const onWithdraw = vi.fn()
     // Use creator user so they can withdraw their own branch
-    renderBranchManager({ branches: baseBranches, onWithdraw, user: creatorUser })
+    renderBranchManager({ branches: baseBranches, onWithdraw, user: creatorUser, mode: 'prod' })
 
     const withdrawButton = screen.getByRole('button', { name: /withdraw/i })
     await userEvent.click(withdrawButton)
@@ -164,7 +164,7 @@ describe('BranchManager', () => {
   })
 
   it('shows create branch form when Create button clicked', async () => {
-    renderBranchManager({ branches: baseBranches })
+    renderBranchManager({ branches: baseBranches, mode: 'prod' })
 
     const createButton = screen.getByRole('button', { name: /create new branch/i })
     await userEvent.click(createButton)
@@ -176,7 +176,7 @@ describe('BranchManager', () => {
 
   it('calls onCreate with branch details when form submitted', async () => {
     const onCreate = vi.fn()
-    renderBranchManager({ branches: baseBranches, onCreate })
+    renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
 
     // Open form
     const createButton = screen.getByRole('button', { name: /create new branch/i })
@@ -203,7 +203,7 @@ describe('BranchManager', () => {
   })
 
   it('disables create button when name is empty', async () => {
-    renderBranchManager({ branches: baseBranches, onCreate: vi.fn() })
+    renderBranchManager({ branches: baseBranches, onCreate: vi.fn(), mode: 'prod' })
 
     // Open form
     const createButton = screen.getByRole('button', { name: /create new branch/i })
@@ -233,7 +233,7 @@ describe('BranchManager', () => {
   it('calls onRequestChanges when button clicked', async () => {
     const onRequestChanges = vi.fn()
     // Use admin user who can request changes on submitted branches
-    renderBranchManager({ branches: baseBranches, onRequestChanges, user: adminUser })
+    renderBranchManager({ branches: baseBranches, onRequestChanges, user: adminUser, mode: 'prod' })
 
     const requestChangesButtons = screen.getAllByRole('button', { name: /request changes/i })
     // The second branch (feature/test) is submitted, so its button should be at index 1
@@ -245,7 +245,7 @@ describe('BranchManager', () => {
   it('calls onDelete when delete button clicked', async () => {
     const onDelete = vi.fn()
     // Use creator user so they can delete their own branch (main is editing, not submitted)
-    renderBranchManager({ branches: baseBranches, onDelete, user: creatorUser })
+    renderBranchManager({ branches: baseBranches, onDelete, user: creatorUser, mode: 'prod' })
 
     const deleteButtons = screen.getAllByRole('button', { name: /delete/i })
     await userEvent.click(deleteButtons[0])

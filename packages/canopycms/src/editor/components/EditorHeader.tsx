@@ -5,6 +5,7 @@ import { GoGitBranch } from 'react-icons/go'
 import type { OperatingMode } from '../../paths'
 import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
+import { clientOperatingStrategy } from '../../operating-mode/client'
 
 /**
  * Props for the EditorHeader component.
@@ -368,13 +369,13 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 </Menu.Dropdown>
               </Menu>
 
-              {operatingMode !== 'local-simple' && branchName && branchStatus && (
+              {clientOperatingStrategy(operatingMode ?? 'prod').supportsStatusBadge() && branchName && branchStatus && (
                 <Badge color={getStatusColor(branchStatus)} variant="light" size="sm" data-testid={`header-status-badge-${branchStatus}`}>
                   {branchStatus}
                 </Badge>
               )}
 
-              {operatingMode !== 'local-simple' && branchName && (
+              {clientOperatingStrategy(operatingMode ?? 'prod').supportsComments() && branchName && (
                 <Button
                   variant="outline"
                   color="gray"

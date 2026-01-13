@@ -55,6 +55,7 @@ describe('ReferenceResolver', () => {
       contentRoot: 'content',
       gitBotAuthorName: 'Test Bot',
       gitBotAuthorEmail: 'test@example.com',
+      mode: 'prod',
       schema: {
         collections: [
           {

@@ -204,6 +204,92 @@ To add support for a new framework (Express, Fastify, SvelteKit, etc.):
 4. **Export unified API** - hide framework details from adopters
 5. **Add framework-specific optimizations** - caching, middleware, etc.
 
+## Operating Mode Strategies
+
+CanopyCMS uses the Strategy pattern to encapsulate mode-specific behavior. Understanding this pattern is important for adding new features that behave differently across modes.
+
+### Strategy Pattern Overview
+
+**Two strategy layers:**
+
+1. **ClientSafeStrategy** (`operating-mode/client-safe-strategy.ts`)
+   - No Node.js imports (can be bundled for client)
+   - Pure configuration values and flags
+   - Methods: `supportsBranching()`, `shouldCommit()`, `getPermissionsFileName()`, etc.
+
+2. **ClientUnsafeStrategy** (`operating-mode/client-unsafe-strategy.ts`)
+   - Extends ClientSafeStrategy
+   - Adds server-side functionality
+   - Methods: `getBaseRoot()`, `getPermissionsFilePath()`, `getRemoteUrlConfig()`, etc.
+
+**Key principle**: Strategies return values, not logic.
+
+```typescript
+// GOOD: Strategy returns a flag
+shouldAutoInitLocal(): boolean {
+  return true
+}
+
+// BAD: Strategy contains business logic
+async resolveRemoteUrl(): Promise<string> {
+  // Don't do git operations in strategies!
+  const git = simpleGit(...)
+  await git.raw([...])
+  // ...
+}
+```
+
+### When to Use Strategies
+
+Add mode-specific behavior to strategies when:
+- Different modes need different configuration values (file names, paths, flags)
+- UI features should be enabled/disabled based on mode
+- Simple boolean decisions drive behavior elsewhere
+
+**Don't put in strategies:**
+- Git operations (belongs in GitManager)
+- File I/O operations (belongs in services/utilities)
+- Complex business logic (belongs in domain code)
+
+### Example: Adding Mode-Specific Behavior
+
+```typescript
+// 1. Add method to strategy interface (operating-mode/types.ts)
+interface ClientSafeStrategy {
+  // ... existing methods
+  supportsFeatureX(): boolean
+}
+
+// 2. Implement in each strategy class
+class ProdClientSafeStrategy implements ClientSafeStrategy {
+  supportsFeatureX(): boolean { return true }
+}
+
+class LocalSimpleClientSafeStrategy implements ClientSafeStrategy {
+  supportsFeatureX(): boolean { return false }
+}
+
+// 3. Use the flag in your code
+const strategy = clientOperatingStrategy(config.mode)
+if (strategy.supportsFeatureX()) {
+  // Enable feature X
+}
+```
+
+### Testing Strategies
+
+```typescript
+import { operatingStrategy } from './operating-mode'
+
+it('returns correct config for each mode', () => {
+  const prodStrategy = operatingStrategy('prod')
+  expect(prodStrategy.shouldAutoInitLocal()).toBe(false)
+
+  const localProdSimStrategy = operatingStrategy('local-prod-sim')
+  expect(localProdSimStrategy.shouldAutoInitLocal()).toBe(true)
+})
+```
+
 ## Schema Architecture
 
 CanopyCMS uses a unified schema model that treats collections and singletons as first-class citizens. Understanding this architecture is essential for working with content.

@@ -26,8 +26,8 @@ export function createNextCanopyContext(options: NextCanopyOptions) {
 
     // Load internal groups from main branch
     const baseBranch = services.config.defaultBaseBranch ?? 'main'
-    const branchMode = services.config.mode ?? 'local-simple'
-    const mainBranchContext = await loadBranchContext({ branchName: baseBranch, mode: branchMode })
+    const operatingMode = services.config.mode ?? 'local-simple'
+    const mainBranchContext = await loadBranchContext({ branchName: baseBranch, mode: operatingMode })
     const internalGroups = mainBranchContext
       ? await loadInternalGroups(mainBranchContext.branchRoot).catch(() => [])
       : []

@@ -4,18 +4,13 @@ import type { PathPermission } from './config'
 import type { PermissionsFile } from './permissions-file'
 import { PermissionsFileSchema } from './permissions-file'
 import type { OperatingMode } from './paths'
-
-const PERMISSIONS_FILE_PATH = '.canopycms/permissions.json'
-const PERMISSIONS_LOCAL_FILE_PATH = '.canopycms/permissions.local.json'
+import { operatingStrategy } from './operating-mode'
 
 /**
  * Get the appropriate permissions file path based on mode
  */
-function getPermissionsFilePath(repoRoot: string, mode?: OperatingMode): string {
-  if (mode === 'local-simple') {
-    return path.join(repoRoot, PERMISSIONS_LOCAL_FILE_PATH)
-  }
-  return path.join(repoRoot, PERMISSIONS_FILE_PATH)
+function getPermissionsFilePath(repoRoot: string, mode: OperatingMode): string {
+  return operatingStrategy(mode).getPermissionsFilePath(repoRoot)
 }
 
 /**
@@ -27,7 +22,7 @@ function getPermissionsFilePath(repoRoot: string, mode?: OperatingMode): string 
  */
 export const loadPermissionsFile = async (
   repoRoot: string,
-  mode?: OperatingMode
+  mode: OperatingMode
 ): Promise<PermissionsFile | null> => {
   const permissionsPath = getPermissionsFilePath(repoRoot, mode)
 
@@ -37,11 +32,11 @@ export const loadPermissionsFile = async (
     const validated = PermissionsFileSchema.parse(parsed)
     return validated
   } catch (error) {
-    // File doesn't exist - try fallback in local-simple mode
+    // File doesn't exist - try fallback
     if ((error as any).code === 'ENOENT') {
-      // In local-simple, try fallback to regular .json file
-      if (mode === 'local-simple') {
-        const fallbackPath = path.join(repoRoot, PERMISSIONS_FILE_PATH)
+      const fallbackPath = operatingStrategy(mode).getFallbackPermissionsFilePath(repoRoot)
+
+      if (fallbackPath) {
         try {
           const fileContent = await fs.readFile(fallbackPath, 'utf-8')
           const parsed = JSON.parse(fileContent)
@@ -73,7 +68,7 @@ export const loadPermissionsFile = async (
  */
 export const loadPathPermissions = async (
   repoRoot: string,
-  mode?: OperatingMode
+  mode: OperatingMode
 ): Promise<PathPermission[]> => {
   const file = await loadPermissionsFile(repoRoot, mode)
   return file?.pathPermissions ?? []
@@ -86,7 +81,7 @@ export const savePathPermissions = async (
   repoRoot: string,
   permissions: PathPermission[],
   updatedBy: string,
-  mode?: OperatingMode,
+  mode: OperatingMode,
   contentVersion?: number
 ): Promise<void> => {
   const permissionsPath = getPermissionsFilePath(repoRoot, mode)
@@ -115,7 +110,7 @@ export const savePathPermissions = async (
 export const ensurePermissionsFile = async (
   repoRoot: string,
   userId: string,
-  mode?: OperatingMode
+  mode: OperatingMode
 ): Promise<void> => {
   const permissionsPath = getPermissionsFilePath(repoRoot, mode)
 
