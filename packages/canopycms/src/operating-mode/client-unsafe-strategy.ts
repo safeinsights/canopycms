@@ -8,16 +8,13 @@
  */
 
 import path from 'node:path'
-import fs from 'node:fs/promises'
-import simpleGit from 'simple-git'
 import {
   ProdClientSafeStrategy,
   LocalProdSimClientSafeStrategy,
   LocalSimpleClientSafeStrategy,
 } from './client-safe-strategy'
-import type { OperatingMode, ClientUnsafeStrategy, ResolveRemoteUrlOptions } from './types'
+import type { OperatingMode, ClientUnsafeStrategy } from './types'
 import type { CanopyConfig } from '../config'
-import { GitManager } from '../git-manager'
 
 const DEFAULT_PROD_BASE = '/mnt/efs/site'
 
@@ -59,12 +56,12 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     return null
   }
 
-  async resolveRemoteUrl(options: ResolveRemoteUrlOptions): Promise<string | undefined> {
-    // Priority: explicit > config > env variable
-    if (options.remoteUrl) return options.remoteUrl
-    if (options.defaultRemoteUrl) return options.defaultRemoteUrl
-    if (process.env.CANOPYCMS_REMOTE_URL) return process.env.CANOPYCMS_REMOTE_URL
-    return undefined
+  getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
+    return {
+      shouldAutoInitLocal: false,
+      defaultRemotePath: '',
+      envVarName: 'CANOPYCMS_REMOTE_URL',
+    }
   }
 
   requiresExistingRepo(): boolean {
@@ -86,19 +83,14 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     return true
   }
 
-  async validateWorkspace(_branchRoot: string): Promise<void> {
-    // Prod mode handles workspace initialization automatically
-    // No validation needed
-  }
-
   validateConfig(config: Partial<CanopyConfig>): void {
     if (!config.gitBotAuthorName || !config.gitBotAuthorEmail) {
       throw new Error('gitBotAuthorName and gitBotAuthorEmail are required in prod mode')
     }
   }
 
-  shouldCreatePermissionsPR(config: { autoCreatePermissionsPR?: boolean }): boolean {
-    return config.autoCreatePermissionsPR ?? true
+  shouldCreateSettingsPR(config: { autoCreateSettingsPR?: boolean }): boolean {
+    return config.autoCreateSettingsPR ?? true
   }
 }
 
@@ -134,38 +126,12 @@ class LocalProdSimStrategy extends LocalProdSimClientSafeStrategy implements Cli
     return null
   }
 
-  async resolveRemoteUrl(options: ResolveRemoteUrlOptions): Promise<string | undefined> {
-    // Priority: explicit > config > env variable > auto-init local remote
-    if (options.remoteUrl) return options.remoteUrl
-    if (options.defaultRemoteUrl) return options.defaultRemoteUrl
-    if (process.env.CANOPYCMS_REMOTE_URL) return process.env.CANOPYCMS_REMOTE_URL
-
-    // Auto-initialize local simulated remote
-    const gitRoot = await this.findGitRoot()
-    const sourceRoot = options.sourceRoot
-    const sourcePath = sourceRoot ? path.resolve(gitRoot, sourceRoot) : gitRoot
-    const localRemotePath = path.join(sourcePath, '.canopycms/remote.git')
-
-    await GitManager.ensureLocalSimulatedRemote({
-      remotePath: localRemotePath,
-      sourcePath: gitRoot,
-      baseBranch: options.baseBranch ?? 'main',
-      subdirectory: sourceRoot,
-    })
-
-    return localRemotePath
-  }
-
-  private async findGitRoot(): Promise<string> {
-    let gitRoot = process.cwd()
-    try {
-      const git = simpleGit({ baseDir: process.cwd() })
-      const result = await git.raw(['rev-parse', '--show-toplevel'])
-      gitRoot = result.trim()
-    } catch {
-      // Fall back to cwd if not in a git repo
+  getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
+    return {
+      shouldAutoInitLocal: true,
+      defaultRemotePath: '.canopycms/remote.git',
+      envVarName: 'CANOPYCMS_REMOTE_URL',
     }
-    return gitRoot
   }
 
   requiresExistingRepo(): boolean {
@@ -187,15 +153,11 @@ class LocalProdSimStrategy extends LocalProdSimClientSafeStrategy implements Cli
     return true
   }
 
-  async validateWorkspace(_branchRoot: string): Promise<void> {
-    // Local-prod-sim handles initialization automatically
-  }
-
   validateConfig(_config: Partial<CanopyConfig>): void {
     // No special validation for local-prod-sim
   }
 
-  shouldCreatePermissionsPR(_config: { autoCreatePermissionsPR?: boolean }): boolean {
+  shouldCreateSettingsPR(_config: { autoCreateSettingsPR?: boolean }): boolean {
     return false // No real GitHub in simulation
   }
 }
@@ -235,8 +197,12 @@ class LocalSimpleStrategy extends LocalSimpleClientSafeStrategy implements Clien
     return path.join(root, '.canopycms/groups.json')
   }
 
-  async resolveRemoteUrl(_options: ResolveRemoteUrlOptions): Promise<string | undefined> {
-    return undefined // No remote needed in local-simple
+  getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
+    return {
+      shouldAutoInitLocal: false,
+      defaultRemotePath: '',
+      envVarName: 'CANOPYCMS_REMOTE_URL',
+    }
   }
 
   requiresExistingRepo(): boolean {
@@ -260,26 +226,11 @@ class LocalSimpleStrategy extends LocalSimpleClientSafeStrategy implements Clien
     return false
   }
 
-  async validateWorkspace(branchRoot: string): Promise<void> {
-    // Local-simple requires existing git repo
-    try {
-      const stat = await fs.stat(path.join(branchRoot, '.git'))
-      if (!stat.isDirectory()) {
-        throw new Error(`Expected git repo at ${branchRoot}`)
-      }
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
-        throw new Error(`Expected git repo at ${branchRoot}`)
-      }
-      throw err
-    }
-  }
-
   validateConfig(_config: Partial<CanopyConfig>): void {
     // No special validation for local-simple
   }
 
-  shouldCreatePermissionsPR(_config: { autoCreatePermissionsPR?: boolean }): boolean {
+  shouldCreateSettingsPR(_config: { autoCreateSettingsPR?: boolean }): boolean {
     return false // No GitHub in local-simple
   }
 }

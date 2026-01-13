@@ -25,6 +25,7 @@ export { clientOperatingStrategy, clearClientStrategyCache } from './client-safe
 // Client-unsafe factory and strategy (server-side only)
 export { operatingStrategy, clearStrategyCache } from './client-unsafe-strategy'
 
+export type OperatingMode = 'prod' | 'local-prod-sim' | 'local-simple'
+
 // Type exports
 export type { ClientSafeStrategy, ClientUnsafeStrategy, ResolveRemoteUrlOptions } from './types'
-export type { OperatingMode } from '../paths'

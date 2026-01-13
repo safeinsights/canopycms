@@ -7,7 +7,7 @@ import {
   type InternalGroup,
   type GroupsFile,
 } from './groups-file'
-import type { OperatingMode } from './paths'
+import type { OperatingMode } from './operating-mode'
 import { operatingStrategy } from './operating-mode'
 
 /**

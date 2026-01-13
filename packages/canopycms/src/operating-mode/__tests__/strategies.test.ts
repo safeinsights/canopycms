@@ -11,7 +11,7 @@ import {
   operatingStrategy,
   clearStrategyCache,
 } from '../index'
-import type { OperatingMode } from '../../paths'
+import type { OperatingMode } from '..'
 
 describe('Operating Mode Strategies', () => {
   // Clean up caches after each test
@@ -308,12 +308,12 @@ describe('Operating Mode Strategies', () => {
 
       it('should create permissions PR by default', () => {
         const strategy = operatingStrategy(mode)
-        expect(strategy.shouldCreatePermissionsPR({})).toBe(true)
+        expect(strategy.shouldCreateSettingsPR({})).toBe(true)
       })
 
       it('should respect autoCreatePermissionsPR config', () => {
         const strategy = operatingStrategy(mode)
-        expect(strategy.shouldCreatePermissionsPR({ autoCreatePermissionsPR: false })).toBe(false)
+        expect(strategy.shouldCreateSettingsPR({ autoCreateSettingsPR: false })).toBe(false)
       })
     })
 
@@ -353,7 +353,7 @@ describe('Operating Mode Strategies', () => {
 
       it('should NOT create permissions PR', () => {
         const strategy = operatingStrategy(mode)
-        expect(strategy.shouldCreatePermissionsPR({})).toBe(false)
+        expect(strategy.shouldCreateSettingsPR({})).toBe(false)
       })
     })
 
@@ -436,15 +436,14 @@ describe('Operating Mode Strategies', () => {
 
       it('should NOT create permissions PR', () => {
         const strategy = operatingStrategy(mode)
-        expect(strategy.shouldCreatePermissionsPR({})).toBe(false)
+        expect(strategy.shouldCreateSettingsPR({})).toBe(false)
       })
 
-      it('should return undefined for remote URL', async () => {
+      it('should not auto-init local remote', () => {
         const strategy = operatingStrategy(mode)
-        const remoteUrl = await strategy.resolveRemoteUrl({
-          mode: 'local-simple',
-        })
-        expect(remoteUrl).toBeUndefined()
+        const config = strategy.getRemoteUrlConfig()
+        expect(config.shouldAutoInitLocal).toBe(false)
+        expect(config.envVarName).toBe('CANOPYCMS_REMOTE_URL')
       })
     })
 

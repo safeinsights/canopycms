@@ -74,9 +74,9 @@ export interface CanopyServices {
  * (e.g., request handlers, loaders).
  */
 export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
-  if (!config.gitBotAuthorName || !config.gitBotAuthorEmail) {
-    throw new Error('CanopyCMS: gitBotAuthorName and gitBotAuthorEmail are required')
-  }
+  // Validate mode-specific requirements (e.g., prod requires git bot credentials for GitHub)
+  const strategy = operatingStrategy(config.mode)
+  strategy.validateConfig(config)
 
   // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()

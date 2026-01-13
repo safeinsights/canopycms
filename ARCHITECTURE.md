@@ -537,7 +537,7 @@ Content operations always work on the current branch. Settings operations need t
 **Configuration:**
 
 - `settingsBranch`: Branch name for settings in prod mode (default: 'canopycms-settings')
-- `autoCreatePermissionsPR`: Whether to create PR automatically in prod (default: true)
+- `autoCreateSettingsPR`: Whether to create PR automatically in prod (default: true)
 
 **Code reduction impact:**
 

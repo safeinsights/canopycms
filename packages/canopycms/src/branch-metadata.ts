@@ -3,7 +3,8 @@ import path from 'node:path'
 
 import type { BranchContext, BranchMetadata, BranchStatus } from './types'
 import { BranchRegistry } from './branch-registry'
-import { resolveBranchPath, type OperatingMode } from './paths'
+import { resolveBranchPath } from './paths'
+import { type OperatingMode } from './operating-mode'
 
 const BRANCH_META_DIR = '.canopycms'
 const BRANCH_META_FILE = 'branch.json'
