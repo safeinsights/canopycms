@@ -3,7 +3,7 @@ import { isAbsolute, join, normalize } from 'pathe'
 import { z } from 'zod'
 
 import type { CanopyGroupId, CanopyUserId } from './types'
-import type { OperatingMode } from './paths'
+import type { OperatingMode } from './operating-mode'
 import type { AuthPlugin } from './auth/plugin'
 
 export const primitiveFieldTypes = [
@@ -231,7 +231,7 @@ export const CanopyConfigSchema = z
     githubTokenEnvVar: githubTokenEnvVarSchema.optional(),
     mode: operatingModeSchema,  // Has .default(), so not optional in output type
     settingsBranch: z.string().optional(),
-    autoCreatePermissionsPR: z.boolean().optional(),
+    autoCreateSettingsPR: z.boolean().optional(),
     contentRoot: contentRootSchema.default('content'),
     sourceRoot: sourceRootSchema.optional(),
     editor: editorConfigSchema.optional(),

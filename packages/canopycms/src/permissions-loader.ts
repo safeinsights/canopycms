@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { PathPermission } from './config'
 import type { PermissionsFile } from './permissions-file'
 import { PermissionsFileSchema } from './permissions-file'
-import type { OperatingMode } from './paths'
+import type { OperatingMode } from './operating-mode'
 import { operatingStrategy } from './operating-mode'
 
 /**

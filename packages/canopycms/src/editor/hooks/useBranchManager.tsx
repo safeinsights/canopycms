@@ -3,7 +3,7 @@ import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
 import type { BranchMetadata } from '../../types'
-import type { OperatingMode } from '../../paths'
+import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
 import { createApiClient } from '../../api'
 

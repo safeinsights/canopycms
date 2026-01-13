@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import { simpleGit, type ConfigListSummary, type SimpleGit, type SimpleGitOptions, type StatusResult } from 'simple-git'
 
-import type { OperatingMode } from './paths'
+import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -211,12 +211,49 @@ export class GitManager {
   }
 
   /**
+   * Find the git root directory
+   * @returns Path to git root, or cwd if not in a git repo
+   */
+  static async findGitRoot(): Promise<string> {
+    let gitRoot = process.cwd()
+    try {
+      const git = simpleGit({ baseDir: process.cwd() })
+      const result = await git.raw(['rev-parse', '--show-toplevel'])
+      gitRoot = result.trim()
+    } catch {
+      // Fall back to cwd if not in a git repo
+    }
+    return gitRoot
+  }
+
+  /**
+   * Validate that a git repository exists at the given path
+   * @param repoPath - Path to check for .git directory
+   * @throws Error if git repo doesn't exist
+   */
+  static async validateGitRepoExists(repoPath: string): Promise<void> {
+    try {
+      const stat = await fs.stat(path.join(repoPath, '.git'))
+      if (!stat.isDirectory()) {
+        throw new Error(`Expected git repo at ${repoPath}`)
+      }
+    } catch (err: unknown) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+        throw new Error(`Expected git repo at ${repoPath}`)
+      }
+      throw err
+    }
+  }
+
+  /**
    * Resolves the remote URL for git operations following the priority:
    * 1. Explicit remoteUrl parameter
    * 2. Config defaultRemoteUrl
-   * 3. Environment variable CANOPYCMS_REMOTE_URL
-   * 4. Auto-initialized local remote for local-prod-sim mode
+   * 3. Environment variable (mode-specific)
+   * 4. Auto-initialized local remote (for local-prod-sim mode)
    * 5. undefined (for local-simple mode)
+   *
+   * Uses strategy flags to determine behavior, GitManager executes the logic.
    *
    * @param options.sourceRoot - Optional source directory for monorepos. When provided,
    *   this directory (relative to git root) is used as the source for the simulated remote.
@@ -226,7 +263,32 @@ export class GitManager {
    */
   static async resolveRemoteUrl(options: ResolveRemoteUrlOptions): Promise<string | undefined> {
     const { operatingStrategy } = await import('./operating-mode')
-    return operatingStrategy(options.mode).resolveRemoteUrl(options)
+    const strategy = operatingStrategy(options.mode)
+    const config = strategy.getRemoteUrlConfig()
+
+    // Centralized priority chain (no duplication across strategies)
+    if (options.remoteUrl) return options.remoteUrl
+    if (options.defaultRemoteUrl) return options.defaultRemoteUrl
+    if (process.env[config.envVarName]) return process.env[config.envVarName]
+
+    // Mode-specific behavior: auto-init local remote
+    if (config.shouldAutoInitLocal) {
+      const gitRoot = await this.findGitRoot()
+      const sourceRoot = options.sourceRoot
+      const sourcePath = sourceRoot ? path.resolve(gitRoot, sourceRoot) : gitRoot
+      const localRemotePath = path.join(sourcePath, config.defaultRemotePath)
+
+      await this.ensureLocalSimulatedRemote({
+        remotePath: localRemotePath,
+        sourcePath: gitRoot,
+        baseBranch: options.baseBranch,
+        subdirectory: sourceRoot,
+      })
+
+      return localRemotePath
+    }
+
+    return undefined
   }
 
   async status(): Promise<GitStatus> {

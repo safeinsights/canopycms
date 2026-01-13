@@ -997,7 +997,7 @@ In production (`mode: 'prod'`), permission and group changes follow a special wo
 
 1. **Settings Branch:** Changes are committed to a long-running `canopycms-settings` branch (configurable via `settingsBranch`, defaults to `"canopycms-settings"`)
 
-2. **Auto-PR Creation:** When `autoCreatePermissionsPR` is enabled (default: `true`), CanopyCMS automatically creates or updates a PR from `canopycms-settings` → `main`
+2. **Auto-PR Creation:** When `autoCreateSettingsPR` is enabled (default: `true`), CanopyCMS automatically creates or updates a PR from `canopycms-settings` → `main`
 
 3. **Immediate Effect:** Changes are active in the CMS immediately (read from the `canopycms-settings` branch)
 
@@ -1012,7 +1012,7 @@ In production (`mode: 'prod'`), permission and group changes follow a special wo
 export default defineCanopyConfig({
   mode: 'prod',
   settingsBranch: 'canopycms-settings',  // Optional, defaults to 'canopycms-settings'
-  autoCreatePermissionsPR: true,  // Optional, defaults to true
+  autoCreateSettingsPR: true,  // Optional, defaults to true
   defaultRemoteUrl: 'https://github.com/your-org/your-repo.git',
   // ... other config
 })
@@ -1043,7 +1043,7 @@ await git.commit('Update permissions')
 // 5. Pushes to remote settings branch
 await git.push('canopycms-settings')
 
-// 6. Creates/updates PR if autoCreatePermissionsPR is true
+// 6. Creates/updates PR if autoCreateSettingsPR is true
 await githubService.createOrUpdatePR({
   head: 'canopycms-settings',
   base: 'main',

@@ -5,7 +5,7 @@ import type { CanopyConfig } from './config'
 import { ensureBranchRoot } from './paths'
 import { getBranchMetadataFileManager } from './branch-metadata'
 import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
-import type { OperatingMode } from './paths'
+import type { OperatingMode } from './operating-mode'
 import { GitManager } from './git-manager'
 import { createDebugLogger } from './utils/debug'
 import { operatingStrategy } from './operating-mode'
@@ -87,7 +87,10 @@ export class BranchWorkspaceManager {
           const repoExists = await hasGit()
           if (!repoExists) {
             // Validate workspace requirements based on operating mode
-            await operatingStrategy(options.mode).validateWorkspace(options.branchRoot)
+            const strategy = operatingStrategy(options.mode)
+            if (strategy.requiresExistingRepo()) {
+              await GitManager.validateGitRepoExists(options.branchRoot)
+            }
 
             // If validation passes (no error thrown), we can clone
             if (!remoteUrl) {

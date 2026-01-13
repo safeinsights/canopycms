@@ -2,7 +2,7 @@ import { promises as fs } from 'fs'
 import { join } from 'path'
 import type { CanopyUserId } from './types'
 import { GroupsFileSchema, createDefaultGroupsFile, type InternalGroup, type GroupsFile } from './groups-file'
-import type { OperatingMode } from './paths'
+import type { OperatingMode } from './operating-mode'
 import { operatingStrategy } from './operating-mode'
 
 /**

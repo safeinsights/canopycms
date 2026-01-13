@@ -1,5 +1,5 @@
 import type { ApiContext } from './types'
-import type { OperatingMode } from '../paths'
+import type { OperatingMode } from '../operating-mode';
 import { operatingStrategy } from '../operating-mode'
 
 /**
@@ -57,8 +57,8 @@ export async function commitSettings(
       branchRoot: options.branchRoot,
       files: options.fileName,
       message: options.message,
-      createPR: strategy.shouldCreatePermissionsPR({
-        autoCreatePermissionsPR: ctx.services.config.autoCreatePermissionsPR,
+      createPR: strategy.shouldCreateSettingsPR({
+        autoCreateSettingsPR: ctx.services.config.autoCreateSettingsPR,
       }),
     })
 

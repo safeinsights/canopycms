@@ -2,9 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import type { BranchContext } from './types'
-import { operatingStrategy } from './operating-mode'
-
-export type OperatingMode = 'prod' | 'local-prod-sim' | 'local-simple'
+import { OperatingMode, operatingStrategy } from './operating-mode'
 
 export interface BranchPathOptions {
   mode: OperatingMode

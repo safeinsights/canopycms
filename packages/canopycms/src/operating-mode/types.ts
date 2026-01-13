@@ -6,7 +6,7 @@
  * - ClientUnsafeStrategy: Full strategy with Node.js APIs (server-side only)
  */
 
-import type { OperatingMode as OM } from '../paths'
+import type { OperatingMode as OM } from '.'
 import type { CanopyConfig } from '../config'
 
 // Re-export OperatingMode so it's available from this module
@@ -21,6 +21,19 @@ export interface ResolveRemoteUrlOptions {
   defaultRemoteUrl?: string
   baseBranch?: string
   sourceRoot?: string
+}
+
+/**
+ * Configuration for remote URL resolution
+ * Strategies return this data; GitManager executes the logic
+ */
+export interface RemoteUrlConfig {
+  /** Whether to auto-initialize a local remote */
+  shouldAutoInitLocal: boolean
+  /** Default path for local remote (e.g., '.canopycms/remote.git') */
+  defaultRemotePath: string
+  /** Environment variable name for remote URL */
+  envVarName: string
 }
 
 /**
@@ -103,8 +116,8 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
   // Git Operations
   // ========================================================================
 
-  /** Resolve the remote URL for git operations */
-  resolveRemoteUrl(options: ResolveRemoteUrlOptions): Promise<string | undefined>
+  /** Get configuration for remote URL resolution (GitManager executes the logic) */
+  getRemoteUrlConfig(): RemoteUrlConfig
 
   /** Whether this mode requires an existing git repository */
   requiresExistingRepo(): boolean
@@ -126,11 +139,8 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
   usesSeparateSettingsBranch(): boolean
 
   // ========================================================================
-  // Validation (needs fs)
+  // Validation
   // ========================================================================
-
-  /** Validate workspace setup (e.g., git repo exists) */
-  validateWorkspace(branchRoot: string): Promise<void>
 
   /** Validate configuration for this mode */
   validateConfig(config: Partial<CanopyConfig>): void
@@ -140,5 +150,5 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
   // ========================================================================
 
   /** Whether PRs should be auto-created for permissions/groups changes */
-  shouldCreatePermissionsPR(config: { autoCreatePermissionsPR?: boolean }): boolean
+  shouldCreateSettingsPR(config: { autoCreateSettingsPR?: boolean }): boolean
 }

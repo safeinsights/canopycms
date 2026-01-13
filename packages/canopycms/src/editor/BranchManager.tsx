@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 
 import { Badge, Button, Group, Paper, ScrollArea, Stack, Text, TextInput, Textarea, Collapse, Tooltip } from '@mantine/core'
-import type { OperatingMode } from '../paths'
+import type { OperatingMode } from '../operating-mode'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
