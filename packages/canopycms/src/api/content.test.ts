@@ -32,7 +32,9 @@ const allowedCtx = (): ApiContext => ({
     bootstrapAdminIds: new Set<string>(),
     registry: undefined as any,
     commitFiles: vi.fn(),
-    submitBranch: vi.fn(),  },
+    submitBranch: vi.fn(),
+    commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
+  },
   getBranchContext: vi.fn().mockResolvedValue({
     baseRoot: '/tmp/base',
     branchRoot: '/tmp/base/feature-x',
@@ -52,8 +54,10 @@ describe('content api', () => {
         createGitManagerFor: undefined as any,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
-    commitFiles: vi.fn(),
-    submitBranch: vi.fn(),      },
+        commitFiles: vi.fn(),
+        submitBranch: vi.fn(),
+        commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
+      },
       getBranchContext: vi.fn().mockResolvedValue({
         baseRoot: '/tmp/base',
         branchRoot: '/tmp/base/feature-x',

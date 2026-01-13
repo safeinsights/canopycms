@@ -804,6 +804,207 @@ describe('Content with IDs', () => {
 
 **Key pattern:** Symlinks point from `_ids_/ID` to the actual content file (e.g., `_ids_/abc123 -> ../test.json`). The `buildFromSymlinks()` method reads these symlinks to populate the in-memory index.
 
+## Development Workflow
+
+### Settings Management (Permissions and Groups)
+
+CanopyCMS manages permissions and groups through JSON files in the `.canopycms/` directory. The behavior differs significantly between development and production modes.
+
+#### Local Development: `.local.json` Files
+
+In `local-simple` mode (the default for development), CanopyCMS uses **gitignored** `.local.json` files for permissions and groups:
+
+- **Files:**
+  - `.canopycms/permissions.local.json` - path-level permissions
+  - `.canopycms/groups.local.json` - user groups and memberships
+
+- **Purpose:** These files allow you to test different permission scenarios and user roles without polluting the git history or conflicting with other developers.
+
+- **Behavior:**
+  - Changes persist across CMS restarts
+  - Files are **automatically gitignored** (via `.canopycms` in `.gitignore`)
+  - If `.local.json` doesn't exist, falls back to reading `.json` (committed version)
+  - Writes always go to `.local.json` in local-simple mode
+
+**Example workflow:**
+
+```bash
+# Start the CMS in local-simple mode (default)
+npm run dev
+
+# 1. Login as different test users (e.g., auth-dev, Clerk dev accounts)
+# 2. Add them to groups via the CMS UI
+# 3. Test permission restrictions
+# 4. Changes are saved to .canopycms/permissions.local.json and .canopycms/groups.local.json
+# 5. Files persist but won't show up in git status
+
+# Verify files are gitignored
+git status  # .canopycms/ should not appear
+```
+
+**Testing different permission scenarios:**
+
+```typescript
+// In your local .canopycms/permissions.local.json
+{
+  "version": 1,
+  "updatedAt": "2026-01-12T10:00:00Z",
+  "updatedBy": "test-user",
+  "pathPermissions": [
+    {
+      "path": "content/posts",
+      "groups": {
+        "Editors": ["read", "write"],
+        "Viewers": ["read"]
+      }
+    }
+  ]
+}
+
+// In your local .canopycms/groups.local.json
+{
+  "version": 1,
+  "updatedAt": "2026-01-12T10:00:00Z",
+  "updatedBy": "test-user",
+  "groups": [
+    {
+      "name": "Editors",
+      "userIds": ["auth-dev-user-1", "clerk-test-user"]
+    },
+    {
+      "name": "Viewers",
+      "userIds": ["auth-dev-user-2"]
+    }
+  ]
+}
+```
+
+#### Understanding the Three Modes
+
+| Mode | Settings Files | Git Operations | Use Case |
+|------|---------------|----------------|----------|
+| **local-simple** | `.canopycms/*.local.json` (gitignored) | None | Local development, testing permissions |
+| **local-prod-sim** | `.canopycms/branches/main/*.json` (gitignored) | Standard commits to branch clones | Testing branch workflows locally |
+| **prod** | `.canopycms/*.json` (committed) | Long-running `settings` branch with auto-PR | Production deployment |
+
+**local-simple (Default for Development):**
+- No git operations
+- Settings in `.local.json` files (gitignored)
+- Instant feedback, no branch management overhead
+- Perfect for testing different users and permissions
+
+**local-prod-sim (Testing Branch Workflows):**
+- Full branch simulation with clones in `.canopycms/branches/`
+- Settings in `.json` files within branch clones
+- All of `.canopycms/` is gitignored
+- Tests branch creation, merging, permission inheritance
+
+**prod (Production):**
+- Settings tracked in git via long-running `settings` branch
+- Changes auto-create/update a PR to merge into `main`
+- Settings are active immediately but persisted when PR merges
+- Requires GitHub token and `defaultRemoteUrl`
+
+#### Production Settings Workflow
+
+In production (`mode: 'prod'`), permission and group changes follow a special workflow:
+
+1. **Settings Branch:** Changes are committed to a long-running `settings` branch (configurable via `settingsBranch`, defaults to `"settings"`)
+
+2. **Auto-PR Creation:** When `autoCreatePermissionsPR` is enabled (default: `true`), CanopyCMS automatically creates or updates a PR from `settings` → `main`
+
+3. **Immediate Effect:** Changes are active in the CMS immediately (read from the `settings` branch)
+
+4. **Persistence:** When the PR is merged, changes become part of the main branch history
+
+**Configuration:**
+
+```typescript
+// canopycms.config.ts
+export default defineCanopyConfig({
+  mode: 'prod',
+  settingsBranch: 'settings',  // Optional, defaults to 'settings'
+  autoCreatePermissionsPR: true,  // Optional, defaults to true
+  defaultRemoteUrl: 'https://github.com/your-org/your-repo.git',
+  // ... other config
+})
+```
+
+**How it works:**
+
+```typescript
+// Internal flow when updating permissions in prod mode
+// 1. commitToSettingsBranch() creates/checks out settings branch
+await git.checkoutBranch('settings')
+
+// 2. Pulls latest (if remote exists)
+await git.pullBase()
+
+// 3. Commits changes
+await git.add('.canopycms/permissions.json')
+await git.commit('Update permissions')
+
+// 4. Pushes to remote settings branch
+await git.push('settings')
+
+// 5. Creates/updates PR if autoCreatePermissionsPR is true
+await githubService.createOrUpdatePR({
+  head: 'settings',
+  base: 'main',
+  title: 'Update permissions and groups',
+  body: 'Automated PR for permission and group changes...'
+})
+```
+
+#### Verifying Local Changes Aren't Committed
+
+To ensure your local `.local.json` files don't accidentally get committed:
+
+```bash
+# Check that .canopycms is in .gitignore
+cat apps/example1/.gitignore
+# Should contain: .canopycms
+
+# Verify nothing shows in git status
+git status
+# .canopycms/permissions.local.json should NOT appear
+
+# List what would be committed
+git add -n .
+# Should not include .canopycms/*.local.json
+
+# If you accidentally committed settings files
+git reset HEAD .canopycms/permissions.local.json
+git reset HEAD .canopycms/groups.local.json
+```
+
+**Common mistake:** Adding `.canopycms/permissions.json` (without `.local`) to git in local-simple mode. This can happen if you:
+1. Switch from `local-prod-sim` or `prod` mode back to `local-simple`
+2. Have an old `.json` file from before the `.local.json` pattern
+
+**Fix:** In local-simple mode, always check that your gitignore includes `.canopycms` and manually delete any `.canopycms/*.json` files that aren't `.local.json`.
+
+#### Migration Guide: Adding .local.json Pattern
+
+If you're upgrading an existing project to use the `.local.json` pattern:
+
+```bash
+# 1. Ensure .canopycms is gitignored
+echo ".canopycms" >> apps/your-app/.gitignore
+
+# 2. Copy existing settings to .local.json (if in local-simple mode)
+cp .canopycms/permissions.json .canopycms/permissions.local.json
+cp .canopycms/groups.json .canopycms/groups.local.json
+
+# 3. Remove tracked files from git (but keep local copies)
+git rm --cached .canopycms/permissions.json
+git rm --cached .canopycms/groups.json
+git commit -m "chore: move to .local.json pattern for local dev"
+
+# 4. Verify
+git status  # Should not show .canopycms/ files
+```
+
 ## Testing
 
 ### Running Tests

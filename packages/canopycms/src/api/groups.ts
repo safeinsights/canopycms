@@ -2,10 +2,11 @@ import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { InternalGroup } from '../groups-file'
-import { loadInternalGroups, saveInternalGroups } from '../groups-loader'
+import { loadInternalGroups, saveInternalGroups, loadGroupsFile } from '../groups-loader'
 import type { CanopyGroupId } from '../types'
 import { isAdmin, RESERVED_GROUPS, isReservedGroup } from '../reserved-groups'
 import { defineEndpoint } from './route-builder'
+import { getSettingsBranchContext, commitSettings } from './settings-helpers'
 
 /** Response type for getting internal groups */
 export type InternalGroupsResponse = ApiResponse<{ groups: InternalGroup[] }>
@@ -28,7 +29,8 @@ const internalGroupSchema = z.object({
 })
 
 const updateInternalGroupsBodySchema = z.object({
-  groups: z.array(internalGroupSchema)
+  groups: z.array(internalGroupSchema),
+  expectedContentVersion: z.number().optional(),
 })
 
 const searchExternalGroupsParamsSchema = z.object({
@@ -97,15 +99,13 @@ const getInternalGroupsHandler = async (
   }
 
   try {
-    // Load from main branch
-    const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-    const context = await ctx.getBranchContext(mainBranch)
-
-    if (!context) {
-      return { ok: false, status: 500, error: 'Main branch not found' }
+    const result = await getSettingsBranchContext(ctx)
+    if ('error' in result) {
+      return { ok: false, status: result.status, error: result.error }
     }
 
-    const groups = await loadInternalGroups(context.branchRoot)
+    const { context, mode } = result
+    const groups = await loadInternalGroups(context.branchRoot, mode)
 
     return {
       ok: true,
@@ -155,21 +155,41 @@ const updateInternalGroupsHandler = async (
   }
 
   try {
-    // Save to main branch
-    const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-    const context = await ctx.getBranchContext(mainBranch)
-
-    if (!context) {
-      return { ok: false, status: 500, error: 'Main branch not found' }
+    const result = await getSettingsBranchContext(ctx)
+    if ('error' in result) {
+      return { ok: false, status: result.status, error: result.error }
     }
 
-    await saveInternalGroups(context.branchRoot, body.groups, req.user.userId)
+    const { context, mode } = result
 
-    // Commit the change
-    await ctx.services.commitFiles({
+    // Load current file to check version (optimistic locking)
+    const currentFile = await loadGroupsFile(context.branchRoot, mode)
+
+    // Check for version conflict if client sent expected version
+    if (body.expectedContentVersion !== undefined) {
+      const currentVersion = currentFile?.contentVersion ?? 0
+      if (currentVersion !== body.expectedContentVersion) {
+        return {
+          ok: false,
+          status: 409,
+          error: 'Groups were modified by another user. Please reload and try again.',
+        }
+      }
+    }
+
+    // Increment version when saving
+    const newContentVersion = (currentFile?.contentVersion ?? 0) + 1
+
+    // Save file (uses mode-aware file path)
+    await saveInternalGroups(context.branchRoot, body.groups, req.user.userId, mode, newContentVersion)
+
+    // Commit and push (mode-aware)
+    await commitSettings(ctx, {
       context,
-      files: '.canopycms/groups.json',
+      branchRoot: context.branchRoot,
+      fileName: '.canopycms/groups.json',
       message: 'Update internal groups',
+      mode,
     })
 
     return { ok: true, status: 200 }

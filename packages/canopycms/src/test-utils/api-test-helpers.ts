@@ -145,6 +145,7 @@ export interface MockServicesOptions {
   bootstrapAdminIds?: Set<string>
   commitFiles?: any
   submitBranch?: any
+  commitToSettingsBranch?: any
 }
 
 /**
@@ -178,6 +179,7 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
     bootstrapAdminIds: options.bootstrapAdminIds ?? new Set<string>(),
     commitFiles: options.commitFiles ?? vi.fn().mockResolvedValue(undefined),
     submitBranch: options.submitBranch ?? vi.fn().mockResolvedValue(undefined),
+    commitToSettingsBranch: options.commitToSettingsBranch ?? vi.fn().mockResolvedValue({ committed: true, pushed: true }),
   }
 }
 
@@ -365,6 +367,7 @@ export function createMockBranchMetadata(saveImpl?: any) {
 export function createMockPermissionsLoader(permissions: PathPermission[] = []) {
   return {
     loadPathPermissions: vi.fn().mockResolvedValue(permissions),
+    loadPermissionsFile: vi.fn().mockResolvedValue(null),
     savePathPermissions: vi.fn().mockResolvedValue(undefined),
   }
 }

@@ -329,3 +329,137 @@ describe('authResultToCanopyUser with internal groups', () => {
     }
   })
 })
+
+describe('commitToSettingsBranch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('should default to "canopycms-settings" branch when settingsBranch not configured', async () => {
+    const checkoutBranchMock = vi.fn()
+    const mockGitInstance = {
+      status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'main' }),
+      branch: vi.fn().mockResolvedValue({ all: ['main'] }),
+      checkout: vi.fn(),
+      checkoutBranch: checkoutBranchMock,
+      fetch: vi.fn(),
+      merge: vi.fn(),
+      rebase: vi.fn(),
+      add: vi.fn(),
+      commit: vi.fn(),
+      push: vi.fn(),
+      revparse: vi.fn().mockResolvedValue('main'),
+    }
+
+    const { simpleGit } = await import('simple-git')
+    const mockGit = vi.mocked(simpleGit)
+    mockGit.mockReturnValue(mockGitInstance as any)
+
+    const cfg = defineCanopyTestConfig({
+      schema: {
+        collections: [
+          { name: 'pages', path: 'pages', entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] } },
+        ],
+        singletons: [],
+      },
+      mode: 'prod',
+      // settingsBranch not specified - should default to 'canopycms-settings'
+    })
+
+    const services = createCanopyServices(cfg)
+
+    await services.commitToSettingsBranch({
+      branchRoot: '/tmp/repo',
+      files: '.canopycms/permissions.json',
+      message: 'Update permissions',
+    })
+
+    // Should have attempted to checkout 'canopycms-settings' branch from origin/main
+    expect(checkoutBranchMock).toHaveBeenCalledWith('canopycms-settings', 'origin/main')
+  })
+
+  it('should create settings branch if it does not exist', async () => {
+    const checkoutBranchMock = vi.fn()
+    const mockGitInstance = {
+      status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'main' }),
+      branch: vi.fn().mockResolvedValue({ all: ['main'] }),
+      checkout: vi.fn(),
+      checkoutBranch: checkoutBranchMock,
+      fetch: vi.fn(),
+      merge: vi.fn(),
+      rebase: vi.fn(),
+      add: vi.fn(),
+      commit: vi.fn(),
+      push: vi.fn(),
+      revparse: vi.fn().mockResolvedValue('main'),
+    }
+
+    const { simpleGit } = await import('simple-git')
+    const mockGit = vi.mocked(simpleGit)
+    mockGit.mockReturnValue(mockGitInstance as any)
+
+    const cfg = defineCanopyTestConfig({
+      schema: {
+        collections: [
+          { name: 'pages', path: 'pages', entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] } },
+        ],
+        singletons: [],
+      },
+      mode: 'prod',
+      settingsBranch: 'my-settings',
+    })
+
+    const services = createCanopyServices(cfg)
+
+    await services.commitToSettingsBranch({
+      branchRoot: '/tmp/repo',
+      files: '.canopycms/permissions.json',
+      message: 'Update permissions',
+    })
+
+    // Should have called checkoutBranch which creates the branch if it doesn't exist
+    expect(checkoutBranchMock).toHaveBeenCalledWith('my-settings', 'origin/main')
+  })
+
+  it('should use configured settingsBranch value', async () => {
+    const checkoutBranchMock = vi.fn()
+    const mockGitInstance = {
+      status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'main' }),
+      branch: vi.fn().mockResolvedValue({ all: ['main'] }),
+      checkout: vi.fn(),
+      checkoutBranch: checkoutBranchMock,
+      fetch: vi.fn(),
+      merge: vi.fn(),
+      rebase: vi.fn(),
+      add: vi.fn(),
+      commit: vi.fn(),
+      push: vi.fn(),
+      revparse: vi.fn().mockResolvedValue('main'),
+    }
+
+    const { simpleGit } = await import('simple-git')
+    const mockGit = vi.mocked(simpleGit)
+    mockGit.mockReturnValue(mockGitInstance as any)
+
+    const cfg = defineCanopyTestConfig({
+      schema: {
+        collections: [
+          { name: 'pages', path: 'pages', entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] } },
+        ],
+        singletons: [],
+      },
+      mode: 'prod',
+      settingsBranch: 'custom-settings-branch',
+    })
+
+    const services = createCanopyServices(cfg)
+
+    await services.commitToSettingsBranch({
+      branchRoot: '/tmp/repo',
+      files: '.canopycms/permissions.json',
+      message: 'Update permissions',
+    })
+
+    expect(checkoutBranchMock).toHaveBeenCalledWith('custom-settings-branch', 'origin/main')
+  })
+})

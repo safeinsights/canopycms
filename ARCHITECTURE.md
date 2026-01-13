@@ -250,6 +250,8 @@ Simulates production behavior locally. Creates per-branch clones in `.canopycms/
 ### prod
 Full production deployment. Branch workspaces live on persistent storage (e.g., EFS on AWS). Integrates with GitHub for PR creation and management. Designed for team collaboration with proper review workflows.
 
+Settings (groups and permissions) are stored on a separate `settingsBranch` (default: 'settings') in prod mode, with changes creating PRs for review before merging to main. This ensures permission changes go through the same review process as content changes.
+
 ## Context Architecture
 
 CanopyCMS provides a context system that manages authentication, permissions, and content access in a framework-agnostic way.
@@ -427,6 +429,70 @@ await ctx.services.submitBranch({ context })
 ```
 
 This reduces complexity, improves readability, and ensures consistent author handling across all git operations.
+
+### Settings-Specific Git Helpers
+
+Groups and permissions (collectively "settings") have unique git operation requirements that differ from content operations. The `settings-helpers.ts` module provides centralized, mode-aware logic for settings operations.
+
+**Why separate helpers for settings?**
+
+Settings files (`.canopycms/groups.json` and `.canopycms/permissions.json`) need different branch handling in production vs local modes:
+- **local-simple**: Settings stored on main branch, no git operations
+- **local-prod-sim**: Settings stored on main branch, regular git operations
+- **prod**: Settings stored on separate settings branch, creates PR for review
+
+Content operations always work on the current branch. Settings operations need to route to the appropriate branch based on mode.
+
+**Two core helpers:**
+
+**`getSettingsBranchContext()`**: Determines which branch to use for settings
+- Returns appropriate branch context based on operating mode
+- In `prod` mode: Uses `settingsBranch` config (default: 'settings')
+- In local modes: Uses `defaultBaseBranch` (default: 'main')
+- Returns both the context and mode for downstream operations
+
+**`commitSettings()`**: Commits and pushes settings changes with mode-specific logic
+- **local-simple**: No-op (no git operations)
+- **local-prod-sim**: Regular `commitFiles()` call
+- **prod**: Uses `commitToSettingsBranch()` with optional PR creation
+
+**Configuration:**
+- `settingsBranch`: Branch name for settings in prod mode (default: 'settings')
+- `autoCreatePermissionsPR`: Whether to create PR automatically in prod (default: true)
+
+**Code reduction impact:**
+
+Before settings-helpers, both `permissions.ts` and `groups.ts` contained ~20 lines each of duplicate mode-checking logic. The helpers eliminate approximately 40 lines of duplicated code by extracting the common pattern.
+
+Handler code before:
+```
+const mode = ctx.services.config.mode ?? 'local-simple'
+let branchName: string
+if (mode === 'prod') {
+  branchName = ctx.services.config.settingsBranch ?? 'settings'
+} else {
+  branchName = ctx.services.config.defaultBaseBranch ?? 'main'
+}
+const context = await ctx.getBranchContext(branchName)
+// ... then mode-specific commit logic
+```
+
+Handler code after:
+```
+const result = await getSettingsBranchContext(ctx)
+const { context, mode } = result
+// ... operate on settings
+await commitSettings(ctx, { context, branchRoot, fileName, message, mode })
+```
+
+**Why this design?**
+
+- **Single source of truth**: Mode-to-branch mapping logic exists in one place
+- **Consistent behavior**: Permissions and groups APIs use identical logic
+- **Testability**: Settings helpers can be tested independently of API handlers
+- **Extensibility**: Future settings (site config, workflow rules) can reuse the same helpers
+
+This pattern complements the general git service methods by addressing the unique branch routing requirements of settings files.
 
 ## Content Workflow
 
@@ -646,6 +712,31 @@ Comments are review artifacts, not content. They're ephemeral discussion about c
 
 ### Why are groups and permissions committed to git?
 Unlike comments, groups and permissions are configuration that should be version-controlled. Changes to who can edit what should be reviewable via PR, and you should be able to roll back permission changes if needed.
+
+### Why do settings use a separate branch in prod mode?
+In production, permission and group changes are stored on a dedicated settings branch (default: 'settings') rather than on content branches. This design provides several benefits:
+
+**Isolation from content changes:**
+- Permission updates don't interfere with content editing workflows
+- Content PRs don't accidentally include permission changes
+- Settings changes can be reviewed independently
+
+**Controlled merge process:**
+- Settings PRs must be explicitly reviewed and merged
+- No automatic merging—requires deliberate action
+- Prevents accidental permission escalation or lockout
+
+**Audit trail:**
+- Dedicated settings branch provides clear history of permission changes
+- Easy to see who changed permissions and when
+- Can diff settings branch against main to see current vs proposed state
+
+**Local modes use main branch:**
+- In `local-simple` and `local-prod-sim`, settings are stored on main for simplicity
+- No separate branch management needed for local development
+- Settings changes are immediate (no PR workflow needed)
+
+The `settings-helpers` pattern abstracts this branching logic so API handlers don't need mode-specific conditionals.
 
 ### Why three permission layers?
 Defense in depth. Branch access controls who can see a branch. Path permissions control what content they can edit. Combining them provides flexible policies: you might let someone access a branch but restrict them to certain content paths within it.

@@ -33,7 +33,7 @@ describe('checkContentAccess', () => {
 
     const res = await checkContent(branchContext, '/repo', 'content/pages/foo.md', { type: 'authenticated', userId: 'u1', groups: [] }, 'edit')
 
-    expect(mockLoadPermissions).toHaveBeenCalledWith('/repo')
+    expect(mockLoadPermissions).toHaveBeenCalledWith('/repo', undefined)
     expect(res.allowed).toBe(false)
     expect(res.branch.reason).toBe('no_acl')
   })

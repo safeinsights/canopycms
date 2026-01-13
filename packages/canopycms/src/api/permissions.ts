@@ -3,9 +3,10 @@ import { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { PathPermission } from '../config'
 import type { UserSearchResult } from '../auth/types'
-import { loadPathPermissions, savePathPermissions } from '../permissions-loader'
+import { loadPathPermissions, savePathPermissions, loadPermissionsFile } from '../permissions-loader'
 import { isAdmin, isReviewer } from '../reserved-groups'
 import { defineEndpoint } from './route-builder'
+import { getSettingsBranchContext, commitSettings } from './settings-helpers'
 
 /** Response type for getting permissions */
 export type PermissionsResponse = ApiResponse<{ permissions: PathPermission[] }>
@@ -23,8 +24,21 @@ export type GetUserMetadataResponse = ApiResponse<{ user: UserSearchResult | nul
 // Zod Schemas for Validation
 // ============================================================================
 
+const permissionTargetSchema = z.object({
+  allowedUsers: z.array(z.string()).optional(),
+  allowedGroups: z.array(z.string()).optional(),
+})
+
+const pathPermissionSchema = z.object({
+  path: z.string().min(1),
+  read: permissionTargetSchema.optional(),
+  edit: permissionTargetSchema.optional(),
+  review: permissionTargetSchema.optional(),
+})
+
 const updatePermissionsBodySchema = z.object({
-  permissions: z.array(z.any()) // PathPermission type is complex, using any for now
+  permissions: z.array(pathPermissionSchema),
+  expectedContentVersion: z.number().optional(),
 })
 
 const searchUsersParamsSchema = z.object({
@@ -53,15 +67,13 @@ const getPermissionsHandler = async (
   }
 
   try {
-    // Load from main branch
-    const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-    const context = await ctx.getBranchContext(mainBranch)
-
-    if (!context) {
-      return { ok: false, status: 500, error: 'Main branch not found' }
+    const result = await getSettingsBranchContext(ctx)
+    if ('error' in result) {
+      return { ok: false, status: result.status, error: result.error }
     }
 
-    const permissions = await loadPathPermissions(context.branchRoot)
+    const { context, mode } = result
+    const permissions = await loadPathPermissions(context.branchRoot, mode)
 
     return {
       ok: true,
@@ -95,21 +107,41 @@ const updatePermissionsHandler = async (
   }
 
   try {
-    // Save to main branch
-    const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-    const context = await ctx.getBranchContext(mainBranch)
-
-    if (!context) {
-      return { ok: false, status: 500, error: 'Main branch not found' }
+    const result = await getSettingsBranchContext(ctx)
+    if ('error' in result) {
+      return { ok: false, status: result.status, error: result.error }
     }
 
-    await savePathPermissions(context.branchRoot, body.permissions, req.user.userId)
+    const { context, mode } = result
 
-    // Commit the change
-    await ctx.services.commitFiles({
+    // Load current file to check version (optimistic locking)
+    const currentFile = await loadPermissionsFile(context.branchRoot, mode)
+
+    // Check for version conflict if client sent expected version
+    if (body.expectedContentVersion !== undefined) {
+      const currentVersion = currentFile?.contentVersion ?? 0
+      if (currentVersion !== body.expectedContentVersion) {
+        return {
+          ok: false,
+          status: 409,
+          error: 'Permissions were modified by another user. Please reload and try again.',
+        }
+      }
+    }
+
+    // Increment version when saving
+    const newContentVersion = (currentFile?.contentVersion ?? 0) + 1
+
+    // Save file (uses mode-aware file path)
+    await savePathPermissions(context.branchRoot, body.permissions, req.user.userId, mode, newContentVersion)
+
+    // Commit and push (mode-aware)
+    await commitSettings(ctx, {
       context,
-      files: '.canopycms/permissions.json',
+      branchRoot: context.branchRoot,
+      fileName: '.canopycms/permissions.json',
       message: 'Update permissions',
+      mode,
     })
 
     return { ok: true, status: 200 }

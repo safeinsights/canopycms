@@ -9,7 +9,6 @@ Let's fix these issues and add tests for them
 2. [ ] Admins and Reviewers groups should be autocreated if they don't exist. (can we simply check in empty to groups.json?)
 6. [ ] Content drawer tree always collapsed when opened. Can its expanded folders always include those above the current entry?
 8. [ ] Lambda-friendly initialization storage in memory outside of request
-9. [ ] When a user doesn't have access, tell them that instead of showing "no items" messages
 10. [ ] Is content navigator filtered by permission?
 11. [ ] Final decision on where permissions and groups are stored -- like do we publish them in the normal flow?
 12. [ ] YAML as easier way to see MDX? Markdown editors that do MDX?

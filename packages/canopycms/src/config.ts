@@ -230,6 +230,8 @@ export const CanopyConfigSchema = z
     gitBotAuthorEmail: gitBotAuthorEmailSchema,
     githubTokenEnvVar: githubTokenEnvVarSchema.optional(),
     mode: branchModeSchema.optional(),
+    settingsBranch: z.string().optional(),
+    autoCreatePermissionsPR: z.boolean().optional(),
     contentRoot: contentRootSchema.default('content'),
     sourceRoot: sourceRootSchema.optional(),
     editor: editorConfigSchema.optional(),
