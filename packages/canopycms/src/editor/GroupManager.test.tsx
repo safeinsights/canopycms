@@ -54,6 +54,12 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
 describe('GroupManager', () => {
   const mockInternalGroups: InternalGroup[] = [
     {
+      id: 'Admins',
+      name: 'Admins',
+      description: 'System administrators',
+      members: ['admin-1'],
+    },
+    {
       id: 'editors',
       name: 'Content Editors',
       description: 'Team members who can edit blog posts',
@@ -192,11 +198,13 @@ describe('GroupManager', () => {
         { wrapper },
       )
 
+      expect(screen.getByText('Admins')).toBeTruthy()
+      expect(screen.getByText('System administrators')).toBeTruthy()
       expect(screen.getByText('Content Editors')).toBeTruthy()
       expect(screen.getByText('Team members who can edit blog posts')).toBeTruthy()
       expect(screen.getByText('2 members')).toBeTruthy()
       expect(screen.getByText('Marketing Team')).toBeTruthy()
-      expect(screen.getByText('1 members')).toBeTruthy()
+      expect(screen.getAllByText('1 members').length).toBe(2) // Admins and Marketing both have 1 member
     })
 
     it('shows edit and delete buttons for each group', () => {
@@ -275,10 +283,12 @@ describe('GroupManager', () => {
         { wrapper },
       )
 
-      // Find the first edit button (ActionIcon with IconEdit)
-      const editButtons = container.querySelectorAll('button[class*="ActionIcon"]')
-      // Edit buttons come before delete buttons, so every even index (0, 2, 4...) is an edit button
-      fireEvent.click(editButtons[0] as Element)
+      // Find the Content Editors group and click its edit button
+      // Strategy: Find the group by name, then navigate to find the edit button within that group's Paper container
+      const contentEditorsText = screen.getByText('Content Editors')
+      const groupPaper = contentEditorsText.closest('[class*="Paper"]')
+      const editButton = groupPaper?.querySelector('button[class*="ActionIcon"]') as HTMLElement
+      fireEvent.click(editButton)
 
       await waitFor(() => {
         expect(screen.getByText('Edit Group')).toBeTruthy()
@@ -297,8 +307,11 @@ describe('GroupManager', () => {
         { wrapper },
       )
 
-      const editButtons = container.querySelectorAll('button[class*="ActionIcon"]')
-      fireEvent.click(editButtons[0] as Element)
+      // Find the Content Editors group and click its edit button
+      const contentEditorsText = screen.getByText('Content Editors')
+      const groupPaper = contentEditorsText.closest('[class*="Paper"]')
+      const editButton = groupPaper?.querySelector('button[class*="ActionIcon"]') as HTMLElement
+      fireEvent.click(editButton)
 
       await waitFor(() => {
         const idInput = screen.getByPlaceholderText('e.g., content-editors') as HTMLInputElement
@@ -350,7 +363,7 @@ describe('GroupManager', () => {
       )
 
       const addMemberButtons = screen.getAllByText('Add Member')
-      expect(addMemberButtons.length).toBe(2)
+      expect(addMemberButtons.length).toBe(3) // Now have 3 groups: Admins, Content Editors, Marketing
     })
 
     it('opens user search when Add Member is clicked', async () => {
@@ -606,7 +619,9 @@ describe('GroupManager', () => {
       )
 
       const actionButtons = container.querySelectorAll('button[class*="ActionIcon"]')
-      fireEvent.click(actionButtons[1] as Element) // Click delete button
+      // Delete buttons are at odd indexes (1, 3, 5...)
+      // Click Marketing Team's delete button (index 5 = third group)
+      fireEvent.click(actionButtons[5] as Element)
 
       await waitFor(() => {
         expect(screen.getByText('Save Groups')).toBeTruthy()
@@ -620,8 +635,12 @@ describe('GroupManager', () => {
         { wrapper },
       )
 
-      const actionButtons = container.querySelectorAll('button[class*="ActionIcon"]')
-      fireEvent.click(actionButtons[1] as Element)
+      // Find the Marketing Team group and click its delete button (second button in the group paper)
+      const marketingText = screen.getByText('Marketing Team')
+      const groupPaper = marketingText.closest('[class*="Paper"]')
+      const actionButtons = groupPaper?.querySelectorAll('button[class*="ActionIcon"]')
+      const deleteButton = actionButtons?.[1] as HTMLElement // Second button is delete
+      fireEvent.click(deleteButton)
 
       await waitFor(() => {
         expect(screen.getByText('Save Groups')).toBeTruthy()
@@ -667,8 +686,12 @@ describe('GroupManager', () => {
         { wrapper },
       )
 
-      const actionButtons = container.querySelectorAll('button[class*="ActionIcon"]')
-      fireEvent.click(actionButtons[1] as Element)
+      // Find the Content Editors group and click its delete button (second button in the group paper)
+      const contentEditorsText = screen.getByText('Content Editors')
+      const groupPaper = contentEditorsText.closest('[class*="Paper"]')
+      const actionButtons = groupPaper?.querySelectorAll('button[class*="ActionIcon"]')
+      const deleteButton = actionButtons?.[1] as HTMLElement // Second button is delete
+      fireEvent.click(deleteButton)
 
       await waitFor(() => {
         expect(screen.getByText('Save Groups')).toBeTruthy()

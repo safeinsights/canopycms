@@ -6,6 +6,7 @@ import type { CanopyUserId, CanopyGroupId } from './types'
  */
 export const GroupsFileSchema = z.object({
   version: z.literal(1),
+  contentVersion: z.number().optional(), // For optimistic locking
   updatedAt: z.string().datetime(),
   updatedBy: z.string() as z.ZodType<CanopyUserId>,
   groups: z.array(

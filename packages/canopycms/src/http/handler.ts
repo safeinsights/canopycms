@@ -34,6 +34,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
   }
   const branchMode = services.config.mode ?? 'local-simple'
   const baseBranch = services.config.defaultBaseBranch ?? 'main'
+  const settingsBranch = services.config.settingsBranch ?? 'canopycms-settings'
 
   const getBranchContext =
     options.getBranchContext ??
@@ -44,8 +45,12 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
         return existing
       }
 
-      // In local-prod-sim mode, auto-create the base branch (main) if it doesn't exist
-      if (branchMode === 'local-prod-sim' && branch === baseBranch) {
+      // In local-prod-sim or prod mode, auto-create system branches if they don't exist
+      const shouldAutoCreate =
+        (branchMode === 'local-prod-sim' || branchMode === 'prod') &&
+        (branch === baseBranch || branch === settingsBranch)
+
+      if (shouldAutoCreate) {
         const manager = new BranchWorkspaceManager(services.config)
         const context = await manager.openOrCreateBranch({
           branchName: branch,

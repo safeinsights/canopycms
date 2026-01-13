@@ -8,6 +8,7 @@ import { createMockApiContext, createMockBranchContext, createMockGitManager } f
 // Mock groups loader
 vi.mock('../groups-loader', () => ({
   loadInternalGroups: vi.fn(),
+  loadGroupsFile: vi.fn(),
   saveInternalGroups: vi.fn(),
 }))
 
@@ -84,7 +85,7 @@ describe('groups API', () => {
       expect(result).toEqual({
         ok: false,
         status: 500,
-        error: 'Main branch not found',
+        error: 'Branch main not found',
       })
     })
 
@@ -160,7 +161,7 @@ describe('groups API', () => {
       expect(result).toEqual({
         ok: false,
         status: 500,
-        error: 'Main branch not found',
+        error: 'Branch main not found',
       })
     })
 
@@ -191,26 +192,17 @@ describe('groups API', () => {
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
 
-      // Verify groups were saved
-      expect(groupsLoader.saveInternalGroups).toHaveBeenCalledWith('/test/main', groups, 'admin-1')
+      // Verify groups were saved (with mode parameter and contentVersion)
+      expect(groupsLoader.saveInternalGroups).toHaveBeenCalledWith(
+        '/test/main',
+        groups,
+        'admin-1',
+        'local-simple',
+        1, // contentVersion starts at 1 when file doesn't exist
+      )
 
-      // Verify git operations via commitFiles
-      expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
-        context: {
-          baseRoot: '/test',
-          branchRoot: '/test/main',
-          branch: {
-            name: 'main',
-            status: 'editing',
-            access: {},
-            createdBy: 'admin-1',
-            createdAt: '2024-01-01T00:00:00.000Z',
-            updatedAt: '2024-01-01T00:00:00.000Z',
-          },
-        },
-        files: '.canopycms/groups.json',
-        message: 'Update internal groups',
-      })
+      // In local-simple mode (default), no git operations are performed
+      expect(mockContext.services.commitFiles).not.toHaveBeenCalled()
     })
   })
 
@@ -500,6 +492,180 @@ describe('groups API', () => {
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
+    })
+  })
+
+  describe('optimistic locking with contentVersion', () => {
+    it('should return 409 when expectedContentVersion does not match current version', async () => {
+      // Mock loadGroupsFile to return a file with contentVersion 5
+      vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue({
+        version: 1,
+        contentVersion: 5,
+        updatedAt: '2024-01-01T00:00:00Z',
+        updatedBy: 'other-admin' as CanopyUserId,
+        groups: [
+          {
+            id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+            name: 'Admins',
+            members: ['admin-1' as CanopyUserId],
+          },
+        ],
+      })
+
+      const req: ApiRequest = {
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1' as CanopyUserId,
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      }
+
+      const body = {
+        groups: [
+          {
+            id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+            name: 'Admins',
+            members: ['admin-1' as CanopyUserId],
+          },
+        ],
+        expectedContentVersion: 3, // Client thinks version is 3, but it's actually 5
+      }
+
+      const result = await updateInternalGroups(mockContext, req, body)
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+      expect(result.error).toBe(
+        'Groups were modified by another user. Please reload and try again.',
+      )
+    })
+
+    it('should succeed when expectedContentVersion matches current version', async () => {
+      // Mock loadGroupsFile to return a file with contentVersion 5
+      vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue({
+        version: 1,
+        contentVersion: 5,
+        updatedAt: '2024-01-01T00:00:00Z',
+        updatedBy: 'admin-1' as CanopyUserId,
+        groups: [
+          {
+            id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+            name: 'Admins',
+            members: ['admin-1' as CanopyUserId],
+          },
+        ],
+      })
+
+      const req: ApiRequest = {
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1' as CanopyUserId,
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      }
+
+      const body = {
+        groups: [
+          {
+            id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+            name: 'Admins',
+            members: ['admin-1' as CanopyUserId],
+          },
+        ],
+        expectedContentVersion: 5, // Matches current version
+      }
+
+      const result = await updateInternalGroups(mockContext, req, body)
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+
+      // Verify saveInternalGroups was called with incremented version
+      expect(groupsLoader.saveInternalGroups).toHaveBeenCalledWith(
+        expect.any(String), // branchRoot varies by test context
+        [{ id: RESERVED_GROUPS.ADMINS, name: 'Admins', members: ['admin-1'] }],
+        'admin-1',
+        'local-simple',
+        6, // Should be 5 + 1
+      )
+    })
+
+    it('should allow update when expectedContentVersion is not provided (backward compatible)', async () => {
+      // Mock loadGroupsFile to return a file with contentVersion 5
+      vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue({
+        version: 1,
+        contentVersion: 5,
+        updatedAt: '2024-01-01T00:00:00Z',
+        updatedBy: 'admin-1' as CanopyUserId,
+        groups: [
+          {
+            id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+            name: 'Admins',
+            members: ['admin-1' as CanopyUserId],
+          },
+        ],
+      })
+
+      const req: ApiRequest = {
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1' as CanopyUserId,
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      }
+
+      const body = {
+        groups: [
+          {
+            id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+            name: 'Admins',
+            members: ['admin-1' as CanopyUserId],
+          },
+        ],
+        // No expectedContentVersion provided
+      }
+
+      const result = await updateInternalGroups(mockContext, req, body)
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+    })
+
+    it('should start at version 1 for new files without contentVersion', async () => {
+      // Mock loadGroupsFile to return null (file doesn't exist)
+      vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue(null)
+
+      const req: ApiRequest = {
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1' as CanopyUserId,
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      }
+
+      const body = {
+        groups: [
+          {
+            id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+            name: 'Admins',
+            members: ['admin-1' as CanopyUserId],
+          },
+        ],
+      }
+
+      const result = await updateInternalGroups(mockContext, req, body)
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+
+      // Verify saveInternalGroups was called with version 1 (0 + 1)
+      expect(groupsLoader.saveInternalGroups).toHaveBeenCalledWith(
+        expect.any(String), // branchRoot varies by test context
+        [{ id: RESERVED_GROUPS.ADMINS, name: 'Admins', members: ['admin-1'] }],
+        'admin-1',
+        'local-simple',
+        1,
+      )
     })
   })
 })

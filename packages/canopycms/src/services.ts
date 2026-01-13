@@ -8,6 +8,7 @@ import { createCheckContentAccess } from './content-access'
 import { loadPathPermissions } from './permissions-loader'
 import { GitManager } from './git-manager'
 import { BranchRegistry } from './branch-registry'
+import { BranchWorkspaceManager } from './branch-workspace'
 import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
 
@@ -52,6 +53,18 @@ export interface CanopyServices {
   }) => Promise<void>
   /** Submit branch: commit all changes and push to remote */
   submitBranch: (options: { context: BranchContext; message?: string }) => Promise<void>
+  /** Commit to settings branch (for permissions/groups), with optional PR creation */
+  commitToSettingsBranch: (options: {
+    branchRoot: string
+    files: string | string[]
+    message: string
+    createPR?: boolean
+  }) => Promise<{
+    committed: boolean
+    pushed: boolean
+    prUrl?: string
+    error?: string
+  }>
 }
 
 /**
@@ -75,10 +88,33 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   // At the service level, we bind with empty rules for direct path checks.
   const checkPathAccess = createCheckPathAccess([], config.defaultPathAccess ?? 'deny')
   // Content access loads permissions dynamically from the branch root
+  // In prod/local-prod-sim modes, permissions are loaded from settings branch
+  const getSettingsBranchRoot = async (): Promise<string> => {
+    const settingsBranchName = config.settingsBranch ?? 'canopycms-settings'
+    const mode = config.mode ?? 'local-simple'
+
+    // Only applicable in prod/local-prod-sim modes
+    if (mode !== 'prod' && mode !== 'local-prod-sim') {
+      throw new Error('getSettingsBranchRoot called in local-simple mode')
+    }
+
+    const manager = new BranchWorkspaceManager(config)
+    // openOrCreateBranch already calls ensureGitWorkspace, which is cached per workspace
+    // This is Lambda-safe because the lock is in-memory per process
+    const context = await manager.openOrCreateBranch({
+      branchName: settingsBranchName,
+      mode,
+      createdBy: 'canopycms-system',
+    })
+    return context.branchRoot
+  }
+
   const checkContentAccess = createCheckContentAccess({
     checkBranchAccess,
     loadPathPermissions,
     defaultPathAccess: config.defaultPathAccess ?? 'deny',
+    mode: config.mode,
+    getSettingsBranchRoot,
   })
   const createGitManagerFor = (repoPath: string, opts?: { baseBranch?: string; remote?: string }) =>
     new GitManager({
@@ -120,6 +156,85 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
     }
   }
 
+  const commitToSettingsBranch = async (options: {
+    branchRoot: string
+    files: string | string[]
+    message: string
+    createPR?: boolean
+  }): Promise<{
+    committed: boolean
+    pushed: boolean
+    prUrl?: string
+    error?: string
+  }> => {
+    const mode = config.mode ?? 'local-simple'
+
+    // Local-simple: No git operations
+    if (mode === 'local-simple') {
+      return { committed: false, pushed: false }
+    }
+
+    const settingsBranch = config.settingsBranch ?? 'canopycms-settings'
+    const git = createGitManagerFor(options.branchRoot)
+
+    try {
+      // Ensure settings branch exists (create from base branch if needed)
+      await git.checkoutBranch(settingsBranch)
+
+      // Pull latest (best effort)
+      try {
+        await git.pullBase()
+      } catch (err) {
+        // First push, no remote branch yet
+        console.log('No remote branch yet, will create on push')
+      }
+
+      // Commit
+      await git.ensureAuthor({
+        name: config.gitBotAuthorName,
+        email: config.gitBotAuthorEmail,
+      })
+      await git.add(options.files)
+      await git.commit(options.message)
+
+      // Push to settings branch
+      let pushed = false
+      try {
+        await git.push(settingsBranch)
+        pushed = true
+      } catch (error) {
+        return {
+          committed: true,
+          pushed: false,
+          error: error instanceof Error ? error.message : 'Push failed',
+        }
+      }
+
+      // Create or update PR
+      let prUrl: string | undefined
+      if (options.createPR !== false && githubService) {
+        try {
+          prUrl = await githubService.createOrUpdatePR({
+            head: settingsBranch,
+            base: config.defaultBaseBranch ?? 'main',
+            title: 'Update permissions and groups',
+            body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
+          })
+        } catch (err) {
+          console.warn('Failed to create/update PR:', err)
+        }
+      }
+
+      return { committed: true, pushed: true, prUrl }
+    } catch (error) {
+      return {
+        committed: false,
+        pushed: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }
+    }
+  }
+
   const branchMode = config.mode ?? 'local-simple'
   const registry = new BranchRegistry(getDefaultBranchBase(branchMode))
 
@@ -153,5 +268,6 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
     bootstrapAdminIds,
     commitFiles,
     submitBranch,
+    commitToSettingsBranch,
   }
 }

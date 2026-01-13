@@ -30,6 +30,8 @@ describe('permissions API', () => {
   let mockGit: ReturnType<typeof createMockGitManager>
 
   beforeEach(() => {
+    vi.clearAllMocks()
+
     mockAuthPlugin = {
       authenticate: vi.fn(),
       searchUsers: vi.fn(),
@@ -112,7 +114,7 @@ describe('permissions API', () => {
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(500)
-      expect(result.error).toBe('Main branch not found')
+      expect(result.error).toBe('Branch main not found')
     })
   })
 
@@ -150,23 +152,8 @@ describe('permissions API', () => {
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
 
-      // Verify commitFiles was called with the correct arguments
-      expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
-        context: {
-          baseRoot: '/test/repo',
-          branchRoot: '/test/repo',
-          branch: {
-            name: 'main',
-            status: 'editing',
-            access: { allowedUsers: [], allowedGroups: [] },
-            createdBy: 'admin-1',
-            createdAt: '2024-01-01T00:00:00Z',
-            updatedAt: '2024-01-01T00:00:00Z',
-          },
-        },
-        files: '.canopycms/permissions.json',
-        message: 'Update permissions',
-      })
+      // In local-simple mode (default), no git operations are performed
+      expect(mockContext.services.commitFiles).not.toHaveBeenCalled()
     })
 
     it('denies access for non-admin users', async () => {
@@ -206,7 +193,7 @@ describe('permissions API', () => {
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(500)
-      expect(result.error).toBe('Main branch not found')
+      expect(result.error).toBe('Branch main not found')
     })
   })
 
@@ -486,6 +473,221 @@ describe('permissions API', () => {
         expect((result.data as { user: UserSearchResult | null }).user).toBeNull()
       }
       expect(mockAuthPlugin.getUserMetadata).toHaveBeenCalledWith('non-existent')
+    })
+  })
+
+  describe('settings branch auto-creation', () => {
+    it('should auto-create settings branch in prod mode when it does not exist', async () => {
+      // Note: In prod and local-prod-sim modes, settings use a separate settings branch
+      // In local-simple mode, settings use the main branch
+
+      // Create a new context with prod mode
+      const prodConfig: Partial<CanopyConfig> = {
+        defaultBaseBranch: 'main',
+        mode: 'prod',
+        settingsBranch: 'canopycms-settings',
+        gitBotAuthorName: 'Test Bot',
+        gitBotAuthorEmail: 'bot@test.com',
+      }
+
+      const prodContext = createMockApiContext({
+        services: {
+          config: prodConfig as CanopyConfig,
+          createGitManagerFor: vi.fn(() => mockGit) as any,
+        },
+        authPlugin: mockAuthPlugin,
+      })
+
+      // Mock getBranchContext to simulate auto-creation
+      prodContext.getBranchContext = vi.fn().mockImplementation(async (branchName: string) => {
+        // Simulate successful auto-creation of settings branch
+        return createMockBranchContext({
+          branchName: branchName,
+          createdBy: 'canopycms-system',
+          access: {},
+          baseRoot: '/test/repo',
+          branchRoot: `/test/repo/.canopycms/branches/${branchName}`,
+          createdAt: '2024-01-01T00:00:00Z',
+          updatedAt: '2024-01-01T00:00:00Z',
+        })
+      })
+
+      vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([])
+
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await getPermissions(prodContext, req)
+
+      // Should succeed because getBranchContext auto-creates the branch
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+      expect(prodContext.getBranchContext).toHaveBeenCalledWith('canopycms-settings')
+    })
+
+    it('should auto-create settings branch in local-prod-sim mode when it does not exist', async () => {
+      // Create a new context with local-prod-sim mode
+      const localProdSimConfig: Partial<CanopyConfig> = {
+        defaultBaseBranch: 'main',
+        mode: 'local-prod-sim',
+        settingsBranch: 'canopycms-settings',
+        gitBotAuthorName: 'Test Bot',
+        gitBotAuthorEmail: 'bot@test.com',
+      }
+
+      const localProdSimContext = createMockApiContext({
+        services: {
+          config: localProdSimConfig as CanopyConfig,
+          createGitManagerFor: vi.fn(() => mockGit) as any,
+        },
+        authPlugin: mockAuthPlugin,
+      })
+
+      // Mock getBranchContext to simulate auto-creation
+      localProdSimContext.getBranchContext = vi
+        .fn()
+        .mockImplementation(async (branchName: string) => {
+          // Simulate successful auto-creation of settings branch in .canopycms/branches/
+          return createMockBranchContext({
+            branchName: branchName,
+            createdBy: 'canopycms-system',
+            access: {},
+            baseRoot: '/test/repo',
+            branchRoot: `/test/repo/.canopycms/branches/${branchName}`,
+            createdAt: '2024-01-01T00:00:00Z',
+            updatedAt: '2024-01-01T00:00:00Z',
+          })
+        })
+
+      vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([])
+
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await getPermissions(localProdSimContext, req)
+
+      // Should succeed because getBranchContext auto-creates the branch
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+      expect(localProdSimContext.getBranchContext).toHaveBeenCalledWith('canopycms-settings')
+    })
+  })
+
+  describe('optimistic locking with contentVersion', () => {
+    it('should return 409 when expectedContentVersion does not match current version', async () => {
+      // Mock loadPermissionsFile to return a file with contentVersion 5
+      vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue({
+        version: 1,
+        contentVersion: 5,
+        updatedAt: '2024-01-01T00:00:00Z',
+        updatedBy: 'other-admin',
+        pathPermissions: [],
+      })
+
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const body = {
+        permissions: [],
+        expectedContentVersion: 3, // Client thinks version is 3, but it's actually 5
+      }
+
+      const result = await updatePermissions(mockContext, req, body)
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+      expect(result.error).toBe(
+        'Permissions were modified by another user. Please reload and try again.',
+      )
+    })
+
+    it('should succeed when expectedContentVersion matches current version', async () => {
+      // Mock loadPermissionsFile to return a file with contentVersion 5
+      vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue({
+        version: 1,
+        contentVersion: 5,
+        updatedAt: '2024-01-01T00:00:00Z',
+        updatedBy: 'admin-1',
+        pathPermissions: [],
+      })
+
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const body = {
+        permissions: [],
+        expectedContentVersion: 5, // Matches current version
+      }
+
+      const result = await updatePermissions(mockContext, req, body)
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+
+      // Verify savePathPermissions was called with incremented version
+      expect(permissionsLoader.savePathPermissions).toHaveBeenCalledWith(
+        expect.any(String), // branchRoot varies by test context
+        [],
+        'admin-1',
+        'local-simple',
+        6, // Should be 5 + 1
+      )
+    })
+
+    it('should allow update when expectedContentVersion is not provided (backward compatible)', async () => {
+      // Mock loadPermissionsFile to return a file with contentVersion 5
+      vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue({
+        version: 1,
+        contentVersion: 5,
+        updatedAt: '2024-01-01T00:00:00Z',
+        updatedBy: 'admin-1',
+        pathPermissions: [],
+      })
+
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const body = {
+        permissions: [],
+        // No expectedContentVersion provided
+      }
+
+      const result = await updatePermissions(mockContext, req, body)
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+    })
+
+    it('should start at version 1 for new files without contentVersion', async () => {
+      // Mock loadPermissionsFile to return null (file doesn't exist)
+      vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue(null)
+
+      const req: ApiRequest<undefined> = {
+        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const body = {
+        permissions: [],
+      }
+
+      const result = await updatePermissions(mockContext, req, body)
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+
+      // Verify savePathPermissions was called with version 1 (0 + 1)
+      expect(permissionsLoader.savePathPermissions).toHaveBeenCalledWith(
+        expect.any(String), // branchRoot varies by test context
+        [],
+        'admin-1',
+        'local-simple',
+        1,
+      )
     })
   })
 })

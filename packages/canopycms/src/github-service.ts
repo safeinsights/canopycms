@@ -76,6 +76,50 @@ export class GitHubService {
   }
 
   /**
+   * Create or update a pull request
+   * If a PR already exists from head to base, update it. Otherwise, create a new one.
+   */
+  async createOrUpdatePR(options: {
+    head: string
+    base: string
+    title: string
+    body: string
+  }): Promise<string> {
+    // Check if PR already exists
+    const existingPRs = await this.octokit.pulls.list({
+      owner: this.owner,
+      repo: this.repo,
+      head: `${this.owner}:${options.head}`,
+      base: options.base,
+      state: 'open',
+    })
+
+    if (existingPRs.data.length > 0) {
+      // Update existing PR
+      const pr = existingPRs.data[0]
+      await this.octokit.pulls.update({
+        owner: this.owner,
+        repo: this.repo,
+        pull_number: pr.number,
+        body: options.body,
+      })
+      return pr.html_url
+    }
+
+    // Create new PR
+    const pr = await this.octokit.pulls.create({
+      owner: this.owner,
+      repo: this.repo,
+      head: options.head,
+      base: options.base,
+      title: options.title,
+      body: options.body,
+    })
+
+    return pr.data.html_url
+  }
+
+  /**
    * Get pull request details
    */
   async getPullRequest(prNumber: number): Promise<PullRequestDetails> {

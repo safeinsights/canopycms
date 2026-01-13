@@ -11,6 +11,7 @@ const permissionTargetSchema = z.object({
  */
 export const PermissionsFileSchema = z.object({
   version: z.literal(1),
+  contentVersion: z.number().optional(), // For optimistic locking
   updatedAt: z.string().datetime(),
   updatedBy: z.string() as z.ZodType<CanopyUserId>,
   pathPermissions: z.array(

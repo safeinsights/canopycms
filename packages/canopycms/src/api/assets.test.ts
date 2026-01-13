@@ -25,6 +25,7 @@ const makeCtx = (): ApiContext => ({
     registry: undefined as any,
     commitFiles: vi.fn(),
     submitBranch: vi.fn(),
+    commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
   },
   getBranchContext: async () => null,
   assetStore: {

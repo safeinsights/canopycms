@@ -70,6 +70,29 @@ export default defineCanopyConfig({
 })
 ```
 
+### 2.5. Configure .gitignore
+
+Update your `.gitignore` to properly handle CanopyCMS files:
+
+```gitignore
+# CanopyCMS
+# Ignore local development files (not committed to git)
+.canopycms/*.local.json
+
+# Ignore branch working directories
+.canopycms/branches/
+
+# Ignore local simulated remote
+.canopycms/remote.git/
+
+# DO commit these files (for version control and PR review):
+# - .canopycms/permissions.json
+# - .canopycms/groups.json
+# - .canopycms/comments.json (optional, review artifacts)
+```
+
+**Important**: Permissions and groups files (`.canopycms/permissions.json` and `.canopycms/groups.json`) should be tracked in git for version control. Only the `.local.json` variants (used in local-simple mode) should be gitignored.
+
 ### 3. Create the Canopy context (one-time setup)
 
 Create `app/lib/canopy.ts`:

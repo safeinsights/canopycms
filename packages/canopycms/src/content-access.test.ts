@@ -41,7 +41,7 @@ describe('checkContentAccess', () => {
       'edit',
     )
 
-    expect(mockLoadPermissions).toHaveBeenCalledWith('/repo')
+    expect(mockLoadPermissions).toHaveBeenCalledWith('/repo', undefined)
     expect(res.allowed).toBe(false)
     expect(res.branch.reason).toBe('no_acl')
   })

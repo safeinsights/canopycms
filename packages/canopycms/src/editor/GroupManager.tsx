@@ -241,6 +241,13 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   const handleSave = async () => {
     if (!onSave) return
 
+    // Validate that Admins group is not empty
+    const adminsGroup = groups.find((g) => g.id === 'Admins')
+    if (!adminsGroup || !adminsGroup.members || adminsGroup.members.length === 0) {
+      setError('Cannot remove the last admin. At least one admin is required.')
+      return
+    }
+
     setIsSaving(true)
     setError(null)
     try {
