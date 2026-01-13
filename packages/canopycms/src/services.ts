@@ -89,7 +89,7 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   // At the service level, we bind with empty rules for direct path checks.
   const checkPathAccess = createCheckPathAccess([], config.defaultPathAccess ?? 'deny')
   // Content access loads permissions dynamically from the branch root
-  // In prod/local-prod-sim modes, permissions are loaded from settings branch
+  // In prod/prod-sim modes, permissions are loaded from settings branch
   const getSettingsBranchRoot = async (): Promise<string> => {
     const mode = config.mode
     const strategy = operatingStrategy(mode)

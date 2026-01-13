@@ -71,11 +71,11 @@ describe('Operating Mode Strategies', () => {
     })
 
     describe('Local Production Simulation Mode', () => {
-      const mode: OperatingMode = 'local-prod-sim'
+      const mode: OperatingMode = 'prod-sim'
 
       it('should have correct mode identifier', () => {
         const strategy = clientOperatingStrategy(mode)
-        expect(strategy.mode).toBe('local-prod-sim')
+        expect(strategy.mode).toBe('prod-sim')
       })
 
       it('should support branching', () => {
@@ -120,11 +120,11 @@ describe('Operating Mode Strategies', () => {
     })
 
     describe('Local Simple Mode', () => {
-      const mode: OperatingMode = 'local-simple'
+      const mode: OperatingMode = 'dev'
 
       it('should have correct mode identifier', () => {
         const strategy = clientOperatingStrategy(mode)
-        expect(strategy.mode).toBe('local-simple')
+        expect(strategy.mode).toBe('dev')
       })
 
       it('should NOT support branching', () => {
@@ -177,7 +177,7 @@ describe('Operating Mode Strategies', () => {
 
       it('should return different instances for different modes', () => {
         const prodStrategy = clientOperatingStrategy('prod')
-        const localStrategy = clientOperatingStrategy('local-simple')
+        const localStrategy = clientOperatingStrategy('dev')
         expect(prodStrategy).not.toBe(localStrategy)
       })
 
@@ -318,11 +318,11 @@ describe('Operating Mode Strategies', () => {
     })
 
     describe('Local Production Simulation Mode', () => {
-      const mode: OperatingMode = 'local-prod-sim'
+      const mode: OperatingMode = 'prod-sim'
 
       it('should inherit all client-safe methods', () => {
         const strategy = operatingStrategy(mode)
-        expect(strategy.mode).toBe('local-prod-sim')
+        expect(strategy.mode).toBe('prod-sim')
         expect(strategy.supportsBranching()).toBe(true)
         expect(strategy.shouldCommit()).toBe(true)
         expect(strategy.supportsPullRequests()).toBe(false)
@@ -358,11 +358,11 @@ describe('Operating Mode Strategies', () => {
     })
 
     describe('Local Simple Mode', () => {
-      const mode: OperatingMode = 'local-simple'
+      const mode: OperatingMode = 'dev'
 
       it('should inherit all client-safe methods', () => {
         const strategy = operatingStrategy(mode)
-        expect(strategy.mode).toBe('local-simple')
+        expect(strategy.mode).toBe('dev')
         expect(strategy.supportsBranching()).toBe(false)
         expect(strategy.shouldCommit()).toBe(false)
         expect(strategy.getPermissionsFileName()).toBe('permissions.local.json')
@@ -456,7 +456,7 @@ describe('Operating Mode Strategies', () => {
 
       it('should return different instances for different modes', () => {
         const prodStrategy = operatingStrategy('prod')
-        const localStrategy = operatingStrategy('local-simple')
+        const localStrategy = operatingStrategy('dev')
         expect(prodStrategy).not.toBe(localStrategy)
       })
 

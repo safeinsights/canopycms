@@ -190,7 +190,7 @@ describe('GitManager.resolveRemoteUrl', () => {
 
   it('returns explicit remoteUrl when provided (highest priority)', async () => {
     const result = await GitManager.resolveRemoteUrl({
-      mode: 'local-prod-sim',
+      mode: 'prod-sim',
       remoteUrl: 'https://explicit.com/repo.git',
       defaultRemoteUrl: 'https://default.com/repo.git',
       baseBranch: 'main',
@@ -201,7 +201,7 @@ describe('GitManager.resolveRemoteUrl', () => {
 
   it('returns defaultRemoteUrl when no explicit url', async () => {
     const result = await GitManager.resolveRemoteUrl({
-      mode: 'local-prod-sim',
+      mode: 'prod-sim',
       defaultRemoteUrl: 'https://default.com/repo.git',
       baseBranch: 'main',
     })
@@ -213,14 +213,14 @@ describe('GitManager.resolveRemoteUrl', () => {
     process.env.CANOPYCMS_REMOTE_URL = 'https://env.com/repo.git'
 
     const result = await GitManager.resolveRemoteUrl({
-      mode: 'local-prod-sim',
+      mode: 'prod-sim',
       baseBranch: 'main',
     })
 
     expect(result).toBe('https://env.com/repo.git')
   })
 
-  it('auto-initializes and returns local remote path for local-prod-sim', async () => {
+  it('auto-initializes and returns local remote path for prod-sim', async () => {
     // Setup: create git repo in tmpDir with commit
     const git = simpleGit({ baseDir: tmpDir })
     await git.init()
@@ -238,7 +238,7 @@ describe('GitManager.resolveRemoteUrl', () => {
 
     try {
       const result = await GitManager.resolveRemoteUrl({
-        mode: 'local-prod-sim',
+        mode: 'prod-sim',
         baseBranch: 'main',
       })
 
@@ -252,9 +252,9 @@ describe('GitManager.resolveRemoteUrl', () => {
     }
   })
 
-  it('returns undefined for local-simple mode', async () => {
+  it('returns undefined for dev mode', async () => {
     const result = await GitManager.resolveRemoteUrl({
-      mode: 'local-simple',
+      mode: 'dev',
       baseBranch: 'main',
     })
 
@@ -266,7 +266,7 @@ describe('GitManager.resolveRemoteUrl', () => {
 
     try {
       const result = await GitManager.resolveRemoteUrl({
-        mode: 'local-prod-sim',
+        mode: 'prod-sim',
         remoteUrl: 'https://explicit.com/repo.git',
         baseBranch: 'main',
       })
@@ -280,7 +280,7 @@ describe('GitManager.resolveRemoteUrl', () => {
     }
   })
 
-  it('uses sourceRoot when provided for local-prod-sim', async () => {
+  it('uses sourceRoot when provided for prod-sim', async () => {
     // Setup: create git repo with subdirectory structure
     const git = simpleGit({ baseDir: tmpDir })
     await git.init()
@@ -302,7 +302,7 @@ describe('GitManager.resolveRemoteUrl', () => {
 
     try {
       const result = await GitManager.resolveRemoteUrl({
-        mode: 'local-prod-sim',
+        mode: 'prod-sim',
         baseBranch: 'main',
         sourceRoot: 'packages/example',
       })

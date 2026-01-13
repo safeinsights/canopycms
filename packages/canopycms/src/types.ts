@@ -27,7 +27,7 @@ export interface BranchPaths {
   /** Root where all branches live (e.g., /mnt/efs/site, ~/.canopycms/branches) */
   baseRoot: string
 
-  /** This branch's directory. Usually {baseRoot}/{branchName}, equals baseRoot in local-simple mode */
+  /** This branch's directory. Usually {baseRoot}/{branchName}, equals baseRoot in dev mode */
   branchRoot: string
 }
 

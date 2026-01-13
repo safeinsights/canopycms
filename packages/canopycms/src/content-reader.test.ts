@@ -231,7 +231,7 @@ describe('createContentReader', () => {
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
-      mode: 'local-simple',
+      mode: 'dev',
       schema: {
         collections: [],
         singletons: [

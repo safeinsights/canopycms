@@ -169,8 +169,8 @@ defineCanopyConfig({
 ### Operating Modes
 
 - `prod`: Branch clones in configurable filesystem directory
-- `local-prod-sim`: Clones in .canopycms/branches/ (gitignored)
-- `local-simple`: No clones, works in current checkout
+- `prod-sim`: Clones in .canopycms/branches/ (gitignored)
+- `dev`: No clones, works in current checkout
 
 ### Branch Lifecycle
 

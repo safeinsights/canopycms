@@ -68,8 +68,8 @@ describe('GitHubService', () => {
       delete process.env.CANOPYCMS_GITHUB_TOKEN
     })
 
-    it('should return null for local-simple mode', () => {
-      const config = { ...mockConfig, mode: 'local-simple' as const }
+    it('should return null for dev mode', () => {
+      const config = { ...mockConfig, mode: 'dev' as const }
       const service = createGitHubService(config, 'https://github.com/owner/repo.git')
       expect(service).toBeNull()
     })

@@ -244,7 +244,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
         {branches.length === 0 ? (
           <Text size="sm" c="dimmed" py="md">
             {!supportsBranching
-              ? 'Branch management is disabled in local-simple mode.'
+              ? 'Branch management is disabled in dev mode.'
               : 'No branches available.'}
           </Text>
         ) : (

@@ -13,7 +13,7 @@ import { BranchRegistry } from './branch-registry'
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branchws-'))
 
 describe('BranchWorkspaceManager', () => {
-  it('creates metadata when opening a branch in local-simple mode', async () => {
+  it('creates metadata when opening a branch in dev mode', async () => {
     const root = await tmpDir()
     const git = simpleGit({ baseDir: root })
     await git.init()
@@ -34,7 +34,7 @@ describe('BranchWorkspaceManager', () => {
 
     const workspace = await manager.openOrCreateBranch({
       branchName: 'feature/foo',
-      mode: 'local-simple',
+      mode: 'dev',
       basePathOverride: root,
       createdBy: 'user-1',
       title: 'Foo Feature',
@@ -47,7 +47,7 @@ describe('BranchWorkspaceManager', () => {
     expect(workspace.branchRoot).toBeDefined()
     expect(workspace.baseRoot).toBe(root)
 
-    // Note: In local-simple mode, there's only one "branch" at the root,
+    // Note: In dev mode, there's only one "branch" at the root,
     // so the registry (which scans subdirectories) doesn't apply
   })
 
@@ -88,7 +88,7 @@ describe('BranchWorkspaceManager', () => {
 
     const workspace = await manager.openOrCreateBranch({
       branchName: 'feature/foo',
-      mode: 'local-prod-sim',
+      mode: 'prod-sim',
       basePathOverride: branchesRoot,
       createdBy: 'user-1',
       title: 'Foo Feature',
@@ -143,7 +143,7 @@ describe('BranchWorkspaceManager', () => {
 
     const workspace = await manager.openOrCreateBranch({
       branchName: 'feature/foo',
-      mode: 'local-prod-sim',
+      mode: 'prod-sim',
       basePathOverride: branchesRoot,
       createdBy: 'user-1',
     })
@@ -155,7 +155,7 @@ describe('BranchWorkspaceManager', () => {
     expect(remotes.find((r) => r.name === 'origin')?.refs.fetch).toBe(remotePath)
   })
 
-  it('loads branch state with workspace root for local-simple', async () => {
+  it('loads branch state with workspace root for dev', async () => {
     const root = await tmpDir()
     const git = simpleGit({ baseDir: root })
     await git.init()
@@ -176,14 +176,14 @@ describe('BranchWorkspaceManager', () => {
 
     await manager.openOrCreateBranch({
       branchName: 'main',
-      mode: 'local-simple',
+      mode: 'dev',
       basePathOverride: root,
       createdBy: 'user-1',
     })
 
     const state = await loadBranchContext({
       branchName: 'main',
-      mode: 'local-simple',
+      mode: 'dev',
       basePathOverride: root,
     })
 

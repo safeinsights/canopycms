@@ -157,14 +157,14 @@ export interface MockServicesOptions {
  *
  * @example
  * const services = createMockServices({
- *   config: { mode: 'local-prod-sim' }
+ *   config: { mode: 'prod-sim' }
  * })
  */
 export function createMockServices(options: MockServicesOptions = {}): CanopyServices {
   const defaultConfig: Partial<CanopyConfig> = {
     schema: [],
     defaultBaseBranch: 'main',
-    mode: 'local-simple',
+    mode: 'dev',
     ...options.config,
   }
 

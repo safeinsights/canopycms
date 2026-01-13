@@ -19,10 +19,10 @@ CanopyCMS is a schema-driven, branch-aware CMS for websites that store their con
 
 ## Branch roots
 
-- Workspaces resolve per mode: `prod` uses `/mnt/efs/site` or `CANOPYCMS_BRANCH_ROOT`, `local-prod-sim` uses `.canopycms/branches/<branch>`, and `local-simple` works directly in the current checkout (no extra clone).
-- For `prod` mode, you must set `defaultRemoteUrl`. For `local-prod-sim`, `defaultRemoteUrl` is **optional** - if omitted, a local simulated remote is auto-created at `.canopycms/remote.git`.
+- Workspaces resolve per mode: `prod` uses `/mnt/efs/site` or `CANOPYCMS_BRANCH_ROOT`, `prod-sim` uses `.canopycms/branches/<branch>`, and `dev` works directly in the current checkout (no extra clone).
+- For `prod` mode, you must set `defaultRemoteUrl`. For `prod-sim`, `defaultRemoteUrl` is **optional** - if omitted, a local simulated remote is auto-created at `.canopycms/remote.git`.
 - Optionally configure `defaultRemoteName` (default: `origin`) and `defaultBaseBranch` (default: `main`).
-- Git author identity is required for all modes except `local-simple`: set `gitBotAuthorName` and `gitBotAuthorEmail` so bot commits can be created reliably.
+- Git author identity is required for all modes except `dev`: set `gitBotAuthorName` and `gitBotAuthorEmail` so bot commits can be created reliably.
 - Branch names are sanitized and traversal is blocked before creating directories.
 - Metadata lives at `<workspace>/.canopycms/branch.json`; the registry lives at `<base>/.canopycms/branches.json` and records the workspaceRoot for each branch.
 - `BranchWorkspaceManager` + `loadBranchState` keep metadata and registry entries in sync so APIs read/write against the correct workspace root.
@@ -47,7 +47,7 @@ When a user makes an edit in CanopyCMS, they do so on a branch they choose (or a
 import { defineCanopyConfig } from 'canopycms'
 
 export default defineCanopyConfig({
-  mode: 'local-simple', // or local-prod-sim/prod
+  mode: 'dev', // or prod-sim/prod
   gitBotAuthorName: 'Canopy Bot',
   gitBotAuthorEmail: 'canopy@example.com',
   editor: {
@@ -59,7 +59,7 @@ export default defineCanopyConfig({
     // previewBase: { 'content/posts': '/blog' }, // optional overrides
   },
   // For prod mode, defaultRemoteUrl is required.
-  // For local-prod-sim, it's optional - if omitted, uses auto-initialized local remote at .canopycms/remote.git
+  // For prod-sim, it's optional - if omitted, uses auto-initialized local remote at .canopycms/remote.git
   // defaultRemoteUrl: 'https://github.com/your/repo.git',
   defaultBranchAccess: 'allow',
   // Optional: contentRoot defaults to "content"
@@ -283,8 +283,8 @@ The `isLoading` object mirrors your data structure:
 
 ## Modes (pick per environment)
 
-- **`local-simple`** (default): Work in the current repo checkout; fastest to start. No remote required.
-- **`local-prod-sim`**: Uses `.canopycms/branches/` for per-branch clones to mimic production behavior.
+- **`dev`** (default): Work in the current repo checkout; fastest to start. No remote required.
+- **`prod-sim`**: Uses `.canopycms/branches/` for per-branch clones to mimic production behavior.
   - **Auto-initialization**: If no `defaultRemoteUrl` is configured, CanopyCMS automatically creates a local simulated remote at `.canopycms/remote.git` and seeds it with your current `baseBranch` (e.g., `main`). This allows fully local testing of branching and submission workflows without requiring an external GitHub remote.
   - **Manual remote**: You can still provide an explicit `defaultRemoteUrl` to use a real remote or custom local path.
 - **`prod`**: EFS-backed roots under `/mnt/efs/site` or `CANOPYCMS_BRANCH_ROOT`. Requires `defaultRemoteUrl`.
@@ -293,14 +293,14 @@ Branch metadata lives in `.canopycms/branch.json`; registry in `.canopycms/branc
 
 ### Local Production Simulation Mode
 
-The `local-prod-sim` mode is ideal for testing the full CanopyCMS workflow locally before deploying:
+The `prod-sim` mode is ideal for testing the full CanopyCMS workflow locally before deploying:
 
 **Basic setup (auto-initialization):**
 
 ```ts
 // canopycms.config.ts
 export default defineCanopyConfig({
-  mode: 'local-prod-sim',
+  mode: 'prod-sim',
   gitBotAuthorName: 'Canopy Bot',
   gitBotAuthorEmail: 'bot@example.com',
   // No defaultRemoteUrl needed - auto-creates .canopycms/remote.git
@@ -337,7 +337,7 @@ If your CanopyCMS config is in a subdirectory of a larger monorepo, set `sourceR
 ```ts
 // packages/my-app/canopycms.config.ts
 export default defineCanopyConfig({
-  mode: 'local-prod-sim',
+  mode: 'prod-sim',
   sourceRoot: 'packages/my-app',  // Path relative to git repository root
   gitBotAuthorName: 'Canopy Bot',
   gitBotAuthorEmail: 'bot@example.com',
@@ -369,7 +369,7 @@ You can still provide an explicit remote URL if you want to test against a real 
 
 ```ts
 export default defineCanopyConfig({
-  mode: 'local-prod-sim',
+  mode: 'prod-sim',
   defaultRemoteUrl: 'https://github.com/your/repo.git',
   // ... or use a local bare repo at a custom path
 })
@@ -379,7 +379,7 @@ export default defineCanopyConfig({
 
 - Public build: ships only your site/pages; reads main/default branch content.
 - Editor build: ships the editor UI + CanopyCMS API routes; handles branch create/switch/save/submit and asset uploads.
-- Modes map to environments: local-simple for quick dev, local-prod-sim to mimic prod clone behavior, prod on EFS. More deployment guidance will be documented as the branch-rooted APIs and submission flow land.
+- Modes map to environments: dev for quick dev, prod-sim to mimic prod clone behavior, prod on EFS. More deployment guidance will be documented as the branch-rooted APIs and submission flow land.
 
 ## Assets
 

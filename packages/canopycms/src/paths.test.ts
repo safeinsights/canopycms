@@ -15,7 +15,7 @@ describe('paths', () => {
   it('sanitizes branch names and prevents traversal', () => {
     expect(() =>
       resolveBranchPath({
-        mode: 'local-prod-sim',
+        mode: 'prod-sim',
         branchName: '../evil',
       }),
     ).toThrow(BranchPathError)
@@ -24,7 +24,7 @@ describe('paths', () => {
   it('ensures branch root is created under base', async () => {
     const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branches-'))
     const { branchRoot, baseRoot } = await ensureBranchRoot({
-      mode: 'local-prod-sim',
+      mode: 'prod-sim',
       branchName: 'feature/test',
       basePathOverride: temp,
     })
@@ -34,9 +34,9 @@ describe('paths', () => {
     expect(baseRoot).toBe(temp)
   })
 
-  it('uses cwd for local-simple mode', () => {
+  it('uses cwd for dev mode', () => {
     const { baseRoot, branchRoot } = resolveBranchPath({
-      mode: 'local-simple',
+      mode: 'dev',
       branchName: 'current',
     })
     expect(baseRoot).toBe(path.resolve(process.cwd()))

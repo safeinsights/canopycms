@@ -294,7 +294,7 @@ await page.pause()
 - Tests run on **Next.js App Router** application
 - Branch workflow integrates with GitHub PR system (may be mocked)
 - Branches stored in `.canopycms/branches/` directory
-- Tests use **local-prod-sim mode** (not local-simple)
+- Tests use **prod-sim mode** (not dev)
 
 ### Test Execution
 

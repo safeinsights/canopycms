@@ -4,7 +4,7 @@ import { homeSchema, postSchema, docSchema, authorSchema } from './app/schemas'
 
 export default defineCanopyConfig({
   defaultBranchAccess: 'allow',
-  mode: 'local-prod-sim',
+  mode: 'prod-sim',
   sourceRoot: 'apps/example1',
   gitBotAuthorName: 'CanopyCMS Example Bot',
   gitBotAuthorEmail: 'canopycms@example.com',

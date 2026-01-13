@@ -21,7 +21,7 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 
 - Schema DSL with Zod validation (collections, singletons, nested objects, blocks)
 - Git-backed content store with branch-aware workspaces
-- Branch modes: `local-simple`, `local-prod-sim`, `prod`
+- Branch modes: `dev`, `prod-sim`, `prod`
 - Content formats: JSON, Markdown, MDX with frontmatter
 - Framework-agnostic HTTP layer (`canopycms/http`) with generic request/response types
 - Next.js adapter in separate `canopycms-next` package

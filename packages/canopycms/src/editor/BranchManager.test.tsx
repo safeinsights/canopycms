@@ -230,8 +230,8 @@ describe('BranchManager', () => {
     })
   })
 
-  it('hides create form in local-simple mode', () => {
-    renderBranchManager({ branches: baseBranches, mode: 'local-simple' })
+  it('hides create form in dev mode', () => {
+    renderBranchManager({ branches: baseBranches, mode: 'dev' })
 
     const createButton = screen.queryByRole('button', { name: /create new branch/i })
     expect(createButton).toBeNull()

@@ -306,7 +306,7 @@ it('returns correct config for each mode', () => {
   const prodStrategy = operatingStrategy('prod')
   expect(prodStrategy.shouldAutoInitLocal()).toBe(false)
 
-  const localProdSimStrategy = operatingStrategy('local-prod-sim')
+  const localProdSimStrategy = operatingStrategy('prod-sim')
   expect(localProdSimStrategy.shouldAutoInitLocal()).toBe(true)
 })
 ```
@@ -925,7 +925,7 @@ CanopyCMS manages permissions and groups through JSON files in the `.canopycms/`
 
 #### Local Development: `.local.json` Files
 
-In `local-simple` mode (the default for development), CanopyCMS uses **gitignored** `.local.json` files for permissions and groups:
+In `dev` mode (the default for development), CanopyCMS uses **gitignored** `.local.json` files for permissions and groups:
 
 - **Files:**
   - `.canopycms/permissions.local.json` - path-level permissions
@@ -937,12 +937,12 @@ In `local-simple` mode (the default for development), CanopyCMS uses **gitignore
   - Changes persist across CMS restarts
   - Files are **automatically gitignored** (via `.canopycms` in `.gitignore`)
   - If `.local.json` doesn't exist, falls back to reading `.json` (committed version)
-  - Writes always go to `.local.json` in local-simple mode
+  - Writes always go to `.local.json` in dev mode
 
 **Example workflow:**
 
 ```bash
-# Start the CMS in local-simple mode (default)
+# Start the CMS in dev mode (default)
 npm run dev
 
 # 1. Login as different test users (e.g., auth-dev, Clerk dev accounts)
@@ -994,20 +994,20 @@ git status  # .canopycms/ should not appear
 
 #### Understanding the Three Modes
 
-| Mode               | Settings Files                                 | Git Operations                              | Use Case                               |
-| ------------------ | ---------------------------------------------- | ------------------------------------------- | -------------------------------------- |
-| **local-simple**   | `.canopycms/*.local.json` (gitignored)         | None                                        | Local development, testing permissions |
-| **local-prod-sim** | `.canopycms/branches/main/*.json` (gitignored) | Standard commits to branch clones           | Testing branch workflows locally       |
-| **prod**           | `.canopycms/*.json` (committed)                | Long-running `settings` branch with auto-PR | Production deployment                  |
+| Mode         | Settings Files                                 | Git Operations                              | Use Case                               |
+| ------------ | ---------------------------------------------- | ------------------------------------------- | -------------------------------------- |
+| **dev**      | `.canopycms/*.local.json` (gitignored)         | None                                        | Local development, testing permissions |
+| **prod-sim** | `.canopycms/branches/main/*.json` (gitignored) | Standard commits to branch clones           | Testing branch workflows locally       |
+| **prod**     | `.canopycms/*.json` (committed)                | Long-running `settings` branch with auto-PR | Production deployment                  |
 
-**local-simple (Default for Development):**
+**dev (Default for Development):**
 
 - No git operations
 - Settings in `.local.json` files (gitignored)
 - Instant feedback, no branch management overhead
 - Perfect for testing different users and permissions
 
-**local-prod-sim (Testing Branch Workflows):**
+**prod-sim (Testing Branch Workflows):**
 
 - Full branch simulation with clones in `.canopycms/branches/`
 - Settings in `.json` files within branch clones
@@ -1107,12 +1107,12 @@ git reset HEAD .canopycms/permissions.local.json
 git reset HEAD .canopycms/groups.local.json
 ```
 
-**Common mistake:** Adding `.canopycms/permissions.json` (without `.local`) to git in local-simple mode. This can happen if you:
+**Common mistake:** Adding `.canopycms/permissions.json` (without `.local`) to git in dev mode. This can happen if you:
 
-1. Switch from `local-prod-sim` or `prod` mode back to `local-simple`
+1. Switch from `prod-sim` or `prod` mode back to `dev`
 2. Have an old `.json` file from before the `.local.json` pattern
 
-**Fix:** In local-simple mode, always check that your gitignore includes `.canopycms` and manually delete any `.canopycms/*.json` files that aren't `.local.json`.
+**Fix:** In dev mode, always check that your gitignore includes `.canopycms` and manually delete any `.canopycms/*.json` files that aren't `.local.json`.
 
 #### Migration Guide: Adding .local.json Pattern
 
@@ -1122,7 +1122,7 @@ If you're upgrading an existing project to use the `.local.json` pattern:
 # 1. Ensure .canopycms is gitignored
 echo ".canopycms" >> apps/your-app/.gitignore
 
-# 2. Copy existing settings to .local.json (if in local-simple mode)
+# 2. Copy existing settings to .local.json (if in dev mode)
 cp .canopycms/permissions.json .canopycms/permissions.local.json
 cp .canopycms/groups.json .canopycms/groups.local.json
 

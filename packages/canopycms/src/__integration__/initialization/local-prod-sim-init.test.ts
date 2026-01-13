@@ -1,5 +1,5 @@
 /**
- * Integration tests for local-prod-sim mode initialization.
+ * Integration tests for prod-sim mode initialization.
  * Tests that branch workspaces are created correctly with proper
  * handling of concurrent requests (no race conditions).
  */
@@ -12,13 +12,13 @@ import { BranchWorkspaceManager } from '../../branch-workspace'
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 
-describe('Local-Prod-Sim Initialization', () => {
+describe('prod-sim Initialization', () => {
   let workspace: TestWorkspace
 
   beforeEach(async () => {
     workspace = await createTestWorkspace({
       schema: BLOG_SCHEMA,
-      mode: 'local-prod-sim',
+      mode: 'prod-sim',
     })
   })
 
@@ -34,27 +34,27 @@ describe('Local-Prod-Sim Initialization', () => {
     const initPromises = Promise.all([
       manager.openOrCreateBranch({
         branchName: 'main',
-        mode: 'local-prod-sim',
+        mode: 'prod-sim',
         createdBy: 'test-1',
       }),
       manager.openOrCreateBranch({
         branchName: 'main',
-        mode: 'local-prod-sim',
+        mode: 'prod-sim',
         createdBy: 'test-2',
       }),
       manager.openOrCreateBranch({
         branchName: 'main',
-        mode: 'local-prod-sim',
+        mode: 'prod-sim',
         createdBy: 'test-3',
       }),
       manager.openOrCreateBranch({
         branchName: 'main',
-        mode: 'local-prod-sim',
+        mode: 'prod-sim',
         createdBy: 'test-4',
       }),
       manager.openOrCreateBranch({
         branchName: 'main',
-        mode: 'local-prod-sim',
+        mode: 'prod-sim',
         createdBy: 'test-5',
       }),
     ])
@@ -86,7 +86,7 @@ describe('Local-Prod-Sim Initialization', () => {
     // Trigger initialization
     const context = await manager.openOrCreateBranch({
       branchName: 'main',
-      mode: 'local-prod-sim',
+      mode: 'prod-sim',
       createdBy: 'test',
     })
 
@@ -116,14 +116,14 @@ describe('Local-Prod-Sim Initialization', () => {
     // First initialization
     const firstContext = await manager.openOrCreateBranch({
       branchName: 'main',
-      mode: 'local-prod-sim',
+      mode: 'prod-sim',
       createdBy: 'test-1',
     })
 
     // Second access should load existing workspace
     const secondContext = await manager.openOrCreateBranch({
       branchName: 'main',
-      mode: 'local-prod-sim',
+      mode: 'prod-sim',
       createdBy: 'test-2',
     })
 

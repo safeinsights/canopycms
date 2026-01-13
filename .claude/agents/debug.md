@@ -56,7 +56,7 @@ npx tsc --noEmit -p packages/canopycms/tsconfig.json 2>&1 | head -50
 
 ### Branch Workspace
 
-- Check operating mode (prod/local-prod-sim/local-simple)
+- Check operating mode (prod/prod-sim/dev)
 - Verify .canopycms/ directory exists
 - Check branch registry for state
 

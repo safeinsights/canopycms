@@ -42,7 +42,7 @@ const homeSchema = defineSchema([
 export default defineCanopyConfig({
   gitBotAuthorName: 'CanopyCMS Bot',
   gitBotAuthorEmail: 'bot@example.com',
-  mode: 'local-simple', // or 'local-prod-sim' or 'prod'
+  mode: 'dev', // or 'prod-sim' or 'prod'
   schema: {
     // Collections: repeatable entries with shared schema
     collections: [
@@ -91,7 +91,7 @@ Update your `.gitignore` to properly handle CanopyCMS files:
 # - .canopycms/comments.json (optional, review artifacts)
 ```
 
-**Important**: Permissions and groups files (`.canopycms/permissions.json` and `.canopycms/groups.json`) should be tracked in git for version control. Only the `.local.json` variants (used in local-simple mode) should be gitignored.
+**Important**: Permissions and groups files (`.canopycms/permissions.json` and `.canopycms/groups.json`) should be tracked in git for version control. Only the `.local.json` variants (used in dev mode) should be gitignored.
 
 ### 3. Create the Canopy context (one-time setup)
 
@@ -297,23 +297,23 @@ const Page = async ({ searchParams }) => {
 
 ### `defineCanopyConfig` Options
 
-| Option                | Type                                           | Required | Default          | Description                                                                       |
-| --------------------- | ---------------------------------------------- | -------- | ---------------- | --------------------------------------------------------------------------------- |
-| `schema`              | `RootCollectionConfig`                         | Yes      | -                | Object with `collections` and `singletons` arrays defining your content structure |
-| `gitBotAuthorName`    | `string`                                       | Yes      | -                | Name used for git commits made by CanopyCMS                                       |
-| `gitBotAuthorEmail`   | `string`                                       | Yes      | -                | Email used for git commits made by CanopyCMS                                      |
-| `mode`                | `'local-simple' \| 'local-prod-sim' \| 'prod'` | No       | `'local-simple'` | Operating mode (see below)                                                        |
-| `contentRoot`         | `string`                                       | No       | `'content'`      | Root directory for content files relative to project root                         |
-| `defaultBaseBranch`   | `string`                                       | No       | `'main'`         | Default git branch to base edits on                                               |
-| `defaultBranchAccess` | `'allow' \| 'deny'`                            | No       | `'deny'`         | Default access policy for new branches                                            |
-| `defaultPathAccess`   | `'allow' \| 'deny'`                            | No       | `'allow'`        | Default access policy for content paths                                           |
-| `media`               | `MediaConfig`                                  | No       | -                | Asset storage configuration (local, s3, or lfs)                                   |
-| `editor`              | `EditorConfig`                                 | No       | -                | Editor UI customization options                                                   |
+| Option                | Type                            | Required | Default     | Description                                                                       |
+| --------------------- | ------------------------------- | -------- | ----------- | --------------------------------------------------------------------------------- |
+| `schema`              | `RootCollectionConfig`          | Yes      | -           | Object with `collections` and `singletons` arrays defining your content structure |
+| `gitBotAuthorName`    | `string`                        | Yes      | -           | Name used for git commits made by CanopyCMS                                       |
+| `gitBotAuthorEmail`   | `string`                        | Yes      | -           | Email used for git commits made by CanopyCMS                                      |
+| `mode`                | `'dev' \| 'prod-sim' \| 'prod'` | No       | `'dev'`     | Operating mode (see below)                                                        |
+| `contentRoot`         | `string`                        | No       | `'content'` | Root directory for content files relative to project root                         |
+| `defaultBaseBranch`   | `string`                        | No       | `'main'`    | Default git branch to base edits on                                               |
+| `defaultBranchAccess` | `'allow' \| 'deny'`             | No       | `'deny'`    | Default access policy for new branches                                            |
+| `defaultPathAccess`   | `'allow' \| 'deny'`             | No       | `'allow'`   | Default access policy for content paths                                           |
+| `media`               | `MediaConfig`                   | No       | -           | Asset storage configuration (local, s3, or lfs)                                   |
+| `editor`              | `EditorConfig`                  | No       | -           | Editor UI customization options                                                   |
 
 ### Operating Modes
 
-- **`local-simple`**: Direct file editing in your current checkout. Best for solo development.
-- **`local-prod-sim`**: Simulates production locally with per-branch clones in `.canopycms/branches/`. Use for testing branch workflows.
+- **`dev`**: Direct file editing in your current checkout. Best for solo development.
+- **`prod-sim`**: Simulates production locally with per-branch clones in `.canopycms/branches/`. Use for testing branch workflows.
 - **`prod`**: Full production deployment with branch workspaces on persistent storage (e.g., AWS Lambda + EFS).
 
 ### Schema Definition

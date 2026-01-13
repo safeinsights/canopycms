@@ -4,9 +4,9 @@ import { operatingStrategy } from '../operating-mode'
 
 /**
  * Get the appropriate branch context for settings (permissions/groups).
- * In local-simple mode, returns the main branch context for reading/writing files.
+ * In dev mode, returns the main branch context for reading/writing files.
  * In prod mode, returns the settings branch context.
- * In local-prod-sim mode, returns the main branch context.
+ * In prod-sim mode, returns the main branch context.
  */
 export async function getSettingsBranchContext(
   ctx: ApiContext,
@@ -32,9 +32,9 @@ export async function getSettingsBranchContext(
 
 /**
  * Commit and push settings changes based on the mode.
- * In local-simple mode, does nothing (no git operations).
+ * In dev mode, does nothing (no git operations).
  * In prod mode, uses commitToSettingsBranch.
- * In local-prod-sim mode, uses regular commitFiles.
+ * In prod-sim mode, uses regular commitFiles.
  */
 export async function commitSettings(
   ctx: ApiContext,
