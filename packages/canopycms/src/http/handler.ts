@@ -9,6 +9,7 @@ import type { BranchContext } from '../types'
 import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { authResultToCanopyUser } from '../user'
 import { loadInternalGroups } from '../groups-loader'
+import { clientOperatingStrategy } from '../operating-mode'
 
 /**
  * Options for creating a Canopy request handler.
@@ -32,7 +33,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
   if (!services) {
     throw new Error('CanopyCMS: config or services is required')
   }
-  const branchMode = services.config.mode ?? 'local-simple'
+  const operatingMode = services.config.mode
   const baseBranch = services.config.defaultBaseBranch ?? 'main'
   const settingsBranch = services.config.settingsBranch ?? 'canopycms-settings'
 
@@ -40,21 +41,21 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     options.getBranchContext ??
     (async (branch: string): Promise<BranchContext | null> => {
       // Try to load existing branch
-      const existing = await loadBranchContext({ branchName: branch, mode: branchMode })
+      const existing = await loadBranchContext({ branchName: branch, mode: operatingMode })
       if (existing) {
         return existing
       }
 
-      // In local-prod-sim or prod mode, auto-create system branches if they don't exist
+      // In modes that support branching, auto-create system branches if they don't exist
       const shouldAutoCreate =
-        (branchMode === 'local-prod-sim' || branchMode === 'prod') &&
+        clientOperatingStrategy(operatingMode).supportsBranching() &&
         (branch === baseBranch || branch === settingsBranch)
 
       if (shouldAutoCreate) {
         const manager = new BranchWorkspaceManager(services.config)
         const context = await manager.openOrCreateBranch({
           branchName: branch,
-          mode: branchMode,
+          mode: operatingMode,
           createdBy: 'canopycms-system',
         })
         return context
@@ -149,8 +150,9 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     // Load internal groups from main branch and merge with user groups
     const baseBranch = apiCtx.services.config.defaultBaseBranch ?? 'main'
     const mainBranchContext = await apiCtx.getBranchContext(baseBranch)
+    const operatingMode = apiCtx.services.config.mode
     const internalGroups = mainBranchContext
-      ? await loadInternalGroups(mainBranchContext.branchRoot).catch(() => [])
+      ? await loadInternalGroups(mainBranchContext.branchRoot, operatingMode).catch(() => [])
       : []
 
     const user = authResultToCanopyUser(

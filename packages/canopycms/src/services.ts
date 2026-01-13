@@ -11,6 +11,7 @@ import { BranchRegistry } from './branch-registry'
 import { BranchWorkspaceManager } from './branch-workspace'
 import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
+import { operatingStrategy } from './operating-mode'
 
 /**
  * Parse bootstrap admin IDs from environment variable.
@@ -90,13 +91,17 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   // Content access loads permissions dynamically from the branch root
   // In prod/local-prod-sim modes, permissions are loaded from settings branch
   const getSettingsBranchRoot = async (): Promise<string> => {
-    const settingsBranchName = config.settingsBranch ?? 'canopycms-settings'
-    const mode = config.mode ?? 'local-simple'
+    const mode = config.mode
+    const strategy = operatingStrategy(mode)
 
-    // Only applicable in prod/local-prod-sim modes
-    if (mode !== 'prod' && mode !== 'local-prod-sim') {
-      throw new Error('getSettingsBranchRoot called in local-simple mode')
+    // Only applicable in modes that use separate settings branch
+    if (!strategy.usesSeparateSettingsBranch()) {
+      throw new Error(
+        'getSettingsBranchRoot called in mode that does not use separate settings branch',
+      )
     }
+
+    const settingsBranchName = strategy.getSettingsBranchName(config)
 
     const manager = new BranchWorkspaceManager(config)
     // openOrCreateBranch already calls ensureGitWorkspace, which is cached per workspace
@@ -167,10 +172,10 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
     prUrl?: string
     error?: string
   }> => {
-    const mode = config.mode ?? 'local-simple'
+    const mode = config.mode
 
-    // Local-simple: No git operations
-    if (mode === 'local-simple') {
+    // Check if this mode supports git operations
+    if (!operatingStrategy(mode).shouldCommit()) {
       return { committed: false, pushed: false }
     }
 
@@ -235,13 +240,13 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
     }
   }
 
-  const operatingMode = config.mode ?? 'local-simple'
+  const operatingMode = config.mode
   const registry = new BranchRegistry(getDefaultBranchBase(operatingMode))
 
-  // Create GitHub service if applicable (only for prod/local-prod-sim modes)
+  // Create GitHub service if applicable (only for modes that support pull requests)
   let githubService: GitHubService | undefined
-  const mode = config.mode ?? 'local-simple'
-  if (mode !== 'local-simple') {
+  const mode = config.mode
+  if (operatingStrategy(mode).supportsPullRequests()) {
     const remoteUrl = config.defaultRemoteUrl
     if (remoteUrl) {
       try {

@@ -168,7 +168,7 @@ describe('PR Workflow Integration', () => {
     const workspaceManager = new BranchWorkspaceManager(config)
     const workspace = await workspaceManager.openOrCreateBranch({
       branchName,
-      mode: config.mode ?? 'local-simple',
+      mode: config.mode,
       title: 'Test PR Feature',
       description: 'This is a test PR for the integration test',
       createdBy: 'test-user',
@@ -239,10 +239,7 @@ describe('PR Workflow Integration', () => {
     })
 
     // Reload state and verify PR info
-    const submittedContext = await loadBranchContext({
-      branchName,
-      mode: config.mode ?? 'local-simple',
-    })
+    const submittedContext = await loadBranchContext({ branchName, mode: config.mode })
     expect(submittedContext?.branch.status).toBe('submitted')
     expect(submittedContext?.branch.pullRequestNumber).toBe(1)
     expect(submittedContext?.branch.pullRequestUrl).toContain('pull/1')
@@ -251,10 +248,7 @@ describe('PR Workflow Integration', () => {
     await githubService.convertToDraft(prResult.number)
     await metadata.save({ branch: { status: 'editing' } })
 
-    const withdrawnContext = await loadBranchContext({
-      branchName,
-      mode: config.mode ?? 'local-simple',
-    })
+    const withdrawnContext = await loadBranchContext({ branchName, mode: config.mode })
     expect(withdrawnContext?.branch.status).toBe('editing')
 
     // Mock PR as draft for next get() call
@@ -275,10 +269,7 @@ describe('PR Workflow Integration', () => {
     // ===== STEP 5: Request changes (reviewer action) =====
     await metadata.save({ branch: { status: 'editing' } })
 
-    const changesRequestedContext = await loadBranchContext({
-      branchName,
-      mode: config.mode ?? 'local-simple',
-    })
+    const changesRequestedContext = await loadBranchContext({ branchName, mode: config.mode })
     expect(changesRequestedContext?.branch.status).toBe('editing')
 
     // ===== STEP 6: Make additional changes and resubmit =====
@@ -320,10 +311,7 @@ describe('PR Workflow Integration', () => {
     await githubService.convertToReady(prResult.number)
     await metadata.save({ branch: { status: 'submitted' } })
 
-    const resubmittedContext = await loadBranchContext({
-      branchName,
-      mode: config.mode ?? 'local-simple',
-    })
+    const resubmittedContext = await loadBranchContext({ branchName, mode: config.mode })
     expect(resubmittedContext?.branch.status).toBe('submitted')
     expect(resubmittedContext?.branch.pullRequestNumber).toBe(1) // Same PR number
 
@@ -411,10 +399,7 @@ describe('PR Workflow Integration', () => {
     // Mark branch as merged in CanopyCMS
     await metadata.save({ branch: { status: 'archived' } })
 
-    const archivedContext = await loadBranchContext({
-      branchName,
-      mode: config.mode ?? 'local-simple',
-    })
+    const archivedContext = await loadBranchContext({ branchName, mode: config.mode })
     expect(archivedContext?.branch.status).toBe('archived')
     expect(archivedContext?.branch.pullRequestNumber).toBe(1)
 
@@ -475,7 +460,7 @@ describe('PR Workflow Integration', () => {
     const workspaceManager = new BranchWorkspaceManager(config)
     const workspace = await workspaceManager.openOrCreateBranch({
       branchName,
-      mode: config.mode ?? 'local-simple',
+      mode: config.mode,
       title: 'Draft PR Test',
       createdBy: 'test-user',
       remoteUrl: remotePath,

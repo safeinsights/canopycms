@@ -1,5 +1,6 @@
 import { Octokit } from '@octokit/rest'
 import type { CanopyConfig } from './config'
+import { operatingStrategy } from './operating-mode'
 
 export interface GitHubServiceOptions {
   token: string
@@ -257,9 +258,9 @@ export const createGitHubService = (
   config: CanopyConfig,
   remoteUrl?: string,
 ): GitHubService | null => {
-  // Only create service for prod/local-prod-sim modes
-  const mode = config.mode ?? 'local-simple'
-  if (mode === 'local-simple') {
+  // Only create service for modes that support pull requests
+  const mode = config.mode
+  if (!operatingStrategy(mode).supportsPullRequests()) {
     return null
   }
 

@@ -1,5 +1,6 @@
 import type { ApiContext } from './types'
 import type { OperatingMode } from '../paths'
+import { operatingStrategy } from '../operating-mode'
 
 /**
  * Get the appropriate branch context for settings (permissions/groups).
@@ -12,17 +13,13 @@ export async function getSettingsBranchContext(
 ): Promise<
   { context: any; mode: OperatingMode; branchName: string } | { error: string; status: number }
 > {
-  const mode = ctx.services.config.mode ?? 'local-simple'
+  const mode = ctx.services.config.mode
 
-  // Determine which branch to use
-  let branchName: string
-  if (mode === 'prod' || mode === 'local-prod-sim') {
-    // Use settings branch in prod and local-prod-sim modes
-    branchName = ctx.services.config.settingsBranch ?? 'canopycms-settings'
-  } else {
-    // Use main branch for local-simple mode
-    branchName = ctx.services.config.defaultBaseBranch ?? 'main'
-  }
+  // Determine which branch to use based on operating mode strategy
+  const branchName = operatingStrategy(mode).getSettingsBranchName({
+    settingsBranch: ctx.services.config.settingsBranch,
+    defaultBaseBranch: ctx.services.config.defaultBaseBranch,
+  })
 
   const context = await ctx.getBranchContext(branchName)
 
@@ -49,20 +46,22 @@ export async function commitSettings(
     mode: OperatingMode
   },
 ): Promise<void> {
-  // No git operations in local-simple
-  if (options.mode === 'local-simple') {
+  const strategy = operatingStrategy(options.mode)
+
+  // No git operations if mode doesn't support commits
+  if (!strategy.shouldCommit()) {
     return
   }
 
-  if (options.mode === 'prod' || options.mode === 'local-prod-sim') {
-    // Use commitToSettingsBranch for prod and local-prod-sim modes
-    // In prod mode: create PR if configured
-    // In local-prod-sim mode: don't create PR (no real GitHub)
+  // For modes that use separate settings branch, commit to settings branch
+  if (strategy.usesSeparateSettingsBranch()) {
     const result = await ctx.services.commitToSettingsBranch({
       branchRoot: options.branchRoot,
       files: options.fileName,
       message: options.message,
-      createPR: options.mode === 'prod' && (ctx.services.config.autoCreatePermissionsPR ?? true),
+      createPR: strategy.shouldCreatePermissionsPR({
+        autoCreatePermissionsPR: ctx.services.config.autoCreatePermissionsPR,
+      }),
     })
 
     if (!result.pushed) {

@@ -45,7 +45,7 @@ describe('permissions loader', () => {
         'utf-8',
       )
 
-      const permissions = await loadPathPermissions(testRoot)
+      const permissions = await loadPathPermissions(testRoot, 'prod')
 
       expect(permissions).toHaveLength(2)
       expect(permissions[0]).toEqual({
@@ -59,7 +59,7 @@ describe('permissions loader', () => {
     })
 
     it('returns empty array when file does not exist', async () => {
-      const permissions = await loadPathPermissions(testRoot)
+      const permissions = await loadPathPermissions(testRoot, 'prod')
       expect(permissions).toEqual([])
     })
 
@@ -71,7 +71,9 @@ describe('permissions loader', () => {
       await fs.mkdir(canopyDir, { recursive: true })
       await fs.writeFile(path.join(canopyDir, 'permissions.json'), 'invalid json', 'utf-8')
 
-      await expect(loadPathPermissions(testRoot)).rejects.toThrow('Invalid permissions file')
+      await expect(loadPathPermissions(testRoot, 'prod')).rejects.toThrow(
+        'Invalid permissions file',
+      )
       expect(consoleSpy).toHaveErrored('Failed to parse permissions file')
       consoleSpy.restore()
     })
@@ -93,7 +95,9 @@ describe('permissions loader', () => {
         'utf-8',
       )
 
-      await expect(loadPathPermissions(testRoot)).rejects.toThrow('Invalid permissions file')
+      await expect(loadPathPermissions(testRoot, 'prod')).rejects.toThrow(
+        'Invalid permissions file',
+      )
       expect(consoleSpy).toHaveErrored('Failed to parse permissions file')
       consoleSpy.restore()
     })
@@ -112,7 +116,7 @@ describe('permissions loader', () => {
         },
       ]
 
-      await savePathPermissions(testRoot, permissions, 'admin-user')
+      await savePathPermissions(testRoot, permissions, 'admin-user', 'prod')
 
       const filePath = path.join(testRoot, '.canopycms', 'permissions.json')
       const fileContent = await fs.readFile(filePath, 'utf-8')
@@ -131,7 +135,7 @@ describe('permissions loader', () => {
     it('creates .canopycms directory if it does not exist', async () => {
       const permissions = [{ path: 'content/**', edit: { allowedGroups: ['all'] } }]
 
-      await savePathPermissions(testRoot, permissions, 'user-1')
+      await savePathPermissions(testRoot, permissions, 'user-1', 'prod')
 
       const canopyDir = path.join(testRoot, '.canopycms')
       const stats = await fs.stat(canopyDir)
@@ -146,17 +150,19 @@ describe('permissions loader', () => {
         },
       ]
 
-      await expect(savePathPermissions(testRoot, invalidPermissions, 'admin')).rejects.toThrow()
+      await expect(
+        savePathPermissions(testRoot, invalidPermissions, 'admin', 'prod'),
+      ).rejects.toThrow()
     })
 
     it('overwrites existing file', async () => {
       const firstPermissions = [{ path: 'content/first/**', edit: { allowedUsers: ['user-1'] } }]
-      await savePathPermissions(testRoot, firstPermissions, 'admin-1')
+      await savePathPermissions(testRoot, firstPermissions, 'admin-1', 'prod')
 
       const secondPermissions = [{ path: 'content/second/**', edit: { allowedUsers: ['user-2'] } }]
-      await savePathPermissions(testRoot, secondPermissions, 'admin-2')
+      await savePathPermissions(testRoot, secondPermissions, 'admin-2', 'prod')
 
-      const loaded = await loadPathPermissions(testRoot)
+      const loaded = await loadPathPermissions(testRoot, 'prod')
 
       expect(loaded).toHaveLength(1)
       expect(loaded[0].path).toBe('content/second/**')
@@ -165,7 +171,7 @@ describe('permissions loader', () => {
 
   describe('ensurePermissionsFile', () => {
     it('creates default file if it does not exist', async () => {
-      await ensurePermissionsFile(testRoot, 'admin-user')
+      await ensurePermissionsFile(testRoot, 'admin-user', 'prod')
 
       const filePath = path.join(testRoot, '.canopycms', 'permissions.json')
       const fileContent = await fs.readFile(filePath, 'utf-8')
@@ -178,11 +184,11 @@ describe('permissions loader', () => {
 
     it('does nothing if file already exists', async () => {
       const existingPermissions = [{ path: 'content/**', edit: { allowedUsers: ['existing'] } }]
-      await savePathPermissions(testRoot, existingPermissions, 'original-admin')
+      await savePathPermissions(testRoot, existingPermissions, 'original-admin', 'prod')
 
-      await ensurePermissionsFile(testRoot, 'new-admin')
+      await ensurePermissionsFile(testRoot, 'new-admin', 'prod')
 
-      const loaded = await loadPathPermissions(testRoot)
+      const loaded = await loadPathPermissions(testRoot, 'prod')
 
       // Original permissions should still be there
       expect(loaded).toHaveLength(1)

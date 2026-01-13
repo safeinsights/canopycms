@@ -31,6 +31,7 @@ describe('checkContentAccess', () => {
       checkBranchAccess: createCheckBranchAccess('deny'),
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
+      mode: 'local-simple',
     })
 
     const res = await checkContent(
@@ -41,7 +42,7 @@ describe('checkContentAccess', () => {
       'edit',
     )
 
-    expect(mockLoadPermissions).toHaveBeenCalledWith('/repo', undefined)
+    expect(mockLoadPermissions).toHaveBeenCalledWith('/repo', 'local-simple')
     expect(res.allowed).toBe(false)
     expect(res.branch.reason).toBe('no_acl')
   })
@@ -52,6 +53,7 @@ describe('checkContentAccess', () => {
       checkBranchAccess: createCheckBranchAccess('deny'),
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
+      mode: 'local-simple',
     })
 
     const res = await checkContent(
@@ -76,6 +78,7 @@ describe('checkContentAccess', () => {
       checkBranchAccess: createCheckBranchAccess('allow'),
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
+      mode: 'local-simple',
     })
 
     const res = await checkContent(
@@ -96,6 +99,7 @@ describe('checkContentAccess', () => {
       checkBranchAccess: createCheckBranchAccess('allow'),
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'deny',
+      mode: 'local-simple',
     })
 
     const res = await checkContent(
@@ -117,6 +121,7 @@ describe('checkContentAccess', () => {
       checkBranchAccess: createCheckBranchAccess('allow'),
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
+      mode: 'local-simple',
     })
 
     const res = await checkContent(

@@ -67,7 +67,7 @@ export interface EditorProps {
   siteTitle?: string
   siteSubtitle?: string
   branchName?: string
-  operatingMode?: OperatingMode
+  operatingMode: OperatingMode
   collections?: EditorCollection[]
   configSchema: RootCollectionConfig
   contentRoot?: string
@@ -104,7 +104,7 @@ export const Editor: React.FC<EditorProps> = ({
   renderPreview,
   onCreateEntry,
   themeOptions,
-  operatingMode = 'local-simple',
+  operatingMode,
   previewBaseByCollection,
   currentUser = 'current-user',
   canResolveComments = true,

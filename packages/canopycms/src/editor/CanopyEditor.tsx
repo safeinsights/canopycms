@@ -18,6 +18,7 @@ export interface CanopyEditorProps extends Omit<
   | 'entries'
   | 'configSchema'
   | 'contentRoot'
+  | 'operatingMode'
 > {
   config: CanopyClientConfig
   entries?: EditorProps['entries']
@@ -31,7 +32,6 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
   renderPreview,
   onCreateEntry,
   branchName,
-  operatingMode,
 }) => {
   const collections = useMemo(() => buildEditorCollections(config.flatSchema), [config.flatSchema])
   const previewBase = useMemo(
@@ -42,7 +42,6 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
     [config],
   )
   const resolvedBranchName = branchName ?? config.defaultBaseBranch ?? 'main'
-  const resolvedOperatingMode = operatingMode ?? config.mode ?? 'local-simple'
   const resolvedTitle = config.editor?.title ?? 'CanopyCMS Editor'
   const resolvedSubtitle = config.editor?.subtitle
   const resolvedTheme = (config.editor?.theme as EditorProps['themeOptions']) ?? undefined
@@ -53,7 +52,7 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
       title={resolvedTitle}
       subtitle={resolvedSubtitle}
       branchName={resolvedBranchName}
-      operatingMode={resolvedOperatingMode}
+      operatingMode={config.mode}
       initialSelectedId={initialSelectedId}
       initialValues={initialValues as Record<string, FormValue> | undefined}
       renderPreview={renderPreview}

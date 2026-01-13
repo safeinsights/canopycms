@@ -49,10 +49,11 @@ describe('Path Permission Integration', () => {
         },
       ],
       'test-admin',
+      'local-prod-sim',
     )
 
     // Load permissions and check access
-    const rules = await loadPathPermissions(branch.branchRoot)
+    const rules = await loadPathPermissions(branch.branchRoot, 'local-prod-sim')
     const pathChecker = createCheckPathAccess(rules, workspace.config.defaultPathAccess ?? 'deny')
 
     const access = pathChecker({
@@ -92,10 +93,11 @@ describe('Path Permission Integration', () => {
         },
       ],
       admin.userId,
+      'local-prod-sim',
     )
 
     // Admin bypasses at branch level, so path restrictions don't matter
-    const rules = await loadPathPermissions(branch.branchRoot)
+    const rules = await loadPathPermissions(branch.branchRoot, 'local-prod-sim')
     const pathChecker = createCheckPathAccess(rules, workspace.config.defaultPathAccess ?? 'deny')
 
     // Path check alone would fail for non-BlogAuthors
@@ -137,9 +139,10 @@ describe('Path Permission Integration', () => {
         },
       ],
       'test-admin',
+      'local-prod-sim',
     )
 
-    const rules = await loadPathPermissions(branch.branchRoot)
+    const rules = await loadPathPermissions(branch.branchRoot, 'local-prod-sim')
     const pathChecker = createCheckPathAccess(rules, workspace.config.defaultPathAccess ?? 'deny')
 
     // Check access to public post (should match first rule)
@@ -186,9 +189,10 @@ describe('Path Permission Integration', () => {
         },
       ],
       'test-admin',
+      'local-prod-sim',
     )
 
-    const rules = await loadPathPermissions(branch.branchRoot)
+    const rules = await loadPathPermissions(branch.branchRoot, 'local-prod-sim')
     const pathChecker = createCheckPathAccess(rules, workspace.config.defaultPathAccess ?? 'deny')
 
     // Reviewer can read and review, but not edit
@@ -258,9 +262,10 @@ describe('Path Permission Integration', () => {
         },
       ],
       'test-admin',
+      'local-prod-sim',
     )
 
-    const rules = await loadPathPermissions(branch.branchRoot)
+    const rules = await loadPathPermissions(branch.branchRoot, 'local-prod-sim')
     const pathChecker = createCheckPathAccess(rules, workspace.config.defaultPathAccess ?? 'deny')
 
     // Editor should have access to about page
@@ -293,10 +298,10 @@ describe('Path Permission Integration', () => {
       },
     ]
 
-    await savePathPermissions(branch.branchRoot, initialRules, admin.userId)
+    await savePathPermissions(branch.branchRoot, initialRules, admin.userId, 'local-prod-sim')
 
     // Load and verify
-    const loadedRules = await loadPathPermissions(branch.branchRoot)
+    const loadedRules = await loadPathPermissions(branch.branchRoot, 'local-prod-sim')
     expect(loadedRules).toHaveLength(1)
     expect(loadedRules[0].path).toBe('content/posts/**')
     expect(loadedRules[0].edit?.allowedGroups).toContain('BlogAuthors')

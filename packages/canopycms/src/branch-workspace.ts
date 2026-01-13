@@ -8,6 +8,7 @@ import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
 import type { OperatingMode } from './paths'
 import { GitManager } from './git-manager'
 import { createDebugLogger } from './utils/debug'
+import { operatingStrategy } from './operating-mode'
 
 const log = createDebugLogger({ prefix: 'BranchWorkspace' })
 
@@ -85,9 +86,10 @@ export class BranchWorkspaceManager {
 
           const repoExists = await hasGit()
           if (!repoExists) {
-            if (options.mode === 'local-simple') {
-              throw new Error(`CanopyCMS: expected git repo at ${options.branchRoot}`)
-            }
+            // Validate workspace requirements based on operating mode
+            await operatingStrategy(options.mode).validateWorkspace(options.branchRoot)
+
+            // If validation passes (no error thrown), we can clone
             if (!remoteUrl) {
               throw new Error(
                 'CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to init branch workspaces',

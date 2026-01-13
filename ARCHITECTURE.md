@@ -259,7 +259,7 @@ Users can work on main branch too—there's nothing preventing it. The branch mo
 
 ## Operating Modes
 
-CanopyCMS supports three operating modes to fit different environments:
+CanopyCMS supports three operating modes to fit different environments. The mode is configured in `canopycms.config.ts` and defaults to `'local-simple'` if not specified. After Zod validation, `config.mode` is always defined and can be used throughout the codebase without fallback checks.
 
 ### local-simple
 
@@ -276,6 +276,15 @@ Full production deployment. Branch workspaces live on persistent storage (e.g., 
 Settings (groups and permissions) are stored on a separate `settingsBranch` (default: 'canopycms-settings') in prod mode, with changes creating PRs for review before merging to main. This ensures permission changes go through the same review process as content changes.
 
 **Security**: In prod/local-prod-sim modes, the system will throw an error if the settings branch cannot be loaded, ensuring permissions are never accidentally read from a content branch. Settings files also include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
+
+### Mode Strategy Pattern
+
+Operating modes are implemented using the Strategy pattern, which encapsulates mode-specific behavior into strategy objects. Each mode has two strategy implementations:
+
+- **ClientSafeStrategy**: Contains UI feature flags and simple configuration (no Node.js APIs). Safe for 'use client' components.
+- **ClientUnsafeStrategy**: Extends ClientSafeStrategy with server-side functionality (file system operations, git integration).
+
+**Key design principle**: Strategies return configuration values and flags, not business logic. Complex operations (like git commands) are handled by domain-specific managers (GitManager, BranchWorkspaceManager) that use strategy flags to make decisions.
 
 ## Context Architecture
 
@@ -423,6 +432,26 @@ CanopyCMS uses a layered approach to Git operations, separating low-level primit
 - Call service methods to perform git operations
 - Focus on workflow logic (permissions, metadata updates, PR creation)
 - No direct git author configuration or path resolution needed
+
+### GitManager and Strategies
+
+GitManager provides low-level git primitives (status, add, commit, push, etc.). It uses operating mode strategies to get configuration values:
+
+```typescript
+// Strategy provides configuration
+const config = strategy.getRemoteUrlConfig()
+// Returns: { shouldAutoInitLocal: boolean, defaultRemotePath: string, envVarName: string }
+
+// GitManager owns the logic
+if (config.shouldAutoInitLocal) {
+  const gitRoot = await GitManager.findGitRoot()
+  const localRemotePath = path.join(gitRoot, config.defaultRemotePath)
+  await GitManager.ensureLocalSimulatedRemote({ remotePath: localRemotePath, ... })
+  return localRemotePath
+}
+```
+
+This separation ensures strategies remain simple value objects while GitManager handles complex git operations.
 
 ### Design Rationale
 

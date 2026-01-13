@@ -46,7 +46,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   }
 
   const services = options.services ?? createCanopyServices(options.config!)
-  const operatingMode: OperatingMode = services.config.mode ?? 'local-simple'
+  const operatingMode: OperatingMode = services.config.mode
   const basePathOverride = options.basePathOverride
   const workspaceManager = options.workspaceManager ?? new BranchWorkspaceManager(services.config)
   const defaultBranch = options.defaultBranch ?? services.config.defaultBaseBranch ?? 'main'

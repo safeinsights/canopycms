@@ -244,7 +244,7 @@ export const CanopyConfigSchema = z
     gitBotAuthorName: gitBotAuthorNameSchema,
     gitBotAuthorEmail: gitBotAuthorEmailSchema,
     githubTokenEnvVar: githubTokenEnvVarSchema.optional(),
-    mode: operatingModeSchema.optional(),
+    mode: operatingModeSchema, // Has .default(), so not optional in output type
     settingsBranch: z.string().optional(),
     autoCreatePermissionsPR: z.boolean().optional(),
     contentRoot: contentRootSchema.default('content'),

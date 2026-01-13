@@ -58,7 +58,7 @@ describe('GitHubService', () => {
       gitBotAuthorName: 'Bot',
       gitBotAuthorEmail: 'bot@example.com',
       defaultBaseBranch: 'main',
-      mode: 'local-prod-sim',
+      mode: 'prod', // Use prod mode for GitHub service tests
       contentRoot: 'content',
     }
 

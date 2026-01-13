@@ -327,14 +327,14 @@ describe('deleteBranch api', () => {
     },
   }
 
-  it('returns 400 in local-simple mode', async () => {
+  it('returns 400 in modes that do not support branching', async () => {
     const res = await deleteBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(400)
-    expect(res.error).toBe('Cannot delete branches in local-simple mode')
+    expect(res.error).toBe('Cannot delete branches in this operating mode')
   })
 
   it('returns 404 if branch not found', async () => {

@@ -14,6 +14,7 @@ Let's fix these issues and add tests for them
 
 Bigger not listed in master plan
 
+1. [ ] After you publish a branch, you can still save. Should you be able to, or should it be locked for editing so the ground doesn't change from under the reviewers feet. You also can't republish.
 1. [ ] Branch ACLs (how we share branches)
 1. [ ] SEO
 1. [ ] Ordering of collection entries

@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import type { BranchContext } from './types'
+import { operatingStrategy } from './operating-mode'
 
 export type OperatingMode = 'prod' | 'local-prod-sim' | 'local-simple'
 
@@ -19,8 +20,6 @@ export interface BranchPathResult {
 
 export class BranchPathError extends Error {}
 
-const DEFAULT_PROD_BASE = '/mnt/efs/site'
-
 const sanitizeBranchName = (branchName: string): string => {
   const replaced = branchName.replace(/[^a-zA-Z0-9._-]/g, '-')
   const squashed = replaced.replace(/-+/g, '-')
@@ -29,15 +28,7 @@ const sanitizeBranchName = (branchName: string): string => {
 }
 
 const resolveBaseRoot = (mode: OperatingMode, override?: string): string => {
-  if (override) return path.resolve(override)
-  if (mode === 'prod') {
-    const envBase = process.env.CANOPYCMS_BRANCH_ROOT
-    return path.resolve(envBase || DEFAULT_PROD_BASE)
-  }
-  if (mode === 'local-prod-sim') {
-    return path.resolve(process.cwd(), '.canopycms/branches')
-  }
-  return path.resolve(process.cwd()) // TODO this may not always be the same?
+  return operatingStrategy(mode).getBaseRoot(override)
 }
 
 export const resolveBranchPath = (options: BranchPathOptions): BranchPathResult => {
@@ -50,8 +41,7 @@ export const resolveBranchPath = (options: BranchPathOptions): BranchPathResult 
   const baseWithSep = normalizedBase.endsWith(path.sep)
     ? normalizedBase
     : `${normalizedBase}${path.sep}`
-  const branchRoot =
-    options.mode === 'local-simple' ? normalizedBase : path.resolve(normalizedBase, safeBranch)
+  const branchRoot = operatingStrategy(options.mode).getBranchRoot(normalizedBase, safeBranch)
 
   const withinBase = (target: string) => {
     const resolved = path.resolve(target)
