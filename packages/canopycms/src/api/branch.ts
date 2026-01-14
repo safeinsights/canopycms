@@ -50,6 +50,7 @@ import { isPrivileged, isAdmin } from '../reserved-groups'
 import type { PathPermission } from '../config'
 import { loadPathPermissions } from '../permissions-loader'
 import type { CanopyUser } from '../user'
+import { isSettingsBranch } from '../settings-branch-utils'
 
 /**
  * Check if a user can create branches.
@@ -115,6 +116,15 @@ export const createBranchHandler = async (
       branchName,
       userId: req.user.userId,
     })
+
+    // Prevent creating branch with settings branch name
+    if (isSettingsBranch(branchName, ctx.services.config)) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'Cannot create branch with reserved settings branch name',
+      }
+    }
 
     // Load path permissions from the main branch's JSON file
     const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
@@ -216,6 +226,15 @@ export const deleteBranchHandler = async (
   params: z.infer<typeof branchParamSchema>,
 ): Promise<BranchDeleteResponse> => {
   const branchName = params.branch
+
+  // Prevent deleting settings branch
+  if (isSettingsBranch(branchName, ctx.services.config)) {
+    return {
+      ok: false,
+      status: 400,
+      error: 'Cannot delete settings branch',
+    }
+  }
 
   // Disallow delete in modes that don't support branching (branch = developer's git checkout)
   const operatingMode = ctx.services.config.mode

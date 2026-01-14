@@ -105,7 +105,11 @@ const getInternalGroupsHandler = async (
     }
 
     const { context, mode } = result
-    const groups = await loadInternalGroups(context.branchRoot, mode)
+    const groups = await loadInternalGroups(
+      context.branchRoot,
+      mode,
+      ctx.services.bootstrapAdminIds,
+    )
 
     return {
       ok: true,
