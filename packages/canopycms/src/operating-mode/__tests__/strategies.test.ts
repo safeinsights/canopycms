@@ -246,28 +246,12 @@ describe('Operating Mode Strategies', () => {
         expect(path).toContain('permissions.json')
       })
 
-      it('should have fallback permissions file in old location', () => {
-        const strategy = operatingStrategy(mode)
-        const fallback = strategy.getFallbackPermissionsFilePath('/root')
-        expect(fallback).toContain('/root')
-        expect(fallback).toContain('.canopycms')
-        expect(fallback).toContain('permissions.json')
-      })
-
       it('should construct groups file path', () => {
         const strategy = operatingStrategy(mode)
         const path = strategy.getGroupsFilePath('/root')
         expect(path).toContain('/root')
         expect(path).toContain('.canopy-meta')
         expect(path).toContain('groups.json')
-      })
-
-      it('should have fallback groups file in old location', () => {
-        const strategy = operatingStrategy(mode)
-        const fallback = strategy.getFallbackGroupsFilePath('/root')
-        expect(fallback).toContain('/root')
-        expect(fallback).toContain('.canopycms')
-        expect(fallback).toContain('groups.json')
       })
 
       it('should NOT require existing repo', () => {
@@ -409,22 +393,6 @@ describe('Operating Mode Strategies', () => {
         const path = strategy.getPermissionsFilePath('/root')
         expect(path).toContain('.canopy-dev')
         expect(path).toContain('permissions.json')
-      })
-
-      it('should have fallback permissions file in old location', () => {
-        const strategy = operatingStrategy(mode)
-        const fallback = strategy.getFallbackPermissionsFilePath('/root')
-        expect(fallback).toContain('/root')
-        expect(fallback).toContain('.canopycms')
-        expect(fallback).toContain('permissions.local.json')
-      })
-
-      it('should have fallback groups file in old location', () => {
-        const strategy = operatingStrategy(mode)
-        const fallback = strategy.getFallbackGroupsFilePath('/root')
-        expect(fallback).toContain('/root')
-        expect(fallback).toContain('.canopycms')
-        expect(fallback).toContain('groups.local.json')
       })
 
       it('should require existing repo', () => {

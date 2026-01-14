@@ -32,22 +32,8 @@ export const loadPermissionsFile = async (
     const validated = PermissionsFileSchema.parse(parsed)
     return validated
   } catch (error) {
-    // File doesn't exist - try fallback
+    // File doesn't exist
     if ((error as any).code === 'ENOENT') {
-      const fallbackPath = operatingStrategy(mode).getFallbackPermissionsFilePath(repoRoot)
-
-      if (fallbackPath) {
-        try {
-          const fileContent = await fs.readFile(fallbackPath, 'utf-8')
-          const parsed = JSON.parse(fileContent)
-          const validated = PermissionsFileSchema.parse(parsed)
-          return validated
-        } catch {
-          // Fallback also doesn't exist
-          return null
-        }
-      }
-      // No file found
       return null
     }
 

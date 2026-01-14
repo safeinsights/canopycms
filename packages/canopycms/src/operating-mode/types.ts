@@ -118,12 +118,6 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
    */
   getGitExcludePattern(): string
 
-  /**
-   * @deprecated Use getContentRoot(), getBranchesRoot(), or getBranchRoot() instead
-   * Resolve the base root directory for branches
-   */
-  getBaseRoot(override?: string): string
-
   // ========================================================================
   // File Paths (needs path.join)
   // ========================================================================
@@ -131,14 +125,8 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
   /** Get the full path to the permissions file */
   getPermissionsFilePath(root: string): string
 
-  /** Get fallback permissions file path (if any) for backwards compatibility */
-  getFallbackPermissionsFilePath(root: string): string | null
-
   /** Get the full path to the groups file */
   getGroupsFilePath(root: string): string
-
-  /** Get fallback groups file path (if any) */
-  getFallbackGroupsFilePath(root: string): string | null
 
   // ========================================================================
   // Git Operations

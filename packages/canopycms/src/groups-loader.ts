@@ -33,22 +33,8 @@ export const loadGroupsFile = async (
     const validated = GroupsFileSchema.parse(parsed)
     return validated
   } catch (error) {
-    // File doesn't exist - try fallback
+    // File doesn't exist
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      const fallbackPath = operatingStrategy(mode).getFallbackGroupsFilePath(branchRoot)
-
-      if (fallbackPath) {
-        try {
-          const content = await fs.readFile(fallbackPath, 'utf-8')
-          const parsed = JSON.parse(content)
-          const validated = GroupsFileSchema.parse(parsed)
-          return validated
-        } catch {
-          // Fallback also doesn't exist
-          return null
-        }
-      }
-      // No file found
       return null
     }
     throw error
