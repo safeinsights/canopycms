@@ -183,15 +183,14 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
     const git = createGitManagerFor(options.branchRoot)
 
     try {
-      // Ensure settings branch exists (create from base branch if needed)
-      await git.checkoutBranch(settingsBranch)
-
-      // Pull latest (best effort)
+      // Pull latest changes from remote settings branch (not base branch!)
+      // Settings branches are orphan branches and should never merge from main
+      // Note: BranchWorkspaceManager already ensured we're on the settings branch
       try {
-        await git.pullBase()
+        await git.pullCurrentBranch()
       } catch (err) {
-        // First push, no remote branch yet
-        console.log('No remote branch yet, will create on push')
+        // First push, no remote branch yet, or no changes to pull
+        console.log('No remote settings branch changes to pull (this is normal for first commit)')
       }
 
       // Commit

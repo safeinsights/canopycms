@@ -69,7 +69,8 @@
       "Bash(npm run dev:*)",
       "Bash(git checkout:*)",
       "Bash(npm run generate-client:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(git grep:*)"
     ]
   }
 }

@@ -23,7 +23,7 @@ describe('permissions loader', () => {
   describe('loadPathPermissions', () => {
     it('loads from file when it exists', async () => {
       // Create permissions file
-      const canopyDir = path.join(testRoot, '.canopy-meta')
+      const canopyDir = testRoot
       await fs.mkdir(canopyDir, { recursive: true })
       await fs.writeFile(
         path.join(canopyDir, 'permissions.json'),
@@ -67,7 +67,7 @@ describe('permissions loader', () => {
       const consoleSpy = mockConsole()
 
       // Create invalid permissions file in new location
-      const canopyDir = path.join(testRoot, '.canopy-meta')
+      const canopyDir = testRoot
       await fs.mkdir(canopyDir, { recursive: true })
       await fs.writeFile(path.join(canopyDir, 'permissions.json'), 'invalid json', 'utf-8')
 
@@ -82,7 +82,7 @@ describe('permissions loader', () => {
       const consoleSpy = mockConsole()
 
       // Create file with wrong version in new location
-      const canopyDir = path.join(testRoot, '.canopy-meta')
+      const canopyDir = testRoot
       await fs.mkdir(canopyDir, { recursive: true })
       await fs.writeFile(
         path.join(canopyDir, 'permissions.json'),
@@ -118,7 +118,7 @@ describe('permissions loader', () => {
 
       await savePathPermissions(testRoot, permissions, 'admin-user', 'prod')
 
-      const filePath = path.join(testRoot, '.canopy-meta', 'permissions.json')
+      const filePath = path.join(testRoot, 'permissions.json')
       const fileContent = await fs.readFile(filePath, 'utf-8')
       const parsed = JSON.parse(fileContent)
 
@@ -130,16 +130,6 @@ describe('permissions loader', () => {
         path: 'content/admin/**',
         edit: {},
       })
-    })
-
-    it('creates .canopy-meta directory if it does not exist', async () => {
-      const permissions = [{ path: 'content/**', edit: { allowedGroups: ['all'] } }]
-
-      await savePathPermissions(testRoot, permissions, 'user-1', 'prod')
-
-      const canopyDir = path.join(testRoot, '.canopy-meta')
-      const stats = await fs.stat(canopyDir)
-      expect(stats.isDirectory()).toBe(true)
     })
 
     it('validates permissions before saving', async () => {
@@ -173,7 +163,7 @@ describe('permissions loader', () => {
     it('creates default file if it does not exist', async () => {
       await ensurePermissionsFile(testRoot, 'admin-user', 'prod')
 
-      const filePath = path.join(testRoot, '.canopy-meta', 'permissions.json')
+      const filePath = path.join(testRoot, 'permissions.json')
       const fileContent = await fs.readFile(filePath, 'utf-8')
       const parsed = JSON.parse(fileContent)
 

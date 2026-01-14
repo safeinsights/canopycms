@@ -353,6 +353,13 @@ export class GitManager {
     await this.git.merge([`${this.remote}/${this.baseBranch}`])
   }
 
+  async pullCurrentBranch(): Promise<void> {
+    const branches = await this.git.branch()
+    const currentBranch = branches.current
+    await this.git.fetch(this.remote, currentBranch)
+    await this.git.merge([`${this.remote}/${currentBranch}`])
+  }
+
   async rebaseOntoBase(): Promise<void> {
     await this.git.fetch(this.remote, this.baseBranch)
     await this.git.rebase([`${this.remote}/${this.baseBranch}`])
@@ -476,7 +483,7 @@ export class GitManager {
    * Orphan branches have no shared history with other branches - they start fresh.
    * This is perfect for deployment-specific settings that shouldn't pollute content history.
    *
-   * The branch contains only settings files at root (no .canopy-meta/, no other structure).
+   * The branch contains only settings files in .canopy-meta/ (groups.json, permissions.json).
    *
    * @param branchName - Name of the orphan branch (e.g., 'canopycms-settings-prod')
    * @param initialFiles - Files to commit to the new branch (e.g., { 'permissions.json': '{}', 'groups.json': '{}' })

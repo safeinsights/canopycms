@@ -242,7 +242,6 @@ describe('Operating Mode Strategies', () => {
         const strategy = operatingStrategy(mode)
         const path = strategy.getPermissionsFilePath('/root')
         expect(path).toContain('/root')
-        expect(path).toContain('.canopy-meta')
         expect(path).toContain('permissions.json')
       })
 
@@ -250,7 +249,6 @@ describe('Operating Mode Strategies', () => {
         const strategy = operatingStrategy(mode)
         const path = strategy.getGroupsFilePath('/root')
         expect(path).toContain('/root')
-        expect(path).toContain('.canopy-meta')
         expect(path).toContain('groups.json')
       })
 
