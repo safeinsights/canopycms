@@ -149,7 +149,9 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     const mainBranchContext = await apiCtx.getBranchContext(baseBranch)
     const operatingMode = apiCtx.services.config.mode
     const internalGroups = mainBranchContext
-      ? await loadInternalGroups(mainBranchContext.branchRoot, operatingMode).catch(() => [])
+      ? await loadInternalGroups(mainBranchContext.branchRoot, operatingMode, apiCtx.services.bootstrapAdminIds).catch(
+          () => []
+        )
       : []
 
     const user = authResultToCanopyUser(authResult, apiCtx.services.bootstrapAdminIds, internalGroups)

@@ -79,6 +79,7 @@ const createMockServices = () => ({
     contentRoot: 'content',
     gitBotAuthorName: 'Test Bot',
     gitBotAuthorEmail: 'bot@test.com',
+    mode: 'dev' as const,
   },
   checkBranchAccess: vi.fn().mockReturnValue({ allowed: true, reason: '' }),
   checkPathAccess: vi.fn().mockReturnValue({ allowed: true }),

@@ -226,10 +226,16 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   }
 
   const operatingMode = config.mode
+  const modeStrategy = operatingStrategy(operatingMode)
+
+  // Get settings branch name for registry filtering
+  const settingsBranchName = modeStrategy.usesSeparateSettingsBranch()
+    ? modeStrategy.getSettingsBranchName(config)
+    : null
 
   // Create branch registry only in branching modes
-  const registry = operatingStrategy(operatingMode).supportsBranching()
-    ? new BranchRegistry(getDefaultBranchBase(operatingMode))
+  const registry = modeStrategy.supportsBranching()
+    ? new BranchRegistry(getDefaultBranchBase(operatingMode), settingsBranchName)
     : undefined
 
   // Create GitHub service if applicable (only for modes that support pull requests)

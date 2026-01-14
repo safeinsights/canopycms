@@ -29,12 +29,14 @@ export class BranchRegistry {
   private readonly registryPath: string
   private readonly stalePath: string
   private readonly tempPath: string
+  private readonly settingsBranchName: string | null
 
-  constructor(root: string) {
+  constructor(root: string, settingsBranchName: string | null = null) {
     this.root = path.resolve(root)
     this.registryPath = path.join(this.root, REGISTRY_FILE)
     this.stalePath = path.join(this.root, REGISTRY_STALE_FILE)
     this.tempPath = path.join(this.root, REGISTRY_TEMP_FILE)
+    this.settingsBranchName = settingsBranchName
   }
 
   /**
@@ -121,6 +123,11 @@ export class BranchRegistry {
       for (const entry of entries) {
         // Skip non-directories and hidden directories (like .canopy-meta, .canopy-prod-sim)
         if (!entry.isDirectory() || entry.name.startsWith('.')) {
+          continue
+        }
+
+        // Skip settings branch
+        if (this.settingsBranchName && entry.name === this.settingsBranchName) {
           continue
         }
 

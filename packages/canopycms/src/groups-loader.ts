@@ -4,6 +4,7 @@ import type { CanopyUserId } from './types'
 import { GroupsFileSchema, createDefaultGroupsFile, type InternalGroup, type GroupsFile } from './groups-file'
 import type { OperatingMode } from './operating-mode'
 import { operatingStrategy } from './operating-mode'
+import { RESERVED_GROUPS } from './reserved-groups'
 
 /**
  * Get the appropriate groups file path based on mode
@@ -38,13 +39,55 @@ export const loadGroupsFile = async (
 
 /**
  * Load internal groups from .canopycms/groups.json (or .local.json in dev mode)
+ * Ensures Admins and Reviewers groups always exist, adding them dynamically if not present.
+ * If Admins group exists in file, merges with bootstrap admin IDs.
  */
 export const loadInternalGroups = async (
   branchRoot: string,
-  mode: OperatingMode
+  mode: OperatingMode,
+  bootstrapAdminIds: Set<string> = new Set()
 ): Promise<InternalGroup[]> => {
   const file = await loadGroupsFile(branchRoot, mode)
-  return file?.groups ?? []
+  const fileGroups = file?.groups ?? []
+
+  // Find existing Admins and Reviewers groups
+  let adminsGroup = fileGroups.find((g) => g.id === RESERVED_GROUPS.ADMINS)
+  let reviewersGroup = fileGroups.find((g) => g.id === RESERVED_GROUPS.REVIEWERS)
+
+  // Ensure Admins group exists and includes bootstrap admins
+  if (adminsGroup) {
+    // Merge bootstrap admin IDs with existing members
+    const allAdmins = new Set([...adminsGroup.members, ...bootstrapAdminIds])
+    adminsGroup = {
+      ...adminsGroup,
+      members: Array.from(allAdmins),
+    }
+  } else {
+    // Create Admins group with bootstrap admins
+    adminsGroup = {
+      id: RESERVED_GROUPS.ADMINS,
+      name: RESERVED_GROUPS.ADMINS,
+      description: 'Full access to all CMS operations',
+      members: Array.from(bootstrapAdminIds),
+    }
+  }
+
+  // Ensure Reviewers group exists
+  if (!reviewersGroup) {
+    reviewersGroup = {
+      id: RESERVED_GROUPS.REVIEWERS,
+      name: RESERVED_GROUPS.REVIEWERS,
+      description: 'Can review branches, request changes, approve PRs',
+      members: [],
+    }
+  }
+
+  // Return all groups: reserved groups first, then other groups
+  const otherGroups = fileGroups.filter(
+    (g) => g.id !== RESERVED_GROUPS.ADMINS && g.id !== RESERVED_GROUPS.REVIEWERS
+  )
+
+  return [adminsGroup, reviewersGroup, ...otherGroups]
 }
 
 /**
