@@ -37,6 +37,19 @@ export class BranchWorkspaceManager {
     this.config = config
   }
 
+  private isSettingsBranch(branchName: string, mode: OperatingMode): boolean {
+    const strategy = operatingStrategy(mode)
+
+    // Only relevant for modes that use separate settings branch
+    if (!strategy.usesSeparateSettingsBranch()) {
+      return false
+    }
+
+    // Get the expected settings branch name for this mode
+    const settingsBranchName = strategy.getSettingsBranchName(this.config)
+    return branchName === settingsBranchName
+  }
+
   private async ensureGitWorkspace(options: {
     branchRoot: string
     branchName: string
@@ -110,7 +123,17 @@ export class BranchWorkspaceManager {
             await git.ensureRemote(remoteUrl)
           }
           await git.ensureAuthor({ name: authorName, email: authorEmail })
-          await git.checkoutBranch(options.branchName)
+
+          // Check if this is a settings branch
+          const isSettingsBranch = this.isSettingsBranch(options.branchName, options.mode)
+
+          if (isSettingsBranch) {
+            // Create orphan branch with NO initial files
+            // Files will be created on-demand by saveInternalGroups/savePathPermissions
+            await git.createOrphanSettingsBranch(options.branchName, {})
+          } else {
+            await git.checkoutBranch(options.branchName)
+          }
         } finally {
           // Always clean up the lock when done (success or failure)
           workspaceInitLocks.delete(options.branchRoot)

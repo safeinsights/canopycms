@@ -101,9 +101,9 @@ export const saveInternalGroups = async (
   contentVersion?: number
 ): Promise<void> => {
   const groupsPath = getGroupsFilePath(branchRoot, mode)
-  const groupsDir = join(branchRoot, '.canopycms')
+  const groupsDir = join(groupsPath, '..')
 
-  // Ensure .canopycms directory exists
+  // Ensure parent directory exists (e.g., .canopy-meta or .canopycms)
   await fs.mkdir(groupsDir, { recursive: true })
 
   const groupsFile: GroupsFile = {

@@ -51,11 +51,11 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
   }
 
   getPermissionsFilePath(root: string): string {
-    return path.join(root, '.canopy-meta', this.getPermissionsFileName())
+    return path.join(root, this.getPermissionsFileName())
   }
 
   getGroupsFilePath(root: string): string {
-    return path.join(root, '.canopy-meta', this.getGroupsFileName())
+    return path.join(root, this.getGroupsFileName())
   }
 
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
@@ -135,11 +135,11 @@ class LocalProdSimStrategy
   }
 
   getPermissionsFilePath(root: string): string {
-    return path.join(root, '.canopy-meta', this.getPermissionsFileName())
+    return path.join(root, this.getPermissionsFileName())
   }
 
   getGroupsFilePath(root: string): string {
-    return path.join(root, '.canopy-meta', this.getGroupsFileName())
+    return path.join(root, this.getGroupsFileName())
   }
 
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {

@@ -336,13 +336,14 @@ describe('commitToSettingsBranch', () => {
   })
 
   it('should default to "canopycms-settings" branch when settingsBranch not configured', async () => {
-    const checkoutBranchMock = vi.fn()
+    const branchMock = vi.fn().mockResolvedValue({ all: ['canopycms-settings'], current: 'canopycms-settings' })
+    const fetchMock = vi.fn()
     const mockGitInstance = {
-      status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'main' }),
-      branch: vi.fn().mockResolvedValue({ all: ['main'] }),
+      status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'canopycms-settings' }),
+      branch: branchMock,
       checkout: vi.fn(),
-      checkoutBranch: checkoutBranchMock,
-      fetch: vi.fn(),
+      checkoutBranch: vi.fn(),
+      fetch: fetchMock,
       merge: vi.fn(),
       rebase: vi.fn(),
       add: vi.fn(),
@@ -374,18 +375,19 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    // Should have attempted to checkout 'canopycms-settings' branch from origin/main
-    expect(checkoutBranchMock).toHaveBeenCalledWith('canopycms-settings', 'origin/main')
+    // Should attempt to pull from the settings branch
+    expect(fetchMock).toHaveBeenCalledWith('origin', 'canopycms-settings')
   })
 
-  it('should create settings branch if it does not exist', async () => {
-    const checkoutBranchMock = vi.fn()
+  it('should pull from the correct settings branch', async () => {
+    const branchMock = vi.fn().mockResolvedValue({ all: ['my-settings'], current: 'my-settings' })
+    const fetchMock = vi.fn()
     const mockGitInstance = {
-      status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'main' }),
-      branch: vi.fn().mockResolvedValue({ all: ['main'] }),
+      status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'my-settings' }),
+      branch: branchMock,
       checkout: vi.fn(),
-      checkoutBranch: checkoutBranchMock,
-      fetch: vi.fn(),
+      checkoutBranch: vi.fn(),
+      fetch: fetchMock,
       merge: vi.fn(),
       rebase: vi.fn(),
       add: vi.fn(),
@@ -417,24 +419,28 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    // Should have called checkoutBranch which creates the branch if it doesn't exist
-    expect(checkoutBranchMock).toHaveBeenCalledWith('my-settings', 'origin/main')
+    // Should pull from the settings branch (not base branch)
+    expect(fetchMock).toHaveBeenCalledWith('origin', 'my-settings')
   })
 
   it('should use configured settingsBranch value', async () => {
-    const checkoutBranchMock = vi.fn()
+    const branchMock = vi.fn().mockResolvedValue({ all: ['custom-settings-branch'], current: 'custom-settings-branch' })
+    const fetchMock = vi.fn().mockResolvedValue(undefined)
+    const pushMock = vi.fn().mockResolvedValue(undefined)
     const mockGitInstance = {
-      status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'main' }),
-      branch: vi.fn().mockResolvedValue({ all: ['main'] }),
-      checkout: vi.fn(),
-      checkoutBranch: checkoutBranchMock,
-      fetch: vi.fn(),
-      merge: vi.fn(),
-      rebase: vi.fn(),
-      add: vi.fn(),
-      commit: vi.fn(),
-      push: vi.fn(),
+      status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'custom-settings-branch' }),
+      branch: branchMock,
+      checkout: vi.fn().mockResolvedValue(undefined),
+      checkoutBranch: vi.fn().mockResolvedValue(undefined),
+      fetch: fetchMock,
+      merge: vi.fn().mockResolvedValue(undefined),
+      rebase: vi.fn().mockResolvedValue(undefined),
+      add: vi.fn().mockResolvedValue(undefined),
+      commit: vi.fn().mockResolvedValue(undefined),
+      push: pushMock,
       revparse: vi.fn().mockResolvedValue('main'),
+      addConfig: vi.fn().mockResolvedValue(undefined),
+      listConfig: vi.fn().mockResolvedValue({ all: { 'user.name': 'Test Bot', 'user.email': 'bot@test.com' } }),
     }
 
     const { simpleGit } = await import('simple-git')
@@ -460,6 +466,9 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    expect(checkoutBranchMock).toHaveBeenCalledWith('custom-settings-branch', 'origin/main')
+    // Should pull from the settings branch (not base branch)
+    expect(fetchMock).toHaveBeenCalledWith('origin', 'custom-settings-branch')
+    // Should push to the settings branch
+    expect(pushMock).toHaveBeenCalledWith('origin', 'custom-settings-branch')
   })
 })

@@ -6,12 +6,13 @@ Little
 
 Let's fix these issues and add tests for them
 
+1. [ ] permissions should point to IDs (for some move resiliency); groups should have random IDs (probably don't need manual IDs); group permissions should reference IDs
 2. [ ] Admins and Reviewers groups should be autocreated if they don't exist. (can we simply check in empty to groups.json?)
-6. [ ] Content drawer tree always collapsed when opened. Can its expanded folders always include those above the current entry?
 8. [ ] Lambda-friendly initialization storage in memory outside of request
 10. [ ] Is content navigator filtered by permission?
 11. [ ] Final decision on where permissions and groups are stored -- like do we publish them in the normal flow?
 12. [ ] YAML as easier way to see MDX? Markdown editors that do MDX?
+13. [ ] Prevent someone from making a canopycms-settings branch, or switching to it
 
 
 Bigger not listed in master plan
