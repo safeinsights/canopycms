@@ -153,6 +153,10 @@ export const listBranchesHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
 ): Promise<BranchListResponse> => {
+  if (!ctx.services.registry) {
+    return { ok: false, status: 400, error: 'Branch operations not available in dev mode' }
+  }
+
   const allBranches = await ctx.services.registry.list()
 
   // Admins and Reviewers see all branches
@@ -237,7 +241,7 @@ export const deleteBranchHandler = async (
   }
 
   // Delete branch metadata file so it disappears from registry scans
-  const metadataFile = path.join(branchContext.branchRoot, '.canopycms', 'branch.json')
+  const metadataFile = path.join(branchContext.branchRoot, '.canopy-meta', 'branch.json')
   try {
     await fs.unlink(metadataFile)
   } catch (err: any) {
@@ -256,6 +260,9 @@ export const deleteBranchHandler = async (
   }
 
   // Invalidate registry cache so next list() will regenerate without this branch
+  if (!ctx.services.registry) {
+    return { ok: false, status: 400, error: 'Branch operations not available in dev mode' }
+  }
   await ctx.services.registry.invalidate()
 
   return { ok: true, status: 200, data: { deleted: true } }

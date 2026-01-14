@@ -25,8 +25,8 @@ const sanitizeBranchName = (branchName: string): string => {
   return trimmedDots || 'branch'
 }
 
-const resolveBaseRoot = (mode: OperatingMode, override?: string): string => {
-  return operatingStrategy(mode).getBaseRoot(override)
+const resolveBranchesRoot = (mode: OperatingMode, override?: string): string => {
+  return operatingStrategy(mode).getBranchesRoot(override)
 }
 
 export const resolveBranchPath = (options: BranchPathOptions): BranchPathResult => {
@@ -34,12 +34,13 @@ export const resolveBranchPath = (options: BranchPathOptions): BranchPathResult 
     throw new BranchPathError('Branch name cannot contain traversal segments')
   }
   const safeBranch = sanitizeBranchName(options.branchName)
-  const baseRoot = resolveBaseRoot(options.mode, options.basePathOverride)
+  const strategy = operatingStrategy(options.mode)
+  const baseRoot = resolveBranchesRoot(options.mode, options.basePathOverride)
   const normalizedBase = path.resolve(baseRoot)
   const baseWithSep = normalizedBase.endsWith(path.sep)
     ? normalizedBase
     : `${normalizedBase}${path.sep}`
-  const branchRoot = operatingStrategy(options.mode).getBranchRoot(normalizedBase, safeBranch)
+  const branchRoot = strategy.getBranchRoot(safeBranch, options.basePathOverride)
 
   const withinBase = (target: string) => {
     const resolved = path.resolve(target)
@@ -60,7 +61,7 @@ export const ensureBranchRoot = async (options: BranchPathOptions): Promise<Bran
 }
 
 export const getDefaultBranchBase = (mode: OperatingMode, override?: string): string =>
-  resolveBaseRoot(mode, override)
+  resolveBranchesRoot(mode, override)
 
 export const resolveBranchPaths = (
   branchContext: BranchContext,
@@ -68,7 +69,9 @@ export const resolveBranchPaths = (
   basePathOverride?: string,
 ): BranchPathResult => {
   if (branchContext.branchRoot || branchContext.baseRoot) {
-    const baseRoot = path.resolve(branchContext.baseRoot ?? resolveBaseRoot(mode, basePathOverride))
+    const baseRoot = path.resolve(
+      branchContext.baseRoot ?? resolveBranchesRoot(mode, basePathOverride),
+    )
     const branchRoot = path.resolve(branchContext.branchRoot ?? baseRoot)
     return {
       branchRoot,

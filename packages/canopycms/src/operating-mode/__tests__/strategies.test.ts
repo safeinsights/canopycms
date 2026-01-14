@@ -147,14 +147,14 @@ describe('Operating Mode Strategies', () => {
         expect(strategy.supportsPullRequests()).toBe(false)
       })
 
-      it('should use local permissions file name', () => {
+      it('should use standard permissions file name', () => {
         const strategy = clientOperatingStrategy(mode)
-        expect(strategy.getPermissionsFileName()).toBe('permissions.local.json')
+        expect(strategy.getPermissionsFileName()).toBe('permissions.json')
       })
 
-      it('should use local groups file name', () => {
+      it('should use standard groups file name', () => {
         const strategy = clientOperatingStrategy(mode)
-        expect(strategy.getGroupsFileName()).toBe('groups.local.json')
+        expect(strategy.getGroupsFileName()).toBe('groups.json')
       })
 
       it('should NOT commit changes', () => {
@@ -193,14 +193,14 @@ describe('Operating Mode Strategies', () => {
   describe('Client-Unsafe Strategies', () => {
     describe('Production Mode', () => {
       const mode: OperatingMode = 'prod'
-      const originalEnv = process.env.CANOPYCMS_BRANCH_ROOT
+      const originalEnv = process.env.CANOPYCMS_WORKSPACE_ROOT
 
       afterEach(() => {
         // Restore original env
         if (originalEnv) {
-          process.env.CANOPYCMS_BRANCH_ROOT = originalEnv
+          process.env.CANOPYCMS_WORKSPACE_ROOT = originalEnv
         } else {
-          delete process.env.CANOPYCMS_BRANCH_ROOT
+          delete process.env.CANOPYCMS_WORKSPACE_ROOT
         }
       })
 
@@ -212,30 +212,29 @@ describe('Operating Mode Strategies', () => {
         expect(strategy.getPermissionsFileName()).toBe('permissions.json')
       })
 
-      it('should use default base root', () => {
-        delete process.env.CANOPYCMS_BRANCH_ROOT
+      it('should use default branches root', () => {
+        delete process.env.CANOPYCMS_WORKSPACE_ROOT
         const strategy = operatingStrategy(mode)
-        const baseRoot = strategy.getBaseRoot()
-        expect(baseRoot).toContain('/mnt/efs/site')
+        const branchesRoot = strategy.getBranchesRoot()
+        expect(branchesRoot).toContain('/mnt/efs/workspace/branches')
       })
 
-      it('should use env variable for base root', () => {
-        process.env.CANOPYCMS_BRANCH_ROOT = '/custom/path'
+      it('should use env variable for branches root', () => {
+        process.env.CANOPYCMS_WORKSPACE_ROOT = '/custom/path'
         const strategy = operatingStrategy(mode)
-        const baseRoot = strategy.getBaseRoot()
-        expect(baseRoot).toContain('/custom/path')
+        const branchesRoot = strategy.getBranchesRoot()
+        expect(branchesRoot).toContain('/custom/path/branches')
       })
 
-      it('should use override for base root', () => {
+      it('should get content root', () => {
         const strategy = operatingStrategy(mode)
-        const baseRoot = strategy.getBaseRoot('/override/path')
-        expect(baseRoot).toContain('/override/path')
+        const contentRoot = strategy.getContentRoot()
+        expect(contentRoot).toContain('content')
       })
 
       it('should create branch subdirectories', () => {
         const strategy = operatingStrategy(mode)
-        const branchRoot = strategy.getBranchRoot('/base', 'feature-branch')
-        expect(branchRoot).toContain('/base')
+        const branchRoot = strategy.getBranchRoot('feature-branch')
         expect(branchRoot).toContain('feature-branch')
       })
 
@@ -243,26 +242,32 @@ describe('Operating Mode Strategies', () => {
         const strategy = operatingStrategy(mode)
         const path = strategy.getPermissionsFilePath('/root')
         expect(path).toContain('/root')
-        expect(path).toContain('.canopycms')
+        expect(path).toContain('.canopy-meta')
         expect(path).toContain('permissions.json')
       })
 
-      it('should have no fallback permissions file', () => {
+      it('should have fallback permissions file in old location', () => {
         const strategy = operatingStrategy(mode)
-        expect(strategy.getFallbackPermissionsFilePath('/root')).toBeNull()
+        const fallback = strategy.getFallbackPermissionsFilePath('/root')
+        expect(fallback).toContain('/root')
+        expect(fallback).toContain('.canopycms')
+        expect(fallback).toContain('permissions.json')
       })
 
       it('should construct groups file path', () => {
         const strategy = operatingStrategy(mode)
         const path = strategy.getGroupsFilePath('/root')
         expect(path).toContain('/root')
-        expect(path).toContain('.canopycms')
+        expect(path).toContain('.canopy-meta')
         expect(path).toContain('groups.json')
       })
 
-      it('should have no fallback groups file', () => {
+      it('should have fallback groups file in old location', () => {
         const strategy = operatingStrategy(mode)
-        expect(strategy.getFallbackGroupsFilePath('/root')).toBeNull()
+        const fallback = strategy.getFallbackGroupsFilePath('/root')
+        expect(fallback).toContain('/root')
+        expect(fallback).toContain('.canopycms')
+        expect(fallback).toContain('groups.json')
       })
 
       it('should NOT require existing repo', () => {
@@ -270,10 +275,16 @@ describe('Operating Mode Strategies', () => {
         expect(strategy.requiresExistingRepo()).toBe(false)
       })
 
-      it('should use canopycms-settings branch by default', () => {
+      it('should use canopycms-settings-prod branch by default', () => {
         const strategy = operatingStrategy(mode)
         const branchName = strategy.getSettingsBranchName({})
-        expect(branchName).toBe('canopycms-settings')
+        expect(branchName).toBe('canopycms-settings-prod')
+      })
+
+      it('should use deploymentName for settings branch', () => {
+        const strategy = operatingStrategy(mode)
+        const branchName = strategy.getSettingsBranchName({ deploymentName: 'staging' })
+        expect(branchName).toBe('canopycms-settings-staging')
       })
 
       it('should respect custom settings branch', () => {
@@ -315,6 +326,11 @@ describe('Operating Mode Strategies', () => {
         const strategy = operatingStrategy(mode)
         expect(strategy.shouldCreateSettingsPR({ autoCreateSettingsPR: false })).toBe(false)
       })
+
+      it('should return git exclude pattern', () => {
+        const strategy = operatingStrategy(mode)
+        expect(strategy.getGitExcludePattern()).toBe('.canopy-meta/')
+      })
     })
 
     describe('Local Production Simulation Mode', () => {
@@ -328,16 +344,15 @@ describe('Operating Mode Strategies', () => {
         expect(strategy.supportsPullRequests()).toBe(false)
       })
 
-      it('should use .canopycms/branches as base', () => {
+      it('should use .canopy-prod-sim/branches as branches root', () => {
         const strategy = operatingStrategy(mode)
-        const baseRoot = strategy.getBaseRoot()
-        expect(baseRoot).toContain('.canopycms/branches')
+        const branchesRoot = strategy.getBranchesRoot()
+        expect(branchesRoot).toContain('.canopy-prod-sim/branches')
       })
 
       it('should create branch subdirectories', () => {
         const strategy = operatingStrategy(mode)
-        const branchRoot = strategy.getBranchRoot('/base', 'feature-branch')
-        expect(branchRoot).toContain('/base')
+        const branchRoot = strategy.getBranchRoot('feature-branch')
         expect(branchRoot).toContain('feature-branch')
       })
 
@@ -355,6 +370,11 @@ describe('Operating Mode Strategies', () => {
         const strategy = operatingStrategy(mode)
         expect(strategy.shouldCreateSettingsPR({})).toBe(false)
       })
+
+      it('should return git exclude pattern', () => {
+        const strategy = operatingStrategy(mode)
+        expect(strategy.getGitExcludePattern()).toBe('.canopy-meta/')
+      })
     })
 
     describe('Local Simple Mode', () => {
@@ -365,42 +385,46 @@ describe('Operating Mode Strategies', () => {
         expect(strategy.mode).toBe('dev')
         expect(strategy.supportsBranching()).toBe(false)
         expect(strategy.shouldCommit()).toBe(false)
-        expect(strategy.getPermissionsFileName()).toBe('permissions.local.json')
+        expect(strategy.getPermissionsFileName()).toBe('permissions.json')
       })
 
-      it('should use current directory as base', () => {
+      it('should get content root', () => {
         const strategy = operatingStrategy(mode)
-        const baseRoot = strategy.getBaseRoot()
-        expect(baseRoot).toBeTruthy()
+        const contentRoot = strategy.getContentRoot()
+        expect(contentRoot).toContain('content')
       })
 
-      it('should NOT create branch subdirectories', () => {
+      it('should throw error when getting branches root', () => {
         const strategy = operatingStrategy(mode)
-        const baseRoot = strategy.getBaseRoot()
-        const branchRoot = strategy.getBranchRoot(baseRoot, 'feature-branch')
-        expect(branchRoot).toBe(baseRoot)
+        expect(() => strategy.getBranchesRoot()).toThrow('No branching in dev mode')
       })
 
-      it('should construct permissions file path with local name', () => {
+      it('should throw error when getting branch root', () => {
+        const strategy = operatingStrategy(mode)
+        expect(() => strategy.getBranchRoot('feature-branch')).toThrow('No branching in dev mode')
+      })
+
+      it('should construct permissions file path in .canopy-dev', () => {
         const strategy = operatingStrategy(mode)
         const path = strategy.getPermissionsFilePath('/root')
-        expect(path).toContain('/root')
-        expect(path).toContain('.canopycms')
-        expect(path).toContain('permissions.local.json')
+        expect(path).toContain('.canopy-dev')
+        expect(path).toContain('permissions.json')
       })
 
-      it('should have fallback permissions file', () => {
+      it('should have fallback permissions file in old location', () => {
         const strategy = operatingStrategy(mode)
         const fallback = strategy.getFallbackPermissionsFilePath('/root')
         expect(fallback).toContain('/root')
-        expect(fallback).toContain('permissions.json')
+        expect(fallback).toContain('.canopycms')
+        expect(fallback).toContain('permissions.local.json')
       })
 
-      it('should have fallback groups file', () => {
+      it('should have fallback groups file in old location', () => {
         const strategy = operatingStrategy(mode)
         const fallback = strategy.getFallbackGroupsFilePath('/root')
         expect(fallback).toContain('/root')
-        expect(fallback).toContain('groups.json')
+        expect(fallback).toContain('.canopycms')
+        expect(fallback).toContain('groups.local.json')
       })
 
       it('should require existing repo', () => {
@@ -444,6 +468,11 @@ describe('Operating Mode Strategies', () => {
         const config = strategy.getRemoteUrlConfig()
         expect(config.shouldAutoInitLocal).toBe(false)
         expect(config.envVarName).toBe('CANOPYCMS_REMOTE_URL')
+      })
+
+      it('should return git exclude pattern', () => {
+        const strategy = operatingStrategy(mode)
+        expect(strategy.getGitExcludePattern()).toBe('.canopy-meta/')
       })
     })
 

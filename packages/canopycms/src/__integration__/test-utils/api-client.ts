@@ -28,6 +28,9 @@ export function createApiClient(options: ApiClientOptions) {
     services,
     authPlugin: options.authPlugin,
     getBranchContext: async (branchName: string) => {
+      if (!services.registry) {
+        throw new Error('Branch registry not available in dev mode')
+      }
       const context = await services.registry.get(branchName)
       return context ?? null
     },

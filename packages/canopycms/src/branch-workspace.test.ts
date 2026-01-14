@@ -13,7 +13,7 @@ import { BranchRegistry } from './branch-registry'
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branchws-'))
 
 describe('BranchWorkspaceManager', () => {
-  it('creates metadata when opening a branch in dev mode', async () => {
+  it('dev mode does not support branching', async () => {
     const root = await tmpDir()
     const git = simpleGit({ baseDir: root })
     await git.init()
@@ -32,28 +32,20 @@ describe('BranchWorkspaceManager', () => {
       }),
     )
 
-    const workspace = await manager.openOrCreateBranch({
-      branchName: 'feature/foo',
-      mode: 'dev',
-      basePathOverride: root,
-      createdBy: 'user-1',
-      title: 'Foo Feature',
-    })
-
-    const metaFile = path.join(workspace.branchRoot, '.canopycms/branch.json')
-    const meta = JSON.parse(await fs.readFile(metaFile, 'utf8'))
-    expect(meta.branch.name).toBe('feature-foo')
-    expect(meta.branch.title).toBe('Foo Feature')
-    expect(workspace.branchRoot).toBeDefined()
-    expect(workspace.baseRoot).toBe(root)
-
-    // Note: In dev mode, there's only one "branch" at the root,
-    // so the registry (which scans subdirectories) doesn't apply
+    // Dev mode should throw when trying to use branching functions
+    await expect(
+      manager.openOrCreateBranch({
+        branchName: 'feature/foo',
+        mode: 'dev',
+        basePathOverride: root,
+        createdBy: 'user-1',
+        title: 'Foo Feature',
+      }),
+    ).rejects.toThrow('No branching in dev mode')
   })
 
   it('creates metadata and registry entry when opening a branch in multi-branch mode', async () => {
     const root = await tmpDir()
-    const branchesRoot = path.join(root, 'branches')
     const remotePath = path.join(root, 'remote.git')
     const seedPath = path.join(root, 'seed')
 
@@ -89,20 +81,24 @@ describe('BranchWorkspaceManager', () => {
     const workspace = await manager.openOrCreateBranch({
       branchName: 'feature/foo',
       mode: 'prod-sim',
-      basePathOverride: branchesRoot,
+      basePathOverride: root,
       createdBy: 'user-1',
       title: 'Foo Feature',
     })
 
-    const metaFile = path.join(workspace.branchRoot, '.canopycms/branch.json')
+    // In prod-sim, strategy creates .canopy-prod-sim/branches structure
+    const expectedBranchesRoot = path.join(root, '.canopy-prod-sim', 'branches')
+
+    // Note: Still using .canopycms for now - Phase 2 will migrate to .canopy-meta
+    const metaFile = path.join(workspace.branchRoot, '.canopy-meta/branch.json')
     const meta = JSON.parse(await fs.readFile(metaFile, 'utf8'))
     expect(meta.branch.name).toBe('feature-foo')
     expect(meta.branch.title).toBe('Foo Feature')
     expect(workspace.branchRoot).toBeDefined()
-    expect(workspace.baseRoot).toBe(branchesRoot)
+    expect(workspace.baseRoot).toBe(expectedBranchesRoot)
 
     // In multi-branch mode, registry can scan subdirectories and find the branch
-    const registry = new BranchRegistry(branchesRoot)
+    const registry = new BranchRegistry(expectedBranchesRoot)
     const entry = await registry.get('feature-foo')
     expect(entry?.branch.name).toBe('feature-foo')
   })
@@ -155,40 +151,18 @@ describe('BranchWorkspaceManager', () => {
     expect(remotes.find((r) => r.name === 'origin')?.refs.fetch).toBe(remotePath)
   })
 
-  it('loads branch state with workspace root for dev', async () => {
+  it('dev mode throws when trying to load branch state', async () => {
     const root = await tmpDir()
     const git = simpleGit({ baseDir: root })
     await git.init()
-    const manager = new BranchWorkspaceManager(
-      defineCanopyTestConfig({
-        schema: {
-          collections: [
-            {
-              name: 'pages',
-              path: 'pages',
-              entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
-            },
-          ],
-          singletons: [],
-        },
+
+    // Dev mode doesn't support branching, so loadBranchContext should throw
+    await expect(
+      loadBranchContext({
+        branchName: 'main',
+        mode: 'dev',
+        basePathOverride: root,
       }),
-    )
-
-    await manager.openOrCreateBranch({
-      branchName: 'main',
-      mode: 'dev',
-      basePathOverride: root,
-      createdBy: 'user-1',
-    })
-
-    const state = await loadBranchContext({
-      branchName: 'main',
-      mode: 'dev',
-      basePathOverride: root,
-    })
-
-    expect(state?.branch.name).toBe('main')
-    expect(state?.branchRoot).toBe(root)
-    expect(state?.baseRoot).toBe(root)
+    ).rejects.toThrow('No branching in dev mode')
   })
 })

@@ -48,7 +48,7 @@ export interface CommentsFile {
 
 /**
  * Manages comment storage for a branch workspace.
- * Comments are stored in .canopycms/comments.json and are NOT committed to git.
+ * Comments are stored in .canopy-meta/comments.json and are NOT committed to git.
  *
  * Uses optimistic locking with retry to handle concurrent modifications safely.
  * This is non-blocking - conflicts are detected via version mismatch and retried.
@@ -58,7 +58,7 @@ export class CommentStore {
   private loadedVersion: number | null = null
 
   constructor(branchRoot: string) {
-    this.filePath = path.join(branchRoot, '.canopycms', 'comments.json')
+    this.filePath = path.join(branchRoot, '.canopy-meta', 'comments.json')
   }
 
   /**

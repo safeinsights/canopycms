@@ -6,7 +6,7 @@ import { BranchRegistry } from './branch-registry'
 import { resolveBranchPath } from './paths'
 import { type OperatingMode } from './operating-mode'
 
-const BRANCH_META_DIR = '.canopycms'
+const BRANCH_META_DIR = '.canopy-meta'
 const BRANCH_META_FILE = 'branch.json'
 
 export interface BranchMetadataFile {

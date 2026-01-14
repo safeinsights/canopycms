@@ -242,10 +242,10 @@ describe('GitManager.resolveRemoteUrl', () => {
         baseBranch: 'main',
       })
 
-      expect(result).toBe(path.join(gitRoot, '.canopycms/remote.git'))
+      expect(result).toBe(path.join(gitRoot, '.canopy-prod-sim/remote.git'))
 
       // Verify remote was created
-      const remoteStat = await fs.stat(path.join(gitRoot, '.canopycms/remote.git'))
+      const remoteStat = await fs.stat(path.join(gitRoot, '.canopy-prod-sim/remote.git'))
       expect(remoteStat.isDirectory()).toBe(true)
     } finally {
       cwdSpy.mockRestore()
@@ -308,21 +308,23 @@ describe('GitManager.resolveRemoteUrl', () => {
       })
 
       // Should resolve to the subdirectory (using real git root path)
-      expect(result).toBe(path.join(gitRoot, 'packages/example/.canopycms/remote.git'))
+      expect(result).toBe(path.join(gitRoot, 'packages/example/.canopy-prod-sim/remote.git'))
 
       // Verify remote was created in the subdirectory
       const actualSubdir = path.join(gitRoot, 'packages/example')
-      const remoteStat = await fs.stat(path.join(actualSubdir, '.canopycms/remote.git'))
+      const remoteStat = await fs.stat(path.join(actualSubdir, '.canopy-prod-sim/remote.git'))
       expect(remoteStat.isDirectory()).toBe(true)
 
       // Verify remote contains main branch
-      const remoteGit = simpleGit({ baseDir: path.join(actualSubdir, '.canopycms/remote.git') })
+      const remoteGit = simpleGit({
+        baseDir: path.join(actualSubdir, '.canopy-prod-sim/remote.git'),
+      })
       const branches = await remoteGit.branch()
       expect(branches.all).toContain('main')
 
       // Clone and verify only subdirectory content was pushed (via git subtree)
       const clonePath = path.join(tmpDir, 'clone-test')
-      await simpleGit().clone(path.join(actualSubdir, '.canopycms/remote.git'), clonePath)
+      await simpleGit().clone(path.join(actualSubdir, '.canopy-prod-sim/remote.git'), clonePath)
       const cloneFiles = await fs.readdir(clonePath)
       expect(cloneFiles).toContain('test.txt')
       // Should NOT contain packages/ dir since we used git subtree split

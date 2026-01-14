@@ -7,9 +7,11 @@ import { describe, expect, it } from 'vitest'
 import { BranchPathError, ensureBranchRoot, getDefaultBranchBase, resolveBranchPath } from './paths'
 
 describe('paths', () => {
-  it('resolves prod base with env override', () => {
-    const base = getDefaultBranchBase('prod', '/tmp/efs')
-    expect(base).toBe(path.resolve('/tmp/efs'))
+  it('resolves prod branches root from default workspace', () => {
+    // In prod mode, uses default workspace path (or CANOPYCMS_WORKSPACE_ROOT env var)
+    // Override parameter is not used in prod mode - workspace comes from env
+    const base = getDefaultBranchBase('prod')
+    expect(base).toContain('branches')
   })
 
   it('sanitizes branch names and prevents traversal', () => {
@@ -21,7 +23,7 @@ describe('paths', () => {
     ).toThrow(BranchPathError)
   })
 
-  it('ensures branch root is created under base', async () => {
+  it('ensures branch root is created under base in prod-sim', async () => {
     const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branches-'))
     const { branchRoot, baseRoot } = await ensureBranchRoot({
       mode: 'prod-sim',
@@ -30,16 +32,17 @@ describe('paths', () => {
     })
     const stat = await fs.stat(branchRoot)
     expect(stat.isDirectory()).toBe(true)
-    expect(branchRoot.startsWith(temp)).toBe(true)
-    expect(baseRoot).toBe(temp)
+    // baseRoot is now .canopy-prod-sim/branches inside the override path
+    expect(baseRoot).toBe(path.resolve(temp, '.canopy-prod-sim', 'branches'))
+    expect(branchRoot.startsWith(baseRoot)).toBe(true)
   })
 
-  it('uses cwd for dev mode', () => {
-    const { baseRoot, branchRoot } = resolveBranchPath({
-      mode: 'dev',
-      branchName: 'current',
-    })
-    expect(baseRoot).toBe(path.resolve(process.cwd()))
-    expect(branchRoot).toBe(path.resolve(process.cwd()))
+  it('throws error when using branching functions in dev mode', () => {
+    expect(() =>
+      resolveBranchPath({
+        mode: 'dev',
+        branchName: 'current',
+      }),
+    ).toThrow('No branching in dev mode')
   })
 })

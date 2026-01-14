@@ -18,7 +18,7 @@ const createBranchWithMetadata = async (
   status: 'editing' | 'submitted' = 'editing',
 ) => {
   const branchDir = path.join(root, branchName)
-  const metaDir = path.join(branchDir, '.canopycms')
+  const metaDir = path.join(branchDir, '.canopy-meta')
   await fs.mkdir(metaDir, { recursive: true })
 
   const metadata = getBranchMetadataFileManager(branchDir, root)
@@ -70,7 +70,7 @@ describe('BranchRegistry', () => {
       const root = await tmpDir()
       await createBranchWithMetadata(root, 'feature-a')
       // Create .canopycms directory at root (registry storage)
-      await fs.mkdir(path.join(root, '.canopycms'), { recursive: true })
+      await fs.mkdir(path.join(root, '.canopy-meta'), { recursive: true })
 
       const registry = new BranchRegistry(root)
       const branches = await registry.list()
@@ -86,7 +86,7 @@ describe('BranchRegistry', () => {
       await registry.list()
 
       // Cache file should exist
-      const cacheFile = path.join(root, '.canopycms', 'branches.json')
+      const cacheFile = path.join(root, 'branches.json')
       const exists = await fs
         .stat(cacheFile)
         .then(() => true)
@@ -106,7 +106,7 @@ describe('BranchRegistry', () => {
 
       // Add another branch directly by writing file (bypassing invalidation)
       const branchDir = path.join(root, 'feature-b')
-      const metaDir = path.join(branchDir, '.canopycms')
+      const metaDir = path.join(branchDir, '.canopy-meta')
       await fs.mkdir(metaDir, { recursive: true })
       await fs.writeFile(
         path.join(metaDir, 'branch.json'),
@@ -188,8 +188,8 @@ describe('BranchRegistry', () => {
       const registry = new BranchRegistry(root)
       await registry.list() // Create cache
 
-      const cacheFile = path.join(root, '.canopycms', 'branches.json')
-      const staleFile = path.join(root, '.canopycms', 'branches.stale.json')
+      const cacheFile = path.join(root, 'branches.json')
+      const staleFile = path.join(root, 'branches.stale.json')
 
       // Cache exists, stale doesn't
       expect(

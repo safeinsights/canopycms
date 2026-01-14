@@ -34,11 +34,11 @@ CanopyCMS is entirely file system based. There are no external databases, no Red
 **What gets stored:**
 
 - **Content**: MD/MDX/JSON files in the content directory (committed to git)
-- **Branch metadata**: `.canopycms/branch.json` per workspace (state, PR references)
-- **Branch registry**: `.canopycms/branches.json` (inventory of all branches)
-- **Comments**: `.canopycms/comments.json` per branch (NOT committed to git)
-- **Groups**: `.canopycms/groups.json` (internal group definitions, committed)
-- **Permissions**: `.canopycms/permissions.json` (path-based permissions, committed)
+- **Branch metadata**: `.canopy-meta/branch.json` per workspace (state, PR references, automatically excluded via git info/exclude)
+- **Branch registry**: `branches.json` at branches root (inventory of all branches, gitignored)
+- **Comments**: `.canopy-meta/comments.json` per branch (NOT committed to git, automatically excluded)
+- **Settings (prod/prod-sim)**: `groups.json` and `permissions.json` on orphan branch `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific)
+- **Settings (dev)**: `.canopy-dev/groups.json` and `.canopy-dev/permissions.json` (gitignored, for local development)
 
 **Deployment model**: CanopyCMS is designed to be deployed to a server or serverless function with an attached file system shared by all server processes. On AWS, this could mean Lambda + EFS.
 
@@ -267,7 +267,7 @@ Direct file editing in the current checkout. No git cloning occurs. Best for sol
 
 ### prod-sim
 
-Simulates production behavior locally. Creates per-branch clones in `.canopycms/branches/` and maintains a local git remote at `.canopycms/remote.git`. Use this for testing the full branch workflow without deploying.
+Simulates production behavior locally. Creates per-branch clones in `.canopy-prod-sim/branches/` and maintains a local git remote at `.canopy-prod-sim/remote.git`. Use this for testing the full branch workflow without deploying.
 
 ### prod
 
@@ -402,9 +402,9 @@ Combines branch and path checks into a single decision. Returns detailed denial 
 
 **Where permissions are stored:**
 
-- Groups and path permissions are stored in `.canopycms/groups.json` and `.canopycms/permissions.json`
-- These files ARE committed to git, providing version history and PR-reviewable changes
-- Branch ACLs are stored in each branch's metadata file
+- **Dev mode**: Settings in `.canopy-dev/groups.json` and `.canopy-dev/permissions.json` (gitignored, local development only)
+- **Prod/prod-sim modes**: Settings on orphan branch `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific)
+- Branch ACLs are stored in each branch's metadata file (`.canopy-meta/branch.json`)
 
 ## Git Operations Architecture
 
@@ -510,11 +510,11 @@ Groups and permissions (collectively "settings") have unique git operation requi
 
 **Why separate helpers for settings?**
 
-Settings files (`.canopycms/groups.json` and `.canopycms/permissions.json`) need different branch handling in production vs local modes:
+Settings files need different branch handling across modes:
 
-- **dev**: Settings stored on main branch, no git operations
-- **prod-sim**: Settings stored on main branch, regular git operations
-- **prod**: Settings stored on separate settings branch, creates PR for review
+- **dev**: Settings in `.canopy-dev/` (not in git)
+- **prod-sim**: Settings on orphan branch `canopycms-settings-{deploymentName}`, regular git operations
+- **prod**: Settings on orphan branch `canopycms-settings-{deploymentName}`, creates PR for review
 
 Content operations always work on the current branch. Settings operations need to route to the appropriate branch based on mode.
 
@@ -689,8 +689,8 @@ The comment system supports asynchronous review workflows.
 
 **Key characteristics:**
 
-- Comments are stored per-branch in `.canopycms/comments.json`
-- Comments are NOT committed to git—they're review artifacts, not content
+- Comments are stored per-branch in `.canopy-meta/comments.json`
+- Comments are NOT committed to git—they're review artifacts, automatically excluded via git info/exclude
 - Thread resolution is controlled by the thread author, reviewers, or admins
 
 ## Editor Architecture
