@@ -36,7 +36,7 @@ export interface CanopyServices {
   checkPathAccess: ReturnType<typeof createCheckPathAccess>
   checkContentAccess: ReturnType<typeof createCheckContentAccess>
   createGitManagerFor: (repoPath: string, opts?: { baseBranch?: string; remote?: string }) => GitManager
-  registry: BranchRegistry
+  registry?: BranchRegistry
   githubService?: GitHubService
   /** Bootstrap admin user IDs that are always treated as Admins */
   bootstrapAdminIds: Set<string>
@@ -75,7 +75,7 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   const flatSchema = flattenSchema(config.schema, config.contentRoot)
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
-  // Path permissions are loaded dynamically from .canopycms/permissions.json at request time.
+  // Path permissions are loaded dynamically from settings branch or .canopy-dev/permissions.json at request time.
   // At the service level, we bind with empty rules for direct path checks.
   const checkPathAccess = createCheckPathAccess([], config.defaultPathAccess ?? 'deny')
   // Content access loads permissions dynamically from the branch root
@@ -226,7 +226,11 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   }
 
   const operatingMode = config.mode
-  const registry = new BranchRegistry(getDefaultBranchBase(operatingMode))
+
+  // Create branch registry only in branching modes
+  const registry = operatingStrategy(operatingMode).supportsBranching()
+    ? new BranchRegistry(getDefaultBranchBase(operatingMode))
+    : undefined
 
   // Create GitHub service if applicable (only for modes that support pull requests)
   let githubService: GitHubService | undefined

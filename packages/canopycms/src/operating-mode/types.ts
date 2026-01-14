@@ -90,11 +90,39 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
   // Path Resolution (needs path, process.cwd, env vars)
   // ========================================================================
 
-  /** Resolve the base root directory for branches */
-  getBaseRoot(override?: string): string
+  /**
+   * Get the content directory path (at project/workspace root).
+   * - dev/prod-sim: {cwd}/content
+   * - prod (in workspaces): {workspaceRoot}/content
+   */
+  getContentRoot(sourceRoot?: string): string
 
-  /** Resolve the branch root given a base and branch name */
-  getBranchRoot(baseRoot: string, branchName: string): string
+  /**
+   * Get the parent directory of all branch workspaces (contains branches.json and branch directories).
+   * - prod-sim: {cwd}/.canopy-prod-sim/branches
+   * - prod: $CANOPYCMS_WORKSPACE_ROOT/branches or /mnt/efs/workspace/branches
+   * @throws Error in dev mode (no branching)
+   */
+  getBranchesRoot(sourceRoot?: string): string
+
+  /**
+   * Get individual branch workspace directory.
+   * Returns: {branchesRoot}/{branchName}
+   * @throws Error in dev mode (no branching)
+   */
+  getBranchRoot(branchName: string, sourceRoot?: string): string
+
+  /**
+   * Get the git exclude pattern for runtime metadata (e.g., '.canopy-meta/').
+   * Used by GitManager to add to .git/info/exclude in content branch workspaces.
+   */
+  getGitExcludePattern(): string
+
+  /**
+   * @deprecated Use getContentRoot(), getBranchesRoot(), or getBranchRoot() instead
+   * Resolve the base root directory for branches
+   */
+  getBaseRoot(override?: string): string
 
   // ========================================================================
   // File Paths (needs path.join)
@@ -126,8 +154,15 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
   // Settings
   // ========================================================================
 
-  /** Get the branch name to use for settings (permissions/groups) */
-  getSettingsBranchName(config: { settingsBranch?: string; defaultBaseBranch?: string }): string
+  /**
+   * Get the branch name to use for settings (permissions/groups).
+   * Returns: canopycms-settings-{deploymentName}
+   */
+  getSettingsBranchName(config: {
+    settingsBranch?: string
+    deploymentName?: string
+    defaultBaseBranch?: string
+  }): string
 
   /** Get the root directory for loading settings */
   getSettingsBranchRoot(

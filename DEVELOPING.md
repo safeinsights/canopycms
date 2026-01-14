@@ -894,23 +894,23 @@ describe('Content with IDs', () => {
 
 ### Settings Management (Permissions and Groups)
 
-CanopyCMS manages permissions and groups through JSON files in the `.canopycms/` directory. The behavior differs significantly between development and production modes.
+CanopyCMS manages permissions and groups through JSON files. The storage location and behavior differs significantly between operating modes.
 
-#### Local Development: `.local.json` Files
+#### Local Development: `.canopy-dev/` Directory
 
-In `dev` mode (the default for development), CanopyCMS uses **gitignored** `.local.json` files for permissions and groups:
+In `dev` mode (the default for development), CanopyCMS uses **gitignored** files in the `.canopy-dev/` directory:
 
 - **Files:**
-  - `.canopycms/permissions.local.json` - path-level permissions
-  - `.canopycms/groups.local.json` - user groups and memberships
+  - `.canopy-dev/permissions.json` - path-level permissions
+  - `.canopy-dev/groups.json` - user groups and memberships
 
 - **Purpose:** These files allow you to test different permission scenarios and user roles without polluting the git history or conflicting with other developers.
 
 - **Behavior:**
   - Changes persist across CMS restarts
-  - Files are **automatically gitignored** (via `.canopycms` in `.gitignore`)
-  - If `.local.json` doesn't exist, falls back to reading `.json` (committed version)
-  - Writes always go to `.local.json` in dev mode
+  - Entire `.canopy-dev/` directory is **automatically gitignored** (via `.canopy*` pattern)
+  - Files are completely separate from production settings (no fallback behavior)
+  - All reads and writes go to `.canopy-dev/` in dev mode
 
 **Example workflow:**
 
@@ -921,17 +921,17 @@ npm run dev
 # 1. Login as different test users (e.g., auth-dev, Clerk dev accounts)
 # 2. Add them to groups via the CMS UI
 # 3. Test permission restrictions
-# 4. Changes are saved to .canopycms/permissions.local.json and .canopycms/groups.local.json
+# 4. Changes are saved to .canopy-dev/permissions.json and .canopy-dev/groups.json
 # 5. Files persist but won't show up in git status
 
 # Verify files are gitignored
-git status  # .canopycms/ should not appear
+git status  # .canopy-dev/ should not appear
 ```
 
 **Testing different permission scenarios:**
 
 ```typescript
-// In your local .canopycms/permissions.local.json
+// In your local .canopy-dev/permissions.json
 {
   "version": 1,
   "updatedAt": "2026-01-12T10:00:00Z",
@@ -947,7 +947,7 @@ git status  # .canopycms/ should not appear
   ]
 }
 
-// In your local .canopycms/groups.local.json
+// In your local .canopy-dev/groups.json
 {
   "version": 1,
   "updatedAt": "2026-01-12T10:00:00Z",
@@ -969,39 +969,39 @@ git status  # .canopycms/ should not appear
 
 | Mode | Settings Files | Git Operations | Use Case |
 |------|---------------|----------------|----------|
-| **dev** | `.canopycms/*.local.json` (gitignored) | None | Local development, testing permissions |
-| **prod-sim** | `.canopycms/branches/main/*.json` (gitignored) | Standard commits to branch clones | Testing branch workflows locally |
-| **prod** | `.canopycms/*.json` (committed) | Long-running `settings` branch with auto-PR | Production deployment |
+| **dev** | `.canopy-dev/*.json` (gitignored) | None | Local development, testing permissions |
+| **prod-sim** | Orphan branch `canopycms-settings-{deployment}` (gitignored workspaces) | Standard commits to settings branch | Testing branch workflows locally |
+| **prod** | Orphan branch `canopycms-settings-{deployment}` (committed) | Admin-only writes to settings branch | Production deployment |
 
 **dev (Default for Development):**
 - No git operations
-- Settings in `.local.json` files (gitignored)
+- Settings in `.canopy-dev/` directory (gitignored)
 - Instant feedback, no branch management overhead
 - Perfect for testing different users and permissions
 
 **prod-sim (Testing Branch Workflows):**
-- Full branch simulation with clones in `.canopycms/branches/`
-- Settings in `.json` files within branch clones
-- All of `.canopycms/` is gitignored
+- Full branch simulation with clones in `.canopy-prod-sim/branches/`
+- Settings on separate orphan branch (deployment-specific)
+- All of `.canopy-prod-sim/` is gitignored
 - Tests branch creation, merging, permission inheritance
 
 **prod (Production):**
-- Settings tracked in git via long-running `settings` branch
-- Changes auto-create/update a PR to merge into `main`
-- Settings are active immediately but persisted when PR merges
-- Requires GitHub token and `defaultRemoteUrl`
+- Settings tracked in git via orphan branch `canopycms-settings-{deploymentName}`
+- Changes written directly to settings branch (admin-only, no PR workflow)
+- Settings are treated as deployment-specific configuration data
+- Each deployment has its own settings branch
 
 #### Production Settings Workflow
 
-In production (`mode: 'prod'`), permission and group changes follow a special workflow:
+In production (`mode: 'prod'`), permission and group changes are stored on a separate **orphan branch** (no shared history with content branches):
 
-1. **Settings Branch:** Changes are committed to a long-running `canopycms-settings` branch (configurable via `settingsBranch`, defaults to `"canopycms-settings"`)
+1. **Settings Branch:** Changes are committed to an orphan branch named `canopycms-settings-{deploymentName}` (e.g., `canopycms-settings-prod`, `canopycms-settings-staging`)
 
-2. **Auto-PR Creation:** When `autoCreateSettingsPR` is enabled (default: `true`), CanopyCMS automatically creates or updates a PR from `canopycms-settings` → `main`
+2. **Direct Writes:** Admin changes are written directly to the settings branch (no PR workflow - settings are treated like database records, not source code)
 
-3. **Immediate Effect:** Changes are active in the CMS immediately (read from the `canopycms-settings` branch)
+3. **Immediate Effect:** Changes are active in the CMS immediately (read from the settings branch workspace)
 
-4. **Persistence:** When the PR is merged, changes become part of the main branch history
+4. **Deployment-Specific:** Each deployment environment (prod, staging, dev) has its own independent settings branch
 
 5. **Optimistic Locking:** Settings files include a `contentVersion` field that prevents concurrent admin updates from overwriting each other. If a version conflict is detected, the API returns a 409 status code.
 
@@ -1011,8 +1011,7 @@ In production (`mode: 'prod'`), permission and group changes follow a special wo
 // canopycms.config.ts
 export default defineCanopyConfig({
   mode: 'prod',
-  settingsBranch: 'canopycms-settings',  // Optional, defaults to 'canopycms-settings'
-  autoCreateSettingsPR: true,  // Optional, defaults to true
+  deploymentName: 'prod',  // Settings branch: canopycms-settings-prod
   defaultRemoteUrl: 'https://github.com/your-org/your-repo.git',
   // ... other config
 })
@@ -1028,78 +1027,75 @@ if (expectedContentVersion !== undefined && currentFile?.contentVersion !== expe
   return { status: 409, error: 'Permissions were modified by another user' }
 }
 
-// 2. commitToSettingsBranch() creates/checks out settings branch
-await git.checkoutBranch('canopycms-settings')
+// 2. Get settings branch name from deploymentName config
+const settingsBranchName = `canopycms-settings-${config.deploymentName}`
+const settingsRoot = getBranchRoot(settingsBranchName)
 
-// 3. Pulls latest (if remote exists)
+// 3. Checkout settings branch workspace
+await git.checkoutBranch(settingsBranchName)
+
+// 4. Pulls latest (if remote exists)
 await git.pullBase()
 
-// 4. Commits changes with incremented version
+// 5. Commits changes with incremented version
 const newContentVersion = (currentFile?.contentVersion ?? 0) + 1
-await savePermissions(branchRoot, permissions, userId, mode, newContentVersion)
-await git.add('.canopycms/permissions.json')
+await savePermissions(settingsRoot, permissions, userId, mode, newContentVersion)
+await git.add('permissions.json')  // Files at root of orphan branch
 await git.commit('Update permissions')
 
-// 5. Pushes to remote settings branch
-await git.push('canopycms-settings')
-
-// 6. Creates/updates PR if autoCreateSettingsPR is true
-await githubService.createOrUpdatePR({
-  head: 'canopycms-settings',
-  base: 'main',
-  title: 'Update permissions and groups',
-  body: 'Automated PR for permission and group changes...'
-})
+// 6. Pushes to remote settings branch
+await git.push(settingsBranchName)
 ```
 
 #### Verifying Local Changes Aren't Committed
 
-To ensure your local `.local.json` files don't accidentally get committed:
+To ensure your local dev settings don't accidentally get committed:
 
 ```bash
-# Check that .canopycms is in .gitignore
+# Check that .canopy* is in .gitignore
 cat apps/example1/.gitignore
-# Should contain: .canopycms
+# Should contain: .canopy*
 
 # Verify nothing shows in git status
 git status
-# .canopycms/permissions.local.json should NOT appear
+# .canopy-dev/ should NOT appear
 
 # List what would be committed
 git add -n .
-# Should not include .canopycms/*.local.json
+# Should not include .canopy-dev/ or .canopy-prod-sim/
 
-# If you accidentally committed settings files
-git reset HEAD .canopycms/permissions.local.json
-git reset HEAD .canopycms/groups.local.json
+# If you accidentally staged CanopyCMS runtime directories
+git reset HEAD .canopy-dev/
+git reset HEAD .canopy-prod-sim/
 ```
 
-**Common mistake:** Adding `.canopycms/permissions.json` (without `.local`) to git in dev mode. This can happen if you:
-1. Switch from `prod-sim` or `prod` mode back to `dev`
-2. Have an old `.json` file from before the `.local.json` pattern
+**Common mistake:** Forgetting to add `.canopy*` to .gitignore when setting up a new app.
 
-**Fix:** In dev mode, always check that your gitignore includes `.canopycms` and manually delete any `.canopycms/*.json` files that aren't `.local.json`.
+**Fix:** Always add `.canopy*` to your .gitignore pattern. This single pattern covers all CanopyCMS runtime directories (`.canopy-dev/`, `.canopy-prod-sim/`).
 
-#### Migration Guide: Adding .local.json Pattern
+#### Migration Guide: New Directory Structure
 
-If you're upgrading an existing project to use the `.local.json` pattern:
+If you're upgrading an existing project to the new `.canopy-*` directory structure:
 
 ```bash
-# 1. Ensure .canopycms is gitignored
-echo ".canopycms" >> apps/your-app/.gitignore
+# 1. Update .gitignore to use simple pattern
+echo ".canopy*" >> apps/your-app/.gitignore
 
-# 2. Copy existing settings to .local.json (if in dev mode)
-cp .canopycms/permissions.json .canopycms/permissions.local.json
-cp .canopycms/groups.json .canopycms/groups.local.json
+# 2. Remove old .canopycms from git tracking (if it was tracked)
+git rm -r --cached .canopycms/ 2>/dev/null || true
+git commit -m "chore: migrate to new .canopy-* directory structure"
 
-# 3. Remove tracked files from git (but keep local copies)
-git rm --cached .canopycms/permissions.json
-git rm --cached .canopycms/groups.json
-git commit -m "chore: move to .local.json pattern for local dev"
+# 3. Delete old runtime directories (they'll regenerate automatically)
+rm -rf .canopycms/
 
 # 4. Verify
-git status  # Should not show .canopycms/ files
+git status  # Should not show any .canopy-* directories
 ```
+
+**Note**: The new structure uses:
+- `.canopy-dev/` for dev mode settings (replaces `.canopycms/*.local.json`)
+- `.canopy-prod-sim/` for prod-sim workspaces (replaces `.canopycms/branches/`)
+- `.canopy-meta/` for branch metadata (replaces `.canopycms/` inside workspaces, automatically excluded via git)
 
 ## Testing
 
@@ -1190,7 +1186,7 @@ it('commits files when updating permissions', async () => {
         updatedAt: '2024-01-01T00:00:00Z',
       },
     },
-    files: '.canopycms/permissions.json',
+    files: 'permissions.json',  // At root of settings branch workspace
     message: 'Update permissions',
   })
 })
@@ -1209,7 +1205,7 @@ const mockGitManager = {
 
 // Verify individual git operations
 expect(mockGitManager.ensureAuthor).toHaveBeenCalled()
-expect(mockGitManager.add).toHaveBeenCalledWith('.canopycms/permissions.json')
+expect(mockGitManager.add).toHaveBeenCalledWith('permissions.json')  // At root of settings branch
 expect(mockGitManager.commit).toHaveBeenCalledWith('Update permissions')
 ```
 
@@ -1229,7 +1225,7 @@ services: {
 // Verify high-level service calls
 expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
   context: branchContext,
-  files: '.canopycms/permissions.json',
+  files: 'permissions.json',  // At root of settings branch workspace
   message: 'Update permissions',
 })
 ```

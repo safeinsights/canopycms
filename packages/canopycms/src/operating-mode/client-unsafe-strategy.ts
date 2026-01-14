@@ -16,7 +16,7 @@ import {
 import type { OperatingMode, ClientUnsafeStrategy } from './types'
 import type { CanopyConfig } from '../config'
 
-const DEFAULT_PROD_BASE = '/mnt/efs/site'
+const DEFAULT_PROD_WORKSPACE = '/mnt/efs/workspace'
 
 // ============================================================================
 // Production Mode - Full Strategy
@@ -30,30 +30,50 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
 
   // Add client-unsafe methods (use Node.js APIs)
 
-  getBaseRoot(override?: string): string {
-    if (override) return path.resolve(override)
-    const envBase = process.env.CANOPYCMS_BRANCH_ROOT
-    return path.resolve(envBase || DEFAULT_PROD_BASE)
+  getContentRoot(sourceRoot?: string): string {
+    // In prod, content is at workspace root (not project root)
+    // This is called with sourceRoot = workspace path
+    return path.resolve(sourceRoot ?? process.cwd(), 'content')
   }
 
-  getBranchRoot(baseRoot: string, branchName: string): string {
-    return path.resolve(baseRoot, branchName)
+  getBranchesRoot(_sourceRoot?: string): string {
+    const envWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+    const workspace = path.resolve(envWorkspace ?? DEFAULT_PROD_WORKSPACE)
+    return path.join(workspace, 'branches')
+  }
+
+  getBranchRoot(branchName: string, sourceRoot?: string): string {
+    return path.resolve(this.getBranchesRoot(sourceRoot), branchName)
+  }
+
+  getGitExcludePattern(): string {
+    return '.canopy-meta/'
+  }
+
+  /** @deprecated Use getContentRoot(), getBranchesRoot(), or getBranchRoot() instead */
+  getBaseRoot(override?: string): string {
+    if (override) return path.resolve(override)
+    const envWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+    const workspace = path.resolve(envWorkspace ?? DEFAULT_PROD_WORKSPACE)
+    return path.join(workspace, 'branches')
   }
 
   getPermissionsFilePath(root: string): string {
+    return path.join(root, '.canopy-meta', this.getPermissionsFileName())
+  }
+
+  getFallbackPermissionsFilePath(root: string): string | null {
+    // Fallback to old .canopycms location
     return path.join(root, '.canopycms', this.getPermissionsFileName())
   }
 
-  getFallbackPermissionsFilePath(_root: string): string | null {
-    return null // No fallback in prod
-  }
-
   getGroupsFilePath(root: string): string {
-    return path.join(root, '.canopycms', this.getGroupsFileName())
+    return path.join(root, '.canopy-meta', this.getGroupsFileName())
   }
 
-  getFallbackGroupsFilePath(_root: string): string | null {
-    return null
+  getFallbackGroupsFilePath(root: string): string | null {
+    // Fallback to old .canopycms location
+    return path.join(root, '.canopycms', this.getGroupsFileName())
   }
 
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
@@ -70,9 +90,12 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
 
   getSettingsBranchName(config: {
     settingsBranch?: string
+    deploymentName?: string
     defaultBaseBranch?: string
   }): string {
-    return config.settingsBranch ?? 'canopycms-settings'
+    if (config.settingsBranch) return config.settingsBranch
+    const deploymentName = config.deploymentName ?? 'prod'
+    return `canopycms-settings-${deploymentName}`
   }
 
   async getSettingsBranchRoot(
@@ -109,35 +132,54 @@ class LocalProdSimStrategy
 {
   // Inherits client-safe methods from LocalProdSimClientSafeStrategy
 
-  getBaseRoot(override?: string): string {
-    if (override) return path.resolve(override)
-    return path.resolve(process.cwd(), '.canopycms/branches')
+  private getProdSimRoot(sourceRoot?: string): string {
+    return path.resolve(sourceRoot ?? process.cwd(), '.canopy-prod-sim')
   }
 
-  getBranchRoot(baseRoot: string, branchName: string): string {
-    return path.resolve(baseRoot, branchName)
+  getContentRoot(sourceRoot?: string): string {
+    return path.resolve(sourceRoot ?? process.cwd(), 'content')
+  }
+
+  getBranchesRoot(sourceRoot?: string): string {
+    return path.join(this.getProdSimRoot(sourceRoot), 'branches')
+  }
+
+  getBranchRoot(branchName: string, sourceRoot?: string): string {
+    return path.resolve(this.getBranchesRoot(sourceRoot), branchName)
+  }
+
+  getGitExcludePattern(): string {
+    return '.canopy-meta/'
+  }
+
+  /** @deprecated Use getContentRoot(), getBranchesRoot(), or getBranchRoot() instead */
+  getBaseRoot(override?: string): string {
+    if (override) return path.resolve(override)
+    return this.getBranchesRoot()
   }
 
   getPermissionsFilePath(root: string): string {
+    return path.join(root, '.canopy-meta', this.getPermissionsFileName())
+  }
+
+  getFallbackPermissionsFilePath(root: string): string | null {
+    // Fallback to old .canopycms location
     return path.join(root, '.canopycms', this.getPermissionsFileName())
   }
 
-  getFallbackPermissionsFilePath(_root: string): string | null {
-    return null
-  }
-
   getGroupsFilePath(root: string): string {
-    return path.join(root, '.canopycms', this.getGroupsFileName())
+    return path.join(root, '.canopy-meta', this.getGroupsFileName())
   }
 
-  getFallbackGroupsFilePath(_root: string): string | null {
-    return null
+  getFallbackGroupsFilePath(root: string): string | null {
+    // Fallback to old .canopycms location
+    return path.join(root, '.canopycms', this.getGroupsFileName())
   }
 
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
     return {
       shouldAutoInitLocal: true,
-      defaultRemotePath: '.canopycms/remote.git',
+      defaultRemotePath: '.canopy-prod-sim/remote.git',
       envVarName: 'CANOPYCMS_REMOTE_URL',
     }
   }
@@ -148,9 +190,12 @@ class LocalProdSimStrategy
 
   getSettingsBranchName(config: {
     settingsBranch?: string
+    deploymentName?: string
     defaultBaseBranch?: string
   }): string {
-    return config.settingsBranch ?? 'canopycms-settings'
+    if (config.settingsBranch) return config.settingsBranch
+    const deploymentName = config.deploymentName ?? 'prod'
+    return `canopycms-settings-${deploymentName}`
   }
 
   async getSettingsBranchRoot(
@@ -183,32 +228,50 @@ class LocalSimpleStrategy
 {
   // Inherits: supportsBranching() returns false, getPermissionsFileName() returns 'permissions.local.json'
 
+  private getDevConfigRoot(sourceRoot?: string): string {
+    return path.resolve(sourceRoot ?? process.cwd(), '.canopy-dev')
+  }
+
+  getContentRoot(sourceRoot?: string): string {
+    return path.resolve(sourceRoot ?? process.cwd(), 'content')
+  }
+
+  getBranchesRoot(_sourceRoot?: string): string {
+    throw new Error('No branching in dev mode')
+  }
+
+  getBranchRoot(_branchName: string, _sourceRoot?: string): string {
+    throw new Error('No branching in dev mode')
+  }
+
+  getGitExcludePattern(): string {
+    return '.canopy-meta/'
+  }
+
+  /** @deprecated Use getContentRoot(), getBranchesRoot(), or getBranchRoot() instead */
   getBaseRoot(override?: string): string {
     if (override) return path.resolve(override)
     return path.resolve(process.cwd())
   }
 
-  getBranchRoot(baseRoot: string, _branchName: string): string {
-    // In dev, branch root is always the base root (no subdirectories)
-    return baseRoot
-  }
-
   getPermissionsFilePath(root: string): string {
-    return path.join(root, '.canopycms', this.getPermissionsFileName())
+    // Returns: {projectRoot}/.canopy-dev/permissions.json
+    return path.join(this.getDevConfigRoot(root), 'permissions.json')
   }
 
   getFallbackPermissionsFilePath(root: string): string | null {
-    // Fallback to non-local file for backwards compatibility
-    return path.join(root, '.canopycms/permissions.json')
+    // Fallback to old .canopycms location with old file name for backwards compatibility
+    return path.join(root, '.canopycms', 'permissions.local.json')
   }
 
   getGroupsFilePath(root: string): string {
-    return path.join(root, '.canopycms', this.getGroupsFileName())
+    // Returns: {projectRoot}/.canopy-dev/groups.json
+    return path.join(this.getDevConfigRoot(root), 'groups.json')
   }
 
   getFallbackGroupsFilePath(root: string): string | null {
-    // Fallback to non-local file for backwards compatibility
-    return path.join(root, '.canopycms/groups.json')
+    // Fallback to old .canopycms location with old file name for backwards compatibility
+    return path.join(root, '.canopycms', 'groups.local.json')
   }
 
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
@@ -225,9 +288,10 @@ class LocalSimpleStrategy
 
   getSettingsBranchName(config: {
     settingsBranch?: string
+    deploymentName?: string
     defaultBaseBranch?: string
   }): string {
-    // Use main branch for settings in dev
+    // Use main branch for settings in dev (no separate settings branch)
     return config.defaultBaseBranch ?? 'main'
   }
 

@@ -164,6 +164,7 @@ const githubTokenEnvVarSchema = z.string().default('GITHUB_BOT_TOKEN')
 const operatingModeSchema = z.enum(['prod', 'prod-sim', 'dev']).default('dev')
 const contentRootSchema = relativePathSchema.default('content')
 const sourceRootSchema = z.string().min(1).optional()
+const deploymentNameSchema = z.string().default('prod')
 
 // Singleton: A single-instance file with unique schema
 const singletonSchema = z.object({
@@ -232,6 +233,7 @@ export const CanopyConfigSchema = z
     mode: operatingModeSchema,  // Has .default(), so not optional in output type
     settingsBranch: z.string().optional(),
     autoCreateSettingsPR: z.boolean().optional(),
+    deploymentName: deploymentNameSchema.optional(),
     contentRoot: contentRootSchema.default('content'),
     sourceRoot: sourceRootSchema.optional(),
     editor: editorConfigSchema.optional(),
@@ -676,6 +678,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
   let gitBotAuthorName: GitBotAuthorName | undefined
   let gitBotAuthorEmail: GitBotAuthorEmail | undefined
   let mode: CanopyOperatingMode | undefined
+  let deploymentName: string | undefined
 
   for (const fragment of fragments) {
     if (fragment.schema) {
@@ -719,6 +722,9 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     if (fragment.mode) {
       mode = fragment.mode
     }
+    if (fragment.deploymentName) {
+      deploymentName = fragment.deploymentName
+    }
   }
 
   const schema: RootCollectionConfig = {
@@ -741,6 +747,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     ...(gitBotAuthorName ? { gitBotAuthorName } : {}),
     ...(gitBotAuthorEmail ? { gitBotAuthorEmail } : {}),
     ...(mode ? { mode } : {}),
+    ...(deploymentName ? { deploymentName } : {}),
   }
 
   return validateCanopyConfig(merged)

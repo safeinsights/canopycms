@@ -4,7 +4,7 @@ import path from 'node:path'
 import type { BranchContext } from './types'
 import { BranchMetadataFileManager } from './branch-metadata'
 
-const REGISTRY_DIR = '.canopycms'
+// Registry files are stored directly in the branches root (not in a subdirectory)
 const REGISTRY_FILE = 'branches.json'
 const REGISTRY_STALE_FILE = 'branches.stale.json'
 const REGISTRY_TEMP_FILE = 'branches.tmp.json'
@@ -26,17 +26,15 @@ export interface BranchRegistrySnapshot {
  */
 export class BranchRegistry {
   private readonly root: string
-  private readonly registryDir: string
   private readonly registryPath: string
   private readonly stalePath: string
   private readonly tempPath: string
 
   constructor(root: string) {
     this.root = path.resolve(root)
-    this.registryDir = path.join(this.root, REGISTRY_DIR)
-    this.registryPath = path.join(this.registryDir, REGISTRY_FILE)
-    this.stalePath = path.join(this.registryDir, REGISTRY_STALE_FILE)
-    this.tempPath = path.join(this.registryDir, REGISTRY_TEMP_FILE)
+    this.registryPath = path.join(this.root, REGISTRY_FILE)
+    this.stalePath = path.join(this.root, REGISTRY_STALE_FILE)
+    this.tempPath = path.join(this.root, REGISTRY_TEMP_FILE)
   }
 
   /**
@@ -93,7 +91,7 @@ export class BranchRegistry {
     // Write to unique temp file first, then atomic rename
     // Use random suffix to avoid conflicts between concurrent regenerations
     const uniqueTempPath = `${this.tempPath}.${Date.now()}.${Math.random().toString(36).slice(2)}`
-    await fs.mkdir(this.registryDir, { recursive: true })
+    await fs.mkdir(this.root, { recursive: true })
     const snapshot: BranchRegistrySnapshot = { version: REGISTRY_VERSION, branches }
     await fs.writeFile(uniqueTempPath, JSON.stringify(snapshot, null, 2) + '\n', 'utf8')
 
@@ -121,7 +119,7 @@ export class BranchRegistry {
       const entries = await fs.readdir(this.root, { withFileTypes: true })
 
       for (const entry of entries) {
-        // Skip non-directories and hidden directories (like .canopycms)
+        // Skip non-directories and hidden directories (like .canopy-meta, .canopy-prod-sim)
         if (!entry.isDirectory() || entry.name.startsWith('.')) {
           continue
         }

@@ -295,7 +295,7 @@ describe('CommentStore', () => {
     })
 
     // Read raw file to check version
-    const filePath = path.join(tmpDir, '.canopycms', 'comments.json')
+    const filePath = path.join(tmpDir, '.canopy-meta', 'comments.json')
     const raw = await fs.readFile(filePath, 'utf-8')
     const data = JSON.parse(raw)
     expect(data.version).toBe(1)

@@ -202,6 +202,9 @@ describe('createContentReader', () => {
 
   it('creates the branch workspace when missing', async () => {
     const root = await tmpDir()
+    // Mock process.cwd() to isolate test from parent git repo
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(root)
+
     const git = simpleGit({ baseDir: root })
     await git.init()
     await git.raw(['branch', '-M', 'main'])
@@ -217,7 +220,7 @@ describe('createContentReader', () => {
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
-      mode: 'dev',
+      mode: 'prod-sim',
       schema: {
         collections: [],
         singletons: [
@@ -233,16 +236,21 @@ describe('createContentReader', () => {
       },
     })
 
-    const reader = createContentReader({ config, basePathOverride: root })
-    const doc = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/home', user: ANONYMOUS_USER })
-    expect(doc.path).toBe('/?branch=main')
-    expect(doc.data.hero.title).toBe('Welcome')
+    try {
+      const reader = createContentReader({ config, basePathOverride: root })
+      const doc = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/home', user: ANONYMOUS_USER })
+      expect(doc.path).toBe('/?branch=main')
+      expect(doc.data.hero.title).toBe('Welcome')
 
-    const metaPath = path.join(root, '.canopycms/branch.json')
-    const metaRaw = await fs.readFile(metaPath, 'utf8')
-    const meta = JSON.parse(metaRaw)
-    expect(meta.branch.name).toBe('main')
-    expect(meta.branch.createdBy).toBe('canopycms-content-reader')
+      // In prod-sim, workspace is at .canopy-prod-sim/branches/main
+      const metaPath = path.join(root, '.canopy-prod-sim/branches/main/.canopy-meta/branch.json')
+      const metaRaw = await fs.readFile(metaPath, 'utf8')
+      const meta = JSON.parse(metaRaw)
+      expect(meta.branch.name).toBe('main')
+      expect(meta.branch.createdBy).toBe('canopycms-content-reader')
+    } finally {
+      cwdSpy.mockRestore()
+    }
   })
 
   it('checks permissions BEFORE reading file (security)', async () => {

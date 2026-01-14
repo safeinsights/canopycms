@@ -65,7 +65,7 @@ describe('Settings Branch Isolation', () => {
     })
 
     // Write PERMISSIVE permissions to main branch (the wrong place)
-    const mainPermissionsDir = path.join(mainBranch.branchRoot, '.canopycms')
+    const mainPermissionsDir = path.join(mainBranch.branchRoot, '.canopy-meta')
     await fs.mkdir(mainPermissionsDir, { recursive: true })
     const mainPermissionsFile = path.join(mainPermissionsDir, 'permissions.json')
     const permissiveRules: PathPermission[] = [
@@ -87,7 +87,7 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Write RESTRICTIVE permissions to settings branch (the correct place)
-    const settingsPermissionsDir = path.join(settingsBranch.branchRoot, '.canopycms')
+    const settingsPermissionsDir = path.join(settingsBranch.branchRoot, '.canopy-meta')
     await fs.mkdir(settingsPermissionsDir, { recursive: true })
     const settingsPermissionsFile = path.join(settingsPermissionsDir, 'permissions.json')
     const restrictiveRules: PathPermission[] = [
@@ -164,7 +164,7 @@ describe('Settings Branch Isolation', () => {
     })
 
     // Write permissions directly to main branch (wrong location in prod-sim)
-    const mainPermissionsDir = path.join(mainBranch.branchRoot, '.canopycms')
+    const mainPermissionsDir = path.join(mainBranch.branchRoot, '.canopy-meta')
     await fs.mkdir(mainPermissionsDir, { recursive: true })
     await fs.writeFile(
       path.join(mainPermissionsDir, 'permissions.json'),
@@ -189,7 +189,7 @@ describe('Settings Branch Isolation', () => {
       remoteUrl: workspace.remotePath,
     })
 
-    const settingsPermissionsDir = path.join(settingsBranch.branchRoot, '.canopycms')
+    const settingsPermissionsDir = path.join(settingsBranch.branchRoot, '.canopy-meta')
     await fs.mkdir(settingsPermissionsDir, { recursive: true })
     await fs.writeFile(
       path.join(settingsPermissionsDir, 'permissions.json'),
@@ -243,7 +243,7 @@ describe('Settings Branch Isolation', () => {
       remoteUrl: workspace.remotePath,
     })
 
-    const featurePermissionsDir = path.join(featureBranch.branchRoot, '.canopycms')
+    const featurePermissionsDir = path.join(featureBranch.branchRoot, '.canopy-meta')
     await fs.mkdir(featurePermissionsDir, { recursive: true })
     await fs.writeFile(
       path.join(featurePermissionsDir, 'permissions.json'),
@@ -263,7 +263,7 @@ describe('Settings Branch Isolation', () => {
       remoteUrl: workspace.remotePath,
     })
 
-    const settingsPermissionsDir = path.join(settingsBranch.branchRoot, '.canopycms')
+    const settingsPermissionsDir = path.join(settingsBranch.branchRoot, '.canopy-meta')
     await fs.mkdir(settingsPermissionsDir, { recursive: true })
     await fs.writeFile(
       path.join(settingsPermissionsDir, 'permissions.json'),

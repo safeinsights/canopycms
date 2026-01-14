@@ -71,10 +71,10 @@ describe('prod-sim Initialization', () => {
     })
 
     // Verify only one workspace was created (no duplicates from race)
-    const branchesDir = path.join(workspace.tmpRoot, '.canopycms', 'branches')
+    const branchesDir = path.join(workspace.tmpRoot, '.canopy-prod-sim', 'branches')
     const entries = await fs.readdir(branchesDir)
 
-    // Should have main workspace + .canopycms metadata
+    // Should have main workspace + branches.json
     expect(entries).toContain('main')
     const mainDirs = entries.filter((e) => e === 'main')
     expect(mainDirs.length).toBe(1)
@@ -131,7 +131,7 @@ describe('prod-sim Initialization', () => {
     expect(secondContext.branchRoot).toBe(firstContext.branchRoot)
 
     // Verify only one workspace exists
-    const branchesDir = path.join(workspace.tmpRoot, '.canopycms', 'branches')
+    const branchesDir = path.join(workspace.tmpRoot, '.canopy-prod-sim', 'branches')
     const entries = await fs.readdir(branchesDir)
     const mainDirs = entries.filter((e) => e === 'main')
     expect(mainDirs.length).toBe(1)

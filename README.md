@@ -74,23 +74,17 @@ export default defineCanopyConfig({
 Update your `.gitignore` to properly handle CanopyCMS files:
 
 ```gitignore
-# CanopyCMS
-# Ignore local development files (not committed to git)
-.canopycms/*.local.json
-
-# Ignore branch working directories
-.canopycms/branches/
-
-# Ignore local simulated remote
-.canopycms/remote.git/
-
-# DO commit these files (for version control and PR review):
-# - .canopycms/permissions.json
-# - .canopycms/groups.json
-# - .canopycms/comments.json (optional, review artifacts)
+# CanopyCMS - ignore all runtime directories
+.canopy*
 ```
 
-**Important**: Permissions and groups files (`.canopycms/permissions.json` and `.canopycms/groups.json`) should be tracked in git for version control. Only the `.local.json` variants (used in dev mode) should be gitignored.
+**That's it!** The single pattern `.canopy*` ignores all CanopyCMS runtime directories:
+- `.canopy-dev/` - Dev mode settings (not committed)
+- `.canopy-prod-sim/` - Prod-sim branch workspaces and local git remote (not committed)
+
+**Note**: Branch metadata (`.canopy-meta/`) is automatically excluded via git's info/exclude mechanism inside branch workspaces - you don't need to worry about it in your .gitignore.
+
+**Settings in production modes**: Permissions and groups are stored on a separate git branch (`canopycms-settings-{deploymentName}`) and are version-controlled through that branch, not in your working tree.
 
 ### 3. Create the Canopy context (one-time setup)
 
@@ -309,8 +303,8 @@ const Page = async ({ searchParams }) => {
 
 ### Operating Modes
 
-- **`dev`**: Direct file editing in your current checkout. Best for solo development.
-- **`prod-sim`**: Simulates production locally with per-branch clones in `.canopycms/branches/`. Use for testing branch workflows.
+- **`dev`**: Direct file editing in your current checkout. Best for solo development. Settings stored in `.canopy-dev/`.
+- **`prod-sim`**: Simulates production locally with per-branch clones in `.canopy-prod-sim/branches/`. Use for testing branch workflows.
 - **`prod`**: Full production deployment with branch workspaces on persistent storage (e.g., AWS Lambda + EFS).
 
 ### Schema Definition
@@ -676,7 +670,7 @@ Comments enable asynchronous review workflows at three levels:
 - **Entry comments**: General feedback on an entire content entry
 - **Branch comments**: Discussion about the overall changeset
 
-Comments are stored in `.canopycms/comments.json` per branch and are NOT committed to git (they're review artifacts).
+Comments are stored in `.canopy-meta/comments.json` per branch workspace and are NOT committed to git (they're review artifacts, excluded via git's info/exclude mechanism).
 
 ### Permission Model
 
@@ -690,7 +684,11 @@ Access control uses three layers:
 
 **Build mode bypass**: During `next build`, all permission checks are bypassed to allow static generation of all content, regardless of auth configuration.
 
-Permissions are stored in `.canopycms/groups.json` and `.canopycms/permissions.json` and ARE committed to git for version control and PR-reviewable changes. In production mode, these files are stored on a separate `canopycms-settings` branch. Files include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
+**Settings storage by mode:**
+- **Dev mode**: Settings stored in `.canopy-dev/groups.json` and `.canopy-dev/permissions.json` (gitignored, for local development only)
+- **Prod/Prod-sim modes**: Settings stored on a separate orphan branch named `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific)
+
+Settings files include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
 
 ### Live Preview
 

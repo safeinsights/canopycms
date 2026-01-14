@@ -19,7 +19,7 @@ describe('permissions loader', () => {
   describe('loadPathPermissions', () => {
     it('loads from file when it exists', async () => {
       // Create permissions file
-      const canopyDir = path.join(testRoot, '.canopycms')
+      const canopyDir = path.join(testRoot, '.canopy-meta')
       await fs.mkdir(canopyDir, { recursive: true })
       await fs.writeFile(
         path.join(canopyDir, 'permissions.json'),
@@ -62,8 +62,8 @@ describe('permissions loader', () => {
     it('throws error on invalid JSON', async () => {
       const consoleSpy = mockConsole()
 
-      // Create invalid permissions file
-      const canopyDir = path.join(testRoot, '.canopycms')
+      // Create invalid permissions file in new location
+      const canopyDir = path.join(testRoot, '.canopy-meta')
       await fs.mkdir(canopyDir, { recursive: true })
       await fs.writeFile(path.join(canopyDir, 'permissions.json'), 'invalid json', 'utf-8')
 
@@ -75,8 +75,8 @@ describe('permissions loader', () => {
     it('throws error on invalid schema', async () => {
       const consoleSpy = mockConsole()
 
-      // Create file with wrong version
-      const canopyDir = path.join(testRoot, '.canopycms')
+      // Create file with wrong version in new location
+      const canopyDir = path.join(testRoot, '.canopy-meta')
       await fs.mkdir(canopyDir, { recursive: true })
       await fs.writeFile(
         path.join(canopyDir, 'permissions.json'),
@@ -110,7 +110,7 @@ describe('permissions loader', () => {
 
       await savePathPermissions(testRoot, permissions, 'admin-user', 'prod')
 
-      const filePath = path.join(testRoot, '.canopycms', 'permissions.json')
+      const filePath = path.join(testRoot, '.canopy-meta', 'permissions.json')
       const fileContent = await fs.readFile(filePath, 'utf-8')
       const parsed = JSON.parse(fileContent)
 
@@ -124,12 +124,12 @@ describe('permissions loader', () => {
       })
     })
 
-    it('creates .canopycms directory if it does not exist', async () => {
+    it('creates .canopy-meta directory if it does not exist', async () => {
       const permissions = [{ path: 'content/**', edit: { allowedGroups: ['all'] } }]
 
       await savePathPermissions(testRoot, permissions, 'user-1', 'prod')
 
-      const canopyDir = path.join(testRoot, '.canopycms')
+      const canopyDir = path.join(testRoot, '.canopy-meta')
       const stats = await fs.stat(canopyDir)
       expect(stats.isDirectory()).toBe(true)
     })
@@ -163,7 +163,7 @@ describe('permissions loader', () => {
     it('creates default file if it does not exist', async () => {
       await ensurePermissionsFile(testRoot, 'admin-user', 'prod')
 
-      const filePath = path.join(testRoot, '.canopycms', 'permissions.json')
+      const filePath = path.join(testRoot, '.canopy-meta', 'permissions.json')
       const fileContent = await fs.readFile(filePath, 'utf-8')
       const parsed = JSON.parse(fileContent)
 

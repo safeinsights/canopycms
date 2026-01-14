@@ -15,7 +15,7 @@ describe('BranchMetadataFileManager', () => {
       const now = new Date().toISOString()
 
       // Manually write file to test loadOnly
-      const metaDir = path.join(root, '.canopycms')
+      const metaDir = path.join(root, '.canopy-meta')
       await fs.mkdir(metaDir, { recursive: true })
       await fs.writeFile(
         path.join(metaDir, 'branch.json'),
@@ -107,7 +107,7 @@ describe('BranchMetadataFileManager', () => {
       const registryDir = await tmpDir()
 
       // Create initial cache file
-      const cacheFile = path.join(registryDir, '.canopycms', 'branches.json')
+      const cacheFile = path.join(registryDir, 'branches.json')
       await fs.mkdir(path.dirname(cacheFile), { recursive: true })
       await fs.writeFile(cacheFile, JSON.stringify({ version: 1, branches: [] }))
 
@@ -136,7 +136,7 @@ describe('BranchMetadataFileManager', () => {
         .stat(cacheFile)
         .then(() => true)
         .catch(() => false)
-      const staleFile = path.join(registryDir, '.canopycms', 'branches.stale.json')
+      const staleFile = path.join(registryDir, 'branches.stale.json')
       const staleExists = await fs
         .stat(staleFile)
         .then(() => true)

@@ -410,4 +410,93 @@ export class GitManager {
     const remote = remotes.find(r => r.name === this.remote)
     return remote?.refs.push || remote?.refs.fetch
   }
+
+  /**
+   * Add a pattern to .git/info/exclude to prevent it from being committed/pushed.
+   * This is used to exclude .canopy-meta/ from content branch workspaces.
+   *
+   * .git/info/exclude is a per-repository gitignore that never gets committed.
+   * Perfect for runtime metadata that should never leave the workspace.
+   *
+   * This is idempotent - if the pattern already exists, it won't be added again.
+   */
+  async ensureGitExclude(pattern: string): Promise<void> {
+    const excludePath = path.join(this.repoPath, '.git', 'info', 'exclude')
+
+    // Ensure .git/info directory exists
+    await fs.mkdir(path.dirname(excludePath), { recursive: true })
+
+    // Read existing exclude file (create if doesn't exist)
+    let content = ''
+    try {
+      content = await fs.readFile(excludePath, 'utf-8')
+    } catch (err: any) {
+      if (err?.code !== 'ENOENT') throw err
+      // File doesn't exist, will create it
+    }
+
+    // Check if pattern already exists (avoid duplicates)
+    const lines = content.split('\n')
+    if (lines.some(line => line.trim() === pattern)) {
+      log.debug('git', 'Pattern already in .git/info/exclude', { pattern })
+      return
+    }
+
+    // Add pattern (with newline if file is not empty and doesn't end with one)
+    const needsLeadingNewline = content.length > 0 && !content.endsWith('\n')
+    const newContent = content + (needsLeadingNewline ? '\n' : '') + pattern + '\n'
+
+    await fs.writeFile(excludePath, newContent, 'utf-8')
+    log.debug('git', 'Added pattern to .git/info/exclude', { pattern })
+  }
+
+  /**
+   * Create an orphan branch for settings (permissions/groups).
+   *
+   * Orphan branches have no shared history with other branches - they start fresh.
+   * This is perfect for deployment-specific settings that shouldn't pollute content history.
+   *
+   * The branch contains only settings files at root (no .canopy-meta/, no other structure).
+   *
+   * @param branchName - Name of the orphan branch (e.g., 'canopycms-settings-prod')
+   * @param initialFiles - Files to commit to the new branch (e.g., { 'permissions.json': '{}', 'groups.json': '{}' })
+   */
+  async createOrphanSettingsBranch(
+    branchName: string,
+    initialFiles: Record<string, string>
+  ): Promise<void> {
+    log.debug('git', 'Creating orphan settings branch', { branchName })
+
+    // Check if branch already exists
+    const branches = await this.git.branch()
+    if (branches.all.includes(branchName)) {
+      log.debug('git', 'Orphan branch already exists', { branchName })
+      // Checkout the existing branch
+      await this.git.checkout(branchName)
+      return
+    }
+
+    // Create orphan branch (--orphan creates a branch with no parent/history)
+    await this.git.raw(['checkout', '--orphan', branchName])
+
+    // Remove all files from index (orphan checkout keeps working tree)
+    try {
+      await this.git.raw(['rm', '-rf', '.'])
+    } catch {
+      // Ignore errors (might fail if index is already empty)
+    }
+
+    // Write initial files
+    for (const [filePath, content] of Object.entries(initialFiles)) {
+      const fullPath = path.join(this.repoPath, filePath)
+      await fs.mkdir(path.dirname(fullPath), { recursive: true })
+      await fs.writeFile(fullPath, content, 'utf-8')
+      await this.git.add(filePath)
+    }
+
+    // Commit initial files
+    await this.git.commit('Initialize settings branch', ['--allow-empty'])
+
+    log.debug('git', 'Orphan settings branch created', { branchName })
+  }
 }

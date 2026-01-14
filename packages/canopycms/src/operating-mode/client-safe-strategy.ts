@@ -119,11 +119,11 @@ export class LocalSimpleClientSafeStrategy implements ClientSafeStrategy {
 
   // Simple Data
   getPermissionsFileName(): string {
-    return 'permissions.local.json'
+    return 'permissions.json'
   }
 
   getGroupsFileName(): string {
-    return 'groups.local.json'
+    return 'groups.json'
   }
 
   shouldCommit(): boolean {
