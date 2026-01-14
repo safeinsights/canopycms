@@ -37,6 +37,18 @@ export interface ResolveRemoteUrlOptions {
   sourceRoot?: string
 }
 
+export interface InitializeWorkspaceOptions {
+  workspacePath: string
+  branchName: string
+  mode: OperatingMode
+  baseBranch?: string
+  sourceRoot?: string
+  defaultRemoteUrl?: string
+  remoteUrl?: string
+  remoteName?: string
+  branchType: 'content' | 'orphan' // Determines checkout vs createOrphan
+}
+
 export class GitManager {
   private readonly git: SimpleGit
   private readonly repoPath: string
@@ -309,6 +321,87 @@ export class GitManager {
     }
 
     return undefined
+  }
+
+  /**
+   * Ensures a git workspace is initialized and ready for use.
+   * Handles cloning, remote configuration, and branch checkout/creation.
+   *
+   * This centralizes the common initialization sequence used by both BranchWorkspaceManager
+   * and SettingsWorkspaceManager.
+   *
+   * Note: Does NOT configure git author - that should be done before commits, not during init.
+   *
+   * @returns Configured GitManager instance for the workspace
+   */
+  static async initializeWorkspace(options: InitializeWorkspaceOptions): Promise<GitManager> {
+    const baseBranch = options.baseBranch ?? 'main'
+    const remoteName = options.remoteName ?? 'origin'
+
+    // 1. Check if git already initialized
+    let repoExists = false
+    try {
+      const stat = await fs.stat(path.join(options.workspacePath, '.git'))
+      repoExists = stat.isDirectory()
+    } catch (err: any) {
+      if (err?.code !== 'ENOENT') throw err
+      // ENOENT means repo doesn't exist, continue to clone
+    }
+
+    // 2. Clone if needed
+    let justCloned = false
+    if (!repoExists) {
+      // Resolve remote URL only when we need to clone
+      const remoteUrl = await GitManager.resolveRemoteUrl({
+        mode: options.mode,
+        remoteUrl: options.remoteUrl,
+        defaultRemoteUrl: options.defaultRemoteUrl,
+        baseBranch,
+        sourceRoot: options.sourceRoot,
+      })
+
+      // Require remoteUrl for cloning
+      if (!remoteUrl) {
+        throw new Error(
+          'CanopyCMS: defaultRemoteUrl (or CANOPYCMS_REMOTE_URL) is required to initialize workspace',
+        )
+      }
+
+      // Clone repository (automatically configures 'origin' remote)
+      await GitManager.cloneRepo(remoteUrl, options.workspacePath, baseBranch)
+      justCloned = true
+    }
+
+    // 3. Create GitManager instance
+    const git = new GitManager({
+      repoPath: options.workspacePath,
+      baseBranch,
+      remote: remoteName,
+    })
+
+    // 4. Configure git remote only if we didn't just clone
+    // (clone already sets up the 'origin' remote)
+    if (!justCloned) {
+      const remoteUrl = await GitManager.resolveRemoteUrl({
+        mode: options.mode,
+        remoteUrl: options.remoteUrl,
+        defaultRemoteUrl: options.defaultRemoteUrl,
+        baseBranch,
+        sourceRoot: options.sourceRoot,
+      })
+      if (remoteUrl) {
+        await git.ensureRemote(remoteUrl)
+      }
+    }
+
+    // 5. Checkout or create branch based on type
+    if (options.branchType === 'orphan') {
+      await git.createOrphanSettingsBranch(options.branchName, {})
+    } else {
+      await git.checkoutBranch(options.branchName)
+    }
+
+    return git
   }
 
   async status(): Promise<GitStatus> {

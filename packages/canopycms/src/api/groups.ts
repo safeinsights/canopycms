@@ -197,7 +197,7 @@ const updateInternalGroupsHandler = async (
     await commitSettings(ctx, {
       context,
       branchRoot: context.branchRoot,
-      fileName: '.canopycms/groups.json',
+      fileName: 'groups.json',
       message: 'Update internal groups',
       mode,
     })

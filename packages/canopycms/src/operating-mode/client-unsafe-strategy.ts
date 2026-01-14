@@ -36,14 +36,14 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     return path.resolve(sourceRoot ?? process.cwd(), 'content')
   }
 
-  getBranchesRoot(_sourceRoot?: string): string {
+  getContentBranchesRoot(_sourceRoot?: string): string {
     const envWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
     const workspace = path.resolve(envWorkspace ?? DEFAULT_PROD_WORKSPACE)
-    return path.join(workspace, 'branches')
+    return path.join(workspace, 'content-branches')
   }
 
-  getBranchRoot(branchName: string, sourceRoot?: string): string {
-    return path.resolve(this.getBranchesRoot(sourceRoot), branchName)
+  getContentBranchRoot(branchName: string, sourceRoot?: string): string {
+    return path.resolve(this.getContentBranchesRoot(sourceRoot), branchName)
   }
 
   getGitExcludePattern(): string {
@@ -80,11 +80,10 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     return `canopycms-settings-${deploymentName}`
   }
 
-  async getSettingsBranchRoot(
-    _branchRoot: string,
-    getSettingsBranch: () => Promise<string>,
-  ): Promise<string> {
-    return getSettingsBranch()
+  getSettingsRoot(_sourceRoot?: string): string {
+    const envWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+    const workspace = path.resolve(envWorkspace ?? DEFAULT_PROD_WORKSPACE)
+    return path.join(workspace, 'settings')
   }
 
   usesSeparateSettingsBranch(): boolean {
@@ -117,12 +116,12 @@ class LocalProdSimStrategy extends LocalProdSimClientSafeStrategy implements Cli
     return path.resolve(sourceRoot ?? process.cwd(), 'content')
   }
 
-  getBranchesRoot(sourceRoot?: string): string {
-    return path.join(this.getProdSimRoot(sourceRoot), 'branches')
+  getContentBranchesRoot(sourceRoot?: string): string {
+    return path.join(this.getProdSimRoot(sourceRoot), 'content-branches')
   }
 
-  getBranchRoot(branchName: string, sourceRoot?: string): string {
-    return path.resolve(this.getBranchesRoot(sourceRoot), branchName)
+  getContentBranchRoot(branchName: string, sourceRoot?: string): string {
+    return path.resolve(this.getContentBranchesRoot(sourceRoot), branchName)
   }
 
   getGitExcludePattern(): string {
@@ -159,11 +158,8 @@ class LocalProdSimStrategy extends LocalProdSimClientSafeStrategy implements Cli
     return `canopycms-settings-${deploymentName}`
   }
 
-  async getSettingsBranchRoot(
-    _branchRoot: string,
-    getSettingsBranch: () => Promise<string>,
-  ): Promise<string> {
-    return getSettingsBranch()
+  getSettingsRoot(sourceRoot?: string): string {
+    return path.join(this.getProdSimRoot(sourceRoot), 'settings')
   }
 
   usesSeparateSettingsBranch(): boolean {
@@ -194,11 +190,11 @@ class LocalSimpleStrategy extends LocalSimpleClientSafeStrategy implements Clien
     return path.resolve(sourceRoot ?? process.cwd(), 'content')
   }
 
-  getBranchesRoot(_sourceRoot?: string): string {
+  getContentBranchesRoot(_sourceRoot?: string): string {
     throw new Error('No branching in dev mode')
   }
 
-  getBranchRoot(_branchName: string, _sourceRoot?: string): string {
+  getContentBranchRoot(_branchName: string, _sourceRoot?: string): string {
     throw new Error('No branching in dev mode')
   }
 
@@ -207,13 +203,13 @@ class LocalSimpleStrategy extends LocalSimpleClientSafeStrategy implements Clien
   }
 
   getPermissionsFilePath(root: string): string {
-    // Returns: {projectRoot}/.canopy-dev/permissions.json
-    return path.join(this.getDevConfigRoot(root), 'permissions.json')
+    // Returns: {projectRoot}/.canopy-dev/settings/permissions.json
+    return path.join(this.getDevConfigRoot(root), 'settings', 'permissions.json')
   }
 
   getGroupsFilePath(root: string): string {
-    // Returns: {projectRoot}/.canopy-dev/groups.json
-    return path.join(this.getDevConfigRoot(root), 'groups.json')
+    // Returns: {projectRoot}/.canopy-dev/settings/groups.json
+    return path.join(this.getDevConfigRoot(root), 'settings', 'groups.json')
   }
 
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
@@ -237,12 +233,8 @@ class LocalSimpleStrategy extends LocalSimpleClientSafeStrategy implements Clien
     return config.defaultBaseBranch ?? 'main'
   }
 
-  async getSettingsBranchRoot(
-    branchRoot: string,
-    _getSettingsBranch: () => Promise<string>,
-  ): Promise<string> {
-    // Settings are in the same branch
-    return branchRoot
+  getSettingsRoot(sourceRoot?: string): string {
+    return path.join(this.getDevConfigRoot(sourceRoot), 'settings')
   }
 
   usesSeparateSettingsBranch(): boolean {

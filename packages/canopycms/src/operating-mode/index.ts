@@ -16,8 +16,9 @@
  *   import { operatingStrategy } from '@/operating-mode'
  *   const strategy = operatingStrategy(mode)
  *   const contentRoot = strategy.getContentRoot()
- *   const branchesRoot = strategy.getBranchesRoot() // throws in dev mode
- *   const branchRoot = strategy.getBranchRoot('my-branch') // throws in dev mode
+ *   const branchesRoot = strategy.getContentBranchesRoot() // throws in dev mode
+ *   const branchRoot = strategy.getContentBranchRoot('my-branch') // throws in dev mode
+ *   const settingsRoot = strategy.getSettingsRoot()
  *   if (strategy.supportsBranching()) { ... } // can also use client-safe methods
  */
 

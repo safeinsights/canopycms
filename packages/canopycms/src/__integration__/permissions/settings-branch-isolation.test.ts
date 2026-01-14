@@ -15,9 +15,11 @@ import fs from 'node:fs/promises'
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import { BranchWorkspaceManager } from '../../branch-workspace'
+import { SettingsWorkspaceManager } from '../../settings-workspace'
 import { createCanopyServices } from '../../services'
 import type { PathPermission } from '../../config'
 import type { AuthenticatedUser } from '../../user'
+import { operatingStrategy } from '../../operating-mode'
 
 describe('Settings Branch Isolation', () => {
   let workspace: TestWorkspace
@@ -56,11 +58,18 @@ describe('Settings Branch Isolation', () => {
       remoteUrl: workspace.remotePath,
     })
 
-    // Create settings branch
-    const settingsBranch = await manager.openOrCreateBranch({
-      branchName: 'canopycms-settings',
+    // Create settings workspace using SettingsWorkspaceManager
+    const settingsManager = new SettingsWorkspaceManager(workspace.config)
+    const strategy = operatingStrategy('prod-sim')
+    const settingsRoot = strategy.getSettingsRoot(workspace.tmpRoot)
+    const settingsBranchName = strategy.getSettingsBranchName({
+      settingsBranch: 'canopycms-settings',
+    })
+
+    await settingsManager.ensureGitWorkspace({
+      settingsRoot,
+      branchName: settingsBranchName,
       mode: 'prod-sim',
-      createdBy: 'system',
       remoteUrl: workspace.remotePath,
     })
 
@@ -86,10 +95,9 @@ describe('Settings Branch Isolation', () => {
       }),
     )
 
-    // Write RESTRICTIVE permissions to settings branch (the correct place)
-    const settingsPermissionsDir = settingsBranch.branchRoot
-    await fs.mkdir(settingsPermissionsDir, { recursive: true })
-    const settingsPermissionsFile = path.join(settingsPermissionsDir, 'permissions.json')
+    // Write RESTRICTIVE permissions to settings directory (the correct place)
+    await fs.mkdir(settingsRoot, { recursive: true })
+    const settingsPermissionsFile = path.join(settingsRoot, 'permissions.json')
     const restrictiveRules: PathPermission[] = [
       {
         path: 'content/posts/hello.mdx',

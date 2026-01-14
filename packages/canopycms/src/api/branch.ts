@@ -50,7 +50,7 @@ import { isPrivileged, isAdmin } from '../reserved-groups'
 import type { PathPermission } from '../config'
 import { loadPathPermissions } from '../permissions-loader'
 import type { CanopyUser } from '../user'
-import { isSettingsBranch } from '../settings-branch-utils'
+import { operatingStrategy } from '../operating-mode'
 
 /**
  * Check if a user can create branches.
@@ -117,12 +117,18 @@ export const createBranchHandler = async (
       userId: req.user.userId,
     })
 
-    // Prevent creating branch with settings branch name
-    if (isSettingsBranch(branchName, ctx.services.config)) {
-      return {
-        ok: false,
-        status: 400,
-        error: 'Cannot create branch with reserved settings branch name',
+    // Prevent git branch name collision with settings branch
+    // Settings live in separate directory but share same git remote
+    const strategy = operatingStrategy(ctx.services.config.mode)
+    if (strategy.usesSeparateSettingsBranch()) {
+      const settingsBranchName = strategy.getSettingsBranchName(ctx.services.config)
+      if (branchName === settingsBranchName) {
+        return {
+          ok: false,
+          status: 400,
+          error:
+            'Cannot create content branch with settings branch name (git branch name collision)',
+        }
       }
     }
 
@@ -226,15 +232,6 @@ export const deleteBranchHandler = async (
   params: z.infer<typeof branchParamSchema>,
 ): Promise<BranchDeleteResponse> => {
   const branchName = params.branch
-
-  // Prevent deleting settings branch
-  if (isSettingsBranch(branchName, ctx.services.config)) {
-    return {
-      ok: false,
-      status: 400,
-      error: 'Cannot delete settings branch',
-    }
-  }
 
   // Disallow delete in modes that don't support branching (branch = developer's git checkout)
   const operatingMode = ctx.services.config.mode

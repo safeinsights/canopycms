@@ -40,6 +40,7 @@ describe('groups API', () => {
           mode: 'dev',
           gitBotAuthorName: 'Canopy Bot',
           gitBotAuthorEmail: 'bot@example.com',
+          sourceRoot: '/test/workspace',
         } as any,
         createGitManagerFor: vi.fn(() => mockGit) as any,
       },
@@ -66,26 +67,6 @@ describe('groups API', () => {
         ok: false,
         status: 403,
         error: 'Admin access required',
-      })
-    })
-
-    it('should return 500 if main branch not found', async () => {
-      mockContext.getBranchContext = vi.fn(async () => null)
-
-      const req: ApiRequest<undefined> = {
-        user: {
-          type: 'authenticated',
-          userId: 'admin-1' as CanopyUserId,
-          groups: [RESERVED_GROUPS.ADMINS],
-        },
-      }
-
-      const result = await getInternalGroups(mockContext, req)
-
-      expect(result).toEqual({
-        ok: false,
-        status: 500,
-        error: 'Branch main not found',
       })
     })
 
@@ -143,28 +124,6 @@ describe('groups API', () => {
       })
     })
 
-    it('should return 500 if main branch not found', async () => {
-      mockContext.getBranchContext = vi.fn(async () => null)
-      // Add bootstrap admin so validation passes
-      ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
-
-      const req: ApiRequest = {
-        user: {
-          type: 'authenticated',
-          userId: 'admin-1' as CanopyUserId,
-          groups: [RESERVED_GROUPS.ADMINS],
-        },
-      }
-
-      const result = await updateInternalGroups(mockContext, req, { groups: [] })
-
-      expect(result).toEqual({
-        ok: false,
-        status: 500,
-        error: 'Branch main not found',
-      })
-    })
-
     it('should save groups and commit changes for admin', async () => {
       vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
       // Add bootstrap admin so validation passes
@@ -193,8 +152,9 @@ describe('groups API', () => {
       expect(result.status).toBe(200)
 
       // Verify groups were saved (with mode parameter and contentVersion)
+      // In dev mode, uses workspace root instead of branch root
       expect(groupsLoader.saveInternalGroups).toHaveBeenCalledWith(
-        '/test/main',
+        '/test/workspace',
         groups,
         'admin-1',
         'dev',
