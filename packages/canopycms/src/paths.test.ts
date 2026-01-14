@@ -7,11 +7,11 @@ import { describe, expect, it } from 'vitest'
 import { BranchPathError, ensureBranchRoot, getDefaultBranchBase, resolveBranchPath } from './paths'
 
 describe('paths', () => {
-  it('resolves prod branches root from default workspace', () => {
+  it('resolves prod content branches root from default workspace', () => {
     // In prod mode, uses default workspace path (or CANOPYCMS_WORKSPACE_ROOT env var)
     // Override parameter is not used in prod mode - workspace comes from env
     const base = getDefaultBranchBase('prod')
-    expect(base).toContain('branches')
+    expect(base).toContain('content-branches')
   })
 
   it('sanitizes branch names and prevents traversal', () => {
@@ -32,8 +32,8 @@ describe('paths', () => {
     })
     const stat = await fs.stat(branchRoot)
     expect(stat.isDirectory()).toBe(true)
-    // baseRoot is now .canopy-prod-sim/branches inside the override path
-    expect(baseRoot).toBe(path.resolve(temp, '.canopy-prod-sim', 'branches'))
+    // baseRoot is now .canopy-prod-sim/content-branches inside the override path
+    expect(baseRoot).toBe(path.resolve(temp, '.canopy-prod-sim', 'content-branches'))
     expect(branchRoot.startsWith(baseRoot)).toBe(true)
   })
 

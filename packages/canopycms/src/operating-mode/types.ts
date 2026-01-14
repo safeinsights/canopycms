@@ -98,19 +98,19 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
   getContentRoot(sourceRoot?: string): string
 
   /**
-   * Get the parent directory of all branch workspaces (contains branches.json and branch directories).
-   * - prod-sim: {cwd}/.canopy-prod-sim/branches
-   * - prod: $CANOPYCMS_WORKSPACE_ROOT/branches or /mnt/efs/workspace/branches
+   * Get the parent directory of all content branch workspaces (contains branches.json and branch directories).
+   * - prod-sim: {cwd}/.canopy-prod-sim/content-branches
+   * - prod: $CANOPYCMS_WORKSPACE_ROOT/content-branches or /mnt/efs/workspace/content-branches
    * @throws Error in dev mode (no branching)
    */
-  getBranchesRoot(sourceRoot?: string): string
+  getContentBranchesRoot(sourceRoot?: string): string
 
   /**
-   * Get individual branch workspace directory.
-   * Returns: {branchesRoot}/{branchName}
+   * Get individual content branch workspace directory.
+   * Returns: {contentBranchesRoot}/{branchName}
    * @throws Error in dev mode (no branching)
    */
-  getBranchRoot(branchName: string, sourceRoot?: string): string
+  getContentBranchRoot(branchName: string, sourceRoot?: string): string
 
   /**
    * Get the git exclude pattern for runtime metadata (e.g., '.canopy-meta/').
@@ -152,11 +152,13 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
     defaultBaseBranch?: string
   }): string
 
-  /** Get the root directory for loading settings */
-  getSettingsBranchRoot(
-    branchRoot: string,
-    getSettingsBranch: () => Promise<string>
-  ): Promise<string>
+  /**
+   * Get the root directory for settings storage.
+   * - prod: $CANOPYCMS_WORKSPACE_ROOT/settings or /mnt/efs/workspace/settings
+   * - prod-sim: {cwd}/.canopy-prod-sim/settings
+   * - dev: {cwd}/.canopy-dev/settings
+   */
+  getSettingsRoot(sourceRoot?: string): string
 
   /** Whether settings should be stored in a separate branch */
   usesSeparateSettingsBranch(): boolean

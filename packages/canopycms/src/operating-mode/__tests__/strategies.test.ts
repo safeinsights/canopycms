@@ -212,18 +212,18 @@ describe('Operating Mode Strategies', () => {
         expect(strategy.getPermissionsFileName()).toBe('permissions.json')
       })
 
-      it('should use default branches root', () => {
+      it('should use default content branches root', () => {
         delete process.env.CANOPYCMS_WORKSPACE_ROOT
         const strategy = operatingStrategy(mode)
-        const branchesRoot = strategy.getBranchesRoot()
-        expect(branchesRoot).toContain('/mnt/efs/workspace/branches')
+        const branchesRoot = strategy.getContentBranchesRoot()
+        expect(branchesRoot).toContain('/mnt/efs/workspace/content-branches')
       })
 
-      it('should use env variable for branches root', () => {
+      it('should use env variable for content branches root', () => {
         process.env.CANOPYCMS_WORKSPACE_ROOT = '/custom/path'
         const strategy = operatingStrategy(mode)
-        const branchesRoot = strategy.getBranchesRoot()
-        expect(branchesRoot).toContain('/custom/path/branches')
+        const branchesRoot = strategy.getContentBranchesRoot()
+        expect(branchesRoot).toContain('/custom/path/content-branches')
       })
 
       it('should get content root', () => {
@@ -234,7 +234,7 @@ describe('Operating Mode Strategies', () => {
 
       it('should create branch subdirectories', () => {
         const strategy = operatingStrategy(mode)
-        const branchRoot = strategy.getBranchRoot('feature-branch')
+        const branchRoot = strategy.getContentBranchRoot('feature-branch')
         expect(branchRoot).toContain('feature-branch')
       })
 
@@ -328,15 +328,15 @@ describe('Operating Mode Strategies', () => {
         expect(strategy.supportsPullRequests()).toBe(false)
       })
 
-      it('should use .canopy-prod-sim/branches as branches root', () => {
+      it('should use .canopy-prod-sim/content-branches as branches root', () => {
         const strategy = operatingStrategy(mode)
-        const branchesRoot = strategy.getBranchesRoot()
-        expect(branchesRoot).toContain('.canopy-prod-sim/branches')
+        const branchesRoot = strategy.getContentBranchesRoot()
+        expect(branchesRoot).toContain('.canopy-prod-sim/content-branches')
       })
 
       it('should create branch subdirectories', () => {
         const strategy = operatingStrategy(mode)
-        const branchRoot = strategy.getBranchRoot('feature-branch')
+        const branchRoot = strategy.getContentBranchRoot('feature-branch')
         expect(branchRoot).toContain('feature-branch')
       })
 
@@ -378,14 +378,14 @@ describe('Operating Mode Strategies', () => {
         expect(contentRoot).toContain('content')
       })
 
-      it('should throw error when getting branches root', () => {
+      it('should throw error when getting content branches root', () => {
         const strategy = operatingStrategy(mode)
-        expect(() => strategy.getBranchesRoot()).toThrow('No branching in dev mode')
+        expect(() => strategy.getContentBranchesRoot()).toThrow('No branching in dev mode')
       })
 
-      it('should throw error when getting branch root', () => {
+      it('should throw error when getting content branch root', () => {
         const strategy = operatingStrategy(mode)
-        expect(() => strategy.getBranchRoot('feature-branch')).toThrow('No branching in dev mode')
+        expect(() => strategy.getContentBranchRoot('feature-branch')).toThrow('No branching in dev mode')
       })
 
       it('should construct permissions file path in .canopy-dev', () => {

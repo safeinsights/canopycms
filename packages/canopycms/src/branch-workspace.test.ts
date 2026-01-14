@@ -78,8 +78,8 @@ describe('BranchWorkspaceManager', () => {
       title: 'Foo Feature',
     })
 
-    // In prod-sim, strategy creates .canopy-prod-sim/branches structure
-    const expectedBranchesRoot = path.join(root, '.canopy-prod-sim', 'branches')
+    // In prod-sim, strategy creates .canopy-prod-sim/content-branches structure
+    const expectedBranchesRoot = path.join(root, '.canopy-prod-sim', 'content-branches')
 
     // Note: Still using .canopycms for now - Phase 2 will migrate to .canopy-meta
     const metaFile = path.join(workspace.branchRoot, '.canopy-meta/branch.json')

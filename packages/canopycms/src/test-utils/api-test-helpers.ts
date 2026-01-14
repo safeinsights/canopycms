@@ -146,6 +146,7 @@ export interface MockServicesOptions {
   commitFiles?: any
   submitBranch?: any
   commitToSettingsBranch?: any
+  getSettingsBranchRoot?: any
 }
 
 /**
@@ -180,6 +181,7 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
     commitFiles: options.commitFiles ?? vi.fn().mockResolvedValue(undefined),
     submitBranch: options.submitBranch ?? vi.fn().mockResolvedValue(undefined),
     commitToSettingsBranch: options.commitToSettingsBranch ?? vi.fn().mockResolvedValue({ committed: true, pushed: true }),
+    getSettingsBranchRoot: options.getSettingsBranchRoot ?? vi.fn().mockResolvedValue('/mock/settings'),
   }
 }
 

@@ -34,6 +34,7 @@ const allowedCtx = (): ApiContext => ({
     commitFiles: vi.fn(),
     submitBranch: vi.fn(),
     commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
+    getSettingsBranchRoot: vi.fn().mockResolvedValue('/mock/settings'),
   },
   getBranchContext: vi.fn().mockResolvedValue({
     baseRoot: '/tmp/base',
@@ -57,6 +58,7 @@ describe('content api', () => {
         commitFiles: vi.fn(),
         submitBranch: vi.fn(),
         commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
+        getSettingsBranchRoot: vi.fn().mockResolvedValue('/tmp/settings'),
       },
       getBranchContext: vi.fn().mockResolvedValue({
         baseRoot: '/tmp/base',

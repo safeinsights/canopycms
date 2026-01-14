@@ -102,20 +102,6 @@ describe('permissions API', () => {
       expect(result.error).toBe('Admin access required')
     })
 
-    it('returns error when main branch not found', async () => {
-      const mockGetBranchState = vi.fn().mockResolvedValue(null)
-      mockContext.getBranchContext = mockGetBranchState
-
-      const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
-      }
-
-      const result = await getPermissions(mockContext, req)
-
-      expect(result.ok).toBe(false)
-      expect(result.status).toBe(500)
-      expect(result.error).toBe('Branch main not found')
-    })
   })
 
   describe('updatePermissions', () => {
@@ -181,20 +167,6 @@ describe('permissions API', () => {
       expect(result.error).toBe('permissions array required')
     })
 
-    it('returns error when main branch not found', async () => {
-      const mockGetBranchState = vi.fn().mockResolvedValue(null)
-      mockContext.getBranchContext = mockGetBranchState
-
-      const req: ApiRequest = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
-      }
-
-      const result = await updatePermissions(mockContext, req, { permissions: [] })
-
-      expect(result.ok).toBe(false)
-      expect(result.status).toBe(500)
-      expect(result.error).toBe('Branch main not found')
-    })
   })
 
   describe('searchUsers', () => {
@@ -498,19 +470,8 @@ describe('permissions API', () => {
         authPlugin: mockAuthPlugin,
       })
 
-      // Mock getBranchContext to simulate auto-creation
-      prodContext.getBranchContext = vi.fn().mockImplementation(async (branchName: string) => {
-        // Simulate successful auto-creation of settings branch
-        return createMockBranchContext({
-          branchName: branchName,
-          createdBy: 'canopycms-system',
-          access: {},
-          baseRoot: '/test/repo',
-          branchRoot: `/test/repo/.canopycms/branches/${branchName}`,
-          createdAt: '2024-01-01T00:00:00Z',
-          updatedAt: '2024-01-01T00:00:00Z',
-        })
-      })
+      // Mock getSettingsBranchRoot to simulate settings workspace
+      prodContext.services.getSettingsBranchRoot = vi.fn().mockResolvedValue('/test/repo/settings')
 
       vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([])
 
@@ -520,10 +481,10 @@ describe('permissions API', () => {
 
       const result = await getPermissions(prodContext, req)
 
-      // Should succeed because getBranchContext auto-creates the branch
+      // Should succeed because getSettingsBranchRoot returns settings path
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-      expect(prodContext.getBranchContext).toHaveBeenCalledWith('canopycms-settings')
+      expect(prodContext.services.getSettingsBranchRoot).toHaveBeenCalled()
     })
 
     it('should auto-create settings branch in prod-sim mode when it does not exist', async () => {
@@ -544,19 +505,8 @@ describe('permissions API', () => {
         authPlugin: mockAuthPlugin,
       })
 
-      // Mock getBranchContext to simulate auto-creation
-      localProdSimContext.getBranchContext = vi.fn().mockImplementation(async (branchName: string) => {
-        // Simulate successful auto-creation of settings branch in .canopycms/branches/
-        return createMockBranchContext({
-          branchName: branchName,
-          createdBy: 'canopycms-system',
-          access: {},
-          baseRoot: '/test/repo',
-          branchRoot: `/test/repo/.canopycms/branches/${branchName}`,
-          createdAt: '2024-01-01T00:00:00Z',
-          updatedAt: '2024-01-01T00:00:00Z',
-        })
-      })
+      // Mock getSettingsBranchRoot to simulate settings workspace
+      localProdSimContext.services.getSettingsBranchRoot = vi.fn().mockResolvedValue('/test/repo/.canopy-prod-sim/settings')
 
       vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([])
 
@@ -566,10 +516,10 @@ describe('permissions API', () => {
 
       const result = await getPermissions(localProdSimContext, req)
 
-      // Should succeed because getBranchContext auto-creates the branch
+      // Should succeed because getSettingsBranchRoot returns settings path
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-      expect(localProdSimContext.getBranchContext).toHaveBeenCalledWith('canopycms-settings')
+      expect(localProdSimContext.services.getSettingsBranchRoot).toHaveBeenCalled()
     })
   })
 

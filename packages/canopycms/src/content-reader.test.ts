@@ -242,8 +242,8 @@ describe('createContentReader', () => {
       expect(doc.path).toBe('/?branch=main')
       expect(doc.data.hero.title).toBe('Welcome')
 
-      // In prod-sim, workspace is at .canopy-prod-sim/branches/main
-      const metaPath = path.join(root, '.canopy-prod-sim/branches/main/.canopy-meta/branch.json')
+      // In prod-sim, workspace is at .canopy-prod-sim/content-branches/main
+      const metaPath = path.join(root, '.canopy-prod-sim/content-branches/main/.canopy-meta/branch.json')
       const metaRaw = await fs.readFile(metaPath, 'utf8')
       const meta = JSON.parse(metaRaw)
       expect(meta.branch.name).toBe('main')

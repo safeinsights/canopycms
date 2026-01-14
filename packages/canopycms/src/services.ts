@@ -9,6 +9,7 @@ import { loadPathPermissions } from './permissions-loader'
 import { GitManager } from './git-manager'
 import { BranchRegistry } from './branch-registry'
 import { BranchWorkspaceManager } from './branch-workspace'
+import { SettingsWorkspaceManager } from './settings-workspace'
 import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
 import { operatingStrategy } from './operating-mode'
@@ -56,6 +57,8 @@ export interface CanopyServices {
     prUrl?: string
     error?: string
   }>
+  /** Get the root path for settings storage (ensures workspace exists) */
+  getSettingsBranchRoot: () => Promise<string>
 }
 
 /**
@@ -78,28 +81,31 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   // Path permissions are loaded dynamically from settings branch or .canopy-dev/permissions.json at request time.
   // At the service level, we bind with empty rules for direct path checks.
   const checkPathAccess = createCheckPathAccess([], config.defaultPathAccess ?? 'deny')
-  // Content access loads permissions dynamically from the branch root
-  // In prod/prod-sim modes, permissions are loaded from settings branch
+  // Content access loads permissions dynamically from settings root
+  // In prod/prod-sim modes, permissions are loaded from settings branch (orphan git branch)
+  // In dev mode, permissions are in .canopy-dev/settings/
   const getSettingsBranchRoot = async (): Promise<string> => {
-    const mode = config.mode
-    const strategy = operatingStrategy(mode)
+    const strategy = operatingStrategy(config.mode)
 
     // Only applicable in modes that use separate settings branch
     if (!strategy.usesSeparateSettingsBranch()) {
       throw new Error('getSettingsBranchRoot called in mode that does not use separate settings branch')
     }
 
-    const settingsBranchName = strategy.getSettingsBranchName(config)
+    const settingsRoot = strategy.getSettingsRoot()
+    const branchName = strategy.getSettingsBranchName(config)
 
-    const manager = new BranchWorkspaceManager(config)
-    // openOrCreateBranch already calls ensureGitWorkspace, which is cached per workspace
+    // Use SettingsWorkspaceManager to ensure git workspace for settings
     // This is Lambda-safe because the lock is in-memory per process
-    const context = await manager.openOrCreateBranch({
-      branchName: settingsBranchName,
-      mode,
-      createdBy: 'canopycms-system',
+    const manager = new SettingsWorkspaceManager(config)
+    await manager.ensureGitWorkspace({
+      settingsRoot,
+      branchName,
+      mode: config.mode,
+      remoteUrl: config.defaultRemoteUrl,
     })
-    return context.branchRoot
+
+    return settingsRoot
   }
 
   const checkContentAccess = createCheckContentAccess({
@@ -227,14 +233,10 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   const operatingMode = config.mode
   const modeStrategy = operatingStrategy(operatingMode)
 
-  // Get settings branch name for registry filtering
-  const settingsBranchName = modeStrategy.usesSeparateSettingsBranch()
-    ? modeStrategy.getSettingsBranchName(config)
-    : null
-
   // Create branch registry only in branching modes
+  // Settings are now in separate directory, no filtering needed
   const registry = modeStrategy.supportsBranching()
-    ? new BranchRegistry(getDefaultBranchBase(operatingMode), settingsBranchName)
+    ? new BranchRegistry(getDefaultBranchBase(operatingMode))
     : undefined
 
   // Create GitHub service if applicable (only for modes that support pull requests)
@@ -268,5 +270,6 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
     commitFiles,
     submitBranch,
     commitToSettingsBranch,
+    getSettingsBranchRoot,
   }
 }

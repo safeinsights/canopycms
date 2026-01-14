@@ -139,7 +139,7 @@ const updatePermissionsHandler = async (
     await commitSettings(ctx, {
       context,
       branchRoot: context.branchRoot,
-      fileName: '.canopycms/permissions.json',
+      fileName: 'permissions.json',
       message: 'Update permissions',
       mode,
     })
