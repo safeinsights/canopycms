@@ -1073,30 +1073,6 @@ git reset HEAD .canopy-prod-sim/
 
 **Fix:** Always add `.canopy*` to your .gitignore pattern. This single pattern covers all CanopyCMS runtime directories (`.canopy-dev/`, `.canopy-prod-sim/`).
 
-#### Migration Guide: New Directory Structure
-
-If you're upgrading an existing project to the new `.canopy-*` directory structure:
-
-```bash
-# 1. Update .gitignore to use simple pattern
-echo ".canopy*" >> apps/your-app/.gitignore
-
-# 2. Remove old .canopycms from git tracking (if it was tracked)
-git rm -r --cached .canopycms/ 2>/dev/null || true
-git commit -m "chore: migrate to new .canopy-* directory structure"
-
-# 3. Delete old runtime directories (they'll regenerate automatically)
-rm -rf .canopycms/
-
-# 4. Verify
-git status  # Should not show any .canopy-* directories
-```
-
-**Note**: The new structure uses:
-- `.canopy-dev/` for dev mode settings (replaces `.canopycms/*.local.json`)
-- `.canopy-prod-sim/` for prod-sim workspaces (replaces `.canopycms/branches/`)
-- `.canopy-meta/` for branch metadata (replaces `.canopycms/` inside workspaces, automatically excluded via git)
-
 ## Testing
 
 ### Running Tests

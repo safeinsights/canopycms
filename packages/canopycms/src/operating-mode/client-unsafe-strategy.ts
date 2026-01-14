@@ -50,30 +50,12 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     return '.canopy-meta/'
   }
 
-  /** @deprecated Use getContentRoot(), getBranchesRoot(), or getBranchRoot() instead */
-  getBaseRoot(override?: string): string {
-    if (override) return path.resolve(override)
-    const envWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
-    const workspace = path.resolve(envWorkspace ?? DEFAULT_PROD_WORKSPACE)
-    return path.join(workspace, 'branches')
-  }
-
   getPermissionsFilePath(root: string): string {
     return path.join(root, '.canopy-meta', this.getPermissionsFileName())
   }
 
-  getFallbackPermissionsFilePath(root: string): string | null {
-    // Fallback to old .canopycms location
-    return path.join(root, '.canopycms', this.getPermissionsFileName())
-  }
-
   getGroupsFilePath(root: string): string {
     return path.join(root, '.canopy-meta', this.getGroupsFileName())
-  }
-
-  getFallbackGroupsFilePath(root: string): string | null {
-    // Fallback to old .canopycms location
-    return path.join(root, '.canopycms', this.getGroupsFileName())
   }
 
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
@@ -152,28 +134,12 @@ class LocalProdSimStrategy
     return '.canopy-meta/'
   }
 
-  /** @deprecated Use getContentRoot(), getBranchesRoot(), or getBranchRoot() instead */
-  getBaseRoot(override?: string): string {
-    if (override) return path.resolve(override)
-    return this.getBranchesRoot()
-  }
-
   getPermissionsFilePath(root: string): string {
     return path.join(root, '.canopy-meta', this.getPermissionsFileName())
   }
 
-  getFallbackPermissionsFilePath(root: string): string | null {
-    // Fallback to old .canopycms location
-    return path.join(root, '.canopycms', this.getPermissionsFileName())
-  }
-
   getGroupsFilePath(root: string): string {
     return path.join(root, '.canopy-meta', this.getGroupsFileName())
-  }
-
-  getFallbackGroupsFilePath(root: string): string | null {
-    // Fallback to old .canopycms location
-    return path.join(root, '.canopycms', this.getGroupsFileName())
   }
 
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
@@ -248,30 +214,14 @@ class LocalSimpleStrategy
     return '.canopy-meta/'
   }
 
-  /** @deprecated Use getContentRoot(), getBranchesRoot(), or getBranchRoot() instead */
-  getBaseRoot(override?: string): string {
-    if (override) return path.resolve(override)
-    return path.resolve(process.cwd())
-  }
-
   getPermissionsFilePath(root: string): string {
     // Returns: {projectRoot}/.canopy-dev/permissions.json
     return path.join(this.getDevConfigRoot(root), 'permissions.json')
   }
 
-  getFallbackPermissionsFilePath(root: string): string | null {
-    // Fallback to old .canopycms location with old file name for backwards compatibility
-    return path.join(root, '.canopycms', 'permissions.local.json')
-  }
-
   getGroupsFilePath(root: string): string {
     // Returns: {projectRoot}/.canopy-dev/groups.json
     return path.join(this.getDevConfigRoot(root), 'groups.json')
-  }
-
-  getFallbackGroupsFilePath(root: string): string | null {
-    // Fallback to old .canopycms location with old file name for backwards compatibility
-    return path.join(root, '.canopycms', 'groups.local.json')
   }
 
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
