@@ -63,7 +63,6 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   // Modal state for creating/editing groups
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingGroup, setEditingGroup] = useState<InternalGroup | null>(null)
-  const [modalGroupId, setModalGroupId] = useState('')
   const [modalGroupName, setModalGroupName] = useState('')
   const [modalGroupDescription, setModalGroupDescription] = useState('')
 
@@ -140,7 +139,6 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
 
   const handleCreateGroup = () => {
     setEditingGroup(null)
-    setModalGroupId('')
     setModalGroupName('')
     setModalGroupDescription('')
     setIsModalOpen(true)
@@ -148,7 +146,6 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
 
   const handleEditGroup = (group: InternalGroup) => {
     setEditingGroup(group)
-    setModalGroupId(group.id)
     setModalGroupName(group.name)
     setModalGroupDescription(group.description || '')
     setIsModalOpen(true)
@@ -160,14 +157,8 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   }
 
   const handleSaveModal = () => {
-    if (!modalGroupId.trim() || !modalGroupName.trim()) {
-      setError('Group ID and name are required')
-      return
-    }
-
-    // Check for duplicate ID
-    if (!editingGroup && groups.some((g) => g.id === modalGroupId)) {
-      setError('Group ID already exists')
+    if (!modalGroupName.trim()) {
+      setError('Group name is required')
       return
     }
 
@@ -185,9 +176,9 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
         )
       )
     } else {
-      // Create new group
+      // Create new group with empty ID (server will generate)
       const newGroup: InternalGroup = {
-        id: modalGroupId,
+        id: '' as CanopyGroupId,
         name: modalGroupName,
         description: modalGroupDescription,
         members: [],
@@ -645,14 +636,18 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
         title={editingGroup ? 'Edit Group' : 'Create Group'}
       >
         <Stack gap="md">
-          <TextInput
-            label="Group ID"
-            placeholder="e.g., content-editors"
-            value={modalGroupId}
-            onChange={(e) => setModalGroupId(e.target.value)}
-            disabled={!!editingGroup}
-            required
-          />
+          {editingGroup && (
+            <div>
+              <Text size="sm" fw={500} mb={4}>
+                ID (system-generated)
+              </Text>
+              <Paper p="xs" withBorder bg="gray.0">
+                <Text size="sm" ff="monospace" c="dimmed">
+                  {editingGroup.id}
+                </Text>
+              </Paper>
+            </div>
+          )}
           <TextInput
             label="Group Name"
             placeholder="e.g., Content Editors"

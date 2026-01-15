@@ -7,6 +7,7 @@ import type { CanopyGroupId } from '../types'
 import { isAdmin, RESERVED_GROUPS, isReservedGroup } from '../reserved-groups'
 import { defineEndpoint } from './route-builder'
 import { getSettingsBranchContext, commitSettings } from './settings-helpers'
+import { generateId } from '../id'
 
 /** Response type for getting internal groups */
 export type InternalGroupsResponse = ApiResponse<{ groups: InternalGroup[] }>
@@ -142,18 +143,6 @@ const updateInternalGroupsHandler = async (
     return { ok: false, status: 400, error: 'groups array required' }
   }
 
-  // Validate reserved groups are not renamed
-  const reservedValidation = validateReservedGroups(body.groups)
-  if (!reservedValidation.valid) {
-    return { ok: false, status: 400, error: reservedValidation.error }
-  }
-
-  // Validate we're not removing the last admin
-  const adminValidation = validateAdminGroupUpdate(body.groups, ctx.services.bootstrapAdminIds)
-  if (!adminValidation.valid) {
-    return { ok: false, status: 400, error: adminValidation.error }
-  }
-
   try {
     const result = await getSettingsBranchContext(ctx)
     if ('error' in result) {
@@ -177,11 +166,63 @@ const updateInternalGroupsHandler = async (
       }
     }
 
+    // Build map of existing group IDs
+    const existingGroups = await loadInternalGroups(context.branchRoot, mode, ctx.services.bootstrapAdminIds)
+    const existingById = new Set(existingGroups.map((g) => g.id))
+
+    // Process groups: generate IDs for new groups, keep IDs for existing groups
+    const processedGroups = body.groups.map((group) => {
+      // Existing group with valid ID - keep ID
+      if (group.id && group.id.trim() !== '' && existingById.has(group.id)) {
+        return group
+      }
+
+      // Check if this is a reserved group (by ID or name)
+      if (isReservedGroup(group.id) || isReservedGroup(group.name)) {
+        // Reserved groups: ID = name (e.g., "Admins", "Reviewers")
+        return { ...group, id: group.name as CanopyGroupId }
+      }
+
+      // New regular group (empty ID or not in existing set) - generate ID
+      return { ...group, id: generateId() as CanopyGroupId }
+    })
+
+    // Validate no duplicate IDs
+    const idSet = new Set<string>()
+    for (const group of processedGroups) {
+      if (idSet.has(group.id)) {
+        return { ok: false, status: 400, error: `Duplicate group ID detected: ${group.id}` }
+      }
+      idSet.add(group.id)
+    }
+
+    // Validate no duplicate names
+    const nameSet = new Set<string>()
+    for (const group of processedGroups) {
+      const normalizedName = group.name.toLowerCase().trim()
+      if (nameSet.has(normalizedName)) {
+        return { ok: false, status: 400, error: `Duplicate group name detected: ${group.name}` }
+      }
+      nameSet.add(normalizedName)
+    }
+
+    // Validate reserved groups are not renamed (after ID generation)
+    const reservedValidation = validateReservedGroups(processedGroups)
+    if (!reservedValidation.valid) {
+      return { ok: false, status: 400, error: reservedValidation.error }
+    }
+
+    // Validate we're not removing the last admin (after ID generation)
+    const adminValidation = validateAdminGroupUpdate(processedGroups, ctx.services.bootstrapAdminIds)
+    if (!adminValidation.valid) {
+      return { ok: false, status: 400, error: adminValidation.error }
+    }
+
     // Increment version when saving
     const newContentVersion = (currentFile?.contentVersion ?? 0) + 1
 
     // Save file (uses mode-aware file path)
-    await saveInternalGroups(context.branchRoot, body.groups, req.user.userId, mode, newContentVersion)
+    await saveInternalGroups(context.branchRoot, processedGroups, req.user.userId, mode, newContentVersion)
 
     // Commit and push (mode-aware)
     await commitSettings(ctx, {

@@ -120,12 +120,13 @@ describe('groups API', () => {
 
     it('should save groups and commit changes for admin', async () => {
       vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
       // Add bootstrap admin so validation passes
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
       const groups: InternalGroup[] = [
         {
-          id: 'editors' as CanopyGroupId,
+          id: '' as CanopyGroupId, // Empty ID for new group
           name: 'Content Editors',
           description: 'Team members who can edit content',
           members: ['user-1' as CanopyUserId, 'user-2' as CanopyUserId],
@@ -141,15 +142,27 @@ describe('groups API', () => {
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
 
-      // Verify groups were saved (with mode parameter and contentVersion)
+      // Verify groups were saved with generated IDs
       // In dev mode, uses workspace root instead of branch root
       expect(groupsLoader.saveInternalGroups).toHaveBeenCalledWith(
         '/test/workspace',
-        groups,
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'Content Editors',
+            description: 'Team members who can edit content',
+            members: ['user-1', 'user-2'],
+            id: expect.any(String), // Should have generated ID
+          }),
+        ]),
         'admin-1',
         'dev',
         1 // contentVersion starts at 1 when file doesn't exist
       )
+
+      // Verify the generated ID is not empty
+      const savedGroups = vi.mocked(groupsLoader.saveInternalGroups).mock.calls[0][1]
+      expect(savedGroups[0].id).not.toBe('')
+      expect(savedGroups[0].id.length).toBeGreaterThan(0)
 
       // In dev mode (default), no git operations are performed
       expect(mockContext.services.commitFiles).not.toHaveBeenCalled()
@@ -350,6 +363,7 @@ describe('groups API', () => {
   describe('updateInternalGroups safety validations', () => {
     it('should reject update that removes last admin', async () => {
       vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
 
       const groups: InternalGroup[] = [
         { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
@@ -368,6 +382,10 @@ describe('groups API', () => {
 
     it('should reject update that renames reserved group', async () => {
       vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      // Mock existing Admins group so it's recognized as existing
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: RESERVED_GROUPS.ADMINS, members: ['admin-1' as CanopyUserId] },
+      ])
 
       const groups: InternalGroup[] = [
         { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Super Admins', members: ['admin-1' as CanopyUserId] },
@@ -386,6 +404,7 @@ describe('groups API', () => {
 
     it('should allow update when bootstrap admin exists even with empty Admins group', async () => {
       vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
 
       // Add bootstrap admin
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
@@ -405,6 +424,253 @@ describe('groups API', () => {
     })
   })
 
+  describe('collision detection', () => {
+    it('should reject duplicate group names', async () => {
+      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
+
+      const groups: InternalGroup[] = [
+        {
+          id: '' as CanopyGroupId,
+          name: 'Editors',
+          members: [],
+        },
+        {
+          id: '' as CanopyGroupId,
+          name: 'Editors', // Duplicate name
+          members: [],
+        },
+      ]
+
+      const req: ApiRequest = {
+        user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await updateInternalGroups(mockContext, req, { groups })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toBe('Duplicate group name detected: Editors')
+    })
+
+    it('should reject duplicate group names case-insensitively', async () => {
+      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
+
+      const groups: InternalGroup[] = [
+        {
+          id: '' as CanopyGroupId,
+          name: 'Editors',
+          members: [],
+        },
+        {
+          id: '' as CanopyGroupId,
+          name: 'editors', // Same name, different case
+          members: [],
+        },
+      ]
+
+      const req: ApiRequest = {
+        user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await updateInternalGroups(mockContext, req, { groups })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toBe('Duplicate group name detected: editors')
+    })
+
+    it('should reject groups with manually specified duplicate IDs', async () => {
+      const existingGroups: InternalGroup[] = [
+        {
+          id: 'existing-1' as CanopyGroupId,
+          name: 'Existing Group',
+          members: [],
+        },
+      ]
+
+      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue(existingGroups)
+      ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
+
+      const groups: InternalGroup[] = [
+        {
+          id: 'existing-1' as CanopyGroupId,
+          name: 'Existing Group',
+          members: [],
+        },
+        {
+          id: 'existing-1' as CanopyGroupId, // Duplicate ID
+          name: 'Another Group',
+          members: [],
+        },
+      ]
+
+      const req: ApiRequest = {
+        user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await updateInternalGroups(mockContext, req, { groups })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toBe('Duplicate group ID detected: existing-1')
+    })
+  })
+
+  describe('autogenerated group IDs', () => {
+    it('should generate unique IDs for new groups', async () => {
+      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
+
+      const groups: InternalGroup[] = [
+        {
+          id: '' as CanopyGroupId,
+          name: 'Group 1',
+          members: [],
+        },
+        {
+          id: '' as CanopyGroupId,
+          name: 'Group 2',
+          members: [],
+        },
+      ]
+
+      const req: ApiRequest = {
+        user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await updateInternalGroups(mockContext, req, { groups })
+
+      expect(result.ok).toBe(true)
+
+      // Check that saveInternalGroups was called
+      expect(groupsLoader.saveInternalGroups).toHaveBeenCalled()
+      const calls = vi.mocked(groupsLoader.saveInternalGroups).mock.calls
+      const savedGroups = calls[calls.length - 1][1] // Get last call
+      expect(savedGroups).toBeDefined()
+      expect(savedGroups.length).toBe(2)
+      expect(savedGroups[0].id).not.toBe('')
+      expect(savedGroups[1].id).not.toBe('')
+      expect(savedGroups[0].id).not.toBe(savedGroups[1].id) // Different IDs
+    })
+
+    it('should preserve IDs for existing groups', async () => {
+      const existingGroups: InternalGroup[] = [
+        {
+          id: 'existing-group-id' as CanopyGroupId,
+          name: 'Existing Group',
+          members: [],
+        },
+      ]
+
+      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue(existingGroups)
+      ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
+
+      const groups: InternalGroup[] = [
+        {
+          id: 'existing-group-id' as CanopyGroupId,
+          name: 'Existing Group (updated)',
+          members: ['user-1' as CanopyUserId],
+        },
+      ]
+
+      const req: ApiRequest = {
+        user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await updateInternalGroups(mockContext, req, { groups })
+
+      expect(result.ok).toBe(true)
+
+      const calls = vi.mocked(groupsLoader.saveInternalGroups).mock.calls
+      const savedGroups = calls[calls.length - 1][1]
+      expect(savedGroups.length).toBe(1)
+      expect(savedGroups[0].id).toBe('existing-group-id') // ID preserved
+      expect(savedGroups[0].name).toBe('Existing Group (updated)') // But name updated
+    })
+
+    it('should use group name as ID for reserved groups', async () => {
+      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
+
+      const groups: InternalGroup[] = [
+        {
+          id: '' as CanopyGroupId,
+          name: 'Admins',
+          members: ['admin-1' as CanopyUserId],
+        },
+        {
+          id: '' as CanopyGroupId,
+          name: 'Reviewers',
+          members: [],
+        },
+      ]
+
+      const req: ApiRequest = {
+        user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await updateInternalGroups(mockContext, req, { groups })
+
+      expect(result.ok).toBe(true)
+
+      const calls = vi.mocked(groupsLoader.saveInternalGroups).mock.calls
+      const savedGroups = calls[calls.length - 1][1]
+      expect(savedGroups.length).toBe(2)
+      expect(savedGroups[0].id).toBe('Admins') // Reserved group uses name as ID
+      expect(savedGroups[1].id).toBe('Reviewers') // Reserved group uses name as ID
+    })
+
+    it('should mix existing groups with new groups correctly', async () => {
+      const existingGroups: InternalGroup[] = [
+        {
+          id: 'existing-1' as CanopyGroupId,
+          name: 'Existing Group',
+          members: [],
+        },
+      ]
+
+      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue(existingGroups)
+      ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
+
+      const groups: InternalGroup[] = [
+        {
+          id: 'existing-1' as CanopyGroupId,
+          name: 'Existing Group',
+          members: [],
+        },
+        {
+          id: '' as CanopyGroupId,
+          name: 'New Group',
+          members: [],
+        },
+      ]
+
+      const req: ApiRequest = {
+        user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
+      }
+
+      const result = await updateInternalGroups(mockContext, req, { groups })
+
+      expect(result.ok).toBe(true)
+
+      const calls = vi.mocked(groupsLoader.saveInternalGroups).mock.calls
+      const savedGroups = calls[calls.length - 1][1]
+      expect(savedGroups.length).toBe(2)
+      expect(savedGroups[0].id).toBe('existing-1') // Existing ID preserved
+      expect(savedGroups[1].id).not.toBe('') // New group got generated ID
+      expect(savedGroups[1].id).not.toBe('existing-1') // Different from existing
+    })
+  })
+
   describe('optimistic locking with contentVersion', () => {
     it('should return 409 when expectedContentVersion does not match current version', async () => {
       // Mock loadGroupsFile to return a file with contentVersion 5
@@ -417,6 +683,9 @@ describe('groups API', () => {
           { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: ['admin-1' as CanopyUserId] },
         ],
       })
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: ['admin-1' as CanopyUserId] },
+      ])
 
       const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
@@ -447,6 +716,9 @@ describe('groups API', () => {
           { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: ['admin-1' as CanopyUserId] },
         ],
       })
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: ['admin-1' as CanopyUserId] },
+      ])
 
       const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
@@ -485,6 +757,9 @@ describe('groups API', () => {
           { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: ['admin-1' as CanopyUserId] },
         ],
       })
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([
+        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: ['admin-1' as CanopyUserId] },
+      ])
 
       const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
@@ -506,6 +781,7 @@ describe('groups API', () => {
     it('should start at version 1 for new files without contentVersion', async () => {
       // Mock loadGroupsFile to return null (file doesn't exist)
       vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue(null)
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
 
       const req: ApiRequest = {
         user: { type: 'authenticated', userId: 'admin-1' as CanopyUserId, groups: [RESERVED_GROUPS.ADMINS] },
