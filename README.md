@@ -825,11 +825,12 @@ const schema = defineSchema([
 
 ### UUID-Based IDs
 
-Every entry in your content automatically receives a unique, stable identifier. CanopyCMS uses 22-character UUIDs (Base58-encoded) that are:
+Every entry in your content automatically receives a unique, stable identifier. CanopyCMS uses 12-character UUIDs (Base58-encoded, truncated) that are:
 
-- **Stable across renames and moves**: When you rename a file or move it to a different directory, the ID never changes
-- **Globally unique**: IDs are automatically generated and guaranteed unique across your entire site
-- **Git-friendly**: IDs are stored as symlinks in `content/_ids_/` (e.g., `content/_ids_/abc123DEF456ghi789`), making them visible in git diff
+- **Stable across renames**: The ID is embedded in the filename (e.g., `my-post.a1b2c3d4e5f6.json`), so it persists even when you change the slug portion
+- **Globally unique**: IDs are automatically generated and guaranteed unique across your entire site (~2.6 × 10^21 possible IDs)
+- **Git-friendly**: IDs are visible in filenames, making them easy to track in git diffs and preserved through `git mv`
+- **Human-readable**: Filenames show both the human-friendly slug and the unique ID
 - **Automatic**: You never manually create or manage IDs - they're generated when entries are created
 
 ### Reference Fields

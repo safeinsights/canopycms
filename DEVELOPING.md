@@ -640,7 +640,7 @@ it('returns correct itemType in API responses', async () => {
 
 ### Using the ID Index
 
-Content entries are identified by stable, content-addressed IDs (22-character short UUIDs). These IDs are managed by the `ContentIdIndex` through symlinks stored in the `_ids_/` directory.
+Content entries are identified by stable, content-addressed IDs (12-character short UUIDs). These IDs are embedded directly in filenames (e.g., `hello.a1b2c3d4e5f6.json`) and managed by the `ContentIdIndex`, which scans filenames to build an in-memory index.
 
 When working with content IDs, use the async `idIndex()` getter to access the index:
 
@@ -869,9 +869,9 @@ Test the resolution flow by:
 
 See `FormRenderer.test.tsx` for examples.
 
-## Testing Content IDs and Symlinks
+## Testing Content IDs
 
-When testing code that uses content IDs, set up a temporary directory with symlinks:
+When testing code that uses content IDs, create files with embedded IDs in their filenames:
 
 ```typescript
 import fs from 'node:fs/promises'
@@ -895,27 +895,27 @@ describe('Content with IDs', () => {
     await fs.rm(tempDir, { recursive: true, force: true })
   })
 
-  it('indexes entries with IDs', async () => {
-    // Create a test file
-    const filePath = path.join(tempDir, 'content/test.json')
+  it('indexes entries with embedded IDs', async () => {
+    // Create file with embedded ID in filename
+    const testId = 'a1b2c3d4e5f6' // 12-character ID
+    const filePath = path.join(tempDir, `content/test.${testId}.json`)
     await fs.writeFile(filePath, '{"title": "Test"}')
 
-    // Create symlink in _ids_/ directory
-    await fs.mkdir(path.join(tempDir, 'content/_ids_'), { recursive: true })
-    const testId = 'test123ABC456def789ghi'
-    await fs.symlink('../test.json', path.join(tempDir, 'content/_ids_', testId), 'file')
+    // Build index by scanning filenames
+    await index.buildFromFilenames('content')
 
-    // Build index from symlinks
-    await index.buildFromSymlinks('content')
-
-    // Verify
+    // Verify forward lookup (ID → path)
     const location = index.findById(testId)
-    expect(location?.relativePath).toBe('content/test.json')
+    expect(location?.relativePath).toBe(`content/test.${testId}.json`)
+
+    // Verify reverse lookup (path → ID)
+    const foundId = index.findByPath(`content/test.${testId}.json`)
+    expect(foundId).toBe(testId)
   })
 })
 ```
 
-**Key pattern:** Symlinks point from `_ids_/ID` to the actual content file (e.g., `_ids_/abc123 -> ../test.json`). The `buildFromSymlinks()` method reads these symlinks to populate the in-memory index.
+**Key pattern:** IDs are embedded in filenames using the pattern `slug.id.ext` (e.g., `test.a1b2c3d4e5f6.json`). The `buildFromFilenames()` method scans filenames recursively to extract IDs and populate the in-memory index.
 
 ## Development Workflow
 

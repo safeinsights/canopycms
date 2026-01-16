@@ -15,10 +15,9 @@ export function generateId(): string {
 
 /**
  * Validate that a string is a valid content ID format.
- * Accepts both 12-character (new format) and 22-character (legacy) IDs.
- * Both use Base58 alphabet (no ambiguous characters: 0, O, I, l).
+ * Standard format: 12 characters using Base58 alphabet (no ambiguous characters: 0, O, I, l).
  */
 export function isValidId(id: string): boolean {
-  // Accept both 12 chars (new) and 22 chars (legacy from migration)
-  return /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{12,22}$/.test(id)
+  // Only accept 12-char IDs (legacy 22-char support removed)
+  return /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{12}$/.test(id)
 }

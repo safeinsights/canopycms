@@ -33,14 +33,10 @@ describe('id utilities', () => {
       expect(isValidId('XYZ123abc789')).toBe(true)
     })
 
-    it('returns true for 22-character legacy IDs', () => {
-      expect(isValidId('abc123def456ghi789jkm2')).toBe(true) // 22 chars (legacy)
-      expect(isValidId('bChqT78gcaLdXS3kD87oZF')).toBe(true) // Real legacy ID
-    })
-
     it('returns false for IDs with invalid length', () => {
       expect(isValidId('abc123')).toBe(false) // Too short
-      expect(isValidId('abc123def456ghi789jkm234567')).toBe(false) // Too long (>22)
+      expect(isValidId('abc123def456ghi789jkm2')).toBe(false) // Too long (22 chars)
+      expect(isValidId('abc123def456ghi789jkm234567')).toBe(false) // Too long
     })
 
     it('returns false for IDs with invalid characters', () => {

@@ -346,16 +346,17 @@ describe('config validation', () => {
     expect(v1?.parentPath).toBe('content/docs/api')
   })
 
-  it('preserves embedded IDs in nested collection paths', () => {
-    // This test simulates the real-world scenario where .collection.json files are loaded
-    // and collection directories have embedded IDs (e.g., "docs.bChqT78gcaLd")
+  it('strips embedded IDs from collection paths for logical identity', () => {
+    // This test verifies that embedded IDs in directory names are stripped from logical paths
+    // Directory on disk: "docs.bChqT78gcaLd", but logical path should be "docs"
+    // This keeps IDs hidden from URLs and the editor while still using them for filesystem uniqueness
     const configBundle = defineCanopyConfig({
       ...gitAuthor,
       schema: {
         collections: [
           {
             name: 'docs',
-            path: 'docs.bChqT78gcaLd',
+            path: 'docs', // Logical path without ID
             entries: {
               format: 'json',
               fields: [{ name: 'title', type: 'string' as const }],
@@ -363,7 +364,7 @@ describe('config validation', () => {
             collections: [
               {
                 name: 'api',
-                path: 'docs.bChqT78gcaLd/api.meiuwxTSo7UN',
+                path: 'docs/api', // Logical path without ID
                 entries: {
                   format: 'json',
                   fields: [{ name: 'title', type: 'string' as const }],
@@ -371,7 +372,7 @@ describe('config validation', () => {
                 collections: [
                   {
                     name: 'v1',
-                    path: 'docs.bChqT78gcaLd/api.meiuwxTSo7UN/v1.cz5H1nu9FEer',
+                    path: 'docs/api/v1', // Logical path without ID
                     entries: {
                       format: 'json',
                       fields: [{ name: 'title', type: 'string' as const }],
@@ -383,7 +384,7 @@ describe('config validation', () => {
           },
           {
             name: 'posts',
-            path: 'posts.916jXZabYCxu',
+            path: 'posts', // Logical path without ID
             entries: {
               format: 'json',
               fields: [{ name: 'title', type: 'string' as const }],
@@ -401,24 +402,24 @@ describe('config validation', () => {
     const v1 = flat.find((item) => item.type === 'collection' && item.name === 'v1')
     const posts = flat.find((item) => item.type === 'collection' && item.name === 'posts')
 
-    // Verify docs collection (root level) - embedded ID preserved
+    // Verify docs collection (root level) - NO embedded ID in logical path
     expect(docs).toBeDefined()
-    expect(docs?.fullPath).toBe('content/docs.bChqT78gcaLd')
+    expect(docs?.fullPath).toBe('content/docs')
     expect(docs?.parentPath).toBeUndefined()
 
-    // Verify api collection (nested under docs) - embedded ID preserved
+    // Verify api collection (nested under docs) - NO embedded ID in logical path
     expect(api).toBeDefined()
-    expect(api?.fullPath).toBe('content/docs.bChqT78gcaLd/api.meiuwxTSo7UN')
-    expect(api?.parentPath).toBe('content/docs.bChqT78gcaLd')
+    expect(api?.fullPath).toBe('content/docs/api')
+    expect(api?.parentPath).toBe('content/docs')
 
-    // Verify v1 collection (nested under api) - embedded ID preserved
+    // Verify v1 collection (nested under api) - NO embedded ID in logical path
     expect(v1).toBeDefined()
-    expect(v1?.fullPath).toBe('content/docs.bChqT78gcaLd/api.meiuwxTSo7UN/v1.cz5H1nu9FEer')
-    expect(v1?.parentPath).toBe('content/docs.bChqT78gcaLd/api.meiuwxTSo7UN')
+    expect(v1?.fullPath).toBe('content/docs/api/v1')
+    expect(v1?.parentPath).toBe('content/docs/api')
 
-    // Verify posts collection (root level) - embedded ID preserved
+    // Verify posts collection (root level) - NO embedded ID in logical path
     expect(posts).toBeDefined()
-    expect(posts?.fullPath).toBe('content/posts.916jXZabYCxu')
+    expect(posts?.fullPath).toBe('content/posts')
     expect(posts?.parentPath).toBeUndefined()
   })
 })

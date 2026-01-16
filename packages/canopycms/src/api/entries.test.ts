@@ -567,11 +567,11 @@ describe('listEntries', () => {
     expect(aliceEntry).toBeDefined()
     expect(aliceEntry?.slug).toBe('alice')
     expect(aliceEntry?.title).toBe('Alice')
-    expect(aliceEntry?.collectionId).toBe(`content/authors.${authorsId}`)
+    expect(aliceEntry?.collectionId).toBe('content/authors') // Logical path, no ID
 
     expect(bobEntry).toBeDefined()
     expect(bobEntry?.slug).toBe('bob')
     expect(bobEntry?.title).toBe('Bob')
-    expect(bobEntry?.collectionId).toBe(`content/authors.${authorsId}`)
+    expect(bobEntry?.collectionId).toBe('content/authors') // Logical path, no ID
   })
 })

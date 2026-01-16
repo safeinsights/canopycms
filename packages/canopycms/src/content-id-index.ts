@@ -215,9 +215,15 @@ export class ContentIdIndex {
  * - Files: slug.id.ext → parts[1] is ID (e.g., "dune.a1b2c3d4e5f6.json")
  * - Directories: slug.id → parts[1] is ID (e.g., "posts.a1b2c3d4e5f6")
  * - Metadata: .collection.json, .gitignore, etc. → null
+ *
+ * Edge cases:
+ * - Slugs with dots: "my.page.a1b2c3d4e5f6.json" → extracts "a1b2c3d4e5f6"
+ * - Hidden files with IDs: ".hidden.a1b2c3d4e5f6.json" → returns null (metadata)
+ * - No ID present: "legacy-file.json" → returns null
  */
 export function extractIdFromFilename(filename: string): string | null {
-  // Skip metadata files (no IDs)
+  // Skip metadata files (no IDs) - anything starting with dot is metadata
+  // This includes .collection.json, .gitignore, and even .hidden.id.json
   if (filename.startsWith('.')) {
     return null
   }
@@ -225,12 +231,13 @@ export function extractIdFromFilename(filename: string): string | null {
   const parts = filename.split('.')
 
   // Files: slug.id.ext → need at least 3 parts
+  // The ID is always the second-to-last part before the extension
   if (parts.length >= 3) {
     const candidate = parts[parts.length - 2]
     if (isValidId(candidate)) return candidate
   }
 
-  // Directories: slug.id → need exactly 2 parts
+  // Directories: slug.id → exactly 2 parts (slug and ID, no extension)
   if (parts.length === 2) {
     const candidate = parts[parts.length - 1]
     if (isValidId(candidate)) return candidate

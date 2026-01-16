@@ -10,6 +10,7 @@ import type {
   SingletonConfig,
   RootCollectionConfig,
 } from './config'
+import { extractSlugFromFilename } from './content-id-index'
 
 /**
  * Schema reference for entries in a collection (replaces actual FieldConfig[] with string reference)
@@ -110,6 +111,17 @@ export type RootCollectionMeta = {
  * @param relativePath - Current path relative to content root (used for recursion)
  * @returns Array of collection metadata with resolved paths
  */
+
+/**
+ * Strip embedded ID from a directory or file name.
+ * e.g., "docs.bChqT78gcaLd" -> "docs"
+ * e.g., "home.agfzDt2RLpSn.json" -> "home"
+ */
+function stripEmbeddedIdFromName(name: string): string {
+  // Use extractSlugFromFilename which handles the ID extraction logic
+  return extractSlugFromFilename(name)
+}
+
 async function scanForCollectionMeta(
   baseDir: string,
   relativePath: string = '',
@@ -123,7 +135,10 @@ async function scanForCollectionMeta(
       if (!entry.isDirectory()) continue
 
       const folderName = entry.name
-      const folderPath = relativePath ? `${relativePath}/${folderName}` : folderName
+      // Strip embedded ID from folder name for logical path
+      // e.g., "docs.bChqT78gcaLd" -> "docs"
+      const logicalName = stripEmbeddedIdFromName(folderName)
+      const folderPath = relativePath ? `${relativePath}/${logicalName}` : logicalName
       const fullPath = join(baseDir, folderName)
       const metaPath = join(fullPath, '.collection.json')
 
