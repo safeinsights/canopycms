@@ -16,6 +16,26 @@ export const encodeSlug = (value?: string): string =>
     .map((segment) => encodeURIComponent(segment))
     .join('/')
 
+/**
+ * Normalizes a collection ID by stripping the content root prefix.
+ *
+ * Collection IDs typically include the content root (e.g., "content/posts"),
+ * but for URLs and display purposes we often need just the path ("posts").
+ *
+ * @param collectionId - The full collection ID (e.g., "content/docs/api")
+ * @returns The normalized path without the content prefix (e.g., "docs/api")
+ *
+ * @example
+ * ```ts
+ * normalizeCollectionPath('content/posts')  // => 'posts'
+ * normalizeCollectionPath('content/docs/api')  // => 'docs/api'
+ * normalizeCollectionPath('posts')  // => 'posts' (no-op if already normalized)
+ * ```
+ */
+export const normalizeCollectionPath = (collectionId: string): string => {
+  return collectionId.replace(/^content\//, '')
+}
+
 export const buildPreviewSrc = (
   entry: { collectionId?: string; collectionName?: string; slug?: string; itemType?: string; previewSrc?: string },
   { branchName, previewBaseByCollection }: PreviewContext
@@ -32,8 +52,7 @@ export const buildPreviewSrc = (
   if (!base) {
     if (entry.itemType === 'singleton') return '/'
     // Build URL from collection path + slug
-    // collectionId is like "content/docs", we need to strip the content root prefix
-    const collectionPath = entry.collectionId?.replace(/^content\//, '') || ''
+    const collectionPath = entry.collectionId ? normalizeCollectionPath(entry.collectionId) : ''
     const encoded = encodeSlug(entry.slug)
     const segments = [collectionPath, encoded].filter(Boolean)
     const url = segments.length > 0 ? `/${segments.join('/')}` : '/'

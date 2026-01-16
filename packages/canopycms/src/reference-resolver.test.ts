@@ -20,34 +20,18 @@ describe('ReferenceResolver', () => {
     // Create temp directory with content structure
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-test-'))
     await fs.mkdir(path.join(tempDir, 'content', 'authors'), { recursive: true })
-    await fs.mkdir(path.join(tempDir, 'content', '_ids_'), { recursive: true })
 
-    // Create test author files
+    // Create test author files with embedded IDs (12-char Base58 format)
+    const aliceId = 'aXice123ABC4' // 12 chars, valid Base58
+    const bobId = 'bob456XYZ789'   // 12 chars, valid Base58
+
     await fs.writeFile(
-      path.join(tempDir, 'content', 'authors', 'alice.json'),
+      path.join(tempDir, 'content', 'authors', `alice.${aliceId}.json`),
       JSON.stringify({ slug: 'alice', name: 'Alice' })
     )
     await fs.writeFile(
-      path.join(tempDir, 'content', 'authors', 'bob.json'),
+      path.join(tempDir, 'content', 'authors', `bob.${bobId}.json`),
       JSON.stringify({ slug: 'bob', name: 'Bob' })
-    )
-
-    // Create symlinks for IDs (must be valid short-uuid Base58 format - no 'l')
-    const aliceId = 'aXice123ABC456def789gh' // Changed 'l' to 'X'
-    const bobId = 'bob456XYZ789abc123def4'
-
-    const aliceSymlink = path.join(tempDir, 'content', '_ids_', aliceId)
-    const bobSymlink = path.join(tempDir, 'content', '_ids_', bobId)
-
-    await fs.symlink(
-      path.join('..', 'authors', 'alice.json'),
-      aliceSymlink,
-      'file'
-    )
-    await fs.symlink(
-      path.join('..', 'authors', 'bob.json'),
-      bobSymlink,
-      'file'
     )
 
     // Initialize store and index

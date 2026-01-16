@@ -5,6 +5,7 @@
   "description": "Standalone demo app for CanopyCMS using mock data and the editor UI.",
   "scripts": {
     "dev": "next dev",
+    "devinspect": "NODE_OPTIONS='--inspect' next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

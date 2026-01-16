@@ -397,6 +397,7 @@ describe('ContentStore', () => {
     if (doc.format === 'json') throw new Error('expected markdown')
     expect(doc.data.title).toBe('Authentication Guide')
     expect(doc.body).toContain('How to authenticate')
-    expect(doc.relativePath).toBe('content/docs/api/v2/authentication.md')
+    // Path should have ID embedded: authentication.{12-char-id}.md
+    expect(doc.relativePath).toMatch(/^content\/docs\/api\/v2\/authentication\.[a-zA-Z0-9]{12}\.md$/)
   })
 })

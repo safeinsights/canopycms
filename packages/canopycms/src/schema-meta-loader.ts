@@ -89,8 +89,19 @@ export type RootCollectionMeta = {
 }
 
 /**
- * Recursively scans a directory for .collection.json files
- * Path is derived from folder name (not in meta file)
+ * Recursively scans a directory for .collection.json files.
+ *
+ * Discovery Rules:
+ * - Scans recursively from the base directory (content root)
+ * - Each directory can have at most ONE .collection.json file
+ * - Collection path is derived from the directory structure (e.g., "docs/api" for content/docs/api/)
+ * - Collection name comes from the "name" field in .collection.json, NOT the directory name
+ * - Directories without .collection.json are still scanned for nested collections
+ * - Invalid .collection.json files cause the entire scan to fail with a descriptive error
+ *
+ * @param baseDir - The directory to scan (absolute path)
+ * @param relativePath - Current path relative to content root (used for recursion)
+ * @returns Array of collection metadata with resolved paths
  */
 async function scanForCollectionMeta(
   baseDir: string,
@@ -148,7 +159,20 @@ async function scanForCollectionMeta(
 }
 
 /**
- * Loads all .collection.json meta files from contentRoot, including root
+ * Loads all .collection.json meta files from contentRoot, including root.
+ *
+ * This function orchestrates the complete discovery process:
+ * 1. Attempts to load the root .collection.json (contentRoot/.collection.json) - optional
+ * 2. Recursively scans all subdirectories for .collection.json files
+ * 3. Returns both root configuration and nested collections
+ *
+ * Meta File Structure:
+ * - Root: contentRoot/.collection.json (optional, defines root-level entries/singletons)
+ * - Collections: contentRoot/[path]/.collection.json (defines collection in that directory)
+ *
+ * @param contentRoot - Absolute path to the content directory
+ * @returns Object containing root meta (if exists) and array of collection metas with paths
+ * @throws Error if any .collection.json file is malformed or invalid
  */
 export async function loadCollectionMetaFiles(
   contentRoot: string
@@ -270,7 +294,20 @@ function resolveCollectionMeta(
 }
 
 /**
- * Resolve schema references for root collection and all collections
+ * Resolve schema references for root collection and all collections.
+ *
+ * This function takes the loaded meta files (which contain string references like "postSchema")
+ * and resolves them to actual FieldConfig[] arrays from the schema registry.
+ *
+ * Resolution Process:
+ * 1. Root entries and singletons: Resolve "fields" string to schema registry lookup
+ * 2. Top-level collections: Resolve recursively, building nested tree structure
+ * 3. Nested collections: Automatically grouped under their parent collections
+ *
+ * @param metaFiles - Loaded meta files from loadCollectionMetaFiles()
+ * @param schemaRegistry - Map of schema names to FieldConfig arrays
+ * @returns Fully resolved root collection config ready for use by CanopyCMS
+ * @throws Error if any schema reference doesn't exist in registry (with helpful suggestions)
  */
 export function resolveCollectionReferences(
   metaFiles: {

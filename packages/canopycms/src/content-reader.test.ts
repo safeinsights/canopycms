@@ -151,7 +151,8 @@ describe('createContentReader', () => {
     const root = await tmpDir()
     const postsDir = path.join(root, 'content/posts')
     await fs.mkdir(postsDir, { recursive: true })
-    await fs.writeFile(path.join(postsDir, 'first.json'), JSON.stringify({ title: 'Hello world' }, null, 2), 'utf8')
+    // Create files with embedded IDs (12-char Base58)
+    await fs.writeFile(path.join(postsDir, 'first.abc123def456.json'), JSON.stringify({ title: 'Hello world' }, null, 2), 'utf8')
     await fs.writeFile(path.join(root, 'content/home.json'), JSON.stringify({ title: 'Home' }, null, 2), 'utf8')
 
     const config = defineCanopyTestConfig({

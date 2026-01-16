@@ -206,10 +206,11 @@ The schema references system has three key components:
 
 ### Setting Up a Schema Registry
 
-Create a schema registry file (e.g., `app/schema-registry.ts`) to define reusable field schemas:
+Create a schemas file (e.g., `app/schemas.ts`) to define your field schemas and registry:
 
 ```typescript
 import { defineSchema } from 'canopycms'
+import { createSchemaRegistry } from 'canopycms/server'
 
 // Define your field schemas
 export const postSchema = defineSchema([
@@ -231,12 +232,12 @@ export const homeSchema = defineSchema([
   { name: 'content', type: 'markdown', label: 'Content' },
 ])
 
-// Export as a registry object
-export const schemaRegistry = {
+// Create the registry - validates schemas at creation time
+export const schemaRegistry = createSchemaRegistry({
   postSchema,
   authorSchema,
   homeSchema,
-} as const
+})
 ```
 
 ### Creating .collection.json Meta Files
@@ -306,7 +307,7 @@ Pass your schema registry to `createNextCanopyContext` in `app/lib/canopy.ts`:
 import { createNextCanopyContext } from 'canopycms-next'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import config from '../../canopycms.config'
-import { schemaRegistry } from '../schema-registry'
+import { schemaRegistry } from '../schemas'
 
 // Pass schemaRegistry to enable .collection.json file support
 const canopyContextPromise = createNextCanopyContext({
@@ -1016,9 +1017,9 @@ The editor shows a live preview of your actual site pages in an iframe. Changes 
 
 CanopyCMS is designed for minimal integration effort. You need:
 
-1. **Config file** (`canopycms.config.ts`): Schema and settings
-2. **Schema registry** (optional, `app/schema-registry.ts`): Reusable field schemas for `.collection.json` meta files
-3. **Canopy context** (`app/lib/canopy.ts`): One-time async setup with auth plugin and optional schema registry
+1. **Config file** (`canopycms.config.ts`): Settings and configuration
+2. **Schema definitions** (`app/schemas.ts`): Field schemas and registry for `.collection.json` meta files
+3. **Canopy context** (`app/lib/canopy.ts`): One-time async setup with auth plugin and schema registry
 4. **API route** (`/api/canopycms/[...canopycms]`): Export the async handler from context
 5. **Editor page** (`/edit`): Embed the editor component
 6. **Middleware**: Protect editor routes with authentication

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { expandId, generateId, isValidId } from './id'
+import { generateId, isValidId } from './id'
 
 describe('id utilities', () => {
   describe('generateId', () => {
-    it('generates a 22-character string', () => {
+    it('generates a 12-character string', () => {
       const id = generateId()
-      expect(id).toHaveLength(22)
+      expect(id).toHaveLength(12)
     })
 
     it('generates unique IDs', () => {
@@ -23,39 +23,30 @@ describe('id utilities', () => {
   })
 
   describe('isValidId', () => {
-    it('returns true for valid IDs', () => {
+    it('returns true for valid 12-character IDs', () => {
       const id = generateId()
       expect(isValidId(id)).toBe(true)
     })
 
-    it('returns false for clearly invalid IDs', () => {
-      expect(isValidId('abc123!@#$%^&*()_+=')).toBe(false)
-      expect(isValidId('abc123 space')).toBe(false)
-    })
-  })
-
-  describe('expandId', () => {
-    it('converts short ID to full UUID format', () => {
-      const shortId = generateId()
-      const fullUuid = expandId(shortId)
-
-      // Full UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-      expect(fullUuid).toMatch(
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-      )
+    it('returns true for 12-character IDs', () => {
+      expect(isValidId('a1b2c3d4e5f6')).toBe(true)
+      expect(isValidId('XYZ123abc789')).toBe(true)
     })
 
-    it('is reversible with generateId', () => {
-      const shortId = generateId()
-      const fullUuid = expandId(shortId)
-
-      // Should be a valid UUID
-      expect(fullUuid.length).toBe(36)
-      expect(fullUuid.split('-').length).toBe(5)
+    it('returns true for 22-character legacy IDs', () => {
+      expect(isValidId('abc123def456ghi789jkm2')).toBe(true) // 22 chars (legacy)
+      expect(isValidId('bChqT78gcaLdXS3kD87oZF')).toBe(true) // Real legacy ID
     })
 
-    it('throws for invalid short IDs', () => {
-      expect(() => expandId('invalid')).toThrow()
+    it('returns false for IDs with invalid length', () => {
+      expect(isValidId('abc123')).toBe(false) // Too short
+      expect(isValidId('abc123def456ghi789jkm234567')).toBe(false) // Too long (>22)
+    })
+
+    it('returns false for IDs with invalid characters', () => {
+      expect(isValidId('abc123!@#$%^')).toBe(false) // Special chars
+      expect(isValidId('abc123 space')).toBe(false) // Space
+      expect(isValidId('0OIlabc12345')).toBe(false) // Ambiguous chars (0, O, I, l)
     })
   })
 })
