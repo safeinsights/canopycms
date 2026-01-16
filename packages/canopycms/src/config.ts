@@ -523,11 +523,9 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
     // Build fullPath: if we have a parent, join with parent; otherwise use collection path
     let fullPath: string
     if (parentPath) {
-      // Child collection: extract the leaf segment from collection.path (preserves embedded IDs)
+      // Child collection: use only the collection name (leaf segment), not the full path
       // The full path from collection.path includes parent path segments that are already in parentPath
-      const pathSegments = normalizedPath.split('/').filter(Boolean)
-      const leafSegment = pathSegments[pathSegments.length - 1]
-      fullPath = join(parentPath, leafSegment)
+      fullPath = join(parentPath, collection.name)
     } else {
       // Root-level collection: prepend base path
       fullPath = base ? join(base, normalizedPath) : normalizedPath

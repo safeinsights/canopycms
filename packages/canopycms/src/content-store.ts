@@ -111,11 +111,35 @@ export class ContentStore {
   ): Promise<{ absolutePath: string; relativePath: string; id?: string }> {
     const rootWithSep = this.root.endsWith(path.sep) ? this.root : `${this.root}${path.sep}`
 
-    // Singletons: fullPath includes complete path (no IDs for singletons)
+    // Singletons: fullPath includes complete path, but filename may have embedded ID
     if (schemaItem.type === 'singleton') {
       const format = schemaItem.format
       const ext = getFormatExtension(format)
-      const resolvedPath = path.resolve(this.root, `${schemaItem.fullPath}${ext}`)
+
+      // Try to find existing singleton file with embedded ID
+      // Pattern: {name}.{12-char-id}.{ext} or {name}.{ext}
+      const singletonDir = path.dirname(path.resolve(this.root, schemaItem.fullPath))
+      const singletonName = path.basename(schemaItem.fullPath)
+
+      let resolvedPath = path.resolve(this.root, `${schemaItem.fullPath}${ext}`)
+
+      // Check if file with embedded ID exists
+      try {
+        const entries = await fs.readdir(singletonDir, { withFileTypes: true })
+        const matchingFile = entries.find((entry) => {
+          if (!entry.isFile()) return false
+          if (!entry.name.endsWith(ext)) return false
+          // Extract slug from filename (part before the ID)
+          const slug = extractSlugFromFilename(entry.name)
+          return slug === singletonName
+        })
+
+        if (matchingFile) {
+          resolvedPath = path.resolve(singletonDir, matchingFile.name)
+        }
+      } catch (err) {
+        // Directory doesn't exist yet, use default path without ID
+      }
 
       // Security: Prevent path traversal
       if (!resolvedPath.startsWith(rootWithSep)) {
@@ -139,7 +163,30 @@ export class ContentStore {
 
       const format = schemaItem.entries?.format || 'json'
       const ext = getFormatExtension(format)
-      const collectionRoot = path.resolve(this.root, schemaItem.fullPath)
+
+      // Find actual collection directory (may have embedded ID)
+      // e.g., logical path "content/authors" maps to "content/authors.q52DCVPuH4ga"
+      let collectionRoot = path.resolve(this.root, schemaItem.fullPath)
+
+      // Try to find directory with embedded ID
+      const parentDir = path.dirname(collectionRoot)
+      const collectionName = path.basename(schemaItem.fullPath)
+
+      try {
+        const entries = await fs.readdir(parentDir, { withFileTypes: true })
+        const matchingDir = entries.find((entry) => {
+          if (!entry.isDirectory()) return false
+          // Extract logical name from directory (strips embedded ID)
+          const logicalName = extractSlugFromFilename(entry.name)
+          return logicalName === collectionName
+        })
+
+        if (matchingDir) {
+          collectionRoot = path.resolve(parentDir, matchingDir.name)
+        }
+      } catch (err) {
+        // Parent directory doesn't exist yet, use logical path
+      }
 
       // Security: Prevent path traversal at collection level
       if (!collectionRoot.startsWith(rootWithSep)) {

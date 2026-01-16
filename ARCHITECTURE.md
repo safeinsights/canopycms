@@ -46,40 +46,43 @@ Every entry and collection in CanopyCMS has a stable, globally unique identifier
 
 ### Short UUIDs
 
-CanopyCMS uses **short UUIDs** (22-character Base58-encoded strings) for all content IDs. These are generated using the `short-uuid` package and provide:
-- **Global uniqueness**: No collisions across the entire system
-- **Compact representation**: 22 characters instead of 36 (standard UUID format)
+CanopyCMS uses **short UUIDs** (12-character Base58-encoded strings) for all content IDs. These are generated using the `short-uuid` package (truncated to 12 chars) and provide:
+- **Global uniqueness**: ~58^12 = 2.6 × 10^21 possible IDs; collision probability with 10,000 entries is ~0.000000002%
+- **Compact representation**: 12 characters (vs. 36 for standard UUIDs)
 - **URL-safe**: Can be used in URLs and APIs without encoding
-- **Human-friendly**: Shorter than UUIDs but still not memorable like sequential numbers
+- **Human-friendly**: Short enough to include in filenames while maintaining uniqueness
 
-Example ID: `SmVpC5wd3j9Z6xY2pQsL`
+Example ID: `a1b2c3d4e5f6`
 
-### ID Storage via Symlinks
+### ID Storage in Filenames
 
-IDs are stored as symlinks in a centralized `content/_ids_/` directory. This design provides several benefits:
+IDs are embedded directly in filenames and directory names using a simple pattern:
 
 ```
 content/
-  _ids_/
-    SmVpC5wd3j9Z6xY2pQsL → ../posts/hello.json
-    aB7xK4mN9pR2tL8vQ3sW → ../posts/
-    ...
-  posts/
-    hello.json
-    world.json
-    drafts/
-      unpublished.json
+  posts.a1b2c3d4e5f6/
+    hello.x7y8z9w1v2u3.json
+    world.m4n5p6q7r8s9.json
+  authors.k2l3m4n5p6q7/
+    alice.t8u9v1w2x3y4.json
+  home.z5a6b7c8d9e1.json
 ```
 
-**Why symlinks?**
-- **Stable IDs across moves**: Rename or reorganize files without breaking references
-- **Single source of truth**: The symlink itself stores the ID; no separate database needed
-- **Filesystem-native**: Fits naturally with git-backed storage; symlinks are committed to the repository
-- **Atomic creation**: Creating a symlink is atomic on all modern filesystems
+**Filename Pattern:**
+- Files: `slug.id.ext` (e.g., `hello.x7y8z9w1v2u3.json`)
+- Directories: `slug.id` (e.g., `posts.a1b2c3d4e5f6`)
+- Metadata files: No ID (e.g., `.collection.json`, `.gitignore`)
+
+**Benefits:**
+- **Stable IDs across moves**: Rename slug portion without breaking references; ID stays in filename
+- **Self-contained**: No separate database or symlink directory needed
+- **Git-friendly**: IDs visible in diffs, file moves preserve IDs via git mv
+- **Atomic operations**: Filesystem renames are atomic
+- **Human-readable**: Filenames show both human-friendly slug and unique ID
 
 ### Bidirectional ID Index
 
-The `ContentIdIndex` class maintains an in-memory bidirectional mapping between IDs and file paths:
+The `ContentIdIndex` class maintains an in-memory bidirectional mapping between IDs and file paths by scanning filenames:
 
 ```
 Forward map:  ID → {path, type, collection, slug}
@@ -87,10 +90,10 @@ Reverse map:  path → ID
 ```
 
 This enables O(1) lookups in both directions:
-- **Forward**: "What file does ID abc123 refer to?"
-- **Reverse**: "What ID does the file at content/posts/hello.json have?"
+- **Forward**: "What file does ID `a1b2c3d4e5f6` refer to?"
+- **Reverse**: "What ID does the file at `content/posts/hello.json` have?"
 
-**Lazy loading optimization**: The index is built on first access by scanning the `_ids_/` directory. This minimizes Lambda cold starts—building the index for 1000 entries takes approximately 10-50ms. Subsequent accesses are instant (index already in memory).
+**Lazy loading optimization**: The index is built on first access by recursively scanning filenames in the content directory. This minimizes Lambda cold starts—building the index for 1000 entries takes approximately 10-50ms. Subsequent accesses are instant (index already in memory).
 
 **Performance characteristics**:
 - Cold start (first access): ~10-50ms for 1000 entries
@@ -101,9 +104,10 @@ This enables O(1) lookups in both directions:
 
 The index is NOT thread-safe, but the system is designed for eventual consistency across processes:
 
-- **Symlinks are source of truth**: Each process rebuilds its index from symlinks on disk
-- **Atomic operations**: Symlink creation is atomic; all processes discover the same symlinks
+- **Filenames are source of truth**: Each process rebuilds its index by scanning filenames on disk
+- **Atomic operations**: File renames are atomic; all processes discover the same filenames
 - **Unique ID generation**: Multiple processes can't create duplicate IDs (globally unique)
+- **Collision detection**: Index build fails if duplicate IDs are found
 - **Eventual consistency**: One process creating an entry might not be visible to another until that process rebuilds its index (acceptable for human-paced editing workflows)
 
 In most CMS use cases (where editors work at human speeds), race conditions are rare and eventual consistency is sufficient.
@@ -1066,29 +1070,31 @@ Keeping adapters thin (like the ~10 line Next.js user extraction) provides sever
 
 If adapters contained business logic, we'd risk behavior divergence, duplicate maintenance, and harder-to-debug issues.
 
-### Why symlink-based content IDs?
+### Why filename-embedded content IDs?
 
-A robust reference system requires stable, globally unique identifiers that survive file renames and moves. The decision to use symlinks in `content/_ids_/` provides several advantages over alternatives:
+A robust reference system requires stable, globally unique identifiers that survive file renames and moves. The decision to embed IDs directly in filenames provides several advantages over alternatives:
 
 **Alternative approaches considered:**
 - **Database IDs**: Would add external dependency, complicating deployment and git synchronization
 - **File-based registry** (e.g., JSON mapping): Requires synchronization logic and introduces write conflicts in concurrent environments
 - **Git objects** (blob hashes): Not stable across file edits; changes whenever content changes
+- **Symlink directory** (previous approach): Required separate `_ids_/` directory; added filesystem overhead and complexity
 
-**Why symlinks?**
-- **Filesystem-native**: No external database or registry file needed
-- **Atomic writes**: Symlink creation is atomic; no partial state or race conditions
-- **Git-friendly**: Symlinks can be committed to git, providing version history and audit trail
-- **Process-agnostic**: Multiple processes can safely read the same symlinks without synchronization
-- **Self-documenting**: The symlink target shows what ID refers to what file
+**Why filename-embedded IDs?**
+- **Self-contained**: No separate database, registry, or symlink directory needed
+- **Atomic operations**: File renames are atomic on all filesystems; no partial state possible
+- **Git-friendly**: IDs visible in diffs and preserved through `git mv`
+- **Human-readable**: Filenames show both slug (human-friendly) and ID (unique)
+- **Process-agnostic**: Multiple processes can safely read the same filenames without synchronization
+- **Zero overhead**: No extra files or symlinks; IDs are part of the natural filename structure
 
-The symlink approach trades a small amount of filesystem overhead (one symlink per entry) for simplicity, atomicity, and git integration.
+The filename-embedded approach provides the same stability and uniqueness guarantees as symlinks, but with simpler filesystem structure and better human readability.
 
 ### Why lazy index loading for Lambda cold starts?
 
-Scanning thousands of symlinks during every request would be expensive. The lazy loading approach defers index building until first access:
+Scanning thousands of files during every request would be expensive. The lazy loading approach defers index building until first access:
 
-- **First access** (cold start): Scan all symlinks in `_ids_/` and build in-memory maps. ~10-50ms for 1000 entries.
+- **First access** (cold start): Recursively scan filenames in content directory and build in-memory maps. ~10-50ms for 1000 entries.
 - **Subsequent accesses** (warm): Index already in memory. Lookups are 0ms.
 - **Cross-request**: In serverless functions, subsequent requests reuse the same Lambda execution context, so the index stays warm.
 
@@ -1098,7 +1104,7 @@ This optimization is critical for serverless deployments where cold starts are i
 
 Once built, the index enables O(1) lookups instead of filesystem syscalls:
 
-- **Filesystem queries**: Each lookup would require `readlink()` + directory scans. Much slower.
+- **Filesystem queries**: Each lookup would require directory scans and filename parsing. Much slower.
 - **In-memory maps**: Two hashmap lookups (forward and reverse). Microsecond-level latency.
 - **Memory cost**: ~1KB per entry. For 10,000 entries, ~10MB. Acceptable for serverless budgets.
 
@@ -1109,8 +1115,8 @@ The tradeoff favors speed over raw memory usage, which is the right choice for r
 The index is per-process, not globally synchronized. This design choice accepts eventual consistency for robustness:
 
 - **No locking**: Avoids distributed lock complexity and deadlock risks
-- **No write conflicts**: Each process independently rebuilds from the authoritative symlinks
-- **Self-healing**: If a process's index gets stale, it rebuilds on next access
+- **No write conflicts**: Each process independently rebuilds by scanning filenames
+- **Self-healing**: If a process's index gets stale, it can rebuild on demand
 - **Suitable for CMS workflows**: Editors work at human speeds; millisecond-level race conditions don't materialize in practice
 
 For a system handling hundreds of concurrent API requests (serverless autoscaling), process-local indexes with eventual consistency is simpler and more scalable than a shared, synchronized index.
