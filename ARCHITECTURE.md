@@ -110,7 +110,12 @@ In most CMS use cases (where editors work at human speeds), race conditions are 
 
 ## Schema-Driven Content Model
 
-CanopyCMS uses a unified schema model where all content is defined through a hierarchical structure of collections and singletons.
+CanopyCMS uses a unified schema model where all content is defined through a hierarchical structure of collections and singletons. Schemas can be defined in two ways:
+
+1. **Configuration-based**: Schema defined directly in `canopycms.config.ts`
+2. **File-based**: Schema defined in `.collection.json` files alongside content (with references to a centralized schema registry)
+
+These approaches can be mixed—file-based and config-based schemas are merged together during initialization.
 
 ### Unified Schema Structure
 
@@ -125,6 +130,152 @@ This unified approach treats the root as a collection itself, eliminating specia
 - If it has `entries`, you can create repeatable items in it
 - If it has `collections`, it contains nested collections
 - If it has `singletons`, it contains single-instance items
+
+### Schema Registry and References
+
+The schema registry is a centralized location for field definitions that can be referenced by collection meta files:
+
+**Schema Registry** (`app/schema-registry.ts`):
+```typescript
+export const schemaRegistry = {
+  postSchema: [/* field definitions */],
+  authorSchema: [/* field definitions */],
+  docSchema: [/* field definitions */],
+}
+```
+
+**Collection Meta File** (`content/posts/.collection.json`):
+```json
+{
+  "name": "posts",
+  "label": "Posts",
+  "entries": {
+    "format": "json",
+    "fields": "postSchema"
+  }
+}
+```
+
+The `fields` property contains a string reference (like `"postSchema"`) that is resolved against the registry during initialization.
+
+**Benefits:**
+- **DRY principle**: Field definitions live in one place, referenced by multiple collections
+- **Type safety**: Schema registry is defined in TypeScript with full type checking
+- **Separation of concerns**: Content structure (meta files) is separate from field definitions (registry)
+- **Co-location**: Collection metadata lives with content files, not in config
+- **Merge flexibility**: Config-based and file-based schemas can coexist
+
+### Schema Meta Files
+
+Each collection folder can contain a `.collection.json` file that defines:
+- Collection name and label
+- Entry configuration (format and field schema reference)
+- Singletons within that collection
+
+**Structure:**
+```
+content/
+  .collection.json           # Root collection (optional)
+  posts/
+    .collection.json         # Posts collection definition
+    hello.json
+    world.json
+  docs/
+    .collection.json         # Docs collection
+    guides/
+      .collection.json       # Nested guides collection
+      getting-started.md
+```
+
+**Root collection** (`content/.collection.json`):
+- No `name` or `path` fields (derived from contentRoot)
+- Can define root-level entries or singletons
+- Optional—system works without it
+
+**Nested collections**:
+- Collection path is derived from folder structure, not from meta file
+- Each collection can have its own `.collection.json`
+- Nesting is detected automatically by scanning subdirectories
+
+### Schema Resolution System
+
+Schema resolution happens during service initialization through a multi-step process:
+
+**Step 1: Load meta files** (`loadCollectionMetaFiles`)
+- Recursively scans content directory for `.collection.json` files
+- Parses and validates each file using Zod schemas
+- Returns raw metadata with string references to schema registry
+
+**Step 2: Resolve references** (`resolveCollectionReferences`)
+- Takes loaded meta files and schema registry
+- Replaces string references (like `"postSchema"`) with actual field definitions
+- Validates that all referenced schemas exist in the registry
+- Builds nested collection hierarchy
+
+**Step 3: Merge with config**
+- Config-defined schemas are merged with file-based schemas
+- Collections and singletons are concatenated
+- Config entries take precedence if root defines entries in both places
+
+**Step 4: Flatten schema**
+- Final merged schema is flattened into `Map<path, FlatSchemaItem>` for O(1) lookups
+- All path resolution and validation happens at initialization, not request time
+
+**Error handling:**
+- Clear error messages when referenced schemas don't exist
+- Lists available schema registry keys in error messages
+- Validates collection structure during parse (must have entries or singletons)
+- Throws if no schema is provided (neither config nor meta files)
+
+### Async Initialization Pattern
+
+The schema resolution system requires async initialization because it reads files from disk:
+
+**Service creation** is async:
+```typescript
+const services = await createCanopyServices(config, schemaRegistry)
+```
+
+**Context creation** in framework adapters:
+```typescript
+// Create once at module load
+const canopyContextPromise = createNextCanopyContext({
+  config,
+  authPlugin,
+  schemaRegistry,
+})
+
+// Export getters that await the promise
+export const getCanopy = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopy()
+}
+```
+
+**Why this pattern:**
+- **One-time cost**: File scanning happens once at server startup, not per request
+- **Shared services**: All requests use the same services instance with cached schemas
+- **Lambda-safe**: In serverless environments, the promise resolves once per container lifecycle
+- **Type safety**: Async await ensures services are fully initialized before use
+
+### Watch System for Meta Files
+
+In development mode, the system watches for changes to `.collection.json` files:
+
+```typescript
+watchCollectionMetaFiles(contentRoot, onChange)
+```
+
+**Implementation:**
+- Uses `chokidar` library for efficient file watching
+- Watches pattern: `${contentRoot}/**/.collection.json`
+- Triggers callback on: add, change, unlink events
+- Returns cleanup function to stop watching
+
+**Current limitation:**
+- Watch system exists but auto-reload is not yet implemented
+- Server restart required after meta file changes
+- Future: Hot reload of schema without server restart
 
 ### Schema Flattening
 
@@ -1060,6 +1211,93 @@ Singletons are represented in the API with an empty string slug instead of using
 
 The alternative (nullable slug) would require conditional logic throughout the codebase, adding complexity and error-prone null checks.
 
+### Why async service initialization?
+
+The introduction of schema meta files requires async initialization of CanopyCMS services. This architectural change has implications across the system:
+
+**The problem:**
+- Loading `.collection.json` files from disk is an async operation (file I/O)
+- Schema resolution depends on these files
+- Services need a fully resolved schema before they can operate
+- Synchronous initialization is no longer possible
+
+**The solution: Async initialization with promise caching**
+
+Services are created once at module load time, with the promise cached:
+
+```typescript
+// Create once (async)
+const canopyContextPromise = createNextCanopyContext({
+  config,
+  authPlugin,
+  schemaRegistry,
+})
+
+// Export getters that await the promise
+export const getCanopy = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopy()
+}
+```
+
+**Benefits:**
+- **One-time cost**: File scanning happens once per server/container lifecycle
+- **Shared services**: All requests await the same promise, get the same services instance
+- **Lambda optimization**: In serverless, the promise resolves once per container and is reused
+- **Error handling**: Initialization errors are thrown once, not on every request
+- **Type safety**: TypeScript enforces await at call sites
+
+**Performance characteristics:**
+- **Cold start**: ~10-50ms to scan and parse meta files (small projects)
+- **Warm requests**: 0ms (promise already resolved, services cached)
+- **Memory overhead**: Minimal (one services instance per process)
+
+**Alternatives considered:**
+
+**Synchronous initialization with lazy loading:**
+- Would require reading meta files on first access (blocking request)
+- Race conditions if multiple requests trigger loading simultaneously
+- Complex locking/memoization logic needed
+- Rejected: Async upfront is simpler and more predictable
+
+**Callback pattern:**
+```typescript
+createCanopyServices(config, (services) => {
+  // Use services
+})
+```
+- Non-standard pattern in modern JavaScript/TypeScript
+- Difficult to integrate with framework request handlers
+- Rejected: Promises are standard, better error handling
+
+**Synchronous config with runtime meta file loading:**
+- Services initialize synchronously from config
+- Meta files loaded lazily per-request
+- Would eliminate async initialization but lose caching benefits
+- Rejected: Per-request file I/O is too slow
+
+**Why the promise caching pattern works:**
+
+In Node.js and serverless environments, module-level variables persist across requests within the same process/container. The cached promise ensures:
+
+1. First request (cold): Promise resolves, reads meta files, creates services
+2. Subsequent requests (warm): Promise is already resolved, returns immediately
+3. All requests: Use the same services instance with shared schema cache
+
+This pattern is common in Next.js and other frameworks for expensive initialization (database connections, external API clients, etc.).
+
+**Developer experience:**
+
+The async pattern is explicit at usage sites:
+
+```typescript
+// Clear that initialization is async
+const canopy = await getCanopy()
+const data = await canopy.read(...)
+```
+
+TypeScript enforces the await, preventing accidental usage before initialization completes. The pattern is consistent with async/await conventions throughout the modern JavaScript ecosystem.
+
 ### Why expose singletons as type 'entry' in the API?
 
 The internal `FlatSchemaItem` uses `type: 'singleton'`, but the API exposes singletons as `type: 'entry'`:
@@ -1085,3 +1323,54 @@ The internal `FlatSchemaItem` uses `type: 'singleton'`, but the API exposes sing
 - `itemType` provides extension point for future content types
 
 This separation of concerns keeps the API stable while allowing internal improvements to the schema model.
+
+### Why schema meta files instead of all-in-config?
+
+The schema meta file system provides an alternative to defining all schemas in `canopycms.config.ts`, offering several architectural benefits:
+
+**Co-location with content:**
+- Collection structure lives alongside content files, not in a separate config file
+- Easier to understand content organization when browsing the content directory
+- Adding a new collection is as simple as creating a folder with a `.collection.json`
+- Git diffs show collection structure changes in the same commits as content changes
+
+**Separation of concerns:**
+- Content structure (which collections exist, where they live) is separate from field definitions (what fields those collections have)
+- Content editors can understand collection hierarchy without reading TypeScript
+- Developers own the schema registry (TypeScript field definitions)
+- Content architects can modify collection structure without touching code
+
+**Reduced config file size:**
+- Config file can focus on operational settings (git, auth, branches)
+- Large nested schema trees can make config files unwieldy
+- Meta files distribute schema definition across the content directory
+
+**Flexibility:**
+- Projects can use all-in-config, all-in-meta, or a hybrid approach
+- Config-defined schemas and file-based schemas are merged
+- Gradual migration path: start with config, move to meta files as project grows
+- Different teams can manage different parts of the schema
+
+**Registry pattern enables reuse:**
+- Field definitions (like `postSchema`) are defined once and referenced multiple times
+- If multiple collections share the same structure, they reference the same schema
+- Changing a schema definition updates all collections that reference it
+- Type safety maintained because registry is TypeScript
+
+**Limitations:**
+- Requires async initialization (file I/O)
+- Two sources of truth (config and meta files) can be confusing initially
+- Schema registry must be maintained separately from meta files
+- References are validated at runtime, not TypeScript compile time
+
+**When to use meta files:**
+- Large projects with many collections
+- Content teams that need visibility into collection structure
+- Projects where collection hierarchy changes frequently
+- Multi-team environments where content structure ownership is distributed
+
+**When to use config-only:**
+- Small projects with 1-3 collections
+- Solo developers who prefer everything in code
+- Projects where TypeScript type checking is critical
+- Rapid prototyping where schema changes frequently

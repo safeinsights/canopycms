@@ -3,6 +3,7 @@ import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import type { AuthPlugin } from 'canopycms/auth'
 import config from '../../canopycms.config'
+import { schemaRegistry } from '../schema-registry'
 
 /**
  * Select auth plugin based on CANOPY_AUTH_MODE environment variable.
@@ -28,13 +29,21 @@ function getAuthPlugin(): AuthPlugin {
 }
 
 // Create unified context - used by both API routes and pages
-const canopyContext = createNextCanopyContext({
+// This is async because it loads .collection.json meta files
+const canopyContextPromise = createNextCanopyContext({
   config: config.server,
   authPlugin: getAuthPlugin(),
+  schemaRegistry,
 })
 
 // Export for server component pages
-export const getCanopy = canopyContext.getCanopy
+export const getCanopy = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopy()
+}
 
 // Export for API routes
-export const handler = canopyContext.handler
+export const getHandler = async () => {
+  const context = await canopyContextPromise
+  return context.handler
+}

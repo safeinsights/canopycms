@@ -1,0 +1,11 @@
+{
+  "singletons": [
+    {
+      "name": "home",
+      "label": "Home",
+      "path": "home",
+      "format": "json",
+      "fields": "homeSchema"
+    }
+  ]
+}

@@ -1,15 +1,11 @@
-import type { CanopyConfig } from './config'
 import type { CanopyUser } from './user'
 import type { CanopyServices } from './services'
 import type { ContentReader, ReadContentInput } from './content-reader'
-import { createCanopyServices } from './services'
 import { isBuildMode, BUILD_USER } from './build-mode'
 import { createContentReader } from './content-reader'
 
 export interface CanopyContextOptions {
-  /** Either config OR services must be provided */
-  config?: CanopyConfig
-  services?: CanopyServices
+  services: CanopyServices
   /**
    * Extract the current user from framework-specific context.
    * Should call authResultToCanopyUser() to apply bootstrap admin groups.
@@ -40,14 +36,14 @@ export interface CanopyContext {
  * Framework-agnostic - the adapter provides the extractUser function.
  *
  * User extractor should apply bootstrap admin groups (via authResultToCanopyUser).
+ *
+ * NOTE: This function is synchronous because in practice, services are always
+ * provided pre-created (async) by the framework adapter. The fallback path
+ * that creates services from config cannot work correctly since createCanopyServices
+ * is now async. Always pass services, not config.
  */
 export function createCanopyContext(options: CanopyContextOptions) {
-  // Accept either pre-created services or config
-  if (!options.services && !options.config) {
-    throw new Error('CanopyCMS: Either services or config must be provided')
-  }
-
-  const services = options.services ?? createCanopyServices(options.config!)
+  const services = options.services
 
   /**
    * Get the current user.

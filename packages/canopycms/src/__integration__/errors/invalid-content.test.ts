@@ -14,14 +14,14 @@ import type { ApiResponse } from '../../api/types'
 
 describe('Invalid Content Errors', () => {
   let workspace: TestWorkspace
-  let editorClient: ApiClient
+  let editorClient: Awaited<ReturnType<typeof createApiClient>>
 
   beforeEach(async () => {
     workspace = await createTestWorkspace({
       schema: BLOG_SCHEMA,
     })
 
-    editorClient = createApiClient({
+    editorClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
     })

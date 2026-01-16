@@ -15,26 +15,26 @@ import type { ApiResponse } from '../../api/types'
 
 describe('Conflict Resolution Integration', () => {
   let workspace: TestWorkspace
-  let editor1Client: ApiClient
-  let editor2Client: ApiClient
-  let adminClient: ApiClient
+  let editor1Client: Awaited<ReturnType<typeof createApiClient>>
+  let editor2Client: Awaited<ReturnType<typeof createApiClient>>
+  let adminClient: Awaited<ReturnType<typeof createApiClient>>
 
   beforeEach(async () => {
     workspace = await createTestWorkspace({
       schema: BLOG_SCHEMA,
     })
 
-    editor1Client = createApiClient({
+    editor1Client = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
     })
 
-    editor2Client = createApiClient({
+    editor2Client = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
     })
 
-    adminClient = createApiClient({
+    adminClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
     })

@@ -49,9 +49,9 @@ function createCustomAuthPlugin(userId: string, groups: string[]): AuthPlugin {
 
 describe('User Context API Integration', () => {
   let workspace: TestWorkspace
-  let adminClient: ApiClient
-  let editorClient: ApiClient
-  let reviewerClient: ApiClient
+  let adminClient: Awaited<ReturnType<typeof createApiClient>>
+  let editorClient: Awaited<ReturnType<typeof createApiClient>>
+  let reviewerClient: Awaited<ReturnType<typeof createApiClient>>
 
   beforeEach(async () => {
     workspace = await createTestWorkspace({
@@ -59,17 +59,17 @@ describe('User Context API Integration', () => {
     })
 
     // Create API clients for different users with different group memberships
-    adminClient = createApiClient({
+    adminClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
     })
 
-    editorClient = createApiClient({
+    editorClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
     })
 
-    reviewerClient = createApiClient({
+    reviewerClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('reviewer'),
     })
@@ -117,7 +117,7 @@ describe('User Context API Integration', () => {
 
   it('returns all groups when user belongs to multiple', async () => {
     // Create a client for a user with multiple groups
-    const multiGroupClient = createApiClient({
+    const multiGroupClient = await createApiClient({
       config: workspace.config,
       authPlugin: createCustomAuthPlugin('multi-group-user', ['ContentEditors', 'Reviewers']),
     })

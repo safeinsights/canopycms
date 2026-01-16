@@ -71,7 +71,9 @@
       "Bash(npm run generate-client:*)",
       "Bash(npm run:*)",
       "Bash(git grep:*)",
-      "Bash(git fetch:*)"
+      "Bash(git fetch:*)",
+      "Bash(1)",
+      "Bash(sed -n:*)"
     ]
   }
 }

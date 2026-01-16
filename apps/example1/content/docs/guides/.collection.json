@@ -1,0 +1,8 @@
+{
+  "name": "guides",
+  "label": "Guides",
+  "entries": {
+    "format": "json",
+    "fields": "docSchema"
+  }
+}

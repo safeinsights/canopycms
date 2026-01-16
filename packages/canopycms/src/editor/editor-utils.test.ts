@@ -39,6 +39,30 @@ describe('buildPreviewSrc', () => {
     )
     expect(result).toBe('/nested%20path/post?branch=feature-1')
   })
+
+  it('includes collection path when building preview URL without base', () => {
+    const result = buildPreviewSrc(
+      { collectionId: 'content/docs', slug: 'overview', itemType: 'entry' },
+      { branchName: 'main', previewBaseByCollection: undefined }
+    )
+    expect(result).toBe('/docs/overview?branch=main')
+  })
+
+  it('handles nested collection paths correctly', () => {
+    const result = buildPreviewSrc(
+      { collectionId: 'content/docs/api', slug: 'intro', itemType: 'entry' },
+      { branchName: 'main', previewBaseByCollection: undefined }
+    )
+    expect(result).toBe('/docs/api/intro?branch=main')
+  })
+
+  it('handles root-level collections', () => {
+    const result = buildPreviewSrc(
+      { collectionId: 'content/posts', slug: 'my-post', itemType: 'entry' },
+      { branchName: 'main', previewBaseByCollection: undefined }
+    )
+    expect(result).toBe('/posts/my-post?branch=main')
+  })
 })
 
 describe('normalizeContentPayload', () => {

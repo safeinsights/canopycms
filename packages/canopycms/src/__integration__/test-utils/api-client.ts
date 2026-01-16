@@ -22,8 +22,8 @@ export interface ApiClientOptions {
  * The client wraps the production CanopyApiClient with a custom fetch
  * that routes through the handler directly instead of making network requests.
  */
-export function createApiClient(options: ApiClientOptions) {
-  const services = createCanopyServices(options.config)
+export async function createApiClient(options: ApiClientOptions) {
+  const services = await createCanopyServices(options.config)
   const handler = createCanopyRequestHandler({
     services,
     authPlugin: options.authPlugin,

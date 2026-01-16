@@ -1,0 +1,8 @@
+{
+  "name": "api",
+  "label": "API Reference",
+  "entries": {
+    "format": "json",
+    "fields": "docSchema"
+  }
+}

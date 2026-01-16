@@ -1,0 +1,8 @@
+{
+  "name": "v2",
+  "label": "v2",
+  "entries": {
+    "format": "json",
+    "fields": "docSchema"
+  }
+}

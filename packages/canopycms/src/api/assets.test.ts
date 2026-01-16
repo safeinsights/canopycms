@@ -13,6 +13,7 @@ const makeCtx = (): ApiContext => ({
   services: {
     config: { schema: [] } as any,
     flatSchema: [],
+    schemaRegistry: {},
     checkBranchAccess: () => ({ allowed: true, reason: 'no_acl' }),
     checkPathAccess: undefined as any,
     checkContentAccess: async () => ({ allowed: true, branch: { allowed: true, reason: 'no_acl' }, path: { allowed: true, reason: 'no_acl' } }),

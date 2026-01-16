@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
 import { createContentReader } from './content-reader'
+import { createCanopyServices } from './services'
 import { defineCanopyTestConfig } from './config-test'
 import { ANONYMOUS_USER } from './user'
 import type { BranchContext } from './types'
@@ -61,8 +62,7 @@ describe('createContentReader', () => {
       },
     })
     const branchContext = buildBranchContext(root)
-    const reader = createContentReader({
-      config,
+    const reader = createContentReader({ services: await createCanopyServices(config),
       allowCreateBranch: false,
       getBranchContext: async (branch) => (branch === 'main' ? branchContext : null),
     })
@@ -106,8 +106,7 @@ describe('createContentReader', () => {
       },
     })
     const branchContext = buildBranchContext(root)
-    const reader = createContentReader({
-      config,
+    const reader = createContentReader({ services: await createCanopyServices(config),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -138,8 +137,7 @@ describe('createContentReader', () => {
       },
     })
     const branchContext = buildBranchContext(root)
-    const reader = createContentReader({
-      config,
+    const reader = createContentReader({ services: await createCanopyServices(config),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -178,8 +176,7 @@ describe('createContentReader', () => {
       },
     })
     const branchContext = buildBranchContext(root)
-    const reader = createContentReader({
-      config,
+    const reader = createContentReader({ services: await createCanopyServices(config),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -237,7 +234,7 @@ describe('createContentReader', () => {
     })
 
     try {
-      const reader = createContentReader({ config, basePathOverride: root })
+      const reader = createContentReader({ services: await createCanopyServices(config), basePathOverride: root })
       const doc = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/home', user: ANONYMOUS_USER })
       expect(doc.path).toBe('/?branch=main')
       expect(doc.data.hero.title).toBe('Welcome')
@@ -276,8 +273,7 @@ describe('createContentReader', () => {
     })
 
     const branchContext = buildBranchContext(root)
-    const reader = createContentReader({
-      config,
+    const reader = createContentReader({ services: await createCanopyServices(config),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })

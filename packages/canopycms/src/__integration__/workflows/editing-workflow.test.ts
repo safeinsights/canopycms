@@ -16,14 +16,14 @@ import type { BranchResponse } from '../../api/branch'
 
 describe('Editing Workflow Integration', () => {
   let workspace: TestWorkspace
-  let editorClient: ApiClient
+  let editorClient: Awaited<ReturnType<typeof createApiClient>>
 
   beforeEach(async () => {
     workspace = await createTestWorkspace({
       schema: BLOG_SCHEMA,
     })
 
-    editorClient = createApiClient({
+    editorClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
     })
@@ -84,7 +84,7 @@ describe('Editing Workflow Integration', () => {
 
   it('handles concurrent edits on different branches', async () => {
     const editor1Client = editorClient
-    const editor2Client = createApiClient({
+    const editor2Client = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
     })
@@ -137,7 +137,7 @@ describe('Editing Workflow Integration', () => {
   })
 
   it('supports multi-file editing with proper git commits', async () => {
-    const adminClient = createApiClient({
+    const adminClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
     })

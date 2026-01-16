@@ -1088,6 +1088,234 @@ cd packages/canopycms && npm test
 cd packages/canopycms && npx vitest run src/github-service.test.ts
 ```
 
+### Working with Async Services
+
+**createCanopyServices is now async** because it loads `.collection.json` meta files from the filesystem. This affects how you create and use services in tests.
+
+**Basic Pattern:**
+
+```typescript
+import { createCanopyServices } from './services'
+
+// Always await service creation
+const services = await createCanopyServices(config)
+
+// Use services in your tests
+const reader = createContentReader({ services, basePathOverride: root })
+```
+
+**Why async?** CanopyCMS supports defining collections through `.collection.json` files in your content directory. These files reference schemas from a registry (e.g., `"fields": "postSchema"`). Services must scan and load these files at initialization time.
+
+**Framework Integration:**
+
+In Next.js apps, create services once at module initialization:
+
+```typescript
+// app/lib/canopy.ts
+import { createNextCanopyContext } from 'canopycms-next'
+import config from '../../canopycms.config'
+import { schemaRegistry } from '../schema-registry'
+
+// Create context at module initialization (async)
+const canopyContextPromise = createNextCanopyContext({
+  config: config.server,
+  authPlugin: getAuthPlugin(),
+  schemaRegistry,
+})
+
+// Export for server components
+export const getCanopy = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopy()
+}
+
+// Export for API routes
+export const getHandler = async () => {
+  const context = await canopyContextPromise
+  return context.handler
+}
+```
+
+**Next.js Context Wrapper:**
+
+`createNextCanopyContext()` is also async for the same reason:
+
+```typescript
+import { createNextCanopyContext } from 'canopycms-next'
+
+// Must await context creation
+const { getCanopy, handler, services } = await createNextCanopyContext({
+  config,
+  authPlugin,
+  schemaRegistry,
+})
+```
+
+### Creating Mock Services for Tests
+
+When testing APIs or services, use the `createMockServices()` helper from test utilities:
+
+```typescript
+import { createMockServices, createMockApiContext } from '../test-utils/api-test-helpers'
+
+it('tests some API handler', async () => {
+  // Create mock services with schemaRegistry (required!)
+  const services = createMockServices({
+    config: { mode: 'prod-sim' },
+    schemaRegistry: {},  // Always include this
+  })
+
+  // Or use higher-level helper that includes schemaRegistry by default
+  const context = createMockApiContext({ services })
+
+  // Test your handler
+  const result = await someApiHandler(context, { user: mockUser })
+  expect(result.ok).toBe(true)
+})
+```
+
+**Critical: Mock services MUST include `schemaRegistry` property.** This property is part of the `CanopyServices` interface and is required for schema resolution. Even if your test doesn't use schemas, include an empty object `{}` to match the interface.
+
+**Why?** When `createCanopyServices()` became async, it started loading `.collection.json` files and building a schema registry. The registry resolves field references like `"fields": "postSchema"` to actual field configurations. Tests that bypass async service creation must manually provide this property.
+
+**Integration Tests with Real Services:**
+
+For integration tests, create services with `await createCanopyServices()`:
+
+```typescript
+import { createCanopyServices } from '../../services'
+import { createMockApiContext } from '../../test-utils/api-test-helpers'
+
+it('integrates with real services', async () => {
+  // Create real services (loads .collection.json files)
+  const services = await createCanopyServices(workspace.config)
+
+  // Use in API context
+  const context = createMockApiContext({ services })
+
+  const result = await someHandler(context, { user: adminUser })
+  expect(result.ok).toBe(true)
+})
+```
+
+**When to use each approach:**
+
+| Approach | Use Case | Pros | Cons |
+|----------|----------|------|------|
+| `createMockServices()` | Unit tests, simple scenarios | Fast, no filesystem access | Must manually set `schemaRegistry: {}` |
+| `await createCanopyServices()` | Integration tests, schema testing | Tests real behavior, loads meta files | Slower, requires test workspace |
+
+### Testing with Schema Meta Files
+
+**What are `.collection.json` files?**
+
+Collections can be defined via JSON files in your content directory instead of (or in addition to) the config:
+
+```json
+// content/posts/.collection.json
+{
+  "name": "posts",
+  "label": "Posts",
+  "entries": {
+    "format": "json",
+    "fields": "postSchema"  // References registry key
+  }
+}
+```
+
+The `"fields": "postSchema"` reference is resolved from a schema registry provided at initialization.
+
+**Setting up test fixtures with meta files:**
+
+```typescript
+import { createTestWorkspace } from '../test-utils/test-workspace'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+
+it('loads collections from .collection.json files', async () => {
+  const workspace = await createTestWorkspace({
+    schema: BLOG_SCHEMA,  // Base schema
+    mode: 'prod-sim',
+  })
+
+  // Add a .collection.json file
+  const postsDir = path.join(workspace.root, 'content/posts')
+  await fs.mkdir(postsDir, { recursive: true })
+  await fs.writeFile(
+    path.join(postsDir, '.collection.json'),
+    JSON.stringify({
+      name: 'posts',
+      entries: {
+        format: 'json',
+        fields: 'postSchema',  // References schema registry
+      },
+    })
+  )
+
+  // Create services (will load the meta file)
+  const services = await createCanopyServices(workspace.config, {
+    postSchema: [
+      { name: 'title', type: 'string' },
+      { name: 'body', type: 'text' },
+    ],
+  })
+
+  // Verify schema was loaded
+  expect(services.flatSchema).toContainEqual(
+    expect.objectContaining({
+      type: 'collection',
+      name: 'posts',
+    })
+  )
+
+  await workspace.cleanup()
+})
+```
+
+**Schema Registry Parameter:**
+
+```typescript
+// createCanopyServices accepts optional schemaRegistry
+const services = await createCanopyServices(
+  config,
+  schemaRegistry  // Maps keys like 'postSchema' to FieldConfig[]
+)
+```
+
+**Why use meta files?**
+
+1. **Decoupling:** Schema definitions can live alongside content, not just in code
+2. **Dynamic:** Content editors can create new collections without code changes
+3. **Modular:** Each collection folder is self-contained with its schema definition
+
+**Testing pattern:**
+
+```typescript
+// When testing code that uses meta files:
+describe('Schema meta file integration', () => {
+  let workspace: TestWorkspace
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace({ mode: 'prod-sim' })
+  })
+
+  afterEach(async () => {
+    await workspace.cleanup()
+  })
+
+  it('merges meta file schemas with config schemas', async () => {
+    // Setup: Create .collection.json in workspace
+    // ...
+
+    // Act: Create services (loads meta files)
+    const services = await createCanopyServices(workspace.config, schemaRegistry)
+
+    // Assert: Check merged schema
+    expect(services.flatSchema.length).toBeGreaterThan(0)
+  })
+})
+```
+
 ### Mocking Git Operations
 
 After a major refactoring, CanopyCMS tests now mock high-level git service methods instead of low-level git operations. This makes tests more maintainable and focused on API behavior.
@@ -1508,6 +1736,64 @@ npm run storybook --workspace=packages/canopycms
 ### Test Coverage
 
 Add tests alongside new logic. Integration tests cover end-to-end behavior.
+
+### Async Changes Quick Reference
+
+**Function signatures that changed to async:**
+
+| Function | Location | Reason |
+|----------|----------|--------|
+| `createCanopyServices(config, schemaRegistry?)` | `packages/canopycms/src/services.ts` | Loads `.collection.json` meta files |
+| `createNextCanopyContext(options)` | `packages/canopycms-next/src/context-wrapper.ts` | Calls async `createCanopyServices()` |
+
+**What to update in your code:**
+
+```typescript
+// BEFORE: Synchronous service creation
+const services = createCanopyServices(config)
+
+// AFTER: Async service creation
+const services = await createCanopyServices(config)
+
+// BEFORE: Synchronous Next.js context
+const { getCanopy } = createNextCanopyContext({ config, authPlugin })
+
+// AFTER: Async Next.js context
+const { getCanopy } = await createNextCanopyContext({ config, authPlugin, schemaRegistry })
+```
+
+**New required properties in mock services:**
+
+```typescript
+// Always include schemaRegistry when creating mock services
+const services = createMockServices({
+  schemaRegistry: {},  // Required even if empty
+})
+```
+
+**Test setup pattern:**
+
+```typescript
+// Tests must use async functions for setup
+it('does something', async () => {
+  const services = await createCanopyServices(config)
+  // ... rest of test
+})
+
+// Or use beforeEach for shared setup
+let services: CanopyServices
+beforeEach(async () => {
+  services = await createCanopyServices(config)
+})
+```
+
+**Common errors and fixes:**
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Property 'schemaRegistry' is missing` | Using old mock structure | Add `schemaRegistry: {}` to mock |
+| `Cannot read property 'then' of undefined` | Forgot to await | Add `await` before `createCanopyServices()` |
+| `Type 'Promise<CanopyServices>' is not assignable` | Not awaiting async function | Add `await` or use `async` function |
 
 ### Claude Subagents
 

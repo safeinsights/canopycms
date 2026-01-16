@@ -39,6 +39,7 @@ export interface UseEntryManagerReturn {
   setSelectedId: (id: string) => void
   entries: EditorEntry[]
   setEntries: (entries: EditorEntry[]) => void
+  collections: EditorCollection[]
   currentEntry: EditorEntry | undefined
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
@@ -80,6 +81,7 @@ export interface UseEntryManagerReturn {
  */
 export function useEntryManager(options: UseEntryManagerOptions): UseEntryManagerReturn {
   const [entriesState, setEntriesState] = useState<EditorEntry[]>(options.initialEntries)
+  const [collectionsState, setCollectionsState] = useState<EditorCollection[]>(options.collections || [])
 
   // Initialize with prop value or empty (URL sync happens in effect after mount)
   const [selectedId, setSelectedId] = useState<string>(options.initialSelectedId ?? '')
@@ -151,6 +153,12 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const result = await getApiClient().entries.list({ branch })
     if (!result.ok) throw new Error(`Refresh failed: ${result.status}`)
     const data = result.data as ListEntriesResponse
+
+    // Store collections from API response
+    const { convertApiCollectionsToEditorCollections } = await import('../editor-utils')
+    const collections = convertApiCollectionsToEditorCollections(data.collections)
+    setCollectionsState(collections)
+
     const refreshed = buildEntriesFromListResponse({
       response: data,
       branchName: branch,
@@ -263,6 +271,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     setSelectedId,
     entries: entriesState,
     setEntries: setEntriesState,
+    collections: collectionsState,
     currentEntry,
     navigatorOpen,
     setNavigatorOpen,

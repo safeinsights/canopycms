@@ -115,7 +115,7 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Create services with prod-sim mode
-    const services = createCanopyServices({
+    const services = await createCanopyServices({
       ...workspace.config,
       mode: 'prod-sim',
       settingsBranch: 'canopycms-settings',
@@ -208,7 +208,7 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Create services
-    const services = createCanopyServices({
+    const services = await createCanopyServices({
       ...workspace.config,
       mode: 'prod-sim',
       settingsBranch: 'canopycms-settings',
@@ -282,7 +282,7 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Create services in prod-sim mode
-    const services = createCanopyServices({
+    const services = await createCanopyServices({
       ...workspace.config,
       mode: 'prod-sim',
       settingsBranch: 'canopycms-settings',

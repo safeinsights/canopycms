@@ -1,0 +1,8 @@
+{
+  "name": "authors",
+  "label": "Authors",
+  "entries": {
+    "format": "json",
+    "fields": "authorSchema"
+  }
+}

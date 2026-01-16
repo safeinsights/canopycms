@@ -220,7 +220,7 @@ const editorConfigSchema = z.object({
 
 export const CanopyConfigSchema = z
   .object({
-    schema: rootCollectionSchema,
+    schema: rootCollectionSchema.optional(),
     media: mediaSchema.optional(),
     defaultBranchAccess: defaultBranchAccessSchema.optional(),
     defaultPathAccess: defaultPathAccessSchema.optional(),
@@ -238,14 +238,6 @@ export const CanopyConfigSchema = z
     sourceRoot: sourceRootSchema.optional(),
     editor: editorConfigSchema.optional(),
     authPlugin: z.custom<AuthPlugin>().optional(),
-  })
-  .superRefine((data, ctx) => {
-    if (!data.schema?.entries && !data.schema?.collections && !data.schema?.singletons) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'Schema must have at least one of: entries, collections, or singletons',
-      })
-    }
   })
 
 export type FieldConfig = z.infer<typeof fieldSchema>
@@ -531,8 +523,9 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
     // Build fullPath: if we have a parent, join with parent; otherwise use collection path
     let fullPath: string
     if (parentPath) {
-      // Child collection: join with parent path
-      fullPath = join(parentPath, normalizedPath)
+      // Child collection: use only the collection name (leaf segment), not the full path
+      // The full path from collection.path includes parent path segments that are already in parentPath
+      fullPath = join(parentPath, collection.name)
     } else {
       // Root-level collection: prepend base path
       fullPath = base ? join(base, normalizedPath) : normalizedPath
@@ -607,7 +600,7 @@ export const validateCanopyConfig = (config: unknown): CanopyConfig => {
   const normalized = {
     ...parsed,
     contentRoot: normalizePathValue(parsed.contentRoot ?? 'content'),
-    schema: normalizeSchemaPathsRoot(parsed.schema),
+    schema: parsed.schema ? normalizeSchemaPathsRoot(parsed.schema) : undefined,
   }
 
   return normalized as CanopyConfig
@@ -644,7 +637,7 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
         contentRoot,
         editor,
         mode,
-        flatSchema: flattenSchema(schema, contentRoot),
+        flatSchema: schema ? flattenSchema(schema, contentRoot) : [],
       }
 
       // Merge client overrides (e.g., auth handlers from useClerkAuthConfig)

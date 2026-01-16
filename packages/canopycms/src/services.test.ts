@@ -25,7 +25,7 @@ vi.mock('simple-git', () => {
 })
 
 describe('createCanopyServices', () => {
-  it('creates helpers with defaults and reuses config', () => {
+  it('creates helpers with defaults and reuses config', async () => {
     const cfg = defineCanopyTestConfig({
       schema: {
         collections: [
@@ -36,7 +36,7 @@ describe('createCanopyServices', () => {
       defaultBranchAccess: 'deny',
     })
 
-    const services = createCanopyServices(cfg)
+    const services = await createCanopyServices(cfg)
 
     // Path permissions are now loaded from JSON file at runtime, not from config
     // Service creates checkPathAccess with empty rules (default deny)
@@ -77,7 +77,7 @@ describe('createCanopyServices', () => {
       defaultBaseBranch: 'main',
       defaultRemoteName: 'origin',
     })
-    const services = createCanopyServices(cfg)
+    const services = await createCanopyServices(cfg)
     const gm = services.createGitManagerFor('/tmp/repo')
     const status = await gm.status()
     expect(status.current).toBe('main')
@@ -367,7 +367,7 @@ describe('commitToSettingsBranch', () => {
       // settingsBranch not specified - should default to 'canopycms-settings'
     })
 
-    const services = createCanopyServices(cfg)
+    const services = await createCanopyServices(cfg)
 
     await services.commitToSettingsBranch({
       branchRoot: '/tmp/repo',
@@ -411,7 +411,7 @@ describe('commitToSettingsBranch', () => {
       settingsBranch: 'my-settings',
     })
 
-    const services = createCanopyServices(cfg)
+    const services = await createCanopyServices(cfg)
 
     await services.commitToSettingsBranch({
       branchRoot: '/tmp/repo',
@@ -458,7 +458,7 @@ describe('commitToSettingsBranch', () => {
       settingsBranch: 'custom-settings-branch',
     })
 
-    const services = createCanopyServices(cfg)
+    const services = await createCanopyServices(cfg)
 
     await services.commitToSettingsBranch({
       branchRoot: '/tmp/repo',

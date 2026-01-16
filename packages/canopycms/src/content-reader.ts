@@ -1,16 +1,15 @@
 import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
-import type { CanopyConfig, FlatSchemaItem } from './config'
+import type { FlatSchemaItem } from './config'
 import { resolveBranchPaths } from './paths'
 import { type OperatingMode } from './operating-mode'
-import { createCanopyServices, type CanopyServices } from './services'
+import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
 import { isBuildMode } from './build-mode'
 
 export interface ContentReaderOptions {
-  config?: CanopyConfig
-  services?: CanopyServices
+  services: CanopyServices
   workspaceManager?: BranchWorkspaceManager
   basePathOverride?: string
   defaultBranch?: string
@@ -39,11 +38,7 @@ export interface ContentReader {
  * Falls back to creating the branch workspace (metadata + checkout) if missing.
  */
 export const createContentReader = (options: ContentReaderOptions): ContentReader => {
-  if (!options.config && !options.services) {
-    throw new Error('canopycms: config or services is required for createContentReader')
-  }
-
-  const services = options.services ?? createCanopyServices(options.config!)
+  const services = options.services
   const operatingMode: OperatingMode = services.config.mode
   const basePathOverride = options.basePathOverride
   const workspaceManager = options.workspaceManager ?? new BranchWorkspaceManager(services.config)

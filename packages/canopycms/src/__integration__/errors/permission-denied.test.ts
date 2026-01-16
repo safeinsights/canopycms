@@ -14,26 +14,26 @@ import type { ApiResponse } from '../../api/types'
 
 describe('Permission Denied Errors', () => {
   let workspace: TestWorkspace
-  let adminClient: ApiClient
-  let editorClient: ApiClient
-  let reviewerClient: ApiClient
+  let adminClient: Awaited<ReturnType<typeof createApiClient>>
+  let editorClient: Awaited<ReturnType<typeof createApiClient>>
+  let reviewerClient: Awaited<ReturnType<typeof createApiClient>>
 
   beforeEach(async () => {
     workspace = await createTestWorkspace({
       schema: BLOG_SCHEMA,
     })
 
-    adminClient = createApiClient({
+    adminClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
     })
 
-    editorClient = createApiClient({
+    editorClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
     })
 
-    reviewerClient = createApiClient({
+    reviewerClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('reviewer'),
     })
