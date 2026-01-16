@@ -3,7 +3,7 @@ import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import type { AuthPlugin } from 'canopycms/auth'
 import config from '../../canopycms.config'
-import { schemaRegistry } from '../schema-registry'
+import { schemaRegistry } from '../schemas'
 
 /**
  * Select auth plugin based on CANOPY_AUTH_MODE environment variable.

@@ -73,7 +73,9 @@
       "Bash(git grep:*)",
       "Bash(git fetch:*)",
       "Bash(1)",
-      "Bash(sed -n:*)"
+      "Bash(sed -n:*)",
+      "Bash(git restore:*)",
+      "Bash(git stash:*)"
     ]
   }
 }

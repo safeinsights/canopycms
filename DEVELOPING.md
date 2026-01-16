@@ -1147,7 +1147,7 @@ In Next.js apps, create services once at module initialization:
 // app/lib/canopy.ts
 import { createNextCanopyContext } from 'canopycms-next'
 import config from '../../canopycms.config'
-import { schemaRegistry } from '../schema-registry'
+import { schemaRegistry } from '../schemas'
 
 // Create context at module initialization (async)
 const canopyContextPromise = createNextCanopyContext({

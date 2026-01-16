@@ -11,6 +11,7 @@ import {
   buildCollectionLabels,
   buildBreadcrumbSegments,
   calculatePathToEntry,
+  normalizeCollectionPath,
 } from './editor-utils'
 import type { EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
@@ -658,5 +659,30 @@ describe('calculatePathToEntry', () => {
       'collection:blog/featured': true,
       'collection:blog/featured/archive': true,
     })
+  })
+})
+
+describe('normalizeCollectionPath', () => {
+  it('strips content/ prefix from collection ID', () => {
+    expect(normalizeCollectionPath('content/posts')).toBe('posts')
+    expect(normalizeCollectionPath('content/docs')).toBe('docs')
+  })
+
+  it('strips content/ prefix from nested collection paths', () => {
+    expect(normalizeCollectionPath('content/docs/api')).toBe('docs/api')
+    expect(normalizeCollectionPath('content/docs/api/v2')).toBe('docs/api/v2')
+  })
+
+  it('returns path unchanged if no content/ prefix', () => {
+    expect(normalizeCollectionPath('posts')).toBe('posts')
+    expect(normalizeCollectionPath('docs/api')).toBe('docs/api')
+  })
+
+  it('only strips the first occurrence of content/', () => {
+    expect(normalizeCollectionPath('content/content/posts')).toBe('content/posts')
+  })
+
+  it('handles empty string', () => {
+    expect(normalizeCollectionPath('')).toBe('')
   })
 })

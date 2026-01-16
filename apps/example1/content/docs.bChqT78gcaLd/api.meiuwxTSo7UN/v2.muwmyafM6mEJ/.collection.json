@@ -1,6 +1,6 @@
 {
-  "name": "v1",
-  "label": "v1",
+  "name": "v2",
+  "label": "API v2",
   "entries": {
     "format": "json",
     "fields": "docSchema"

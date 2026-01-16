@@ -143,20 +143,26 @@ This unified approach treats the root as a collection itself, eliminating specia
 
 The schema registry is a centralized location for field definitions that can be referenced by collection meta files:
 
-**Schema Registry** (`app/schema-registry.ts`):
+**Schema Definitions** (`app/schemas.ts`):
 
 ```typescript
-export const schemaRegistry = {
-  postSchema: [
-    /* field definitions */
-  ],
-  authorSchema: [
-    /* field definitions */
-  ],
-  docSchema: [
-    /* field definitions */
-  ],
-}
+import { createSchemaRegistry } from 'canopycms/server'
+
+export const postSchema = [
+  /* field definitions */
+]
+export const authorSchema = [
+  /* field definitions */
+]
+export const docSchema = [
+  /* field definitions */
+]
+
+export const schemaRegistry = createSchemaRegistry({
+  postSchema,
+  authorSchema,
+  docSchema,
+})
 ```
 
 **Collection Meta File** (`content/posts/.collection.json`):

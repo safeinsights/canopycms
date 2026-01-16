@@ -11,6 +11,7 @@ import { createCheckContentAccess } from '../content-access'
 import type { PathPermission } from '../config'
 import { listEntriesHandler } from './entries'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
+import { loadCollectionMetaFiles, resolveCollectionReferences } from '../schema-meta-loader'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-entries-'))
 
@@ -406,5 +407,171 @@ describe('listEntries', () => {
 
     expect(publicEntry?.canEdit).toBe(true) // u1 can edit public post (default allow)
     expect(readonlyEntry?.canEdit).toBe(false) // u1 cannot edit readonly post (restricted to admin)
+  })
+
+  it('lists entries with embedded IDs in filenames', async () => {
+    const root = await tmpDir()
+
+    // Create content directory
+    await fs.mkdir(path.join(root, 'content'), { recursive: true })
+
+    // Create root .collection.json with singleton (like example1)
+    await fs.writeFile(
+      path.join(root, 'content/.collection.json'),
+      JSON.stringify({
+        singletons: [
+          {
+            name: 'home',
+            label: 'Home',
+            path: 'home',
+            format: 'json',
+            fields: 'homeSchema',
+          },
+        ],
+      }),
+      'utf8',
+    )
+
+    // Create home.json singleton file with embedded ID
+    const homeId = 'h1m2e3p4a5g6'
+    await fs.writeFile(
+      path.join(root, `content/home.${homeId}.json`),
+      JSON.stringify({
+        hero: { title: 'CanopyCMS Demo', body: 'Schema-driven content' },
+        features: [],
+        cta: { text: 'Get Started', link: '/posts' },
+      }),
+      'utf8',
+    )
+
+    // Create collection folder with ID (like authors.q52DCVPuH4ga)
+    const authorsId = 'q52DCVPuH4ga'
+    await fs.mkdir(path.join(root, `content/authors.${authorsId}`), { recursive: true })
+
+    // Create .collection.json file (matching example1's approach)
+    await fs.writeFile(
+      path.join(root, `content/authors.${authorsId}/.collection.json`),
+      JSON.stringify({
+        name: 'authors',
+        label: 'Authors',
+        entries: {
+          format: 'json',
+          fields: 'authorSchema',
+        },
+      }),
+      'utf8',
+    )
+
+    // Create entry files with embedded IDs (like alice.5NVkkrB1MJUv.json)
+    const aliceId = '5NVkkrB1MJUv'
+    const bobId = 'jm6FYVAtJie8'
+    await fs.writeFile(
+      path.join(root, `content/authors.${authorsId}/alice.${aliceId}.json`),
+      JSON.stringify({ name: 'Alice', bio: 'Developer' }),
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(root, `content/authors.${authorsId}/bob.${bobId}.json`),
+      JSON.stringify({ name: 'Bob', bio: 'Designer' }),
+      'utf8',
+    )
+
+    // Load schema from .collection.json files (like services do)
+    const schemaRegistry = {
+      homeSchema: [
+        {
+          name: 'hero',
+          type: 'object',
+          fields: [
+            { name: 'title', type: 'string' },
+            { name: 'body', type: 'string' },
+          ],
+        },
+        {
+          name: 'features',
+          type: 'object',
+          list: true,
+          fields: [
+            { name: 'title', type: 'string' },
+            { name: 'description', type: 'string' },
+          ],
+        },
+        {
+          name: 'cta',
+          type: 'object',
+          fields: [
+            { name: 'text', type: 'string' },
+            { name: 'link', type: 'string' },
+          ],
+        },
+      ],
+      authorSchema: [
+        { name: 'name', type: 'string' },
+        { name: 'bio', type: 'string' },
+      ],
+    }
+
+    const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
+    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+
+    // Create config with the loaded schema
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema,
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        flatSchema: flattenSchema(config.schema, config.contentRoot),
+        schemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+      },
+      branchContext: createMockBranchContext({
+        branchName: 'main',
+        baseRoot: root,
+        branchRoot: root,
+        createdBy: 'u1',
+      }),
+    })
+
+    const res = await listEntriesHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main' },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.entries).toHaveLength(3) // home singleton + alice + bob
+
+    // Verify home singleton is included
+    const homeEntry = res.data?.entries.find((e) => e.collectionId === 'content/home')
+    expect(homeEntry).toBeDefined()
+    expect(homeEntry?.itemType).toBe('singleton')
+    expect(homeEntry?.title).toBe('Home') // Title comes from schema label
+
+    // Verify slugs are extracted correctly (without IDs) for collection entries
+    const aliceEntry = res.data?.entries.find((e) => e.slug === 'alice')
+    const bobEntry = res.data?.entries.find((e) => e.slug === 'bob')
+
+    expect(aliceEntry).toBeDefined()
+    expect(aliceEntry?.slug).toBe('alice')
+    expect(aliceEntry?.title).toBe('Alice')
+    expect(aliceEntry?.collectionId).toBe(`content/authors.${authorsId}`)
+
+    expect(bobEntry).toBeDefined()
+    expect(bobEntry?.slug).toBe('bob')
+    expect(bobEntry?.title).toBe('Bob')
+    expect(bobEntry?.collectionId).toBe(`content/authors.${authorsId}`)
   })
 })

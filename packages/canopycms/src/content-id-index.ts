@@ -7,18 +7,17 @@ import { generateId, isValidId } from './id'
 export interface IdLocation {
   id: string
   type: 'entry' | 'collection'
-  relativePath: string // e.g. 'content/books/scifi/dune.json'
-  symlinkPath: string // e.g. '/content/books/scifi/abc123DEF456ghi789'
-  collection?: string // e.g. 'books/scifi' (for entries only)
+  relativePath: string // e.g. 'content/posts/dune.a1b2c3d4e5f6.json'
+  collection?: string // e.g. 'content/posts' (for entries only)
   slug?: string // e.g. 'dune' (for entries only)
 }
 
 /**
  * ContentIdIndex manages the bidirectional mapping between content IDs and file paths.
  *
- * IDs are stored as filesystem symlinks in a centralized `content/_ids_/` directory
- * (e.g., `content/_ids_/abc123 → ../posts/hello.json`).
- * This class builds an in-memory index by scanning these symlinks, providing O(1) lookups
+ * IDs are embedded in filenames using the pattern `{slug}.{12-char-id}.{ext}` for files
+ * and `{slug}.{12-char-id}/` for directories (e.g., `dune.a1b2c3d4e5f6.json`).
+ * This class builds an in-memory index by scanning filenames recursively, providing O(1) lookups
  * in both directions (ID→path and path→ID).
  *
  * The index is built lazily on first access to optimize Lambda cold starts.
@@ -29,18 +28,17 @@ export interface IdLocation {
  * instances or server processes), each process maintains its own in-memory index.
  *
  * **Consistency guarantees:**
- * - Symlinks on the filesystem are the source of truth
- * - Each process discovers the same symlinks when building its index
- * - Write operations create symlinks atomically (fs.symlink is atomic)
+ * - Filenames on the filesystem are the source of truth
+ * - Each process discovers the same filenames when building its index
+ * - Write operations that change filenames are atomic (rename is atomic)
  * - Read operations always reflect current filesystem state after index rebuild
  *
  * **Race condition handling:**
  * - Multiple processes creating entries simultaneously: Each generates a unique ID,
- *   no collisions possible (globally unique IDs)
+ *   collisions detected during index build (fail fast)
  * - One process writes, another reads: Reader's stale index might miss new IDs until
  *   next rebuild. This is acceptable - eventual consistency.
  * - Index drift: Rare, but processes can rebuild index if they detect missing IDs
- *   (e.g., entry exists on disk but not in index)
  *
  * For most use cases (CMS with human editors), race conditions are unlikely and
  * eventual consistency is sufficient.
@@ -55,61 +53,68 @@ export class ContentIdIndex {
   }
 
   /**
-   * Build both indexes by scanning symlinks in the _ids_ directory.
-   * This is lazy - only called when first needed.
+   * Build index by scanning filenames recursively.
+   * Throws if duplicate IDs found (collision detection).
    */
-  async buildFromSymlinks(startPath: string = ''): Promise<void> {
-    const idsDir = path.join(this.root, startPath, '_ids_')
+  async buildFromFilenames(startPath: string = ''): Promise<void> {
+    await this.scanDirectory(startPath)
+  }
+
+  private async scanDirectory(relativePath: string): Promise<void> {
+    const absoluteDir = path.join(this.root, relativePath)
 
     try {
-      const entries = await fs.readdir(idsDir, { withFileTypes: true })
+      const entries = await fs.readdir(absoluteDir, { withFileTypes: true })
 
       for (const entry of entries) {
-        // Symlink IDs are 22-char alphanumeric strings (short UUIDs)
-        if (entry.isSymbolicLink() && isValidId(entry.name)) {
-          try {
-            await this.processSymlink(idsDir, entry)
-          } catch (err) {
-            // Skip entries that fail to process (e.g., broken symlinks)
+        // Skip hidden files and directories (including _ids_)
+        if (entry.name.startsWith('.') || entry.name === '_ids_') {
+          continue
+        }
+
+        const fullRelativePath = path.join(relativePath, entry.name)
+        const id = extractIdFromFilename(entry.name)
+
+        if (id) {
+          // Collision detection
+          if (this.idToLocation.has(id)) {
+            const existing = this.idToLocation.get(id)!
+            throw new Error(
+              `ID collision detected: ${id}\n` +
+                `  File 1: ${existing.relativePath}\n` +
+                `  File 2: ${fullRelativePath}`,
+            )
           }
+
+          const location: IdLocation = {
+            id,
+            type: entry.isDirectory() ? 'collection' : 'entry',
+            relativePath: fullRelativePath,
+          }
+
+          // Extract slug and collection for entries
+          if (!entry.isDirectory()) {
+            const slug = extractSlugFromFilename(entry.name)
+            const collectionPath = path.dirname(fullRelativePath)
+            location.slug = slug
+            location.collection = collectionPath
+          }
+
+          this.idToLocation.set(id, location)
+          this.pathToId.set(fullRelativePath, id)
+        }
+
+        // Recurse into directories
+        if (entry.isDirectory()) {
+          await this.scanDirectory(fullRelativePath)
         }
       }
     } catch (err) {
-      // _ids_ directory might not exist yet, skip
+      // Directory might not exist yet
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw err
+      }
     }
-  }
-
-  private async processSymlink(idsDir: string, entry: Dirent): Promise<void> {
-    const id = entry.name // The symlink name IS the ID
-    const symlinkPath = path.join(idsDir, entry.name)
-    const target = await fs.readlink(symlinkPath)
-    const absoluteTarget = path.resolve(path.dirname(symlinkPath), target)
-    const relativePath = path.relative(this.root, absoluteTarget)
-
-    // Determine if target is entry or collection
-    const stat = await fs.stat(absoluteTarget)
-    const isCollection = stat.isDirectory()
-
-    const location: IdLocation = {
-      id,
-      type: isCollection ? 'collection' : 'entry',
-      relativePath,
-      symlinkPath,
-    }
-
-    // For entries, extract collection and slug
-    if (!isCollection) {
-      const parts = relativePath.split(path.sep)
-      const filename = parts[parts.length - 1]
-      location.slug = path.basename(filename, path.extname(filename))
-      // Keep the full collection path (e.g., 'content/authors' not 'authors')
-      // This matches what ContentStore expects
-      location.collection = parts.slice(0, -1).join('/')
-    }
-
-    // Update BOTH maps (keep in sync)
-    this.idToLocation.set(id, location)
-    this.pathToId.set(relativePath, id)
   }
 
   /**
@@ -135,61 +140,138 @@ export class ContentIdIndex {
   }
 
   /**
-   * Add a new entry or collection.
-   * Generates a new ID, creates the symlink in content/_ids_/, and updates the index.
-   * Returns the generated ID.
+   * Add a new entry or collection to the index.
+   * Note: This only updates the in-memory index. The file with embedded ID
+   * must already exist on disk (created by ContentStore).
    */
-  async add(location: Omit<IdLocation, 'id' | 'symlinkPath'>): Promise<string> {
-    // Check if this path already has an ID
-    const existingId = this.pathToId.get(location.relativePath)
-    if (existingId) {
-      return existingId // Already has an ID, return it
+  add(location: Omit<IdLocation, 'id'>): void {
+    const id = extractIdFromFilename(path.basename(location.relativePath))
+    if (!id) {
+      throw new Error(`Cannot add location without ID in filename: ${location.relativePath}`)
     }
 
-    // Generate new ID
-    const id = generateId()
+    // Collision detection
+    if (this.idToLocation.has(id)) {
+      const existing = this.idToLocation.get(id)!
+      throw new Error(
+        `ID collision detected: ${id}\n` +
+          `  File 1: ${existing.relativePath}\n` +
+          `  File 2: ${location.relativePath}`,
+      )
+    }
 
-    // Ensure _ids_ directory exists
-    const idsDir = path.join(this.root, 'content/_ids_')
-    await fs.mkdir(idsDir, { recursive: true })
-
-    // Create symlink in _ids_ directory
-    // Target is relative path from _ids_ to the actual file
-    const symlinkPath = path.join(idsDir, id)
-    const absoluteTarget = path.join(this.root, location.relativePath)
-    const target = path.relative(idsDir, absoluteTarget)
-
-    const symlinkType = location.type === 'collection' ? 'dir' : 'file'
-    await fs.symlink(target, symlinkPath, symlinkType)
-
-    // Update both maps
     const fullLocation: IdLocation = {
       ...location,
       id,
-      symlinkPath,
     }
     this.idToLocation.set(id, fullLocation)
     this.pathToId.set(location.relativePath, id)
-
-    return id
   }
 
   /**
-   * Remove an entry or collection by ID.
+   * Remove an entry or collection from the index by ID.
+   * Note: This only updates the in-memory index. The file must be deleted separately.
    */
-  async remove(id: string): Promise<void> {
+  remove(id: string): void {
     const location = this.idToLocation.get(id)
     if (!location) return
 
-    // Delete symlink
-    try {
-      await fs.unlink(location.symlinkPath)
-    } catch {
-      // Symlink might already be gone
-    }
-
-    // Update both maps
     this.idToLocation.delete(id)
     this.pathToId.delete(location.relativePath)
   }
+
+  /**
+   * Update the path for an existing ID (e.g., after file rename/move).
+   * This is used to keep the index in sync when files are renamed.
+   */
+  updatePath(id: string, newRelativePath: string): void {
+    const location = this.idToLocation.get(id)
+    if (!location) {
+      throw new Error(`Cannot update path for unknown ID: ${id}`)
+    }
+
+    // Remove old path mapping
+    this.pathToId.delete(location.relativePath)
+
+    // Update location
+    location.relativePath = newRelativePath
+
+    // Update slug and collection for entries
+    if (location.type === 'entry') {
+      location.slug = extractSlugFromFilename(path.basename(newRelativePath))
+      location.collection = path.dirname(newRelativePath)
+    }
+
+    // Add new path mapping
+    this.pathToId.set(newRelativePath, id)
+  }
+}
+
+/**
+ * Extract ID from filename.
+ * Returns null if filename doesn't contain an ID or is a metadata file.
+ *
+ * Pattern:
+ * - Files: slug.id.ext → parts[1] is ID (e.g., "dune.a1b2c3d4e5f6.json")
+ * - Directories: slug.id → parts[1] is ID (e.g., "posts.a1b2c3d4e5f6")
+ * - Metadata: .collection.json, .gitignore, etc. → null
+ */
+export function extractIdFromFilename(filename: string): string | null {
+  // Skip metadata files (no IDs)
+  if (filename.startsWith('.')) {
+    return null
+  }
+
+  const parts = filename.split('.')
+
+  // Files: slug.id.ext → need at least 3 parts
+  if (parts.length >= 3) {
+    const candidate = parts[parts.length - 2]
+    if (isValidId(candidate)) return candidate
+  }
+
+  // Directories: slug.id → need exactly 2 parts
+  if (parts.length === 2) {
+    const candidate = parts[parts.length - 1]
+    if (isValidId(candidate)) return candidate
+  }
+
+  return null
+}
+
+/**
+ * Extract slug from filename (the part before the ID).
+ * Works for both files (slug.id.ext) and directories (slug.id).
+ * Handles slugs with dots (e.g., "my.page.a1b2c3d4e5f6.json" → "my.page")
+ */
+export function extractSlugFromFilename(filename: string): string {
+  const parts = filename.split('.')
+
+  // Try to find the ID in the parts
+  // Files: slug.id.ext (at least 3 parts)
+  if (parts.length >= 3) {
+    const possibleId = parts[parts.length - 2]
+    if (isValidId(possibleId)) {
+      // Everything before the ID is the slug
+      return parts.slice(0, parts.length - 2).join('.')
+    }
+  }
+
+  // Directories: slug.id (exactly 2 parts)
+  if (parts.length === 2) {
+    const possibleId = parts[parts.length - 1]
+    if (isValidId(possibleId)) {
+      // Everything before the ID is the slug
+      return parts[0]
+    }
+  }
+
+  // No ID found, remove extension and return the rest
+  // This handles legacy files without IDs
+  if (parts.length > 1) {
+    return parts.slice(0, -1).join('.')
+  }
+
+  // No extension, return as-is
+  return filename
 }

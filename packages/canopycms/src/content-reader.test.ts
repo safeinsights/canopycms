@@ -160,8 +160,9 @@ describe('createContentReader', () => {
     const root = await tmpDir()
     const postsDir = path.join(root, 'content/posts')
     await fs.mkdir(postsDir, { recursive: true })
+    // Create files with embedded IDs (12-char Base58)
     await fs.writeFile(
-      path.join(postsDir, 'first.json'),
+      path.join(postsDir, 'first.abc123def456.json'),
       JSON.stringify({ title: 'Hello world' }, null, 2),
       'utf8',
     )

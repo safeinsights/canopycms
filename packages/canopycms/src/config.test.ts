@@ -345,4 +345,80 @@ describe('config validation', () => {
     expect(v1?.fullPath).toBe('content/docs/api/v1') // Should NOT be 'content/docs/docs/api/api/v1'
     expect(v1?.parentPath).toBe('content/docs/api')
   })
+
+  it('preserves embedded IDs in nested collection paths', () => {
+    // This test simulates the real-world scenario where .collection.json files are loaded
+    // and collection directories have embedded IDs (e.g., "docs.bChqT78gcaLd")
+    const configBundle = defineCanopyConfig({
+      ...gitAuthor,
+      schema: {
+        collections: [
+          {
+            name: 'docs',
+            path: 'docs.bChqT78gcaLd',
+            entries: {
+              format: 'json',
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+            collections: [
+              {
+                name: 'api',
+                path: 'docs.bChqT78gcaLd/api.meiuwxTSo7UN',
+                entries: {
+                  format: 'json',
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+                collections: [
+                  {
+                    name: 'v1',
+                    path: 'docs.bChqT78gcaLd/api.meiuwxTSo7UN/v1.cz5H1nu9FEer',
+                    entries: {
+                      format: 'json',
+                      fields: [{ name: 'title', type: 'string' as const }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            name: 'posts',
+            path: 'posts.916jXZabYCxu',
+            entries: {
+              format: 'json',
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          },
+        ],
+      },
+    })
+    const cfg = configBundle.server
+    const flat = flattenSchema(cfg.schema, cfg.contentRoot || 'content')
+
+    // Find all collections
+    const docs = flat.find((item) => item.type === 'collection' && item.name === 'docs')
+    const api = flat.find((item) => item.type === 'collection' && item.name === 'api')
+    const v1 = flat.find((item) => item.type === 'collection' && item.name === 'v1')
+    const posts = flat.find((item) => item.type === 'collection' && item.name === 'posts')
+
+    // Verify docs collection (root level) - embedded ID preserved
+    expect(docs).toBeDefined()
+    expect(docs?.fullPath).toBe('content/docs.bChqT78gcaLd')
+    expect(docs?.parentPath).toBeUndefined()
+
+    // Verify api collection (nested under docs) - embedded ID preserved
+    expect(api).toBeDefined()
+    expect(api?.fullPath).toBe('content/docs.bChqT78gcaLd/api.meiuwxTSo7UN')
+    expect(api?.parentPath).toBe('content/docs.bChqT78gcaLd')
+
+    // Verify v1 collection (nested under api) - embedded ID preserved
+    expect(v1).toBeDefined()
+    expect(v1?.fullPath).toBe('content/docs.bChqT78gcaLd/api.meiuwxTSo7UN/v1.cz5H1nu9FEer')
+    expect(v1?.parentPath).toBe('content/docs.bChqT78gcaLd/api.meiuwxTSo7UN')
+
+    // Verify posts collection (root level) - embedded ID preserved
+    expect(posts).toBeDefined()
+    expect(posts?.fullPath).toBe('content/posts.916jXZabYCxu')
+    expect(posts?.parentPath).toBeUndefined()
+  })
 })

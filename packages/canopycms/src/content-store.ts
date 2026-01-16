@@ -4,7 +4,8 @@ import path from 'node:path'
 import matter from 'gray-matter'
 
 import type { ContentFormat, FlatSchemaItem } from './config'
-import { ContentIdIndex } from './content-id-index'
+import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename } from './content-id-index'
+import { generateId } from './id'
 import { getFormatExtension } from './utils/format'
 
 export type MarkdownDocument = {
@@ -64,7 +65,7 @@ export class ContentStore {
    */
   public async idIndex(): Promise<ContentIdIndex> {
     if (!this.indexLoaded) {
-      await this._idIndex.buildFromSymlinks('content')
+      await this._idIndex.buildFromFilenames('content')
       this.indexLoaded = true
     }
     return this._idIndex
@@ -92,6 +93,7 @@ export class ContentStore {
 
   /**
    * Build absolute and relative paths with security validation.
+   * For collection entries, includes the ID in the filename.
    *
    * SECURITY BOUNDARY: This method prevents path traversal attacks by:
    * 1. Validating that resolved paths stay within the content root
@@ -100,11 +102,17 @@ export class ContentStore {
    *
    * This validation is performed BEFORE file I/O in resolveDocumentPath(),
    * ensuring permission checks happen before any file system access.
+   *
+   * @param options.existingId - Optional ID to use (for edits). If not provided, generates new ID.
    */
-  private buildPaths(schemaItem: FlatSchemaItem, slug: string) {
+  private async buildPaths(
+    schemaItem: FlatSchemaItem,
+    slug: string,
+    options: { existingId?: string } = {},
+  ): Promise<{ absolutePath: string; relativePath: string; id?: string }> {
     const rootWithSep = this.root.endsWith(path.sep) ? this.root : `${this.root}${path.sep}`
 
-    // Singletons: fullPath includes complete path
+    // Singletons: fullPath includes complete path (no IDs for singletons)
     if (schemaItem.type === 'singleton') {
       const format = schemaItem.format
       const ext = getFormatExtension(format)
@@ -121,7 +129,7 @@ export class ContentStore {
       }
     }
 
-    // Collection entries: append slug to collection path
+    // Collection entries: append slug.id.ext to collection path
     if (schemaItem.type === 'collection') {
       const safeSlug = slug.replace(/^\/+/, '')
       if (!safeSlug) {
@@ -139,7 +147,31 @@ export class ContentStore {
         throw new ContentStoreError('Path traversal detected')
       }
 
-      const resolved = path.resolve(collectionRoot, `${safeSlug}${ext}`)
+      // Check if file already exists (editing case)
+      let id = options.existingId
+
+      if (!id) {
+        // Try to find existing file with this slug
+        const entries = await fs.readdir(collectionRoot, { withFileTypes: true }).catch(() => [])
+        const existingFile = entries.find((entry) => {
+          if (entry.isDirectory()) return false
+          const existingSlug = extractSlugFromFilename(entry.name)
+          return existingSlug === safeSlug
+        })
+
+        if (existingFile) {
+          id = extractIdFromFilename(existingFile.name) || undefined
+        }
+      }
+
+      // Generate new ID if needed
+      if (!id) {
+        id = generateId()
+      }
+
+      // Build filename with embedded ID: slug.id.ext
+      const filename = `${safeSlug}.${id}${ext}`
+      const resolved = path.resolve(collectionRoot, filename)
       const collectionRootWithSep = collectionRoot.endsWith(path.sep)
         ? collectionRoot
         : `${collectionRoot}${path.sep}`
@@ -152,6 +184,7 @@ export class ContentStore {
       return {
         absolutePath: resolved,
         relativePath: path.relative(this.root, resolved),
+        id,
       }
     }
 
@@ -208,9 +241,9 @@ export class ContentStore {
     throw new ContentStoreError(`No schema item found for path: ${fullPath}`)
   }
 
-  resolveDocumentPath(schemaPath: string, slug = '') {
+  async resolveDocumentPath(schemaPath: string, slug = '') {
     const schemaItem = this.assertSchemaItem(schemaPath)
-    return this.buildPaths(schemaItem, slug)
+    return await this.buildPaths(schemaItem, slug)
   }
 
   async read(
@@ -219,7 +252,7 @@ export class ContentStore {
     options: { resolveReferences?: boolean } = {},
   ): Promise<ContentDocument> {
     const schemaItem = this.assertSchemaItem(collectionPath)
-    const { absolutePath, relativePath } = this.buildPaths(schemaItem, slug)
+    const { absolutePath, relativePath } = await this.buildPaths(schemaItem, slug)
     const raw = await fs.readFile(absolutePath, 'utf8')
 
     let doc: ContentDocument
@@ -278,20 +311,31 @@ export class ContentStore {
     if (expectedFormat !== input.format) {
       throw new ContentStoreError(`Format mismatch: expects ${expectedFormat}, got ${input.format}`)
     }
-    const { absolutePath, relativePath } = this.buildPaths(schemaItem, slug)
+    const { absolutePath, relativePath, id } = await this.buildPaths(schemaItem, slug)
     await fs.mkdir(path.dirname(absolutePath), { recursive: true })
 
     if (input.format === 'json') {
       const json = JSON.stringify(input.data ?? {}, null, 2)
       await fs.writeFile(absolutePath, `${json}\n`, 'utf8')
 
-      // Assign ID (index.add() will check if ID already exists and return early)
-      await idIndex.add({
-        type: 'entry',
-        relativePath,
-        collection: collectionPath,
-        slug,
-      })
+      // Update index (ID is already in filename)
+      if (id) {
+        const existing = idIndex.findById(id)
+        if (existing) {
+          // Update if path changed, otherwise do nothing
+          if (existing.relativePath !== relativePath) {
+            idIndex.updatePath(id, relativePath)
+          }
+        } else {
+          // Add new entry to index
+          idIndex.add({
+            type: 'entry',
+            relativePath,
+            collection: collectionPath,
+            slug,
+          })
+        }
+      }
 
       return {
         collection: schemaItem.fullPath,
@@ -306,13 +350,24 @@ export class ContentStore {
     const file = matter.stringify(input.body, input.data ?? {})
     await fs.writeFile(absolutePath, file, 'utf8')
 
-    // Assign ID (index.add() will check if ID already exists and return early)
-    await idIndex.add({
-      type: 'entry',
-      relativePath,
-      collection: collectionPath,
-      slug,
-    })
+    // Update index (ID is already in filename)
+    if (id) {
+      const existing = idIndex.findById(id)
+      if (existing) {
+        // Update if path changed, otherwise do nothing
+        if (existing.relativePath !== relativePath) {
+          idIndex.updatePath(id, relativePath)
+        }
+      } else {
+        // Add new entry to index
+        idIndex.add({
+          type: 'entry',
+          relativePath,
+          collection: collectionPath,
+          slug,
+        })
+      }
+    }
 
     return {
       collection: schemaItem.fullPath,
@@ -342,17 +397,17 @@ export class ContentStore {
    */
   async getIdForEntry(collectionPath: string, slug: string): Promise<string | null> {
     const idIndex = await this.idIndex()
-    const { relativePath } = this.buildPaths(this.assertCollection(collectionPath), slug)
+    const { relativePath } = await this.buildPaths(this.assertCollection(collectionPath), slug)
     return idIndex.findByPath(relativePath)
   }
 
   /**
-   * Delete an entry and its associated ID symlink.
+   * Delete an entry and remove it from the index.
    */
   async delete(collectionPath: string, slug: string): Promise<void> {
     const idIndex = await this.idIndex()
     const collection = this.assertCollection(collectionPath)
-    const { absolutePath, relativePath } = this.buildPaths(collection, slug)
+    const { absolutePath, relativePath } = await this.buildPaths(collection, slug)
 
     // Get ID before deleting
     const id = idIndex.findByPath(relativePath)
@@ -360,9 +415,9 @@ export class ContentStore {
     // Delete file
     await fs.unlink(absolutePath)
 
-    // Remove symlink
+    // Remove from index
     if (id) {
-      await idIndex.remove(id)
+      idIndex.remove(id)
     }
   }
 

@@ -101,7 +101,8 @@ const readContentHandler = async (
     const resolved = store.resolvePath(fullPathSegments)
     schemaItem = resolved.schemaItem
     slug = resolved.slug
-    relativePath = store.resolveDocumentPath(schemaItem.fullPath, slug).relativePath
+    const pathResult = await store.resolveDocumentPath(schemaItem.fullPath, slug)
+    relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: message }
@@ -151,7 +152,8 @@ const writeContentHandler = async (
     const resolved = store.resolvePath(fullPathSegments)
     schemaItem = resolved.schemaItem
     slug = resolved.slug
-    relativePath = store.resolveDocumentPath(schemaItem.fullPath, slug).relativePath
+    const pathResult = await store.resolveDocumentPath(schemaItem.fullPath, slug)
+    relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: message }
@@ -214,7 +216,8 @@ const validateReferencesHandler = async (
     const resolved = store.resolvePath(fullPathSegments)
     schemaItem = resolved.schemaItem
     const slug = resolved.slug
-    relativePath = store.resolveDocumentPath(schemaItem.fullPath, slug).relativePath
+    const pathResult = await store.resolveDocumentPath(schemaItem.fullPath, slug)
+    relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
     return { ok: false, status: 400, error: message }

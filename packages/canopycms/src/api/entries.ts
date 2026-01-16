@@ -10,6 +10,7 @@ import { ContentStoreError } from '../content-store'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
+import { extractSlugFromFilename } from '../content-id-index'
 
 type CollectionKind = 'collection' | 'entry'
 
@@ -122,7 +123,7 @@ const listCollectionEntries = async (
   }
 
   const files = dirents
-    .filter((d) => d.isFile() && d.name.endsWith(ext))
+    .filter((d) => d.isFile() && d.name.endsWith(ext) && d.name !== '.collection.json')
     .sort((a, b) => a.name.localeCompare(b.name))
 
   // Parallelize file stats and title reads for better performance
@@ -130,7 +131,7 @@ const listCollectionEntries = async (
     files.map(async (file) => {
       const absolutePath = path.join(collectionRoot, file.name)
       const relativePath = normalizePath(root, absolutePath)
-      const slug = file.name.slice(0, -ext.length)
+      const slug = extractSlugFromFilename(file.name)
       const [stats, title] = await Promise.all([
         fs.stat(absolutePath),
         readTitle(absolutePath, format),

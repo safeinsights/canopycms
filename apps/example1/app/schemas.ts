@@ -1,4 +1,5 @@
 import { TypeFromSchema, defineSchema } from 'canopycms'
+import { createSchemaRegistry } from 'canopycms/server'
 
 export const homeSchema = defineSchema([
   {
@@ -94,3 +95,11 @@ export const docSchema = defineSchema([
 ])
 
 export type DocContent = TypeFromSchema<typeof docSchema> & { slug: string }
+
+// Schema registry for CanopyCMS - references schemas by name in .collection.json files
+export const schemaRegistry = createSchemaRegistry({
+  postSchema,
+  authorSchema,
+  docSchema,
+  homeSchema,
+})

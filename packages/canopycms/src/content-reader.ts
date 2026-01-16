@@ -136,7 +136,8 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     // Get the path WITHOUT reading the file
     let relativePath: string
     try {
-      relativePath = store.resolveDocumentPath(entryPath, slug ?? '').relativePath
+      const resolved = await store.resolveDocumentPath(entryPath, slug ?? '')
+      relativePath = resolved.relativePath
     } catch (err) {
       const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
       throw new ContentStoreError(message)

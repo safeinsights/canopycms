@@ -11,3 +11,4 @@ export {
   watchCollectionMetaFiles,
 } from './schema-meta-loader'
 export type { CollectionMeta, RootCollectionMeta } from './schema-meta-loader'
+export { createSchemaRegistry } from './schema-registry-helpers'
