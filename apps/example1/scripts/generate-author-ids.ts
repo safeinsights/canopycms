@@ -1,4 +1,4 @@
-import { ContentStore } from 'canopycms'
+import { ContentStore } from 'canopycms/server'
 import path from 'path'
 import config from '../canopycms.config'
 

@@ -1,4 +1,4 @@
-import type { CollectionItem, ListEntriesResponse } from '../api/entries'
+import type { CollectionItem, ListEntriesResponse, EntryCollectionSummary } from '../api/entries'
 import type { ContentFormat, FieldConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import type { EditorEntry, EditorCollection } from './Editor'
@@ -37,8 +37,12 @@ export const buildPreviewSrc = (
     (entry.collectionName && previewBaseByCollection?.[entry.collectionName])
   if (!base) {
     if (entry.itemType === 'singleton') return '/'
+    // Build URL from collection path + slug
+    // collectionId is like "content/docs", we need to strip the content root prefix
+    const collectionPath = entry.collectionId?.replace(/^content\//, '') || ''
     const encoded = encodeSlug(entry.slug)
-    const url = encoded ? `/${encoded}` : '/'
+    const segments = [collectionPath, encoded].filter(Boolean)
+    const url = segments.length > 0 ? `/${segments.join('/')}` : '/'
     return appendBranch(url)
   }
   const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
@@ -80,6 +84,37 @@ export const buildWritePayload = (
     data: rest,
     body: typeof body === 'string' ? body : '',
   }
+}
+
+/**
+ * Converts API collection summaries to Editor collection tree structure.
+ * The API returns a flat list with parentId references; this builds a tree.
+ */
+export function convertApiCollectionsToEditorCollections(
+  apiCollections: EntryCollectionSummary[],
+): EditorCollection[] {
+  // Build a lookup map for quick access
+  const byId = new Map<string, EntryCollectionSummary>()
+  apiCollections.forEach((col) => byId.set(col.id, col))
+
+  // Find root collections (no parent or parent not in list)
+  const roots = apiCollections.filter((col) => !col.parentId || !byId.has(col.parentId))
+
+  // Recursively build tree
+  const buildTree = (col: EntryCollectionSummary): EditorCollection => {
+    const children = apiCollections.filter((c) => c.parentId === col.id).map((c) => buildTree(c))
+
+    return {
+      id: col.id,
+      name: col.name,
+      label: col.label,
+      format: col.format,
+      type: col.type,
+      children: children.length > 0 ? children : undefined,
+    }
+  }
+
+  return roots.map(buildTree)
 }
 
 interface BuildEntriesFromListParams {

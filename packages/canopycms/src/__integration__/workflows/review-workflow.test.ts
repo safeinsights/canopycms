@@ -19,26 +19,26 @@ import type {
 
 describe('Review Workflow Integration', () => {
   let workspace: TestWorkspace
-  let editorClient: ApiClient
-  let reviewerClient: ApiClient
-  let adminClient: ApiClient
+  let editorClient: Awaited<ReturnType<typeof createApiClient>>
+  let reviewerClient: Awaited<ReturnType<typeof createApiClient>>
+  let adminClient: Awaited<ReturnType<typeof createApiClient>>
 
   beforeEach(async () => {
     workspace = await createTestWorkspace({
       schema: BLOG_SCHEMA,
     })
 
-    editorClient = createApiClient({
+    editorClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
     })
 
-    reviewerClient = createApiClient({
+    reviewerClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('reviewer'),
     })
 
-    adminClient = createApiClient({
+    adminClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
     })

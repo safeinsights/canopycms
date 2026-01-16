@@ -41,6 +41,7 @@
     "@mantine/modals": "^7.14.2",
     "@mantine/notifications": "^7.14.2",
     "@octokit/rest": "^20.0.2",
+    "chokidar": "^4.0.3",
     "chroma-js": "^3.2.0",
     "gray-matter": "^4.0.3",
     "minimatch": "^9.0.5",

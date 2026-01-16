@@ -161,6 +161,7 @@ export const Editor: React.FC<EditorProps> = ({
     setSelectedId,
     entries: entriesState,
     setEntries: setEntriesState,
+    collections: collectionsFromApi,
     currentEntry,
     navigatorOpen,
     setNavigatorOpen,
@@ -178,6 +179,9 @@ export const Editor: React.FC<EditorProps> = ({
       buildPreviewSrc(entry, { branchName: branchNameState, previewBaseByCollection }),
     setBusy: setEntriesLoading,
   })
+
+  // Use collections from API (falls back to props if not loaded yet)
+  const activeCollections = collectionsFromApi.length > 0 ? collectionsFromApi : collections
 
   // 3. Draft manager (depends on branchNameState, selectedId from useEntryManager)
   const {
@@ -260,10 +264,13 @@ export const Editor: React.FC<EditorProps> = ({
         }
       })
     }
-    walk(collections)
+    walk(activeCollections)
     return all
-  }, [collections])
-  const collectionLabels = useMemo(() => buildCollectionLabels(collections), [collections])
+  }, [activeCollections])
+  const collectionLabels = useMemo(
+    () => buildCollectionLabels(activeCollections),
+    [activeCollections],
+  )
   const schema = currentEntry?.schema ?? []
   const previewKey = currentEntry?.previewSrc ?? currentEntry?.id
 
@@ -291,7 +298,7 @@ export const Editor: React.FC<EditorProps> = ({
   }, [currentEntry, drafts, selectedId])
 
   const navCollections = useMemo<EntryNavCollection[] | undefined>(() => {
-    if (!collections) return undefined
+    if (!activeCollections) return undefined
     const grouped = new Map<string, EntryNavCollection['entries']>()
     entriesState.forEach((entry) => {
       if (!entry.collectionId) return
@@ -310,8 +317,8 @@ export const Editor: React.FC<EditorProps> = ({
           ? () => (onCreateEntry ? onCreateEntry(node.id) : handleCreateEntry(node.id))
           : undefined,
     })
-    return collections.map((node) => build(node))
-  }, [collections, entriesState, onCreateEntry, handleCreateEntry])
+    return activeCollections.map((node) => build(node))
+  }, [activeCollections, entriesState, onCreateEntry, handleCreateEntry])
 
   // Tree expansion state - persists across drawer close/open
   const treeExpandedStateRef = useRef<Record<string, boolean>>({})
@@ -512,9 +519,7 @@ export const Editor: React.FC<EditorProps> = ({
           <Drawer.Overlay blur={2} />
           <Drawer.Content>
             <Drawer.Header>
-              <Drawer.Title>
-                <Title order={4}>Content</Title>
-              </Drawer.Title>
+              <Drawer.Title>Content</Drawer.Title>
               <Group gap="xs">
                 <ActionIcon
                   variant="subtle"

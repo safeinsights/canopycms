@@ -15,8 +15,8 @@ import type { ApiResponse } from '../../api/types'
 
 describe('API Editing Workflow Integration', () => {
   let workspace: TestWorkspace
-  let adminClient: ApiClient
-  let editorClient: ApiClient
+  let adminClient: Awaited<ReturnType<typeof createApiClient>>
+  let editorClient: Awaited<ReturnType<typeof createApiClient>>
 
   beforeEach(async () => {
     workspace = await createTestWorkspace({
@@ -24,12 +24,12 @@ describe('API Editing Workflow Integration', () => {
     })
 
     // Create API clients for different users
-    adminClient = createApiClient({
+    adminClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
     })
 
-    editorClient = createApiClient({
+    editorClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
     })

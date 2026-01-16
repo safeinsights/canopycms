@@ -4,3 +4,10 @@ export * from './build-mode'
 export * from './context'
 export * from './groups-loader'
 export * from './branch-workspace'
+export * from './content-store'
+export {
+  loadCollectionMetaFiles,
+  resolveCollectionReferences,
+  watchCollectionMetaFiles,
+} from './schema-meta-loader'
+export type { CollectionMeta, RootCollectionMeta } from './schema-meta-loader'

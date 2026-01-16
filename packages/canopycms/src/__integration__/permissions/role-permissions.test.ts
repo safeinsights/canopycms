@@ -14,26 +14,26 @@ import type { BranchResponse, BranchListResponse } from '../../api/branch'
 
 describe('Role Permission Integration', () => {
   let workspace: TestWorkspace
-  let adminClient: ApiClient
-  let reviewerClient: ApiClient
-  let editorClient: ApiClient
+  let adminClient: Awaited<ReturnType<typeof createApiClient>>
+  let reviewerClient: Awaited<ReturnType<typeof createApiClient>>
+  let editorClient: Awaited<ReturnType<typeof createApiClient>>
 
   beforeEach(async () => {
     workspace = await createTestWorkspace({
       schema: BLOG_SCHEMA,
     })
 
-    adminClient = createApiClient({
+    adminClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
     })
 
-    reviewerClient = createApiClient({
+    reviewerClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('reviewer'),
     })
 
-    editorClient = createApiClient({
+    editorClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
     })

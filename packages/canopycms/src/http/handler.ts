@@ -29,7 +29,7 @@ export interface CanopyHandlerOptions {
  */
 const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> => {
   const services =
-    options.services ?? (options.config ? createCanopyServices(options.config) : undefined)
+    options.services ?? (options.config ? await createCanopyServices(options.config) : undefined)
   if (!services) {
     throw new Error('CanopyCMS: config or services is required')
   }
@@ -221,11 +221,11 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
 /**
  * Create a handler with pre-built services from config.
  */
-export function createCanopyRequestHandlerFromConfig(
+export async function createCanopyRequestHandlerFromConfig(
   options: { config: CanopyConfig } & Omit<CanopyHandlerOptions, 'services' | 'config'>,
-): CanopyRequestHandler {
+): Promise<CanopyRequestHandler> {
   return createCanopyRequestHandler({
     ...options,
-    services: createCanopyServices(options.config),
+    services: await createCanopyServices(options.config),
   })
 }

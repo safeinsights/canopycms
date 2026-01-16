@@ -5,6 +5,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 **Key features:**
 
 - **Schema-enforced content**: Define your content structure with TypeScript - get runtime validation and type inference
+- **Flexible schema definition**: Use config-based schemas, `.collection.json` meta files, or a hybrid approach
 - **Branch-based editing**: Every editor works on an isolated branch, preventing conflicts and enabling review workflows
 - **Git as source of truth**: All content is versioned in git with full history, rollback, and PR-based review
 - **Live preview**: See changes in real-time with click-to-focus field navigation
@@ -97,15 +98,25 @@ import { createNextCanopyContext } from 'canopycms-next'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import config from '../../canopycms.config'
 
-const canopyContext = createNextCanopyContext({
+// Context creation is now async (loads .collection.json meta files)
+const canopyContextPromise = createNextCanopyContext({
   config: config.server,
   authPlugin: createClerkAuthPlugin({
     useOrganizationsAsGroups: true,
   }),
 })
 
-export const getCanopy = canopyContext.getCanopy // For server components
-export const handler = canopyContext.handler // For API routes
+// Export for server components
+export const getCanopy = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopy()
+}
+
+// Export for API routes
+export const getHandler = async () => {
+  const context = await canopyContextPromise
+  return context.handler
+}
 ```
 
 ### 4. Add the API route handler
@@ -113,12 +124,29 @@ export const handler = canopyContext.handler // For API routes
 Create `app/api/canopycms/[...canopycms]/route.ts`:
 
 ```typescript
-import { handler } from '../../../lib/canopy'
+import { getHandler } from '../../../lib/canopy'
 
-export const GET = handler
-export const POST = handler
-export const PUT = handler
-export const DELETE = handler
+const handlerPromise = getHandler()
+
+export const GET = async (req: Request, context: any) => {
+  const handler = await handlerPromise
+  return handler(req, context)
+}
+
+export const POST = async (req: Request, context: any) => {
+  const handler = await handlerPromise
+  return handler(req, context)
+}
+
+export const PUT = async (req: Request, context: any) => {
+  const handler = await handlerPromise
+  return handler(req, context)
+}
+
+export const DELETE = async (req: Request, context: any) => {
+  const handler = await handlerPromise
+  return handler(req, context)
+}
 ```
 
 ### 5. Create the editor page
@@ -160,6 +188,289 @@ export const config = {
     '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
   ],
 }
+```
+
+## Schema References System
+
+CanopyCMS supports two approaches for defining your content schema:
+
+1. **Config-based schemas**: Define everything in `canopycms.config.ts` (traditional approach)
+2. **Meta file schemas**: Define collections using `.collection.json` files in your content directories (new approach)
+3. **Hybrid**: Mix both approaches - use meta files for some collections and config for others
+
+The meta file approach provides better separation of concerns by colocating schema definitions with content, making it easier to manage large content structures.
+
+### How It Works
+
+The schema references system has three key components:
+
+1. **Schema Registry**: A centralized registry of reusable field schemas defined in TypeScript
+2. **Meta Files**: `.collection.json` files that reference schemas from the registry
+3. **Automatic Loading**: CanopyCMS automatically scans your content directory for meta files and resolves schema references
+
+### Setting Up a Schema Registry
+
+Create a schema registry file (e.g., `app/schema-registry.ts`) to define reusable field schemas:
+
+```typescript
+import { defineSchema } from 'canopycms'
+
+// Define your field schemas
+export const postSchema = defineSchema([
+  { name: 'title', type: 'string', label: 'Title', required: true },
+  {
+    name: 'author',
+    type: 'reference',
+    label: 'Author',
+    collections: ['authors'],
+    displayField: 'name',
+  },
+  { name: 'published', type: 'boolean', label: 'Published' },
+  { name: 'body', type: 'markdown', label: 'Body' },
+])
+
+export const authorSchema = defineSchema([
+  { name: 'name', type: 'string', label: 'Name', required: true },
+  { name: 'bio', type: 'string', label: 'Bio' },
+  { name: 'avatar', type: 'image', label: 'Avatar' },
+])
+
+export const homeSchema = defineSchema([
+  { name: 'headline', type: 'string', label: 'Headline', required: true },
+  { name: 'tagline', type: 'string', label: 'Tagline' },
+  { name: 'content', type: 'markdown', label: 'Content' },
+])
+
+// Export as a registry object
+export const schemaRegistry = {
+  postSchema,
+  authorSchema,
+  homeSchema,
+} as const
+```
+
+### Creating .collection.json Meta Files
+
+Create `.collection.json` files in your content directories to define collections and singletons:
+
+**For a collection** (`content/posts/.collection.json`):
+
+```json
+{
+  "name": "posts",
+  "label": "Blog Posts",
+  "entries": {
+    "format": "json",
+    "fields": "postSchema"
+  }
+}
+```
+
+**For a singleton** (`content/.collection.json` - root level):
+
+```json
+{
+  "singletons": [
+    {
+      "name": "home",
+      "label": "Homepage",
+      "path": "home",
+      "format": "json",
+      "fields": "homeSchema"
+    }
+  ]
+}
+```
+
+**For nested collections** (`content/docs/.collection.json`):
+
+```json
+{
+  "name": "docs",
+  "label": "Documentation",
+  "entries": {
+    "format": "mdx",
+    "fields": "docSchema"
+  }
+}
+```
+
+Then create nested collections in subfolders (e.g., `content/docs/guides/.collection.json`):
+
+```json
+{
+  "name": "guides",
+  "label": "Guides",
+  "entries": {
+    "format": "mdx",
+    "fields": "guideSchema"
+  }
+}
+```
+
+### Connecting the Schema Registry
+
+Pass your schema registry to `createNextCanopyContext` in `app/lib/canopy.ts`:
+
+```typescript
+import { createNextCanopyContext } from 'canopycms-next'
+import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
+import config from '../../canopycms.config'
+import { schemaRegistry } from '../schema-registry'
+
+// Pass schemaRegistry to enable .collection.json file support
+const canopyContextPromise = createNextCanopyContext({
+  config: config.server,
+  authPlugin: createClerkAuthPlugin({
+    useOrganizationsAsGroups: true,
+  }),
+  schemaRegistry, // Enable meta file schemas
+})
+
+export const getCanopy = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopy()
+}
+
+export const getHandler = async () => {
+  const context = await canopyContextPromise
+  return context.handler
+}
+```
+
+### Meta File Format Reference
+
+**.collection.json structure:**
+
+```typescript
+{
+  "name": "collectionName",      // Required: collection identifier
+  "label": "Display Name",        // Optional: human-readable label
+  "entries": {                    // Optional: for repeatable entries
+    "format": "json" | "md" | "mdx",  // Optional: defaults to json
+    "fields": "schemaRegistryKey"     // Required: key from schema registry
+  },
+  "singletons": [                 // Optional: unique entries in this collection
+    {
+      "name": "singletonName",
+      "label": "Display Name",
+      "path": "relative/path",    // Relative to collection folder
+      "format": "json" | "md" | "mdx",
+      "fields": "schemaRegistryKey"
+    }
+  ]
+}
+```
+
+**Root .collection.json** (`content/.collection.json`):
+
+```typescript
+{
+  "entries": {                    // Optional: entries at root level
+    "format": "json",
+    "fields": "schemaRegistryKey"
+  },
+  "singletons": [                 // Optional: singletons at root level
+    {
+      "name": "home",
+      "path": "home",
+      "format": "json",
+      "fields": "homeSchema"
+    }
+  ]
+}
+```
+
+### Directory Structure Example
+
+Here's how your content directory might look with meta files:
+
+```
+content/
+├── .collection.json          # Root meta file (singletons)
+├── home.json                 # Homepage singleton
+├── posts/
+│   ├── .collection.json      # Posts collection definition
+│   ├── my-first-post.json
+│   └── another-post.json
+├── authors/
+│   ├── .collection.json      # Authors collection definition
+│   ├── alice.json
+│   └── bob.json
+└── docs/
+    ├── .collection.json      # Docs collection definition
+    ├── intro.mdx
+    ├── guides/
+    │   ├── .collection.json  # Nested guides collection
+    │   ├── getting-started.mdx
+    │   └── advanced.mdx
+    └── api/
+        ├── .collection.json  # Nested API docs collection
+        └── reference.mdx
+```
+
+### Benefits of Schema References
+
+**Separation of Concerns:**
+
+- Content structure lives near the content itself
+- TypeScript schemas provide type safety and reusability
+- Easy to reorganize content without touching config
+
+**Scalability:**
+
+- Add new collections by creating a folder and meta file
+- Schema registry keeps field definitions DRY
+- Large content structures are easier to navigate
+
+**Flexibility:**
+
+- Use meta files for some collections, config for others
+- Override or extend meta file schemas in config if needed
+- Gradual migration path from config-based to meta file approach
+
+### Hybrid Approach
+
+You can mix both approaches in the same project:
+
+```typescript
+// canopycms.config.ts
+export default defineCanopyConfig({
+  schema: {
+    // Config-based collection
+    collections: [
+      {
+        name: 'pages',
+        label: 'Pages',
+        path: 'pages',
+        entries: {
+          format: 'mdx',
+          fields: pageSchema, // Inline schema definition
+        },
+      },
+    ],
+    // Note: Collections defined in .collection.json files will be
+    // automatically merged with these config-based collections
+  },
+  // ...other config
+})
+```
+
+Collections defined in `.collection.json` files are automatically loaded and merged with any collections defined in your config. This gives you maximum flexibility to choose the best approach for each part of your content structure.
+
+### Schema Validation
+
+CanopyCMS validates schema references at startup:
+
+- **Missing schemas**: Clear error messages if a referenced schema doesn't exist in the registry
+- **Invalid meta files**: JSON validation with helpful error messages
+- **Type safety**: Schema registry gets full TypeScript type checking
+
+**Example error message:**
+
+```
+Error: Schema reference "postSchema" in collection "posts" not found in registry.
+Available schemas: authorSchema, homeSchema, docSchema
 ```
 
 ## Migration Guides
@@ -256,13 +567,21 @@ import { createNextCanopyContext } from 'canopycms-next'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import config from '../../canopycms.config'
 
-const canopyContext = createNextCanopyContext({
+// Context creation is now async (loads .collection.json meta files)
+const canopyContextPromise = createNextCanopyContext({
   config: config.server,
   authPlugin: createClerkAuthPlugin({ useOrganizationsAsGroups: true }),
 })
 
-export const getCanopy = canopyContext.getCanopy
-export const handler = canopyContext.handler
+export const getCanopy = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopy()
+}
+
+export const getHandler = async () => {
+  const context = await canopyContextPromise
+  return context.handler
+}
 ```
 
 **Then in every page**:
@@ -282,28 +601,37 @@ const Page = async ({ searchParams }) => {
 
 ### Migration checklist
 
-1. Create `app/lib/canopy.ts` with `createNextCanopyContext()` setup
-2. Replace `createCanopyCatchAllHandler()` in API route with imported `handler`
-3. Replace `createContentReader()` calls in pages with `getCanopy()`
-4. Remove `user` parameter from `read()` calls (now automatic)
-5. Branch parameter is now optional (defaults to main)
+1. Create `app/lib/canopy.ts` with async `createNextCanopyContext()` setup
+2. Update context exports to be async functions (`getCanopy`, `getHandler`)
+3. Replace `createCanopyCatchAllHandler()` in API route with imported async `getHandler()`
+4. Replace `createContentReader()` calls in pages with `await getCanopy()`
+5. Remove `user` parameter from `read()` calls (now automatic)
+6. Branch parameter is now optional (defaults to main)
 
 ## Configuration Reference
 
 ### `defineCanopyConfig` Options
 
-| Option                | Type                            | Required | Default     | Description                                                                       |
-| --------------------- | ------------------------------- | -------- | ----------- | --------------------------------------------------------------------------------- |
-| `schema`              | `RootCollectionConfig`          | Yes      | -           | Object with `collections` and `singletons` arrays defining your content structure |
-| `gitBotAuthorName`    | `string`                        | Yes      | -           | Name used for git commits made by CanopyCMS                                       |
-| `gitBotAuthorEmail`   | `string`                        | Yes      | -           | Email used for git commits made by CanopyCMS                                      |
-| `mode`                | `'dev' \| 'prod-sim' \| 'prod'` | No       | `'dev'`     | Operating mode (see below)                                                        |
-| `contentRoot`         | `string`                        | No       | `'content'` | Root directory for content files relative to project root                         |
-| `defaultBaseBranch`   | `string`                        | No       | `'main'`    | Default git branch to base edits on                                               |
-| `defaultBranchAccess` | `'allow' \| 'deny'`             | No       | `'deny'`    | Default access policy for new branches                                            |
-| `defaultPathAccess`   | `'allow' \| 'deny'`             | No       | `'allow'`   | Default access policy for content paths                                           |
-| `media`               | `MediaConfig`                   | No       | -           | Asset storage configuration (local, s3, or lfs)                                   |
-| `editor`              | `EditorConfig`                  | No       | -           | Editor UI customization options                                                   |
+| Option                | Type                            | Required | Default     | Description                                                                                                                              |
+| --------------------- | ------------------------------- | -------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`              | `RootCollectionConfig`          | No\*     | -           | Object with `collections` and `singletons` arrays defining your content structure. \*Required unless using `.collection.json` meta files |
+| `gitBotAuthorName`    | `string`                        | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                              |
+| `gitBotAuthorEmail`   | `string`                        | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                             |
+| `mode`                | `'dev' \| 'prod-sim' \| 'prod'` | No       | `'dev'`     | Operating mode (see below)                                                                                                               |
+| `contentRoot`         | `string`                        | No       | `'content'` | Root directory for content files relative to project root                                                                                |
+| `defaultBaseBranch`   | `string`                        | No       | `'main'`    | Default git branch to base edits on                                                                                                      |
+| `defaultBranchAccess` | `'allow' \| 'deny'`             | No       | `'deny'`    | Default access policy for new branches                                                                                                   |
+| `defaultPathAccess`   | `'allow' \| 'deny'`             | No       | `'allow'`   | Default access policy for content paths                                                                                                  |
+| `media`               | `MediaConfig`                   | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                          |
+| `editor`              | `EditorConfig`                  | No       | -           | Editor UI customization options                                                                                                          |
+
+**Note**: You must define your schema using at least one of these approaches:
+
+- Config-based: Set the `schema` option in `defineCanopyConfig`
+- Meta file-based: Create `.collection.json` files in your content directory (requires passing `schemaRegistry` to `createNextCanopyContext`)
+- Hybrid: Use both approaches together - schemas will be merged
+
+See the [Schema References System](#schema-references-system) section for details on using `.collection.json` meta files.
 
 ### Operating Modes
 
@@ -708,13 +1036,14 @@ The editor shows a live preview of your actual site pages in an iframe. Changes 
 CanopyCMS is designed for minimal integration effort. You need:
 
 1. **Config file** (`canopycms.config.ts`): Schema and settings
-2. **Canopy context** (`app/lib/canopy.ts`): One-time setup with auth plugin
-3. **API route** (`/api/canopycms/[...canopycms]`): Export the handler from context
-4. **Editor page** (`/edit`): Embed the editor component
-5. **Middleware**: Protect editor routes with authentication
-6. **Server components**: Use `getCanopy()` to read content with automatic auth
+2. **Schema registry** (optional, `app/schema-registry.ts`): Reusable field schemas for `.collection.json` meta files
+3. **Canopy context** (`app/lib/canopy.ts`): One-time async setup with auth plugin and optional schema registry
+4. **API route** (`/api/canopycms/[...canopycms]`): Export the async handler from context
+5. **Editor page** (`/edit`): Embed the editor component
+6. **Middleware**: Protect editor routes with authentication
+7. **Server components**: Use `await getCanopy()` to read content with automatic auth
 
-Everything else (branch management, content storage, permissions, comments, bootstrap admin groups) is handled automatically by CanopyCMS.
+Everything else (branch management, content storage, permissions, comments, bootstrap admin groups, meta file loading) is handled automatically by CanopyCMS.
 
 ## Environment Variables
 

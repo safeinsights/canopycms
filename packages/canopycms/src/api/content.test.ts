@@ -34,6 +34,7 @@ const allowedCtx = (): ApiContext => ({
   services: {
     config: { schema: [] } as any,
     flatSchema: [],
+    schemaRegistry: {},
     checkBranchAccess: vi.fn(),
     checkPathAccess: undefined as any,
     checkContentAccess: vi.fn().mockReturnValue({ allowed: true, branch: {}, path: {} }),
@@ -65,6 +66,7 @@ describe('content api', () => {
       services: {
         config: { schema: [] } as any,
         flatSchema: [],
+        schemaRegistry: {},
         checkBranchAccess: vi.fn(),
         checkPathAccess: undefined as any,
         checkContentAccess: vi.fn().mockReturnValue({ allowed: false, branch: {}, path: {} }),

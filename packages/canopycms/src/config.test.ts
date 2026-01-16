@@ -80,13 +80,14 @@ describe('config validation', () => {
     ).toThrow(/options/i)
   })
 
-  it('requires at least one collection or singleton', () => {
+  it('allows empty schema (for loading from meta files)', () => {
+    // Schema can be empty if collections are defined in .collection.json meta files
     expect(() =>
       validateCanopyConfig({
         ...gitAuthor,
         schema: {},
       }),
-    ).toThrow()
+    ).not.toThrow()
   })
 
   it('composes config fragments from multiple files', () => {
@@ -221,5 +222,127 @@ describe('config validation', () => {
     expect(apiIntro).toBeDefined()
     expect(apiIntro?.type).toBe('singleton')
     expect(apiIntro?.parentPath).toBe('content/docs/api')
+  })
+
+  it('correctly flattens nested collections without path duplication', () => {
+    const configBundle = defineCanopyConfig({
+      ...gitAuthor,
+      schema: {
+        collections: [
+          {
+            name: 'docs',
+            path: 'docs',
+            entries: {
+              format: 'mdx' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+            collections: [
+              {
+                name: 'api',
+                path: 'api',
+                entries: {
+                  format: 'mdx' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+                collections: [
+                  {
+                    name: 'v1',
+                    path: 'v1',
+                    entries: {
+                      format: 'mdx' as const,
+                      fields: [{ name: 'title', type: 'string' as const }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    })
+    const cfg = configBundle.server
+    const flat = flattenSchema(cfg.schema, cfg.contentRoot || 'content')
+
+    // Find all collections
+    const docs = flat.find((item) => item.type === 'collection' && item.name === 'docs')
+    const api = flat.find((item) => item.type === 'collection' && item.name === 'api')
+    const v1 = flat.find((item) => item.type === 'collection' && item.name === 'v1')
+
+    // Verify docs collection (root level)
+    expect(docs).toBeDefined()
+    expect(docs?.fullPath).toBe('content/docs')
+    expect(docs?.parentPath).toBeUndefined()
+
+    // Verify api collection (nested under docs)
+    expect(api).toBeDefined()
+    expect(api?.fullPath).toBe('content/docs/api')
+    expect(api?.parentPath).toBe('content/docs')
+
+    // Verify v1 collection (nested under api)
+    expect(v1).toBeDefined()
+    expect(v1?.fullPath).toBe('content/docs/api/v1')
+    expect(v1?.parentPath).toBe('content/docs/api')
+  })
+
+  it('handles schema-meta-loader nested structure correctly (from .collection.json pattern)', () => {
+    // This simulates the structure created by schema-meta-loader
+    // where nested collections have FULL paths (e.g., "docs/api") not relative paths (e.g., "api")
+    const configBundle = defineCanopyConfig({
+      ...gitAuthor,
+      schema: {
+        collections: [
+          {
+            name: 'docs',
+            path: 'docs', // Top-level path
+            entries: {
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+            collections: [
+              {
+                name: 'api',
+                path: 'docs/api', // FULL path from content root (as set by schema-meta-loader)
+                entries: {
+                  format: 'json' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+                collections: [
+                  {
+                    name: 'v1',
+                    path: 'docs/api/v1', // FULL path from content root
+                    entries: {
+                      format: 'json' as const,
+                      fields: [{ name: 'title', type: 'string' as const }],
+                    },
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    })
+    const cfg = configBundle.server
+    const flat = flattenSchema(cfg.schema, cfg.contentRoot || 'content')
+
+    // Find all collections
+    const docs = flat.find((item) => item.type === 'collection' && item.name === 'docs')
+    const api = flat.find((item) => item.type === 'collection' && item.name === 'api')
+    const v1 = flat.find((item) => item.type === 'collection' && item.name === 'v1')
+
+    // Verify docs collection (root level)
+    expect(docs).toBeDefined()
+    expect(docs?.fullPath).toBe('content/docs')
+    expect(docs?.parentPath).toBeUndefined()
+
+    // Verify api collection (nested under docs)
+    expect(api).toBeDefined()
+    expect(api?.fullPath).toBe('content/docs/api') // Should NOT be 'content/docs/docs/api'
+    expect(api?.parentPath).toBe('content/docs')
+
+    // Verify v1 collection (nested under api)
+    expect(v1).toBeDefined()
+    expect(v1?.fullPath).toBe('content/docs/api/v1') // Should NOT be 'content/docs/docs/api/api/v1'
+    expect(v1?.parentPath).toBe('content/docs/api')
   })
 })

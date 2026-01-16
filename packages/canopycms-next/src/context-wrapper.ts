@@ -1,7 +1,7 @@
 import { cache } from 'react'
 import { headers } from 'next/headers'
 import { createCanopyContext, type CanopyContext, createCanopyServices } from 'canopycms/server'
-import type { CanopyConfig, AuthPlugin, CanopyUser } from 'canopycms'
+import type { CanopyConfig, AuthPlugin, CanopyUser, FieldConfig } from 'canopycms'
 import { authResultToCanopyUser } from 'canopycms'
 import { loadInternalGroups, loadBranchContext } from 'canopycms/server'
 import { createCanopyCatchAllHandler } from './adapter'
@@ -9,15 +9,17 @@ import { createCanopyCatchAllHandler } from './adapter'
 export interface NextCanopyOptions {
   config: CanopyConfig
   authPlugin: AuthPlugin
+  schemaRegistry: Record<string, readonly FieldConfig[]>
 }
 
 /**
  * Create Next.js-specific wrapper around core context.
  * Adds React cache() for per-request memoization and API handler.
+ * This function is async because it needs to load .collection.json meta files.
  */
-export function createNextCanopyContext(options: NextCanopyOptions) {
+export async function createNextCanopyContext(options: NextCanopyOptions) {
   // Create services ONCE at initialization
-  const services = createCanopyServices(options.config)
+  const services = await createCanopyServices(options.config, options.schemaRegistry)
 
   // User extractor: passes Next.js headers to auth plugin, loads internal groups, applies authorization
   const extractUser = async (): Promise<CanopyUser> => {

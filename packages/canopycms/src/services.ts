@@ -1,4 +1,4 @@
-import type { CanopyConfig, FlatSchemaItem } from './config'
+import type { CanopyConfig, FlatSchemaItem, FieldConfig, RootCollectionConfig } from './config'
 import { flattenSchema } from './config'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
@@ -13,6 +13,7 @@ import { SettingsWorkspaceManager } from './settings-workspace'
 import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
 import { operatingStrategy } from './operating-mode'
+import { loadCollectionMetaFiles, resolveCollectionReferences } from './schema-meta-loader'
 
 /**
  * Parse bootstrap admin IDs from environment variable.
@@ -33,6 +34,8 @@ export interface CanopyServices {
   config: CanopyConfig
   /** Cached flattened schema for O(1) lookups */
   flatSchema: FlatSchemaItem[]
+  /** Schema registry for access by admin UI */
+  schemaRegistry: Record<string, readonly FieldConfig[]>
   checkBranchAccess: (
     context: BranchContext,
     user: CanopyUser,
@@ -75,8 +78,15 @@ export interface CanopyServices {
  * Create reusable helpers from a validated CanopyConfig.
  * Intended to be called once at startup and injected where needed
  * (e.g., request handlers, loaders).
+ *
+ * @param config - Validated Canopy configuration
+ * @param schemaRegistry - Optional schema registry for resolving .collection.json references.
+ *                         If not provided, only config-defined schemas will be used.
  */
-export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
+export const createCanopyServices = async (
+  config: CanopyConfig,
+  schemaRegistry: Record<string, readonly FieldConfig[]> = {},
+): Promise<CanopyServices> => {
   // Validate mode-specific requirements (e.g., prod requires git bot credentials for GitHub)
   const strategy = operatingStrategy(config.mode)
   strategy.validateConfig(config)
@@ -84,8 +94,33 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
 
+  // Load .collection.json meta files (including root content/.collection.json if it exists)
+  const metaFiles = await loadCollectionMetaFiles(config.contentRoot)
+
+  // Resolve schema references to get RootCollectionConfig
+  const schemaFromMeta = resolveCollectionReferences(metaFiles, schemaRegistry)
+
+  // Merge with config schema (config can still define collections/singletons too)
+  const schema: RootCollectionConfig = {
+    entries: schemaFromMeta.entries || config.schema?.entries,
+    collections: [...(schemaFromMeta.collections || []), ...(config.schema?.collections || [])],
+    singletons: [...(schemaFromMeta.singletons || []), ...(config.schema?.singletons || [])],
+  }
+
+  // Validate that we have at least one schema source
+  if (
+    !schema.entries &&
+    (!schema.collections || schema.collections.length === 0) &&
+    (!schema.singletons || schema.singletons.length === 0)
+  ) {
+    throw new Error(
+      'Schema must have at least one of: entries, collections, or singletons. ' +
+        'Either define them in canopycms.config.ts or create .collection.json meta files in your content directory.',
+    )
+  }
+
   // Flatten schema once for O(1) lookups throughout the app
-  const flatSchema = flattenSchema(config.schema, config.contentRoot)
+  const flatSchema = flattenSchema(schema, config.contentRoot)
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
   // Path permissions are loaded dynamically from settings branch or .canopy-dev/permissions.json at request time.
@@ -275,6 +310,7 @@ export const createCanopyServices = (config: CanopyConfig): CanopyServices => {
   return {
     config,
     flatSchema,
+    schemaRegistry,
     checkBranchAccess,
     checkPathAccess,
     checkContentAccess,
