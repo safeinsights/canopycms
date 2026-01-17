@@ -26,6 +26,7 @@ describe('Editing Workflow Integration', () => {
     editorClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
+      schema: BLOG_SCHEMA,
     })
   })
 
@@ -87,6 +88,7 @@ describe('Editing Workflow Integration', () => {
     const editor2Client = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
+      schema: BLOG_SCHEMA,
     })
 
     // Both editors create branches simultaneously
@@ -140,6 +142,7 @@ describe('Editing Workflow Integration', () => {
     const adminClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
+      schema: BLOG_SCHEMA,
     })
 
     // Create branch

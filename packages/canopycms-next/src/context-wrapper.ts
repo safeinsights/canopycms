@@ -19,7 +19,7 @@ export interface NextCanopyOptions {
  */
 export async function createNextCanopyContext(options: NextCanopyOptions) {
   // Create services ONCE at initialization
-  const services = await createCanopyServices(options.config, options.schemaRegistry)
+  const services = await createCanopyServices(options.config, { schemaRegistry: options.schemaRegistry })
 
   // User extractor: passes Next.js headers to auth plugin, loads internal groups, applies authorization
   const extractUser = async (): Promise<CanopyUser> => {

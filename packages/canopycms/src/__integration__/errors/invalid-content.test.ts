@@ -24,6 +24,7 @@ describe('Invalid Content Errors', () => {
     editorClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
+      schema: BLOG_SCHEMA,
     })
   })
 

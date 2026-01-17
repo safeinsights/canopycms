@@ -27,11 +27,13 @@ describe('API Editing Workflow Integration', () => {
     adminClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
+      schema: BLOG_SCHEMA,
     })
 
     editorClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
+      schema: BLOG_SCHEMA,
     })
   })
 

@@ -13,7 +13,7 @@ import { SettingsWorkspaceManager } from './settings-workspace'
 import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
 import { operatingStrategy } from './operating-mode'
-import { loadCollectionMetaFiles, resolveCollectionReferences } from './schema-meta-loader'
+import { resolveSchema, isValidSchema } from './schema'
 
 /**
  * Parse bootstrap admin IDs from environment variable.
@@ -65,17 +65,34 @@ export interface CanopyServices {
 }
 
 /**
+ * Options for createCanopyServices.
+ */
+export interface CreateCanopyServicesOptions {
+  /**
+   * Schema registry for resolving .collection.json references.
+   * Maps schema names to field definitions.
+   */
+  schemaRegistry?: Record<string, readonly FieldConfig[]>
+
+  /**
+   * Pre-resolved schema (bypasses .collection.json loading).
+   * Use this for tests that define schemas inline.
+   * In production, always use .collection.json files.
+   */
+  schema?: RootCollectionConfig
+}
+
+/**
  * Create reusable helpers from a validated CanopyConfig.
  * Intended to be called once at startup and injected where needed
  * (e.g., request handlers, loaders).
  *
  * @param config - Validated Canopy configuration
- * @param schemaRegistry - Optional schema registry for resolving .collection.json references.
- *                         If not provided, only config-defined schemas will be used.
+ * @param options - Optional settings including schema registry or pre-resolved schema
  */
 export const createCanopyServices = async (
   config: CanopyConfig,
-  schemaRegistry: Record<string, readonly FieldConfig[]> = {}
+  options: CreateCanopyServicesOptions = {}
 ): Promise<CanopyServices> => {
   // Validate mode-specific requirements (e.g., prod requires git bot credentials for GitHub)
   const strategy = operatingStrategy(config.mode)
@@ -84,30 +101,23 @@ export const createCanopyServices = async (
   // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
 
-  // Load .collection.json meta files (including root content/.collection.json if it exists)
-  const metaFiles = await loadCollectionMetaFiles(config.contentRoot)
-
-  // Resolve schema references to get RootCollectionConfig
-  const schemaFromMeta = resolveCollectionReferences(metaFiles, schemaRegistry)
-
-  // Merge with config schema (config can still define collections/singletons too)
-  const schema: RootCollectionConfig = {
-    entries: schemaFromMeta.entries || config.schema?.entries,
-    collections: [
-      ...(schemaFromMeta.collections || []),
-      ...(config.schema?.collections || [])
-    ],
-    singletons: [
-      ...(schemaFromMeta.singletons || []),
-      ...(config.schema?.singletons || [])
-    ],
+  // Resolve schema: use pre-resolved schema if provided (for tests), otherwise load from .collection.json
+  let schema: RootCollectionConfig
+  if (options.schema) {
+    // Use pre-resolved schema (test mode)
+    schema = options.schema
+  } else {
+    // Production path: Load from .collection.json files (single source of truth)
+    const schemaRegistry = options.schemaRegistry ?? {}
+    const result = await resolveSchema(config.contentRoot, schemaRegistry)
+    schema = result.schema
   }
 
-  // Validate that we have at least one schema source
-  if (!schema.entries && (!schema.collections || schema.collections.length === 0) && (!schema.singletons || schema.singletons.length === 0)) {
+  // Validate that schema has content
+  if (!isValidSchema(schema)) {
     throw new Error(
-      'Schema must have at least one of: entries, collections, or singletons. ' +
-      'Either define them in canopycms.config.ts or create .collection.json meta files in your content directory.'
+      'No schema found. Create .collection.json files in your content directory ' +
+      'with references to field schemas defined in your schema registry.'
     )
   }
 
@@ -297,7 +307,7 @@ export const createCanopyServices = async (
   return {
     config,
     flatSchema,
-    schemaRegistry,
+    schemaRegistry: options.schemaRegistry ?? {},
     checkBranchAccess,
     checkPathAccess,
     checkContentAccess,

@@ -1,5 +1,6 @@
 import type { CanopyConfig, CanopyConfigInput, RootCollectionConfig } from './config'
 import { defineCanopyConfig } from './config'
+import { createCanopyServices, type CanopyServices, type CreateCanopyServicesOptions } from './services'
 
 const FALLBACK_AUTHOR = {
   gitBotAuthorName: 'CanopyCMS Test Bot',
@@ -20,4 +21,17 @@ export const defineCanopyTestConfig = (config: TestConfigInput, overrides?: Part
     ...config,
     ...(overrides ?? {}),
   }).server
+}
+
+/**
+ * Test-only helper that creates CanopyServices with inline schema.
+ * Automatically passes the schema from config to avoid .collection.json files.
+ * Do not use in production code; use createCanopyServices with schemaRegistry.
+ */
+export const createTestServices = async (
+  config: TestConfigInput,
+  options?: Omit<CreateCanopyServicesOptions, 'schema'>
+): Promise<CanopyServices> => {
+  const canopyConfig = defineCanopyTestConfig(config)
+  return createCanopyServices(canopyConfig, { ...options, schema: config.schema })
 }

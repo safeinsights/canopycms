@@ -26,17 +26,18 @@ vi.mock('simple-git', () => {
 
 describe('createCanopyServices', () => {
   it('creates helpers with defaults and reuses config', async () => {
+    const schema = {
+      collections: [
+        { name: 'pages', path: 'pages', entries: { format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] } },
+      ],
+      singletons: [],
+    }
     const cfg = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          { name: 'pages', path: 'pages', entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] } },
-        ],
-        singletons: [],
-      },
+      schema,
       defaultBranchAccess: 'deny',
     })
 
-    const services = await createCanopyServices(cfg)
+    const services = await createCanopyServices(cfg, { schema })
 
     // Path permissions are now loaded from JSON file at runtime, not from config
     // Service creates checkPathAccess with empty rules (default deny)
@@ -67,17 +68,18 @@ describe('createCanopyServices', () => {
   })
 
   it('creates git manager using defaults', async () => {
+    const schema = {
+      collections: [
+        { name: 'pages', path: 'pages', entries: { format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] } },
+      ],
+      singletons: [],
+    }
     const cfg = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          { name: 'pages', path: 'pages', entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] } },
-        ],
-        singletons: [],
-      },
+      schema,
       defaultBaseBranch: 'main',
       defaultRemoteName: 'origin',
     })
-    const services = await createCanopyServices(cfg)
+    const services = await createCanopyServices(cfg, { schema })
     const gm = services.createGitManagerFor('/tmp/repo')
     const status = await gm.status()
     expect(status.current).toBe('main')
@@ -356,18 +358,19 @@ describe('commitToSettingsBranch', () => {
     const mockGit = vi.mocked(simpleGit)
     mockGit.mockReturnValue(mockGitInstance as any)
 
+    const schema = {
+      collections: [
+        { name: 'pages', path: 'pages', entries: { format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] } },
+      ],
+      singletons: [],
+    }
     const cfg = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          { name: 'pages', path: 'pages', entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] } },
-        ],
-        singletons: [],
-      },
+      schema,
       mode: 'prod',
       // settingsBranch not specified - should default to 'canopycms-settings'
     })
 
-    const services = await createCanopyServices(cfg)
+    const services = await createCanopyServices(cfg, { schema })
 
     await services.commitToSettingsBranch({
       branchRoot: '/tmp/repo',
@@ -400,18 +403,19 @@ describe('commitToSettingsBranch', () => {
     const mockGit = vi.mocked(simpleGit)
     mockGit.mockReturnValue(mockGitInstance as any)
 
+    const schema = {
+      collections: [
+        { name: 'pages', path: 'pages', entries: { format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] } },
+      ],
+      singletons: [],
+    }
     const cfg = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          { name: 'pages', path: 'pages', entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] } },
-        ],
-        singletons: [],
-      },
+      schema,
       mode: 'prod',
       settingsBranch: 'my-settings',
     })
 
-    const services = await createCanopyServices(cfg)
+    const services = await createCanopyServices(cfg, { schema })
 
     await services.commitToSettingsBranch({
       branchRoot: '/tmp/repo',
@@ -447,18 +451,19 @@ describe('commitToSettingsBranch', () => {
     const mockGit = vi.mocked(simpleGit)
     mockGit.mockReturnValue(mockGitInstance as any)
 
+    const schema = {
+      collections: [
+        { name: 'pages', path: 'pages', entries: { format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] } },
+      ],
+      singletons: [],
+    }
     const cfg = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          { name: 'pages', path: 'pages', entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] } },
-        ],
-        singletons: [],
-      },
+      schema,
       mode: 'prod',
       settingsBranch: 'custom-settings-branch',
     })
 
-    const services = await createCanopyServices(cfg)
+    const services = await createCanopyServices(cfg, { schema })
 
     await services.commitToSettingsBranch({
       branchRoot: '/tmp/repo',

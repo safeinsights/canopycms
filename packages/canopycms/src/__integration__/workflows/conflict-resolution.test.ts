@@ -27,16 +27,19 @@ describe('Conflict Resolution Integration', () => {
     editor1Client = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
+      schema: BLOG_SCHEMA,
     })
 
     editor2Client = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
+      schema: BLOG_SCHEMA,
     })
 
     adminClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
+      schema: BLOG_SCHEMA,
     })
   })
 
