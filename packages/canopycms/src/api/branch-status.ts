@@ -9,6 +9,7 @@ import { defineEndpoint } from './route-builder'
 import type { BranchMetadata } from '../types'
 import { canPerformWorkflowAction } from '../authorization'
 import { clientOperatingStrategy } from '../operating-mode'
+import { guardBranchAccess, guardBranchExists, isBranchAccessError } from './middleware'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -26,14 +27,10 @@ const getBranchStatusHandler = async (
   req: ApiRequest,
   params: z.infer<typeof branchParamSchema>,
 ): Promise<BranchResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
-  const access = ctx.services.checkBranchAccess(context, req.user)
-  if (!access.allowed) {
-    return { ok: false, status: 403, error: 'Forbidden' }
-  }
+  const accessResult = await guardBranchAccess(ctx, req, params.branch)
+  if (isBranchAccessError(accessResult)) return accessResult
+  const { context } = accessResult
+
   return { ok: true, status: 200, data: { branch: context.branch } }
 }
 
@@ -42,10 +39,9 @@ const submitBranchForMergeHandler = async (
   req: ApiRequest,
   params: z.infer<typeof branchParamSchema>,
 ): Promise<BranchResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const accessResult = await guardBranchExists(ctx, params.branch)
+  if (isBranchAccessError(accessResult)) return accessResult
+  const { context } = accessResult
 
   // Check if user can perform workflow actions (creator OR ACL access)
   const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'

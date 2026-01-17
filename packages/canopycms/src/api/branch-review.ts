@@ -4,6 +4,7 @@ import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { isReviewer } from '../authorization'
 import { defineEndpoint } from './route-builder'
+import { guardBranchExists, isBranchAccessError } from './middleware'
 
 export interface RequestChangesBody {
   comment?: string
@@ -23,10 +24,9 @@ const requestChangesHandler = async (
   params: z.infer<typeof branchParamSchema>,
   body?: z.infer<typeof requestChangesBodySchema>,
 ): Promise<BranchResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const accessResult = await guardBranchExists(ctx, params.branch)
+  if (isBranchAccessError(accessResult)) return accessResult
+  const { context } = accessResult
 
   // Check user is a Reviewer (or Admin)
   if (!isReviewer(req.user.groups)) {
@@ -75,10 +75,9 @@ const approveBranchHandler = async (
   req: ApiRequest,
   params: z.infer<typeof branchParamSchema>,
 ): Promise<BranchResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const accessResult = await guardBranchExists(ctx, params.branch)
+  if (isBranchAccessError(accessResult)) return accessResult
+  const { context } = accessResult
 
   // Check user is a Reviewer (or Admin)
   if (!isReviewer(req.user.groups)) {
