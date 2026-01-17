@@ -3,6 +3,8 @@ import type { ContentFormat, FieldConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import type { EditorEntry, EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
+// Import directly from normalize to avoid pulling in server-only branch.ts
+import { normalizeCollectionId } from '../paths/normalize'
 
 export interface PreviewContext {
   branchName?: string
@@ -33,7 +35,7 @@ export const encodeSlug = (value?: string): string =>
  * ```
  */
 export const normalizeCollectionPath = (collectionId: string): string => {
-  return collectionId.replace(/^content\//, '')
+  return normalizeCollectionId(collectionId)
 }
 
 export const buildPreviewSrc = (

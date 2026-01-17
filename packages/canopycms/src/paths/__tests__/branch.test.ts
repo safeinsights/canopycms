@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { BranchPathError, ensureBranchRoot, getDefaultBranchBase, resolveBranchPath } from './paths'
+import { BranchPathError, ensureBranchRoot, getDefaultBranchBase, resolveBranchPath } from '../branch'
 
 describe('paths', () => {
   it('resolves prod content branches root from default workspace', () => {

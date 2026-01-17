@@ -7,6 +7,7 @@ import type { ContentFormat, FlatSchemaItem } from './config'
 import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename, resolveCollectionPath } from './content-id-index'
 import { generateId } from './id'
 import { getFormatExtension } from './utils/format'
+import { normalizeFilesystemPath } from './paths'
 
 export type MarkdownDocument = {
   format: 'md' | 'mdx'
@@ -74,7 +75,7 @@ export class ContentStore {
   }
 
   private assertSchemaItem(path: string): FlatSchemaItem {
-    const normalized = path.split(/[\\/]+/).filter(Boolean).join('/')
+    const normalized = normalizeFilesystemPath(path)
     const item = this.schemaIndex.get(normalized)
     if (!item) {
       throw new ContentStoreError(`Unknown schema item: ${path}`)
@@ -238,7 +239,7 @@ export class ContentStore {
     }
 
     const fullPath = pathSegments.join('/')
-    const normalized = fullPath.split(/[\\/]+/).filter(Boolean).join('/')
+    const normalized = normalizeFilesystemPath(fullPath)
 
     // Try as singleton first
     const singleton = this.schemaIndex.get(normalized)
@@ -253,7 +254,7 @@ export class ContentStore {
     // Try as collection + slug
     const slug = pathSegments[pathSegments.length - 1]
     const collectionPath = pathSegments.slice(0, -1).join('/')
-    const normalizedCollection = collectionPath.split(/[\\/]+/).filter(Boolean).join('/')
+    const normalizedCollection = normalizeFilesystemPath(collectionPath)
     const collection = this.schemaIndex.get(normalizedCollection)
 
     if (collection?.type === 'collection' && collection.entries) {
