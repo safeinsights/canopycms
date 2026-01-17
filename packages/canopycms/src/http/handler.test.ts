@@ -23,7 +23,7 @@ vi.mock('../branch-workspace', () => ({
 }))
 
 // Mock the permissions loader to avoid file system operations
-vi.mock('../permissions-loader', () => ({
+vi.mock('../authorization/permissions', () => ({
   loadPathPermissions: vi.fn().mockResolvedValue([]),
 }))
 

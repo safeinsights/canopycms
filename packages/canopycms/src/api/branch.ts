@@ -9,6 +9,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
+import { isNotFoundError, getErrorMessage } from '../utils/error'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
 
@@ -259,9 +260,12 @@ export const deleteBranchHandler = async (
   const metadataFile = path.join(branchContext.branchRoot, '.canopy-meta', 'branch.json')
   try {
     await fs.unlink(metadataFile)
-  } catch (err: any) {
-    if (err?.code !== 'ENOENT') {
-      console.error(`CanopyCMS: Failed to delete branch metadata for ${branchName}:`, err.message)
+  } catch (err: unknown) {
+    if (!isNotFoundError(err)) {
+      console.error(
+        `CanopyCMS: Failed to delete branch metadata for ${branchName}:`,
+        getErrorMessage(err),
+      )
     }
   }
 
@@ -269,8 +273,11 @@ export const deleteBranchHandler = async (
   if (branchContext.branchRoot !== branchContext.baseRoot) {
     try {
       await fs.rm(branchContext.branchRoot, { recursive: true, force: true })
-    } catch (err: any) {
-      console.error(`CanopyCMS: Failed to delete branch directory for ${branchName}:`, err.message)
+    } catch (err: unknown) {
+      console.error(
+        `CanopyCMS: Failed to delete branch directory for ${branchName}:`,
+        getErrorMessage(err),
+      )
     }
   }
 

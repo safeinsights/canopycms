@@ -12,6 +12,7 @@ import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
 import { extractSlugFromFilename, resolveCollectionPath } from '../content-id-index'
 import { validateAndNormalizePath, normalizeFilesystemPath } from '../paths'
+import { isNotFoundError } from '../utils/error'
 
 type CollectionKind = 'collection' | 'entry'
 
@@ -129,8 +130,8 @@ const listCollectionEntries = async (
   let dirents: Dirent[]
   try {
     dirents = await fs.readdir(collectionRoot, { withFileTypes: true })
-  } catch (err: any) {
-    if (err?.code === 'ENOENT') return []
+  } catch (err: unknown) {
+    if (isNotFoundError(err)) return []
     throw err
   }
 
@@ -326,8 +327,8 @@ export const listEntriesHandler = async (
             await fs.readFile(singletonPath, 'utf8')
             exists = true
             title = await readTitle(singletonPath, format)
-          } catch (err: any) {
-            if (err?.code !== 'ENOENT') throw err
+          } catch (err: unknown) {
+            if (!isNotFoundError(err)) throw err
             // File doesn't exist yet - that's okay for singletons
           }
 

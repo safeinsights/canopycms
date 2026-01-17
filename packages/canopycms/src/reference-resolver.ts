@@ -1,5 +1,5 @@
 import type { ContentStore } from './content-store'
-import type { ContentIdIndex, IdLocation } from './content-id-index'
+import type { ContentIdIndex } from './content-id-index'
 
 export interface ResolvedReference {
   id: string
@@ -138,7 +138,7 @@ export class ReferenceResolver {
 
     // This is inefficient but works for now
     // TODO: Add a proper listCollectionEntries method to ContentStore
-    const allLocations = Array.from((this.idIndex as any).idToLocation.values()) as IdLocation[]
+    const allLocations = this.idIndex.getAllLocations()
 
     // Normalize collection path - ID index stores full paths like "content/authors"
     // but schema specifies just "authors", so we need to try both

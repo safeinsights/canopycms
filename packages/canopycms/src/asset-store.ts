@@ -2,6 +2,8 @@ import fs from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import path from 'node:path'
 
+import { isNotFoundError } from './utils/error'
+
 export interface AssetItem {
   key: string
   url?: string
@@ -55,8 +57,8 @@ export class LocalAssetStore implements AssetStore {
     let entries: Dirent[]
     try {
       entries = await fs.readdir(dir, { withFileTypes: true })
-    } catch (err: any) {
-      if (err?.code === 'ENOENT') return []
+    } catch (err: unknown) {
+      if (isNotFoundError(err)) return []
       throw err
     }
     const items: AssetItem[] = []
@@ -92,8 +94,8 @@ export class LocalAssetStore implements AssetStore {
     const filePath = this.resolvePath(key)
     try {
       await fs.unlink(filePath)
-    } catch (err: any) {
-      if (err?.code === 'ENOENT') return
+    } catch (err: unknown) {
+      if (isNotFoundError(err)) return
       throw err
     }
   }

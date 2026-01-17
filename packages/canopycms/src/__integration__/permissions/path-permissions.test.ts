@@ -9,9 +9,12 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { createTestUser } from '../test-utils/multi-user'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import { BranchWorkspaceManager } from '../../branch-workspace'
-import { checkBranchAccessWithDefault } from '../../authz'
-import { loadPathPermissions, savePathPermissions } from '../../permissions-loader'
-import { createCheckPathAccess } from '../../path-permissions'
+import {
+  checkBranchAccessWithDefault,
+  loadPathPermissions,
+  savePathPermissions,
+  createCheckPathAccess,
+} from '../../authorization'
 
 describe('Path Permission Integration', () => {
   let workspace: TestWorkspace

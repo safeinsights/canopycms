@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { GroupManager } from './GroupManager'
-import type { InternalGroup } from '../groups-file'
+import type { InternalGroup } from '../authorization'
 import type { ExternalGroup } from '../api/groups'
 import type { UserSearchResult } from '../auth/types'
 

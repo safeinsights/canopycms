@@ -11,6 +11,7 @@ import {
 
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
+import { isNotFoundError } from './utils/error'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
 
@@ -106,8 +107,8 @@ export class GitManager {
           log.debug('git', 'Remote exists after waiting for lock')
           return
         }
-      } catch (err: any) {
-        if (err?.code !== 'ENOENT') throw err
+      } catch (err: unknown) {
+        if (!isNotFoundError(err)) throw err
         // Remote doesn't exist, fall through to create it
         log.debug('git', 'Remote does not exist after lock, will retry initialization')
       }
@@ -128,8 +129,8 @@ export class GitManager {
             log.debug('git', 'Remote already exists, skipping')
             return
           }
-        } catch (err: any) {
-          if (err?.code !== 'ENOENT') throw err
+        } catch (err: unknown) {
+          if (!isNotFoundError(err)) throw err
         }
 
         // Find the actual git root directory
@@ -343,8 +344,8 @@ export class GitManager {
     try {
       const stat = await fs.stat(path.join(options.workspacePath, '.git'))
       repoExists = stat.isDirectory()
-    } catch (err: any) {
-      if (err?.code !== 'ENOENT') throw err
+    } catch (err: unknown) {
+      if (!isNotFoundError(err)) throw err
       // ENOENT means repo doesn't exist, continue to clone
     }
 
@@ -550,8 +551,8 @@ export class GitManager {
     let content = ''
     try {
       content = await fs.readFile(excludePath, 'utf-8')
-    } catch (err: any) {
-      if (err?.code !== 'ENOENT') throw err
+    } catch (err: unknown) {
+      if (!isNotFoundError(err)) throw err
       // File doesn't exist, will create it
     }
 

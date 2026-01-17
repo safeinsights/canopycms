@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import type { BranchContext } from './types'
 import { BranchMetadataFileManager } from './branch-metadata'
+import { isNotFoundError } from './utils/error'
 
 // Registry files are stored directly in the branches root (not in a subdirectory)
 const REGISTRY_FILE = 'branches.json'
@@ -49,8 +50,8 @@ export class BranchRegistry {
         return await this.regenerate()
       }
       return parsed.branches
-    } catch (err: any) {
-      if (err?.code === 'ENOENT') {
+    } catch (err: unknown) {
+      if (isNotFoundError(err)) {
         // Cache missing or stale, regenerate
         return await this.regenerate()
       }
@@ -73,9 +74,9 @@ export class BranchRegistry {
   async invalidate(): Promise<void> {
     try {
       await fs.rename(this.registryPath, this.stalePath)
-    } catch (err: any) {
+    } catch (err: unknown) {
       // ENOENT means already stale or never existed, which is fine
-      if (err?.code !== 'ENOENT') {
+      if (!isNotFoundError(err)) {
         throw err
       }
     }
@@ -97,7 +98,7 @@ export class BranchRegistry {
 
     try {
       await fs.rename(uniqueTempPath, this.registryPath)
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Clean up temp file if rename fails
       await fs.unlink(uniqueTempPath).catch(() => {})
       throw err
@@ -135,9 +136,9 @@ export class BranchRegistry {
           })
         }
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       // If root doesn't exist yet, return empty list
-      if (err?.code === 'ENOENT') {
+      if (isNotFoundError(err)) {
         return []
       }
       throw err

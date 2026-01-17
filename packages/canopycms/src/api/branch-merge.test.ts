@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { markAsMerged } from './branch-merge'
 import type { ApiContext, ApiRequest } from './types'
-import { RESERVED_GROUPS } from '../reserved-groups'
+import { RESERVED_GROUPS } from '../authorization'
 import { mockConsole } from '../test-utils/console-spy.js'
 
 // Extract handler for testing

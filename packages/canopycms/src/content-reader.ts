@@ -7,6 +7,7 @@ import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
 import { isBuildMode } from './build-mode'
+import { isNotFoundError } from './utils/error'
 
 export interface ContentReaderOptions {
   services: CanopyServices
@@ -163,8 +164,8 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       return await store.read(entryPath, slug ?? '', {
         resolveReferences: input.resolveReferences ?? true,
       })
-    } catch (err: any) {
-      if (err?.code === 'ENOENT') return null
+    } catch (err: unknown) {
+      if (isNotFoundError(err)) return null
       throw err
     }
   }

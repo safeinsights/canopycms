@@ -9,6 +9,6 @@ export {
   loadCollectionMetaFiles,
   resolveCollectionReferences,
   watchCollectionMetaFiles,
-} from './schema-meta-loader'
-export type { CollectionMeta, RootCollectionMeta } from './schema-meta-loader'
+} from './schema'
+export type { CollectionMeta, RootCollectionMeta } from './schema'
 export { createSchemaRegistry } from './schema-registry-helpers'

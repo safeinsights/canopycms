@@ -1,6 +1,7 @@
 import type { ContentIdIndex } from '../content-id-index'
 import type { FieldConfig, ReferenceFieldConfig } from '../config'
 import { isValidId } from '../id'
+import { findFieldsByType } from './field-traversal'
 
 export interface ValidationError {
   field: string
@@ -49,7 +50,13 @@ export class ReferenceValidator {
    */
   async validate(data: Record<string, unknown>): Promise<ValidationResult> {
     const errors: ValidationError[] = []
-    const refs = this.extractReferences(this.schema, data)
+    // Use shared field traversal to find all reference fields
+    const refContexts = findFieldsByType(this.schema, data, 'reference')
+    const refs = refContexts.map((ctx) => ({
+      field: ctx.field as ReferenceFieldConfig,
+      value: ctx.value as string | string[],
+      path: ctx.path,
+    }))
 
     for (const { field, value, path } of refs) {
       const ids = Array.isArray(value) ? value : [value]
@@ -112,87 +119,6 @@ export class ReferenceValidator {
     }
 
     return { valid: errors.length === 0, errors }
-  }
-
-  /**
-   * Extract all reference field instances from data, respecting the schema structure.
-   *
-   * This handles nested objects, arrays, and block fields.
-   */
-  private extractReferences(
-    fields: FieldConfig[],
-    data: Record<string, unknown>,
-    pathPrefix = '',
-  ): ReferenceInstance[] {
-    const refs: ReferenceInstance[] = []
-
-    for (const field of fields) {
-      const fieldPath = pathPrefix ? `${pathPrefix}.${field.name}` : field.name
-      const value = data[field.name]
-
-      if (value === undefined || value === null) continue
-
-      if (field.type === 'reference') {
-        refs.push({
-          field: field as ReferenceFieldConfig,
-          value: value as string | string[],
-          path: fieldPath,
-        })
-      } else if (field.type === 'object') {
-        // Recurse into object fields
-        const objectField = field as any
-        if (objectField.fields && typeof value === 'object' && !Array.isArray(value)) {
-          refs.push(
-            ...this.extractReferences(
-              objectField.fields,
-              value as Record<string, unknown>,
-              fieldPath,
-            ),
-          )
-        }
-      } else if (field.type === 'block') {
-        // Handle block fields (arrays of objects with different schemas)
-        const blockField = field as any
-        if (Array.isArray(value)) {
-          value.forEach((item, index) => {
-            if (typeof item === 'object' && item !== null) {
-              const blockType = (item as any)._type
-              const blockDef = blockField.blocks?.find((b: any) => b.name === blockType)
-              if (blockDef && blockDef.fields) {
-                refs.push(
-                  ...this.extractReferences(
-                    blockDef.fields,
-                    item as Record<string, unknown>,
-                    `${fieldPath}[${index}]`,
-                  ),
-                )
-              }
-            }
-          })
-        }
-      } else if (field.type === 'array') {
-        // Handle array fields
-        const arrayField = field as any
-        if (Array.isArray(value) && arrayField.of) {
-          // If the array contains objects/blocks with fields, recurse
-          if (arrayField.of.type === 'object' && arrayField.of.fields) {
-            value.forEach((item, index) => {
-              if (typeof item === 'object' && item !== null) {
-                refs.push(
-                  ...this.extractReferences(
-                    arrayField.of.fields,
-                    item as Record<string, unknown>,
-                    `${fieldPath}[${index}]`,
-                  ),
-                )
-              }
-            })
-          }
-        }
-      }
-    }
-
-    return refs
   }
 
   /**

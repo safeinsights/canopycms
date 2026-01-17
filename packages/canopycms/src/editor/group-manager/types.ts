@@ -4,7 +4,7 @@
 
 import type { UserSearchResult, GroupMetadata } from '../../auth/types'
 import type { CanopyGroupId, CanopyUserId } from '../../types'
-import type { InternalGroup } from '../../groups-file'
+import type { InternalGroup } from '../../authorization'
 import type { ExternalGroup } from '../../api/groups'
 
 // Re-export commonly used types for convenience

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ASSET_ROUTES } from './assets'
 import type { ApiContext } from './types'
-import { RESERVED_GROUPS } from '../reserved-groups'
+import { RESERVED_GROUPS } from '../authorization'
 
 // Extract handlers for testing
 const listAssets = ASSET_ROUTES.list.handler

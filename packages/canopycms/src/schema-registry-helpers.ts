@@ -75,7 +75,7 @@ export async function validateSchemaRegistry(
   schemaRegistry: Record<string, readonly FieldConfig[]>,
   contentPath: string,
 ): Promise<void> {
-  const { loadCollectionMetaFiles } = await import('./schema-meta-loader')
+  const { loadCollectionMetaFiles } = await import('./schema')
   const { access } = await import('fs/promises')
 
   // Check if content directory exists
