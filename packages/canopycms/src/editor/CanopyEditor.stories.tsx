@@ -53,7 +53,7 @@ const entries = [
     id: 'content/home',
     label: 'Home',
     status: 'page',
-    schema: configBundle.server.schema.singletons![0].fields,
+    schema: configBundle.server.schema!.singletons![0].fields,
     apiPath: '/api/canopycms/main/content/home',
     collectionId: 'content/home',
     collectionName: 'home',

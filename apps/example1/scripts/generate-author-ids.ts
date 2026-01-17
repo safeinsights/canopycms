@@ -5,7 +5,7 @@ import config from '../canopycms.config'
 
 async function generateIds() {
   const root = path.resolve(__dirname, '..')
-  const flatSchema = flattenSchema(config.server.schema, config.server.contentRoot)
+  const flatSchema = flattenSchema(config.server.schema!, config.server.contentRoot)
   const store = new ContentStore(root, flatSchema)
   const idIndex = await store.idIndex()
 

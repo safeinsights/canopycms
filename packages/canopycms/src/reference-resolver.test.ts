@@ -56,7 +56,7 @@ describe('ReferenceResolver', () => {
       },
     }
 
-    store = new ContentStore(tempDir, flattenSchema(config.schema, config.contentRoot))
+    store = new ContentStore(tempDir, flattenSchema(config.schema!, config.contentRoot))
     idIndex = await store.idIndex()
     const contentRoot = config.contentRoot ?? 'content'
     resolver = new ReferenceResolver(store, idIndex, contentRoot)
