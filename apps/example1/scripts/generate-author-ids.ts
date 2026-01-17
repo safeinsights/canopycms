@@ -1,10 +1,12 @@
+import { flattenSchema } from 'canopycms'
 import { ContentStore } from 'canopycms/server'
 import path from 'path'
 import config from '../canopycms.config'
 
 async function generateIds() {
   const root = path.resolve(__dirname, '..')
-  const store = new ContentStore(root, config.server)
+  const flatSchema = flattenSchema(config.server.schema, config.server.contentRoot)
+  const store = new ContentStore(root, flatSchema)
   const idIndex = await store.idIndex()
 
   // Add IDs for alice and bob

@@ -1,4 +1,5 @@
 import { defineSchema } from 'canopycms'
+import { createSchemaRegistry } from 'canopycms/server'
 
 export const postSchema = defineSchema([
   { name: 'title', type: 'string' },
@@ -13,3 +14,9 @@ export const homeSchema = defineSchema([
   { name: 'tagline', type: 'string' },
   { name: 'featuredPosts', type: 'string', list: true },
 ] as const)
+
+// Schema registry for CanopyCMS - references schemas by name in .collection.json files
+export const schemaRegistry = createSchemaRegistry({
+  postSchema,
+  homeSchema,
+})

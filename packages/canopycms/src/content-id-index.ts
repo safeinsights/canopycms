@@ -247,6 +247,50 @@ export function extractIdFromFilename(filename: string): string | null {
 }
 
 /**
+ * Resolve a logical collection path to its actual filesystem path with embedded IDs.
+ * Recursively resolves each path segment to handle nested collections.
+ *
+ * Example:
+ *   Input: resolveCollectionPath(root, "content/docs/api")
+ *   Output: "/abs/path/to/content/docs.bChqT78gcaLd/api.meiuwxTSo7UN"
+ *
+ * @param root - Absolute path to the workspace root
+ * @param logicalPath - Logical path from schema (e.g., "content/docs/api")
+ * @returns Absolute filesystem path with embedded IDs, or null if path doesn't exist
+ */
+export async function resolveCollectionPath(root: string, logicalPath: string): Promise<string | null> {
+  const fs = await import('node:fs/promises')
+  const path = await import('node:path')
+
+  const segments = logicalPath.split('/').filter(Boolean)
+  let currentPath = root
+
+  for (const segment of segments) {
+    try {
+      const entries = await fs.readdir(currentPath, { withFileTypes: true })
+      const matchingDir = entries.find((entry) => {
+        if (!entry.isDirectory()) return false
+        // Extract logical name from directory (strips embedded ID)
+        const logicalName = extractSlugFromFilename(entry.name)
+        return logicalName === segment
+      })
+
+      if (matchingDir) {
+        currentPath = path.join(currentPath, matchingDir.name)
+      } else {
+        // Directory not found - might not exist yet
+        return null
+      }
+    } catch (err: any) {
+      if (err?.code === 'ENOENT') return null
+      throw err
+    }
+  }
+
+  return currentPath
+}
+
+/**
  * Extract slug from filename (the part before the ID).
  * Works for both files (slug.id.ext) and directories (slug.id).
  * Handles slugs with dots (e.g., "my.page.a1b2c3d4e5f6.json" → "my.page")

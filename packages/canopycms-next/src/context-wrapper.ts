@@ -31,7 +31,7 @@ export async function createNextCanopyContext(options: NextCanopyOptions) {
     const operatingMode = services.config.mode ?? 'dev'
     const mainBranchContext = await loadBranchContext({ branchName: baseBranch, mode: operatingMode })
     const internalGroups = mainBranchContext
-      ? await loadInternalGroups(mainBranchContext.branchRoot).catch(() => [])
+      ? await loadInternalGroups(mainBranchContext.branchRoot, operatingMode, services.bootstrapAdminIds).catch(() => [])
       : []
 
     return authResultToCanopyUser(authResult, services.bootstrapAdminIds, internalGroups)

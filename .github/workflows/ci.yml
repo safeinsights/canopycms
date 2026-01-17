@@ -41,7 +41,6 @@ jobs:
 
       - name: TypeScript type checking
         run: npm run typecheck
-        working-directory: packages/canopycms
 
       - name: Run tests
         run: npm test
