@@ -36,9 +36,11 @@ npx vitest run --coverage
 
 ## Test Status
 
-- 232/236 tests passing (98.3%)
-- 4 skipped: Mantine Button async issues in jsdom
-- See PROMPT.md for detailed backlog
+- 949+ tests passing (98%+ coverage)
+- 5 skipped: Mantine Button async issues in jsdom
+- Test organization:
+  - Unit tests: `src/**/__tests__/*.test.ts`
+  - Integration tests: `src/__integration__/**/*.test.ts`
 
 ## Workflow
 
@@ -48,11 +50,20 @@ npx vitest run --coverage
 4. Implement targeted fixes
 5. Re-run tests to verify resolution
 
+## Key Test Directories
+
+- `src/authorization/__tests__/` - Authorization module tests
+- `src/paths/__tests__/` - Path utilities tests
+- `src/validation/__tests__/` - Field traversal, reference validation tests
+- `src/utils/` - Error handling, debug utilities tests
+- `src/editor/hooks/` - React hooks tests
+- `src/__integration__/` - Full integration tests
+
 ## Instructions
 
 1. If no specific task given, run the full test suite and report results
 2. For test failures, analyze the error message and suggest fixes
 3. When fixing tests, understand the component/function being tested first
-4. Note: 4 tests are intentionally skipped due to Mantine Button async issues in jsdom
+4. Note: 5 tests are intentionally skipped due to Mantine Button async issues in jsdom
 5. Check packages/canopycms/src/editor/comments/ for comment system tests
 6. Always run typecheck after test fixes: `npm run typecheck --workspaces`

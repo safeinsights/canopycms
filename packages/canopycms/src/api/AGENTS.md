@@ -5,6 +5,31 @@
 - **Do not edit `client.ts` or `__test__/mock-client.ts` directly** - these files are auto-generated
 - To modify the client, edit `packages/canopycms/scripts/generate-client.ts` and run `npm run generate:client`
 
+## Branch Access Middleware
+
+Use the middleware patterns from `middleware/branch-access.ts` for common access guard patterns:
+
+```typescript
+import {
+  guardBranchAccess,
+  guardBranchExists,
+  isBranchAccessError,
+} from '../middleware/branch-access'
+
+// For operations that need both branch existence and user access
+const branchAccess = guardBranchAccess(deps, context, user, branchName)
+if (isBranchAccessError(branchAccess)) {
+  return branchAccess // Returns 404 or 403 response
+}
+const { branch, branchRoot } = branchAccess
+
+// For operations that only need branch existence (e.g., read operations)
+const branchExists = guardBranchExists(deps, context, branchName)
+if (isBranchAccessError(branchExists)) {
+  return branchExists
+}
+```
+
 ## Adding New API Endpoints
 
 When adding a new API endpoint with a request body, follow these steps to ensure full type safety:

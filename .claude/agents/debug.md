@@ -40,25 +40,40 @@ npx vitest run -t "test name pattern" --reporter=verbose
 npx tsc --noEmit -p packages/canopycms/tsconfig.json 2>&1 | head -50
 ```
 
+## Key Modules
+
+- **Authorization**: `src/authorization/` - checkContentAccess, checkBranchAccessWithDefault
+- **Path handling**: `src/paths/` - branded types, normalization, validation
+- **Error handling**: `src/utils/error.ts` - getErrorMessage, isNodeError, isNotFoundError
+- **Field traversal**: `src/validation/field-traversal.ts` - traverseFields, findFieldsByType
+- **State management**: `src/editor/context/` - ApiClientContext, EditorStateContext
+
 ## Common Issues
 
 ### Mantine Button Tests
 
 - Some button click tests fail in jsdom (known issue)
 - Functionality works in real app
-- See PROMPT.md Priority 7
+- 5 tests are intentionally skipped
 
 ### Client/Server Boundary
 
 - "use client" required for browser components
 - Server imports shouldn't reach browser
 - Check exports in package.json
+- Client code should import from `./paths/normalize`, not `./paths`
 
 ### Branch Workspace
 
 - Check operating mode (prod/prod-sim/dev)
 - Verify .canopycms/ directory exists
 - Check branch registry for state
+
+### Error Handling
+
+- Use `catch (err: unknown)` not `catch (err: any)`
+- Use `getErrorMessage(err)` from `utils/error.ts` to extract message
+- Use `isNotFoundError(err)` to check for ENOENT
 
 ## Instructions
 

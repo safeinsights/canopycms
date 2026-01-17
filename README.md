@@ -9,7 +9,21 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - **Branch-based editing**: Every editor works on an isolated branch, preventing conflicts and enabling review workflows
 - **Git as source of truth**: All content is versioned in git with full history, rollback, and PR-based review
 - **Live preview**: See changes in real-time with click-to-focus field navigation
+- **Minimal integration**: Just config, one editor component, and one API route
 - **Framework-agnostic core**: Works with Next.js today, adaptable to other frameworks
+
+## Table of Contents
+
+- [Quick Start](#quick-start)
+- [Schema References System](#schema-references-system)
+- [Configuration Reference](#configuration-reference)
+- [Content Identification and References](#content-identification--references)
+- [Integration Guide](#integration-guide)
+- [Features](#features)
+- [Using the Editor](#using-the-editor)
+- [Adopter Touchpoints Summary](#adopter-touchpoints-summary)
+- [Environment Variables](#environment-variables)
+- [Documentation](#documentation)
 
 ## Quick Start
 
@@ -474,141 +488,6 @@ Error: Schema reference "postSchema" in collection "posts" not found in registry
 Available schemas: authorSchema, homeSchema, docSchema
 ```
 
-## Migration Guides
-
-### Migrating to Unified Schema (v0.x to v1.0)
-
-The schema structure has changed from an array-based format to a unified object-based model. Here's how to migrate:
-
-**Old format (array-based):**
-
-```typescript
-schema: [
-  {
-    type: 'collection',
-    name: 'posts',
-    path: 'posts',
-    format: 'json',
-    fields: [...],
-  },
-  {
-    type: 'singleton',  // Previously called "document" in some versions
-    name: 'home',
-    path: 'home',
-    format: 'json',
-    fields: [...],
-  },
-]
-```
-
-**New format (object-based):**
-
-```typescript
-schema: {
-  collections: [
-    {
-      name: 'posts',
-      path: 'posts',
-      entries: {        // New: wrap format and fields in 'entries'
-        format: 'json',
-        fields: [...],
-      },
-    },
-  ],
-  singletons: [        // New: top-level key for singletons
-    {
-      name: 'home',
-      path: 'home',
-      format: 'json',   // No 'entries' wrapper for singletons
-      fields: [...],
-    },
-  ],
-}
-```
-
-**Migration checklist:**
-
-1. Change `schema: [...]` to `schema: { collections: [...], singletons: [...] }`
-2. Remove `type: 'collection'` from collection definitions
-3. Wrap collection `format` and `fields` in an `entries: { ... }` object
-4. Remove `type: 'singleton'` (or `type: 'document'`) from singleton definitions
-5. Move singletons to the `singletons` array
-6. For nested collections, use `collections: [...]` instead of `children: [...]`
-
-### Migrating from Old API
-
-If you're upgrading from a previous version, here's how to migrate to the new simplified API:
-
-### Before (verbose approach)
-
-```typescript
-// Every page had to repeat this boilerplate
-import { createContentReader } from 'canopycms/server'
-import { ANONYMOUS_USER } from 'canopycms'
-import config from '../canopycms.config'
-
-const contentReader = createContentReader({ config: config.server })
-
-const Page = async ({ searchParams }) => {
-  const { data } = await contentReader.read({
-    entryPath: 'content/home',
-    branch: searchParams?.branch,
-    user: ANONYMOUS_USER,  // No auth
-  })
-  return <HomeView data={data} />
-}
-```
-
-### After (clean approach)
-
-**One-time setup** in `app/lib/canopy.ts`:
-
-```typescript
-import { createNextCanopyContext } from 'canopycms-next'
-import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
-import config from '../../canopycms.config'
-
-// Context creation is now async (loads .collection.json meta files)
-const canopyContextPromise = createNextCanopyContext({
-  config: config.server,
-  authPlugin: createClerkAuthPlugin({ useOrganizationsAsGroups: true }),
-})
-
-export const getCanopy = async () => {
-  const context = await canopyContextPromise
-  return context.getCanopy()
-}
-
-export const getHandler = async () => {
-  const context = await canopyContextPromise
-  return context.handler
-}
-```
-
-**Then in every page**:
-
-```typescript
-import { getCanopy } from './lib/canopy'
-
-const Page = async ({ searchParams }) => {
-  const canopy = await getCanopy()
-  const { data } = await canopy.read({
-    entryPath: 'content/home',
-    branch: searchParams?.branch,  // Optional
-  })
-  return <HomeView data={data} />
-}
-```
-
-### Migration checklist
-
-1. Create `app/lib/canopy.ts` with async `createNextCanopyContext()` setup
-2. Update context exports to be async functions (`getCanopy`, `getHandler`)
-3. Replace `createCanopyCatchAllHandler()` in API route with imported async `getHandler()`
-4. Replace `createContentReader()` calls in pages with `await getCanopy()`
-5. Remove `user` parameter from `read()` calls (now automatic)
-6. Branch parameter is now optional (defaults to main)
-
 ## Configuration Reference
 
 ### `defineCanopyConfig` Options
@@ -1022,28 +901,103 @@ Access control uses three layers:
 
 **Build mode bypass**: During `next build`, all permission checks are bypassed to allow static generation of all content, regardless of auth configuration.
 
-**Settings storage by mode:**
-
-- **Dev mode**: Settings stored in `.canopy-dev/groups.json` and `.canopy-dev/permissions.json` (gitignored, for local development only)
-- **Prod/Prod-sim modes**: Settings stored on a separate orphan branch named `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific)
-
-Settings files include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
-
 ### Live Preview
 
 The editor shows a live preview of your actual site pages in an iframe. Changes update immediately via postMessage. Clicking elements in the preview focuses the corresponding form field.
+
+## Using the Editor
+
+This section describes how to use the CanopyCMS editor interface from a content editor's perspective.
+
+### Getting Started
+
+1. Navigate to your editor URL (e.g., `/edit`)
+2. Sign in with your authentication provider (Clerk, etc.)
+3. Select or create a branch to work on
+
+### Working with Branches
+
+**Creating a branch:**
+
+1. Click the branch selector in the header
+2. Click "New Branch"
+3. Enter a descriptive name (e.g., `update-homepage-hero`)
+4. Your branch is created and you can start editing
+
+**Switching branches:**
+
+1. Click the branch selector
+2. Choose from available branches
+3. The editor loads content from the selected branch
+
+### Editing Content
+
+**Selecting an entry:**
+
+1. Use the sidebar to browse collections and singletons
+2. Click an entry to open it in the editor
+3. For collections, you can create new entries with the "+" button
+
+**Making changes:**
+
+1. Edit fields using the form on the left
+2. See changes reflected in the live preview on the right
+3. Click "Save" to persist changes to your branch (changes are NOT committed yet)
+
+**Discarding changes:**
+
+- Use "Discard" to revert unsaved changes to the last saved state
+
+### Submitting for Review
+
+When your changes are ready:
+
+1. Click "Submit for Review" in the header
+2. This commits your changes and creates a GitHub PR
+3. The PR can be reviewed using standard GitHub workflows
+4. Once merged, your changes are deployed with the next site build
+
+### Using Comments
+
+**Adding field comments:**
+
+1. Hover over a field label
+2. Click the comment icon
+3. Type your comment and submit
+
+**Viewing comments:**
+
+- Comments appear as badges on fields
+- Click a comment badge to see the thread and add replies
+
+**Resolving comments:**
+
+- Mark comments as resolved once addressed
+
+### Managing Permissions (Admins)
+
+Admins can configure access control:
+
+1. Go to Settings (gear icon)
+2. **Groups**: Create groups and add users
+3. **Permissions**: Set path-based access rules
 
 ## Adopter Touchpoints Summary
 
 CanopyCMS is designed for minimal integration effort. You need:
 
-1. **Config file** (`canopycms.config.ts`): Settings and configuration
-2. **Schema definitions** (`app/schemas.ts`): Field schemas and registry for `.collection.json` meta files
-3. **Canopy context** (`app/lib/canopy.ts`): One-time async setup with auth plugin and schema registry
-4. **API route** (`/api/canopycms/[...canopycms]`): Export the async handler from context
-5. **Editor page** (`/edit`): Embed the editor component
-6. **Middleware**: Protect editor routes with authentication
-7. **Server components**: Use `await getCanopy()` to read content with automatic auth
+| Touchpoint      | File                                        | Purpose                                                      |
+| --------------- | ------------------------------------------- | ------------------------------------------------------------ |
+| **Config**      | `canopycms.config.ts`                       | Define settings and operating mode                           |
+| **Schemas**     | `app/schemas.ts`                            | Field schemas and registry (for `.collection.json` approach) |
+| **Context**     | `app/lib/canopy.ts`                         | One-time async setup with auth plugin                        |
+| **API Route**   | `app/api/canopycms/[...canopycms]/route.ts` | Single catch-all handler                                     |
+| **Editor Page** | `app/edit/page.tsx`                         | Embed the editor component                                   |
+| **Middleware**  | `middleware.ts`                             | Protect editor routes with authentication                    |
+
+**Optional touchpoint:**
+
+- **Server components**: Use `await getCanopy()` to read draft content with automatic auth
 
 Everything else (branch management, content storage, permissions, comments, bootstrap admin groups, meta file loading) is handled automatically by CanopyCMS.
 
@@ -1072,5 +1026,5 @@ GITHUB_BOT_TOKEN=ghp_...    # Bot token for PR creation
 
 ## Documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) - Internal architecture and design decisions
 - [DEVELOPING.md](DEVELOPING.md) - Development guidelines for contributors
+- [ARCHITECTURE.md](ARCHITECTURE.md) - Internal architecture (for contributors)
