@@ -120,29 +120,41 @@ describe('listEntries', () => {
   it('lists entries recursively from deeply nested collections', async () => {
     const root = await tmpDir()
 
-    // Create 3-level nested structure: docs/api/v2
-    await fs.mkdir(path.join(root, 'content/docs'), { recursive: true })
-    await fs.mkdir(path.join(root, 'content/docs/api'), { recursive: true })
-    await fs.mkdir(path.join(root, 'content/docs/api/v2'), { recursive: true })
+    // Create 3-level nested structure with embedded IDs: docs/api/v2
+    // This mirrors the real example1 structure
+    const docsId = 'bChqT78gcaLd'
+    const apiId = 'meiuwxTSo7UN'
+    const v2Id = 'muwmyafM6mEJ'
 
-    // Create entries at each level
+    await fs.mkdir(path.join(root, `content/docs.${docsId}`), { recursive: true })
+    await fs.mkdir(path.join(root, `content/docs.${docsId}/api.${apiId}`), { recursive: true })
+    await fs.mkdir(path.join(root, `content/docs.${docsId}/api.${apiId}/v2.${v2Id}`), {
+      recursive: true,
+    })
+
+    // Create entries at each level with embedded IDs in filenames
+    const overviewId = 'gnVmHnnMjWrD'
+    const introId = 'k396pBDVP8tC'
+    const authId = 'kmtzTh2k9Axq'
+    const usersId = 'ppqJw61uKkV5'
+
     await fs.writeFile(
-      path.join(root, 'content/docs/overview.json'),
+      path.join(root, `content/docs.${docsId}/overview.${overviewId}.json`),
       JSON.stringify({ title: 'Overview' }),
       'utf8',
     )
     await fs.writeFile(
-      path.join(root, 'content/docs/api/intro.json'),
+      path.join(root, `content/docs.${docsId}/api.${apiId}/intro.${introId}.json`),
       JSON.stringify({ title: 'API Introduction' }),
       'utf8',
     )
     await fs.writeFile(
-      path.join(root, 'content/docs/api/v2/auth.json'),
+      path.join(root, `content/docs.${docsId}/api.${apiId}/v2.${v2Id}/auth.${authId}.json`),
       JSON.stringify({ title: 'Authentication' }),
       'utf8',
     )
     await fs.writeFile(
-      path.join(root, 'content/docs/api/v2/users.json'),
+      path.join(root, `content/docs.${docsId}/api.${apiId}/v2.${v2Id}/users.${usersId}.json`),
       JSON.stringify({ title: 'Users API' }),
       'utf8',
     )

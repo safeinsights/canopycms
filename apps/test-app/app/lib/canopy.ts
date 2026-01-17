@@ -1,6 +1,7 @@
 import { createNextCanopyContext } from 'canopycms-next'
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import config from '../../canopycms.config'
+import { schemaRegistry } from '../schemas'
 
 /**
  * Dev auth plugin for local development and E2E testing.
@@ -8,10 +9,20 @@ import config from '../../canopycms.config'
  * - Supports user switching via canopy-dev-user cookie (for UI)
  * - Compatible with existing test fixtures
  */
-const canopyContext = createNextCanopyContext({
+const canopyContextPromise = createNextCanopyContext({
   config: config.server,
   authPlugin: createDevAuthPlugin(),
+  schemaRegistry,
 })
 
-export const getCanopy = canopyContext.getCanopy
-export const handler = canopyContext.handler
+// Export for server component pages
+export const getCanopy = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopy()
+}
+
+// Export for API routes
+export const getHandler = async () => {
+  const context = await canopyContextPromise
+  return context.handler
+}

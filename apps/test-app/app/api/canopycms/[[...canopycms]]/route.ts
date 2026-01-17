@@ -1,7 +1,9 @@
-import { handler } from '../../../lib/canopy'
+import { getHandler } from '../../../lib/canopy'
+import type { NextRequest } from 'next/server'
 
-export const GET = handler
-export const POST = handler
-export const PUT = handler
-export const PATCH = handler
-export const DELETE = handler
+const handler = getHandler()
+
+export const GET = async (req: NextRequest, ctx: any) => (await handler)(req, ctx)
+export const POST = async (req: NextRequest, ctx: any) => (await handler)(req, ctx)
+export const PUT = async (req: NextRequest, ctx: any) => (await handler)(req, ctx)
+export const DELETE = async (req: NextRequest, ctx: any) => (await handler)(req, ctx)

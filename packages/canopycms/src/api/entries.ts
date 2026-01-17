@@ -10,7 +10,7 @@ import { ContentStoreError } from '../content-store'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
-import { extractSlugFromFilename } from '../content-id-index'
+import { extractSlugFromFilename, resolveCollectionPath } from '../content-id-index'
 
 type CollectionKind = 'collection' | 'entry'
 
@@ -113,28 +113,12 @@ const listCollectionEntries = async (
   const format = collection.entries.format || 'json'
   const ext = getFormatExtension(format)
 
-  // Find actual collection directory (may have embedded ID)
-  // e.g., logical path "content/authors" maps to "content/authors.q52DCVPuH4ga"
-  let collectionRoot = path.resolve(root, collection.fullPath)
+  // Resolve the full collection path with embedded IDs
+  // e.g., "content/docs/api" → "content/docs.bChqT78gcaLd/api.meiuwxTSo7UN"
+  const collectionRoot = await resolveCollectionPath(root, collection.fullPath)
 
-  // Try to find directory with embedded ID
-  const parentDir = path.dirname(collectionRoot)
-  const collectionName = path.basename(collection.fullPath)
-
-  try {
-    const parentEntries = await fs.readdir(parentDir, { withFileTypes: true })
-    const matchingDir = parentEntries.find((entry) => {
-      if (!entry.isDirectory()) return false
-      // Extract logical name from directory (strips embedded ID)
-      const logicalName = extractSlugFromFilename(entry.name)
-      return logicalName === collectionName
-    })
-
-    if (matchingDir) {
-      collectionRoot = path.resolve(parentDir, matchingDir.name)
-    }
-  } catch (err) {
-    // Parent directory doesn't exist, return empty
+  if (!collectionRoot) {
+    // Collection directory doesn't exist yet
     return []
   }
 

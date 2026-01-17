@@ -4,7 +4,12 @@ import path from 'node:path'
 import matter from 'gray-matter'
 
 import type { ContentFormat, FlatSchemaItem } from './config'
-import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename } from './content-id-index'
+import {
+  ContentIdIndex,
+  extractIdFromFilename,
+  extractSlugFromFilename,
+  resolveCollectionPath,
+} from './content-id-index'
 import { generateId } from './id'
 import { getFormatExtension } from './utils/format'
 
@@ -165,28 +170,14 @@ export class ContentStore {
       const format = schemaItem.entries?.format || 'json'
       const ext = getFormatExtension(format)
 
-      // Find actual collection directory (may have embedded ID)
-      // e.g., logical path "content/authors" maps to "content/authors.q52DCVPuH4ga"
-      let collectionRoot = path.resolve(this.root, schemaItem.fullPath)
+      // Resolve the full collection path with embedded IDs
+      // e.g., "content/docs/api" → "content/docs.bChqT78gcaLd/api.meiuwxTSo7UN"
+      let collectionRoot = await resolveCollectionPath(this.root, schemaItem.fullPath)
 
-      // Try to find directory with embedded ID
-      const parentDir = path.dirname(collectionRoot)
-      const collectionName = path.basename(schemaItem.fullPath)
-
-      try {
-        const entries = await fs.readdir(parentDir, { withFileTypes: true })
-        const matchingDir = entries.find((entry) => {
-          if (!entry.isDirectory()) return false
-          // Extract logical name from directory (strips embedded ID)
-          const logicalName = extractSlugFromFilename(entry.name)
-          return logicalName === collectionName
-        })
-
-        if (matchingDir) {
-          collectionRoot = path.resolve(parentDir, matchingDir.name)
-        }
-      } catch (err) {
-        // Parent directory doesn't exist yet, use logical path
+      if (!collectionRoot) {
+        // Collection directory doesn't exist yet - use logical path
+        // (Directory will be created on write if needed)
+        collectionRoot = path.resolve(this.root, schemaItem.fullPath)
       }
 
       // Security: Prevent path traversal at collection level
