@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button, Group, Paper, Stack, Text } from '@mantine/core'
 
 import type {
+  BlockFieldConfig,
   FieldConfig,
   ObjectFieldConfig,
   ReferenceFieldConfig,
@@ -491,12 +492,13 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             />,
           )
         }
-        case 'block':
+        case 'block': {
+          const blockField = field as BlockFieldConfig
           return wrapWithComments(
             <BlockField
               key={fieldKey(path)}
               label={label}
-              templates={field.templates}
+              templates={blockField.templates}
               value={(Array.isArray(currentValue) ? currentValue : []) as BlockInstance[]}
               onChange={(next) => update(next)}
               renderField={renderField}
@@ -504,6 +506,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               dataCanopyField={normalizeCanopyPath(path)}
             />,
           )
+        }
         case 'object': {
           const objectField = field as ObjectFieldConfig
           if (objectField.list) {

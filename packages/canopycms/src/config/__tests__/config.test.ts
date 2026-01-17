@@ -1,12 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import type { CanopyConfigFragment } from './config'
-import {
-  composeCanopyConfig,
-  defineCanopyConfig,
-  flattenSchema,
-  validateCanopyConfig,
-} from './config'
+import type { CanopyConfigFragment } from '../types'
+import { composeCanopyConfig, defineCanopyConfig } from '../helpers'
+import { flattenSchema } from '../flatten'
+import { validateCanopyConfig } from '../validation'
 
 const gitAuthor = { gitBotAuthorName: 'Test Bot', gitBotAuthorEmail: 'bot@example.com' }
 
@@ -55,9 +52,9 @@ describe('config validation', () => {
       media: { adapter: 's3', bucket: 'my-bucket', region: 'us-east-1' },
     })
 
-    expect(configBundle.server.schema.collections).toBeDefined()
-    expect(configBundle.server.schema.collections?.[0].singletons).toBeDefined()
-    expect(configBundle.server.schema.collections?.[0].singletons?.[0].name).toBe('landing')
+    expect(configBundle.server.schema?.collections).toBeDefined()
+    expect(configBundle.server.schema?.collections?.[0].singletons).toBeDefined()
+    expect(configBundle.server.schema?.collections?.[0].singletons?.[0].name).toBe('landing')
   })
 
   it('rejects select fields without options', () => {
@@ -123,8 +120,8 @@ describe('config validation', () => {
 
     const config = composeCanopyConfig(posts, homesingleton)
 
-    expect(config.schema.collections?.[0].name).toBe('posts')
-    expect(config.schema.singletons?.[0].name).toBe('homepage')
+    expect(config.schema?.collections?.[0].name).toBe('posts')
+    expect(config.schema?.singletons?.[0].name).toBe('homepage')
     expect(config.media?.adapter).toBe('local')
   })
 
@@ -155,7 +152,7 @@ describe('config validation', () => {
       },
     })
     const cfg = configBundle.server
-    const flat = flattenSchema(cfg.schema, cfg.contentRoot || 'content')
+    const flat = flattenSchema(cfg.schema!, cfg.contentRoot || 'content')
 
     const contentCollection = flat.find((item) => item.fullPath === 'content/content')
     const pagesCollection = flat.find((item) => item.fullPath === 'content/content/pages')
@@ -210,7 +207,7 @@ describe('config validation', () => {
       },
     })
     const cfg = configBundle.server
-    const flat = flattenSchema(cfg.schema, cfg.contentRoot || 'content')
+    const flat = flattenSchema(cfg.schema!, cfg.contentRoot || 'content')
 
     const docsOverview = flat.find((item) => item.fullPath === 'content/docs/overview')
     const apiIntro = flat.find((item) => item.fullPath === 'content/docs/api/intro')
@@ -261,7 +258,7 @@ describe('config validation', () => {
       },
     })
     const cfg = configBundle.server
-    const flat = flattenSchema(cfg.schema, cfg.contentRoot || 'content')
+    const flat = flattenSchema(cfg.schema!, cfg.contentRoot || 'content')
 
     // Find all collections
     const docs = flat.find((item) => item.type === 'collection' && item.name === 'docs')
@@ -323,7 +320,7 @@ describe('config validation', () => {
       },
     })
     const cfg = configBundle.server
-    const flat = flattenSchema(cfg.schema, cfg.contentRoot || 'content')
+    const flat = flattenSchema(cfg.schema!, cfg.contentRoot || 'content')
 
     // Find all collections
     const docs = flat.find((item) => item.type === 'collection' && item.name === 'docs')
@@ -394,7 +391,7 @@ describe('config validation', () => {
       },
     })
     const cfg = configBundle.server
-    const flat = flattenSchema(cfg.schema, cfg.contentRoot || 'content')
+    const flat = flattenSchema(cfg.schema!, cfg.contentRoot || 'content')
 
     // Find all collections
     const docs = flat.find((item) => item.type === 'collection' && item.name === 'docs')

@@ -164,7 +164,7 @@ export interface MockServicesOptions {
  */
 export function createMockServices(options: MockServicesOptions = {}): CanopyServices {
   const defaultConfig: Partial<CanopyConfig> = {
-    schema: [],
+    schema: {},
     defaultBaseBranch: 'main',
     mode: 'dev',
     ...options.config,

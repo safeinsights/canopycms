@@ -69,7 +69,7 @@ export interface EditorProps {
   branchName?: string
   operatingMode: OperatingMode
   collections?: EditorCollection[]
-  configSchema: RootCollectionConfig
+  configSchema?: RootCollectionConfig
   contentRoot?: string
   initialSelectedId?: string
   initialValues?: Record<string, FormValue>

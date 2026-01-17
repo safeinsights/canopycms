@@ -73,7 +73,7 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema, config.contentRoot),
+        flatSchema: flattenSchema(config.schema!, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
       },
@@ -198,7 +198,7 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema, config.contentRoot),
+        flatSchema: flattenSchema(config.schema!, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
       },
@@ -309,7 +309,7 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema, config.contentRoot),
+        flatSchema: flattenSchema(config.schema!, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
       },
@@ -392,7 +392,7 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema, config.contentRoot),
+        flatSchema: flattenSchema(config.schema!, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
       },
@@ -544,7 +544,7 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema, config.contentRoot),
+        flatSchema: flattenSchema(config.schema!, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,

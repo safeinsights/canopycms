@@ -1,8 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { PermissionManager } from './PermissionManager'
-import type { PathPermission } from '../config'
+import type { PathPermission, RootCollectionConfig } from '../config'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
-import type { CanopyConfig } from '../config'
 
 const meta: Meta<typeof PermissionManager> = {
   title: 'Editor/PermissionManager',
@@ -12,46 +11,54 @@ const meta: Meta<typeof PermissionManager> = {
 export default meta
 type Story = StoryObj<typeof PermissionManager>
 
-// Mock schema
-const mockSchema: CanopyConfig['schema'] = [
-  {
-    type: 'collection',
-    name: 'Posts',
-    path: 'posts',
-    format: 'mdx',
-    fields: [
-      { name: 'title', type: 'string' },
-      { name: 'content', type: 'markdown' },
-    ],
-  },
-  {
-    type: 'collection',
-    name: 'Pages',
-    path: 'pages',
-    format: 'mdx',
-    fields: [
-      { name: 'title', type: 'string' },
-      { name: 'body', type: 'markdown' },
-    ],
-  },
-  {
-    type: 'entry',
-    name: 'About',
-    path: 'about.md',
-    format: 'mdx',
-    fields: [
-      { name: 'title', type: 'string' },
-      { name: 'bio', type: 'markdown' },
-    ],
-  },
-  {
-    type: 'entry',
-    name: 'Settings',
-    path: 'settings.json',
-    format: 'json',
-    fields: [{ name: 'siteName', type: 'string' }],
-  },
-]
+// Mock schema using proper RootCollectionConfig structure
+const mockSchema: RootCollectionConfig = {
+  collections: [
+    {
+      name: 'posts',
+      label: 'Posts',
+      path: 'posts',
+      entries: {
+        format: 'mdx',
+        fields: [
+          { name: 'title', type: 'string' },
+          { name: 'content', type: 'markdown' },
+        ],
+      },
+    },
+    {
+      name: 'pages',
+      label: 'Pages',
+      path: 'pages',
+      entries: {
+        format: 'mdx',
+        fields: [
+          { name: 'title', type: 'string' },
+          { name: 'body', type: 'markdown' },
+        ],
+      },
+    },
+  ],
+  singletons: [
+    {
+      name: 'about',
+      label: 'About',
+      path: 'about.md',
+      format: 'mdx',
+      fields: [
+        { name: 'title', type: 'string' },
+        { name: 'bio', type: 'markdown' },
+      ],
+    },
+    {
+      name: 'settings',
+      label: 'Settings',
+      path: 'settings.json',
+      format: 'json',
+      fields: [{ name: 'siteName', type: 'string' }],
+    },
+  ],
+}
 
 // Mock permissions
 const mockPermissions: PathPermission[] = [
@@ -211,66 +218,67 @@ export const ComplexPermissions: Story = {
   },
 }
 
+const largeSchema: RootCollectionConfig = {
+  collections: [
+    {
+      name: 'posts',
+      label: 'Posts',
+      path: 'posts',
+      entries: { format: 'mdx', fields: [{ name: 'title', type: 'string' }] },
+    },
+    {
+      name: 'pages',
+      label: 'Pages',
+      path: 'pages',
+      entries: { format: 'mdx', fields: [{ name: 'title', type: 'string' }] },
+    },
+    {
+      name: 'products',
+      label: 'Products',
+      path: 'products',
+      entries: { format: 'json', fields: [{ name: 'name', type: 'string' }] },
+    },
+    {
+      name: 'categories',
+      label: 'Categories',
+      path: 'categories',
+      entries: { format: 'json', fields: [{ name: 'name', type: 'string' }] },
+    },
+    {
+      name: 'authors',
+      label: 'Authors',
+      path: 'authors',
+      entries: { format: 'json', fields: [{ name: 'name', type: 'string' }] },
+    },
+  ],
+  singletons: [
+    {
+      name: 'about',
+      label: 'About',
+      path: 'about.md',
+      format: 'mdx',
+      fields: [{ name: 'title', type: 'string' }],
+    },
+    {
+      name: 'contact',
+      label: 'Contact',
+      path: 'contact.md',
+      format: 'mdx',
+      fields: [{ name: 'title', type: 'string' }],
+    },
+    {
+      name: 'settings',
+      label: 'Settings',
+      path: 'settings.json',
+      format: 'json',
+      fields: [{ name: 'siteName', type: 'string' }],
+    },
+  ],
+}
+
 export const LargeSchema: Story = {
   args: {
-    schema: [
-      {
-        type: 'collection',
-        name: 'Posts',
-        path: 'posts',
-        format: 'mdx',
-        fields: [{ name: 'title', type: 'string' }],
-      },
-      {
-        type: 'collection',
-        name: 'Pages',
-        path: 'pages',
-        format: 'mdx',
-        fields: [{ name: 'title', type: 'string' }],
-      },
-      {
-        type: 'collection',
-        name: 'Products',
-        path: 'products',
-        format: 'json',
-        fields: [{ name: 'name', type: 'string' }],
-      },
-      {
-        type: 'collection',
-        name: 'Categories',
-        path: 'categories',
-        format: 'json',
-        fields: [{ name: 'name', type: 'string' }],
-      },
-      {
-        type: 'collection',
-        name: 'Authors',
-        path: 'authors',
-        format: 'json',
-        fields: [{ name: 'name', type: 'string' }],
-      },
-      {
-        type: 'entry',
-        name: 'About',
-        path: 'about.md',
-        format: 'mdx',
-        fields: [{ name: 'title', type: 'string' }],
-      },
-      {
-        type: 'entry',
-        name: 'Contact',
-        path: 'contact.md',
-        format: 'mdx',
-        fields: [{ name: 'title', type: 'string' }],
-      },
-      {
-        type: 'entry',
-        name: 'Settings',
-        path: 'settings.json',
-        format: 'json',
-        fields: [{ name: 'siteName', type: 'string' }],
-      },
-    ],
+    schema: largeSchema,
     contentTree: {
       path: 'content',
       name: 'content',
