@@ -1,9 +1,9 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useBranchManager, UseBranchManagerOptions, resetApiClient } from './useBranchManager'
+import { useBranchManager, UseBranchManagerOptions } from './useBranchManager'
 import type { BranchMetadata } from '../../types'
 import type { MockApiClient } from '../../api/__test__/mock-client'
-import { setupMockApiClient, setupMockLocation, setupMockHistory, setupMockConsole } from './__test__/test-utils'
+import { setupMockApiClient, setupMockLocation, setupMockHistory, setupMockConsole, createApiClientWrapper } from './__test__/test-utils'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -35,6 +35,7 @@ vi.mock('@mantine/modals', () => ({
 
 describe('useBranchManager', () => {
   let mockClient: MockApiClient
+  let wrapper: ReturnType<typeof createApiClientWrapper>
 
   const mockBranches: BranchMetadata[] = [
     {
@@ -68,7 +69,7 @@ describe('useBranchManager', () => {
 
   beforeEach(async () => {
     mockClient = await setupMockApiClient()
-    resetApiClient()
+    wrapper = createApiClientWrapper(mockClient)
 
     setupMockLocation()
     setupMockHistory()
@@ -85,7 +86,7 @@ describe('useBranchManager', () => {
       data: { branches: [] },
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions))
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     expect(result.current.branchName).toBe('main')
     expect(result.current.branches).toEqual([])
@@ -98,7 +99,7 @@ describe('useBranchManager', () => {
       data: { branches: mockBranches },
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions))
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     await waitFor(() => {
       expect(result.current.branches).toEqual(mockBranches)
@@ -115,7 +116,7 @@ describe('useBranchManager', () => {
       status: 404,
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions))
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     await waitFor(() => {
       expect(result.current.branches).toEqual([])
@@ -129,7 +130,7 @@ describe('useBranchManager', () => {
       status: 500,
     })
 
-    renderHook(() => useBranchManager(defaultOptions))
+    renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     await waitFor(() => {
       expect(mockSetBusy).toHaveBeenCalledWith(false)
@@ -145,7 +146,7 @@ describe('useBranchManager', () => {
       data: { branches: mockBranches },
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions))
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     await waitFor(() => {
       expect(result.current.currentBranch).toEqual(mockBranches[0])
@@ -171,7 +172,7 @@ describe('useBranchManager', () => {
       status: 200,
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions))
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     await waitFor(() => {
       expect(result.current.branches).toHaveLength(2)
@@ -200,7 +201,7 @@ describe('useBranchManager', () => {
       error: 'Submit failed',
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions))
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     await waitFor(() => {
       expect(result.current.branches).toHaveLength(2)
@@ -239,7 +240,7 @@ describe('useBranchManager', () => {
       status: 200,
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions))
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     await waitFor(() => {
       expect(result.current.branches).toHaveLength(2)
@@ -270,7 +271,7 @@ describe('useBranchManager', () => {
       status: 200,
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions))
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     await waitFor(() => {
       expect(result.current.branches).toHaveLength(2)
@@ -296,7 +297,7 @@ describe('useBranchManager', () => {
         data: { branches: mockBranches },
       })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions))
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     await waitFor(() => {
       expect(result.current.branches).toHaveLength(2)
@@ -317,7 +318,7 @@ describe('useBranchManager', () => {
       data: { branches: mockBranches },
     })
 
-    renderHook(() => useBranchManager(defaultOptions))
+    renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     await waitFor(() => {
       expect(window.history.replaceState).toHaveBeenCalled()
@@ -335,7 +336,7 @@ describe('useBranchManager', () => {
       data: { branches: mockBranches },
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions))
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     await waitFor(() => {
       expect(result.current.branches).toHaveLength(2)
@@ -349,7 +350,7 @@ describe('useBranchManager', () => {
     const { error, restore } = setupMockConsole(['error'])
     mockClient.branches.list.mockRejectedValueOnce(new Error('Network error'))
 
-    renderHook(() => useBranchManager(defaultOptions))
+    renderHook(() => useBranchManager(defaultOptions), { wrapper })
 
     await waitFor(() => {
       expect(error).toHaveBeenCalled()

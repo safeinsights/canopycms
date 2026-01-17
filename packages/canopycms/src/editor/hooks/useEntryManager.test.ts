@@ -1,9 +1,9 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useEntryManager, resetApiClient } from './useEntryManager'
+import { useEntryManager } from './useEntryManager'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { MockApiClient } from '../../api/__test__/mock-client'
-import { setupMockApiClient, setupMockLocation, setupMockHistory } from './__test__/test-utils'
+import { setupMockApiClient, setupMockLocation, setupMockHistory, createApiClientWrapper } from './__test__/test-utils'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -23,6 +23,7 @@ vi.mock('@mantine/notifications', () => ({
 
 describe('useEntryManager', () => {
   let mockClient: MockApiClient
+  let wrapper: ReturnType<typeof createApiClientWrapper>
 
   const mockEntry: EditorEntry = {
     id: 'entry1',
@@ -76,7 +77,7 @@ describe('useEntryManager', () => {
 
   beforeEach(async () => {
     mockClient = await setupMockApiClient()
-    resetApiClient()
+    wrapper = createApiClientWrapper(mockClient)
 
     setupMockLocation()
     setupMockHistory()
@@ -87,7 +88,7 @@ describe('useEntryManager', () => {
   })
 
   it('initializes with provided entries and selects first entry', () => {
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     expect(result.current.entries).toEqual([mockEntry])
     expect(result.current.selectedId).toBe('entry1')
@@ -95,15 +96,16 @@ describe('useEntryManager', () => {
   })
 
   it('uses initialSelectedId when provided', () => {
-    const { result } = renderHook(() =>
-      useEntryManager({ ...defaultOptions, initialSelectedId: 'entry1' })
+    const { result } = renderHook(
+      () => useEntryManager({ ...defaultOptions, initialSelectedId: 'entry1' }),
+      { wrapper }
     )
 
     expect(result.current.selectedId).toBe('entry1')
   })
 
   it('builds collectionById map correctly', () => {
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     expect(result.current.collectionById.get('posts')).toEqual(mockCollections[0])
   })
@@ -116,7 +118,7 @@ describe('useEntryManager', () => {
       data: mockData as any, // Mock uses simplified format that normalizeContentPayload handles
     })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     const loaded = await result.current.loadEntry(mockEntry)
 
@@ -130,7 +132,7 @@ describe('useEntryManager', () => {
       status: 404,
     })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     await expect(result.current.loadEntry(mockEntry)).rejects.toThrow('Load failed: 404')
   })
@@ -144,7 +146,7 @@ describe('useEntryManager', () => {
       data: mockResponse as any, // Mock uses simplified format that normalizeContentPayload handles
     })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     const saved = await result.current.saveEntry(mockEntry, mockValue)
 
@@ -165,7 +167,7 @@ describe('useEntryManager', () => {
       status: 500,
     })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     await expect(result.current.saveEntry(mockEntry, {})).rejects.toThrow('Save failed: 500')
   })
@@ -192,7 +194,7 @@ describe('useEntryManager', () => {
         },
       })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     await act(async () => {
       await result.current.refreshEntries()
@@ -224,7 +226,7 @@ describe('useEntryManager', () => {
         },
       })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     await act(async () => {
       await result.current.refreshEntries()
@@ -259,7 +261,7 @@ describe('useEntryManager', () => {
       },
     })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     await act(async () => {
       await result.current.handleCreateEntry('posts')
@@ -279,7 +281,7 @@ describe('useEntryManager', () => {
   it('does not create entry when prompt is cancelled', async () => {
     window.prompt = vi.fn(() => null)
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     await act(async () => {
       await result.current.handleCreateEntry('posts')
@@ -299,8 +301,9 @@ describe('useEntryManager', () => {
       },
     ]
 
-    const { result } = renderHook(() =>
-      useEntryManager({ ...defaultOptions, collections: entryCollections })
+    const { result } = renderHook(
+      () => useEntryManager({ ...defaultOptions, collections: entryCollections }),
+      { wrapper }
     )
 
     await act(async () => {
@@ -312,7 +315,7 @@ describe('useEntryManager', () => {
   })
 
   it('toggles navigator open state', () => {
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     expect(result.current.navigatorOpen).toBe(false)
 
@@ -324,7 +327,7 @@ describe('useEntryManager', () => {
   })
 
   it('updates selectedId and syncs to URL', () => {
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     act(() => {
       result.current.setSelectedId('entry1')
@@ -338,6 +341,7 @@ describe('useEntryManager', () => {
     const entries = [mockEntry, { ...mockEntry, id: 'entry2' }]
     const { result, rerender } = renderHook((props) => useEntryManager(props), {
       initialProps: { ...defaultOptions, initialEntries: entries },
+      wrapper,
     })
 
     act(() => {
@@ -360,7 +364,7 @@ describe('useEntryManager', () => {
   it('reads entry from URL parameter on mount', () => {
     window.location.search = '?entry=entry1'
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions))
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     waitFor(() => {
       expect(result.current.selectedId).toBe('entry1')
@@ -387,6 +391,7 @@ describe('useEntryManager', () => {
       (props) => useEntryManager(props),
       {
         initialProps: { ...defaultOptions, initialEntries: [] },
+        wrapper,
       }
     )
 
@@ -419,8 +424,9 @@ describe('useEntryManager', () => {
       slug: 'entry2',
     }
 
-    const { result } = renderHook(() =>
-      useEntryManager({ ...defaultOptions, initialEntries: [entry1, entry2] })
+    const { result } = renderHook(
+      () => useEntryManager({ ...defaultOptions, initialEntries: [entry1, entry2] }),
+      { wrapper }
     )
 
     // Should fall back to first entry since URL entry doesn't exist
@@ -447,8 +453,9 @@ describe('useEntryManager', () => {
     }
 
     // Start with entries already loaded (simulates client-side navigation)
-    renderHook(() =>
-      useEntryManager({ ...defaultOptions, initialEntries: [entry1, entry2] })
+    renderHook(
+      () => useEntryManager({ ...defaultOptions, initialEntries: [entry1, entry2] }),
+      { wrapper }
     )
 
     // Wait for sync to complete
@@ -482,8 +489,9 @@ describe('useEntryManager', () => {
       },
     })
 
-    const { result } = renderHook(() =>
-      useEntryManager({ ...defaultOptions, initialEntries: [entry1] })
+    const { result } = renderHook(
+      () => useEntryManager({ ...defaultOptions, initialEntries: [entry1] }),
+      { wrapper }
     )
 
     // Should preserve selection from URL on initial mount, not clear it

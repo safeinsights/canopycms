@@ -1,21 +1,7 @@
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
 import { Text } from '@mantine/core'
-import { createApiClient } from '../../api'
-
-// Lazy singleton - created on first access to pick up any fetch mocks in tests
-let apiClient: ReturnType<typeof createApiClient> | null = null
-function getApiClient() {
-  if (!apiClient) {
-    apiClient = createApiClient()
-  }
-  return apiClient
-}
-
-// For testing: reset the singleton to pick up new fetch mocks
-export function resetApiClient() {
-  apiClient = null
-}
+import { useApiClient } from '../context'
 
 export interface UseBranchActionsOptions {
   branchName: string
@@ -48,6 +34,8 @@ export interface UseBranchActionsReturn {
  * ```
  */
 export function useBranchActions(options: UseBranchActionsOptions): UseBranchActionsReturn {
+  const apiClient = useApiClient()
+
   // Helper: Perform branch switch with URL update
   const performBranchSwitch = (next: string) => {
     // Update branchName state - hooks will react:
@@ -100,7 +88,7 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
 
     // Create the branch via API
     try {
-      const result = await getApiClient().branches.create({
+      const result = await apiClient.branches.create({
         branch: branch.name,
         title: branch.title,
         description: branch.description,

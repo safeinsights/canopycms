@@ -1,21 +1,7 @@
 import { useEffect, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { PathPermission } from '../../config'
-import { createApiClient } from '../../api'
-
-// Lazy singleton - created on first access to pick up any fetch mocks in tests
-let apiClient: ReturnType<typeof createApiClient> | null = null
-function getApiClient() {
-  if (!apiClient) {
-    apiClient = createApiClient()
-  }
-  return apiClient
-}
-
-// For testing: reset the singleton to pick up new fetch mocks
-export function resetApiClient() {
-  apiClient = null
-}
+import { useApiClient } from '../context'
 
 export interface UsePermissionManagerOptions {
   /**
@@ -58,13 +44,14 @@ export interface UsePermissionManagerReturn {
 export function usePermissionManager(
   options: UsePermissionManagerOptions
 ): UsePermissionManagerReturn {
+  const apiClient = useApiClient()
   const [permissionsData, setPermissionsData] = useState<PathPermission[]>([])
   const [permissionsLoading, setPermissionsLoading] = useState(false)
 
   const loadPermissions = async () => {
     setPermissionsLoading(true)
     try {
-      const result = await getApiClient().permissions.get()
+      const result = await apiClient.permissions.get()
       if (!result.ok) throw new Error('Failed to load permissions')
       setPermissionsData(result.data?.permissions ?? [])
     } catch (err) {
@@ -77,7 +64,7 @@ export function usePermissionManager(
 
   const handleSavePermissions = async (permissions: PathPermission[]) => {
     try {
-      const result = await getApiClient().permissions.update({ permissions })
+      const result = await apiClient.permissions.update({ permissions })
       if (!result.ok) {
         throw new Error(result.error || 'Failed to save permissions')
       }
@@ -96,7 +83,7 @@ export function usePermissionManager(
 
   const handleListGroups = async () => {
     try {
-      const result = await getApiClient().permissions.listGroups()
+      const result = await apiClient.permissions.listGroups()
       if (!result.ok) return []
       return result.data?.groups ?? []
     } catch (err) {

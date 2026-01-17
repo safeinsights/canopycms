@@ -3,21 +3,7 @@ import { notifications } from '@mantine/notifications'
 import type { CommentThread } from '../../comment-store'
 import type { EditorEntry } from '../Editor'
 import { normalizeCanopyPath } from '../canopy-path'
-import { createApiClient } from '../../api'
-
-// Lazy singleton - created on first access to pick up any fetch mocks in tests
-let apiClient: ReturnType<typeof createApiClient> | null = null
-function getApiClient() {
-  if (!apiClient) {
-    apiClient = createApiClient()
-  }
-  return apiClient
-}
-
-// For testing: reset the singleton to pick up new fetch mocks
-export function resetApiClient() {
-  apiClient = null
-}
+import { useApiClient } from '../context'
 
 export interface UseCommentSystemOptions {
   /**
@@ -120,6 +106,7 @@ export interface UseCommentSystemReturn {
  * ```
  */
 export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSystemReturn {
+  const apiClient = useApiClient()
   const [comments, setComments] = useState<CommentThread[]>([])
   const [focusedFieldPath, setFocusedFieldPath] = useState<string | undefined>(undefined)
   const [highlightThreadId, setHighlightThreadId] = useState<string | undefined>(undefined)
@@ -133,7 +120,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   const loadComments = async (branch: string) => {
     if (!branch) return
     try {
-      const result = await getApiClient().comments.list({ branch })
+      const result = await apiClient.comments.list({ branch })
       if (!result.ok) {
         console.error('Failed to load comments:', result.status)
         return
@@ -155,7 +142,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   ) => {
     if (!options.branchName) return
     try {
-      const result = await getApiClient().comments.add(
+      const result = await apiClient.comments.add(
         { branch: options.branchName },
         {
           text,
@@ -177,7 +164,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   const handleResolveThread = async (threadId: string) => {
     if (!options.branchName) return
     try {
-      const result = await getApiClient().comments.resolve({ branch: options.branchName, threadId })
+      const result = await apiClient.comments.resolve({ branch: options.branchName, threadId })
       if (!result.ok) throw new Error('Failed to resolve thread')
       await loadComments(options.branchName)
       // Branch summaries auto-update via useMemo watching comments

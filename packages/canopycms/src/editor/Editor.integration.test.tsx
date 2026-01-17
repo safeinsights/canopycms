@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 
 import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
+import { ApiClientProvider } from './context'
 
 // Mock @mantine/modals
 vi.mock('@mantine/modals', () => ({
@@ -126,14 +127,16 @@ describe('Editor integration', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     render(
-      <Editor
-        entries={[entry]}
-        title="Test Editor"
-        branchName="main"
-        operatingMode="dev"
-        themeOptions={{}}
-        configSchema={{ collections: [], singletons: [] }}
-      />
+      <ApiClientProvider>
+        <Editor
+          entries={[entry]}
+          title="Test Editor"
+          branchName="main"
+          operatingMode="dev"
+          themeOptions={{}}
+          configSchema={{ collections: [], singletons: [] }}
+        />
+      </ApiClientProvider>
     )
 
     // Wait for the entry data to be loaded and form to render with loaded value

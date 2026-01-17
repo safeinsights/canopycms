@@ -1,8 +1,8 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { usePermissionManager, resetApiClient } from './usePermissionManager'
+import { usePermissionManager } from './usePermissionManager'
 import type { MockApiClient } from '../../api/__test__/mock-client'
-import { setupMockApiClient, setupMockConsole } from './__test__/test-utils'
+import { setupMockApiClient, setupMockConsole, createApiClientWrapper } from './__test__/test-utils'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -22,10 +22,11 @@ vi.mock('@mantine/notifications', () => ({
 
 describe('usePermissionManager', () => {
   let mockClient: MockApiClient
+  let wrapper: ReturnType<typeof createApiClientWrapper>
 
   beforeEach(async () => {
     mockClient = await setupMockApiClient()
-    resetApiClient()
+    wrapper = createApiClientWrapper(mockClient)
   })
 
   afterEach(() => {
@@ -33,7 +34,7 @@ describe('usePermissionManager', () => {
   })
 
   it('initializes with empty permissions', () => {
-    const { result } = renderHook(() => usePermissionManager({ isOpen: false }))
+    const { result } = renderHook(() => usePermissionManager({ isOpen: false }), { wrapper })
 
     expect(result.current.permissionsData).toEqual([])
     expect(result.current.permissionsLoading).toBe(false)
@@ -51,7 +52,7 @@ describe('usePermissionManager', () => {
       data: { permissions: mockPermissions },
     })
 
-    const { result } = renderHook(() => usePermissionManager({ isOpen: true }))
+    const { result } = renderHook(() => usePermissionManager({ isOpen: true }), { wrapper })
 
     // Should start loading
     expect(result.current.permissionsLoading).toBe(true)
@@ -71,7 +72,7 @@ describe('usePermissionManager', () => {
       status: 500,
     })
 
-    const { result } = renderHook(() => usePermissionManager({ isOpen: true }))
+    const { result } = renderHook(() => usePermissionManager({ isOpen: true }), { wrapper })
 
     await waitFor(() => {
       expect(result.current.permissionsLoading).toBe(false)
@@ -91,7 +92,7 @@ describe('usePermissionManager', () => {
       data: { permissions: [] },
     })
 
-    const { result } = renderHook(() => usePermissionManager({ isOpen: true }))
+    const { result } = renderHook(() => usePermissionManager({ isOpen: true }), { wrapper })
 
     await waitFor(() => {
       expect(result.current.permissionsLoading).toBe(false)
@@ -126,7 +127,7 @@ describe('usePermissionManager', () => {
       error: 'Save failed',
     })
 
-    const { result } = renderHook(() => usePermissionManager({ isOpen: false }))
+    const { result } = renderHook(() => usePermissionManager({ isOpen: false }), { wrapper })
 
     await expect(result.current.handleSavePermissions([])).rejects.toThrow('Save failed')
   })
@@ -143,7 +144,7 @@ describe('usePermissionManager', () => {
       data: { groups: mockGroups },
     })
 
-    const { result } = renderHook(() => usePermissionManager({ isOpen: false }))
+    const { result } = renderHook(() => usePermissionManager({ isOpen: false }), { wrapper })
 
     const groups = await result.current.handleListGroups()
 
@@ -157,7 +158,7 @@ describe('usePermissionManager', () => {
       status: 500,
     })
 
-    const { result } = renderHook(() => usePermissionManager({ isOpen: false }))
+    const { result } = renderHook(() => usePermissionManager({ isOpen: false }), { wrapper })
 
     const groups = await result.current.handleListGroups()
 
@@ -165,7 +166,7 @@ describe('usePermissionManager', () => {
   })
 
   it('does not load permissions when isOpen is false', async () => {
-    const { result } = renderHook(() => usePermissionManager({ isOpen: false }))
+    const { result } = renderHook(() => usePermissionManager({ isOpen: false }), { wrapper })
 
     expect(result.current.permissionsLoading).toBe(false)
     expect(mockClient.permissions.get).not.toHaveBeenCalled()
@@ -180,7 +181,7 @@ describe('usePermissionManager', () => {
       data: { permissions: mockPermissions },
     })
 
-    const { result } = renderHook(() => usePermissionManager({ isOpen: false }))
+    const { result } = renderHook(() => usePermissionManager({ isOpen: false }), { wrapper })
 
     await result.current.loadPermissions()
 
