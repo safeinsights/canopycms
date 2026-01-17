@@ -37,10 +37,32 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#operating-modes) for detailed mode behavio
 
 See [DEVELOPING.md](DEVELOPING.md) for detailed development patterns and practices.
 
+## Code Organization
+
+The core package (`packages/canopycms/src/`) is organized into focused modules:
+- `authorization/` - Unified access control (branch + path permissions, groups)
+- `config/` - Configuration types, schemas, validation
+- `schema/` - Schema loading and resolution
+- `paths/` - Path utilities with branded types (LogicalPath, PhysicalPath, CollectionPath)
+- `editor/` - React editor components and hooks
+- `operating-mode/` - Operating mode strategies (prod, prod-sim, dev)
+- `api/` - API handlers (see [api/AGENTS.md](packages/canopycms/src/api/AGENTS.md) for API development guidelines)
+- `middleware/` - API middleware patterns (branch access guards)
+- `validation/` - Validation utilities (field traversal, reference validation)
+- `utils/` - Shared utilities (error handling, debug)
+
+Top-level files (intentionally flat for discoverability): services.ts, content-store.ts, git-manager.ts, branch-registry.ts, etc.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md#module-structure) for detailed module documentation.
+
+## Subdirectory Guidelines
+- [packages/canopycms/src/api/AGENTS.md](packages/canopycms/src/api/AGENTS.md) - API endpoint development, client generation, middleware patterns
+- [apps/example1/AGENTS.md](apps/example1/AGENTS.md) - Example app integration guidelines
+
 ## Working Agreements
 - Use TypeScript/React; keep code ASCII; prefer `rg` for search and `apply_patch` for edits. Avoid destructive git commands.
 - Prefer using popular, maintained libraries over bespoke code.
-- Avoid `any` unless documented.
+- Avoid `any` - use `unknown` with type guards. Use `getErrorMessage()` and `isNodeError()` from `utils/error.ts` for error handling.
 - IMPORTANT: This is new code that has not been used by others yet, so no need to maintain interfaces for legacy uses, no need for migrations.
 - Primary target is Next.js websites, but will expand to others.
 - Learn from `reference/` but do not edit its contents.
@@ -54,9 +76,11 @@ See [DEVELOPING.md](DEVELOPING.md) for detailed development patterns and practic
 
 ## Quality Checks
 See [DEVELOPING.md](DEVELOPING.md#quality-checks) for testing and typecheck requirements. Claude subagents are available:
-- `.claude/agents/test.md` - Run tests and fix failures
+- `.claude/agents/test.md` - Run tests and fix failures (949+ tests, 98%+ coverage)
 - `.claude/agents/typecheck.md` - Type checking
 - `.claude/agents/review.md` - Code review checklist
+- `.claude/agents/debug.md` - Debugging and issue investigation
+- `.claude/agents/codebase-guide.md` - Codebase navigation and understanding
 
 ## Adopter Integration Constraints
 Keep adopter effort minimal: only expose config + Editor + one catch-all API route. See [README.md](README.md#adopter-integration) for practical integration steps.

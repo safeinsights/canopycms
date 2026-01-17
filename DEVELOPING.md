@@ -2,6 +2,225 @@
 
 This document contains development guidelines and patterns for contributors to CanopyCMS.
 
+## Code Patterns from Major Refactoring (Phases 1-10)
+
+The codebase underwent a major refactoring to establish consistent patterns. Contributors should follow these patterns.
+
+### Error Handling
+
+Use `catch (err: unknown)` with utilities from `src/utils/error.ts`:
+
+```typescript
+import { getErrorMessage, isNotFoundError, isNodeError } from './utils/error'
+
+try {
+  await riskyOperation()
+} catch (err: unknown) {
+  // Check for expected error conditions
+  if (isNotFoundError(err)) {
+    return null // File not found is expected
+  }
+
+  // Check for permission errors
+  if (isNodeError(err) && err.code === 'EACCES') {
+    throw new Error(`Permission denied: ${getErrorMessage(err)}`)
+  }
+
+  // Re-throw with context
+  throw new Error(`Operation failed: ${getErrorMessage(err)}`)
+}
+```
+
+**Available utilities:**
+
+| Function | Purpose |
+|----------|---------|
+| `getErrorMessage(err)` | Extract message string from unknown error |
+| `isNodeError(err)` | Type guard for Node.js errors with `code` property |
+| `isNotFoundError(err)` | Check if error is ENOENT (file not found) |
+| `isPermissionError(err)` | Check if error is EACCES (permission denied) |
+
+**Why this pattern:** TypeScript's `unknown` type is safer than `any` for caught errors. These utilities provide type-safe access to error properties without casting.
+
+### Path Handling with Branded Types
+
+Use branded types from `src/paths/` for type-safe path handling:
+
+```typescript
+// Client code - import directly from normalize to avoid server-only modules
+import { createLogicalPath, normalizeCollectionId } from './paths/normalize'
+
+// Server code - can use the barrel export
+import {
+  createLogicalPath,
+  createPhysicalPath,
+  validateAndNormalizePath,
+  type LogicalPath,
+  type PhysicalPath,
+  type CollectionPath
+} from './paths'
+```
+
+**Path types:**
+
+| Type | Purpose | Example |
+|------|---------|---------|
+| `LogicalPath` | Content-relative paths | `content/posts/my-post` |
+| `PhysicalPath` | Filesystem paths with embedded IDs | `content/posts/my-post.abc123.mdx` |
+| `CollectionPath` | Collection identifiers | `posts` or `blog/posts` |
+
+**Creating paths:**
+
+```typescript
+// Validates and creates a logical path (throws on traversal sequences)
+const path = createLogicalPath('content', 'posts', 'my-post')
+
+// Creates a physical path (for files with embedded IDs)
+const filePath = createPhysicalPath('content', 'posts', 'my-post.ABC123.mdx')
+
+// Normalize collection ID (strips content root if present)
+const collectionId = normalizeCollectionId('content/posts') // Returns 'posts'
+```
+
+**Client/server boundary:** Client code must import from `./paths/normalize` directly because the barrel export (`./paths`) includes server-only modules that use Node.js `path`. This prevents bundler errors when code is used in the browser.
+
+### Field Traversal
+
+Use the shared utility for schema-aware data traversal:
+
+```typescript
+import { traverseFields, findFieldsByType } from './validation/field-traversal'
+
+// Find all reference fields in nested data
+const refs = findFieldsByType(schema.fields, data, 'reference')
+// Returns: [{ field, value, path }, ...]
+
+// Custom traversal with visitor pattern
+const results = traverseFields(schema.fields, data, ({ field, value, path }) => {
+  if (field.type === 'reference' && value) {
+    return [{ fieldPath: path, ids: Array.isArray(value) ? value : [value] }]
+  }
+  return []
+})
+```
+
+**Use cases:**
+- Reference validation (checking all referenced IDs exist)
+- Reference resolution (fetching referenced content)
+- Data transformation (normalizing nested structures)
+
+The traversal handles objects, blocks (with `_type` discriminator), and arrays automatically.
+
+### Authorization
+
+Use the unified authorization module at `src/authorization/`:
+
+```typescript
+import { checkContentAccess, isAdmin, isPrivileged } from './authorization'
+
+// Check if user can perform an action on content
+const result = await checkContentAccess(
+  deps,           // { loadPermissionsFile, loadGroupsFile }
+  context,        // { config }
+  branchRoot,     // Path to branch workspace
+  'content/posts/post.mdx',
+  user,
+  'edit'          // 'read' | 'edit'
+)
+
+if (result.allowed) {
+  // Proceed with operation
+} else {
+  // result.reason explains why access was denied
+}
+
+// Quick admin check
+if (isAdmin(user)) {
+  // User is in Admins group
+}
+
+// Check if user can review/approve (admin or reviewer)
+if (isPrivileged(user)) {
+  // User can perform privileged operations
+}
+```
+
+**Module structure:**
+- `content.ts` - Combined branch + path access (recommended entry point)
+- `branch.ts` - Branch-level access control
+- `path.ts` - Path-level permissions
+- `helpers.ts` - Utility functions (`isAdmin`, `isReviewer`, `isPrivileged`)
+- `permissions/` - Permissions file schema and loader
+- `groups/` - Groups file schema and loader
+
+### State Management (Editor Components)
+
+React Context provides dependency injection for editor components:
+
+**API Client Context:**
+
+```typescript
+import { ApiClientProvider, useApiClient } from './context/ApiClientContext'
+
+// In your test or app root
+<ApiClientProvider client={mockClient}>
+  <YourComponent />
+</ApiClientProvider>
+
+// In components
+function MyComponent() {
+  const client = useApiClient()
+  // Use client for API calls
+}
+```
+
+**Editor State Context:**
+
+```typescript
+import { EditorStateProvider, useEditorState, useEditorModals } from './context/EditorStateContext'
+
+// Provides loading states, modal states, preview data
+<EditorStateProvider>
+  <Editor />
+</EditorStateProvider>
+
+// In components
+function Toolbar() {
+  const { openModal, closeModal, navigator } = useEditorModals()
+  // ...
+}
+```
+
+**Benefits:**
+- Clean testing via providers (no global mutable state)
+- Explicit dependencies
+- Reduced prop drilling
+
+### Module Organization
+
+**Modules with subdirectories** (grouped for complexity):
+
+| Directory | Purpose |
+|-----------|---------|
+| `authorization/` | Access control (branch + path permissions) |
+| `config/` | Schema definitions and validation |
+| `paths/` | Path handling and validation |
+| `schema/` | Schema registry and resolution |
+| `editor/` | React components and hooks |
+| `api/` | API handlers and client |
+
+**Top-level files** (flat for discoverability):
+
+| File | Purpose |
+|------|---------|
+| `content-store.ts` | Content reading/writing |
+| `git-manager.ts` | Git operations |
+| `branch-workspace.ts` | Branch workspace management |
+| `comment-store.ts` | Comment persistence |
+| `content-id-index.ts` | ID-to-path mapping |
+
+**Convention:** Group into directories when a module has multiple related files (types, helpers, tests). Keep top-level for single-file modules that are frequently imported.
+
 ## Architecture Patterns
 
 ### Framework-Agnostic Core
@@ -1075,6 +1294,16 @@ git reset HEAD .canopy-prod-sim/
 
 ## Testing
 
+### Test Coverage
+
+The codebase maintains high test coverage (949+ tests, 98%+ coverage):
+
+| Test Type | Location | Purpose |
+|-----------|----------|---------|
+| Unit tests | `src/**/__tests__/*.test.ts` | Test individual functions/modules |
+| Component tests | `src/editor/**/*.test.tsx` | Test React components with jsdom |
+| Integration tests | `src/__integration__/**/*.test.ts` | Test complete workflows |
+
 ### Running Tests
 
 ```bash
@@ -1086,6 +1315,60 @@ cd packages/canopycms && npm test
 
 # Run a specific test file
 cd packages/canopycms && npx vitest run src/github-service.test.ts
+
+# Run tests matching a pattern
+cd packages/canopycms && npx vitest run --grep "authorization"
+
+# Run with coverage
+cd packages/canopycms && npx vitest run --coverage
+
+# Watch mode for development
+cd packages/canopycms && npx vitest
+```
+
+### Integration Test Structure
+
+Integration tests are in `src/__integration__/` with shared fixtures and utilities:
+
+```
+src/__integration__/
+  fixtures/
+    schemas.ts          # Shared test schemas
+    content-seeds.ts    # Sample content for tests
+  test-utils/
+    test-workspace.ts   # Creates isolated test workspaces
+    api-client.ts       # Test API client helpers
+    multi-user.ts       # Multi-user scenario helpers
+  errors/               # Error handling tests
+  permissions/          # Permission/authorization tests
+  validation/           # Input validation tests
+  workflows/            # End-to-end workflow tests
+```
+
+**Creating test workspaces:**
+
+```typescript
+import { createTestWorkspace } from '../__integration__/test-utils/test-workspace'
+
+describe('my integration test', () => {
+  let workspace: TestWorkspace
+
+  beforeEach(async () => {
+    workspace = await createTestWorkspace({
+      schema: BLOG_SCHEMA,
+      mode: 'prod-sim',
+    })
+  })
+
+  afterEach(async () => {
+    await workspace.cleanup()
+  })
+
+  it('does something with content', async () => {
+    // workspace.root - path to isolated workspace
+    // workspace.config - configured CanopyConfig
+  })
+})
 ```
 
 ### Working with Async Services

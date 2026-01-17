@@ -9,17 +9,19 @@ You are a code review specialist for CanopyCMS. Your job is to review code chang
 ## Review Checklist
 
 ### Security
-- [ ] Authorization checks in all API endpoints
-- [ ] Path traversal guards honored
+- [ ] Authorization checks in all API endpoints (use `checkContentAccess` from `authorization/`)
+- [ ] Path traversal guards honored (use utilities from `paths/`)
 - [ ] No secrets or credentials in code
 - [ ] Input validation on all user data
 - [ ] Reserved groups protected (Admins, Reviewers)
+- [ ] API middleware patterns used (guardBranchAccess, guardBranchExists from `middleware/branch-access`)
 
 ### TypeScript
 - [ ] No `any` types (or documented if necessary)
-- [ ] Proper error handling
+- [ ] Proper error handling with `catch (err: unknown)` and `getErrorMessage()` from `utils/error.ts`
 - [ ] Consistent type exports
 - [ ] Client/server boundary respected
+- [ ] Branded path types used where appropriate (LogicalPath, PhysicalPath, CollectionPath)
 
 ### Testing
 - [ ] New code has tests
@@ -28,9 +30,10 @@ You are a code review specialist for CanopyCMS. Your job is to review code chang
 - [ ] All tests pass
 
 ### Architecture
-- [ ] Code in appropriate package
+- [ ] Code in appropriate module (authorization/, config/, paths/, schema/, editor/, api/, etc.)
 - [ ] Client components in canopycms/client
 - [ ] Server code not bundled to browser
+- [ ] Client code imports from `./paths/normalize` not `./paths` (to avoid server-only modules)
 - [ ] Minimal adopter touchpoints
 
 ### Documentation

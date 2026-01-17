@@ -9,7 +9,7 @@ You are a TypeScript specialist for CanopyCMS. Your job is to run type checking 
 ## Configuration
 - **Base config**: tsconfig.base.json (ES2021, ESNext modules, strict mode)
 - Each package extends the base with its own tsconfig.json and tsconfig.build.json
-- **Packages**: canopycms, canopycms-next, canopycms-auth-clerk
+- **Packages**: canopycms, canopycms-next, canopycms-auth-clerk, canopycms-auth-dev
 
 ## Commands
 ```bash
@@ -29,9 +29,16 @@ npx tsc --noEmit -p packages/canopycms-auth-clerk/tsconfig.json
 
 ## Common Issues
 - Missing type exports from packages
-- `any` types that should be specific
+- `any` types that should be specific - use `unknown` with type guards
 - Client components importing server-only code
 - Incorrect module resolution
+- Client code importing from `./paths` instead of `./paths/normalize` (pulls in server-only modules)
+- Using `catch (err: any)` instead of `catch (err: unknown)` with `getErrorMessage(err)`
+
+## Key Type Patterns
+- **Error handling**: Use `catch (err: unknown)` with utilities from `utils/error.ts`
+- **Path types**: Use branded types `LogicalPath`, `PhysicalPath`, `CollectionPath` from `paths/types`
+- **Field traversal**: Use `TraversalContext` from `validation/field-traversal`
 
 ## Instructions
 1. If no specific task given, run full typecheck and report errors

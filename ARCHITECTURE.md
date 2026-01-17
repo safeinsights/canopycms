@@ -26,6 +26,107 @@ CanopyCMS is organized as a monorepo with separate packages for extensibility:
 
 This separation keeps the core framework-agnostic while allowing adapters to be minimal integration layers. All business logic lives in core—adapters only handle framework-specific concerns like extracting user identity from request contexts.
 
+## Module Structure
+
+The core package organizes code into focused modules, each with a single responsibility. This modular structure emerged from decomposing larger monolithic files into smaller, more maintainable units.
+
+### Modularized Domains
+
+**Authorization** - Unified access control combining branch and path permissions:
+- Branch-level access control (who can access which branches)
+- Path-level permissions (who can edit which content paths)
+- Combined content access checks (main entry point for authorization)
+- Helper functions for role checking (isAdmin, isReviewer, etc.)
+- File loaders for permissions and groups configuration
+
+**Configuration** - Configuration types, schemas, and validation:
+- Type definitions for all configuration options
+- Zod schemas organized by concern (field, collection, permissions, media)
+- Schema flattening utilities for O(1) path lookups
+- Validation and helper functions for config authoring
+
+**Schema** - Schema loading and resolution:
+- Meta file loader for `.collection.json` files
+- Reference resolution against schema registries
+- High-level resolver that combines loading and resolution
+
+**Paths** - Path utilities with branded types for type safety:
+- Branded types: `LogicalPath`, `PhysicalPath`, `CollectionPath`, `SanitizedBranchName`
+- Normalization utilities (client-safe and server-only variants)
+- Security validation for path traversal prevention
+- Branch workspace path resolution
+
+**Editor** - React components, hooks, and context providers:
+- Context providers for dependency injection (ApiClient, EditorState)
+- Extracted hooks for state management (branch, entry, draft, comment, permissions, groups)
+- Component subdirectories for permission-manager and group-manager utilities
+
+**API** - API handlers and middleware:
+- Route handlers for all API endpoints
+- Middleware patterns for common guards (branch access checking)
+- API client for editor-to-server communication
+- Settings helpers for mode-aware configuration storage
+
+**Operating Mode** - Strategy pattern for deployment modes:
+- Client-safe strategies (UI flags, simple configuration)
+- Client-unsafe strategies (file system operations, git integration)
+- Type definitions for strategy interfaces
+
+**Validation** - Content validation utilities:
+- Reference validator for checking content references
+- Deletion checker for referential integrity
+- Field traversal utilities for schema-aware content inspection
+
+**Utilities** - Shared utilities:
+- Type-safe error handling patterns
+- Debug logging utilities
+- Formatting helpers
+
+### Top-Level Files
+
+Some files remain at the source root because they represent core domain concepts that span multiple modules:
+
+**Branch Management:**
+- Branch metadata (per-branch state storage)
+- Branch registry (branch listing cache)
+- Branch workspace (workspace provisioning)
+- Settings branch utilities (mode-aware settings storage)
+
+**Content:**
+- Content ID index (bidirectional ID-to-path mapping)
+- Content reader (authenticated content access)
+- Content store (file-based content persistence)
+- Content types (content data structures)
+
+**Git:**
+- Git manager (low-level git operations)
+- GitHub service (GitHub API integration)
+
+**Core:**
+- Services (service container and factory)
+- Context (request context creation)
+- Types (shared type definitions)
+- User (user data structures)
+- ID generation
+
+**Other:**
+- Asset store (media file management)
+- Comment store (review comment persistence)
+- Reference resolver (content reference handling)
+- Settings workspace (settings file management)
+- Build mode (static generation detection)
+
+### Design Rationale
+
+**Why modularize?** The original codebase had several large files (600-1100+ lines) that made navigation difficult and created implicit coupling. Breaking these into focused modules with explicit exports improves:
+- Discoverability (clear module boundaries)
+- Testability (smaller units with defined interfaces)
+- Maintainability (changes are localized)
+
+**Why keep some files at root?** Files that represent core domain concepts used across many modules remain at the root to avoid deep import chains. These are stable abstractions that change infrequently.
+
+**Why branded types for paths?** Path handling is error-prone because different contexts need different path representations (logical content paths vs physical filesystem paths). Branded types make the compiler catch misuse at development time rather than runtime.
+
 ## Storage Architecture
 
 CanopyCMS is entirely file system based. There are no external databases, no Redis/Valkey caching servers, and no separate worker processes by default. This simplifies deployment and operations.
@@ -345,6 +446,31 @@ The API exposes collections and singletons through a unified interface:
 - Entries have a `slug`; singletons use empty string
 - Both have a `collectionId` pointing to their parent collection or path
 
+### API Middleware
+
+Common patterns in API handlers are extracted into middleware functions to reduce duplication and ensure consistent behavior.
+
+**Branch Access Guards**: The `guardBranchAccess` middleware extracts the common pattern of checking both branch existence and user access permissions. It returns either a success result with the branch context or an error response ready to be returned to the client.
+
+```
+// Before: duplicated in many handlers
+const branch = await ctx.services.branchRegistry.get(branchName)
+if (!branch) return ctx.json({ error: 'Branch not found' }, 404)
+const hasAccess = await checkBranchAccess(...)
+if (!hasAccess) return ctx.json({ error: 'Access denied' }, 403)
+
+// After: single middleware call
+const result = await guardBranchAccess(ctx, branchName)
+if (isBranchAccessError(result)) return result.response
+const { context } = result
+```
+
+**Guard Variants**:
+- `guardBranchAccess`: Checks both existence and user permissions (for most handlers)
+- `guardBranchExists`: Checks only existence (for handlers that do their own permission logic)
+
+This pattern reduces code duplication across API handlers while keeping the authorization logic visible and explicit.
+
 ### Editor Integration
 
 The editor uses simplified collection IDs (just the path, not including contentRoot):
@@ -511,25 +637,29 @@ No manual user management, no config imports, no auth logic. The context handles
 
 ## The Permission Model
 
-Access control uses three layers that all must pass:
+Access control uses three layers that all must pass. These are implemented in the unified authorization module.
 
 ### Layer 1: Branch Access
-Per-branch ACLs control who can access a branch. Branches can be restricted to specific users or groups. Admins and reviewers always have access.
+Per-branch ACLs control who can access a branch. Branches can be restricted to specific users or groups. Admins and reviewers always have access. Implemented in the `branch.ts` submodule.
 
 ### Layer 2: Path Permissions
-Glob patterns (e.g., `content/posts/**`) restrict who can edit specific content paths. First matching rule wins. Only admins bypass path rules.
+Glob patterns (e.g., `content/posts/**`) restrict who can edit specific content paths. First matching rule wins. Only admins bypass path rules. Implemented in the `path.ts` submodule.
 
 ### Layer 3: Content Access
-Combines branch and path checks into a single decision. Returns detailed denial reasons for debugging.
+Combines branch and path checks into a single decision. Returns detailed denial reasons for debugging. The `checkContentAccess` function in `content.ts` is the main entry point for most authorization checks.
 
 **Reserved groups** provide consistent roles:
 - **admins**: Full access to all operations
 - **reviewers**: Can review branches, request changes, approve PRs
 
+Helper functions (`isAdmin`, `isReviewer`, `isPrivileged`) provide convenient role checking.
+
 **Where permissions are stored:**
 - **Dev mode**: Settings in `.canopy-dev/groups.json` and `.canopy-dev/permissions.json` (gitignored, local development only)
 - **Prod/prod-sim modes**: Settings on orphan branch `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific)
 - Branch ACLs are stored in each branch's metadata file (`.canopy-meta/branch.json`)
+
+The `permissions/` and `groups/` subdirectories handle file schema definitions and loading logic for these configuration files.
 
 ## Git Operations Architecture
 
@@ -811,6 +941,32 @@ The editor provides a rich editing experience with schema-driven forms, block-ba
 
 **Live preview**: The editor can show a live preview of content changes. The preview is an iframe that loads your actual site pages, and the editor communicates with it via postMessage. When you edit a field, the preview updates immediately. Clicking on elements in the preview focuses the corresponding form field. This preview bridge enables real-time feedback without page reloads.
 
+### State Management
+
+The editor uses React Context for dependency injection and state management:
+
+**ApiClientContext**: Provides the API client instance to all editor components. This replaces lazy singletons with explicit dependency injection, improving testability and eliminating global state.
+
+**EditorStateContext**: Consolidates editor-wide state including:
+- Loading states (which operations are in progress)
+- Modal states (which dialogs are open)
+- Preview data (current preview state)
+
+This context-based architecture allows components to access shared state without prop drilling while maintaining clear boundaries for testing and state isolation.
+
+### Custom Hooks
+
+Complex state management logic is extracted into custom hooks:
+- **useBranchManager**: Branch selection and lifecycle management
+- **useEntryManager**: Entry CRUD operations
+- **useDraftManager**: Draft state and auto-save
+- **useCommentSystem**: Comment threading and resolution
+- **useGroupManager**: Group administration
+- **usePermissionManager**: Permission rule management
+- **useReferenceResolution**: Async reference data loading with caching
+
+This extraction keeps components focused on rendering while hooks encapsulate business logic and side effects.
+
 ### Live Preview Reference Resolution
 
 The live preview needs to display full referenced content (e.g., author names/data) instead of just reference IDs. This is accomplished through a synchronous resolution system with background caching.
@@ -934,6 +1090,28 @@ The `settings-helpers` pattern abstracts this branching logic so API handlers do
 ### Why three permission layers?
 Defense in depth. Branch access controls who can see a branch. Path permissions control what content they can edit. Combining them provides flexible policies: you might let someone access a branch but restrict them to certain content paths within it.
 
+### Why modularize into focused subdirectories?
+
+The codebase underwent a major refactoring to decompose large files (600-1100+ lines) into focused modules. This provides several benefits:
+
+**Improved navigation**: Instead of scrolling through a 1000-line file looking for a function, developers can navigate to a specific module with a clear name. The module index file serves as documentation of what the module provides.
+
+**Explicit dependencies**: When a module imports from another module, the dependency is visible. This makes the architecture easier to understand and helps prevent circular dependencies.
+
+**Testability**: Smaller modules with well-defined interfaces are easier to test in isolation. Mock boundaries become clearer.
+
+**Code ownership**: Different modules can have different owners or expertise requirements. Authorization logic can be reviewed by security-focused developers while UI components can be reviewed by frontend specialists.
+
+**Bundle optimization**: Client-safe code is separated from server-only code (e.g., `normalize.ts` vs `normalize-server.ts` in paths module). This prevents accidental inclusion of Node.js APIs in browser bundles.
+
+**Examples of decomposition**:
+- Authorization: Branch access, path permissions, and content access separated into focused files with a unified entry point
+- Configuration: Zod schemas organized by concern (field, collection, permissions, media)
+- Paths: Branded types, normalization, validation, and branch resolution in separate files
+- Editor hooks: Each major feature (branch, entry, draft, comments, etc.) has its own hook
+
+The tradeoff is slightly more complex import paths, but the improved maintainability is worth it for a codebase of this size.
+
 ### Why separate packages for auth and framework adapters?
 Keeps the core framework-agnostic. Adopters only install what they need. Testing is simpler because the core doesn't depend on Next.js or Clerk. New frameworks and auth providers can be supported without modifying core code.
 
@@ -1049,6 +1227,25 @@ Build mode solves this by:
 
 This means you write `await canopy.read(...)` once, and it works in both authenticated runtime requests and build-time static generation.
 
+### Why React Context for editor state management?
+
+The editor previously used module-level singletons for shared state like the API client. This approach has several problems:
+- Hard to test (global state persists between tests)
+- No isolation between editor instances (if you had multiple)
+- Hidden dependencies (imports don't show the dependency)
+
+React Context provides explicit dependency injection:
+- **ApiClientContext**: Provides the API client to all editor components
+- **EditorStateContext**: Provides shared loading/modal/preview state
+
+**Benefits:**
+- Testable: Wrap components in test providers with mock implementations
+- Explicit: Dependencies are visible in the component tree
+- Isolated: Each provider instance has its own state
+- Standard: Uses React's built-in patterns
+
+**Custom hooks for complex logic**: State management logic is extracted from components into custom hooks (useBranchManager, useEntryManager, etc.). This keeps components focused on rendering while hooks encapsulate side effects and business logic.
+
 ### Why minimal framework adapters?
 
 Keeping adapters thin (like the ~10 line Next.js user extraction) provides several benefits:
@@ -1069,6 +1266,31 @@ Keeping adapters thin (like the ~10 line Next.js user extraction) provides sever
 - Confidence that adapters are just thin wrappers, not reimplementations
 
 If adapters contained business logic, we'd risk behavior divergence, duplicate maintenance, and harder-to-debug issues.
+
+### Why branded types for paths?
+
+Path handling is notoriously error-prone because different contexts need different path representations. A "logical" content path like `posts/hello` means something different from a "physical" filesystem path like `/var/data/branches/feature-1/content/posts/hello.json`.
+
+The paths module uses TypeScript branded types to distinguish between:
+- **LogicalPath**: Content-relative paths used in URLs and APIs
+- **PhysicalPath**: Absolute filesystem paths
+- **CollectionPath**: Paths that identify collections
+- **SanitizedBranchName**: Branch names that have passed security validation
+
+These are nominal types (string with a brand) that the compiler tracks separately. Passing a `LogicalPath` where a `PhysicalPath` is expected causes a compile error.
+
+**Benefits:**
+- Catch path misuse at compile time, not runtime
+- Self-documenting function signatures
+- Prevents accidental path concatenation errors
+- Makes security-sensitive code more reviewable
+
+**Tradeoffs:**
+- Requires explicit conversion between path types
+- Slightly more verbose at boundaries
+- Need to maintain type guards and conversion functions
+
+The safety benefits outweigh the verbosity cost, especially for security-sensitive path operations where a bug could lead to path traversal vulnerabilities.
 
 ### Why filename-embedded content IDs?
 
