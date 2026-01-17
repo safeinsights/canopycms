@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { checkBranchAccessWithDefault, canPerformWorkflowAction } from './authz'
-import type { BranchContext } from './types'
-import { RESERVED_GROUPS } from './reserved-groups'
+import { checkBranchAccessWithDefault, canPerformWorkflowAction, RESERVED_GROUPS } from '../'
+import type { BranchContext } from '../../types'
 
 const baseContext: BranchContext = {
   baseRoot: '/tmp/base',

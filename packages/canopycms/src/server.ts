@@ -2,7 +2,7 @@ export * from './content-reader'
 export * from './services'
 export * from './build-mode'
 export * from './context'
-export * from './groups-loader'
+export * from './authorization/groups'
 export * from './branch-workspace'
 export * from './content-store'
 export {

@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
-import { isReviewer } from '../reserved-groups'
+import { isReviewer } from '../authorization'
 import { defineEndpoint } from './route-builder'
 
 export interface RequestChangesBody {

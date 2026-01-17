@@ -3,19 +3,30 @@ import type { ApiContext, ApiRequest } from './types'
 import type { PathPermission, CanopyConfig } from '../config'
 import type { AuthPlugin } from '../auth/plugin'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
-import { RESERVED_GROUPS } from '../reserved-groups'
-import {
-  createMockApiContext,
-  createMockBranchContext,
-  createMockGitManager,
-  createMockPermissionsLoader,
-} from '../test-utils'
+import { RESERVED_GROUPS } from '../authorization'
+import { createMockApiContext, createMockBranchContext, createMockGitManager } from '../test-utils'
 
-// Mock permissions loader
-vi.mock('../permissions-loader', () => createMockPermissionsLoader())
+// Mock authorization module (specifically the permissions loader functions)
+vi.mock('../authorization', async (importOriginal) => {
+  const { vi } = await import('vitest')
+  const original = await importOriginal<typeof import('../authorization')>()
+  return {
+    ...original,
+    loadPathPermissions: vi.fn().mockResolvedValue([]),
+    loadPermissionsFile: vi.fn().mockResolvedValue(null),
+    savePathPermissions: vi.fn().mockResolvedValue(undefined),
+  }
+})
 
 import { PERMISSION_ROUTES } from './permissions'
-import * as permissionsLoader from '../permissions-loader'
+import * as authorization from '../authorization'
+
+// Alias for convenience (tests reference permissionsLoader)
+const permissionsLoader = {
+  loadPathPermissions: authorization.loadPathPermissions,
+  loadPermissionsFile: authorization.loadPermissionsFile,
+  savePathPermissions: authorization.savePathPermissions,
+}
 
 // Extract handlers for testing
 const getPermissions = PERMISSION_ROUTES.get.handler

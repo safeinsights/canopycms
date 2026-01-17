@@ -20,7 +20,8 @@ import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
 import { UserBadge } from './components/UserBadge'
-import { isAdmin, isReviewer } from '../reserved-groups'
+// Import directly from helpers to avoid server-only code in authorization barrel
+import { isAdmin, isReviewer } from '../authorization/helpers'
 import { clientOperatingStrategy } from '../operating-mode/client'
 
 export interface BranchSummary {

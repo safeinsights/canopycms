@@ -1,16 +1,21 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { ApiContext, ApiRequest } from './types'
-import type { InternalGroup } from '../groups-file'
+import type { InternalGroup } from '../authorization'
 import type { CanopyGroupId, CanopyUserId } from '../types'
-import { RESERVED_GROUPS } from '../reserved-groups'
+import { RESERVED_GROUPS } from '../authorization'
 import { createMockApiContext, createMockBranchContext, createMockGitManager } from '../test-utils'
 
-// Mock groups loader
-vi.mock('../groups-loader', () => ({
-  loadInternalGroups: vi.fn(),
-  loadGroupsFile: vi.fn(),
-  saveInternalGroups: vi.fn(),
-}))
+// Mock authorization module (specifically the groups loader functions)
+vi.mock('../authorization', async (importOriginal) => {
+  const { vi } = await import('vitest')
+  const original = await importOriginal<typeof import('../authorization')>()
+  return {
+    ...original,
+    loadInternalGroups: vi.fn(),
+    loadGroupsFile: vi.fn(),
+    saveInternalGroups: vi.fn(),
+  }
+})
 
 import {
   GROUP_ROUTES,
@@ -19,7 +24,14 @@ import {
   type UpdateInternalGroupsBody,
   type SearchExternalGroupsParams,
 } from './groups'
-import * as groupsLoader from '../groups-loader'
+import * as authorization from '../authorization'
+
+// Alias for convenience (tests reference groupsLoader)
+const groupsLoader = {
+  loadInternalGroups: authorization.loadInternalGroups,
+  loadGroupsFile: authorization.loadGroupsFile,
+  saveInternalGroups: authorization.saveInternalGroups,
+}
 
 // Extract handlers for testing
 const getInternalGroups = GROUP_ROUTES.getInternal.handler

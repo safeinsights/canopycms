@@ -7,8 +7,9 @@ import {
   loadPathPermissions,
   savePathPermissions,
   loadPermissionsFile,
-} from '../permissions-loader'
-import { isAdmin, isReviewer } from '../reserved-groups'
+  isAdmin,
+  isReviewer,
+} from '../authorization'
 import { defineEndpoint } from './route-builder'
 import { getSettingsBranchContext, commitSettings } from './settings-helpers'
 

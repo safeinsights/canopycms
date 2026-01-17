@@ -1,9 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { checkPathAccess } from './path-permissions'
-import { RESERVED_GROUPS } from './reserved-groups'
-import type { PathPermission } from './config'
-import type { CanopyUser } from './user'
+import { checkPathAccess, RESERVED_GROUPS } from '../'
+import type { PathPermission } from '../../config'
+import type { CanopyUser } from '../../user'
 
 // Path permission rules (previously from config.pathPermissions, now from .canopycms/permissions.json)
 const rules: PathPermission[] = [

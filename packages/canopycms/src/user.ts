@@ -1,7 +1,8 @@
 import type { CanopyUserId, CanopyGroupId } from './types'
 import type { AuthenticationResult } from './auth/types'
-import { RESERVED_GROUPS } from './reserved-groups'
-import type { InternalGroup } from './groups-file'
+// Import from client-safe subpaths to avoid pulling in server-only loader code
+import { RESERVED_GROUPS } from './authorization/helpers'
+import type { InternalGroup } from './authorization/groups/schema'
 
 /**
  * Anonymous user - explicitly marked for public/unauthenticated access

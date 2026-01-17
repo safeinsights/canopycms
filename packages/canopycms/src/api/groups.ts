@@ -1,10 +1,16 @@
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import type { InternalGroup } from '../groups-file'
-import { loadInternalGroups, saveInternalGroups, loadGroupsFile } from '../groups-loader'
 import type { CanopyGroupId } from '../types'
-import { isAdmin, RESERVED_GROUPS, isReservedGroup } from '../reserved-groups'
+import {
+  type InternalGroup,
+  loadInternalGroups,
+  saveInternalGroups,
+  loadGroupsFile,
+  isAdmin,
+  RESERVED_GROUPS,
+  isReservedGroup,
+} from '../authorization'
 import { defineEndpoint } from './route-builder'
 import { getSettingsBranchContext, commitSettings } from './settings-helpers'
 import { generateId } from '../id'

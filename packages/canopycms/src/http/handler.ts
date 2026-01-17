@@ -8,7 +8,7 @@ import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
 import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { authResultToCanopyUser } from '../user'
-import { loadInternalGroups } from '../groups-loader'
+import { loadInternalGroups } from '../authorization'
 import { clientOperatingStrategy } from '../operating-mode'
 
 /**

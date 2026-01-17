@@ -7,7 +7,7 @@ import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
 import { defineEndpoint } from './route-builder'
 import type { BranchMetadata } from '../types'
-import { canPerformWorkflowAction } from '../authz'
+import { canPerformWorkflowAction } from '../authorization'
 import { clientOperatingStrategy } from '../operating-mode'
 
 // Re-export for client generation

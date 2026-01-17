@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createCheckBranchAccess } from './authz'
-import { createCheckContentAccess } from './content-access'
-import { RESERVED_GROUPS } from './reserved-groups'
-import type { PathPermission } from './config'
+import { createCheckBranchAccess, createCheckContentAccess, RESERVED_GROUPS } from '../'
+import type { PathPermission } from '../../config'
 
 const branchContext = {
   baseRoot: '/tmp/base',

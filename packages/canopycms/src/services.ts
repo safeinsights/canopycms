@@ -2,10 +2,12 @@ import type { CanopyConfig, FlatSchemaItem, FieldConfig, RootCollectionConfig } 
 import { flattenSchema } from './config'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
-import { createCheckPathAccess } from './path-permissions'
-import { createCheckBranchAccess } from './authz'
-import { createCheckContentAccess } from './content-access'
-import { loadPathPermissions } from './permissions-loader'
+import {
+  createCheckPathAccess,
+  createCheckBranchAccess,
+  createCheckContentAccess,
+  loadPathPermissions,
+} from './authorization'
 import { GitManager } from './git-manager'
 import { BranchRegistry } from './branch-registry'
 import { BranchWorkspaceManager } from './branch-workspace'
