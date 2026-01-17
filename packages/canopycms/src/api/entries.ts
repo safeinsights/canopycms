@@ -11,6 +11,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
 import { extractSlugFromFilename, resolveCollectionPath } from '../content-id-index'
+import { validateAndNormalizePath, normalizeFilesystemPath } from '../paths'
 
 type CollectionKind = 'collection' | 'entry'
 
@@ -75,14 +76,16 @@ const listEntriesParamsSchema = z.object({
   recursive: z.boolean().optional(),
 })
 
+/**
+ * Validate and normalize a path relative to root.
+ * Throws ContentStoreError on traversal attempt.
+ */
 const normalizePath = (root: string, target: string): string => {
-  const resolvedRoot = path.resolve(root)
-  const withSep = resolvedRoot.endsWith(path.sep) ? resolvedRoot : `${resolvedRoot}${path.sep}`
-  const resolvedTarget = path.resolve(target)
-  if (!resolvedTarget.startsWith(withSep)) {
-    throw new ContentStoreError('Path traversal detected')
+  const result = validateAndNormalizePath(root, target)
+  if (!result.valid) {
+    throw new ContentStoreError(result.error || 'Path traversal detected')
   }
-  return path.relative(resolvedRoot, resolvedTarget).split(path.sep).join('/')
+  return result.normalizedPath!
 }
 
 const readTitle = async (filePath: string, format: ContentFormat): Promise<string | undefined> => {
@@ -186,11 +189,8 @@ const listCollectionEntriesRecursive = async (
   return results.flat()
 }
 
-const normalizeCollectionId = (value: string): string =>
-  value
-    .split(/[\\/]+/)
-    .filter(Boolean)
-    .join('/')
+/** Normalize a collection ID for consistent comparison */
+const normalizeCollectionId = (value: string): string => normalizeFilesystemPath(value)
 
 /**
  * Build collection summaries from flat schema items.

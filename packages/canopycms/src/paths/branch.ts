@@ -1,8 +1,15 @@
+/**
+ * Branch path resolution utilities.
+ *
+ * Handles resolving branch names to workspace directories.
+ */
+
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
-import type { BranchContext } from './types'
-import { OperatingMode, operatingStrategy } from './operating-mode'
+import type { BranchContext } from '../types'
+import { OperatingMode, operatingStrategy } from '../operating-mode'
+import type { SanitizedBranchName } from './types'
 
 export interface BranchPathOptions {
   mode: OperatingMode
@@ -18,18 +25,28 @@ export interface BranchPathResult {
 
 export class BranchPathError extends Error {}
 
-const sanitizeBranchName = (branchName: string): string => {
+/**
+ * Sanitize a branch name for use in filesystem paths.
+ * - Replaces invalid characters with hyphens
+ * - Collapses multiple hyphens
+ * - Trims leading/trailing dots
+ */
+export function sanitizeBranchName(branchName: string): SanitizedBranchName {
   const replaced = branchName.replace(/[^a-zA-Z0-9._-]/g, '-')
   const squashed = replaced.replace(/-+/g, '-')
   const trimmedDots = squashed.replace(/^\.+/, '').replace(/\.+$/, '')
-  return trimmedDots || 'branch'
+  return (trimmedDots || 'branch') as SanitizedBranchName
 }
 
 const resolveContentBranchesRoot = (mode: OperatingMode, override?: string): string => {
   return operatingStrategy(mode).getContentBranchesRoot(override)
 }
 
-export const resolveBranchPath = (options: BranchPathOptions): BranchPathResult => {
+/**
+ * Resolve branch name to workspace paths.
+ * Validates for path traversal attacks.
+ */
+export function resolveBranchPath(options: BranchPathOptions): BranchPathResult {
   if (options.branchName.includes('..')) {
     throw new BranchPathError('Branch name cannot contain traversal segments')
   }
@@ -54,20 +71,30 @@ export const resolveBranchPath = (options: BranchPathOptions): BranchPathResult 
   return { branchRoot, baseRoot: normalizedBase, branchName: safeBranch }
 }
 
-export const ensureBranchRoot = async (options: BranchPathOptions): Promise<BranchPathResult> => {
+/**
+ * Ensure the branch workspace directory exists.
+ */
+export async function ensureBranchRoot(options: BranchPathOptions): Promise<BranchPathResult> {
   const result = resolveBranchPath(options)
   await fs.mkdir(result.branchRoot, { recursive: true })
   return result
 }
 
-export const getDefaultBranchBase = (mode: OperatingMode, override?: string): string =>
-  resolveContentBranchesRoot(mode, override)
+/**
+ * Get the default base directory for branch workspaces.
+ */
+export function getDefaultBranchBase(mode: OperatingMode, override?: string): string {
+  return resolveContentBranchesRoot(mode, override)
+}
 
-export const resolveBranchPaths = (
+/**
+ * Resolve branch paths from a branch context.
+ */
+export function resolveBranchPaths(
   branchContext: BranchContext,
   mode: OperatingMode,
   basePathOverride?: string,
-): BranchPathResult => {
+): BranchPathResult {
   if (branchContext.branchRoot || branchContext.baseRoot) {
     const baseRoot = path.resolve(
       branchContext.baseRoot ?? resolveContentBranchesRoot(mode, basePathOverride),
@@ -86,5 +113,3 @@ export const resolveBranchPaths = (
     basePathOverride,
   })
 }
-
-export { sanitizeBranchName }
