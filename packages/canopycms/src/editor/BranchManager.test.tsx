@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { BranchManager, getBranchPermissions } from './BranchManager'
 import type { BranchSummary, UserContext } from './BranchManager'
 import { CanopyCMSProvider } from './theme'
-import { RESERVED_GROUPS } from '../reserved-groups'
+import { RESERVED_GROUPS } from '../authorization'
 
 const originalMatchMedia = window.matchMedia
 

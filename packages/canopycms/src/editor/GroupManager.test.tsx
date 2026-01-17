@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } 
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { GroupManager } from './GroupManager'
-import type { InternalGroup } from '../groups-file'
+import type { InternalGroup } from '../authorization'
 import type { ExternalGroup } from '../api/groups'
 import type { UserSearchResult } from '../auth/types'
 import { mockConsole } from '../test-utils/console-spy.js'

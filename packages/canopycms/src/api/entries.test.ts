@@ -6,12 +6,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from '../config-test'
 import { flattenSchema } from '../config'
-import { createCheckBranchAccess } from '../authz'
-import { createCheckContentAccess } from '../content-access'
+import { createCheckBranchAccess } from '../authorization'
+import { createCheckContentAccess } from '../authorization'
 import type { PathPermission } from '../config'
 import { listEntriesHandler } from './entries'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
-import { loadCollectionMetaFiles, resolveCollectionReferences } from '../schema-meta-loader'
+import { loadCollectionMetaFiles, resolveCollectionReferences } from '../schema'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-entries-'))
 

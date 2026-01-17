@@ -13,9 +13,8 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import { createCanopyServices } from '../../services'
 import { createMockApiContext } from '../../test-utils/api-test-helpers'
-import { RESERVED_GROUPS } from '../../reserved-groups'
+import { RESERVED_GROUPS, type InternalGroup } from '../../authorization'
 import { GROUP_ROUTES } from '../../api/groups'
-import type { InternalGroup } from '../../groups-file'
 import { operatingStrategy } from '../../operating-mode'
 
 // Extract handlers

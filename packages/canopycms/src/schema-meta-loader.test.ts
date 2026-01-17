@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { loadCollectionMetaFiles, resolveCollectionReferences } from './schema-meta-loader'
+import { loadCollectionMetaFiles, resolveCollectionReferences } from './schema'
 import type { FieldConfig } from './config'
 
 describe('schema-meta-loader', () => {

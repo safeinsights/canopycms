@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   normalizeFilesystemPath,
   normalizeCollectionId,
-  validateAndNormalizePath,
   hasTraversalSequence,
   createLogicalPath,
   createPhysicalPath,
   joinPath,
 } from '../normalize'
+import { validateAndNormalizePath } from '../normalize-server'
 
 describe('normalizeFilesystemPath', () => {
   it('converts backslashes to forward slashes', () => {

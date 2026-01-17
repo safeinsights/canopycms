@@ -5,6 +5,7 @@ import type { BranchContext, BranchMetadata, BranchStatus } from './types'
 import { BranchRegistry } from './branch-registry'
 import { resolveBranchPath } from './paths'
 import { type OperatingMode } from './operating-mode'
+import { isNotFoundError } from './utils/error'
 
 const BRANCH_META_DIR = '.canopy-meta'
 const BRANCH_META_FILE = 'branch.json'
@@ -36,8 +37,8 @@ export class BranchMetadataFileManager {
     try {
       const raw = await fs.readFile(filePath, 'utf8')
       return JSON.parse(raw) as BranchMetadataFile
-    } catch (err: any) {
-      if (err?.code === 'ENOENT') {
+    } catch (err: unknown) {
+      if (isNotFoundError(err)) {
         return null
       }
       throw err
@@ -57,8 +58,8 @@ export class BranchMetadataFileManager {
       const raw = await fs.readFile(this.filePath, 'utf8')
       const parsed = JSON.parse(raw) as BranchMetadataFile
       return parsed
-    } catch (err: any) {
-      if (err?.code === 'ENOENT') {
+    } catch (err: unknown) {
+      if (isNotFoundError(err)) {
         return null
       }
       throw err

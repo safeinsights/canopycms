@@ -3,9 +3,9 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { defineCanopyTestConfig } from './config-test'
 import { createCanopyServices, getBootstrapAdminIds } from './services'
 import { authResultToCanopyUser } from './user'
-import { RESERVED_GROUPS } from './reserved-groups'
+import { RESERVED_GROUPS } from './authorization'
 import type { AuthenticationResult } from './auth/types'
-import type { InternalGroup } from './groups-file'
+import type { InternalGroup } from './authorization'
 
 vi.mock('simple-git', () => {
   const stub = vi.fn(() => ({

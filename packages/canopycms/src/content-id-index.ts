@@ -3,6 +3,7 @@ import type { Dirent } from 'node:fs'
 import path from 'node:path'
 
 import { generateId, isValidId } from './id'
+import { isNotFoundError } from './utils/error'
 
 export interface IdLocation {
   id: string
@@ -281,8 +282,8 @@ export async function resolveCollectionPath(root: string, logicalPath: string): 
         // Directory not found - might not exist yet
         return null
       }
-    } catch (err: any) {
-      if (err?.code === 'ENOENT') return null
+    } catch (err: unknown) {
+      if (isNotFoundError(err)) return null
       throw err
     }
   }

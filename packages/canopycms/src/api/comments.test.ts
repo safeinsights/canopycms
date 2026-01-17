@@ -30,7 +30,7 @@ vi.mock('../comment-store', () => ({
 }))
 
 import { COMMENT_ROUTES } from './comments'
-import { RESERVED_GROUPS } from '../reserved-groups'
+import { RESERVED_GROUPS } from '../authorization'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
 
 // Extract handlers for testing

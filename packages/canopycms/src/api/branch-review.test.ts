@@ -22,7 +22,7 @@ vi.mock('../branch-metadata', () => ({
 }))
 
 import { requestChanges, approveBranch } from './branch-review'
-import { RESERVED_GROUPS } from '../reserved-groups'
+import { RESERVED_GROUPS } from '../authorization'
 import { mockConsole, createMockApiContext, createMockBranchContext } from '../test-utils'
 
 // Extract handlers for testing

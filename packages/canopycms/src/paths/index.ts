@@ -24,11 +24,10 @@ export type {
   PathValidationResult,
 } from './types'
 
-// Normalization utilities
+// Normalization utilities (client-safe)
 export {
   normalizeFilesystemPath,
   normalizeCollectionId,
-  validateAndNormalizePath,
   hasTraversalSequence,
   createLogicalPath,
   createPhysicalPath,
@@ -36,6 +35,9 @@ export {
   physicalPathToString,
   joinPath,
 } from './normalize'
+
+// Normalization utilities (server-only, requires Node.js path module)
+export { validateAndNormalizePath } from './normalize-server'
 
 // Validation utilities
 export {

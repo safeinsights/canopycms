@@ -4,7 +4,7 @@ import type { BranchContext, BranchMetadata, BranchStatus, BranchAccessControl }
 import type { CanopyServices } from '../services'
 import type { CanopyUser } from '../user'
 import type { CanopyConfig, PathPermission } from '../config'
-import { RESERVED_GROUPS } from '../reserved-groups'
+import { RESERVED_GROUPS } from '../authorization'
 
 /**
  * Options for creating a mock BranchContext

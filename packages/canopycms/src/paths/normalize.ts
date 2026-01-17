@@ -1,12 +1,14 @@
 /**
- * Path normalization utilities.
+ * Path normalization utilities (client-safe).
  *
  * Consolidates the various path normalization patterns used across the codebase
  * into a single, well-tested module.
+ *
+ * NOTE: These functions are pure and can be used in both client and server code.
+ * Server-only functions that depend on Node.js 'path' module are in normalize-server.ts.
  */
 
-import { sep, resolve, relative } from 'path'
-import type { CollectionPath, LogicalPath, PhysicalPath, PathValidationResult } from './types'
+import type { CollectionPath, LogicalPath, PhysicalPath } from './types'
 
 /**
  * Normalize a filesystem path by:
@@ -43,36 +45,6 @@ export function normalizeCollectionId(collectionId: string, contentRoot = 'conte
     return normalized.slice(prefix.length) as CollectionPath
   }
   return normalized as CollectionPath
-}
-
-/**
- * Validate and normalize a path relative to a root directory.
- * Checks for path traversal attacks.
- *
- * @param root - The root directory
- * @param target - The target path to validate
- * @returns Validation result with normalized relative path if valid
- */
-export function validateAndNormalizePath(root: string, target: string): PathValidationResult {
-  const resolvedRoot = resolve(root)
-  const withSep = resolvedRoot.endsWith(sep) ? resolvedRoot : `${resolvedRoot}${sep}`
-  const resolvedTarget = resolve(target)
-
-  if (!resolvedTarget.startsWith(withSep) && resolvedTarget !== resolvedRoot) {
-    return {
-      valid: false,
-      error: 'Path traversal detected',
-    }
-  }
-
-  const relativePath = relative(resolvedRoot, resolvedTarget)
-    .split(sep)
-    .join('/')
-
-  return {
-    valid: true,
-    normalizedPath: relativePath,
-  }
 }
 
 /**
