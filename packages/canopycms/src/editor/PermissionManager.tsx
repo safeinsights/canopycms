@@ -34,10 +34,13 @@ import type { UserSearchResult, GroupMetadata } from '../auth/types'
 import type { CanopyConfig } from '../config'
 import { flattenSchema } from '../config'
 import { UserBadge } from './components/UserBadge'
+import type { EditorCollection } from './Editor'
 
 export interface PermissionManagerProps {
-  /** Content schema to build tree from */
-  schema: CanopyConfig['schema']
+  /** Content schema to build tree from (optional - can use collections instead) */
+  schema?: CanopyConfig['schema']
+  /** Collections from API (alternative to schema for file-based configs) */
+  collections?: EditorCollection[]
   /** Content root path (default: 'content') */
   contentRoot?: string
   /** Current permissions */
@@ -101,6 +104,7 @@ function findTreeNode(node: TreeNode, path: string): TreeNode | null {
 
 export const PermissionManager: React.FC<PermissionManagerProps> = ({
   schema,
+  collections,
   contentRoot = 'content',
   permissions,
   canEdit,
@@ -198,10 +202,10 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
     return () => clearTimeout(timer)
   }, [userSearchQuery, onSearchUsers, showUserSearch])
 
-  // Build tree from schema + contentTree
+  // Build tree from schema (or collections) + contentTree
   const tree = useMemo(
-    () => buildTree(schema, contentTree, contentRoot),
-    [schema, contentTree, contentRoot],
+    () => buildTree(schema, contentTree, contentRoot, collections),
+    [schema, collections, contentTree, contentRoot],
   )
 
   // Annotate tree with permissions
@@ -1026,17 +1030,66 @@ const TreeNodeComponent: React.FC<TreeNodeComponentProps> = ({
   )
 }
 
+// Helper: Convert EditorCollection[] to TreeNode structure
+function convertCollectionsToTreeNodes(
+  collections: EditorCollection[],
+  contentRoot: string,
+  parentPath?: string,
+): TreeNode[] {
+  const nodes: TreeNode[] = []
+
+  for (const collection of collections) {
+    const fullPath = parentPath
+      ? `${parentPath}/${collection.name}`
+      : `${contentRoot}/${collection.name}`
+
+    const node: TreeNode = {
+      path: fullPath,
+      name: collection.label || collection.name,
+      type: collection.type === 'collection' ? 'folder' : 'file',
+      children: [],
+    }
+
+    // Recursively convert children
+    if (collection.children) {
+      node.children = convertCollectionsToTreeNodes(collection.children, contentRoot, fullPath)
+    }
+
+    nodes.push(node)
+  }
+
+  return nodes
+}
+
 // Helper: Build tree from schema and optional contentTree
 function buildTree(
-  schema: CanopyConfig['schema'],
-  contentTree?: ContentNode,
+  schema: CanopyConfig['schema'] | undefined,
+  contentTree: ContentNode | undefined,
   contentRoot = 'content',
+  collections?: EditorCollection[],
 ): TreeNode {
   const root: TreeNode = {
     path: contentRoot,
     name: contentRoot,
     type: 'folder',
     children: [],
+  }
+
+  // If collections are provided (from API), use them instead of schema
+  if (collections && collections.length > 0) {
+    root.children = convertCollectionsToTreeNodes(collections, contentRoot)
+
+    // Merge contentTree if provided
+    if (contentTree) {
+      mergeContentTree(root, contentTree)
+    }
+
+    return root
+  }
+
+  // Handle undefined schema gracefully
+  if (!schema) {
+    return root
   }
 
   // Flatten schema to get all collections and singletons

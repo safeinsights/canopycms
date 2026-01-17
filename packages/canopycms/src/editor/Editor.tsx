@@ -680,6 +680,7 @@ export const Editor: React.FC<EditorProps> = ({
         >
           <PermissionManager
             schema={configSchema}
+            collections={activeCollections}
             contentRoot={contentRoot}
             permissions={permissionsData}
             loading={permissionsLoading}
