@@ -5,6 +5,7 @@ import type { CommentThread, CommentType } from '../comment-store'
 import { CommentStore } from '../comment-store'
 import { isReviewer } from '../authorization'
 import { defineEndpoint } from './route-builder'
+import { guardBranchAccess, guardBranchExists, isBranchAccessError } from './middleware'
 
 export interface AddCommentBody {
   text: string
@@ -53,18 +54,11 @@ const listCommentsHandler = async (
   req: ApiRequest,
   params: z.infer<typeof branchParamSchema>
 ): Promise<CommentsResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
-
-  const access = ctx.services.checkBranchAccess(context, req.user)
-  if (!access.allowed) {
-    return { ok: false, status: 403, error: 'Forbidden' }
-  }
+  const result = await guardBranchAccess(ctx, req, params.branch)
+  if (isBranchAccessError(result)) return result
+  const { context } = result
 
   const commentStore = new CommentStore(context.branchRoot)
-
   const threads = await commentStore.listThreads({ includeResolved: true })
 
   return { ok: true, status: 200, data: { threads } }
@@ -76,15 +70,9 @@ const addCommentHandler = async (
   params: z.infer<typeof branchParamSchema>,
   body: z.infer<typeof addCommentBodySchema>
 ): Promise<AddCommentResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
-
-  const access = ctx.services.checkBranchAccess(context, req.user)
-  if (!access.allowed) {
-    return { ok: false, status: 403, error: 'Forbidden' }
-  }
+  const accessResult = await guardBranchAccess(ctx, req, params.branch)
+  if (isBranchAccessError(accessResult)) return accessResult
+  const { context } = accessResult
 
   // Validate required fields based on type
   if (body.type === 'field' && !body.canopyPath) {
@@ -114,10 +102,9 @@ const resolveCommentHandler = async (
   req: ApiRequest,
   params: z.infer<typeof threadParamSchema>
 ): Promise<ResolveCommentResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const accessResult = await guardBranchExists(ctx, params.branch)
+  if (isBranchAccessError(accessResult)) return accessResult
+  const { context } = accessResult
 
   const commentStore = new CommentStore(context.branchRoot)
 

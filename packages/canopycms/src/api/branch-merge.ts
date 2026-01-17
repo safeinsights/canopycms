@@ -3,6 +3,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { isAdmin } from '../authorization'
 import { defineEndpoint } from './route-builder'
+import { guardBranchExists, isBranchAccessError } from './middleware'
 
 const markAsMergedParamsSchema = z.object({
   branch: z.string().min(1)
@@ -22,11 +23,9 @@ const markAsMergedHandler = async (
 ): Promise<BranchMergeResponse> => {
   const { branch: branchName } = params
 
-  // Load branch context
-  const context = await ctx.getBranchContext(branchName)
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const accessResult = await guardBranchExists(ctx, branchName)
+  if (isBranchAccessError(accessResult)) return accessResult
+  const { context } = accessResult
 
   // Check permissions - only admins can mark as merged
   if (!isAdmin(req.user.groups)) {

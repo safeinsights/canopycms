@@ -4,6 +4,7 @@ import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 import { canPerformWorkflowAction } from '../authorization'
+import { guardBranchExists, isBranchAccessError } from './middleware'
 
 const branchParamSchema = z.object({
   branch: z.string().min(1)
@@ -14,10 +15,9 @@ const withdrawBranchHandler = async (
   req: ApiRequest,
   params: z.infer<typeof branchParamSchema>
 ): Promise<BranchResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const accessResult = await guardBranchExists(ctx, params.branch)
+  if (isBranchAccessError(accessResult)) return accessResult
+  const { context } = accessResult
 
   // Check if user can perform workflow actions (creator OR ACL access)
   const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'
