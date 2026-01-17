@@ -1,8 +1,8 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useGroupManager, resetApiClient } from './useGroupManager'
+import { useGroupManager } from './useGroupManager'
 import type { MockApiClient } from '../../api/__test__/mock-client'
-import { setupMockApiClient, setupMockConsole } from './__test__/test-utils'
+import { setupMockApiClient, setupMockConsole, createApiClientWrapper } from './__test__/test-utils'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -22,10 +22,11 @@ vi.mock('@mantine/notifications', () => ({
 
 describe('useGroupManager', () => {
   let mockClient: MockApiClient
+  let wrapper: ReturnType<typeof createApiClientWrapper>
 
   beforeEach(async () => {
     mockClient = await setupMockApiClient()
-    resetApiClient()
+    wrapper = createApiClientWrapper(mockClient)
   })
 
   afterEach(() => {
@@ -33,7 +34,7 @@ describe('useGroupManager', () => {
   })
 
   it('initializes with empty groups', () => {
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }))
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
 
     expect(result.current.groupsData).toEqual([])
     expect(result.current.groupsLoading).toBe(false)
@@ -51,7 +52,7 @@ describe('useGroupManager', () => {
       data: { groups: mockGroups },
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: true }))
+    const { result } = renderHook(() => useGroupManager({ isOpen: true }), { wrapper })
 
     // Should start loading
     expect(result.current.groupsLoading).toBe(true)
@@ -71,7 +72,7 @@ describe('useGroupManager', () => {
       status: 500,
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: true }))
+    const { result } = renderHook(() => useGroupManager({ isOpen: true }), { wrapper })
 
     await waitFor(() => {
       expect(result.current.groupsLoading).toBe(false)
@@ -91,7 +92,7 @@ describe('useGroupManager', () => {
       data: { groups: [] },
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: true }))
+    const { result } = renderHook(() => useGroupManager({ isOpen: true }), { wrapper })
 
     await waitFor(() => {
       expect(result.current.groupsLoading).toBe(false)
@@ -126,7 +127,7 @@ describe('useGroupManager', () => {
       error: 'Save failed',
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }))
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
 
     await expect(result.current.handleSaveGroups([])).rejects.toThrow('Save failed')
   })
@@ -143,7 +144,7 @@ describe('useGroupManager', () => {
       data: { users: mockUsers },
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }))
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
 
     const users = await result.current.handleSearchUsers('john', 10)
 
@@ -161,7 +162,7 @@ describe('useGroupManager', () => {
       data: { users: mockUsers },
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }))
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
 
     const users = await result.current.handleSearchUsers('john')
 
@@ -176,7 +177,7 @@ describe('useGroupManager', () => {
       status: 500,
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }))
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
 
     const users = await result.current.handleSearchUsers('john')
 
@@ -195,7 +196,7 @@ describe('useGroupManager', () => {
       data: { groups: mockExternalGroups },
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }))
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
 
     const groups = await result.current.handleSearchExternalGroups('external')
 
@@ -209,7 +210,7 @@ describe('useGroupManager', () => {
       status: 500,
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }))
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
 
     const groups = await result.current.handleSearchExternalGroups('external')
 
@@ -217,7 +218,7 @@ describe('useGroupManager', () => {
   })
 
   it('does not load groups when isOpen is false', async () => {
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }))
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
 
     expect(result.current.groupsLoading).toBe(false)
     expect(mockClient.groups.getInternal).not.toHaveBeenCalled()
@@ -232,7 +233,7 @@ describe('useGroupManager', () => {
       data: { groups: mockGroups },
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }))
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
 
     await result.current.loadGroups()
 

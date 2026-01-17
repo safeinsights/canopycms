@@ -1,22 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { notifications } from '@mantine/notifications'
-import type { InternalGroup } from '../../groups-file'
+import type { InternalGroup } from '../../authorization'
 import type { UserSearchResult, GroupMetadata } from '../../auth/types'
-import { createApiClient } from '../../api'
-
-// Lazy singleton - created on first access to pick up any fetch mocks in tests
-let apiClient: ReturnType<typeof createApiClient> | null = null
-function getApiClient() {
-  if (!apiClient) {
-    apiClient = createApiClient()
-  }
-  return apiClient
-}
-
-// For testing: reset the singleton to pick up new fetch mocks
-export function resetApiClient() {
-  apiClient = null
-}
+import { useApiClient } from '../context'
 
 export interface UseGroupManagerOptions {
   /**
@@ -60,13 +46,14 @@ export interface UseGroupManagerReturn {
  * ```
  */
 export function useGroupManager(options: UseGroupManagerOptions): UseGroupManagerReturn {
+  const apiClient = useApiClient()
   const [groupsData, setGroupsData] = useState<InternalGroup[]>([])
   const [groupsLoading, setGroupsLoading] = useState(false)
 
   const loadGroups = async () => {
     setGroupsLoading(true)
     try {
-      const result = await getApiClient().groups.getInternal()
+      const result = await apiClient.groups.getInternal()
       if (!result.ok) throw new Error('Failed to load groups')
       setGroupsData(result.data?.groups ?? [])
     } catch (err) {
@@ -79,7 +66,7 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
 
   const handleSaveGroups = useCallback(async (groups: InternalGroup[]) => {
     try {
-      const result = await getApiClient().groups.updateInternal({ groups })
+      const result = await apiClient.groups.updateInternal({ groups })
       if (!result.ok) {
         throw new Error(result.error || 'Failed to save groups')
       }
@@ -102,7 +89,7 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
       if (limit) {
         params.limit = String(limit)
       }
-      const result = await getApiClient().permissions.searchUsers(params)
+      const result = await apiClient.permissions.searchUsers(params)
       if (!result.ok) return []
       return result.data?.users ?? []
     } catch (err) {
@@ -113,7 +100,7 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
 
   const handleGetUserMetadata = useCallback(async (userId: string) => {
     try {
-      const result = await getApiClient().permissions.getUserMetadata({ userId })
+      const result = await apiClient.permissions.getUserMetadata({ userId })
       if (!result.ok) return null
       return result.data?.user ?? null
     } catch (err) {
@@ -124,7 +111,7 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
 
   const handleSearchExternalGroups = useCallback(async (query: string) => {
     try {
-      const result = await getApiClient().groups.searchExternal({ q: query })
+      const result = await apiClient.groups.searchExternal({ q: query })
       if (!result.ok) return []
       return result.data?.groups ?? []
     } catch (err) {

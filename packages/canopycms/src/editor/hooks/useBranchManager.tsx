@@ -5,21 +5,7 @@ import { notifications } from '@mantine/notifications'
 import type { BranchMetadata } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
-import { createApiClient } from '../../api'
-
-// Lazy singleton - created on first access to pick up any fetch mocks in tests
-let apiClient: ReturnType<typeof createApiClient> | null = null
-function getApiClient() {
-  if (!apiClient) {
-    apiClient = createApiClient()
-  }
-  return apiClient
-}
-
-// For testing: reset the singleton to pick up new fetch mocks
-export function resetApiClient() {
-  apiClient = null
-}
+import { useApiClient } from '../context'
 
 /**
  * Helper function to show confirmation modal for branch submit action.
@@ -154,6 +140,7 @@ export interface UseBranchManagerReturn {
  * ```
  */
 export function useBranchManager(options: UseBranchManagerOptions): UseBranchManagerReturn {
+  const apiClient = useApiClient()
   const [branchName, setBranchName] = useState<string>(options.initialBranch)
   const [branches, setBranches] = useState<BranchMetadata[]>([])
 
@@ -184,7 +171,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const loadBranches = async () => {
     options.setBusy(true)
     try {
-      const result = await getApiClient().branches.list()
+      const result = await apiClient.branches.list()
       if (result.status === 404) {
         // No branch endpoint available; stay branchless until user selects/creates via other means.
         setBranches([])
@@ -208,7 +195,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         async () => {
           options.setBusy(true)
           try {
-            const result = await getApiClient().workflow.submit({ branch: branchNameToSubmit })
+            const result = await apiClient.workflow.submit({ branch: branchNameToSubmit })
             if (!result.ok) {
               throw new Error(result.error || 'Failed to submit branch')
             }
@@ -235,7 +222,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         async () => {
           options.setBusy(true)
           try {
-            const result = await getApiClient().workflow.withdraw({ branch: branchNameToWithdraw })
+            const result = await apiClient.workflow.withdraw({ branch: branchNameToWithdraw })
             if (!result.ok) {
               throw new Error(result.error || 'Failed to withdraw branch')
             }
@@ -258,10 +245,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const handleRequestChanges = async (branchNameForChanges: string) => {
     options.setBusy(true)
     try {
-      const result = await getApiClient().workflow.requestChanges(
-        { branch: branchNameForChanges },
-        {},
-      )
+      const result = await apiClient.workflow.requestChanges({ branch: branchNameForChanges }, {})
       if (!result.ok) {
         throw new Error(result.error || 'Failed to request changes')
       }

@@ -1,8 +1,13 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useBranchActions, resetApiClient } from './useBranchActions'
+import { useBranchActions } from './useBranchActions'
 import type { MockApiClient } from '../../api/__test__/mock-client'
-import { setupMockApiClient, setupMockLocation, setupMockHistory } from './__test__/test-utils'
+import {
+  setupMockApiClient,
+  setupMockLocation,
+  setupMockHistory,
+  createApiClientWrapper,
+} from './__test__/test-utils'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -29,6 +34,7 @@ vi.mock('@mantine/modals', () => ({
 
 describe('useBranchActions', () => {
   let mockClient: MockApiClient
+  let wrapper: ReturnType<typeof createApiClientWrapper>
   const mockSetBranchName = vi.fn()
   const mockIsSelectedDirty = vi.fn(() => false)
   const mockOnReloadBranches = vi.fn().mockResolvedValue(undefined)
@@ -44,7 +50,7 @@ describe('useBranchActions', () => {
 
   beforeEach(async () => {
     mockClient = await setupMockApiClient()
-    resetApiClient()
+    wrapper = createApiClientWrapper(mockClient)
 
     setupMockLocation()
     setupMockHistory()
@@ -59,7 +65,7 @@ describe('useBranchActions', () => {
   })
 
   it('handles branch change without unsaved changes', async () => {
-    const { result } = renderHook(() => useBranchActions(defaultOptions))
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
     await act(async () => {
       await result.current.handleBranchChange('feature')
@@ -74,7 +80,7 @@ describe('useBranchActions', () => {
     const { modals } = await import('@mantine/modals')
     mockIsSelectedDirty.mockReturnValue(true)
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions))
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
     act(() => {
       result.current.handleBranchChange('feature')
@@ -86,7 +92,7 @@ describe('useBranchActions', () => {
   })
 
   it('does not switch branch when already on that branch', async () => {
-    const { result } = renderHook(() => useBranchActions(defaultOptions))
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
     await act(async () => {
       await result.current.handleBranchChange('main')
@@ -105,7 +111,7 @@ describe('useBranchActions', () => {
       config.onCancel()
     })
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions))
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
     await expect(result.current.handleBranchChange('feature')).rejects.toThrow(
       'User cancelled branch switch',
@@ -130,7 +136,7 @@ describe('useBranchActions', () => {
       },
     })
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions))
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
     await act(async () => {
       await result.current.handleCreateBranch({
@@ -156,7 +162,7 @@ describe('useBranchActions', () => {
       error: 'Branch already exists',
     })
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions))
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
     await act(async () => {
       await result.current.handleCreateBranch({ name: 'existing-branch' })
@@ -171,7 +177,7 @@ describe('useBranchActions', () => {
     const { modals } = await import('@mantine/modals')
     mockIsSelectedDirty.mockReturnValue(true)
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions))
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
     act(() => {
       result.current.handleCreateBranch({ name: 'new-branch' })
@@ -191,7 +197,7 @@ describe('useBranchActions', () => {
       config.onCancel()
     })
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions))
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
     await act(async () => {
       await result.current.handleCreateBranch({ name: 'new-branch' })
@@ -201,7 +207,7 @@ describe('useBranchActions', () => {
   })
 
   it('updates URL when switching branches', async () => {
-    const { result } = renderHook(() => useBranchActions(defaultOptions))
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
     await act(async () => {
       await result.current.handleBranchChange('feature')
@@ -214,7 +220,7 @@ describe('useBranchActions', () => {
   })
 
   it('calls onBranchSwitch callback when provided', async () => {
-    const { result } = renderHook(() => useBranchActions(defaultOptions))
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
 
     await act(async () => {
       await result.current.handleBranchChange('feature')
@@ -229,7 +235,7 @@ describe('useBranchActions', () => {
       onBranchSwitch: undefined,
     }
 
-    const { result } = renderHook(() => useBranchActions(optionsWithoutCallback))
+    const { result } = renderHook(() => useBranchActions(optionsWithoutCallback), { wrapper })
 
     await act(async () => {
       await result.current.handleBranchChange('feature')

@@ -5,8 +5,10 @@
  * across hook test files.
  */
 
+import React from 'react'
 import { vi } from 'vitest'
 import { createMockApiClient, type MockApiClient } from '../../../api/__test__/mock-client'
+import { ApiClientProvider } from '../../context'
 
 /**
  * Setup mock API client for hook tests.
@@ -14,7 +16,6 @@ import { createMockApiClient, type MockApiClient } from '../../../api/__test__/m
  * This helper handles the common pattern of:
  * 1. Creating a mock API client
  * 2. Injecting it into the createApiClient factory
- * 3. Resetting the API client singleton
  *
  * @returns The mock API client instance
  *
@@ -31,10 +32,25 @@ export async function setupMockApiClient(): Promise<MockApiClient> {
   const { createApiClient } = await import('../../../api')
   const mockClient = createMockApiClient()
   vi.mocked(createApiClient).mockReturnValue(mockClient as any)
-
-  // Reset the singleton if resetApiClient is available
-  // Each hook exports its own resetApiClient function
   return mockClient
+}
+
+/**
+ * Create a wrapper component that provides the mock API client via context.
+ *
+ * Use this with renderHook to provide the ApiClientContext:
+ *
+ * @example
+ * ```ts
+ * const mockClient = await setupMockApiClient()
+ * const wrapper = createApiClientWrapper(mockClient)
+ * const { result } = renderHook(() => useSomeHook(), { wrapper })
+ * ```
+ */
+export function createApiClientWrapper(mockClient: MockApiClient) {
+  return function Wrapper({ children }: { children: React.ReactNode }) {
+    return <ApiClientProvider client={mockClient as any}>{children}</ApiClientProvider>
+  }
 }
 
 /**

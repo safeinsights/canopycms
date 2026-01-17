@@ -6,6 +6,7 @@ import type { CanopyClientConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import type { EditorProps } from './Editor'
 import { Editor } from './Editor'
+import { ApiClientProvider } from './context'
 import { buildEditorCollections, buildPreviewBaseByCollection } from './editor-config'
 
 export interface CanopyEditorProps extends Omit<
@@ -47,25 +48,27 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
   const resolvedTheme = (config.editor?.theme as EditorProps['themeOptions']) ?? undefined
 
   return (
-    <Editor
-      entries={entries}
-      title={resolvedTitle}
-      subtitle={resolvedSubtitle}
-      branchName={resolvedBranchName}
-      operatingMode={config.mode}
-      initialSelectedId={initialSelectedId}
-      initialValues={initialValues as Record<string, FormValue> | undefined}
-      renderPreview={renderPreview}
-      onCreateEntry={onCreateEntry}
-      collections={collections}
-      configSchema={config.schema}
-      contentRoot={config.contentRoot}
-      previewBaseByCollection={previewBase}
-      themeOptions={resolvedTheme}
-      AccountComponent={config.editor?.AccountComponent}
-      onAccountClick={config.editor?.onAccountClick}
-      onLogoutClick={config.editor?.onLogoutClick}
-    />
+    <ApiClientProvider>
+      <Editor
+        entries={entries}
+        title={resolvedTitle}
+        subtitle={resolvedSubtitle}
+        branchName={resolvedBranchName}
+        operatingMode={config.mode}
+        initialSelectedId={initialSelectedId}
+        initialValues={initialValues as Record<string, FormValue> | undefined}
+        renderPreview={renderPreview}
+        onCreateEntry={onCreateEntry}
+        collections={collections}
+        configSchema={config.schema}
+        contentRoot={config.contentRoot}
+        previewBaseByCollection={previewBase}
+        themeOptions={resolvedTheme}
+        AccountComponent={config.editor?.AccountComponent}
+        onAccountClick={config.editor?.onAccountClick}
+        onLogoutClick={config.editor?.onLogoutClick}
+      />
+    </ApiClientProvider>
   )
 }
 

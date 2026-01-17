@@ -8,21 +8,7 @@ import {
   buildWritePayload,
   normalizeContentPayload,
 } from '../editor-utils'
-import { createApiClient } from '../../api'
-
-// Lazy singleton - created on first access to pick up any fetch mocks in tests
-let apiClient: ReturnType<typeof createApiClient> | null = null
-function getApiClient() {
-  if (!apiClient) {
-    apiClient = createApiClient()
-  }
-  return apiClient
-}
-
-// For testing: reset the singleton to pick up new fetch mocks
-export function resetApiClient() {
-  apiClient = null
-}
+import { useApiClient } from '../context'
 
 export interface UseEntryManagerOptions {
   initialEntries: EditorEntry[]
@@ -80,6 +66,7 @@ export interface UseEntryManagerReturn {
  * ```
  */
 export function useEntryManager(options: UseEntryManagerOptions): UseEntryManagerReturn {
+  const apiClient = useApiClient()
   const [entriesState, setEntriesState] = useState<EditorEntry[]>(options.initialEntries)
   const [collectionsState, setCollectionsState] = useState<EditorCollection[]>(
     options.collections || [],
@@ -124,7 +111,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     }
     // Build path from collectionId and slug (if it's a collection entry)
     const path = entry.slug ? `${entry.collectionId}/${entry.slug}` : entry.collectionId
-    const result = await getApiClient().content.read({
+    const result = await apiClient.content.read({
       branch: options.branchName,
       path,
     })
@@ -139,7 +126,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const payload = buildWritePayload(entry, value)
     // Build path from collectionId and slug (if it's a collection entry)
     const path = entry.slug ? `${entry.collectionId}/${entry.slug}` : entry.collectionId
-    const result = await getApiClient().content.write(
+    const result = await apiClient.content.write(
       {
         branch: options.branchName,
         path,
@@ -152,7 +139,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   const refreshEntries = async (branch: string = options.branchName) => {
     if (!branch) return
-    const result = await getApiClient().entries.list({ branch })
+    const result = await apiClient.entries.list({ branch })
     if (!result.ok) throw new Error(`Refresh failed: ${result.status}`)
     const data = result.data as ListEntriesResponse
 
@@ -195,7 +182,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
           ? { format: 'json' as const, data: {} }
           : { format: col.format, data: {}, body: '' }
       const path = `${collectionId}/${slug}`
-      const result = await getApiClient().content.write(
+      const result = await apiClient.content.write(
         {
           branch: options.branchName,
           path,
