@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import { isAdmin, isPrivileged } from '../reserved-groups'
+import { isAdmin, isPrivileged } from '../authorization'
 import { defineEndpoint } from './route-builder'
 
 /** Response type for listing assets */

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { CommentThread, CommentType } from '../comment-store'
 import { CommentStore } from '../comment-store'
-import { isReviewer } from '../reserved-groups'
+import { isReviewer } from '../authorization'
 import { defineEndpoint } from './route-builder'
 
 export interface AddCommentBody {

@@ -44,9 +44,8 @@ const updateBranchAccessBodySchema = z.object({
   allowedGroups: z.array(z.string()).optional()
 })
 
-import { isPrivileged, isAdmin } from '../reserved-groups'
+import { isPrivileged, isAdmin, loadPathPermissions } from '../authorization'
 import type { PathPermission } from '../config'
-import { loadPathPermissions } from '../permissions-loader'
 import type { CanopyUser } from '../user'
 import { operatingStrategy } from '../operating-mode'
 

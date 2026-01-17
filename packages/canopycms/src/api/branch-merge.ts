@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { getBranchMetadataFileManager } from '../branch-metadata'
-import { isAdmin } from '../reserved-groups'
+import { isAdmin } from '../authorization'
 import { defineEndpoint } from './route-builder'
 
 const markAsMergedParamsSchema = z.object({

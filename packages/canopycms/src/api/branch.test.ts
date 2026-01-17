@@ -1,9 +1,14 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
-// Mock permissions loader
-vi.mock('../permissions-loader', () => ({
-  loadPathPermissions: vi.fn(),
-}))
+// Mock authorization module (specifically loadPathPermissions)
+vi.mock('../authorization', async (importOriginal) => {
+  const { vi } = await import('vitest')
+  const original = await importOriginal<typeof import('../authorization')>()
+  return {
+    ...original,
+    loadPathPermissions: vi.fn(),
+  }
+})
 
 const mockMetadataUpdate = vi.fn().mockImplementation((updates: { branch?: { access?: any } }) => {
   return Promise.resolve({
@@ -47,9 +52,14 @@ vi.mock('../branch-workspace', () => ({
 
 import { createBranchHandler as createBranch, listBranchesHandler as listBranches, deleteBranchHandler as deleteBranch, updateBranchAccessHandler as updateBranchAccess, canCreateBranch, canDeleteBranch, canModifyBranchAccess } from './branch'
 import type { ApiContext } from './types'
-import { RESERVED_GROUPS } from '../reserved-groups'
+import { RESERVED_GROUPS } from '../authorization'
 import { createMockApiContext, createMockBranchContext, createMockRegistry } from '../test-utils'
-import * as permissionsLoader from '../permissions-loader'
+import * as authorization from '../authorization'
+
+// Alias for convenience (tests reference permissionsLoader)
+const permissionsLoader = {
+  loadPathPermissions: authorization.loadPathPermissions,
+}
 
 const mockRegistry = createMockRegistry([
   createMockBranchContext({ branchName: 'feature/a', createdBy: 'u1', baseRoot: '/test/base' }),

@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { loadPathPermissions, savePathPermissions, ensurePermissionsFile } from './permissions-loader'
-import { mockConsole } from './test-utils/console-spy.js'
+import { loadPathPermissions, savePathPermissions, ensurePermissionsFile } from '../permissions'
+import { mockConsole } from '../../test-utils/console-spy.js'
 
 describe('permissions loader', () => {
   let testRoot: string

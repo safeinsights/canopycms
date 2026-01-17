@@ -3,7 +3,7 @@ import type { ApiContext, ApiRequest } from './types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
-import { canPerformWorkflowAction } from '../authz'
+import { canPerformWorkflowAction } from '../authorization'
 
 const branchParamSchema = z.object({
   branch: z.string().min(1)
