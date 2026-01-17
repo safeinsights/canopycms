@@ -62,16 +62,19 @@ describe('User Context API Integration', () => {
     adminClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
+      schema: BLOG_SCHEMA,
     })
 
     editorClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
+      schema: BLOG_SCHEMA,
     })
 
     reviewerClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('reviewer'),
+      schema: BLOG_SCHEMA,
     })
   })
 
@@ -120,6 +123,7 @@ describe('User Context API Integration', () => {
     const multiGroupClient = await createApiClient({
       config: workspace.config,
       authPlugin: createCustomAuthPlugin('multi-group-user', ['ContentEditors', 'Reviewers']),
+      schema: BLOG_SCHEMA,
     })
 
     const response = await multiGroupClient.get('/api/canopycms/whoami')

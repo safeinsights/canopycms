@@ -117,11 +117,14 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Create services with prod-sim mode
-    const services = await createCanopyServices({
-      ...workspace.config,
-      mode: 'prod-sim',
-      settingsBranch: 'canopycms-settings',
-    })
+    const services = await createCanopyServices(
+      {
+        ...workspace.config,
+        mode: 'prod-sim',
+        settingsBranch: 'canopycms-settings',
+      },
+      { schema: BLOG_SCHEMA },
+    )
 
     // Check access for restrictedUser on main branch
     // This should read from settings branch (restrictive), not main branch (permissive)
@@ -210,11 +213,14 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Create services
-    const services = await createCanopyServices({
-      ...workspace.config,
-      mode: 'prod-sim',
-      settingsBranch: 'canopycms-settings',
-    })
+    const services = await createCanopyServices(
+      {
+        ...workspace.config,
+        mode: 'prod-sim',
+        settingsBranch: 'canopycms-settings',
+      },
+      { schema: BLOG_SCHEMA },
+    )
 
     // Check access - should fall back to defaultPathAccess (deny)
     // NOT use the permissive rule from main branch
@@ -284,11 +290,14 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Create services in prod-sim mode
-    const services = await createCanopyServices({
-      ...workspace.config,
-      mode: 'prod-sim',
-      settingsBranch: 'canopycms-settings',
-    })
+    const services = await createCanopyServices(
+      {
+        ...workspace.config,
+        mode: 'prod-sim',
+        settingsBranch: 'canopycms-settings',
+      },
+      { schema: BLOG_SCHEMA },
+    )
 
     // Check access on feature branch
     // Should read from settings branch (empty), not feature branch (permissive)

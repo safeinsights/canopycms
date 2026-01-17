@@ -26,16 +26,19 @@ describe('Role Permission Integration', () => {
     adminClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('admin'),
+      schema: BLOG_SCHEMA,
     })
 
     reviewerClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('reviewer'),
+      schema: BLOG_SCHEMA,
     })
 
     editorClient = await createApiClient({
       config: workspace.config,
       authPlugin: createMockAuthPlugin('editor'),
+      schema: BLOG_SCHEMA,
     })
   })
 

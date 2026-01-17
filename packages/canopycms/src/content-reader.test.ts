@@ -61,7 +61,7 @@ describe('createContentReader', () => {
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createCanopyServices(config),
+      services: await createCanopyServices(config, { schema: config.schema }),
       allowCreateBranch: false,
       getBranchContext: async (branch) => (branch === 'main' ? branchContext : null),
     })
@@ -108,7 +108,7 @@ describe('createContentReader', () => {
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createCanopyServices(config),
+      services: await createCanopyServices(config, { schema: config.schema }),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -143,7 +143,7 @@ describe('createContentReader', () => {
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createCanopyServices(config),
+      services: await createCanopyServices(config, { schema: config.schema }),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -195,7 +195,7 @@ describe('createContentReader', () => {
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createCanopyServices(config),
+      services: await createCanopyServices(config, { schema: config.schema }),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -252,7 +252,7 @@ describe('createContentReader', () => {
 
     try {
       const reader = createContentReader({
-        services: await createCanopyServices(config),
+        services: await createCanopyServices(config, { schema: config.schema }),
         basePathOverride: root,
       })
       const doc = await reader.read<{ hero: { title: string } }>({
@@ -300,7 +300,7 @@ describe('createContentReader', () => {
 
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createCanopyServices(config),
+      services: await createCanopyServices(config, { schema: config.schema }),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
