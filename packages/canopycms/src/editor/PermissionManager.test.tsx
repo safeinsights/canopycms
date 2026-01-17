@@ -91,11 +91,11 @@ describe('PermissionManager', () => {
   const mockPermissions: PathPermission[] = [
     {
       path: 'content/posts/**',
-      edit: { allowedGroups: ['editors'] },
+      read: { allowedGroups: ['editors'] },
     },
     {
       path: 'content/about',
-      edit: { allowedUsers: ['alice'] },
+      read: { allowedUsers: ['alice'] },
     },
   ]
 
@@ -382,10 +382,13 @@ describe('PermissionManager', () => {
         { wrapper },
       )
 
-      // Expand tree to see badges
-      const expandAllButton = screen.getByText('Expand All')
-      fireEvent.click(expandAllButton)
+      // Content is expanded by default - posts should be visible
+      expect(screen.getByText('posts')).toBeTruthy()
 
+      // Click posts node to see its permissions (posts has group 'editors' assigned)
+      fireEvent.click(screen.getByText('posts'))
+
+      // Wait for group badges to appear in the permission editor
       await waitFor(() => {
         const badges = screen.getAllByText('Editors')
         expect(badges.length).toBeGreaterThan(0)
@@ -405,10 +408,13 @@ describe('PermissionManager', () => {
         { wrapper },
       )
 
-      // Expand tree to see badges
-      const expandAllButton = screen.getByText('Expand All')
-      fireEvent.click(expandAllButton)
+      // Content is expanded by default - about should be visible
+      expect(screen.getByText('about')).toBeTruthy()
 
+      // Click about node to see its permissions (about has user 'alice' assigned)
+      fireEvent.click(screen.getByText('about'))
+
+      // Wait for user badges to appear in the permission editor
       await waitFor(() => {
         const badges = screen.getAllByText('alice')
         expect(badges.length).toBeGreaterThan(0)
