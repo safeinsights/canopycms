@@ -6,6 +6,19 @@ import { vi } from 'vitest'
 import type { CanopyConfig } from '../../config'
 import { defineCanopyTestConfig } from '../../config-test'
 
+/**
+ * Initialize a bare git repository with the specified default branch.
+ * This ensures the bare repo's HEAD points to the correct branch when cloning.
+ *
+ * @param remotePath - Path where the bare repository should be created
+ * @param defaultBranch - The default branch name (defaults to 'main')
+ * @returns A simpleGit instance configured for the bare repository
+ */
+export async function initBareRepo(remotePath: string, defaultBranch = 'main') {
+  await simpleGit().raw(['init', '--bare', `--initial-branch=${defaultBranch}`, remotePath])
+  return simpleGit({ baseDir: remotePath })
+}
+
 export interface TestWorkspace {
   /** Root temporary directory for this workspace */
   tmpRoot: string
@@ -61,7 +74,7 @@ export async function createTestWorkspace(
 
   try {
     // Initialize bare remote
-    await simpleGit().raw(['init', '--bare', remotePath])
+    await initBareRepo(remotePath)
 
     // Create and configure seed clone
     await fs.mkdir(seedPath, { recursive: true })

@@ -9,6 +9,7 @@ import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
 import { defineCanopyConfig } from './config'
 import { defineCanopyTestConfig } from './config-test'
 import { BranchRegistry } from './branch-registry'
+import { initBareRepo } from './__integration__/test-utils/test-workspace'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branchws-'))
 
@@ -50,7 +51,7 @@ describe('BranchWorkspaceManager', () => {
     const seedPath = path.join(root, 'seed')
 
     // Set up a bare remote repo
-    await simpleGit().raw(['init', '--bare', remotePath])
+    await initBareRepo(remotePath)
     await fs.mkdir(seedPath, { recursive: true })
     const seedGit = simpleGit({ baseDir: seedPath })
     await seedGit.init()
@@ -107,7 +108,7 @@ describe('BranchWorkspaceManager', () => {
     const root = await tmpDir()
     const remotePath = path.join(root, 'remote.git')
     const seedPath = path.join(root, 'seed')
-    await simpleGit().raw(['init', '--bare', remotePath])
+    await initBareRepo(remotePath)
 
     await fs.mkdir(seedPath, { recursive: true })
     const seedGit = simpleGit({ baseDir: seedPath })
