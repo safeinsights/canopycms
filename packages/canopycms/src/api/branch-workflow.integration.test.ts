@@ -13,6 +13,7 @@ import { simpleGit } from 'simple-git'
 
 import { GitHubService } from '../github-service'
 import { GitManager } from '../git-manager'
+import { initBareRepo } from '../__integration__/test-utils/test-workspace'
 import { BranchWorkspaceManager, loadBranchContext } from '../branch-workspace'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { CommentStore } from '../comment-store'
@@ -117,7 +118,7 @@ describe('PR Workflow Integration', () => {
     const repo = 'testrepo'
 
     // ===== SETUP: Initialize bare remote and seed main branch =====
-    await simpleGit().raw(['init', '--bare', remotePath])
+    await initBareRepo(remotePath)
 
     await fs.mkdir(seedPath, { recursive: true })
     const seedGit = simpleGit({ baseDir: seedPath })
@@ -418,7 +419,7 @@ describe('PR Workflow Integration', () => {
     const repo = 'testrepo-draft'
 
     // Setup remote and seed
-    await simpleGit().raw(['init', '--bare', remotePath])
+    await initBareRepo(remotePath)
     await fs.mkdir(seedPath, { recursive: true })
     const seedGit = simpleGit({ baseDir: seedPath })
     await seedGit.init()

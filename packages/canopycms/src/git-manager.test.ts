@@ -22,6 +22,8 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     // Setup: create a git repo with a commit on main
     const git = simpleGit({ baseDir: tmpDir })
     await git.init()
+    await git.addConfig('user.name', 'Test Bot')
+    await git.addConfig('user.email', 'test@canopycms.test')
     await git.raw(['branch', '-M', 'main'])
     await fs.writeFile(path.join(tmpDir, 'test.txt'), 'hello', 'utf8')
     await git.add(['.'])
@@ -134,6 +136,8 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     // Setup: create main with one commit, then feature branch with different commit
     const git = simpleGit({ baseDir: tmpDir })
     await git.init()
+    await git.addConfig('user.name', 'Test Bot')
+    await git.addConfig('user.email', 'test@canopycms.test')
     await git.raw(['branch', '-M', 'main'])
     await fs.writeFile(path.join(tmpDir, 'main.txt'), 'main content', 'utf8')
     await git.add(['.'])
@@ -284,6 +288,8 @@ describe('GitManager.resolveRemoteUrl', () => {
     // Setup: create git repo with subdirectory structure
     const git = simpleGit({ baseDir: tmpDir })
     await git.init()
+    await git.addConfig('user.name', 'Test Bot')
+    await git.addConfig('user.email', 'test@canopycms.test')
     await git.raw(['branch', '-M', 'main'])
 
     // Create subdirectory with content

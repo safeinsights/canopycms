@@ -173,7 +173,7 @@ export class GitManager {
       // Create bare remote
       log.debug('git', 'Creating bare remote repository')
       await fs.mkdir(path.dirname(options.remotePath), { recursive: true })
-      await simpleGit().raw(['init', '--bare', options.remotePath])
+      await simpleGit().raw(['init', '--bare', `--initial-branch=${options.baseBranch}`, options.remotePath])
 
       // Push baseBranch to remote (not current HEAD)
       const tempRemoteName = `__canopycms_init_${Date.now()}__`

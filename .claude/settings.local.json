@@ -75,7 +75,8 @@
       "Bash(1)",
       "Bash(sed -n:*)",
       "Bash(git restore:*)",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "Bash(gh run list:*)"
     ]
   }
 }

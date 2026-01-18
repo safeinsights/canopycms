@@ -43,5 +43,8 @@ jobs:
         run: npm run typecheck
 
       - name: Run tests
-        run: npm test
         working-directory: packages/canopycms
+        run: |
+          git config --global user.email "ci@canopycms.test"
+          git config --global user.name "CI Bot"
+          npm test
