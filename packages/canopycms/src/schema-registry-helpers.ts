@@ -95,45 +95,25 @@ export async function validateSchemaRegistry(
     const availableSchemas = Object.keys(schemaRegistry)
     const errors: string[] = []
 
-    // Validate root collection schema references
-    if (metaFiles.root?.entries?.fields) {
-      const ref = metaFiles.root.entries.fields
-      if (!schemaRegistry[ref]) {
-        errors.push(
-          `Root collection references schema "${ref}" which does not exist in registry. ` +
-          `Available: ${availableSchemas.join(', ')}`
-        )
-      }
-    }
-
-    if (metaFiles.root?.singletons) {
-      for (const singleton of metaFiles.root.singletons) {
-        if (!schemaRegistry[singleton.fields]) {
+    // Validate root collection schema references (entry types)
+    if (metaFiles.root?.entries) {
+      for (const entryType of metaFiles.root.entries) {
+        if (!schemaRegistry[entryType.fields]) {
           errors.push(
-            `Root singleton "${singleton.name}" references schema "${singleton.fields}" which does not exist in registry. ` +
+            `Root entry type "${entryType.name}" references schema "${entryType.fields}" which does not exist in registry. ` +
             `Available: ${availableSchemas.join(', ')}`
           )
         }
       }
     }
 
-    // Validate collection schema references
+    // Validate collection schema references (entry types)
     for (const collection of metaFiles.collections) {
-      if (collection.entries?.fields) {
-        const ref = collection.entries.fields
-        if (!schemaRegistry[ref]) {
-          errors.push(
-            `Collection "${collection.name}" (${collection.path}) references schema "${ref}" which does not exist in registry. ` +
-            `Available: ${availableSchemas.join(', ')}`
-          )
-        }
-      }
-
-      if (collection.singletons) {
-        for (const singleton of collection.singletons) {
-          if (!schemaRegistry[singleton.fields]) {
+      if (collection.entries) {
+        for (const entryType of collection.entries) {
+          if (!schemaRegistry[entryType.fields]) {
             errors.push(
-              `Singleton "${singleton.name}" in collection "${collection.name}" references schema "${singleton.fields}" which does not exist in registry. ` +
+              `Entry type "${entryType.name}" in collection "${collection.name}" (${collection.path}) references schema "${entryType.fields}" which does not exist in registry. ` +
               `Available: ${availableSchemas.join(', ')}`
             )
           }

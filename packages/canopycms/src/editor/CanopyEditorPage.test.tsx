@@ -29,7 +29,6 @@ const baseConfig = {
         },
       },
     ],
-    singletons: [],
   },
   contentRoot: 'content',
   gitBotAuthorName: 'Bot',

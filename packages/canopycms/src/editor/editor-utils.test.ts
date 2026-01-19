@@ -140,17 +140,17 @@ describe('buildEntriesFromListResponse', () => {
 
   const existingEntries: EditorEntry[] = [
     {
-      id: 'home',
-      label: 'Home',
+      id: 'pages/home',
+      label: 'Home Page',
       status: 'entry',
       schema: fallbackSchema,
-      apiPath: '/api/canopycms/feature-branch/content/home',
-      previewSrc: '/preview/home',
-      collectionId: 'home',
-      collectionName: 'Home',
-      slug: '',
+      apiPath: '/api/canopycms/feature-branch/content/pages/home',
+      previewSrc: '/preview/pages/home',
+      collectionId: 'pages',
+      collectionName: 'Pages',
+      slug: 'home',
       format: 'json',
-      type: 'singleton',
+      type: 'entry',
     },
   ]
 
@@ -165,11 +165,11 @@ describe('buildEntriesFromListResponse', () => {
         schema: postsSchema,
       },
       {
-        id: 'home',
-        name: 'Home',
-        path: 'home',
+        id: 'pages',
+        name: 'Pages',
+        path: 'pages',
         format: 'json',
-        type: 'entry',
+        type: 'collection',
         schema: [],
       },
     ],
@@ -180,19 +180,19 @@ describe('buildEntriesFromListResponse', () => {
         collectionId: 'posts',
         collectionName: 'Posts',
         format: 'mdx',
-        itemType: 'entry',
+        entryType: 'post',
         path: 'content/posts/hello-world',
         title: 'Hello Title',
         exists: true,
       },
       {
-        id: 'home',
-        slug: '',
-        collectionId: 'home',
-        collectionName: 'Home',
+        id: 'pages/home',
+        slug: 'home',
+        collectionId: 'pages',
+        collectionName: 'Pages',
         format: 'json',
-        itemType: 'singleton',
-        path: 'content/home.json',
+        entryType: 'page',
+        path: 'content/pages/home.json',
         exists: false,
       },
     ],
@@ -201,7 +201,7 @@ describe('buildEntriesFromListResponse', () => {
 
   it('maps entries with schema, status, preview, and api paths', () => {
     const resolvePreviewSrc = vi.fn(
-      (entry: { collectionId?: string; collectionName?: string; slug?: string; itemType?: string }) =>
+      (entry: { collectionId?: string; collectionName?: string; slug?: string; entryType?: string }) =>
         `preview-${entry.slug ?? 'home'}`
     )
     const result = buildEntriesFromListResponse({
@@ -210,6 +210,7 @@ describe('buildEntriesFromListResponse', () => {
       resolvePreviewSrc,
       existingEntries,
       initialEntries: existingEntries,
+      contentRoot: 'content',
     })
 
     expect(result).toHaveLength(2)
@@ -217,30 +218,31 @@ describe('buildEntriesFromListResponse', () => {
     const post = result.find((item) => item.collectionId === 'posts')
     expect(post?.label).toBe('Hello Title')
     expect(post?.schema).toEqual(postsSchema)
-    expect(post?.status).toBe('entry')
+    expect(post?.status).toBe('post')
     expect(post?.apiPath).toBe('/api/canopycms/feature-branch/content/posts/hello%20world')
     expect(post?.previewSrc).toBe('preview-hello world')
 
-    const home = result.find((item) => item.collectionId === 'home')
-    expect(home?.schema).toEqual([])
-    expect(home?.status).toBe('missing')
-    expect(home?.apiPath).toBe('/api/canopycms/feature-branch/content/home')
-    expect(home?.slug).toBe('')
+    const page = result.find((item) => item.collectionId === 'pages')
+    expect(page?.schema).toEqual([])
+    expect(page?.status).toBe('missing')
+    expect(page?.apiPath).toBe('/api/canopycms/feature-branch/content/pages/home')
+    expect(page?.slug).toBe('home')
 
     expect(resolvePreviewSrc).toHaveBeenCalledTimes(2)
   })
 
   it('falls back to existing schemas when collection metadata is missing', () => {
     const result = buildEntriesFromListResponse({
-      response: { ...response, collections: response.collections.filter((c) => c.id !== 'home') },
+      response: { ...response, collections: response.collections.filter((c) => c.id !== 'pages') },
       branchName: 'feature-branch',
       resolvePreviewSrc: () => 'preview',
       existingEntries,
       initialEntries: existingEntries,
+      contentRoot: 'content',
     })
 
-    const home = result.find((item) => item.collectionId === 'home')
-    expect(home?.schema).toEqual(fallbackSchema)
+    const page = result.find((item) => item.collectionId === 'pages')
+    expect(page?.schema).toEqual(fallbackSchema)
   })
 })
 
@@ -430,14 +432,14 @@ describe('buildBreadcrumbSegments', () => {
     expect(result).toEqual(['All Files', 'Blog Posts', '2024', '01'])
   })
 
-  it('works for singleton entries with collection', () => {
+  it('works for root entry types with maxItems: 1', () => {
     const entry: EditorEntry = {
       id: 'content/settings',
       label: 'Site Settings',
       schema: [],
       apiPath: '/api/test',
       collectionId: 'content/settings',
-      type: 'singleton',
+      type: 'entry',
     }
     const labels = new Map([
       ['content', 'Content'],

@@ -42,22 +42,15 @@ describe('listEntries', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
-          },
-        ],
-        singletons: [
-          {
-            name: 'settings',
-            path: 'settings',
-            format: 'json',
-            fields: [{ name: 'siteName', type: 'string' }],
+            entries: [{ name: 'entry', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
           },
         ],
       },
     })
 
     // Mock loadPathPermissions to return rules that hide 'hidden.json' from user 'u1'
-    const pathRules: PathPermission[] = [{ path: 'content/posts/hidden.json', edit: { allowedUsers: ['other'] } }]
+    // Use 'read' access restriction to actually hide the file from listing
+    const pathRules: PathPermission[] = [{ path: 'content/posts/hidden.json', read: { allowedUsers: ['other'] } }]
     const mockLoadPermissions = vi.fn().mockResolvedValue(pathRules)
 
     const checkBranchAccess = createCheckBranchAccess('allow')
@@ -83,19 +76,13 @@ describe('listEntries', () => {
       }),
     })
 
-    // Request limit=2 to get both the singleton and at least one collection entry
+    // Request limit=2 to get entries
     const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'main', limit: 2 })
 
     expect(res.ok).toBe(true)
-    // Should include the singleton (settings) and the first post
-    expect(res.data?.entries.some((e) => e.collectionName === 'settings' && e.itemType === 'singleton')).toBe(true)
+    // Should include posts but not hidden.json (restricted by permission)
     expect(res.data?.entries.some((e) => e.slug === 'first')).toBe(true)
     expect(res.data?.entries.some((e) => e.slug === 'hidden')).toBe(false)
-    const summaries = res.data?.collections ?? []
-    const flat = (nodes: typeof summaries): typeof summaries =>
-      nodes.flatMap((n) => [n, ...(n.children ? flat(n.children) : [])])
-    expect(flat(summaries).find((c) => c.name === 'settings')?.type).toBe('entry')
-    expect(res.data?.pagination.hasMore).toBe(true)
   })
 
   it('returns 404 when branch is missing', async () => {
@@ -152,24 +139,23 @@ describe('listEntries', () => {
           {
             name: 'docs',
             path: 'docs',
-            entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'entry', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
             collections: [
               {
                 name: 'api',
                 path: 'api',
-                entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+                entries: [{ name: 'entry', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
                 collections: [
                   {
                     name: 'v2',
                     path: 'v2',
-                    entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+                    entries: [{ name: 'entry', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
                   },
                 ],
               },
             ],
           },
         ],
-        singletons: [],
       },
     })
 
@@ -256,11 +242,11 @@ describe('listEntries', () => {
     expect(authEntry?.collectionId).toBe('content/docs/api/v2')
   })
 
-  it('returns singletons with schemas using new schema format', async () => {
+  it('returns entries with schemas using new schema format', async () => {
     const root = await tmpDir()
-    await fs.mkdir(path.join(root, 'content'), { recursive: true })
+    await fs.mkdir(path.join(root, 'content/pages'), { recursive: true })
     await fs.writeFile(
-      path.join(root, 'content/home.json'),
+      path.join(root, 'content/pages/home.json'),
       JSON.stringify({ title: 'Home Page', tagline: 'Welcome' }),
       'utf8'
     )
@@ -269,15 +255,20 @@ describe('listEntries', () => {
       defaultBranchAccess: 'allow',
       contentRoot: 'content',
       schema: {
-        singletons: [
+        collections: [
           {
-            name: 'home',
-            label: 'Home',
-            path: 'home',
-            format: 'json',
-            fields: [
-              { name: 'title', type: 'string' },
-              { name: 'tagline', type: 'string' },
+            name: 'pages',
+            label: 'Pages',
+            path: 'pages',
+            entries: [
+              {
+                name: 'page',
+                format: 'json',
+                fields: [
+                  { name: 'title', type: 'string' },
+                  { name: 'tagline', type: 'string' },
+                ],
+              },
             ],
           },
         ],
@@ -311,19 +302,18 @@ describe('listEntries', () => {
 
     expect(res.ok).toBe(true)
 
-    // Verify singleton entry is returned
-    const homeEntry = res.data?.entries.find((e) => e.collectionId === 'content/home')
+    // Verify entry is returned
+    const homeEntry = res.data?.entries.find((e) => e.slug === 'home')
     expect(homeEntry).toBeDefined()
-    expect(homeEntry?.itemType).toBe('singleton')
-    expect(homeEntry?.slug).toBe('')
+    expect(homeEntry?.collectionId).toBe('content/pages')
 
-    // Verify singleton is in collections array with schema
-    const homeCollection = res.data?.collections.find((c) => c.id === 'content/home')
-    expect(homeCollection).toBeDefined()
-    expect(homeCollection?.type).toBe('entry')
-    expect(homeCollection?.schema).toHaveLength(2)
-    expect(homeCollection?.schema[0].name).toBe('title')
-    expect(homeCollection?.schema[1].name).toBe('tagline')
+    // Verify collection is in collections array with schema
+    const pagesCollection = res.data?.collections.find((c) => c.id === 'content/pages')
+    expect(pagesCollection).toBeDefined()
+    expect(pagesCollection?.type).toBe('collection')
+    expect(pagesCollection?.schema).toHaveLength(2)
+    expect(pagesCollection?.schema[0].name).toBe('title')
+    expect(pagesCollection?.schema[1].name).toBe('tagline')
   })
 
   it('includes canEdit flag based on edit permissions', async () => {
@@ -347,7 +337,7 @@ describe('listEntries', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'entry', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
           },
         ],
       },
@@ -409,35 +399,6 @@ describe('listEntries', () => {
     // Create content directory
     await fs.mkdir(path.join(root, 'content'), { recursive: true })
 
-    // Create root .collection.json with singleton (like example1)
-    await fs.writeFile(
-      path.join(root, 'content/.collection.json'),
-      JSON.stringify({
-        singletons: [
-          {
-            name: 'home',
-            label: 'Home',
-            path: 'home',
-            format: 'json',
-            fields: 'homeSchema'
-          }
-        ]
-      }),
-      'utf8'
-    )
-
-    // Create home.json singleton file with embedded ID
-    const homeId = 'h1m2e3p4a5g6'
-    await fs.writeFile(
-      path.join(root, `content/home.${homeId}.json`),
-      JSON.stringify({
-        hero: { title: 'CanopyCMS Demo', body: 'Schema-driven content' },
-        features: [],
-        cta: { text: 'Get Started', link: '/posts' }
-      }),
-      'utf8'
-    )
-
     // Create collection folder with ID (like authors.q52DCVPuH4ga)
     const authorsId = 'q52DCVPuH4ga'
     await fs.mkdir(path.join(root, `content/authors.${authorsId}`), { recursive: true })
@@ -448,10 +409,13 @@ describe('listEntries', () => {
       JSON.stringify({
         name: 'authors',
         label: 'Authors',
-        entries: {
-          format: 'json',
-          fields: 'authorSchema'
-        }
+        entries: [
+          {
+            name: 'author',
+            format: 'json',
+            fields: 'authorSchema'
+          }
+        ]
       }),
       'utf8'
     )
@@ -472,33 +436,6 @@ describe('listEntries', () => {
 
     // Load schema from .collection.json files (like services do)
     const schemaRegistry = {
-      homeSchema: [
-        {
-          name: 'hero',
-          type: 'object',
-          fields: [
-            { name: 'title', type: 'string' },
-            { name: 'body', type: 'string' }
-          ]
-        },
-        {
-          name: 'features',
-          type: 'object',
-          list: true,
-          fields: [
-            { name: 'title', type: 'string' },
-            { name: 'description', type: 'string' }
-          ]
-        },
-        {
-          name: 'cta',
-          type: 'object',
-          fields: [
-            { name: 'text', type: 'string' },
-            { name: 'link', type: 'string' }
-          ]
-        }
-      ],
       authorSchema: [
         { name: 'name', type: 'string' },
         { name: 'bio', type: 'string' }
@@ -546,13 +483,7 @@ describe('listEntries', () => {
     )
 
     expect(res.ok).toBe(true)
-    expect(res.data?.entries).toHaveLength(3) // home singleton + alice + bob
-
-    // Verify home singleton is included
-    const homeEntry = res.data?.entries.find((e) => e.collectionId === 'content/home')
-    expect(homeEntry).toBeDefined()
-    expect(homeEntry?.itemType).toBe('singleton')
-    expect(homeEntry?.title).toBe('Home') // Title comes from schema label
+    expect(res.data?.entries).toHaveLength(2) // alice + bob
 
     // Verify slugs are extracted correctly (without IDs) for collection entries
     const aliceEntry = res.data?.entries.find((e) => e.slug === 'alice')
@@ -567,5 +498,148 @@ describe('listEntries', () => {
     expect(bobEntry?.slug).toBe('bob')
     expect(bobEntry?.title).toBe('Bob')
     expect(bobEntry?.collectionId).toBe('content/authors') // Logical path, no ID
+  })
+
+  it('lists root-level entry types with maxItems: 1', async () => {
+    const root = await tmpDir()
+
+    // Create content directory
+    await fs.mkdir(path.join(root, 'content'), { recursive: true })
+
+    // Create root .collection.json with entries (not singletons)
+    await fs.writeFile(
+      path.join(root, 'content/.collection.json'),
+      JSON.stringify({
+        entries: [
+          {
+            name: 'home',
+            label: 'Home',
+            format: 'json',
+            fields: 'homeSchema',
+            maxItems: 1
+          },
+          {
+            name: 'settings',
+            label: 'Settings',
+            format: 'json',
+            fields: 'settingsSchema',
+            maxItems: 1
+          }
+        ]
+      }),
+      'utf8'
+    )
+
+    // Create root-level entry files (pattern: {name}.{id}.{ext})
+    const homeId = 'agfzDt2RLpSn'
+    const settingsId = 'Xp7qR2sL9mKn'
+    await fs.writeFile(
+      path.join(root, `content/home.${homeId}.json`),
+      JSON.stringify({ title: 'Welcome Home', hero: 'Hello World' }),
+      'utf8'
+    )
+    await fs.writeFile(
+      path.join(root, `content/settings.${settingsId}.json`),
+      JSON.stringify({ siteName: 'My Site', theme: 'dark' }),
+      'utf8'
+    )
+
+    // Also create a collection to verify both work together
+    const postsId = '916jXZabYCxu'
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/.collection.json`),
+      JSON.stringify({
+        name: 'posts',
+        label: 'Posts',
+        entries: [
+          { name: 'post', format: 'json', fields: 'postSchema' }
+        ]
+      }),
+      'utf8'
+    )
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/first.abc123.json`),
+      JSON.stringify({ title: 'First Post' }),
+      'utf8'
+    )
+
+    // Load schema from .collection.json files
+    const schemaRegistry = {
+      homeSchema: [
+        { name: 'title', type: 'string' },
+        { name: 'hero', type: 'string' }
+      ],
+      settingsSchema: [
+        { name: 'siteName', type: 'string' },
+        { name: 'theme', type: 'string' }
+      ],
+      postSchema: [
+        { name: 'title', type: 'string' }
+      ]
+    }
+
+    const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
+    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema,
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+      },
+      branchContext: createMockBranchContext({
+        branchName: 'main',
+        baseRoot: root,
+        branchRoot: root,
+        createdBy: 'u1',
+      }),
+    })
+
+    const res = await listEntriesHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main' }
+    )
+
+    expect(res.ok).toBe(true)
+    // Should have 3 entries: home, settings (root-level) + first post (collection)
+    expect(res.data?.entries).toHaveLength(3)
+
+    // Check root-level entry types
+    const homeEntry = res.data?.entries.find((e) => e.slug === 'home' && e.collectionId === 'content')
+    expect(homeEntry).toBeDefined()
+    expect(homeEntry?.slug).toBe('home') // Name acts as slug
+    expect(homeEntry?.title).toBe('Welcome Home')
+    expect(homeEntry?.collectionId).toBe('content') // Parent path, not full path
+    expect(homeEntry?.entryType).toBe('home')
+
+    const settingsEntry = res.data?.entries.find((e) => e.slug === 'settings' && e.collectionId === 'content')
+    expect(settingsEntry).toBeDefined()
+    expect(settingsEntry?.slug).toBe('settings') // Name acts as slug
+    expect(settingsEntry?.title).toBe('Settings') // Falls back to label since siteName isn't title
+    expect(settingsEntry?.collectionId).toBe('content') // Parent path, not full path
+    expect(settingsEntry?.entryType).toBe('settings')
+
+    // Check collection entry still works
+    const postEntry = res.data?.entries.find((e) => e.slug === 'first')
+    expect(postEntry).toBeDefined()
+    expect(postEntry?.collectionId).toBe('content/posts')
   })
 })

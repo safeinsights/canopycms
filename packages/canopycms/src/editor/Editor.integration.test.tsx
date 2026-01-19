@@ -134,7 +134,7 @@ describe('Editor integration', () => {
           branchName="main"
           operatingMode="dev"
           themeOptions={{}}
-          configSchema={{ collections: [], singletons: [] }}
+          configSchema={{ collections: [] }}
         />
       </ApiClientProvider>
     )

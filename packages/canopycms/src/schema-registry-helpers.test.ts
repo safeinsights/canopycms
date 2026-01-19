@@ -65,10 +65,13 @@ describe('validateSchemaRegistry', () => {
       join(testDir, 'posts', '.collection.json'),
       JSON.stringify({
         name: 'posts',
-        entries: {
-          format: 'mdx',
-          fields: 'postSchema',
-        },
+        entries: [
+          {
+            name: 'post',
+            format: 'mdx',
+            fields: 'postSchema',
+          },
+        ],
       })
     )
 
@@ -88,34 +91,36 @@ describe('validateSchemaRegistry', () => {
       join(testDir, 'posts', '.collection.json'),
       JSON.stringify({
         name: 'posts',
-        entries: {
-          format: 'mdx',
-          fields: 'authorSchema',
-        },
+        entries: [
+          {
+            name: 'post',
+            format: 'mdx',
+            fields: 'authorSchema',
+          },
+        ],
       })
     )
 
     await expect(validateSchemaRegistry(registry, testDir)).rejects.toThrow(
-      /Collection "posts".*references schema "authorSchema".*does not exist/
+      /Entry type "post" in collection "posts".*references schema "authorSchema".*does not exist/
     )
     await expect(validateSchemaRegistry(registry, testDir)).rejects.toThrow(/Available: postSchema/)
   })
 
-  it('throws error for missing schema reference in root singleton', async () => {
+  it('throws error for missing schema reference in root entry type', async () => {
     const registry = {
       postSchema: [
         { type: 'text' as const, name: 'title', label: 'Title', required: true },
       ],
     }
 
-    // Create root collection with singleton referencing non-existent schema
+    // Create root collection with entry type referencing non-existent schema
     await writeFile(
       join(testDir, '.collection.json'),
       JSON.stringify({
-        singletons: [
+        entries: [
           {
             name: 'home',
-            path: 'home.json',
             format: 'json',
             fields: 'homeSchema',
           },
@@ -124,27 +129,26 @@ describe('validateSchemaRegistry', () => {
     )
 
     await expect(validateSchemaRegistry(registry, testDir)).rejects.toThrow(
-      /Root singleton "home".*references schema "homeSchema".*does not exist/
+      /Root entry type "home".*references schema "homeSchema".*does not exist/
     )
   })
 
-  it('throws error for missing schema reference in collection singleton', async () => {
+  it('throws error for missing schema reference in collection entry type', async () => {
     const registry = {
       postSchema: [
         { type: 'text' as const, name: 'title', label: 'Title', required: true },
       ],
     }
 
-    // Create collection with singleton referencing non-existent schema
+    // Create collection with entry type referencing non-existent schema
     await mkdir(join(testDir, 'docs'), { recursive: true })
     await writeFile(
       join(testDir, 'docs', '.collection.json'),
       JSON.stringify({
         name: 'docs',
-        singletons: [
+        entries: [
           {
-            name: 'config',
-            path: 'config.json',
+            name: 'doc',
             format: 'json',
             fields: 'configSchema',
           },
@@ -153,7 +157,7 @@ describe('validateSchemaRegistry', () => {
     )
 
     await expect(validateSchemaRegistry(registry, testDir)).rejects.toThrow(
-      /Singleton "config" in collection "docs".*references schema "configSchema".*does not exist/
+      /Entry type "doc" in collection "docs".*references schema "configSchema".*does not exist/
     )
   })
 
@@ -173,20 +177,26 @@ describe('validateSchemaRegistry', () => {
       join(testDir, 'docs', '.collection.json'),
       JSON.stringify({
         name: 'docs',
-        entries: {
-          format: 'mdx',
-          fields: 'docSchema',
-        },
+        entries: [
+          {
+            name: 'doc',
+            format: 'mdx',
+            fields: 'docSchema',
+          },
+        ],
       })
     )
     await writeFile(
       join(testDir, 'docs', 'api', '.collection.json'),
       JSON.stringify({
         name: 'api',
-        entries: {
-          format: 'mdx',
-          fields: 'docSchema',
-        },
+        entries: [
+          {
+            name: 'doc',
+            format: 'mdx',
+            fields: 'docSchema',
+          },
+        ],
       })
     )
 

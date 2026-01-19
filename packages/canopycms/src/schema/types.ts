@@ -20,8 +20,6 @@ export interface SchemaSourceInfo {
   type: 'root' | 'collection'
   /** Collection names defined in this source */
   collections: string[]
-  /** Singleton names defined in this source */
-  singletons: string[]
 }
 
 /**

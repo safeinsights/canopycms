@@ -111,47 +111,43 @@ export type MediaConfig =
   | { adapter: string; publicBaseUrl?: string }
 
 /**
- * Singleton: A single-instance file with unique schema
- * Made readonly-compatible to support `as const` in tests
+ * Entry type config: defines a type of content within a collection.
+ * Each type has its own schema (fields) and can have cardinality constraints.
+ *
+ * Examples:
+ * - { name: 'post', format: 'mdx', fields: postSchema } - unlimited posts
+ * - { name: 'settings', format: 'json', fields: settingsSchema, maxItems: 1 } - singleton-like
  */
-export type SingletonConfig = {
+export type EntryTypeConfig = {
   readonly name: string
-  readonly path: string
   readonly format: ContentFormat
   readonly fields: readonly FieldConfig[]
   readonly label?: string
+  readonly default?: boolean // Is this the default type for "Add" button?
+  readonly maxItems?: number // Limit instances (1 = singleton-like behavior)
 }
 
 /**
- * Collection entries config: shared schema for repeatable entries
- * Made readonly-compatible to support `as const` in tests
- */
-export type CollectionEntriesConfig = {
-  readonly format?: ContentFormat
-  readonly fields: readonly FieldConfig[]
-}
-
-/**
- * Collection: contains nested collections, singletons, or entries
+ * Collection: contains nested collections and typed entries.
+ * The entries array defines the types of content allowed in this collection.
  */
 export type CollectionConfig = {
   readonly name: string
   readonly path: string
   readonly label?: string
-  readonly entries?: CollectionEntriesConfig
+  /** Array of entry types allowed in this collection */
+  readonly entries?: readonly EntryTypeConfig[]
   readonly collections?: readonly CollectionConfig[]
-  readonly singletons?: readonly SingletonConfig[]
 }
 
 /**
  * Root schema configuration for CanopyCMS.
- * Contains top-level collections and singletons arrays.
- * Can be nested recursively with collections containing sub-collections and singletons.
+ * Contains top-level collections and entries (typed content at the root level).
  */
 export type RootCollectionConfig = {
-  readonly entries?: CollectionEntriesConfig
+  /** Entry types at the root level */
+  readonly entries?: readonly EntryTypeConfig[]
   readonly collections?: readonly CollectionConfig[]
-  readonly singletons?: readonly SingletonConfig[]
 }
 
 // Editor configuration
@@ -230,7 +226,7 @@ export type CanopyConfigFragment = Partial<CanopyConfigInput>
 
 /**
  * Flattened schema item for efficient lookups.
- * Discriminated union of collection or singleton with full path resolved.
+ * Discriminated union of collection or entry type with full path resolved.
  * Used for O(1) schema lookups via Map<fullPath, FlatSchemaItem>.
  */
 export type FlatSchemaItem =
@@ -240,18 +236,23 @@ export type FlatSchemaItem =
       name: string
       label?: string
       parentPath?: string
-      entries?: CollectionEntriesConfig
+      /** Array of entry types in this collection */
+      entries?: readonly EntryTypeConfig[]
       collections?: readonly CollectionConfig[]
-      singletons?: readonly SingletonConfig[]
     }
   | {
-      type: 'singleton'
+      /** An entry type within a collection */
+      type: 'entry-type'
       fullPath: string
+      /** The entry type name (e.g., 'post', 'doc') */
       name: string
       label?: string
-      parentPath?: string
+      /** Path of the parent collection */
+      parentPath: string
       format: ContentFormat
       fields: readonly FieldConfig[]
+      default?: boolean
+      maxItems?: number
     }
 
 /**

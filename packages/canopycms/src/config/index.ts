@@ -31,8 +31,7 @@ export type {
   ObjectFieldConfig,
   CustomFieldConfig,
   // Schema types
-  SingletonConfig,
-  CollectionEntriesConfig,
+  EntryTypeConfig,
   CollectionConfig,
   RootCollectionConfig,
   // Media
@@ -65,7 +64,7 @@ export { primitiveFieldTypes, fieldTypes } from './types'
 // Re-export schemas (for advanced use cases)
 export { CanopyConfigSchema } from './schemas/config'
 export { fieldSchema, blockSchema, selectOptionSchema, referenceOptionSchema } from './schemas/field'
-export { collectionSchema, rootCollectionSchema, singletonSchema, collectionEntriesSchema, relativePathSchema } from './schemas/collection'
+export { collectionSchema, rootCollectionSchema, entryTypeSchema, relativePathSchema } from './schemas/collection'
 export { permissionTargetSchema, pathPermissionSchema } from './schemas/permissions'
 export { mediaSchema } from './schemas/media'
 

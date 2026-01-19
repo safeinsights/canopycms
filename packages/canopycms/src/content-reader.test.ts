@@ -33,10 +33,11 @@ const buildBranchContext = (branchRoot: string, name = 'main'): BranchContext =>
 describe('createContentReader', () => {
   it('reads content for a provided branch state and returns null when missing', async () => {
     const root = await tmpDir()
-    const homePath = path.join(root, 'content/home.json')
+    const pagesDir = path.join(root, 'content/pages')
     const postsDir = path.join(root, 'content/posts')
+    await fs.mkdir(pagesDir, { recursive: true })
     await fs.mkdir(postsDir, { recursive: true })
-    await fs.writeFile(homePath, JSON.stringify({ hero: { title: 'Hi' } }, null, 2), 'utf8')
+    await fs.writeFile(path.join(pagesDir, 'home.json'), JSON.stringify({ hero: { title: 'Hi' } }, null, 2), 'utf8')
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
@@ -46,16 +47,19 @@ describe('createContentReader', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'post', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
           },
-        ],
-        singletons: [
           {
-            name: 'home',
-            path: 'home',
-            format: 'json',
-            fields: [
-              { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+            name: 'pages',
+            path: 'pages',
+            entries: [
+              {
+                name: 'page',
+                format: 'json',
+                fields: [
+                  { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+                ],
+              },
             ],
           },
         ],
@@ -67,8 +71,8 @@ describe('createContentReader', () => {
       getBranchContext: async (branch) => (branch === 'main' ? branchContext : null),
     })
 
-    const home = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/home', branch: 'main', user: ANONYMOUS_USER })
-    expect(home.path).toBe('/?branch=main')
+    const home = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/pages', slug: 'home', branch: 'main', user: ANONYMOUS_USER })
+    expect(home.path).toBe('/pages/home?branch=main')
     expect(home.data.hero.title).toBe('Hi')
 
     await expect(reader.read({ entryPath: 'content/posts', slug: 'missing', user: ANONYMOUS_USER })).rejects.toBeInstanceOf(
@@ -78,9 +82,9 @@ describe('createContentReader', () => {
 
   it('readDataOrThrow returns data and throws on missing content', async () => {
     const root = await tmpDir()
-    const homePath = path.join(root, 'content/home.json')
-    await fs.mkdir(path.dirname(homePath), { recursive: true })
-    await fs.writeFile(homePath, JSON.stringify({ hero: { title: 'Hello' } }, null, 2), 'utf8')
+    const pagesDir = path.join(root, 'content/pages')
+    await fs.mkdir(pagesDir, { recursive: true })
+    await fs.writeFile(path.join(pagesDir, 'home.json'), JSON.stringify({ hero: { title: 'Hello' } }, null, 2), 'utf8')
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
@@ -90,16 +94,19 @@ describe('createContentReader', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'post', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
           },
-        ],
-        singletons: [
           {
-            name: 'home',
-            path: 'home',
-            format: 'json',
-            fields: [
-              { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+            name: 'pages',
+            path: 'pages',
+            entries: [
+              {
+                name: 'page',
+                format: 'json',
+                fields: [
+                  { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+                ],
+              },
             ],
           },
         ],
@@ -111,7 +118,7 @@ describe('createContentReader', () => {
       getBranchContext: async () => branchContext,
     })
 
-    const { data } = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/home', user: ANONYMOUS_USER })
+    const { data } = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/pages', slug: 'home', user: ANONYMOUS_USER })
     expect(data.hero.title).toBe('Hello')
 
     await expect(
@@ -121,17 +128,16 @@ describe('createContentReader', () => {
 
   it('enforces branch access checks', async () => {
     const root = await tmpDir()
-    await fs.mkdir(path.join(root, 'content'), { recursive: true })
+    const pagesDir = path.join(root, 'content/pages')
+    await fs.mkdir(pagesDir, { recursive: true })
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'deny',
       schema: {
-        collections: [],
-        singletons: [
+        collections: [
           {
-            name: 'home',
-            path: 'home',
-            format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
+            name: 'pages',
+            path: 'pages',
+            entries: [{ name: 'page', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
           },
         ],
       },
@@ -142,7 +148,7 @@ describe('createContentReader', () => {
       getBranchContext: async () => branchContext,
     })
 
-    await expect(reader.read({ entryPath: 'content/home', user: { type: 'authenticated', userId: 'anon', groups: [] } })).rejects.toBeInstanceOf(
+    await expect(reader.read({ entryPath: 'content/pages', slug: 'home', user: { type: 'authenticated', userId: 'anon', groups: [] } })).rejects.toBeInstanceOf(
       ContentStoreError
     )
   })
@@ -150,10 +156,12 @@ describe('createContentReader', () => {
   it('builds preview paths alongside data', async () => {
     const root = await tmpDir()
     const postsDir = path.join(root, 'content/posts')
+    const pagesDir = path.join(root, 'content/pages')
     await fs.mkdir(postsDir, { recursive: true })
+    await fs.mkdir(pagesDir, { recursive: true })
     // Create files with embedded IDs (12-char Base58)
     await fs.writeFile(path.join(postsDir, 'first.abc123def456.json'), JSON.stringify({ title: 'Hello world' }, null, 2), 'utf8')
-    await fs.writeFile(path.join(root, 'content/home.json'), JSON.stringify({ title: 'Home' }, null, 2), 'utf8')
+    await fs.writeFile(path.join(pagesDir, 'home.json'), JSON.stringify({ title: 'Home' }, null, 2), 'utf8')
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
@@ -163,15 +171,12 @@ describe('createContentReader', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: { format: 'json', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'post', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
           },
-        ],
-        singletons: [
           {
-            name: 'home',
-            path: 'home',
-            format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
+            name: 'pages',
+            path: 'pages',
+            entries: [{ name: 'page', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
           },
         ],
       },
@@ -190,12 +195,13 @@ describe('createContentReader', () => {
     expect(post.data.title).toBe('Hello world')
     expect(post.path).toBe('/posts/first?branch=main')
 
-    const home = await reader.read<{ title: string }>({
-      entryPath: 'content/home',
+    const page = await reader.read<{ title: string }>({
+      entryPath: 'content/pages',
+      slug: 'home',
       branch: 'feature/foo',
       user: ANONYMOUS_USER,
     })
-    expect(home.path).toBe('/?branch=feature%2Ffoo')
+    expect(page.path).toBe('/pages/home?branch=feature%2Ffoo')
   })
 
   it('creates the branch workspace when missing', async () => {
@@ -206,9 +212,9 @@ describe('createContentReader', () => {
     const git = simpleGit({ baseDir: root })
     await git.init()
     await git.raw(['branch', '-M', 'main'])
-    await fs.mkdir(path.join(root, 'content'), { recursive: true })
+    await fs.mkdir(path.join(root, 'content/pages'), { recursive: true })
     await fs.writeFile(
-      path.join(root, 'content/home.json'),
+      path.join(root, 'content/pages/home.json'),
       JSON.stringify({ hero: { title: 'Welcome' } }, null, 2),
       'utf8'
     )
@@ -220,14 +226,18 @@ describe('createContentReader', () => {
       defaultPathAccess: 'allow',
       mode: 'prod-sim',
       schema: {
-        collections: [],
-        singletons: [
+        collections: [
           {
-            name: 'home',
-            path: 'home',
-            format: 'json',
-            fields: [
-              { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+            name: 'pages',
+            path: 'pages',
+            entries: [
+              {
+                name: 'page',
+                format: 'json',
+                fields: [
+                  { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+                ],
+              },
             ],
           },
         ],
@@ -236,8 +246,8 @@ describe('createContentReader', () => {
 
     try {
       const reader = createContentReader({ services: await createCanopyServices(config, { schema: config.schema }), basePathOverride: root })
-      const doc = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/home', user: ANONYMOUS_USER })
-      expect(doc.path).toBe('/?branch=main')
+      const doc = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/pages', slug: 'home', user: ANONYMOUS_USER })
+      expect(doc.path).toBe('/pages/home?branch=main')
       expect(doc.data.hero.title).toBe('Welcome')
 
       // In prod-sim, workspace is at .canopy-prod-sim/content-branches/main
@@ -253,21 +263,19 @@ describe('createContentReader', () => {
 
   it('checks permissions BEFORE reading file (security)', async () => {
     const root = await tmpDir()
-    const homePath = path.join(root, 'content/home.json')
-    await fs.mkdir(path.dirname(homePath), { recursive: true })
-    await fs.writeFile(homePath, JSON.stringify({ title: 'Secret' }, null, 2), 'utf8')
+    const pagesDir = path.join(root, 'content/pages')
+    await fs.mkdir(pagesDir, { recursive: true })
+    await fs.writeFile(path.join(pagesDir, 'home.json'), JSON.stringify({ title: 'Secret' }, null, 2), 'utf8')
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'deny', // Deny by default
       schema: {
-        collections: [],
-        singletons: [
+        collections: [
           {
-            name: 'home',
-            path: 'home',
-            format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
+            name: 'pages',
+            path: 'pages',
+            entries: [{ name: 'page', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
           },
         ],
       },
@@ -284,12 +292,12 @@ describe('createContentReader', () => {
 
     // Attempt unauthorized read
     await expect(
-      reader.read({ entryPath: 'content/home', user: { type: 'authenticated', userId: 'unauthorized', groups: [] } })
+      reader.read({ entryPath: 'content/pages', slug: 'home', user: { type: 'authenticated', userId: 'unauthorized', groups: [] } })
     ).rejects.toThrow(/Forbidden/)
 
     // CRITICAL: Content file should NOT have been accessed (permissions.json is OK)
     const contentFileCalls = readFileSpy.mock.calls.filter((call) =>
-      call[0].toString().includes('content/home.json')
+      call[0].toString().includes('content/pages/home.json')
     )
     expect(contentFileCalls).toHaveLength(0)
 

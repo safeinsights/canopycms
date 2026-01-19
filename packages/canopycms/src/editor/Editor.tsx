@@ -38,7 +38,7 @@ export interface EditorEntry {
   collectionName?: string
   slug?: string
   format?: ContentFormat
-  type?: 'entry' | 'singleton'
+  type?: 'entry'
   canEdit?: boolean
 }
 
@@ -165,8 +165,9 @@ export const Editor: React.FC<EditorProps> = ({
     branchName: branchNameState,
     collections,
     previewBaseByCollection,
-    resolvePreviewSrc: (entry) => buildPreviewSrc(entry, { branchName: branchNameState, previewBaseByCollection }),
+    resolvePreviewSrc: (entry) => buildPreviewSrc(entry, { branchName: branchNameState, previewBaseByCollection, contentRoot }),
     setBusy: setEntriesLoading,
+    contentRoot,
   })
 
   // Use collections from API (falls back to props if not loaded yet)

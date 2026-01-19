@@ -1,8 +1,11 @@
 {
   "name": "posts",
   "label": "Posts",
-  "entries": {
-    "format": "json",
-    "fields": "postSchema"
-  }
+  "entries": [
+    {
+      "name": "post",
+      "format": "json",
+      "fields": "postSchema"
+    }
+  ]
 }

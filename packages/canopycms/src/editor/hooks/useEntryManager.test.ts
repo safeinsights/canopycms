@@ -43,7 +43,7 @@ describe('useEntryManager', () => {
     collectionId: 'posts',
     collectionName: 'posts',
     format: 'mdx' as const,
-    itemType: 'entry' as const,
+    entryType: 'post',
     path: '/content/posts/test',
   }
 

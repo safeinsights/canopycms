@@ -1,8 +1,11 @@
 {
   "name": "docs",
   "label": "Documentation",
-  "entries": {
-    "format": "json",
-    "fields": "docSchema"
-  }
+  "entries": [
+    {
+      "name": "doc",
+      "format": "json",
+      "fields": "docSchema"
+    }
+  ]
 }

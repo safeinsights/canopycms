@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import matter from 'gray-matter'
 
-import type { ContentFormat, FlatSchemaItem } from './config'
+import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from './config'
 import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename, resolveCollectionPath } from './content-id-index'
 import { generateId } from './id'
 import { getFormatExtension } from './utils/format'
@@ -32,6 +32,15 @@ export type WriteInput =
   | { format: 'json'; data: Record<string, unknown> }
 
 export class ContentStoreError extends Error {}
+
+/**
+ * Get the default entry type from a collection's entries array.
+ * Returns the entry marked as default, or the first one, or undefined if no entries.
+ */
+function getDefaultEntryType(entries: readonly EntryTypeConfig[] | undefined): EntryTypeConfig | undefined {
+  if (!entries || entries.length === 0) return undefined
+  return entries.find(e => e.default) || entries[0]
+}
 
 /**
  * Validates that a slug doesn't contain slashes or backslashes.
@@ -94,6 +103,8 @@ export class ContentStore {
   /**
    * Build absolute and relative paths with security validation.
    * For collection entries, includes the ID in the filename.
+   * For entry-type items (root-level entries with maxItems: 1), the file is stored
+   * in the parent directory with filename pattern: {name}.{id}.{ext}
    *
    * SECURITY BOUNDARY: This method prevents path traversal attacks by:
    * 1. Validating that resolved paths stay within the content root
@@ -112,44 +123,73 @@ export class ContentStore {
   ): Promise<{ absolutePath: string; relativePath: string; id?: string }> {
     const rootWithSep = this.root.endsWith(path.sep) ? this.root : `${this.root}${path.sep}`
 
-    // Singletons: fullPath includes complete path, but filename may have embedded ID
-    if (schemaItem.type === 'singleton') {
+    // Entry-type items (root-level entries with maxItems: 1):
+    // File pattern: {name}.{id}.{ext} in the parent directory
+    if (schemaItem.type === 'entry-type') {
+      const name = schemaItem.name
       const format = schemaItem.format
       const ext = getFormatExtension(format)
 
-      // Try to find existing singleton file with embedded ID
-      // Pattern: {name}.{12-char-id}.{ext} or {name}.{ext}
-      const singletonDir = path.dirname(path.resolve(this.root, schemaItem.fullPath))
-      const singletonName = path.basename(schemaItem.fullPath)
+      // Entry types are stored in their parent directory (e.g., content/)
+      // parentPath is the content root (e.g., 'content')
+      const parentDir = schemaItem.parentPath
+        ? path.resolve(this.root, schemaItem.parentPath)
+        : this.root
 
-      let resolvedPath = path.resolve(this.root, `${schemaItem.fullPath}${ext}`)
-
-      // Check if file with embedded ID exists
-      try {
-        const entries = await fs.readdir(singletonDir, { withFileTypes: true })
-        const matchingFile = entries.find((entry) => {
-          if (!entry.isFile()) return false
-          if (!entry.name.endsWith(ext)) return false
-          // Extract slug from filename (part before the ID)
-          const slug = extractSlugFromFilename(entry.name)
-          return slug === singletonName
-        })
-
-        if (matchingFile) {
-          resolvedPath = path.resolve(singletonDir, matchingFile.name)
-        }
-      } catch (err) {
-        // Directory doesn't exist yet, use default path without ID
+      // Security: Prevent path traversal at parent level
+      if (!parentDir.startsWith(rootWithSep)) {
+        throw new ContentStoreError('Path traversal detected')
       }
 
-      // Security: Prevent path traversal
-      if (!resolvedPath.startsWith(rootWithSep)) {
+      // Check if file already exists (editing case)
+      let id = options.existingId
+      let existingFilename: string | undefined
+
+      if (!id) {
+        // Try to find existing file with this name
+        const entries = await fs.readdir(parentDir, { withFileTypes: true }).catch(() => [])
+        const existingFile = entries.find((entry) => {
+          if (entry.isDirectory()) return false
+          // Match files like: home.agfzDt2RLpSn.json
+          const parts = entry.name.split('.')
+          return parts.length >= 3 && parts[0] === name && entry.name.endsWith(ext)
+        })
+
+        if (existingFile) {
+          const parts = existingFile.name.split('.')
+          if (parts.length >= 3) {
+            // Extract ID from: name.id.ext -> parts[1]
+            id = parts[parts.length - 2]
+          }
+          existingFilename = existingFile.name
+        }
+      }
+
+      // Build filename: {name}.{id}.{ext}
+      let filename: string
+      if (existingFilename && !id) {
+        // Legacy file without embedded ID - use original filename
+        filename = existingFilename
+      } else {
+        // Generate new ID if needed
+        if (!id) {
+          id = generateId()
+        }
+        filename = `${name}.${id}${ext}`
+      }
+
+      const resolved = path.resolve(parentDir, filename)
+      const parentDirWithSep = parentDir.endsWith(path.sep) ? parentDir : `${parentDir}${path.sep}`
+
+      // Security: Prevent path traversal at file level
+      if (!resolved.startsWith(parentDirWithSep)) {
         throw new ContentStoreError('Path traversal detected')
       }
 
       return {
-        absolutePath: resolvedPath,
-        relativePath: path.relative(this.root, resolvedPath),
+        absolutePath: resolved,
+        relativePath: path.relative(this.root, resolved),
+        id,
       }
     }
 
@@ -162,7 +202,8 @@ export class ContentStore {
       // Security: Validate slug format (prevents ../../../etc/passwd)
       validateSlug(safeSlug)
 
-      const format = schemaItem.entries?.format || 'json'
+      const defaultEntry = getDefaultEntryType(schemaItem.entries)
+      const format = defaultEntry?.format || 'json'
       const ext = getFormatExtension(format)
 
       // Resolve the full collection path with embedded IDs
@@ -182,6 +223,7 @@ export class ContentStore {
 
       // Check if file already exists (editing case)
       let id = options.existingId
+      let existingFilename: string | undefined
 
       if (!id) {
         // Try to find existing file with this slug
@@ -194,16 +236,24 @@ export class ContentStore {
 
         if (existingFile) {
           id = extractIdFromFilename(existingFile.name) || undefined
+          // Remember original filename for legacy files without IDs
+          existingFilename = existingFile.name
         }
       }
 
-      // Generate new ID if needed
-      if (!id) {
-        id = generateId()
+      // Build filename: use existing filename if found, or generate new one with ID
+      let filename: string
+      if (existingFilename && !id) {
+        // Legacy file without embedded ID - use original filename
+        filename = existingFilename
+      } else {
+        // Generate new ID if needed
+        if (!id) {
+          id = generateId()
+        }
+        // Build filename with embedded ID: slug.id.ext
+        filename = `${safeSlug}.${id}${ext}`
       }
-
-      // Build filename with embedded ID: slug.id.ext
-      const filename = `${safeSlug}.${id}${ext}`
       const resolved = path.resolve(collectionRoot, filename)
       const collectionRootWithSep = collectionRoot.endsWith(path.sep)
         ? collectionRoot
@@ -226,30 +276,17 @@ export class ContentStore {
 
   /**
    * Path resolution: resolves a URL path to a schema item
-   * - Try as singleton first (full path match)
-   * - Then try as collection + slug (last segment = slug)
+   * - Try as collection + slug (last segment = slug)
    */
   resolvePath(pathSegments: string[]): {
     schemaItem: FlatSchemaItem
     slug: string
-    itemType: 'entry' | 'singleton'
   } {
     if (pathSegments.length === 0) {
       throw new ContentStoreError('Empty path')
     }
 
     const fullPath = pathSegments.join('/')
-    const normalized = normalizeFilesystemPath(fullPath)
-
-    // Try as singleton first
-    const singleton = this.schemaIndex.get(normalized)
-    if (singleton?.type === 'singleton') {
-      return {
-        schemaItem: singleton,
-        slug: '',
-        itemType: 'singleton',
-      }
-    }
 
     // Try as collection + slug
     const slug = pathSegments[pathSegments.length - 1]
@@ -261,7 +298,6 @@ export class ContentStore {
       return {
         schemaItem: collection,
         slug,
-        itemType: 'entry',
       }
     }
 
@@ -286,15 +322,15 @@ export class ContentStore {
     let format: ContentFormat
     let fields: readonly any[]
 
-    if (schemaItem.type === 'singleton') {
+    if (schemaItem.type === 'entry-type') {
+      // Entry type from unified model
       format = schemaItem.format
       fields = schemaItem.fields
     } else {
       // Collection entry
-      // Note: Collections can exist without entries (e.g., only containing subcollections/singletons)
-      // In such cases, fallback to default format and empty fields
-      format = schemaItem.entries?.format || 'json'
-      fields = schemaItem.entries?.fields || []
+      const defaultEntry = getDefaultEntryType(schemaItem.entries)
+      format = defaultEntry?.format || 'json'
+      fields = defaultEntry?.fields || []
     }
 
     if (format === 'json') {
@@ -332,8 +368,13 @@ export class ContentStore {
     const idIndex = await this.idIndex()
     const schemaItem = this.assertSchemaItem(collectionPath)
 
-    const expectedFormat =
-      schemaItem.type === 'singleton' ? schemaItem.format : schemaItem.entries?.format || 'json'
+    let expectedFormat: ContentFormat
+    if (schemaItem.type === 'entry-type') {
+      expectedFormat = schemaItem.format
+    } else {
+      const defaultEntry = getDefaultEntryType(schemaItem.entries)
+      expectedFormat = defaultEntry?.format || 'json'
+    }
 
     if (expectedFormat !== input.format) {
       throw new ContentStoreError(

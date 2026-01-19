@@ -19,19 +19,13 @@ const configBundle = defineCanopyConfig({
         name: 'posts',
         label: 'Posts',
         path: 'posts',
-        entries: {
-          format: 'json',
-          fields: [{ name: 'title', type: 'string' }],
-        },
-      },
-    ],
-    singletons: [
-      {
-        name: 'home',
-        label: 'Home',
-        path: 'home',
-        format: 'json',
-        fields: [{ name: 'hero', type: 'string' }],
+        entries: [
+          {
+            name: 'entry',
+            format: 'json',
+            fields: [{ name: 'title', type: 'string' }],
+          },
+        ],
       },
     ],
   },
@@ -50,14 +44,14 @@ const config = configBundle.client()
 
 const entries = [
   {
-    id: 'content/home',
-    label: 'Home',
+    id: 'content/posts/hello',
+    label: 'Hello Post',
     status: 'page',
-    schema: configBundle.server.schema!.singletons![0].fields,
-    apiPath: '/api/canopycms/main/content/home',
-    collectionId: 'content/home',
-    collectionName: 'home',
-    slug: '',
+    schema: configBundle.server.schema!.collections![0].entries![0].fields,
+    apiPath: '/api/canopycms/main/content/posts/hello',
+    collectionId: 'content/posts',
+    collectionName: 'posts',
+    slug: 'hello',
     format: 'json' as const,
     type: 'entry' as const,
   },

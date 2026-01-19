@@ -18,44 +18,31 @@ const mockSchema: RootCollectionConfig = {
       name: 'posts',
       label: 'Posts',
       path: 'posts',
-      entries: {
-        format: 'mdx',
-        fields: [
-          { name: 'title', type: 'string' },
-          { name: 'content', type: 'markdown' },
-        ],
-      },
+      entries: [
+        {
+          name: 'post',
+          format: 'mdx',
+          fields: [
+            { name: 'title', type: 'string' },
+            { name: 'content', type: 'markdown' },
+          ],
+        },
+      ],
     },
     {
       name: 'pages',
       label: 'Pages',
       path: 'pages',
-      entries: {
-        format: 'mdx',
-        fields: [
-          { name: 'title', type: 'string' },
-          { name: 'body', type: 'markdown' },
-        ],
-      },
-    },
-  ],
-  singletons: [
-    {
-      name: 'about',
-      label: 'About',
-      path: 'about.md',
-      format: 'mdx',
-      fields: [
-        { name: 'title', type: 'string' },
-        { name: 'bio', type: 'markdown' },
+      entries: [
+        {
+          name: 'page',
+          format: 'mdx',
+          fields: [
+            { name: 'title', type: 'string' },
+            { name: 'body', type: 'markdown' },
+          ],
+        },
       ],
-    },
-    {
-      name: 'settings',
-      label: 'Settings',
-      path: 'settings.json',
-      format: 'json',
-      fields: [{ name: 'siteName', type: 'string' }],
     },
   ],
 }
@@ -224,54 +211,31 @@ const largeSchema: RootCollectionConfig = {
       name: 'posts',
       label: 'Posts',
       path: 'posts',
-      entries: { format: 'mdx', fields: [{ name: 'title', type: 'string' }] },
+      entries: [{ name: 'post', format: 'mdx', fields: [{ name: 'title', type: 'string' }] }],
     },
     {
       name: 'pages',
       label: 'Pages',
       path: 'pages',
-      entries: { format: 'mdx', fields: [{ name: 'title', type: 'string' }] },
+      entries: [{ name: 'page', format: 'mdx', fields: [{ name: 'title', type: 'string' }] }],
     },
     {
       name: 'products',
       label: 'Products',
       path: 'products',
-      entries: { format: 'json', fields: [{ name: 'name', type: 'string' }] },
+      entries: [{ name: 'product', format: 'json', fields: [{ name: 'name', type: 'string' }] }],
     },
     {
       name: 'categories',
       label: 'Categories',
       path: 'categories',
-      entries: { format: 'json', fields: [{ name: 'name', type: 'string' }] },
+      entries: [{ name: 'category', format: 'json', fields: [{ name: 'name', type: 'string' }] }],
     },
     {
       name: 'authors',
       label: 'Authors',
       path: 'authors',
-      entries: { format: 'json', fields: [{ name: 'name', type: 'string' }] },
-    },
-  ],
-  singletons: [
-    {
-      name: 'about',
-      label: 'About',
-      path: 'about.md',
-      format: 'mdx',
-      fields: [{ name: 'title', type: 'string' }],
-    },
-    {
-      name: 'contact',
-      label: 'Contact',
-      path: 'contact.md',
-      format: 'mdx',
-      fields: [{ name: 'title', type: 'string' }],
-    },
-    {
-      name: 'settings',
-      label: 'Settings',
-      path: 'settings.json',
-      format: 'json',
-      fields: [{ name: 'siteName', type: 'string' }],
+      entries: [{ name: 'author', format: 'json', fields: [{ name: 'name', type: 'string' }] }],
     },
   ],
 }

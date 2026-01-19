@@ -145,16 +145,18 @@ describe('PR Workflow Integration', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: {
-              format: 'json',
-              fields: [
-                { name: 'title', type: 'string' },
-                { name: 'content', type: 'markdown' },
-              ],
-            },
+            entries: [
+              {
+                name: 'post',
+                format: 'json',
+                fields: [
+                  { name: 'title', type: 'string' },
+                  { name: 'content', type: 'markdown' },
+                ],
+              },
+            ],
           },
         ],
-        singletons: [],
       },
     })
 
@@ -438,13 +440,11 @@ describe('PR Workflow Integration', () => {
       gitBotAuthorName: 'Bot',
       gitBotAuthorEmail: 'bot@test.com',
       schema: {
-        collections: [],
-        singletons: [
+        collections: [
           {
             name: 'home',
             path: 'home',
-            format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
+            entries: [{ name: 'entry', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
           },
         ],
       },

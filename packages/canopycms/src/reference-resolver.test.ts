@@ -45,12 +45,15 @@ describe('ReferenceResolver', () => {
           {
             name: 'authors',
             path: 'authors',
-            entries: {
-              format: 'json',
-              fields: [
-                { name: 'name', type: 'string', label: 'Name' },
-              ],
-            },
+            entries: [
+              {
+                name: 'author',
+                format: 'json',
+                fields: [
+                  { name: 'name', type: 'string', label: 'Name' },
+                ],
+              },
+            ],
           },
         ],
       },

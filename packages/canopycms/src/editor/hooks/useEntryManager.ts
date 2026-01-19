@@ -18,6 +18,7 @@ export interface UseEntryManagerOptions {
   previewBaseByCollection?: Record<string, string>
   resolvePreviewSrc: (entry: Partial<EditorEntry>) => string | undefined
   setBusy: (busy: boolean) => void
+  contentRoot?: string
 }
 
 export interface UseEntryManagerReturn {
@@ -153,6 +154,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       existingEntries: entriesState,
       currentEntry,
       initialEntries: options.initialEntries,
+      contentRoot: options.contentRoot || 'content',
     })
     setEntriesState(refreshed)
     // Only auto-select newly created entry if there were already entries before
@@ -168,7 +170,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const handleCreateEntry = async (collectionId: string) => {
     const col = collectionById.get(collectionId)
     if (!col || col.type === 'entry') {
-      console.log('Collection not found or is singleton:', { collectionId })
+      console.log('Collection not found or is root entry type:', { collectionId })
       return
     }
     const slug = window.prompt(`New ${col.label ?? col.name} slug?`, 'untitled')
