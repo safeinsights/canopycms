@@ -108,7 +108,7 @@ export function buildTree(
     return root
   }
 
-  // Flatten schema to get all collections and singletons
+  // Flatten schema to get all collections and entry types
   const flatSchema = flattenSchema(schema, contentRoot)
 
   // Create a map of path -> TreeNode for fast lookup

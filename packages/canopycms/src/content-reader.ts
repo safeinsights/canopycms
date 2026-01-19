@@ -1,6 +1,6 @@
 import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
-import type { FlatSchemaItem } from './config'
+// FlatSchemaItem used via services.flatSchema
 import { resolveBranchPaths } from './paths'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
@@ -90,7 +90,6 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
 
   // Cache flattened schema for O(1) lookups
   const flatSchema = services.flatSchema
-  const schemaMap = new Map(flatSchema.map((item) => [item.fullPath, item]))
 
   const encodeSlug = (value?: string): string =>
     (value ?? '')
@@ -99,10 +98,6 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       .map((segment) => encodeURIComponent(segment))
       .join('/')
 
-  const findSchemaNode = (fullPath: string): FlatSchemaItem | undefined => {
-    return schemaMap.get(fullPath)
-  }
-
   // Build preview path mapping once (uses cached flatSchema)
   const contentRoot = (services.config.contentRoot ?? 'content').replace(/^\/+|\/+$/g, '')
   const stripRoot = (val: string) =>
@@ -110,20 +105,16 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const baseMap = new Map<string, string>()
   flatSchema.forEach((item) => {
     const base = stripRoot(item.fullPath)
-    baseMap.set(item.fullPath, item.type === 'singleton' ? '/' : base ? `/${base}` : '/')
+    baseMap.set(item.fullPath, base ? `/${base}` : '/')
   })
 
   const buildEntryPath = (opts: { collectionPath: string; slug?: string; branch?: string }) => {
     const baseResolvedPath = opts.collectionPath
-    const node = findSchemaNode(baseResolvedPath)
     const base = baseMap.get(baseResolvedPath) ?? '/'
     const appendBranch = (url: string) =>
       opts.branch
         ? `${url}${url.includes('?') ? '&' : '?'}branch=${encodeURIComponent(opts.branch)}`
         : url
-    if (node?.type === 'singleton') {
-      return appendBranch(base || '/')
-    }
     const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
     const encodedSlug = encodeSlug(opts.slug)
     const url = encodedSlug ? `${trimmed}/${encodedSlug}` : trimmed || '/'

@@ -19,10 +19,9 @@ describe('ContentStore', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
           },
         ],
-        singletons: [],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
@@ -48,10 +47,9 @@ describe('ContentStore', () => {
           {
             name: 'pages',
             path: 'pages',
-            entries: { format: 'mdx', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'page', format: 'mdx', fields: [{ name: 'title', type: 'string' }] }],
           },
         ],
-        singletons: [],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
@@ -77,10 +75,11 @@ describe('ContentStore', () => {
           {
             name: 'settings',
             path: 'config',
-            entries: { format: 'json', fields: [{ name: 'siteName', type: 'string' }] },
+            entries: [
+              { name: 'setting', format: 'json', fields: [{ name: 'siteName', type: 'string' }] },
+            ],
           },
         ],
-        singletons: [],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
@@ -103,10 +102,9 @@ describe('ContentStore', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
           },
         ],
-        singletons: [],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
@@ -120,32 +118,32 @@ describe('ContentStore', () => {
     ).rejects.toBeInstanceOf(ContentStoreError)
   })
 
-  it('reads and writes entry items at a fixed path', async () => {
+  it('reads and writes entry items with a slug', async () => {
     const root = await tmpDir()
     const config = defineCanopyTestConfig({
       schema: {
-        collections: [],
-        singletons: [
+        collections: [
           {
             name: 'settings',
             path: 'settings',
-            format: 'json',
-            fields: [{ name: 'siteName', type: 'string' }],
+            entries: [
+              { name: 'setting', format: 'json', fields: [{ name: 'siteName', type: 'string' }] },
+            ],
           },
         ],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
 
-    await store.write('content/settings', '', {
+    await store.write('content/settings', 'site', {
       format: 'json',
       data: { siteName: 'CanopyCMS' },
     })
 
-    const doc = await store.read('content/settings')
+    const doc = await store.read('content/settings', 'site')
     expect(doc.format).toBe('json')
     expect(doc.data.siteName).toBe('CanopyCMS')
-    expect(doc.relativePath).toBe('content/settings.json')
+    expect(doc.relativePath).toMatch(/content\/settings\/site\.[a-zA-Z0-9]+\.json/)
   })
 
   it('rejects slugs with forward slashes', async () => {
@@ -156,10 +154,9 @@ describe('ContentStore', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
           },
         ],
-        singletons: [],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
@@ -181,10 +178,9 @@ describe('ContentStore', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
           },
         ],
-        singletons: [],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
@@ -206,10 +202,9 @@ describe('ContentStore', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
           },
         ],
-        singletons: [],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
@@ -221,28 +216,28 @@ describe('ContentStore', () => {
     expect(result.slug).toBe('hello')
   })
 
-  it('resolves paths for entry types (no slug)', async () => {
+  it('resolves paths for collection entries with slug', async () => {
     const root = await tmpDir()
     const config = defineCanopyTestConfig({
       schema: {
-        collections: [],
-        singletons: [
+        collections: [
           {
             name: 'settings',
             path: 'settings',
-            format: 'json',
-            fields: [{ name: 'siteName', type: 'string' }],
+            entries: [
+              { name: 'setting', format: 'json', fields: [{ name: 'siteName', type: 'string' }] },
+            ],
           },
         ],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
 
-    // Path: content/settings -> singleton, no slug
-    const result = store.resolvePath(['content', 'settings'])
+    // Path: content/settings/site -> collection entry with slug
+    const result = store.resolvePath(['content', 'settings', 'site'])
     expect(result.schemaItem.fullPath).toBe('content/settings')
-    expect(result.schemaItem.type).toBe('singleton')
-    expect(result.slug).toBe('')
+    expect(result.schemaItem.type).toBe('collection')
+    expect(result.slug).toBe('site')
   })
 
   it('resolves nested collection paths', async () => {
@@ -253,17 +248,18 @@ describe('ContentStore', () => {
           {
             name: 'docs',
             path: 'docs',
-            entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
             collections: [
               {
                 name: 'guides',
                 path: 'guides',
-                entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                entries: [
+                  { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                ],
               },
             ],
           },
         ],
-        singletons: [],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
@@ -284,24 +280,27 @@ describe('ContentStore', () => {
           {
             name: 'docs',
             path: 'docs',
-            entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
             collections: [
               {
                 name: 'api',
                 path: 'api',
-                entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                entries: [
+                  { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                ],
                 collections: [
                   {
                     name: 'v2',
                     path: 'v2',
-                    entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                    entries: [
+                      { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                    ],
                   },
                 ],
               },
             ],
           },
         ],
-        singletons: [],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
@@ -322,22 +321,32 @@ describe('ContentStore', () => {
           {
             name: 'docs',
             path: 'docs',
-            entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
             collections: [
               {
                 name: 'api',
                 path: 'api',
-                entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                entries: [
+                  { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                ],
                 collections: [
                   {
                     name: 'v2',
                     path: 'v2',
-                    entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                    entries: [
+                      { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                    ],
                     collections: [
                       {
                         name: 'endpoints',
                         path: 'endpoints',
-                        entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                        entries: [
+                          {
+                            name: 'entry',
+                            format: 'md',
+                            fields: [{ name: 'title', type: 'string' }],
+                          },
+                        ],
                       },
                     ],
                   },
@@ -346,7 +355,6 @@ describe('ContentStore', () => {
             ],
           },
         ],
-        singletons: [],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
@@ -367,24 +375,27 @@ describe('ContentStore', () => {
           {
             name: 'docs',
             path: 'docs',
-            entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+            entries: [{ name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
             collections: [
               {
                 name: 'api',
                 path: 'api',
-                entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                entries: [
+                  { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                ],
                 collections: [
                   {
                     name: 'v2',
                     path: 'v2',
-                    entries: { format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                    entries: [
+                      { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                    ],
                   },
                 ],
               },
             ],
           },
         ],
-        singletons: [],
       },
     })
     const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))

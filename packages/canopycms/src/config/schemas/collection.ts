@@ -1,5 +1,5 @@
 /**
- * Zod schemas for collection and singleton configuration validation.
+ * Zod schemas for collection configuration validation.
  */
 
 import { z } from 'zod'
@@ -20,19 +20,21 @@ export const relativePathSchema = z
       .join('/'),
   )
 
-// Singleton: A single-instance file with unique schema
-export const singletonSchema = z.object({
+/**
+ * Entry type schema: defines a type of content within a collection.
+ * Each type has its own schema (fields) and can have cardinality constraints.
+ *
+ * Examples:
+ * - { name: 'post', format: 'mdx', fields: postSchema } - unlimited posts
+ * - { name: 'settings', format: 'json', fields: settingsSchema, maxItems: 1 } - singleton-like
+ */
+export const entryTypeSchema = z.object({
   name: z.string().min(1),
-  path: relativePathSchema,
   format: z.enum(['md', 'mdx', 'json']),
   fields: z.array(z.lazy(() => fieldSchema)).min(1),
   label: z.string().optional(),
-})
-
-// Collection entries config: shared schema for repeatable entries
-export const collectionEntriesSchema = z.object({
-  format: z.enum(['md', 'mdx', 'json']).optional(),
-  fields: z.array(z.lazy(() => fieldSchema)).min(1),
+  default: z.boolean().optional(),
+  maxItems: z.number().int().positive().optional(),
 })
 
 // Forward declaration for recursive collection schema
@@ -45,20 +47,18 @@ collectionSchema = z.lazy(() =>
       name: z.string().min(1),
       path: relativePathSchema,
       label: z.string().optional(),
-      entries: collectionEntriesSchema.optional(),
+      entries: z.array(entryTypeSchema).optional(),
       collections: z.array(collectionSchema).optional(),
-      singletons: z.array(singletonSchema).optional(),
     })
-    .refine((data) => data.entries || data.collections || data.singletons, {
-      message: 'Collection must have entries, collections, or singletons',
+    .refine((data) => data.entries || data.collections, {
+      message: 'Collection must have entries or collections',
     }),
 )
 
 // Root collection: no name/path required (top-level schema)
 export const rootCollectionSchema = z.object({
-  entries: collectionEntriesSchema.optional(),
+  entries: z.array(entryTypeSchema).optional(),
   collections: z.array(collectionSchema).optional(),
-  singletons: z.array(singletonSchema).optional(),
 })
 
 export { collectionSchema }

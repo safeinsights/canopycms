@@ -17,12 +17,12 @@ import type {
   DefaultPathAccess,
   DefaultRemoteName,
   DefaultRemoteUrl,
+  EntryTypeConfig,
   GitBotAuthorEmail,
   GitBotAuthorName,
   CanopyOperatingMode,
   MediaConfig,
   RootCollectionConfig,
-  SingletonConfig,
   SourceRoot,
 } from './types'
 
@@ -110,7 +110,7 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
  */
 export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): CanopyConfig => {
   const collections: CollectionConfig[] = []
-  const singletons: SingletonConfig[] = []
+  const entries: EntryTypeConfig[] = []
   let media: MediaConfig | undefined
   let contentRoot: ContentRoot | undefined
   let sourceRoot: SourceRoot | undefined
@@ -129,8 +129,8 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
       if (fragment.schema.collections) {
         collections.push(...fragment.schema.collections)
       }
-      if (fragment.schema.singletons) {
-        singletons.push(...fragment.schema.singletons)
+      if (fragment.schema.entries) {
+        entries.push(...fragment.schema.entries)
       }
     }
     if (fragment.media) {
@@ -173,7 +173,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
 
   const schema: RootCollectionConfig = {
     ...(collections.length > 0 ? { collections } : {}),
-    ...(singletons.length > 0 ? { singletons } : {}),
+    ...(entries.length > 0 ? { entries } : {}),
   }
 
   const merged: CanopyConfigInput = {

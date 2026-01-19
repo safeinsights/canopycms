@@ -32,14 +32,10 @@ export const ensureSelectFieldsHaveOptions = (config: unknown): void => {
 
   const walkSchema = (root: Record<string, unknown> | undefined) => {
     if (!root) return
-    // Check entries fields
-    if ((root.entries as Record<string, unknown>)?.fields) {
-      checkFields((root.entries as Record<string, unknown>).fields as unknown[])
-    }
-    // Check singletons
-    if (Array.isArray(root.singletons)) {
-      for (const singleton of root.singletons as Array<{ fields?: unknown[] }>) {
-        checkFields(singleton?.fields)
+    // Check entries fields (now an array of entry types)
+    if (Array.isArray(root.entries)) {
+      for (const entryType of root.entries as Array<{ fields?: unknown[] }>) {
+        checkFields(entryType?.fields)
       }
     }
     // Recursively check nested collections

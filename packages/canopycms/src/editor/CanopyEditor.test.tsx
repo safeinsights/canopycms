@@ -24,10 +24,13 @@ const baseConfig = {
       {
         name: 'posts',
         path: 'posts',
-        entries: {
-          format: 'json',
-          fields: [{ name: 'title', type: 'string' }],
-        },
+        entries: [
+          {
+            name: 'entry',
+            format: 'json',
+            fields: [{ name: 'title', type: 'string' }],
+          },
+        ],
       },
     ],
   },

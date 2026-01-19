@@ -31,8 +31,7 @@ export type {
   ObjectFieldConfig,
   CustomFieldConfig,
   // Schema types
-  SingletonConfig,
-  CollectionEntriesConfig,
+  EntryTypeConfig,
   CollectionConfig,
   RootCollectionConfig,
   // Media
@@ -73,8 +72,7 @@ export {
 export {
   collectionSchema,
   rootCollectionSchema,
-  singletonSchema,
-  collectionEntriesSchema,
+  entryTypeSchema,
   relativePathSchema,
 } from './schemas/collection'
 export { permissionTargetSchema, pathPermissionSchema } from './schemas/permissions'

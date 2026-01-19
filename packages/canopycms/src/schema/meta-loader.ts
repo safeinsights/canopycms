@@ -7,38 +7,30 @@ import type {
   ContentFormat,
   FieldConfig,
   CollectionConfig,
-  SingletonConfig,
   RootCollectionConfig,
+  EntryTypeConfig,
 } from '../config'
 import { extractSlugFromFilename } from '../content-id-index'
 
 /**
- * Schema reference for entries in a collection (replaces actual FieldConfig[] with string reference)
+ * Schema reference for entry types in a collection.
+ * Each entry type has a name, format, and fields reference to the schema registry.
  */
-const entriesSchemaRefSchema = z.object({
-  format: z.enum(['md', 'mdx', 'json']).optional(),
-  fields: z.string().min(1), // Schema registry key (validated at resolution time)
-})
-
-/**
- * Schema reference for a singleton (replaces actual FieldConfig[] with string reference)
- */
-const singletonSchemaRefSchema = z.object({
+const entryTypeSchemaRefSchema = z.object({
   name: z.string().min(1),
-  path: z.string().min(1), // Relative path within this collection
   format: z.enum(['md', 'mdx', 'json']),
   fields: z.string().min(1), // Schema registry key (validated at resolution time)
   label: z.string().optional(),
+  default: z.boolean().optional(),
+  maxItems: z.number().int().positive().optional(),
 })
 
 /**
  * Zod schema for .collection.json files
  *
  * A collection folder can contain:
- * - entries: Repeatable items with a shared schema
- * - singletons: Single files within this collection
- *
- * Nested collections are NOT defined here - they have their own .collection.json files in subfolders.
+ * - entries: Array of entry types with their own schemas
+ * - collections: Nested collections (discovered via their own .collection.json files)
  *
  * Note: We can't validate `fields` against registry keys at parse time because:
  * 1. Schema registry is passed at runtime (not available during Zod schema definition)
@@ -50,11 +42,10 @@ const collectionMetaSchema = z
   .object({
     name: z.string().min(1),
     label: z.string().optional(),
-    entries: entriesSchemaRefSchema.optional(),
-    singletons: z.array(singletonSchemaRefSchema).optional(),
+    entries: z.array(entryTypeSchemaRefSchema).optional(),
   })
-  .refine((data) => data.entries || data.singletons, {
-    message: 'Collection must have entries or singletons',
+  .refine((data) => data.entries && data.entries.length > 0, {
+    message: 'Collection must have at least one entry type',
   })
 
 /**
@@ -62,38 +53,26 @@ const collectionMetaSchema = z
  * Like other collections but no name/path (derived from contentRoot)
  */
 const rootCollectionMetaSchema = z.object({
-  entries: entriesSchemaRefSchema.optional(),
-  singletons: z.array(singletonSchemaRefSchema).optional(),
+  entries: z.array(entryTypeSchemaRefSchema).optional(),
 })
+
+export type EntryTypeMeta = {
+  name: string
+  format: 'md' | 'mdx' | 'json'
+  fields: string // Schema registry key
+  label?: string
+  default?: boolean
+  maxItems?: number
+}
 
 export type CollectionMeta = {
   name: string
   label?: string
-  entries?: {
-    format?: 'md' | 'mdx' | 'json'
-    fields: string // Schema registry key
-  }
-  singletons?: Array<{
-    name: string
-    path: string
-    label?: string
-    format: 'md' | 'mdx' | 'json'
-    fields: string // Schema registry key
-  }>
+  entries?: EntryTypeMeta[]
 }
 
 export type RootCollectionMeta = {
-  entries?: {
-    format?: 'md' | 'mdx' | 'json'
-    fields: string // Schema registry key
-  }
-  singletons?: Array<{
-    name: string
-    path: string
-    label?: string
-    format: 'md' | 'mdx' | 'json'
-    fields: string // Schema registry key
-  }>
+  entries?: EntryTypeMeta[]
 }
 
 /**
@@ -189,7 +168,7 @@ async function scanForCollectionMeta(
  * 3. Returns both root configuration and nested collections
  *
  * Meta File Structure:
- * - Root: contentRoot/.collection.json (optional, defines root-level entries/singletons)
+ * - Root: contentRoot/.collection.json (optional, defines root-level entry types)
  * - Collections: contentRoot/[path]/.collection.json (defines collection in that directory)
  *
  * @param contentRoot - Absolute path to the content directory
@@ -225,34 +204,29 @@ export async function loadCollectionMetaFiles(contentRoot: string): Promise<{
 }
 
 /**
- * Resolve schema references for singletons
+ * Resolve schema references for entry types
  */
-function resolveSingletons(
-  singletons: Array<{
-    name: string
-    path: string
-    label?: string
-    format: 'md' | 'mdx' | 'json'
-    fields: string
-  }>,
+function resolveEntryTypes(
+  entryTypes: EntryTypeMeta[],
   schemaRegistry: Record<string, readonly FieldConfig[]>,
   contextName: string,
-): SingletonConfig[] {
-  return singletons.map((singleton) => {
-    const schema = schemaRegistry[singleton.fields]
+): EntryTypeConfig[] {
+  return entryTypes.map((entryType) => {
+    const schema = schemaRegistry[entryType.fields]
     if (!schema) {
       throw new Error(
-        `Schema reference "${singleton.fields}" in singleton "${singleton.name}" (${contextName}) not found in registry. ` +
+        `Schema reference "${entryType.fields}" in entry type "${entryType.name}" (${contextName}) not found in registry. ` +
           `Available schemas: ${Object.keys(schemaRegistry).join(', ')}`,
       )
     }
 
     return {
-      name: singleton.name,
-      label: singleton.label,
-      path: singleton.path,
-      format: singleton.format as ContentFormat,
+      name: entryType.name,
+      label: entryType.label,
+      format: entryType.format as ContentFormat,
       fields: schema,
+      default: entryType.default,
+      maxItems: entryType.maxItems,
     }
   })
 }
@@ -272,29 +246,9 @@ function resolveCollectionMeta(
     path: meta.path,
   }
 
-  // Resolve entries schema reference
-  if (meta.entries) {
-    const schema = schemaRegistry[meta.entries.fields]
-    if (!schema) {
-      throw new Error(
-        `Schema reference "${meta.entries.fields}" in collection "${meta.name}" not found in registry. ` +
-          `Available schemas: ${Object.keys(schemaRegistry).join(', ')}`,
-      )
-    }
-
-    result.entries = {
-      format: meta.entries.format,
-      fields: schema,
-    }
-  }
-
-  // Resolve singletons
-  if (meta.singletons && meta.singletons.length > 0) {
-    result.singletons = resolveSingletons(
-      meta.singletons,
-      schemaRegistry,
-      `collection "${meta.name}"`,
-    )
+  // Resolve entry types
+  if (meta.entries && meta.entries.length > 0) {
+    result.entries = resolveEntryTypes(meta.entries, schemaRegistry, `collection "${meta.name}"`)
   }
 
   // Find nested collections (subfolders with .collection.json)
@@ -322,7 +276,7 @@ function resolveCollectionMeta(
  * and resolves them to actual FieldConfig[] arrays from the schema registry.
  *
  * Resolution Process:
- * 1. Root entries and singletons: Resolve "fields" string to schema registry lookup
+ * 1. Root entry types: Resolve "fields" string to schema registry lookup
  * 2. Top-level collections: Resolve recursively, building nested tree structure
  * 3. Nested collections: Automatically grouped under their parent collections
  *
@@ -341,29 +295,9 @@ export function resolveCollectionReferences(
   // Build result object dynamically to avoid readonly conflicts
   const result: any = {}
 
-  // Resolve root entries
-  if (metaFiles.root?.entries) {
-    const schema = schemaRegistry[metaFiles.root.entries.fields]
-    if (!schema) {
-      throw new Error(
-        `Schema reference "${metaFiles.root.entries.fields}" in root collection not found in registry. ` +
-          `Available schemas: ${Object.keys(schemaRegistry).join(', ')}`,
-      )
-    }
-
-    result.entries = {
-      format: metaFiles.root.entries.format,
-      fields: schema,
-    }
-  }
-
-  // Resolve root singletons
-  if (metaFiles.root?.singletons && metaFiles.root.singletons.length > 0) {
-    result.singletons = resolveSingletons(
-      metaFiles.root.singletons,
-      schemaRegistry,
-      'root collection',
-    )
+  // Resolve root entry types
+  if (metaFiles.root?.entries && metaFiles.root.entries.length > 0) {
+    result.entries = resolveEntryTypes(metaFiles.root.entries, schemaRegistry, 'root collection')
   }
 
   // Resolve top-level collections (no slashes in path)

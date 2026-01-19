@@ -104,7 +104,7 @@ export async function createTestWorkspace(
       defaultBaseBranch: 'main',
       defaultRemoteName: 'origin',
       defaultRemoteUrl: remotePath,
-      schema: { collections: [], singletons: [] },
+      schema: { collections: [] },
       ...configOverrides,
     })
 

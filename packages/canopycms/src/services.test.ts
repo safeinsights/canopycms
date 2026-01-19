@@ -31,10 +31,15 @@ describe('createCanopyServices', () => {
         {
           name: 'pages',
           path: 'pages',
-          entries: { format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] },
+          entries: [
+            {
+              name: 'page',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
         },
       ],
-      singletons: [],
     }
     const cfg = defineCanopyTestConfig({
       schema,
@@ -77,10 +82,15 @@ describe('createCanopyServices', () => {
         {
           name: 'pages',
           path: 'pages',
-          entries: { format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] },
+          entries: [
+            {
+              name: 'page',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
         },
       ],
-      singletons: [],
     }
     const cfg = defineCanopyTestConfig({
       schema,
@@ -375,10 +385,15 @@ describe('commitToSettingsBranch', () => {
         {
           name: 'pages',
           path: 'pages',
-          entries: { format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] },
+          entries: [
+            {
+              name: 'page',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
         },
       ],
-      singletons: [],
     }
     const cfg = defineCanopyTestConfig({
       schema,
@@ -424,10 +439,15 @@ describe('commitToSettingsBranch', () => {
         {
           name: 'pages',
           path: 'pages',
-          entries: { format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] },
+          entries: [
+            {
+              name: 'page',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
         },
       ],
-      singletons: [],
     }
     const cfg = defineCanopyTestConfig({
       schema,
@@ -482,10 +502,15 @@ describe('commitToSettingsBranch', () => {
         {
           name: 'pages',
           path: 'pages',
-          entries: { format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] },
+          entries: [
+            {
+              name: 'page',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
         },
       ],
-      singletons: [],
     }
     const cfg = defineCanopyTestConfig({
       schema,

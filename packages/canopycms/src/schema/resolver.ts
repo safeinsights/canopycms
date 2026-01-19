@@ -2,7 +2,7 @@
  * Schema resolver for CanopyCMS.
  *
  * Loads and resolves schema from .collection.json files in the content directory.
- * This is the single source of truth for collection/singleton structure.
+ * This is the single source of truth for collection structure.
  *
  * Field schemas are defined in the schema registry and referenced by name
  * in .collection.json files for reusability and type safety.
@@ -39,7 +39,6 @@ export async function resolveSchema(
       path: '.collection.json',
       type: 'root',
       collections: [],
-      singletons: metaFiles.root.singletons?.map((s) => s.name) ?? [],
     })
   }
 
@@ -48,7 +47,6 @@ export async function resolveSchema(
       path: `${collection.path}/.collection.json`,
       type: 'collection',
       collections: [collection.name],
-      singletons: collection.singletons?.map((s) => s.name) ?? [],
     })
   }
 
@@ -72,15 +70,14 @@ export async function hasSchemaFiles(contentRoot: string): Promise<boolean> {
 /**
  * Validate schema completeness.
  *
- * Checks that the resolved schema has at least one collection, singleton,
- * or root entries definition.
+ * Checks that the resolved schema has at least one collection or
+ * root entries definition.
  *
  * @param schema - Resolved schema to validate
  * @returns true if schema is valid
  */
 export function isValidSchema(schema: RootCollectionConfig): boolean {
-  const hasEntries = !!schema.entries
+  const hasEntries = !!(schema.entries && schema.entries.length > 0)
   const hasCollections = !!(schema.collections && schema.collections.length > 0)
-  const hasSingletons = !!(schema.singletons && schema.singletons.length > 0)
-  return hasEntries || hasCollections || hasSingletons
+  return hasEntries || hasCollections
 }

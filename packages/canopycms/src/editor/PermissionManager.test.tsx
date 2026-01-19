@@ -55,34 +55,43 @@ describe('PermissionManager', () => {
       {
         name: 'Posts',
         path: 'posts',
-        entries: {
-          format: 'mdx' as const,
-          fields: [
-            { name: 'title', type: 'string' as const },
-            { name: 'content', type: 'markdown' as const },
-          ],
-        },
+        entries: [
+          {
+            name: 'entry',
+            format: 'mdx' as const,
+            fields: [
+              { name: 'title', type: 'string' as const },
+              { name: 'content', type: 'markdown' as const },
+            ],
+          },
+        ],
       },
       {
         name: 'Pages',
         path: 'pages',
-        entries: {
-          format: 'mdx' as const,
-          fields: [
-            { name: 'title', type: 'string' as const },
-            { name: 'body', type: 'markdown' as const },
-          ],
-        },
+        entries: [
+          {
+            name: 'entry',
+            format: 'mdx' as const,
+            fields: [
+              { name: 'title', type: 'string' as const },
+              { name: 'body', type: 'markdown' as const },
+            ],
+          },
+        ],
       },
-    ],
-    singletons: [
       {
         name: 'About',
         path: 'about',
-        format: 'mdx' as const,
-        fields: [
-          { name: 'title', type: 'string' as const },
-          { name: 'bio', type: 'markdown' as const },
+        entries: [
+          {
+            name: 'entry',
+            format: 'mdx' as const,
+            fields: [
+              { name: 'title', type: 'string' as const },
+              { name: 'bio', type: 'markdown' as const },
+            ],
+          },
         ],
       },
     ],
@@ -94,7 +103,7 @@ describe('PermissionManager', () => {
       read: { allowedGroups: ['editors'] },
     },
     {
-      path: 'content/about',
+      path: 'content/about/**',
       read: { allowedUsers: ['alice'] },
     },
   ]
@@ -269,26 +278,35 @@ describe('PermissionManager', () => {
           {
             name: 'docs',
             path: 'docs',
-            entries: {
-              format: 'md' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
-            },
+            entries: [
+              {
+                name: 'entry',
+                format: 'md' as const,
+                fields: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
             collections: [
               {
                 name: 'api',
                 path: 'api',
-                entries: {
-                  format: 'md' as const,
-                  fields: [{ name: 'title', type: 'string' as const }],
-                },
+                entries: [
+                  {
+                    name: 'entry',
+                    format: 'md' as const,
+                    fields: [{ name: 'title', type: 'string' as const }],
+                  },
+                ],
               },
-            ],
-            singletons: [
               {
-                name: 'overview',
-                path: 'overview',
-                format: 'md' as const,
-                fields: [{ name: 'title', type: 'string' as const }],
+                name: 'guides',
+                path: 'guides',
+                entries: [
+                  {
+                    name: 'entry',
+                    format: 'md' as const,
+                    fields: [{ name: 'title', type: 'string' as const }],
+                  },
+                ],
               },
             ],
           },
@@ -324,11 +342,11 @@ describe('PermissionManager', () => {
         () => {
           // CRITICAL: Nested items should appear under 'docs', not at root level
           const apiNode = screen.queryByText('api')
-          const overviewNode = screen.queryByText('overview')
+          const guidesNode = screen.queryByText('guides')
 
           // These items should exist when docs is expanded
           expect(apiNode).not.toBeNull()
-          expect(overviewNode).not.toBeNull()
+          expect(guidesNode).not.toBeNull()
         },
         { timeout: 3000 },
       )

@@ -25,19 +25,27 @@ export default defineCanopyConfig({
         name: 'posts',
         label: 'Posts',
         path: 'posts',
-        entries: {
-          format: 'json',
-          fields: postSchema,
-        },
+        entries: [
+          {
+            name: 'post',
+            format: 'json',
+            fields: postSchema,
+          },
+        ],
       },
-    ],
-    singletons: [
       {
-        name: 'home',
-        label: 'Home',
-        path: 'home',
-        format: 'json',
-        fields: homeSchema,
+        name: 'pages',
+        label: 'Pages',
+        path: 'pages',
+        entries: [
+          {
+            name: 'home',
+            label: 'Home',
+            format: 'json',
+            fields: homeSchema,
+            maxItems: 1, // Singleton-like behavior
+          },
+        ],
       },
     ],
   },

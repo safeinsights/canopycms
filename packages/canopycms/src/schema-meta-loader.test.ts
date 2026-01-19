@@ -23,11 +23,10 @@ describe('schema-meta-loader', () => {
       await fs.writeFile(
         path.join(contentDir, '.collection.json'),
         JSON.stringify({
-          singletons: [
+          entries: [
             {
               name: 'home',
               label: 'Home',
-              path: 'home',
               format: 'json',
               fields: 'homeSchema',
             },
@@ -38,11 +37,10 @@ describe('schema-meta-loader', () => {
       const result = await loadCollectionMetaFiles(contentDir)
 
       expect(result.root).toEqual({
-        singletons: [
+        entries: [
           {
             name: 'home',
             label: 'Home',
-            path: 'home',
             format: 'json',
             fields: 'homeSchema',
           },
@@ -54,10 +52,7 @@ describe('schema-meta-loader', () => {
     it('should load collection meta files from subdirectories', async () => {
       const contentDir = path.join(tempDir, 'content')
       await fs.mkdir(contentDir, { recursive: true })
-      await fs.writeFile(
-        path.join(contentDir, '.collection.json'),
-        JSON.stringify({ singletons: [] }),
-      )
+      await fs.writeFile(path.join(contentDir, '.collection.json'), JSON.stringify({ entries: [] }))
 
       const postsDir = path.join(contentDir, 'posts')
       await fs.mkdir(postsDir, { recursive: true })
@@ -66,10 +61,13 @@ describe('schema-meta-loader', () => {
         JSON.stringify({
           name: 'posts',
           label: 'Posts',
-          entries: {
-            format: 'mdx',
-            fields: 'postSchema',
-          },
+          entries: [
+            {
+              name: 'post',
+              format: 'mdx',
+              fields: 'postSchema',
+            },
+          ],
         }),
       )
 
@@ -80,33 +78,42 @@ describe('schema-meta-loader', () => {
         JSON.stringify({
           name: 'authors',
           label: 'Authors',
-          entries: {
-            format: 'json',
-            fields: 'authorSchema',
-          },
+          entries: [
+            {
+              name: 'author',
+              format: 'json',
+              fields: 'authorSchema',
+            },
+          ],
         }),
       )
 
       const result = await loadCollectionMetaFiles(contentDir)
 
-      expect(result.root).toEqual({ singletons: [] })
+      expect(result.root).toEqual({ entries: [] })
       expect(result.collections).toHaveLength(2)
       expect(result.collections).toContainEqual({
         name: 'posts',
         label: 'Posts',
-        entries: {
-          format: 'mdx',
-          fields: 'postSchema',
-        },
+        entries: [
+          {
+            name: 'post',
+            format: 'mdx',
+            fields: 'postSchema',
+          },
+        ],
         path: 'posts',
       })
       expect(result.collections).toContainEqual({
         name: 'authors',
         label: 'Authors',
-        entries: {
-          format: 'json',
-          fields: 'authorSchema',
-        },
+        entries: [
+          {
+            name: 'author',
+            format: 'json',
+            fields: 'authorSchema',
+          },
+        ],
         path: 'authors',
       })
     })
@@ -122,10 +129,13 @@ describe('schema-meta-loader', () => {
         JSON.stringify({
           name: 'posts',
           label: 'Posts',
-          entries: {
-            format: 'mdx',
-            fields: 'postSchema',
-          },
+          entries: [
+            {
+              name: 'post',
+              format: 'mdx',
+              fields: 'postSchema',
+            },
+          ],
         }),
       )
 
@@ -160,7 +170,7 @@ describe('schema-meta-loader', () => {
       await fs.mkdir(contentDir, { recursive: true })
       await fs.writeFile(
         path.join(contentDir, '.collection.json'),
-        JSON.stringify({ singletons: 'not an array' }),
+        JSON.stringify({ entries: 'not an array' }),
       )
 
       await expect(loadCollectionMetaFiles(contentDir)).rejects.toThrow(
@@ -185,27 +195,29 @@ describe('schema-meta-loader', () => {
       ],
     } satisfies Record<string, readonly FieldConfig[]>
 
-    it('should resolve schema references in singletons', () => {
+    it('should resolve schema references in collections with entries array', () => {
       const metaFiles = {
-        root: {
-          singletons: [
-            {
-              name: 'home',
-              label: 'Home',
-              path: 'home',
-              format: 'json' as const,
-              fields: 'homeSchema',
-            },
-          ],
-        },
-        collections: [],
+        root: null,
+        collections: [
+          {
+            name: 'pages',
+            label: 'Pages',
+            entries: [
+              {
+                name: 'page',
+                format: 'json' as const,
+                fields: 'homeSchema',
+              },
+            ],
+            path: 'pages',
+          },
+        ],
       }
 
       const result = resolveCollectionReferences(metaFiles, mockSchemaRegistry)
 
-      expect(result.singletons).toHaveLength(1)
-      expect(result.singletons![0].fields).toEqual(mockSchemaRegistry.homeSchema)
-      expect(result.singletons![0]).toHaveProperty('fields')
+      expect(result.collections).toHaveLength(1)
+      expect(result.collections![0].entries?.[0]?.fields).toEqual(mockSchemaRegistry.homeSchema)
     })
 
     it('should resolve schema references in collections', () => {
@@ -215,19 +227,25 @@ describe('schema-meta-loader', () => {
           {
             name: 'posts',
             label: 'Posts',
-            entries: {
-              format: 'mdx' as const,
-              fields: 'postSchema',
-            },
+            entries: [
+              {
+                name: 'post',
+                format: 'mdx' as const,
+                fields: 'postSchema',
+              },
+            ],
             path: 'posts',
           },
           {
             name: 'authors',
             label: 'Authors',
-            entries: {
-              format: 'json' as const,
-              fields: 'authorSchema',
-            },
+            entries: [
+              {
+                name: 'author',
+                format: 'json' as const,
+                fields: 'authorSchema',
+              },
+            ],
             path: 'authors',
           },
         ],
@@ -236,24 +254,27 @@ describe('schema-meta-loader', () => {
       const result = resolveCollectionReferences(metaFiles, mockSchemaRegistry)
 
       expect(result.collections).toHaveLength(2)
-      expect(result.collections![0].entries?.fields).toEqual(mockSchemaRegistry.postSchema)
-      expect(result.collections![1].entries?.fields).toEqual(mockSchemaRegistry.authorSchema)
+      expect(result.collections![0].entries?.[0]?.fields).toEqual(mockSchemaRegistry.postSchema)
+      expect(result.collections![1].entries?.[0]?.fields).toEqual(mockSchemaRegistry.authorSchema)
     })
 
     it('should throw error if schema reference not found', () => {
       const metaFiles = {
-        root: {
-          singletons: [
-            {
-              name: 'home',
-              label: 'Home',
-              path: 'home',
-              format: 'json' as const,
-              fields: 'nonexistentSchema',
-            },
-          ],
-        },
-        collections: [],
+        root: null,
+        collections: [
+          {
+            name: 'pages',
+            label: 'Pages',
+            path: 'pages',
+            entries: [
+              {
+                name: 'page',
+                format: 'json' as const,
+                fields: 'nonexistentSchema',
+              },
+            ],
+          },
+        ],
       }
 
       expect(() => {
@@ -261,27 +282,32 @@ describe('schema-meta-loader', () => {
       }).toThrow('Schema reference "nonexistentSchema"')
     })
 
-    it('should handle mixed singletons and collections', () => {
+    it('should handle multiple collections', () => {
       const metaFiles = {
-        root: {
-          singletons: [
-            {
-              name: 'home',
-              label: 'Home',
-              path: 'home',
-              format: 'json' as const,
-              fields: 'homeSchema',
-            },
-          ],
-        },
+        root: null,
         collections: [
+          {
+            name: 'pages',
+            label: 'Pages',
+            path: 'pages',
+            entries: [
+              {
+                name: 'page',
+                format: 'json' as const,
+                fields: 'homeSchema',
+              },
+            ],
+          },
           {
             name: 'posts',
             label: 'Posts',
-            entries: {
-              format: 'mdx' as const,
-              fields: 'postSchema',
-            },
+            entries: [
+              {
+                name: 'post',
+                format: 'mdx' as const,
+                fields: 'postSchema',
+              },
+            ],
             path: 'posts',
           },
         ],
@@ -289,10 +315,9 @@ describe('schema-meta-loader', () => {
 
       const result = resolveCollectionReferences(metaFiles, mockSchemaRegistry)
 
-      expect(result.singletons).toHaveLength(1)
-      expect(result.singletons![0].fields).toEqual(mockSchemaRegistry.homeSchema)
-      expect(result.collections).toHaveLength(1)
-      expect(result.collections![0].entries?.fields).toEqual(mockSchemaRegistry.postSchema)
+      expect(result.collections).toHaveLength(2)
+      expect(result.collections![0].entries?.[0]?.fields).toEqual(mockSchemaRegistry.homeSchema)
+      expect(result.collections![1].entries?.[0]?.fields).toEqual(mockSchemaRegistry.postSchema)
     })
 
     it('should preserve other collection properties', () => {
@@ -302,10 +327,13 @@ describe('schema-meta-loader', () => {
           {
             name: 'posts',
             label: 'Posts',
-            entries: {
-              format: 'mdx' as const,
-              fields: 'postSchema',
-            },
+            entries: [
+              {
+                name: 'post',
+                format: 'mdx' as const,
+                fields: 'postSchema',
+              },
+            ],
             path: 'custom-path',
           },
         ],
@@ -318,7 +346,7 @@ describe('schema-meta-loader', () => {
         label: 'Posts',
         path: 'custom-path',
       })
-      expect(result.collections![0].entries?.fields).toEqual(mockSchemaRegistry.postSchema)
+      expect(result.collections![0].entries?.[0]?.fields).toEqual(mockSchemaRegistry.postSchema)
     })
 
     it('should return empty object when no meta files', () => {
@@ -329,7 +357,6 @@ describe('schema-meta-loader', () => {
 
       const result = resolveCollectionReferences(metaFiles, mockSchemaRegistry)
 
-      expect(result.singletons).toBeUndefined()
       expect(result.collections).toBeUndefined()
     })
   })

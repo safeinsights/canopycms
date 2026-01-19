@@ -16,34 +16,29 @@ describe('config validation', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: {
-              format: 'mdx' as const,
-              fields: [
-                { name: 'title', type: 'string' as const, required: true },
-                { name: 'body', type: 'mdx' as const, required: true },
-                { name: 'tags', type: 'string' as const, list: true },
-                {
-                  name: 'layout',
-                  type: 'block' as const,
-                  templates: [
-                    {
-                      name: 'hero',
-                      label: 'Hero',
-                      fields: [
-                        { name: 'headline', type: 'string' as const, required: true },
-                        { name: 'ctaLabel', type: 'string' as const },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-            singletons: [
+            entries: [
               {
-                name: 'landing',
-                path: 'landing',
-                format: 'json' as const,
-                fields: [{ name: 'heading', type: 'string' as const }],
+                name: 'entry',
+                format: 'mdx' as const,
+                fields: [
+                  { name: 'title', type: 'string' as const, required: true },
+                  { name: 'body', type: 'mdx' as const, required: true },
+                  { name: 'tags', type: 'string' as const, list: true },
+                  {
+                    name: 'layout',
+                    type: 'block' as const,
+                    templates: [
+                      {
+                        name: 'hero',
+                        label: 'Hero',
+                        fields: [
+                          { name: 'headline', type: 'string' as const, required: true },
+                          { name: 'ctaLabel', type: 'string' as const },
+                        ],
+                      },
+                    ],
+                  },
+                ],
               },
             ],
           },
@@ -53,8 +48,7 @@ describe('config validation', () => {
     })
 
     expect(configBundle.server.schema?.collections).toBeDefined()
-    expect(configBundle.server.schema?.collections?.[0].singletons).toBeDefined()
-    expect(configBundle.server.schema?.collections?.[0].singletons?.[0].name).toBe('landing')
+    expect(configBundle.server.schema?.collections?.[0].name).toBe('posts')
   })
 
   it('rejects select fields without options', () => {
@@ -66,10 +60,13 @@ describe('config validation', () => {
             {
               name: 'pages',
               path: 'pages',
-              entries: {
-                format: 'md' as const,
-                fields: [{ name: 'badSelect', type: 'select' as const }],
-              },
+              entries: [
+                {
+                  name: 'entry',
+                  format: 'md' as const,
+                  fields: [{ name: 'badSelect', type: 'select' as const }],
+                },
+              ],
             },
           ],
         },
@@ -95,33 +92,41 @@ describe('config validation', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: {
-              format: 'mdx',
-              fields: [{ name: 'title', type: 'string' }],
-            },
+            entries: [
+              {
+                name: 'entry',
+                format: 'mdx',
+                fields: [{ name: 'title', type: 'string' }],
+              },
+            ],
           },
         ],
       },
     }
-    const homesingleton: CanopyConfigFragment = {
+    const pages: CanopyConfigFragment = {
       ...gitAuthor,
       schema: {
-        singletons: [
+        collections: [
           {
-            name: 'homepage',
-            path: 'home',
-            format: 'json',
-            fields: [{ name: 'hero', type: 'string' }],
+            name: 'pages',
+            path: 'pages',
+            entries: [
+              {
+                name: 'page',
+                format: 'json',
+                fields: [{ name: 'hero', type: 'string' }],
+              },
+            ],
           },
         ],
       },
       media: { adapter: 'local' as const },
     }
 
-    const config = composeCanopyConfig(posts, homesingleton)
+    const config = composeCanopyConfig(posts, pages)
 
     expect(config.schema?.collections?.[0].name).toBe('posts')
-    expect(config.schema?.singletons?.[0].name).toBe('homepage')
+    expect(config.schema?.collections?.[1].name).toBe('pages')
     expect(config.media?.adapter).toBe('local')
   })
 
@@ -133,18 +138,24 @@ describe('config validation', () => {
           {
             name: 'content',
             path: 'content',
-            entries: {
-              format: 'json',
-              fields: [{ name: 'title', type: 'string' }],
-            },
+            entries: [
+              {
+                name: 'entry',
+                format: 'json',
+                fields: [{ name: 'title', type: 'string' }],
+              },
+            ],
             collections: [
               {
                 name: 'pages',
                 path: 'pages',
-                entries: {
-                  format: 'md',
-                  fields: [{ name: 'title', type: 'string' }],
-                },
+                entries: [
+                  {
+                    name: 'entry',
+                    format: 'md',
+                    fields: [{ name: 'title', type: 'string' }],
+                  },
+                ],
               },
             ],
           },
@@ -164,7 +175,7 @@ describe('config validation', () => {
     expect(pagesCollection?.parentPath).toBe('content/content')
   })
 
-  it('handles deeply nested singletons with correct paths', () => {
+  it('handles deeply nested collections with correct paths', () => {
     const configBundle = defineCanopyConfig({
       ...gitAuthor,
       schema: {
@@ -172,34 +183,37 @@ describe('config validation', () => {
           {
             name: 'docs',
             path: 'docs',
-            entries: {
-              format: 'md',
-              fields: [{ name: 'title', type: 'string' }],
-            },
+            entries: [
+              {
+                name: 'entry',
+                format: 'md',
+                fields: [{ name: 'title', type: 'string' }],
+              },
+            ],
             collections: [
               {
                 name: 'api',
                 path: 'api',
-                entries: {
-                  format: 'md',
-                  fields: [{ name: 'title', type: 'string' }],
-                },
-                singletons: [
+                entries: [
                   {
-                    name: 'intro',
-                    path: 'intro',
+                    name: 'entry',
                     format: 'md',
-                    fields: [{ name: 'content', type: 'markdown' }],
+                    fields: [{ name: 'title', type: 'string' }],
                   },
                 ],
-              },
-            ],
-            singletons: [
-              {
-                name: 'overview',
-                path: 'overview',
-                format: 'md',
-                fields: [{ name: 'content', type: 'markdown' }],
+                collections: [
+                  {
+                    name: 'v2',
+                    path: 'v2',
+                    entries: [
+                      {
+                        name: 'entry',
+                        format: 'md',
+                        fields: [{ name: 'content', type: 'markdown' }],
+                      },
+                    ],
+                  },
+                ],
               },
             ],
           },
@@ -209,16 +223,20 @@ describe('config validation', () => {
     const cfg = configBundle.server
     const flat = flattenSchema(cfg.schema!, cfg.contentRoot || 'content')
 
-    const docsOverview = flat.find((item) => item.fullPath === 'content/docs/overview')
-    const apiIntro = flat.find((item) => item.fullPath === 'content/docs/api/intro')
+    const docsCollection = flat.find((item) => item.fullPath === 'content/docs')
+    const apiCollection = flat.find((item) => item.fullPath === 'content/docs/api')
+    const v2Collection = flat.find((item) => item.fullPath === 'content/docs/api/v2')
 
-    expect(docsOverview).toBeDefined()
-    expect(docsOverview?.type).toBe('singleton')
-    expect(docsOverview?.parentPath).toBe('content/docs')
+    expect(docsCollection).toBeDefined()
+    expect(docsCollection?.type).toBe('collection')
 
-    expect(apiIntro).toBeDefined()
-    expect(apiIntro?.type).toBe('singleton')
-    expect(apiIntro?.parentPath).toBe('content/docs/api')
+    expect(apiCollection).toBeDefined()
+    expect(apiCollection?.type).toBe('collection')
+    expect(apiCollection?.parentPath).toBe('content/docs')
+
+    expect(v2Collection).toBeDefined()
+    expect(v2Collection?.type).toBe('collection')
+    expect(v2Collection?.parentPath).toBe('content/docs/api')
   })
 
   it('correctly flattens nested collections without path duplication', () => {
@@ -229,26 +247,35 @@ describe('config validation', () => {
           {
             name: 'docs',
             path: 'docs',
-            entries: {
-              format: 'mdx' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
-            },
+            entries: [
+              {
+                name: 'entry',
+                format: 'mdx' as const,
+                fields: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
             collections: [
               {
                 name: 'api',
                 path: 'api',
-                entries: {
-                  format: 'mdx' as const,
-                  fields: [{ name: 'title', type: 'string' as const }],
-                },
+                entries: [
+                  {
+                    name: 'entry',
+                    format: 'mdx' as const,
+                    fields: [{ name: 'title', type: 'string' as const }],
+                  },
+                ],
                 collections: [
                   {
                     name: 'v1',
                     path: 'v1',
-                    entries: {
-                      format: 'mdx' as const,
-                      fields: [{ name: 'title', type: 'string' as const }],
-                    },
+                    entries: [
+                      {
+                        name: 'entry',
+                        format: 'mdx' as const,
+                        fields: [{ name: 'title', type: 'string' as const }],
+                      },
+                    ],
                   },
                 ],
               },
@@ -291,26 +318,35 @@ describe('config validation', () => {
           {
             name: 'docs',
             path: 'docs', // Top-level path
-            entries: {
-              format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
-            },
+            entries: [
+              {
+                name: 'entry',
+                format: 'json' as const,
+                fields: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
             collections: [
               {
                 name: 'api',
                 path: 'docs/api', // FULL path from content root (as set by schema-meta-loader)
-                entries: {
-                  format: 'json' as const,
-                  fields: [{ name: 'title', type: 'string' as const }],
-                },
+                entries: [
+                  {
+                    name: 'entry',
+                    format: 'json' as const,
+                    fields: [{ name: 'title', type: 'string' as const }],
+                  },
+                ],
                 collections: [
                   {
                     name: 'v1',
                     path: 'docs/api/v1', // FULL path from content root
-                    entries: {
-                      format: 'json' as const,
-                      fields: [{ name: 'title', type: 'string' as const }],
-                    },
+                    entries: [
+                      {
+                        name: 'entry',
+                        format: 'json' as const,
+                        fields: [{ name: 'title', type: 'string' as const }],
+                      },
+                    ],
                   },
                 ],
               },
@@ -354,26 +390,35 @@ describe('config validation', () => {
           {
             name: 'docs',
             path: 'docs', // Logical path without ID
-            entries: {
-              format: 'json',
-              fields: [{ name: 'title', type: 'string' as const }],
-            },
+            entries: [
+              {
+                name: 'entry',
+                format: 'json',
+                fields: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
             collections: [
               {
                 name: 'api',
                 path: 'docs/api', // Logical path without ID
-                entries: {
-                  format: 'json',
-                  fields: [{ name: 'title', type: 'string' as const }],
-                },
+                entries: [
+                  {
+                    name: 'entry',
+                    format: 'json',
+                    fields: [{ name: 'title', type: 'string' as const }],
+                  },
+                ],
                 collections: [
                   {
                     name: 'v1',
                     path: 'docs/api/v1', // Logical path without ID
-                    entries: {
-                      format: 'json',
-                      fields: [{ name: 'title', type: 'string' as const }],
-                    },
+                    entries: [
+                      {
+                        name: 'entry',
+                        format: 'json',
+                        fields: [{ name: 'title', type: 'string' as const }],
+                      },
+                    ],
                   },
                 ],
               },
@@ -382,10 +427,13 @@ describe('config validation', () => {
           {
             name: 'posts',
             path: 'posts', // Logical path without ID
-            entries: {
-              format: 'json',
-              fields: [{ name: 'title', type: 'string' as const }],
-            },
+            entries: [
+              {
+                name: 'entry',
+                format: 'json',
+                fields: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
           },
         ],
       },

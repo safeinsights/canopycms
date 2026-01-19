@@ -6,9 +6,9 @@ import { join, normalize } from 'pathe'
 
 import type {
   CollectionConfig,
+  EntryTypeConfig,
   FlatSchemaItem,
   RootCollectionConfig,
-  SingletonConfig,
 } from './types'
 
 /**
@@ -19,7 +19,7 @@ export const normalizePathValue = (val: string): string =>
 
 /**
  * Normalize all paths in the root collection schema.
- * Recursively processes nested collections and singletons.
+ * Recursively processes nested collections.
  */
 export const normalizeSchemaPathsRoot = (root: RootCollectionConfig): RootCollectionConfig => {
   const normalizeCollection = (collection: CollectionConfig, parentPath = ''): CollectionConfig => {
@@ -32,10 +32,6 @@ export const normalizeSchemaPathsRoot = (root: RootCollectionConfig): RootCollec
     return {
       ...collection,
       path: normalizePathValue(collection.path),
-      singletons: collection.singletons?.map((s: SingletonConfig) => ({
-        ...s,
-        path: normalizePathValue(s.path),
-      })),
       collections: collection.collections?.map((c: CollectionConfig) =>
         normalizeCollection(c, normalizedFull),
       ),
@@ -44,17 +40,13 @@ export const normalizeSchemaPathsRoot = (root: RootCollectionConfig): RootCollec
 
   return {
     ...root,
-    singletons: root.singletons?.map((s: SingletonConfig) => ({
-      ...s,
-      path: normalizePathValue(s.path),
-    })),
     collections: root.collections?.map((c: CollectionConfig) => normalizeCollection(c)),
   }
 }
 
 /**
  * Flatten the root collection schema into a flat array for O(1) lookups.
- * Traverses the nested schema structure and returns all collections and singletons
+ * Traverses the nested schema structure and returns all collections and entry types
  * with their full paths resolved.
  *
  * @param root - The root collection configuration
@@ -93,21 +85,23 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
       parentPath: parentPath || undefined,
       entries: collection.entries,
       collections: collection.collections,
-      singletons: collection.singletons,
     })
 
-    // Add singletons in this collection
-    if (collection.singletons) {
-      for (const singleton of collection.singletons) {
-        const singletonPath = join(normalizedFull, normalizePathValue(singleton.path))
+    // Add entry types in this collection
+    if (collection.entries) {
+      for (const entryType of collection.entries as readonly EntryTypeConfig[]) {
+        // Entry type path is collection path + entry type name
+        const entryTypePath = join(normalizedFull, entryType.name)
         flat.push({
-          type: 'singleton',
-          fullPath: normalizePathValue(singletonPath),
-          name: singleton.name,
-          label: singleton.label,
+          type: 'entry-type',
+          fullPath: normalizePathValue(entryTypePath),
+          name: entryType.name,
+          label: entryType.label,
           parentPath: normalizedFull,
-          format: singleton.format,
-          fields: singleton.fields,
+          format: entryType.format,
+          fields: entryType.fields,
+          default: entryType.default,
+          maxItems: entryType.maxItems,
         })
       }
     }
@@ -120,20 +114,21 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
     }
   }
 
-  // Add root-level singletons
-  if (root.singletons) {
-    for (const singleton of root.singletons) {
-      const singletonPath = base
-        ? join(base, normalizePathValue(singleton.path))
-        : normalizePathValue(singleton.path)
+  // Add root-level entry types
+  if (root.entries) {
+    for (const entryType of root.entries as readonly EntryTypeConfig[]) {
+      // Root entry type path is base + entry type name
+      const entryTypePath = base ? join(base, entryType.name) : entryType.name
       flat.push({
-        type: 'singleton',
-        fullPath: normalizePathValue(singletonPath),
-        name: singleton.name,
-        label: singleton.label,
-        parentPath: undefined,
-        format: singleton.format,
-        fields: singleton.fields,
+        type: 'entry-type',
+        fullPath: normalizePathValue(entryTypePath),
+        name: entryType.name,
+        label: entryType.label,
+        parentPath: base, // Root entry types have base as parent (empty string if no base)
+        format: entryType.format,
+        fields: entryType.fields,
+        default: entryType.default,
+        maxItems: entryType.maxItems,
       })
     }
   }

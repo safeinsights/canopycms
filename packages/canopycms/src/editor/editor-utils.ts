@@ -46,7 +46,7 @@ export const buildPreviewSrc = (
     itemType?: string
     previewSrc?: string
   },
-  { branchName, previewBaseByCollection }: PreviewContext,
+  { branchName, previewBaseByCollection, contentRoot }: PreviewContext & { contentRoot?: string },
 ): string => {
   if (entry.previewSrc) return entry.previewSrc
   const appendBranch = (url: string) => {
@@ -54,11 +54,24 @@ export const buildPreviewSrc = (
     const separator = url.includes('?') ? '&' : '?'
     return `${url}${separator}branch=${encodeURIComponent(branchName)}`
   }
+
+  // Root-level entries have collectionId === contentRoot (e.g., 'content')
+  const isRootEntry = contentRoot && entry.collectionId === contentRoot
+
+  if (isRootEntry) {
+    // Check for custom preview URL in previewBaseByCollection
+    const customPreview = previewBaseByCollection?.[`${contentRoot}/${entry.slug}`]
+    if (customPreview) {
+      return appendBranch(customPreview)
+    }
+    // Default root entries to root path
+    return appendBranch('/')
+  }
+
   const base =
     (entry.collectionId && previewBaseByCollection?.[entry.collectionId]) ??
     (entry.collectionName && previewBaseByCollection?.[entry.collectionName])
   if (!base) {
-    if (entry.itemType === 'singleton') return '/'
     // Build URL from collection path + slug
     const collectionPath = entry.collectionId ? normalizeCollectionPath(entry.collectionId) : ''
     const encoded = encodeSlug(entry.slug)
@@ -67,7 +80,6 @@ export const buildPreviewSrc = (
     return appendBranch(url)
   }
   const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
-  if (entry.itemType === 'singleton') return appendBranch(trimmed || '/')
   const encoded = encodeSlug(entry.slug)
   const url = encoded ? `${trimmed}/${encoded}` : trimmed || '/'
   return appendBranch(url)
@@ -142,11 +154,12 @@ interface BuildEntriesFromListParams {
   response: ListEntriesResponse
   branchName: string
   resolvePreviewSrc: (
-    entry: Pick<CollectionItem, 'collectionId' | 'collectionName' | 'slug' | 'itemType'>,
+    entry: Pick<CollectionItem, 'collectionId' | 'collectionName' | 'slug' | 'entryType'>,
   ) => string
   existingEntries: EditorEntry[]
   initialEntries: EditorEntry[]
   currentEntry?: EditorEntry
+  contentRoot: string
 }
 
 export const buildEntriesFromListResponse = ({
@@ -156,6 +169,7 @@ export const buildEntriesFromListResponse = ({
   existingEntries,
   currentEntry,
   initialEntries,
+  contentRoot,
 }: BuildEntriesFromListParams): EditorEntry[] => {
   const schemaByCollection = new Map<string, readonly FieldConfig[]>()
   const collectSchemas = (nodes: ListEntriesResponse['collections']) => {
@@ -168,25 +182,30 @@ export const buildEntriesFromListResponse = ({
   return response.entries.map((entry) => {
     const schema =
       schemaByCollection.get(entry.collectionId) ??
+      schemaByCollection.get(entry.id) ?? // For root entries, check by entry ID (entry-type fullPath)
       existingEntries.find((e) => e.collectionId === entry.collectionId)?.schema ??
       currentEntry?.schema ??
       initialEntries.find((e) => e.collectionId === entry.collectionId)?.schema ??
       []
+
+    // Detect root-level entries (collectionId === contentRoot)
+    const isRootEntry = entry.collectionId === contentRoot
+    const apiPath = isRootEntry
+      ? `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.slug)}`
+      : `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionId)}/${encodeURIComponent(entry.slug)}`
+
     return {
       id: entry.id,
       label: entry.title || entry.slug || entry.collectionName || entry.collectionId,
-      status: entry.exists === false ? 'missing' : (entry.itemType ?? 'entry'),
+      status: entry.exists === false ? 'missing' : (entry.entryType ?? 'entry'),
       schema,
-      apiPath:
-        entry.itemType === 'singleton'
-          ? `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionId)}`
-          : `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionId)}/${encodeURIComponent(entry.slug)}`,
+      apiPath,
       previewSrc: resolvePreviewSrc(entry),
       collectionId: entry.collectionId,
       collectionName: entry.collectionName,
-      slug: entry.itemType === 'singleton' ? '' : entry.slug,
+      slug: entry.slug,
       format: entry.format,
-      type: entry.itemType,
+      type: 'entry' as const,
       canEdit: entry.canEdit,
     }
   })
@@ -242,7 +261,7 @@ export const buildBreadcrumbSegments = (
   if (!currentEntry) return ['All Files']
   const segments = ['All Files']
 
-  // Show collection hierarchy for entries and singletons that belong to a collection
+  // Show collection hierarchy for entries that belong to a collection
   if (currentEntry.collectionId) {
     // Split the collectionId into path parts and build cumulative paths
     // e.g., "content/documentation/guides" -> ["content/documentation", "content/documentation/guides"]
