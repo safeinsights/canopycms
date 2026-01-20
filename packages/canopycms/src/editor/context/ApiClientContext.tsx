@@ -3,7 +3,7 @@
 /**
  * API Client Context
  *
- * Provides dependency injection for the API client, replacing the lazy singleton
+ * Provides dependency injection for the API client via context-based pattern
  * pattern that was duplicated across 6 hooks. This enables:
  * - Clean testing via provider (no more resetApiClient() hacks)
  * - Explicit dependency

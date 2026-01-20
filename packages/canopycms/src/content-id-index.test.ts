@@ -322,9 +322,16 @@ describe('extractSlugFromFilename', () => {
   })
 
   it('extracts slug with dots correctly', () => {
-    // Slug with dot: my.page.{id}.json should extract "my.page" as slug
-    expect(extractSlugFromFilename('my.page.a1b2c3d4e5f6.json')).toBe('my.page')
-    expect(extractSlugFromFilename('api.v2.x7y8z9abB1c2.mdx')).toBe('api.v2')
-    expect(extractSlugFromFilename('foo.bar.baz.p1s2t3a4b5c6.json')).toBe('foo.bar.baz')
+    // Collection entries (4+ parts): type.slug.{id}.ext → extracts slug (strips type)
+    // type.my.page.{id}.json has 5 parts, should extract "my.page" (strips first part "type")
+    expect(extractSlugFromFilename('page.my.page.a1b2c3d4e5f6.json')).toBe('my.page')
+    expect(extractSlugFromFilename('doc.api.v2.x7y8z9abB1c2.mdx')).toBe('api.v2')
+    expect(extractSlugFromFilename('item.foo.bar.baz.p1s2t3a4b5c6.json')).toBe('foo.bar.baz')
+  })
+
+  it('extracts slug for root-level entries (3 parts)', () => {
+    // Root-level entries (exactly 3 parts): name.{id}.ext → extracts name
+    // Since name serves as both type and slug for root entries
+    expect(extractSlugFromFilename('home.a1b2c3d4e5f6.json')).toBe('home')
   })
 })

@@ -113,8 +113,13 @@ export function buildTree(
   const nodeMap = new Map<string, TreeNode>()
   nodeMap.set(contentRoot, root)
 
-  // First pass: Create all nodes
+  // First pass: Create all nodes (skip content root since we already have it)
   flatSchema.forEach((item) => {
+    // Skip the content root itself - we already created it as the root node
+    if (item.fullPath === contentRoot) {
+      return
+    }
+
     const pathSegments = item.fullPath.split('/').filter(Boolean)
     const displayName = pathSegments[pathSegments.length - 1] || item.name
 
@@ -130,6 +135,11 @@ export function buildTree(
 
   // Second pass: Build hierarchy using parentPath
   flatSchema.forEach((item) => {
+    // Skip the content root itself
+    if (item.fullPath === contentRoot) {
+      return
+    }
+
     const node = nodeMap.get(item.fullPath)
     if (!node) return
 

@@ -159,9 +159,10 @@ describe('createContentReader', () => {
     const pagesDir = path.join(root, 'content/pages')
     await fs.mkdir(postsDir, { recursive: true })
     await fs.mkdir(pagesDir, { recursive: true })
-    // Create files with embedded IDs (12-char Base58)
-    await fs.writeFile(path.join(postsDir, 'first.abc123def456.json'), JSON.stringify({ title: 'Hello world' }, null, 2), 'utf8')
-    await fs.writeFile(path.join(pagesDir, 'home.json'), JSON.stringify({ title: 'Home' }, null, 2), 'utf8')
+    // Create files with embedded IDs: {type}.{slug}.{id}.{ext}
+    // IDs must be valid Base58 (12 chars, excludes 0, O, I, l)
+    await fs.writeFile(path.join(postsDir, 'post.first.abc123def456.json'), JSON.stringify({ title: 'Hello world' }, null, 2), 'utf8')
+    await fs.writeFile(path.join(pagesDir, 'page.home.xyz789uvwABC.json'), JSON.stringify({ title: 'Home' }, null, 2), 'utf8')
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',

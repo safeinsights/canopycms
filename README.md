@@ -58,26 +58,34 @@ export default defineCanopyConfig({
   gitBotAuthorEmail: 'bot@example.com',
   mode: 'dev', // or 'prod-sim' or 'prod'
   schema: {
-    // Collections: repeatable entries with shared schema
     collections: [
+      // Collection with repeatable entries
       {
         name: 'posts',
         label: 'Blog Posts',
         path: 'posts',          // Files at content/posts/*.json
-        entries: {
-          format: 'json',
-          fields: postSchema,
-        },
+        entries: [
+          {
+            name: 'post',
+            format: 'json',
+            fields: postSchema,
+          },
+        ],
       },
-    ],
-    // Singletons: unique entries with individual schemas
-    singletons: [
+      // Collection with singleton-like entry (maxItems: 1)
       {
-        name: 'home',
-        label: 'Homepage',
-        path: 'home',           // File at content/home.json
-        format: 'json',
-        fields: homeSchema,
+        name: 'pages',
+        label: 'Pages',
+        path: 'pages',
+        entries: [
+          {
+            name: 'home',
+            label: 'Homepage',
+            format: 'json',
+            fields: homeSchema,
+            maxItems: 1,        // Only one homepage allowed
+          },
+        ],
       },
     ],
   },
@@ -256,7 +264,7 @@ export const schemaRegistry = createSchemaRegistry({
 
 ### Creating .collection.json Meta Files
 
-Create `.collection.json` files in your content directories to define collections and singletons:
+Create `.collection.json` files in your content directories to define collections:
 
 **For a collection** (`content/posts/.collection.json`):
 
@@ -264,24 +272,29 @@ Create `.collection.json` files in your content directories to define collection
 {
   "name": "posts",
   "label": "Blog Posts",
-  "entries": {
-    "format": "json",
-    "fields": "postSchema"
-  }
+  "entries": [
+    {
+      "name": "post",
+      "format": "json",
+      "fields": "postSchema"
+    }
+  ]
 }
 ```
 
-**For a singleton** (`content/.collection.json` - root level):
+**For a singleton-like entry** (`content/pages/.collection.json`):
 
 ```json
 {
-  "singletons": [
+  "name": "pages",
+  "label": "Pages",
+  "entries": [
     {
       "name": "home",
       "label": "Homepage",
-      "path": "home",
       "format": "json",
-      "fields": "homeSchema"
+      "fields": "homeSchema",
+      "maxItems": 1
     }
   ]
 }
@@ -293,10 +306,13 @@ Create `.collection.json` files in your content directories to define collection
 {
   "name": "docs",
   "label": "Documentation",
-  "entries": {
-    "format": "mdx",
-    "fields": "docSchema"
-  }
+  "entries": [
+    {
+      "name": "doc",
+      "format": "mdx",
+      "fields": "docSchema"
+    }
+  ]
 }
 ```
 
@@ -306,10 +322,13 @@ Then create nested collections in subfolders (e.g., `content/docs/guides/.collec
 {
   "name": "guides",
   "label": "Guides",
-  "entries": {
-    "format": "mdx",
-    "fields": "guideSchema"
-  }
+  "entries": [
+    {
+      "name": "guide",
+      "format": "mdx",
+      "fields": "guideSchema"
+    }
+  ]
 }
 ```
 
@@ -351,17 +370,13 @@ export const getHandler = async () => {
 {
   "name": "collectionName",      // Required: collection identifier
   "label": "Display Name",        // Optional: human-readable label
-  "entries": {                    // Optional: for repeatable entries
-    "format": "json" | "md" | "mdx",  // Optional: defaults to json
-    "fields": "schemaRegistryKey"     // Required: key from schema registry
-  },
-  "singletons": [                 // Optional: unique entries in this collection
+  "entries": [                    // Optional: array of entry types in this collection
     {
-      "name": "singletonName",
-      "label": "Display Name",
-      "path": "relative/path",    // Relative to collection folder
-      "format": "json" | "md" | "mdx",
-      "fields": "schemaRegistryKey"
+      "name": "entryTypeName",    // Required: entry type identifier
+      "label": "Display Name",    // Optional: human-readable label
+      "format": "json" | "md" | "mdx",  // Optional: defaults to json
+      "fields": "schemaRegistryKey",    // Required: key from schema registry
+      "maxItems": 1               // Optional: limit instances (1 = singleton-like)
     }
   ]
 }
@@ -371,16 +386,12 @@ export const getHandler = async () => {
 
 ```typescript
 {
-  "entries": {                    // Optional: entries at root level
-    "format": "json",
-    "fields": "schemaRegistryKey"
-  },
-  "singletons": [                 // Optional: singletons at root level
+  "entries": [                    // Optional: entry types at root level
     {
       "name": "home",
-      "path": "home",
       "format": "json",
-      "fields": "homeSchema"
+      "fields": "homeSchema",
+      "maxItems": 1               // Singleton-like: only one homepage
     }
   ]
 }
@@ -392,8 +403,9 @@ Here's how your content directory might look with meta files:
 
 ```
 content/
-├── .collection.json          # Root meta file (singletons)
-├── home.json                 # Homepage singleton
+├── pages/
+│   ├── .collection.json      # Pages collection with singleton-like entry
+│   └── home.json             # Homepage (maxItems: 1)
 ├── posts/
 │   ├── .collection.json      # Posts collection definition
 │   ├── my-first-post.json
@@ -445,10 +457,13 @@ export default defineCanopyConfig({
         name: 'pages',
         label: 'Pages',
         path: 'pages',
-        entries: {
-          format: 'mdx',
-          fields: pageSchema,  // Inline schema definition
-        },
+        entries: [
+          {
+            name: 'page',
+            format: 'mdx',
+            fields: pageSchema,  // Inline schema definition
+          },
+        ],
       },
     ],
     // Note: Collections defined in .collection.json files will be
@@ -481,7 +496,7 @@ Available schemas: authorSchema, homeSchema, docSchema
 
 | Option | Type | Required | Default | Description |
 |--------|------|----------|---------|-------------|
-| `schema` | `RootCollectionConfig` | No* | - | Object with `collections` and `singletons` arrays defining your content structure. *Required unless using `.collection.json` meta files |
+| `schema` | `RootCollectionConfig` | No* | - | Object with `collections` and `entries` arrays defining your content structure. *Required unless using `.collection.json` meta files |
 | `gitBotAuthorName` | `string` | Yes | - | Name used for git commits made by CanopyCMS |
 | `gitBotAuthorEmail` | `string` | Yes | - | Email used for git commits made by CanopyCMS |
 | `mode` | `'dev' \| 'prod-sim' \| 'prod'` | No | `'dev'` | Operating mode (see below) |
@@ -507,7 +522,12 @@ See the [Schema References System](#schema-references-system) section for detail
 
 ### Schema Definition
 
-The schema uses a unified object-based structure. The root can contain `collections` (repeatable entries with shared schema) and `singletons` (unique entries with individual schemas). Collections can be nested and can themselves contain entries, subcollections, and singletons.
+The schema uses a unified collection-based structure. Collections contain **entry types**, which define the types of content allowed within that collection. Each entry type has its own schema (fields), format, and optional cardinality constraints.
+
+**Entry types** replace the old singleton/collection distinction:
+- For repeatable content (blog posts, products), create an entry type without restrictions
+- For unique content (homepage, settings), create an entry type with `maxItems: 1`
+- You can mix multiple entry types in a single collection
 
 ```typescript
 const config = defineCanopyConfig({
@@ -519,48 +539,73 @@ const config = defineCanopyConfig({
         name: 'posts',
         label: 'Blog Posts',
         path: 'posts',        // Files at content/posts/*.json
-        entries: {
-          format: 'json',     // or 'md', 'mdx'
-          fields: [...],
-        },
-      },
-      // Nested collections example
-      {
-        name: 'docs',
-        label: 'Documentation',
-        path: 'docs',
-        entries: {
-          format: 'json',
-          fields: [...],
-        },
-        collections: [
+        entries: [
           {
-            name: 'guides',
-            path: 'guides',   // Files at content/docs/{parent}/guides/*.json
-            entries: {
-              format: 'json',
-              fields: [...],
-            },
-          },
-        ],
-        singletons: [
-          {
-            name: 'overview',
-            path: 'overview', // File at content/docs/{parent}/overview.json
-            format: 'json',
+            name: 'post',
+            format: 'json',   // or 'md', 'mdx'
             fields: [...],
           },
         ],
       },
-    ],
-    singletons: [
-      // Singleton: single unique entry (e.g., homepage)
+      // Collection with singleton-like entry (e.g., homepage)
       {
-        name: 'home',
-        label: 'Homepage',
-        path: 'home',         // File at content/home.json
+        name: 'pages',
+        label: 'Pages',
+        path: 'pages',
+        entries: [
+          {
+            name: 'home',
+            label: 'Homepage',
+            format: 'json',
+            fields: [...],
+            maxItems: 1,      // Only one homepage allowed
+          },
+        ],
+      },
+      // Collection with multiple entry types
+      {
+        name: 'docs',
+        label: 'Documentation',
+        path: 'docs',
+        entries: [
+          {
+            name: 'guide',
+            label: 'Guide',
+            format: 'mdx',
+            fields: [...],
+          },
+          {
+            name: 'tutorial',
+            label: 'Tutorial',
+            format: 'mdx',
+            fields: [...],
+          },
+        ],
+        // Nested collections
+        collections: [
+          {
+            name: 'api',
+            label: 'API Reference',
+            path: 'api',
+            entries: [
+              {
+                name: 'endpoint',
+                format: 'mdx',
+                fields: [...],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    // Entry types at root level (optional)
+    entries: [
+      {
+        name: 'settings',
+        label: 'Site Settings',
         format: 'json',
         fields: [...],
+        maxItems: 1,          // Singleton-like at root level
       },
     ],
   },
@@ -569,10 +614,12 @@ const config = defineCanopyConfig({
 
 **Key concepts:**
 
-- **Collections** define a set of repeatable entries with a shared schema. Use the `entries` property to define the format and fields.
-- **Singletons** define unique, one-off entries with individual schemas. Each singleton has its own `format` and `fields`.
-- **Nesting**: Collections can contain `collections` and `singletons` for hierarchical content structures.
-- **Unified model**: The same structure applies everywhere - root, collections, and nested collections all work the same way.
+- **Collections** are containers for content, organized by path (e.g., `posts`, `docs/guides`)
+- **Entry types** define the types of content within a collection, each with its own schema
+- **Multiple entry types**: A collection can have multiple entry types (e.g., "guide" and "tutorial" in docs)
+- **Singleton-like behavior**: Use `maxItems: 1` to limit an entry type to a single instance
+- **Nesting**: Collections can contain nested collections for hierarchical content structures
+- **Root entries**: The root schema can have entry types directly (useful for site-wide settings)
 
 ### Field Types
 
@@ -913,9 +960,9 @@ This section describes how to use the CanopyCMS editor interface from a content 
 ### Editing Content
 
 **Selecting an entry:**
-1. Use the sidebar to browse collections and singletons
+1. Use the sidebar to browse collections
 2. Click an entry to open it in the editor
-3. For collections, you can create new entries with the "+" button
+3. Create new entries with the "+" button (disabled for entry types with `maxItems: 1` when one already exists)
 
 **Making changes:**
 1. Edit fields using the form on the left

@@ -292,10 +292,10 @@ describe('config validation', () => {
     const api = flat.find(item => item.type === 'collection' && item.name === 'api')
     const v1 = flat.find(item => item.type === 'collection' && item.name === 'v1')
 
-    // Verify docs collection (root level)
+    // Verify docs collection (child of content root)
     expect(docs).toBeDefined()
     expect(docs?.fullPath).toBe('content/docs')
-    expect(docs?.parentPath).toBeUndefined()
+    expect(docs?.parentPath).toBe('content') // Now has content root as parent
 
     // Verify api collection (nested under docs)
     expect(api).toBeDefined()
@@ -363,10 +363,10 @@ describe('config validation', () => {
     const api = flat.find(item => item.type === 'collection' && item.name === 'api')
     const v1 = flat.find(item => item.type === 'collection' && item.name === 'v1')
 
-    // Verify docs collection (root level)
+    // Verify docs collection (child of content root)
     expect(docs).toBeDefined()
     expect(docs?.fullPath).toBe('content/docs')
-    expect(docs?.parentPath).toBeUndefined()
+    expect(docs?.parentPath).toBe('content') // Now has content root as parent
 
     // Verify api collection (nested under docs)
     expect(api).toBeDefined()
@@ -447,10 +447,10 @@ describe('config validation', () => {
     const v1 = flat.find(item => item.type === 'collection' && item.name === 'v1')
     const posts = flat.find(item => item.type === 'collection' && item.name === 'posts')
 
-    // Verify docs collection (root level) - NO embedded ID in logical path
+    // Verify docs collection (child of content root) - NO embedded ID in logical path
     expect(docs).toBeDefined()
     expect(docs?.fullPath).toBe('content/docs')
-    expect(docs?.parentPath).toBeUndefined()
+    expect(docs?.parentPath).toBe('content') // Now has content root as parent
 
     // Verify api collection (nested under docs) - NO embedded ID in logical path
     expect(api).toBeDefined()
@@ -462,9 +462,9 @@ describe('config validation', () => {
     expect(v1?.fullPath).toBe('content/docs/api/v1')
     expect(v1?.parentPath).toBe('content/docs/api')
 
-    // Verify posts collection (root level) - NO embedded ID in logical path
+    // Verify posts collection (child of content root) - NO embedded ID in logical path
     expect(posts).toBeDefined()
     expect(posts?.fullPath).toBe('content/posts')
-    expect(posts?.parentPath).toBeUndefined()
+    expect(posts?.parentPath).toBe('content') // Now has content root as parent
   })
 })

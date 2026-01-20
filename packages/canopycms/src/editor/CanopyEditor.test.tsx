@@ -53,7 +53,9 @@ describe('CanopyEditor', () => {
 
     expect(container.querySelector('[data-testid="mock-editor"]')?.textContent).toBe('Config Title')
     expect(props?.subtitle).toBe('Config Subtitle')
-    expect(props?.collections?.[0]?.id).toBe('content/posts')
+    // First collection is now the content root, posts is a child
+    expect(props?.collections?.[0]?.id).toBe('content')
+    expect(props?.collections?.[0]?.children?.[0]?.id).toBe('content/posts')
     expect(props?.previewBaseByCollection?.['content/posts']).toBe('/blog')
     expect(props?.themeOptions).toMatchObject({ colors: { brand: '#123456' } })
   })

@@ -215,26 +215,29 @@ In most CMS use cases (where editors work at human speeds), race conditions are 
 
 ## Schema-Driven Content Model
 
-CanopyCMS uses a unified schema model where all content is defined through a hierarchical structure of collections and singletons. Schemas can be defined in two ways:
+CanopyCMS uses a schema model based on **collections** and **entry types**. Schemas can be defined in two ways:
 
 1. **Configuration-based**: Schema defined directly in `canopycms.config.ts`
 2. **File-based**: Schema defined in `.collection.json` files alongside content (with references to a centralized schema registry)
 
 These approaches can be mixed—file-based and config-based schemas are merged together during initialization.
 
-### Unified Schema Structure
+### Schema Structure
 
-The schema is defined as a `RootCollectionConfig` with three optional properties:
-- **entries**: Repeatable content items (e.g., blog posts, products)
+The schema is defined as a `RootCollectionConfig` with two optional properties:
+- **entries**: Array of entry type configurations (typed content items)
 - **collections**: Nested collection hierarchies
-- **singletons**: Single-instance content items (e.g., site settings, about page)
 
-This unified approach treats the root as a collection itself, eliminating special cases. Collections can be arbitrarily nested, and each collection can contain any combination of entries, child collections, and singletons.
+**Entry types** define the types of content allowed in a collection. Each entry type has:
+- **name**: The type identifier (e.g., 'post', 'doc', 'settings')
+- **format**: Content format (md, mdx, json)
+- **fields**: Field schema definitions
+- **maxItems**: Optional cardinality limit (1 = only one instance allowed, like a singleton)
+- **default**: Whether this is the default type for "Add" button
 
-**Key design principle**: No discriminator field is needed. The structure itself determines what something is:
-- If it has `entries`, you can create repeatable items in it
-- If it has `collections`, it contains nested collections
-- If it has `singletons`, it contains single-instance items
+**Collections** contain entry types and can nest other collections. The root itself is a collection (the content root), creating a uniform model where every collection behaves identically.
+
+**Key design principle**: Entry types are schema metadata, not navigable tree nodes. A collection with `entries: [{ name: 'post', ... }]` defines that entries of type "post" can be created in that collection. The entry type itself doesn't appear in navigation—only the collection does.
 
 ### Schema Registry and References
 
@@ -260,14 +263,18 @@ export const schemaRegistry = createSchemaRegistry({
 {
   "name": "posts",
   "label": "Posts",
-  "entries": {
-    "format": "json",
-    "fields": "postSchema"
-  }
+  "entries": [
+    {
+      "name": "post",
+      "format": "json",
+      "fields": "postSchema",
+      "default": true
+    }
+  ]
 }
 ```
 
-The `fields` property contains a string reference (like `"postSchema"`) that is resolved against the registry during initialization.
+The `fields` property contains a string reference (like `"postSchema"`) that is resolved against the registry during initialization. Collections can define multiple entry types, each with different schemas.
 
 **Benefits:**
 - **DRY principle**: Field definitions live in one place, referenced by multiple collections
@@ -280,8 +287,7 @@ The `fields` property contains a string reference (like `"postSchema"`) that is 
 
 Each collection folder can contain a `.collection.json` file that defines:
 - Collection name and label
-- Entry configuration (format and field schema reference)
-- Singletons within that collection
+- Entry type configurations (array of typed content definitions)
 
 **Structure:**
 ```
@@ -300,13 +306,15 @@ content/
 
 **Root collection** (`content/.collection.json`):
 - No `name` or `path` fields (derived from contentRoot)
-- Can define root-level entries or singletons
+- Can define root-level entry types
 - Optional—system works without it
 
 **Nested collections**:
 - Collection path is derived from folder structure, not from meta file
 - Each collection can have its own `.collection.json`
 - Nesting is detected automatically by scanning subdirectories
+
+**Entry type cardinality**: Entry types with `maxItems: 1` provide singleton-like behavior where only one instance of that type can exist. For example, a settings entry type with `maxItems: 1` ensures only one settings file can be created.
 
 ### Schema Resolution System
 
@@ -325,7 +333,7 @@ Schema resolution happens during service initialization through a multi-step pro
 
 **Step 3: Merge with config**
 - Config-defined schemas are merged with file-based schemas
-- Collections and singletons are concatenated
+- Collections are concatenated
 - Config entries take precedence if root defines entries in both places
 
 **Step 4: Flatten schema**
@@ -335,7 +343,7 @@ Schema resolution happens during service initialization through a multi-step pro
 **Error handling:**
 - Clear error messages when referenced schemas don't exist
 - Lists available schema registry keys in error messages
-- Validates collection structure during parse (must have entries or singletons)
+- Validates collection structure during parse (must have entries or collections)
 - Throws if no schema is provided (neither config nor meta files)
 
 ### Async Initialization Pattern
@@ -395,56 +403,62 @@ At initialization, the hierarchical schema is flattened into a `Map<path, FlatSc
 **Collection item**:
 - `type: 'collection'`
 - `fullPath`: Complete path from content root (e.g., "content/blog")
-- `entries`: Optional entries configuration with format and fields
-- `collections` and `singletons`: Optional nested items
+- `entries`: Optional array of entry type configurations
+- `collections`: Optional nested collections
+- `name`, `label`, `parentPath`: For navigation and display
 
-**Singleton item**:
-- `type: 'singleton'`
-- `fullPath`: Complete path including filename (e.g., "content/settings")
-- `fields`: Field definitions
+**Entry type item**:
+- `type: 'entry-type'`
+- `fullPath`: Complete path including entry type name (e.g., "content/posts/post")
+- `name`: Entry type name (e.g., 'post', 'doc')
 - `format`: Content format (md, mdx, json)
+- `fields`: Field definitions
+- `maxItems`: Optional cardinality limit
+- `parentPath`: Path of the parent collection
 
-All items include `name`, `label`, and `parentPath` for navigation and display.
+**Important**: The content root itself is included as a collection with `type: 'collection'`, `fullPath: 'content'`, and `parentPath: undefined`. Root-level collections have `parentPath: 'content'`, making them children of the content root. This eliminates all special-casing for root vs. nested collections.
 
 ### Content Store Integration
 
-The `ContentStore` uses the flat schema index instead of traversing a hierarchical tree:
+The `ContentStore` uses the flat schema index for O(1) path resolution:
 
 **Path resolution** (`resolvePath`):
-1. Try to match the full path as a singleton
-2. If no singleton matches, try to split the last segment as a slug and match the rest as a collection
-3. Return the schema item, slug, and item type (singleton or entry)
+1. Split the path into segments
+2. Look up the collection in the flat schema map
+3. Determine if the path refers to an entry type (has a slug) or the collection itself
+4. Return the schema item, slug, and entry type
 
 **Reading and writing**:
 - `read()` and `write()` accept a collection path and slug
-- For singletons, the slug is empty string
-- For entries, the slug identifies the specific item
-- The schema item type determines format, fields, and file extension
+- For entry-type items with `maxItems: 1`, the filename is `{entryTypeName}.{id}.{ext}` (stored at root level)
+- For regular entries, the slug identifies the specific item within the collection
+- The entry type configuration determines format, fields, and file extension
 
 **Path building**:
-- Singletons: Use the full path directly
-- Entries: Join collection path with slug
+- Entry types: Collection path + entry type name + entry ID
+- Regular entries: Collection path + slug
 
-This design means the same APIs work for both singletons and entries without special-casing.
+The API works uniformly across all entry types regardless of cardinality constraints.
 
 ### API Layer
 
-The API exposes collections and singletons through a unified interface:
+The API exposes collections through a unified interface:
 
 **Collection summaries** (`buildCollectionSummaries`):
-- Both collections and singletons appear in the summaries list
-- Singletons use `type: 'entry'` for backward compatibility (different from internal `type: 'singleton'`)
+- Returns only collections (not individual entry types)
 - Collections have `type: 'collection'`
+- Entry types are part of the collection configuration, accessed via `collection.entries`
 
 **Entries list** (`listCollectionEntries`):
-- Only returns actual entries (repeatable items)
-- Singletons are excluded from the entries list
-- They appear in summaries only, as they don't have a slug
+- Returns entries based on the collection's entry type configurations
+- Supports multiple entry types per collection (each type can have different schemas)
+- Entry types with `maxItems: 1` are included if they exist
+- Entry filenames include type information for multi-type collections
 
-**CollectionItem** type:
-- `itemType`: Distinguishes 'singleton' from 'entry'
-- Entries have a `slug`; singletons use empty string
-- Both have a `collectionId` pointing to their parent collection or path
+**Entry identification**:
+- Entries have a `slug` derived from filename
+- Entry type is determined by filename pattern or extension
+- All entries have a `collectionId` pointing to their parent collection path
 
 ### API Middleware
 
@@ -473,19 +487,23 @@ This pattern reduces code duplication across API handlers while keeping the auth
 
 ### Editor Integration
 
-The editor uses simplified collection IDs (just the path, not including contentRoot):
+The editor uses collection-based navigation:
 
 **Navigation**:
-- Collections and singletons appear side-by-side in the content navigator
-- Singletons are visually distinguished (no entry count, different icon)
+- `buildEditorCollections()` returns only collections, not individual entry types
+- Entry types are schema metadata that define what can be created in a collection
+- Collections appear as navigable tree nodes in the content navigator
+- Entry types appear in "Add" buttons and entry type selectors, not as navigation nodes
 
 **Preview URLs**:
-- Singletons: Use full path as preview URL
-- Entries: Append slug to collection path
+- Collections map to base preview paths
+- Individual entries append their slug to the collection's preview base
+- Entry types with `maxItems: 1` use their type name as the slug
 
 **Form rendering**:
-- Both use the same field rendering infrastructure
-- Schema fields determine the form structure
+- All entries use the same field rendering infrastructure
+- Entry type configuration determines which fields appear
+- Multi-type collections can have different forms for different entry types
 
 ## Core Mental Model
 
@@ -1343,27 +1361,30 @@ The index is per-process, not globally synchronized. This design choice accepts 
 
 For a system handling hundreds of concurrent API requests (serverless autoscaling), process-local indexes with eventual consistency is simpler and more scalable than a shared, synchronized index.
 
-### Why unified schema model (collections + singletons)?
+### Why entry types model instead of singletons?
 
-The unified schema model treats the root as a collection with three optional properties: `entries`, `collections`, and `singletons`. This design provides several advantages over array-based or discriminated schemas:
+The entry types model treats all content as typed entries within collections, with cardinality constraints (like `maxItems: 1`) providing singleton-like behavior. This design provides several advantages:
 
 **Eliminates special cases:**
+- No separate "singleton" concept—just entry types with `maxItems: 1`
 - Root and nested collections have identical structure
-- No need for separate root-level handling logic
+- No need for heuristic detection of root-level singletons
 - Recursive traversal becomes straightforward
 
-**Structural detection instead of discriminators:**
-- No `type` field required to distinguish collections from singletons
-- The presence of `entries`, `collections`, or `singletons` determines capabilities
-- A collection can have any combination of these properties
+**Content root as normal collection:**
+- The content root (`content/`) is a collection with `type: 'collection'`, `fullPath: 'content'`, `parentPath: undefined`
+- Root-level collections are children of the content root with `parentPath: 'content'`
+- No special-casing for root vs. nested collections
+- Eliminates all "is this root-level?" checks
 
-**Flexible composition:**
-- Collections can contain both entries and singletons
-- Singletons can be nested at any level
-- Collections can be infinitely nested
+**Entry types are schema metadata:**
+- Entry types define what can be created in a collection
+- They don't appear as navigable nodes in the tree
+- Collections are navigable; entry types are schema configuration
+- Clearer separation between structure (collections) and content types (entry types)
 
 **Type safety:**
-- `FlatSchemaItem` is a discriminated union with `type: 'collection' | 'singleton'`
+- `FlatSchemaItem` is a discriminated union with `type: 'collection' | 'entry-type'`
 - TypeScript enforces correct access to fields based on type
 - Compile-time detection of invalid schema operations
 
@@ -1393,57 +1414,60 @@ The flattening process converts the hierarchical schema into `Map<path, FlatSche
 
 The alternative (traversing the tree on every request) would add milliseconds to every content access, making serverless deployments impractical.
 
-### Why try singleton-first in path resolution?
+### Why flatten content root as a normal collection?
 
-The `resolvePath` method tries to match the full path as a singleton before attempting collection+slug splitting:
+The content root is included in the flattened schema as a normal collection with `type: 'collection'`, `fullPath: 'content'`, and `parentPath: undefined`:
 
-**Predictable resolution order:**
-- Singletons have priority over entries with matching paths
-- Prevents ambiguity when paths overlap
-- Clear mental model for schema authors
+**Eliminates special cases:**
+- No separate code path for "is this root-level?" checks
+- Root-level collections simply have `parentPath: 'content'`
+- Entry types at root level have `parentPath: 'content'`, just like nested entry types
+- Collection traversal logic works uniformly
 
-**Avoids false matches:**
-- Without singleton-first, "content/settings" might incorrectly match as collection "content" + slug "settings"
-- Singleton-first ensures exact matches take precedence
-- Only falls back to collection+slug if no singleton exists
+**Simpler parent-child relationships:**
+- Every collection except content root has a parent
+- Content root is the only collection with `parentPath: undefined`
+- Clear tree structure with a single root node
+- No ambiguity about where root-level items belong
 
-**Consistent with file system:**
-- Files (singletons) are naturally distinct from directories (collections)
-- The resolution logic mirrors filesystem semantics
-- Editors intuitively understand the hierarchy
+**Consistent API:**
+- `buildEditorCollections()` can start with `parentPath: undefined` and find the content root
+- All collections use the same lookup and traversal patterns
+- No special handling for root vs. nested items
 
 **Performance:**
-- Map lookups are fast (O(1))
-- Trying singleton first adds negligible overhead
-- Single lookup for singletons, two lookups for entries (still fast)
+- Same O(1) lookup performance
+- One additional item in the flat schema (negligible)
+- Eliminates conditional logic in hot paths
 
-This design means you can have both a singleton at "content/about" and a collection at "content/blog" without conflicts or confusion.
+This design change removed extensive heuristic detection code that tried to determine if an entry type was "root-level" based on path prefixes and special cases.
 
-### Why use empty string for singleton slugs?
+### Why use entry type name for maxItems: 1 filenames?
 
-Singletons are represented in the API with an empty string slug instead of using a special value like `null`:
+Entry types with `maxItems: 1` store their files using the entry type name as part of the filename pattern:
 
-**API consistency:**
-- Both `read(path, slug)` and `write(path, slug, data)` work uniformly
-- No special null checks required in calling code
-- Same validation and permission logic for both types
+**Predictable file locations:**
+- File is stored at the collection root: `{collectionPath}/{entryTypeName}.{id}.{ext}`
+- For root-level: `content/settings.abc123.json`
+- For nested: `content/blog/config.def456.json`
+- No ambiguity about where the file lives
 
-**URL routing simplicity:**
-- Empty slug naturally produces clean paths
-- No need to filter out "null" or "undefined" in URLs
-- Slug is simply omitted rather than treated specially
+**Consistent ID system:**
+- Same ID-in-filename pattern as regular entries
+- Same stable reference system
+- Same rename and move handling
 
-**Type safety:**
-- Slug is always a string, never nullable
-- Prevents null-related runtime errors
-- TypeScript enforces string operations uniformly
+**Multi-type collection support:**
+- A collection can have both `maxItems: 1` types and unlimited types
+- Each type's files are clearly identified by type name in the filename
+- No conflicts or special-casing needed
 
-**Path building:**
-- `join(collectionPath, '')` correctly returns collectionPath
-- No conditional logic needed for singletons vs entries
-- Path construction code works identically
+**API uniformity:**
+- Same `read(path, slug)` API
+- Entry type name can be used as a predictable slug
+- No separate code paths for cardinality-constrained types
 
-The alternative (nullable slug) would require conditional logic throughout the codebase, adding complexity and error-prone null checks.
+This approach treats `maxItems: 1` as a schema constraint, not a fundamentally different content model.
 
 ### Why async service initialization?
 
@@ -1532,31 +1556,70 @@ const data = await canopy.read(...)
 
 TypeScript enforces the await, preventing accidental usage before initialization completes. The pattern is consistent with async/await conventions throughout the modern JavaScript ecosystem.
 
-### Why expose singletons as type 'entry' in the API?
+### Why don't entry types appear in navigation?
 
-The internal `FlatSchemaItem` uses `type: 'singleton'`, but the API exposes singletons as `type: 'entry'`:
+Entry types are schema metadata, not navigable tree nodes. The `buildEditorCollections()` function returns only collections:
 
-**Backward compatibility:**
-- Existing editor code expects `type: 'collection' | 'entry'`
-- Avoids breaking changes during schema model evolution
-- Smooth migration path for adopters
+**Clear mental model:**
+- Collections = navigable containers (folders)
+- Entry types = content type definitions (schemas)
+- Navigation tree shows structure, not schema
 
-**Conceptual simplicity:**
-- To editors, singletons are just "special entries" with one instance
-- The distinction between singleton and entry is implementation detail
-- UI doesn't need to change behavior based on type
+**Prevents confusion:**
+- Without this separation, users might think entry types are special folders
+- Entry types like "post" would appear as nodes alongside their parent collection "posts"
+- The tree would conflate structure (where things are) with schema (what can be created)
 
-**Single code path:**
-- Editor treats both as editable content items
-- Same form rendering, validation, and save logic
-- `itemType` field provides granular distinction when needed
+**Simpler UI:**
+- Collections have child collections (nesting)
+- Entry types appear in "Add" buttons and type selectors
+- Clear separation between browsing (collections) and creating (entry types)
 
-**Future flexibility:**
-- Internal model can evolve without breaking API contracts
-- Can add new item types without changing `type` enum
-- `itemType` provides extension point for future content types
+**Consistent with filesystem:**
+- Collections map to directories
+- Entry types map to file types (like .md vs .json)
+- You navigate directories, not file types
 
-This separation of concerns keeps the API stable while allowing internal improvements to the schema model.
+**Cardinality is a constraint:**
+- `maxItems: 1` is a validation rule, not a structural distinction
+- Entry types with `maxItems: 1` aren't fundamentally different from unlimited types
+- Both are content types; the only difference is how many instances are allowed
+
+This design emerged from removing the old singleton concept, which conflated schema constraints with navigable structure.
+
+### Why is this architecture simpler than the old singleton model?
+
+The transition from singletons to entry types with cardinality constraints eliminated significant complexity:
+
+**Before (singleton model):**
+- Separate `SingletonConfig` type alongside `CollectionConfig`
+- Root-level singletons needed special detection ("is this path root-level?")
+- Flattening logic had separate code paths for singletons vs. collections
+- Navigation logic needed to distinguish between singleton nodes and collection nodes
+- API layer exposed both `type: 'collection'` and `type: 'entry'` (confusing naming)
+- Path resolution had singleton-first fallback logic
+
+**After (entry types model):**
+- Single `EntryTypeConfig` type used uniformly
+- Content root is just a collection with `parentPath: undefined`
+- All collections have identical structure regardless of nesting level
+- Entry types are schema metadata, not navigable nodes
+- `buildEditorCollections()` returns only collections
+- No special detection or fallback needed
+
+**Code reduction:**
+- Eliminated extensive "is root-level?" heuristics throughout the codebase
+- Removed separate singleton handling in navigation tree building
+- Simplified path resolution (no singleton-first logic)
+- Unified API responses (collections only, with entry types as configuration)
+
+**Conceptual simplification:**
+- Collections are structure (navigable containers)
+- Entry types are schema (what can be created)
+- Cardinality is a constraint (how many instances allowed)
+- No conflation of these three concepts
+
+The key insight: treating the content root as a normal collection eliminates the need to special-case root-level items. Every collection except the root has a parent, and the root is just the one collection with `parentPath: undefined`.
 
 ### Why schema meta files instead of all-in-config?
 
@@ -1572,7 +1635,7 @@ The schema meta file system provides an alternative to defining all schemas in `
 - Content structure (which collections exist, where they live) is separate from field definitions (what fields those collections have)
 - Content editors can understand collection hierarchy without reading TypeScript
 - Developers own the schema registry (TypeScript field definitions)
-- Content architects can modify collection structure without touching code
+- Content architects can modify collection structure and entry types without touching code
 
 **Reduced config file size:**
 - Config file can focus on operational settings (git, auth, branches)
@@ -1587,8 +1650,8 @@ The schema meta file system provides an alternative to defining all schemas in `
 
 **Registry pattern enables reuse:**
 - Field definitions (like `postSchema`) are defined once and referenced multiple times
-- If multiple collections share the same structure, they reference the same schema
-- Changing a schema definition updates all collections that reference it
+- If multiple entry types share the same structure, they reference the same schema
+- Changing a schema definition updates all entry types that reference it
 - Type safety maintained because registry is TypeScript
 
 **Limitations:**

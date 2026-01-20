@@ -21,7 +21,7 @@ export const relativePathSchema = z
  *
  * Examples:
  * - { name: 'post', format: 'mdx', fields: postSchema } - unlimited posts
- * - { name: 'settings', format: 'json', fields: settingsSchema, maxItems: 1 } - singleton-like
+ * - { name: 'settings', format: 'json', fields: settingsSchema, maxItems: 1 } - restricted to one instance
  */
 export const entryTypeSchema = z.object({
   name: z.string().min(1),
