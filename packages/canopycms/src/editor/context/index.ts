@@ -3,7 +3,7 @@
  *
  * These contexts consolidate editor-wide state and dependencies:
  *
- * - ApiClientContext: Dependency injection for API client (replaces lazy singletons)
+ * - ApiClientContext: Dependency injection for API client (context-based pattern)
  * - EditorStateContext: Loading states, modal states, preview data
  *
  * Usage:

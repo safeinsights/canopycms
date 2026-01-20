@@ -21,16 +21,16 @@ describe('ReferenceResolver', () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-test-'))
     await fs.mkdir(path.join(tempDir, 'content', 'authors'), { recursive: true })
 
-    // Create test author files with embedded IDs (12-char Base58 format)
+    // Create test author files with embedded IDs: {type}.{slug}.{id}.{ext}
     const aliceId = 'aXice123ABC4' // 12 chars, valid Base58
     const bobId = 'bob456XYZ789' // 12 chars, valid Base58
 
     await fs.writeFile(
-      path.join(tempDir, 'content', 'authors', `alice.${aliceId}.json`),
+      path.join(tempDir, 'content', 'authors', `author.alice.${aliceId}.json`),
       JSON.stringify({ slug: 'alice', name: 'Alice' }),
     )
     await fs.writeFile(
-      path.join(tempDir, 'content', 'authors', `bob.${bobId}.json`),
+      path.join(tempDir, 'content', 'authors', `author.bob.${bobId}.json`),
       JSON.stringify({ slug: 'bob', name: 'Bob' }),
     )
 

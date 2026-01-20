@@ -1,43 +1,9 @@
-import { describe, it, expect, vi, beforeEach, beforeAll, afterAll, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { PermissionManager } from './PermissionManager'
 import type { PathPermission } from '../config'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
-
-const originalMatchMedia = window.matchMedia
-
-beforeAll(() => {
-  if (!window.matchMedia) {
-    window.matchMedia = ((query: string) =>
-      ({
-        matches: false,
-        media: query,
-        onchange: null,
-        addListener: () => {},
-        removeListener: () => {},
-        addEventListener: () => {},
-        removeEventListener: () => {},
-        dispatchEvent: () => false,
-      }) as MediaQueryList) as typeof window.matchMedia
-  }
-
-  if (!window.ResizeObserver) {
-    class ResizeObserver {
-      observe() {}
-      unobserve() {}
-      disconnect() {}
-    }
-    ;(window as unknown as { ResizeObserver: typeof ResizeObserver }).ResizeObserver =
-      ResizeObserver as typeof ResizeObserver
-  }
-})
-
-afterAll(() => {
-  if (originalMatchMedia) {
-    window.matchMedia = originalMatchMedia
-  }
-})
 
 afterEach(() => {
   cleanup()
@@ -211,10 +177,12 @@ describe('PermissionManager', () => {
         { wrapper },
       )
 
-      // Content is expanded by default, so children should be visible
-      expect(screen.getByText('posts')).toBeTruthy()
-      expect(screen.getByText('pages')).toBeTruthy()
-      expect(screen.getByText('about')).toBeTruthy()
+      // Content is expanded by default, wait for children to appear after Collapse animation
+      await waitFor(() => {
+        expect(screen.getByText('posts')).toBeTruthy()
+        expect(screen.getByText('pages')).toBeTruthy()
+        expect(screen.getByText('about')).toBeTruthy()
+      })
     })
 
     it('expands all nodes when Expand All clicked', async () => {

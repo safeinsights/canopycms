@@ -16,8 +16,11 @@ export interface IdLocation {
 /**
  * ContentIdIndex manages the bidirectional mapping between content IDs and file paths.
  *
- * IDs are embedded in filenames using the pattern `{slug}.{12-char-id}.{ext}` for files
- * and `{slug}.{12-char-id}/` for directories (e.g., `dune.a1b2c3d4e5f6.json`).
+ * IDs are embedded in filenames using the patterns:
+ * - Collection entries: `{type}.{slug}.{12-char-id}.{ext}` (e.g., `post.dune.a1b2c3d4e5f6.json`)
+ * - Collection directories: `{slug}.{12-char-id}/` (e.g., `posts.a1b2c3d4e5f6/`)
+ * - Root-level entries: `{name}.{12-char-id}.{ext}` (e.g., `home.a1b2c3d4e5f6.json`)
+ *
  * This class builds an in-memory index by scanning filenames recursively, providing O(1) lookups
  * in both directions (ID→path and path→ID).
  *
@@ -213,14 +216,14 @@ export class ContentIdIndex {
  * Returns null if filename doesn't contain an ID or is a metadata file.
  *
  * Pattern:
- * - Files: slug.id.ext → parts[1] is ID (e.g., "dune.a1b2c3d4e5f6.json")
- * - Directories: slug.id → parts[1] is ID (e.g., "posts.a1b2c3d4e5f6")
- * - Metadata: .collection.json, .gitignore, etc. → null
+ * - Collection entry files: type.slug.id.ext → ID is parts[parts.length - 2] (e.g., "post.dune.a1b2c3d4e5f6.json")
+ * - Collection directories: slug.id → ID is parts[1] (e.g., "posts.a1b2c3d4e5f6")
+ * - Metadata files: .collection.json, .gitignore, etc. → null
  *
  * Edge cases:
- * - Slugs with dots: "my.page.a1b2c3d4e5f6.json" → extracts "a1b2c3d4e5f6"
+ * - Slugs with dots: "post.my.page.a1b2c3d4e5f6.json" → extracts "a1b2c3d4e5f6"
  * - Hidden files with IDs: ".hidden.a1b2c3d4e5f6.json" → returns null (metadata)
- * - No ID present: "legacy-file.json" → returns null
+ * - No ID present: "file.json" → returns null
  */
 export function extractIdFromFilename(filename: string): string | null {
   // Skip metadata files (no IDs) - anything starting with dot is metadata
@@ -231,7 +234,7 @@ export function extractIdFromFilename(filename: string): string | null {
 
   const parts = filename.split('.')
 
-  // Files: slug.id.ext → need at least 3 parts
+  // Files: type.slug.id.ext → need at least 3 parts
   // The ID is always the second-to-last part before the extension
   if (parts.length >= 3) {
     const candidate = parts[parts.length - 2]
@@ -295,20 +298,43 @@ export async function resolveCollectionPath(
 }
 
 /**
- * Extract slug from filename (the part before the ID).
- * Works for both files (slug.id.ext) and directories (slug.id).
- * Handles slugs with dots (e.g., "my.page.a1b2c3d4e5f6.json" → "my.page")
+ * Extract slug from filename.
+ *
+ * Collection entries: type.slug.id.ext → slug is parts[1...-2] (between type and ID)
+ * Directories: slug.id → slug is parts[0] (before ID)
+ *
+ * For collection entry files (4+ parts), automatically strips the first part (type) to extract just the slug.
+ *
+ * Examples:
+ * - "post.my-slug.a1b2c3d4e5f6.json" → "my-slug" (4 parts)
+ * - "post.my.page.a1b2c3d4e5f6.json" → "my.page" (dotted slug, 5 parts)
+ * - "posts.a1b2c3d4e5f6" → "posts" (directory, 2 parts)
+ *
+ * @param filename - The filename to parse
+ * @param entryTypeName - Optional entry type name for explicit type matching (e.g., "post")
+ *                        If provided and matches first part, strips it from slug
  */
-export function extractSlugFromFilename(filename: string): string {
+export function extractSlugFromFilename(filename: string, entryTypeName?: string): string {
   const parts = filename.split('.')
 
-  // Try to find the ID in the parts
-  // Files: slug.id.ext (at least 3 parts)
+  // Files: type.slug.id.ext (at least 3 parts)
   if (parts.length >= 3) {
     const possibleId = parts[parts.length - 2]
     if (isValidId(possibleId)) {
-      // Everything before the ID is the slug
-      return parts.slice(0, parts.length - 2).join('.')
+      // Get all parts before ID (excluding extension)
+      let slugParts = parts.slice(0, parts.length - 2)
+
+      // If entryTypeName is provided and matches the first part, strip it
+      if (entryTypeName && slugParts.length > 1 && slugParts[0] === entryTypeName) {
+        slugParts = slugParts.slice(1)
+      }
+      // Auto-detect: 4+ parts means type.slug.id.ext format
+      else if (parts.length >= 4 && slugParts.length > 1) {
+        // Strip first part (the type) to get just the slug
+        slugParts = slugParts.slice(1)
+      }
+
+      return slugParts.join('.')
     }
   }
 
@@ -316,17 +342,14 @@ export function extractSlugFromFilename(filename: string): string {
   if (parts.length === 2) {
     const possibleId = parts[parts.length - 1]
     if (isValidId(possibleId)) {
-      // Everything before the ID is the slug
       return parts[0]
     }
   }
 
-  // No ID found, remove extension and return the rest
-  // This handles legacy files without IDs
+  // No ID found, remove extension and return filename without extension
   if (parts.length > 1) {
     return parts.slice(0, -1).join('.')
   }
 
-  // No extension, return as-is
   return filename
 }

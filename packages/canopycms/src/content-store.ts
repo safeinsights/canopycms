@@ -210,6 +210,7 @@ export class ContentStore {
       const defaultEntry = getDefaultEntryType(schemaItem.entries)
       const format = defaultEntry?.format || 'json'
       const ext = getFormatExtension(format)
+      const entryTypeName = defaultEntry?.name || 'entry'
 
       // Resolve the full collection path with embedded IDs
       // e.g., "content/docs/api" → "content/docs.bChqT78gcaLd/api.meiuwxTSo7UN"
@@ -235,7 +236,7 @@ export class ContentStore {
         const entries = await fs.readdir(collectionRoot, { withFileTypes: true }).catch(() => [])
         const existingFile = entries.find((entry) => {
           if (entry.isDirectory()) return false
-          const existingSlug = extractSlugFromFilename(entry.name)
+          const existingSlug = extractSlugFromFilename(entry.name, entryTypeName)
           return existingSlug === safeSlug
         })
 
@@ -256,8 +257,8 @@ export class ContentStore {
         if (!id) {
           id = generateId()
         }
-        // Build filename with embedded ID: slug.id.ext
-        filename = `${safeSlug}.${id}${ext}`
+        // Build filename with embedded ID: type.slug.id.ext
+        filename = `${entryTypeName}.${safeSlug}.${id}${ext}`
       }
       const resolved = path.resolve(collectionRoot, filename)
       const collectionRootWithSep = collectionRoot.endsWith(path.sep)

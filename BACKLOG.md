@@ -89,7 +89,7 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 - Figure out gray-matter usage (currently JSON heavy)
 - Type-smoke test: render Editor with minimal entry, run `tsc --noEmit` to catch API shape mismatches
 - TODO: Decide if `normalizeContentPayload` should merge top-level `body` when both nested `{ format, data, body }` and sibling `body` present
-- TODO: Refine preview base defaults from config (allow overrides, better singleton/root handling, clarify trailing-slash behavior)
+- TODO: Refine preview base defaults from config (allow overrides, better root entry handling, clarify trailing-slash behavior)
 
 ### 10. Sync and conflict surfacing
 

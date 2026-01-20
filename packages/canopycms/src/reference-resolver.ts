@@ -1,5 +1,8 @@
+import path from 'node:path'
+
 import type { ContentStore } from './content-store'
 import type { ContentIdIndex } from './content-id-index'
+import { extractSlugFromFilename } from './content-id-index'
 
 export interface ResolvedReference {
   id: string
@@ -98,8 +101,15 @@ export class ReferenceResolver {
         if (!id) continue
 
         try {
-          const doc = await this.store.read(entry.collection, entry.slug)
-          const label = String(doc.data[displayField] || doc.data.title || entry.slug)
+          // The slug from the index may include the entry type prefix for new-format files
+          // (e.g., "author.alice" instead of just "alice"). We need to strip the type prefix
+          // before passing to store.read() to avoid double-prefixing.
+          // Use extractSlugFromFilename to properly extract just the slug part.
+          const filename = path.basename(entry.relativePath)
+          const normalizedSlug = extractSlugFromFilename(filename)
+
+          const doc = await this.store.read(entry.collection, normalizedSlug)
+          const label = String(doc.data[displayField] || doc.data.title || normalizedSlug)
 
           // Apply search filter if provided
           if (search && !label.toLowerCase().includes(search.toLowerCase())) {

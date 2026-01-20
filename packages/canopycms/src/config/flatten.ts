@@ -66,13 +66,16 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
     const normalizedPath = normalizePathValue(collection.path)
     // Build fullPath: if we have a parent, join with parent; otherwise use collection path
     let fullPath: string
-    if (parentPath) {
-      // Child collection: use only the collection name (leaf segment), not the full path
+    if (parentPath && parentPath !== base) {
+      // Nested child collection: use only the collection name (leaf segment), not the full path
       // The full path from collection.path includes parent path segments that are already in parentPath
       fullPath = join(parentPath, collection.name)
+    } else if (parentPath === base) {
+      // Root-level collection (direct child of content root): use collection path
+      fullPath = join(base, normalizedPath)
     } else {
-      // Root-level collection: prepend base path
-      fullPath = base ? join(base, normalizedPath) : normalizedPath
+      // No parent and no base: use collection path as-is
+      fullPath = normalizedPath
     }
     const normalizedFull = normalizePathValue(fullPath)
 
@@ -114,7 +117,22 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
     }
   }
 
+  // Add the root collection itself as a normal collection (if we have a base path)
+  // This makes content root behave exactly like any other collection, just without a parent
+  if (base) {
+    flat.push({
+      type: 'collection',
+      fullPath: base,
+      name: base, // Use base path as the name (e.g., 'content')
+      label: undefined, // Root collection has no label
+      parentPath: undefined, // No parent - this is the root
+      entries: root.entries,
+      collections: root.collections,
+    })
+  }
+
   // Add root-level entry types
+  // Now their parentPath will reference the root collection we just added above
   if (root.entries) {
     for (const entryType of root.entries as readonly EntryTypeConfig[]) {
       // Root entry type path is base + entry type name
@@ -124,7 +142,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
         fullPath: normalizePathValue(entryTypePath),
         name: entryType.name,
         label: entryType.label,
-        parentPath: base, // Root entry types have base as parent (empty string if no base)
+        parentPath: base, // Now references the root collection (e.g., 'content')
         format: entryType.format,
         fields: entryType.fields,
         default: entryType.default,
@@ -134,9 +152,10 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
   }
 
   // Process root-level collections
+  // Pass base as parentPath so they are children of the content root collection
   if (root.collections) {
     for (const collection of root.collections) {
-      walkCollection(collection, '')
+      walkCollection(collection, base || '')
     }
   }
 

@@ -143,7 +143,8 @@ describe('ContentStore', () => {
     const doc = await store.read('content/settings', 'site')
     expect(doc.format).toBe('json')
     expect(doc.data.siteName).toBe('CanopyCMS')
-    expect(doc.relativePath).toMatch(/content\/settings\/site\.[a-zA-Z0-9]+\.json/)
+    // Pattern: {type}.{slug}.{id}.{ext}
+    expect(doc.relativePath).toMatch(/content\/settings\/setting\.site\.[a-zA-Z0-9]+\.json/)
   })
 
   it('rejects slugs with forward slashes', async () => {
@@ -412,9 +413,9 @@ describe('ContentStore', () => {
     if (doc.format === 'json') throw new Error('expected markdown')
     expect(doc.data.title).toBe('Authentication Guide')
     expect(doc.body).toContain('How to authenticate')
-    // Path should have ID embedded: authentication.{12-char-id}.md
+    // Pattern: {type}.{slug}.{id}.{ext}
     expect(doc.relativePath).toMatch(
-      /^content\/docs\/api\/v2\/authentication\.[a-zA-Z0-9]{12}\.md$/,
+      /^content\/docs\/api\/v2\/entry\.authentication\.[a-zA-Z0-9]{12}\.md$/,
     )
   })
 })

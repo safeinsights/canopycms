@@ -122,7 +122,7 @@ export type MediaConfig =
  *
  * Examples:
  * - { name: 'post', format: 'mdx', fields: postSchema } - unlimited posts
- * - { name: 'settings', format: 'json', fields: settingsSchema, maxItems: 1 } - singleton-like
+ * - { name: 'settings', format: 'json', fields: settingsSchema, maxItems: 1 } - restricted to one instance
  */
 export type EntryTypeConfig = {
   readonly name: string
@@ -130,7 +130,7 @@ export type EntryTypeConfig = {
   readonly fields: readonly FieldConfig[]
   readonly label?: string
   readonly default?: boolean // Is this the default type for "Add" button?
-  readonly maxItems?: number // Limit instances (1 = singleton-like behavior)
+  readonly maxItems?: number // Limit instances (e.g., 1 = only one entry allowed)
 }
 
 /**
