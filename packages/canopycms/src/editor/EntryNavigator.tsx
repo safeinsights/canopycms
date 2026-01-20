@@ -88,7 +88,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         return {
           value: `collection:${col.id}`,
           label: col.label,
-          nodeProps: { onAdd: col.onAdd, isCollection: true, type: col.type },
+          nodeProps: { isCollection: true, type: col.type, onAdd: col.onAdd },
           children: allChildren,
         }
       }
@@ -257,8 +257,13 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             <Text size="sm" fw={selected ? 600 : 500} truncate="end">
               {node.label}
             </Text>
+            {status && (
+              <Badge size="xs" variant="light" color="gray">
+                {status}
+              </Badge>
+            )}
           </Group>
-          {isCollection && onAdd ? (
+          {isCollection && onAdd && expanded ? (
             <Button
               size="compact-xs"
               variant="light"

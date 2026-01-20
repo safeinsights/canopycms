@@ -8,7 +8,12 @@ import type { TreeNode, ContentNode, PathPermission } from './types'
 import type { EditorCollection } from '../Editor'
 
 /**
- * Find a tree node by path (recursive search)
+ * Search utility: Find a tree node by exact path match (recursive search).
+ * Used to locate nodes when updating permissions.
+ *
+ * @param node - Root node to start searching from
+ * @param path - The exact path to search for
+ * @returns The matching TreeNode or null if not found
  */
 export function findTreeNode(node: TreeNode, path: string): TreeNode | null {
   if (node.path === path) return node
@@ -20,19 +25,38 @@ export function findTreeNode(node: TreeNode, path: string): TreeNode | null {
 }
 
 /**
- * Convert EditorCollection[] to TreeNode structure
+ * Transforms API/editor collections into permission tree nodes.
+ *
+ * Handles the case where buildEditorCollections returns a structure with the content root
+ * as a top-level collection. Avoids double-wrapping by detecting when a collection IS the
+ * content root itself and processing its children directly.
+ *
+ * @param collections - Array of EditorCollection from API or buildEditorCollections
+ * @param contentRoot - The content root path (e.g., "content")
+ * @param parentPath - Optional parent path for recursive calls
+ * @returns Array of TreeNode for the permission tree
  */
 export function convertCollectionsToTreeNodes(
   collections: EditorCollection[],
   contentRoot: string,
   parentPath?: string,
 ): TreeNode[] {
+  // Special case: If we're at the top level (no parentPath) and the collections array
+  // contains exactly one item that IS the content root itself, skip creating a duplicate
+  // node for it and just process its children directly.
+  if (!parentPath && collections.length === 1 && collections[0].id === contentRoot) {
+    const rootCollection = collections[0]
+    return rootCollection.children
+      ? convertCollectionsToTreeNodes(rootCollection.children, contentRoot, contentRoot)
+      : []
+  }
+
   const nodes: TreeNode[] = []
 
   for (const collection of collections) {
-    const fullPath = parentPath
-      ? `${parentPath}/${collection.name}`
-      : `${contentRoot}/${collection.name}`
+    // Build the full path - use collection.id directly since it already includes
+    // the content root prefix from buildEditorCollections
+    const fullPath = collection.id
 
     const node: TreeNode = {
       path: fullPath,
@@ -41,7 +65,7 @@ export function convertCollectionsToTreeNodes(
       children: [],
     }
 
-    // Recursively convert children
+    // Recursively process nested collections
     if (collection.children) {
       node.children = convertCollectionsToTreeNodes(collection.children, contentRoot, fullPath)
     }
@@ -53,7 +77,14 @@ export function convertCollectionsToTreeNodes(
 }
 
 /**
- * Merge actual content tree into schema tree
+ * Merges filesystem content into schema tree for files not defined in the schema.
+ *
+ * Used to add files that exist in the filesystem but aren't explicitly defined in
+ * the schema (e.g., entries created manually via the filesystem). Only adds files,
+ * not folders - folders are expected to come from the schema.
+ *
+ * @param schemaNode - TreeNode from schema to merge into (mutated)
+ * @param contentNode - Actual filesystem content tree from API
  */
 export function mergeContentTree(schemaNode: TreeNode, contentNode: ContentNode): void {
   contentNode.children?.forEach((child) => {
@@ -76,7 +107,18 @@ export function mergeContentTree(schemaNode: TreeNode, contentNode: ContentNode)
 }
 
 /**
- * Build tree from schema and optional contentTree
+ * Main entry point: Creates permission tree root node and delegates to collection
+ * or schema-based building.
+ *
+ * Has two modes:
+ * 1. Collections-based (when collections provided): Uses API/editor collections
+ * 2. Schema-based (fallback): Flattens schema and builds hierarchy from parentPath relationships
+ *
+ * @param schema - CanopyConfig schema (optional)
+ * @param contentTree - Actual filesystem content from API (optional)
+ * @param contentRoot - The content root path, defaults to "content"
+ * @param collections - Optional EditorCollection[] from API
+ * @returns Root TreeNode for the permission tree
  */
 export function buildTree(
   schema: CanopyConfig['schema'] | undefined,
@@ -166,7 +208,15 @@ export function buildTree(
 }
 
 /**
- * Annotate tree with permissions (direct and inherited)
+ * Decorates tree with permission data (direct + inherited).
+ *
+ * Recursively walks the tree and attaches permission information to each node:
+ * - directPermission: Exact match for this path (or path/** for folders)
+ * - inheritedPermission: Nearest parent's folder wildcard permission (if no direct permission)
+ *
+ * @param node - TreeNode to annotate
+ * @param permissions - Array of PathPermission from API
+ * @returns Annotated TreeNode with permission data
  */
 export function annotateTreeWithPermissions(
   node: TreeNode,
