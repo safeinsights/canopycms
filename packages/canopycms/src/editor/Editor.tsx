@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState, useRef } from 'react'
 
-import { ActionIcon, Box, Drawer, Group, Paper, Text, Title, useTree } from '@mantine/core'
+import { ActionIcon, Box, Button, Drawer, Group, Paper, Text, Title, useTree } from '@mantine/core'
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 
@@ -285,6 +285,13 @@ export const Editor: React.FC<EditorProps> = ({
 
   const navCollections = useMemo<EntryNavCollection[] | undefined>(() => {
     if (!activeCollections) return undefined
+
+    // Unwrap content root if it's the only top-level collection
+    const collectionsToRender =
+      activeCollections.length === 1 && activeCollections[0].id === contentRoot
+        ? activeCollections[0].children ?? []
+        : activeCollections
+
     const grouped = new Map<string, EntryNavCollection['entries']>()
     entriesState.forEach((entry) => {
       if (!entry.collectionId) return
@@ -303,8 +310,8 @@ export const Editor: React.FC<EditorProps> = ({
           ? () => (onCreateEntry ? onCreateEntry(node.id) : handleCreateEntry(node.id))
           : undefined,
     })
-    return activeCollections.map((node) => build(node))
-  }, [activeCollections, entriesState, onCreateEntry, handleCreateEntry])
+    return collectionsToRender.map((node) => build(node))
+  }, [activeCollections, entriesState, onCreateEntry, handleCreateEntry, contentRoot])
 
   // Tree expansion state - persists across drawer close/open
   const treeExpandedStateRef = useRef<Record<string, boolean>>({})
@@ -496,6 +503,16 @@ export const Editor: React.FC<EditorProps> = ({
             <Drawer.Header>
               <Drawer.Title>Content</Drawer.Title>
               <Group gap="xs">
+                {navCollections && navCollections.length > 0 && navCollections[0].onAdd && (
+                  <Button
+                    size="compact-xs"
+                    variant="light"
+                    color="accent"
+                    onClick={() => navCollections[0].onAdd?.()}
+                  >
+                    + Add
+                  </Button>
+                )}
                 <ActionIcon
                   variant="subtle"
                   color="gray"
