@@ -126,7 +126,7 @@ export interface UseBranchManagerReturn {
  * } = useBranchManager({
  *   initialBranch: 'main',
  *   operatingMode: 'collaboration',
- *   selectedId,
+ *   selectedPath,
  *   drafts,
  *   loadedValues,
  *   setDrafts,

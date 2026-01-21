@@ -22,7 +22,7 @@ const sampleThreads: CommentThread[] = [
   {
     id: 'thread-1',
     type: 'field',
-    entryId: 'posts/hello',
+    entryPath: 'posts/hello',
     canopyPath: 'title',
     authorId: 'alice',
     resolved: false,
@@ -47,7 +47,7 @@ const sampleThreads: CommentThread[] = [
   {
     id: 'thread-2',
     type: 'field',
-    entryId: 'posts/hello',
+    entryPath: 'posts/hello',
     canopyPath: 'title',
     authorId: 'charlie',
     resolved: false,
@@ -68,7 +68,7 @@ const resolvedThreads: CommentThread[] = [
   {
     id: 'thread-3',
     type: 'field',
-    entryId: 'posts/hello',
+    entryPath: 'posts/hello',
     canopyPath: 'title',
     authorId: 'alice',
     resolved: true,
@@ -91,7 +91,7 @@ export const WithUnresolvedComments: Story = {
   args: {
     children: <TextInput label="Title" placeholder="Enter title..." />,
     canopyPath: 'title',
-    entryId: 'posts/hello',
+    entryPath: 'posts/hello',
     threads: sampleThreads,
     autoFocus: false,
     currentUserId: 'alice',
@@ -99,11 +99,11 @@ export const WithUnresolvedComments: Story = {
     onAddComment: async (
       text: string,
       type: string,
-      entryId?: string,
+      entryPath?: string,
       canopyPath?: string,
       threadId?: string,
     ) => {
-      console.log('Add comment:', { text, type, entryId, canopyPath, threadId })
+      console.log('Add comment:', { text, type, entryPath, canopyPath, threadId })
       await new Promise((resolve) => setTimeout(resolve, 500))
     },
     onResolveThread: async (threadId: string) => {
@@ -117,7 +117,7 @@ export const WithResolvedComments: Story = {
   args: {
     children: <TextInput label="Title" placeholder="Enter title..." />,
     canopyPath: 'title',
-    entryId: 'posts/hello',
+    entryPath: 'posts/hello',
     threads: resolvedThreads,
     autoFocus: false,
     currentUserId: 'alice',
@@ -125,11 +125,11 @@ export const WithResolvedComments: Story = {
     onAddComment: async (
       text: string,
       type: string,
-      entryId?: string,
+      entryPath?: string,
       canopyPath?: string,
       threadId?: string,
     ) => {
-      console.log('Add comment:', { text, type, entryId, canopyPath, threadId })
+      console.log('Add comment:', { text, type, entryPath, canopyPath, threadId })
     },
     onResolveThread: async (threadId: string) => {
       console.log('Resolve thread:', threadId)
@@ -141,7 +141,7 @@ export const NoComments: Story = {
   args: {
     children: <TextInput label="Description" placeholder="Enter description..." />,
     canopyPath: 'description',
-    entryId: 'posts/hello',
+    entryPath: 'posts/hello',
     threads: [],
     autoFocus: false,
     currentUserId: 'alice',
@@ -149,11 +149,11 @@ export const NoComments: Story = {
     onAddComment: async (
       text: string,
       type: string,
-      entryId?: string,
+      entryPath?: string,
       canopyPath?: string,
       threadId?: string,
     ) => {
-      console.log('Add comment:', { text, type, entryId, canopyPath, threadId })
+      console.log('Add comment:', { text, type, entryPath, canopyPath, threadId })
     },
     onResolveThread: async (threadId: string) => {
       console.log('Resolve thread:', threadId)
@@ -165,7 +165,7 @@ export const AutoFocused: Story = {
   args: {
     children: <TextInput label="Title" placeholder="Enter title..." />,
     canopyPath: 'title',
-    entryId: 'posts/hello',
+    entryPath: 'posts/hello',
     threads: sampleThreads,
     autoFocus: true,
     currentUserId: 'alice',
@@ -173,11 +173,11 @@ export const AutoFocused: Story = {
     onAddComment: async (
       text: string,
       type: string,
-      entryId?: string,
+      entryPath?: string,
       canopyPath?: string,
       threadId?: string,
     ) => {
-      console.log('Add comment:', { text, type, entryId, canopyPath, threadId })
+      console.log('Add comment:', { text, type, entryPath, canopyPath, threadId })
     },
     onResolveThread: async (threadId: string) => {
       console.log('Resolve thread:', threadId)

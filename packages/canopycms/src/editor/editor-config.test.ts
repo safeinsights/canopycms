@@ -55,20 +55,20 @@ describe('editor-config helpers', () => {
 
     // With schema refactor, content root is now a visible collection
     expect(collections).toHaveLength(1)
-    expect(collections[0].id).toBe('content')
+    expect(collections[0].path).toBe('content')
     expect(collections[0].children).toHaveLength(2)
-    expect(collections[0].children!.map((c) => c.id).sort()).toEqual([
+    expect(collections[0].children!.map((c) => c.path).sort()).toEqual([
       'content/nested',
       'content/posts',
     ])
 
     // Verify nested collection structure
-    const nested = collections[0].children!.find((c) => c.id === 'content/nested')
+    const nested = collections[0].children!.find((c) => c.path === 'content/nested')
     expect(nested?.type).toBe('collection')
-    expect(nested?.children?.[0]?.id).toBe('content/nested/child')
+    expect(nested?.children?.[0]?.path).toBe('content/nested/child')
 
     // Verify posts collection
-    const posts = collections[0].children!.find((c) => c.id === 'content/posts')
+    const posts = collections[0].children!.find((c) => c.path === 'content/posts')
     expect(posts?.type).toBe('collection')
     expect(posts?.format).toBe('json')
   })
@@ -132,18 +132,18 @@ describe('editor-config helpers', () => {
 
     // Content root is the top-level collection
     expect(collections).toHaveLength(1)
-    expect(collections[0].id).toBe('content')
+    expect(collections[0].path).toBe('content')
     expect(collections[0].children).toHaveLength(1)
 
     // Docs is a child of content
     const docs = collections[0].children![0]
-    expect(docs.id).toBe('content/docs')
+    expect(docs.path).toBe('content/docs')
     expect(docs.type).toBe('collection')
     expect(docs.children).toHaveLength(1)
 
     // API is nested under docs
     const api = docs.children?.[0]
-    expect(api?.id).toBe('content/docs/api')
+    expect(api?.path).toBe('content/docs/api')
     expect(api?.name).toBe('api')
     expect(api?.type).toBe('collection')
     expect(api?.format).toBe('md')
@@ -189,26 +189,26 @@ describe('editor-config helpers', () => {
 
     // Content root is the top-level collection
     expect(collections).toHaveLength(1)
-    expect(collections[0].id).toBe('content')
+    expect(collections[0].path).toBe('content')
 
     // Children should have 3 items: 2 root-level entries + 1 collection
     const children = collections[0].children!
     expect(children).toHaveLength(3)
 
     // Root-level entries with maxItems: 1 should appear as type 'entry'
-    const home = children.find((c) => c.id === 'content/home')
+    const home = children.find((c) => c.path === 'content/home')
     expect(home).toBeDefined()
     expect(home?.type).toBe('entry')
     expect(home?.label).toBe('Home')
     expect(home?.format).toBe('json')
 
-    const settings = children.find((c) => c.id === 'content/settings')
+    const settings = children.find((c) => c.path === 'content/settings')
     expect(settings).toBeDefined()
     expect(settings?.type).toBe('entry')
     expect(settings?.label).toBe('Settings')
 
     // Collection should also be present as a child
-    const posts = children.find((c) => c.id === 'content/posts')
+    const posts = children.find((c) => c.path === 'content/posts')
     expect(posts).toBeDefined()
     expect(posts?.type).toBe('collection')
   })
@@ -247,9 +247,9 @@ describe('editor-config helpers', () => {
     // The content root collection should be present with posts as a child
     // Entry types without maxItems: 1 are not navigable
     expect(collections).toHaveLength(1)
-    expect(collections[0].id).toBe('content')
+    expect(collections[0].path).toBe('content')
     expect(collections[0].children).toHaveLength(1)
-    expect(collections[0].children![0].id).toBe('content/posts')
+    expect(collections[0].children![0].path).toBe('content/posts')
   })
 
   it('excludes collection entry types from navigation', () => {
@@ -281,13 +281,13 @@ describe('editor-config helpers', () => {
 
     // The content root collection should be present with posts as a child
     expect(collections).toHaveLength(1)
-    expect(collections[0].id).toBe('content')
+    expect(collections[0].path).toBe('content')
     expect(collections[0].type).toBe('collection')
     expect(collections[0].children).toHaveLength(1)
 
     // The posts collection should be present, not its entry types
     const posts = collections[0].children![0]
-    expect(posts.id).toBe('content/posts')
+    expect(posts.path).toBe('content/posts')
     expect(posts.type).toBe('collection')
     // Entry types within a collection are not children in the navigation
     expect(posts.children).toHaveLength(0)

@@ -35,7 +35,7 @@ export interface CommentThread {
   authorId: string // userId of thread creator (for resolve permission)
 
   // Addressing (all optional based on type)
-  entryId?: string // Required for field/entry, undefined for branch
+  entryPath?: string // Required for field/entry, undefined for branch
   canopyPath?: string // Required for field, undefined for entry/branch
 }
 
@@ -181,7 +181,7 @@ export class CommentStore {
     text: string
     threadId?: string
     type: CommentType
-    entryId?: string
+    entryPath?: string
     canopyPath?: string
   }): Promise<{ threadId: string; commentId: string }> {
     // Generate IDs outside retry so they stay stable across retries
@@ -209,7 +209,7 @@ export class CommentStore {
           createdAt: timestamp,
           type: options.type,
           authorId: options.userId,
-          entryId: options.entryId,
+          entryPath: options.entryPath,
           canopyPath: options.canopyPath,
         }
       } else {
@@ -272,20 +272,20 @@ export class CommentStore {
   /**
    * Get all threads for a specific field
    */
-  async getThreadsForField(entryId: string, canopyPath: string): Promise<CommentThread[]> {
+  async getThreadsForField(entryPath: string, canopyPath: string): Promise<CommentThread[]> {
     const data = await this.load()
     return Object.values(data.threads)
-      .filter((t) => t.type === 'field' && t.entryId === entryId && t.canopyPath === canopyPath)
+      .filter((t) => t.type === 'field' && t.entryPath === entryPath && t.canopyPath === canopyPath)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   }
 
   /**
    * Get all threads for a specific entry (not field-specific)
    */
-  async getThreadsForEntry(entryId: string): Promise<CommentThread[]> {
+  async getThreadsForEntry(entryPath: string): Promise<CommentThread[]> {
     const data = await this.load()
     return Object.values(data.threads)
-      .filter((t) => t.type === 'entry' && t.entryId === entryId)
+      .filter((t) => t.type === 'entry' && t.entryPath === entryPath)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
   }
 

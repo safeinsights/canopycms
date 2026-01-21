@@ -17,7 +17,7 @@ const sampleThreads: CommentThread[] = [
   {
     id: 'thread-1',
     type: 'field',
-    entryId: 'blog/intro',
+    entryPath: 'blog/intro',
     canopyPath: 'title',
     authorId: 'alice',
     resolved: false,
@@ -42,7 +42,7 @@ const sampleThreads: CommentThread[] = [
   {
     id: 'thread-2',
     type: 'entry',
-    entryId: 'blog/intro',
+    entryPath: 'blog/intro',
     authorId: 'charlie',
     resolved: false,
     createdAt: new Date(Date.now() - 7200000).toISOString(),
@@ -59,7 +59,7 @@ const sampleThreads: CommentThread[] = [
   {
     id: 'thread-3',
     type: 'field',
-    entryId: 'pages/about',
+    entryPath: 'pages/about',
     canopyPath: 'hero.image',
     authorId: 'alice',
     resolved: true,
@@ -156,7 +156,7 @@ export const ManyComments: Story = {
       {
         id: 'thread-5',
         type: 'field',
-        entryId: 'products/widget',
+        entryPath: 'products/widget',
         canopyPath: 'pricing.monthly',
         authorId: 'eve',
         resolved: false,

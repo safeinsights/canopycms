@@ -22,8 +22,8 @@ export interface UseEntryManagerOptions {
 }
 
 export interface UseEntryManagerReturn {
-  selectedId: string
-  setSelectedId: (id: string) => void
+  selectedPath: string
+  setSelectedPath: (path: string) => void
   entries: EditorEntry[]
   setEntries: (entries: EditorEntry[]) => void
   collections: EditorCollection[]
@@ -50,7 +50,7 @@ export interface UseEntryManagerReturn {
  * @example
  * ```tsx
  * const {
- *   selectedId,
+ *   selectedPath,
  *   entries,
  *   currentEntry,
  *   refreshEntries,
@@ -74,7 +74,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   )
 
   // Initialize with prop value or empty (URL sync happens in effect after mount)
-  const [selectedId, setSelectedId] = useState<string>(options.initialSelectedId ?? '')
+  const [selectedPath, setSelectedPath] = useState<string>(options.initialSelectedId ?? '')
   const [navigatorOpen, setNavigatorOpen] = useState(false)
   const isInitialMount = useRef(true)
   const hasSyncedFromUrl = useRef(false)
@@ -102,8 +102,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   }, [options.collections])
 
   const currentEntry = useMemo(
-    () => entriesState.find((e) => e.id === selectedId),
-    [entriesState, selectedId],
+    () => entriesState.find((e) => e.path === selectedPath),
+    [entriesState, selectedPath],
   )
 
   const loadEntry = async (entry: EditorEntry) => {
@@ -162,9 +162,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     // Only auto-select newly created entry if there were already entries before
     // (i.e., this is a true refresh after user action, not initial load)
     if (entriesState.length > 0) {
-      const newlyCreated = refreshed.find((e) => !entriesState.find((old) => old.id === e.id))
+      const newlyCreated = refreshed.find((e) => !entriesState.find((old) => old.path === e.path))
       if (newlyCreated) {
-        setSelectedId(newlyCreated.id)
+        setSelectedPath(newlyCreated.path)
       }
     }
   }
@@ -210,7 +210,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       if (isInitialMount.current) {
         isInitialMount.current = false
       } else {
-        setSelectedId('')
+        setSelectedPath('')
       }
 
       // Refresh entries for new branch
@@ -230,18 +230,18 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (!hasSyncedFromUrl.current) {
       hasSyncedFromUrl.current = true
       // If there's an entry in the URL that exists in entries, select it
-      if (initialUrlEntry.current && entriesState.find((e) => e.id === initialUrlEntry.current)) {
-        setSelectedId(initialUrlEntry.current!)
+      if (initialUrlEntry.current && entriesState.find((e) => e.path === initialUrlEntry.current)) {
+        setSelectedPath(initialUrlEntry.current!)
         return
       }
     }
 
     // If the selected entry exists, keep it
-    if (entriesState.find((e) => e.id === selectedId)) return
+    if (entriesState.find((e) => e.path === selectedPath)) return
 
     // Fall back to first entry
-    setSelectedId(entriesState[0]?.id ?? '')
-  }, [entriesState, selectedId])
+    setSelectedPath(entriesState[0]?.path ?? '')
+  }, [entriesState, selectedPath])
 
   // Update URL when selection changes (skip until URL sync has happened)
   useEffect(() => {
@@ -249,17 +249,17 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     // Don't update URL until we've synced from it first
     if (!hasSyncedFromUrl.current) return
     const url = new URL(window.location.href)
-    if (selectedId) {
-      url.searchParams.set('entry', selectedId)
+    if (selectedPath) {
+      url.searchParams.set('entry', selectedPath)
     } else {
       url.searchParams.delete('entry')
     }
     window.history.replaceState({}, '', url.toString())
-  }, [selectedId])
+  }, [selectedPath])
 
   return {
-    selectedId,
-    setSelectedId,
+    selectedPath,
+    setSelectedPath,
     entries: entriesState,
     setEntries: setEntriesState,
     collections: collectionsState,

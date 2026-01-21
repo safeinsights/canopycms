@@ -17,7 +17,7 @@ export interface BranchCommentsProps {
   onAddComment: (
     text: string,
     type: 'field' | 'entry' | 'branch',
-    entryId?: string,
+    entryPath?: string,
     canopyPath?: string,
     threadId?: string,
   ) => Promise<void>

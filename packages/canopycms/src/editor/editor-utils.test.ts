@@ -146,7 +146,7 @@ describe('buildEntriesFromListResponse', () => {
 
   const existingEntries: EditorEntry[] = [
     {
-      id: 'pages/home',
+      path: 'pages/home',
       label: 'Home Page',
       status: 'entry',
       schema: fallbackSchema,
@@ -163,17 +163,17 @@ describe('buildEntriesFromListResponse', () => {
   const response: ListEntriesResponse = {
     collections: [
       {
-        id: 'posts',
-        name: 'Posts',
         path: 'posts',
+        contentId: 'abc123XYZ789',
+        name: 'Posts',
         format: 'mdx',
         type: 'collection',
         schema: postsSchema,
       },
       {
-        id: 'pages',
-        name: 'Pages',
         path: 'pages',
+        contentId: 'def456UVW012',
+        name: 'Pages',
         format: 'json',
         type: 'collection',
         schema: [],
@@ -181,24 +181,26 @@ describe('buildEntriesFromListResponse', () => {
     ],
     entries: [
       {
-        id: 'posts/hello',
+        path: 'posts/hello',
+        contentId: 'ghi789RST345',
         slug: 'hello world',
         collectionId: 'posts',
         collectionName: 'Posts',
         format: 'mdx',
         entryType: 'post',
-        path: 'content/posts/hello-world',
+        physicalPath: 'content/posts/hello-world',
         title: 'Hello Title',
         exists: true,
       },
       {
-        id: 'pages/home',
+        path: 'pages/home',
+        contentId: 'jkl012MNO678',
         slug: 'home',
         collectionId: 'pages',
         collectionName: 'Pages',
         format: 'json',
         entryType: 'page',
-        path: 'content/pages/home.json',
+        physicalPath: 'content/pages/home.json',
         exists: false,
       },
     ],
@@ -243,7 +245,10 @@ describe('buildEntriesFromListResponse', () => {
 
   it('falls back to existing schemas when collection metadata is missing', () => {
     const result = buildEntriesFromListResponse({
-      response: { ...response, collections: response.collections.filter((c) => c.id !== 'pages') },
+      response: {
+        ...response,
+        collections: response.collections.filter((c) => c.path !== 'pages'),
+      },
       branchName: 'feature-branch',
       resolvePreviewSrc: () => 'preview',
       existingEntries,
@@ -264,8 +269,8 @@ describe('buildCollectionLabels', () => {
 
   it('builds flat map of collection IDs to labels', () => {
     const collections: EditorCollection[] = [
-      { id: 'posts', name: 'posts', label: 'Posts', type: 'collection', format: 'mdx' },
-      { id: 'pages', name: 'pages', type: 'collection', format: 'mdx' },
+      { path: 'posts', name: 'posts', label: 'Posts', type: 'collection', format: 'mdx' },
+      { path: 'pages', name: 'pages', type: 'collection', format: 'mdx' },
     ]
 
     const result = buildCollectionLabels(collections)
@@ -277,21 +282,21 @@ describe('buildCollectionLabels', () => {
   it('handles nested collections', () => {
     const collections: EditorCollection[] = [
       {
-        id: 'content',
+        path: 'content',
         name: 'content',
         label: 'Content',
         type: 'collection',
         format: 'mdx',
         children: [
           {
-            id: 'content/docs',
+            path: 'content/docs',
             name: 'docs',
             label: 'Documentation',
             type: 'collection',
             format: 'mdx',
             children: [
               {
-                id: 'content/docs/guides',
+                path: 'content/docs/guides',
                 name: 'guides',
                 label: 'Guides',
                 type: 'collection',
@@ -319,7 +324,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('returns only "All Files" for entry without collectionId', () => {
     const entry: EditorEntry = {
-      id: 'test',
+      path: 'test',
       label: 'Test',
       schema: [],
       apiPath: '/api/test',
@@ -330,7 +335,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('returns "All Files" for single-level collection (root level)', () => {
     const entry: EditorEntry = {
-      id: 'posts/hello',
+      path: 'posts/hello',
       label: 'Hello',
       schema: [],
       apiPath: '/api/test',
@@ -344,7 +349,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('shows hierarchy for nested collections', () => {
     const entry: EditorEntry = {
-      id: 'content/docs/guides/config',
+      path: 'content/docs/guides/config',
       label: 'Configuration Guide',
       schema: [],
       apiPath: '/api/test',
@@ -365,7 +370,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('shows hierarchy for deeply nested collections', () => {
     const entry: EditorEntry = {
-      id: 'content/docs/api/v2/endpoint',
+      path: 'content/docs/api/v2/endpoint',
       label: 'Endpoint',
       schema: [],
       apiPath: '/api/test',
@@ -386,7 +391,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('skips missing labels in hierarchy', () => {
     const entry: EditorEntry = {
-      id: 'content/docs/guides/config',
+      path: 'content/docs/guides/config',
       label: 'Configuration Guide',
       schema: [],
       apiPath: '/api/test',
@@ -407,7 +412,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('includes slug path segments for nested slugs', () => {
     const entry: EditorEntry = {
-      id: 'posts/2024/01/new-year',
+      path: 'posts/2024/01/new-year',
       label: 'New Year Post',
       schema: [],
       apiPath: '/api/test',
@@ -424,7 +429,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('combines collection hierarchy and slug segments', () => {
     const entry: EditorEntry = {
-      id: 'content/posts/2024/01/new-year',
+      path: 'content/posts/2024/01/new-year',
       label: 'New Year Post',
       schema: [],
       apiPath: '/api/test',
@@ -444,7 +449,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('works for root entry types with maxItems: 1', () => {
     const entry: EditorEntry = {
-      id: 'content/settings',
+      path: 'content/settings',
       label: 'Site Settings',
       schema: [],
       apiPath: '/api/test',

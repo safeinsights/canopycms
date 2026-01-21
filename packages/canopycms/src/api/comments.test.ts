@@ -16,7 +16,7 @@ vi.mock('../comment-store', () => ({
         ],
         resolved: false,
         type: 'field',
-        entryId: 'posts/hello',
+        entryPath: 'posts/hello',
         canopyPath: 'title',
         authorId: 'u1',
         createdAt: '2024-01-01',
@@ -28,7 +28,7 @@ vi.mock('../comment-store', () => ({
       comments: [],
       resolved: false,
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
       authorId: 'u1',
       createdAt: '2024-01-01',
@@ -94,7 +94,7 @@ describe('comments api - addComment', () => {
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'missing' },
-      { text: 'test', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
+      { text: 'test', type: 'field', entryPath: 'posts/hello', canopyPath: 'title' },
     )
     expect(res.status).toBe(404)
   })
@@ -104,7 +104,7 @@ describe('comments api - addComment', () => {
       makeCtx(false),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
-      { text: 'test', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
+      { text: 'test', type: 'field', entryPath: 'posts/hello', canopyPath: 'title' },
     )
     expect(res.status).toBe(403)
   })
@@ -114,13 +114,13 @@ describe('comments api - addComment', () => {
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
-      { text: 'test', type: 'field', entryId: 'posts/hello' } as any,
+      { text: 'test', type: 'field', entryPath: 'posts/hello' } as any,
     )
     expect(res.status).toBe(400)
     expect(res.error).toContain('canopyPath required')
   })
 
-  it('returns 400 if entryId missing for field comment', async () => {
+  it('returns 400 if entryPath missing for field comment', async () => {
     const res = await addComment(
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -128,10 +128,10 @@ describe('comments api - addComment', () => {
       { text: 'test', type: 'field', canopyPath: 'title' } as any,
     )
     expect(res.status).toBe(400)
-    expect(res.error).toContain('entryId required')
+    expect(res.error).toContain('entryPath required')
   })
 
-  it('returns 400 if entryId missing for entry comment', async () => {
+  it('returns 400 if entryPath missing for entry comment', async () => {
     const res = await addComment(
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -139,7 +139,7 @@ describe('comments api - addComment', () => {
       { text: 'test', type: 'entry' } as any,
     )
     expect(res.status).toBe(400)
-    expect(res.error).toContain('entryId required')
+    expect(res.error).toContain('entryPath required')
   })
 
   it('adds field comment when allowed', async () => {
@@ -147,7 +147,7 @@ describe('comments api - addComment', () => {
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
-      { text: 'Great work!', type: 'field', entryId: 'posts/hello', canopyPath: 'title' },
+      { text: 'Great work!', type: 'field', entryPath: 'posts/hello', canopyPath: 'title' },
     )
     expect(res.ok).toBe(true)
     expect(res.data?.threadId).toBe('thread1')
@@ -159,7 +159,7 @@ describe('comments api - addComment', () => {
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' },
-      { text: 'Entry feedback', type: 'entry', entryId: 'posts/hello' },
+      { text: 'Entry feedback', type: 'entry', entryPath: 'posts/hello' },
     )
     expect(res.ok).toBe(true)
   })
@@ -183,7 +183,7 @@ describe('comments api - addComment', () => {
         text: 'Reply comment',
         threadId: 'existing-thread',
         type: 'field',
-        entryId: 'posts/hello',
+        entryPath: 'posts/hello',
         canopyPath: 'title',
       },
     )

@@ -12,7 +12,7 @@ vi.mock('@mantine/notifications', () => ({
 
 describe('useDraftManager', () => {
   const mockEntry: EditorEntry = {
-    id: 'entry1',
+    path: 'entry1',
     label: 'Test Entry',
     collectionId: 'posts',
     collectionName: 'posts',
@@ -29,7 +29,7 @@ describe('useDraftManager', () => {
 
   const defaultOptions = {
     branchName: 'main',
-    selectedId: 'entry1',
+    selectedPath: 'entry1',
     currentEntry: mockEntry,
     entries: [mockEntry],
     loadEntry: mockLoadEntry,
@@ -123,8 +123,8 @@ describe('useDraftManager', () => {
   it('computes editedFiles correctly', () => {
     const entries = [
       mockEntry,
-      { ...mockEntry, id: 'entry2', label: 'Entry 2' },
-      { ...mockEntry, id: 'entry3', label: 'Entry 3' },
+      { ...mockEntry, path: 'entry2', label: 'Entry 2' },
+      { ...mockEntry, path: 'entry3', label: 'Entry 3' },
     ]
 
     const { result } = renderHook(() => useDraftManager({ ...defaultOptions, entries }))
@@ -137,8 +137,8 @@ describe('useDraftManager', () => {
     })
 
     expect(result.current.editedFiles).toEqual([
-      { id: 'entry1', label: 'Test Entry' },
-      { id: 'entry2', label: 'Entry 2' },
+      { path: 'entry1', label: 'Test Entry' },
+      { path: 'entry2', label: 'Entry 2' },
     ])
   })
 

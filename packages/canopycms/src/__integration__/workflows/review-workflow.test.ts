@@ -91,7 +91,7 @@ describe('Review Workflow Integration', () => {
       {
         text: 'Please add more details to the introduction',
         type: 'entry',
-        entryId: 'content/posts/test-post',
+        entryPath: 'content/posts/test-post',
       },
     )
 

@@ -11,7 +11,7 @@ export interface AddCommentBody {
   text: string
   threadId?: string
   type: CommentType
-  entryId?: string
+  entryPath?: string
   canopyPath?: string
 }
 
@@ -45,7 +45,7 @@ const addCommentBodySchema = z.object({
   text: z.string().min(1),
   threadId: z.string().optional(),
   type: z.enum(['field', 'entry', 'branch']),
-  entryId: z.string().optional(),
+  entryPath: z.string().optional(),
   canopyPath: z.string().optional(),
 })
 
@@ -79,8 +79,8 @@ const addCommentHandler = async (
     return { ok: false, status: 400, error: 'canopyPath required for field comments' }
   }
 
-  if ((body.type === 'field' || body.type === 'entry') && !body.entryId) {
-    return { ok: false, status: 400, error: 'entryId required for field/entry comments' }
+  if ((body.type === 'field' || body.type === 'entry') && !body.entryPath) {
+    return { ok: false, status: 400, error: 'entryPath required for field/entry comments' }
   }
 
   const commentStore = new CommentStore(context.branchRoot)
@@ -90,7 +90,7 @@ const addCommentHandler = async (
     text: body.text,
     threadId: body.threadId,
     type: body.type,
-    entryId: body.entryId,
+    entryPath: body.entryPath,
     canopyPath: body.canopyPath,
   })
 

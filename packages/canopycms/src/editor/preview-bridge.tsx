@@ -25,7 +25,7 @@ export const sendDraftUpdate = (iframe: HTMLIFrameElement | null, message: Draft
 
 export interface PreviewFocusMessage {
   type: typeof CANOPY_PREVIEW_FOCUS
-  entryId: string
+  entryPath: string
   fieldPath: string
 }
 
@@ -120,7 +120,7 @@ export const usePreviewHighlight = () => {
 /**
  * Hook for preview pages to emit focus messages when elements with data-canopy-path are clicked.
  */
-export const usePreviewFocusEmitter = (entryId: string) => {
+export const usePreviewFocusEmitter = (entryPath: string) => {
   useEffect(() => {
     const handleClick = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null
@@ -130,14 +130,14 @@ export const usePreviewFocusEmitter = (entryId: string) => {
       if (!fieldPath || !window.parent) return
       const msg: PreviewFocusMessage = {
         type: CANOPY_PREVIEW_FOCUS,
-        entryId,
+        entryPath,
         fieldPath,
       }
       window.parent.postMessage(msg, '*')
     }
     document.addEventListener('click', handleClick)
     return () => document.removeEventListener('click', handleClick)
-  }, [entryId])
+  }, [entryPath])
 }
 
 /**

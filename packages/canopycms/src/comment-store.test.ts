@@ -28,7 +28,7 @@ describe('CommentStore', () => {
       userId: 'user1',
       text: 'First comment',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
     })
 
@@ -41,7 +41,7 @@ describe('CommentStore', () => {
     expect(threads[0].comments[0].text).toBe('First comment')
     expect(threads[0].comments[0].userId).toBe('user1')
     expect(threads[0].type).toBe('field')
-    expect(threads[0].entryId).toBe('posts/hello')
+    expect(threads[0].entryPath).toBe('posts/hello')
     expect(threads[0].canopyPath).toBe('title')
     expect(threads[0].authorId).toBe('user1')
     expect(threads[0].createdAt).toBeTruthy()
@@ -52,12 +52,12 @@ describe('CommentStore', () => {
       userId: 'user1',
       text: 'Entry comment',
       type: 'entry',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
     })
 
     const thread = await store.getThread(result.threadId)
     expect(thread?.type).toBe('entry')
-    expect(thread?.entryId).toBe('posts/hello')
+    expect(thread?.entryPath).toBe('posts/hello')
     expect(thread?.canopyPath).toBeUndefined()
   })
 
@@ -70,7 +70,7 @@ describe('CommentStore', () => {
 
     const thread = await store.getThread(result.threadId)
     expect(thread?.type).toBe('branch')
-    expect(thread?.entryId).toBeUndefined()
+    expect(thread?.entryPath).toBeUndefined()
     expect(thread?.canopyPath).toBeUndefined()
   })
 
@@ -79,7 +79,7 @@ describe('CommentStore', () => {
       userId: 'user1',
       text: 'First comment',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
     })
 
@@ -88,7 +88,7 @@ describe('CommentStore', () => {
       text: 'Reply',
       type: 'field',
       threadId: first.threadId,
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
     })
 
@@ -105,7 +105,7 @@ describe('CommentStore', () => {
       userId: 'user1',
       text: 'Comment',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
     })
 
@@ -122,7 +122,7 @@ describe('CommentStore', () => {
       userId: 'user1',
       text: 'Unresolved',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
     })
 
@@ -130,7 +130,7 @@ describe('CommentStore', () => {
       userId: 'user2',
       text: 'Resolved',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'description',
     })
 
@@ -149,7 +149,7 @@ describe('CommentStore', () => {
       userId: 'user1',
       text: 'Title comment',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
     })
 
@@ -157,7 +157,7 @@ describe('CommentStore', () => {
       userId: 'user2',
       text: 'Description comment',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'description',
     })
 
@@ -171,21 +171,21 @@ describe('CommentStore', () => {
       userId: 'user1',
       text: 'Entry comment 1',
       type: 'entry',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
     })
 
     await store.addComment({
       userId: 'user2',
       text: 'Entry comment 2',
       type: 'entry',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
     })
 
     await store.addComment({
       userId: 'user3',
       text: 'Different entry',
       type: 'entry',
-      entryId: 'posts/world',
+      entryPath: 'posts/world',
     })
 
     const entryThreads = await store.getThreadsForEntry('posts/hello')
@@ -209,7 +209,7 @@ describe('CommentStore', () => {
       userId: 'user3',
       text: 'Field comment',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
     })
 
@@ -223,7 +223,7 @@ describe('CommentStore', () => {
       userId: 'user1',
       text: 'Second thread',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
     })
 
@@ -234,7 +234,7 @@ describe('CommentStore', () => {
       userId: 'user2',
       text: 'Third thread',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
     })
 
@@ -249,7 +249,7 @@ describe('CommentStore', () => {
       userId: 'user1',
       text: 'To delete',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
     })
 
@@ -275,7 +275,7 @@ describe('CommentStore', () => {
       userId: 'user1',
       text: 'Persisted',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
     })
 

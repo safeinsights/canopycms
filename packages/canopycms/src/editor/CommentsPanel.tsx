@@ -25,16 +25,16 @@ export interface CommentsPanelProps {
   onAddComment: (
     text: string,
     type: 'field' | 'entry' | 'branch',
-    entryId?: string,
+    entryPath?: string,
     canopyPath?: string,
     threadId?: string,
   ) => Promise<void>
   onResolveThread: (threadId: string) => Promise<void>
   onClose: () => void
   /** Jump to field and auto-expand inline comments */
-  onJumpToField?: (entryId: string, canopyPath: string, threadId: string) => void
+  onJumpToField?: (entryPath: string, canopyPath: string, threadId: string) => void
   /** Jump to entry comments (top of form) */
-  onJumpToEntry?: (entryId: string, threadId: string) => void
+  onJumpToEntry?: (entryPath: string, threadId: string) => void
   /** Open branch manager */
   onJumpToBranch?: (threadId: string) => void
   /** Optional function to fetch user metadata for displaying user badges */
@@ -72,7 +72,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
           await onAddComment(
             newCommentText,
             thread.type,
-            thread.entryId,
+            thread.entryPath,
             thread.canopyPath,
             replyTo,
           )
@@ -197,9 +197,9 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                         >
                           {thread.type}
                         </Badge>
-                        {thread.entryId && (
+                        {thread.entryPath && (
                           <Badge size="xs" variant="light">
-                            {thread.entryId}
+                            {thread.entryPath}
                           </Badge>
                         )}
                         {thread.canopyPath && (
@@ -231,26 +231,26 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                     {/* Jump to navigation buttons */}
                     <Group gap="xs">
                       {thread.type === 'field' &&
-                        thread.entryId &&
+                        thread.entryPath &&
                         thread.canopyPath &&
                         onJumpToField && (
                           <Button
                             size="xs"
                             variant="light"
                             onClick={() => {
-                              onJumpToField(thread.entryId!, thread.canopyPath!, thread.id)
+                              onJumpToField(thread.entryPath!, thread.canopyPath!, thread.id)
                               onClose()
                             }}
                           >
                             Jump to field
                           </Button>
                         )}
-                      {thread.type === 'entry' && thread.entryId && onJumpToEntry && (
+                      {thread.type === 'entry' && thread.entryPath && onJumpToEntry && (
                         <Button
                           size="xs"
                           variant="light"
                           onClick={() => {
-                            onJumpToEntry(thread.entryId!, thread.id)
+                            onJumpToEntry(thread.entryPath!, thread.id)
                             onClose()
                           }}
                         >

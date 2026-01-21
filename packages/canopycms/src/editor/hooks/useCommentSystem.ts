@@ -12,9 +12,9 @@ export interface UseCommentSystemOptions {
   branchName: string
 
   /**
-   * Currently selected entry ID.
+   * Currently selected entry path.
    */
-  selectedId: string
+  selectedPath: string
 
   /**
    * Current entry being edited.
@@ -34,7 +34,7 @@ export interface UseCommentSystemOptions {
   /**
    * Callback to change the selected entry.
    */
-  setSelectedId: (id: string) => void
+  setSelectedPath: (id: string) => void
 
   /**
    * Callback to open the branch manager.
@@ -66,14 +66,14 @@ export interface UseCommentSystemReturn {
   handleAddComment: (
     text: string,
     type: 'field' | 'entry' | 'branch',
-    entryId?: string,
+    entryPath?: string,
     canopyPath?: string,
     threadId?: string,
   ) => Promise<void>
   handleResolveThread: (threadId: string) => Promise<void>
   loadComments: (branch: string) => Promise<void>
-  handleJumpToField: (entryId: string, canopyPath: string, threadId: string) => void
-  handleJumpToEntry: (entryId: string, threadId: string) => void
+  handleJumpToField: (entryPath: string, canopyPath: string, threadId: string) => void
+  handleJumpToEntry: (entryPath: string, threadId: string) => void
   handleJumpToBranch: (threadId: string) => void
 }
 
@@ -97,7 +97,7 @@ export interface UseCommentSystemReturn {
  *   loadComments
  * } = useCommentSystem({
  *   branchName,
- *   selectedId,
+ *   selectedPath,
  *   currentEntry,
  *   currentUser,
  *   canResolveComments,
@@ -136,7 +136,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   const handleAddComment = async (
     text: string,
     type: 'field' | 'entry' | 'branch',
-    entryId?: string,
+    entryPath?: string,
     canopyPath?: string,
     threadId?: string,
   ) => {
@@ -148,7 +148,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
           text,
           threadId,
           type,
-          entryId,
+          entryPath,
           canopyPath,
         },
       )
@@ -182,17 +182,17 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
       return comments.filter(
         (t) =>
           t.type === 'field' &&
-          t.entryId === options.selectedId &&
+          t.entryPath === options.selectedPath &&
           t.canopyPath === activeCommentContext.canopyPath,
       )
     } else if (activeCommentContext.type === 'entry') {
-      return comments.filter((t) => t.type === 'entry' && t.entryId === options.selectedId)
+      return comments.filter((t) => t.type === 'entry' && t.entryPath === options.selectedPath)
     } else if (activeCommentContext.type === 'branch') {
       return comments.filter((t) => t.type === 'branch')
     }
 
     return []
-  }, [activeCommentContext, comments, options.selectedId])
+  }, [activeCommentContext, comments, options.selectedPath])
 
   const activeContextLabel = useMemo(() => {
     if (!activeCommentContext) return ''
@@ -200,13 +200,13 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
     if (activeCommentContext.type === 'field' && activeCommentContext.canopyPath) {
       return activeCommentContext.canopyPath
     } else if (activeCommentContext.type === 'entry') {
-      return options.selectedId
+      return options.selectedPath
     } else if (activeCommentContext.type === 'branch') {
       return options.branchName
     }
 
     return ''
-  }, [activeCommentContext, options.selectedId, options.branchName])
+  }, [activeCommentContext, options.selectedPath, options.branchName])
 
   // Load comments when branch changes
   useEffect(() => {
@@ -220,11 +220,11 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // Listen for field focus messages from preview frame
   useEffect(() => {
     const handleFocus = (event: MessageEvent) => {
-      const msg = event.data as { type?: string; entryId?: string; fieldPath?: string }
+      const msg = event.data as { type?: string; entryPath?: string; fieldPath?: string }
       if (msg?.type !== 'canopycms:preview:focus') return
       if (
-        msg.entryId &&
-        msg.entryId !== (options.currentEntry?.previewSrc ?? options.currentEntry?.id)
+        msg.entryPath &&
+        msg.entryPath !== (options.currentEntry?.previewSrc ?? options.currentEntry?.path)
       )
         return
       const normalizedPath = msg.fieldPath ? normalizeCanopyPath(msg.fieldPath) : undefined
@@ -254,10 +254,10 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   }, [options.currentEntry])
 
   // Jump-to handlers for navigating from CommentsPanel
-  const handleJumpToField = (entryId: string, canopyPath: string, threadId: string) => {
+  const handleJumpToField = (entryPath: string, canopyPath: string, threadId: string) => {
     // Switch to the correct entry if needed
-    if (entryId !== options.selectedId) {
-      options.setSelectedId(entryId)
+    if (entryPath !== options.selectedPath) {
+      options.setSelectedPath(entryPath)
     }
 
     // Wait for entry to load, then scroll and highlight
@@ -276,14 +276,14 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
           setHighlightThreadId(undefined)
         }, 2100) // Clear after highlight animation completes
       },
-      entryId !== options.selectedId ? 300 : 0,
+      entryPath !== options.selectedPath ? 300 : 0,
     ) // Delay if switching entries
   }
 
-  const handleJumpToEntry = (entryId: string, threadId: string) => {
+  const handleJumpToEntry = (entryPath: string, threadId: string) => {
     // Switch to the correct entry if needed
-    if (entryId !== options.selectedId) {
-      options.setSelectedId(entryId)
+    if (entryPath !== options.selectedPath) {
+      options.setSelectedPath(entryPath)
     }
 
     // Wait for entry to load, then scroll and highlight
@@ -300,7 +300,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
           setHighlightThreadId(undefined)
         }, 2100) // Clear after highlight animation completes
       },
-      entryId !== options.selectedId ? 300 : 0,
+      entryPath !== options.selectedPath ? 300 : 0,
     ) // Delay if switching entries
   }
 

@@ -424,7 +424,7 @@ export function createMockCommentStore() {
         comments: [],
         resolved: false,
         type: 'field',
-        entryId: 'posts/hello',
+        entryPath: 'posts/hello',
         canopyPath: 'title',
         authorId: 'u1',
         createdAt: 'now',

@@ -10,8 +10,8 @@ export interface FieldWrapperProps {
   children: React.ReactNode
   /** CanopyPath identifying this field */
   canopyPath: string
-  /** Entry ID for this field */
-  entryId: string
+  /** Entry path for this field */
+  entryPath: string
   /** All comment threads for this field */
   threads: CommentThread[]
   /** Whether to auto-expand comments (from preview click) */
@@ -24,7 +24,7 @@ export interface FieldWrapperProps {
   onAddComment: (
     text: string,
     type: 'field' | 'entry' | 'branch',
-    entryId?: string,
+    entryPath?: string,
     canopyPath?: string,
     threadId?: string,
   ) => Promise<void>
@@ -43,7 +43,7 @@ export interface FieldWrapperProps {
 export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   children,
   canopyPath,
-  entryId,
+  entryPath,
   threads,
   autoFocus,
   currentUserId,
@@ -68,7 +68,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
 
   // Wrapper to add field context to comment handler
   const handleAddComment = async (text: string, threadId?: string) => {
-    await onAddComment(text, 'field', entryId, canopyPath, threadId)
+    await onAddComment(text, 'field', entryPath, canopyPath, threadId)
   }
 
   return (

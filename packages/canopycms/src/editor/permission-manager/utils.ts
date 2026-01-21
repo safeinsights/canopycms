@@ -44,7 +44,7 @@ export function convertCollectionsToTreeNodes(
   // Special case: If we're at the top level (no parentPath) and the collections array
   // contains exactly one item that IS the content root itself, skip creating a duplicate
   // node for it and just process its children directly.
-  if (!parentPath && collections.length === 1 && collections[0].id === contentRoot) {
+  if (!parentPath && collections.length === 1 && collections[0].path === contentRoot) {
     const rootCollection = collections[0]
     return rootCollection.children
       ? convertCollectionsToTreeNodes(rootCollection.children, contentRoot, contentRoot)
@@ -54,9 +54,9 @@ export function convertCollectionsToTreeNodes(
   const nodes: TreeNode[] = []
 
   for (const collection of collections) {
-    // Build the full path - use collection.id directly since it already includes
+    // Build the full path - use collection.path directly since it already includes
     // the content root prefix from buildEditorCollections
-    const fullPath = collection.id
+    const fullPath = collection.path
 
     const node: TreeNode = {
       path: fullPath,

@@ -327,7 +327,7 @@ describe('PR Workflow Integration', () => {
       text: 'Please revise the title',
       userId: 'reviewer1',
       type: 'field',
-      entryId: 'posts/first-post',
+      entryPath: 'posts/first-post',
       canopyPath: 'title',
     })
 
@@ -336,7 +336,7 @@ describe('PR Workflow Integration', () => {
       text: 'Overall structure looks good',
       userId: 'reviewer1',
       type: 'entry',
-      entryId: 'posts/first-post',
+      entryPath: 'posts/first-post',
     })
 
     // Add branch comment
@@ -352,7 +352,7 @@ describe('PR Workflow Integration', () => {
       userId: 'author1',
       threadId: fieldThread.threadId,
       type: 'field',
-      entryId: 'posts/first-post',
+      entryPath: 'posts/first-post',
       canopyPath: 'title',
     })
 

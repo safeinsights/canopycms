@@ -27,7 +27,7 @@ describe('useCommentSystem', () => {
   let wrapper: ReturnType<typeof createApiClientWrapper>
 
   const mockEntry: EditorEntry = {
-    id: 'entry1',
+    path: 'entry1',
     label: 'Test Entry',
     collectionId: 'posts',
     collectionName: 'posts',
@@ -43,7 +43,7 @@ describe('useCommentSystem', () => {
     {
       id: 'thread1',
       type: 'field',
-      entryId: 'entry1',
+      entryPath: 'entry1',
       canopyPath: 'title',
       comments: [
         {
@@ -61,7 +61,7 @@ describe('useCommentSystem', () => {
     {
       id: 'thread2',
       type: 'entry',
-      entryId: 'entry1',
+      entryPath: 'entry1',
       comments: [
         {
           id: 'c2',
@@ -97,12 +97,12 @@ describe('useCommentSystem', () => {
 
   const defaultOptions = {
     branchName: 'main',
-    selectedId: 'entry1',
+    selectedPath: 'entry1',
     currentEntry: mockEntry,
     currentUser: 'user1',
     canResolveComments: true,
     onReloadBranches: mockReloadBranches,
-    setSelectedId: vi.fn(),
+    setSelectedPath: vi.fn(),
     setBranchManagerOpen: vi.fn(),
   }
 
@@ -227,7 +227,7 @@ describe('useCommentSystem', () => {
       {
         text: 'Test comment',
         type: 'field',
-        entryId: 'entry1',
+        entryPath: 'entry1',
         canopyPath: 'title',
         threadId: undefined,
       },
@@ -265,7 +265,7 @@ describe('useCommentSystem', () => {
       {
         text: 'Test comment',
         type: 'entry',
-        entryId: 'entry1',
+        entryPath: 'entry1',
         threadId: undefined,
       },
     )
@@ -465,7 +465,7 @@ describe('useCommentSystem', () => {
     const message = new MessageEvent('message', {
       data: {
         type: 'canopycms:preview:focus',
-        entryId: 'preview-entry1',
+        entryPath: 'preview-entry1',
         fieldPath: 'title',
       },
     })
@@ -500,7 +500,7 @@ describe('useCommentSystem', () => {
     const message = new MessageEvent('message', {
       data: {
         type: 'canopycms:preview:focus',
-        entryId: 'wrong-entry',
+        entryPath: 'wrong-entry',
         fieldPath: 'title',
       },
     })
