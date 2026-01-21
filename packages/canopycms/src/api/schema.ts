@@ -36,6 +36,8 @@ import { parseLogicalPath, type LogicalPath } from '../paths'
 export interface SchemaResponse {
   schema: RootCollectionConfig
   flatSchema: FlatSchemaItem[]
+  /** Available schema registry keys that can be used for entry type `fields` */
+  availableSchemas: string[]
 }
 
 export interface CollectionResponse {
@@ -182,6 +184,7 @@ const getSchemaHandler = async (
     data: {
       schema: ctx.services.config.schema || {},
       flatSchema: ctx.services.flatSchema,
+      availableSchemas: Object.keys(ctx.services.schemaRegistry),
     },
   }
 }
@@ -540,7 +543,7 @@ export const getSchema = defineEndpoint({
   params: branchParamsSchema,
   responseType: 'GetSchemaApiResponse',
   response: {} as GetSchemaApiResponse,
-  defaultMockData: { schema: {}, flatSchema: [] },
+  defaultMockData: { schema: {}, flatSchema: [], availableSchemas: [] },
   handler: getSchemaHandler,
 })
 

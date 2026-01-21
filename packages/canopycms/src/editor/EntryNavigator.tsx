@@ -3,11 +3,12 @@
 import React, { useMemo, useRef, useEffect } from 'react'
 
 import {
+  ActionIcon,
   Badge,
   Box,
   Button,
   Group,
-  Paper,
+  Menu,
   ScrollArea,
   Stack,
   Text,
@@ -17,6 +18,7 @@ import {
   type TreeNodeData,
   rem,
 } from '@mantine/core'
+import { IconDots, IconEdit, IconFolderPlus, IconTrash } from '@tabler/icons-react'
 
 import { calculatePathToEntry } from './editor-utils'
 
@@ -37,6 +39,9 @@ export interface EntryNavCollection {
   entries?: EntryNavItem[]
   children?: EntryNavCollection[]
   onAdd?: () => void
+  onEdit?: () => void
+  onAddSubCollection?: () => void
+  onDelete?: () => void
 }
 
 export interface EntryNavigatorProps {
@@ -47,6 +52,8 @@ export interface EntryNavigatorProps {
   onTreeControllerReady?: (controller: TreeController) => void
   expandedStateRef?: React.MutableRefObject<Record<string, boolean>>
   onExpandedStateChange?: (state: Record<string, boolean>) => void
+  /** Called when user requests to delete an entry */
+  onDeleteEntry?: (path: string) => void
 }
 
 export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
@@ -57,6 +64,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   onTreeControllerReady,
   expandedStateRef,
   onExpandedStateChange,
+  onDeleteEntry,
 }) => {
   const selectedNodeRef = useRef<HTMLDivElement>(null)
   const hasScrolledRef = useRef(false)
@@ -70,7 +78,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           return {
             value: entry?.path ?? `collection:${col.path}`,
             label: entry?.label ?? col.label,
-            nodeProps: { status: entry?.status, isEntry: true },
+            nodeProps: { status: entry?.status, isEntry: true, entryPath: entry?.path },
             children: [],
           }
         }
@@ -78,7 +86,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           col.entries?.map((entry) => ({
             value: entry.path,
             label: entry.label,
-            nodeProps: { status: entry.status, isEntry: true },
+            nodeProps: { status: entry.status, isEntry: true, entryPath: entry.path },
           })) ?? []
         const childNodes = col.children?.map(toTree) ?? []
         const allChildren = [...entryNodes, ...childNodes]
@@ -88,7 +96,15 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         return {
           value: `collection:${col.path}`,
           label: col.label,
-          nodeProps: { isCollection: true, type: col.type, onAdd: col.onAdd },
+          nodeProps: {
+            isCollection: true,
+            type: col.type,
+            collectionPath: col.path,
+            onAdd: col.onAdd,
+            onEdit: col.onEdit,
+            onAddSubCollection: col.onAddSubCollection,
+            onDelete: col.onDelete,
+          },
           children: allChildren,
         }
       }
@@ -99,7 +115,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     return flatItems.map((item) => ({
       value: item.path,
       label: item.label,
-      nodeProps: { status: item.status, isEntry: true },
+      nodeProps: { status: item.status, isEntry: true, entryPath: item.path },
     }))
   }, [collections, items])
 
@@ -211,14 +227,23 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   }: RenderTreeNodePayload) => {
     const status = node.nodeProps?.status as string | undefined
     const onAdd = node.nodeProps?.onAdd as (() => void) | undefined
+    const onEdit = node.nodeProps?.onEdit as (() => void) | undefined
+    const onAddSubCollection = node.nodeProps?.onAddSubCollection as (() => void) | undefined
+    const onDelete = node.nodeProps?.onDelete as (() => void) | undefined
+    const entryPath = node.nodeProps?.entryPath as string | undefined
     const isCollection = node.nodeProps?.isCollection as boolean | undefined
-    const isLeaf = !hasChildren || node.nodeProps?.isEntry
+    const isEntry = node.nodeProps?.isEntry as boolean | undefined
+    const isLeaf = !hasChildren || isEntry
     const selected = node.value === selectedPath
 
     // For collections, always show chevron (even if empty) to match standard tree UI
     // Mantine only provides hasChildren=true if children.length > 0, but we want
     // collections to always be expandable
     const showChevron = hasChildren || Boolean(isCollection)
+
+    // Determine if we should show a context menu
+    const hasCollectionMenu = isCollection && (onEdit || onAddSubCollection || onDelete)
+    const hasEntryMenu = isEntry && entryPath && onDeleteEntry
 
     return (
       <Box
@@ -229,7 +254,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           .replace(/\s+/g, '-')}`}
         onClick={(event) => {
           elementProps.onClick(event)
-          if (isLeaf && node.nodeProps?.isEntry) {
+          if (isLeaf && isEntry) {
             onSelect(node.value)
           }
         }}
@@ -263,19 +288,106 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               </Badge>
             )}
           </Group>
-          {isCollection && onAdd && expanded ? (
-            <Button
-              size="compact-xs"
-              variant="light"
-              color="accent"
-              onClick={(event) => {
-                event.stopPropagation()
-                onAdd()
-              }}
-            >
-              + Add
-            </Button>
-          ) : null}
+          <Group gap={4} wrap="nowrap">
+            {isCollection && onAdd && expanded ? (
+              <Button
+                size="compact-xs"
+                variant="light"
+                color="accent"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onAdd()
+                }}
+              >
+                + Add
+              </Button>
+            ) : null}
+            {hasCollectionMenu && (
+              <Menu shadow="md" width={180} withinPortal position="bottom-end">
+                <Menu.Target>
+                  <ActionIcon
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    onClick={(event) => event.stopPropagation()}
+                    aria-label="Collection actions"
+                    data-testid={`collection-menu-${String(node.label ?? '')
+                      .toLowerCase()
+                      .replace(/\s+/g, '-')}`}
+                  >
+                    <IconDots size={14} />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  {onEdit && (
+                    <Menu.Item
+                      leftSection={<IconEdit size={14} />}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onEdit()
+                      }}
+                    >
+                      Edit Collection
+                    </Menu.Item>
+                  )}
+                  {onAddSubCollection && (
+                    <Menu.Item
+                      leftSection={<IconFolderPlus size={14} />}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onAddSubCollection()
+                      }}
+                    >
+                      Add Sub-Collection
+                    </Menu.Item>
+                  )}
+                  {(onEdit || onAddSubCollection) && onDelete && <Menu.Divider />}
+                  {onDelete && (
+                    <Menu.Item
+                      leftSection={<IconTrash size={14} />}
+                      color="red"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onDelete()
+                      }}
+                    >
+                      Delete Collection
+                    </Menu.Item>
+                  )}
+                </Menu.Dropdown>
+              </Menu>
+            )}
+            {hasEntryMenu && (
+              <Menu shadow="md" width={150} withinPortal position="bottom-end">
+                <Menu.Target>
+                  <ActionIcon
+                    size="xs"
+                    variant="subtle"
+                    color="gray"
+                    onClick={(event) => event.stopPropagation()}
+                    aria-label="Entry actions"
+                    data-testid={`entry-menu-${String(node.label ?? '')
+                      .toLowerCase()
+                      .replace(/\s+/g, '-')}`}
+                  >
+                    <IconDots size={14} />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown>
+                  <Menu.Item
+                    leftSection={<IconTrash size={14} />}
+                    color="red"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onDeleteEntry(entryPath)
+                    }}
+                  >
+                    Delete Entry
+                  </Menu.Item>
+                </Menu.Dropdown>
+              </Menu>
+            )}
+          </Group>
         </Group>
       </Box>
     )

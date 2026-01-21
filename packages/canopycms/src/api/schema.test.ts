@@ -98,13 +98,14 @@ describe('Schema API', () => {
   })
 
   describe('getSchema', () => {
-    it('should return full schema and flatSchema', async () => {
+    it('should return full schema, flatSchema, and availableSchemas', async () => {
       const result = await getSchema.handler(mockCtx, mockReq, { branch: 'main' })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
       expect(result.data?.schema).toEqual(mockSchema)
       expect(result.data?.flatSchema).toEqual(mockFlatSchema)
+      expect(result.data?.availableSchemas).toEqual(['postSchema'])
     })
 
     it('should return 404 for non-existent branch', async () => {
