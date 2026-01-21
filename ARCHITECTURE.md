@@ -564,21 +564,21 @@ At initialization, the hierarchical schema is flattened into a `Map<path, FlatSc
 
 **Collection item**:
 - `type: 'collection'`
-- `fullPath`: Complete path from content root (e.g., "content/blog")
+- `logicalPath`: Complete logical path from content root (e.g., "content/blog") - branded type for compile-time safety
 - `entries`: Optional array of entry type configurations
 - `collections`: Optional nested collections
 - `name`, `label`, `parentPath`: For navigation and display
 
 **Entry type item**:
 - `type: 'entry-type'`
-- `fullPath`: Complete path including entry type name (e.g., "content/posts/post")
+- `logicalPath`: Complete logical path including entry type name (e.g., "content/posts/post") - branded type
 - `name`: Entry type name (e.g., 'post', 'doc')
 - `format`: Content format (md, mdx, json)
 - `fields`: Field definitions
 - `maxItems`: Optional cardinality limit
-- `parentPath`: Path of the parent collection
+- `parentPath`: Logical path of the parent collection
 
-**Important**: The content root itself is included as a collection with `type: 'collection'`, `fullPath: 'content'`, and `parentPath: undefined`. Root-level collections have `parentPath: 'content'`, making them children of the content root. This eliminates all special-casing for root vs. nested collections.
+**Important**: The content root itself is included as a collection with `type: 'collection'`, `logicalPath: 'content'`, and `parentPath: undefined`. Root-level collections have `parentPath: 'content'`, making them children of the content root. This eliminates all special-casing for root vs. nested collections.
 
 ### Content Store Integration
 
@@ -1534,7 +1534,7 @@ The entry types model treats all content as typed entries within collections, wi
 - Recursive traversal becomes straightforward
 
 **Content root as normal collection:**
-- The content root (`content/`) is a collection with `type: 'collection'`, `fullPath: 'content'`, `parentPath: undefined`
+- The content root (`content/`) is a collection with `type: 'collection'`, `logicalPath: 'content'`, `parentPath: undefined`
 - Root-level collections are children of the content root with `parentPath: 'content'`
 - No special-casing for root vs. nested collections
 - Eliminates all "is this root-level?" checks
@@ -1578,7 +1578,7 @@ The alternative (traversing the tree on every request) would add milliseconds to
 
 ### Why flatten content root as a normal collection?
 
-The content root is included in the flattened schema as a normal collection with `type: 'collection'`, `fullPath: 'content'`, and `parentPath: undefined`:
+The content root is included in the flattened schema as a normal collection with `type: 'collection'`, `logicalPath: 'content'`, and `parentPath: undefined`:
 
 **Eliminates special cases:**
 - No separate code path for "is this root-level?" checks

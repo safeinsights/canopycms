@@ -160,31 +160,31 @@ export function buildTree(
   // First pass: Create all nodes (skip content root since we already have it)
   flatSchema.forEach((item) => {
     // Skip the content root itself - we already created it as the root node
-    if (item.fullPath === contentRoot) {
+    if (item.logicalPath === contentRoot) {
       return
     }
 
-    const pathSegments = item.fullPath.split('/').filter(Boolean)
+    const pathSegments = item.logicalPath.split('/').filter(Boolean)
     const displayName = pathSegments[pathSegments.length - 1] || item.name
 
     const node: TreeNode = {
-      path: item.fullPath,
+      path: item.logicalPath,
       name: displayName,
       type: item.type === 'collection' ? 'folder' : 'file',
       children: [],
     }
 
-    nodeMap.set(item.fullPath, node)
+    nodeMap.set(item.logicalPath, node)
   })
 
   // Second pass: Build hierarchy using parentPath
   flatSchema.forEach((item) => {
     // Skip the content root itself
-    if (item.fullPath === contentRoot) {
+    if (item.logicalPath === contentRoot) {
       return
     }
 
-    const node = nodeMap.get(item.fullPath)
+    const node = nodeMap.get(item.logicalPath)
     if (!node) return
 
     // Determine parent path (or use root if no parent)

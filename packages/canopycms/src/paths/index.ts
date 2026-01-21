@@ -31,6 +31,8 @@ export {
   hasTraversalSequence,
   createLogicalPath,
   createPhysicalPath,
+  toLogicalPath,
+  toPhysicalPath,
   logicalPathToString,
   physicalPathToString,
   joinPath,

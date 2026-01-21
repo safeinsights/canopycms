@@ -308,7 +308,7 @@ describe('listEntries', () => {
     expect(homeEntry?.collectionId).toBe('content/pages')
 
     // Verify collection is in collections array with schema
-    const pagesCollection = res.data?.collections.find((c) => c.path === 'content/pages')
+    const pagesCollection = res.data?.collections.find((c) => c.logicalPath === 'content/pages')
     expect(pagesCollection).toBeDefined()
     expect(pagesCollection?.type).toBe('collection')
     expect(pagesCollection?.schema).toHaveLength(2)

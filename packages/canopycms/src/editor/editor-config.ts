@@ -46,12 +46,12 @@ export const buildEditorCollections = (flatSchema: FlatSchemaItem[]): EditorColl
         // Collections are always navigable
         const defaultEntry = item.entries?.find(e => e.default) || item.entries?.[0]
         results.push({
-          path: item.fullPath,
+          path: item.logicalPath,
           name: item.name,
           label: item.label,
           format: defaultEntry?.format || 'json',
           type: 'collection' as const,
-          children: buildTree(item.fullPath), // Recursively build children
+          children: buildTree(item.logicalPath), // Recursively build children
         })
       }
       // Entry types are NOT included - they're schema metadata, not navigable nodes
@@ -75,9 +75,9 @@ export const buildPreviewBaseByCollection = (
 
   for (const item of flat) {
     // Strip content root from all items and normalize to preview URL
-    const base = stripContentRoot(item.fullPath, contentRoot)
+    const base = stripContentRoot(item.logicalPath, contentRoot)
     const normalizedBase = base ? `/${base}` : '/'
-    map[item.fullPath] = normalizedBase
+    map[item.logicalPath] = normalizedBase
   }
 
   return map

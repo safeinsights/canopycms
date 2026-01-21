@@ -590,7 +590,7 @@ const flatItems = flattenSchema(config.schema, config.contentRoot)
 // Returns: FlatSchemaItem[]
 
 // Build an index for fast lookups
-const schemaIndex = new Map(flatItems.map((item) => [item.fullPath, item]))
+const schemaIndex = new Map(flatItems.map((item) => [item.logicalPath, item]))
 
 // Lookup by path
 const item = schemaIndex.get('content/posts')
@@ -609,29 +609,29 @@ The flattened schema uses a discriminated union for type safety:
 type FlatSchemaItem =
   | {
       type: 'collection'
-      fullPath: string          // e.g., "content/posts"
+      logicalPath: LogicalPath  // e.g., "content/posts" (branded type)
       name: string              // e.g., "posts"
       label?: string
-      parentPath?: string       // Path of parent collection
+      parentPath?: LogicalPath  // Path of parent collection
       entries?: CollectionEntriesConfig
       collections?: CollectionConfig[]
       singletons?: SingletonConfig[]
     }
   | {
       type: 'singleton'
-      fullPath: string          // e.g., "content/settings"
+      logicalPath: LogicalPath  // e.g., "content/settings" (branded type)
       name: string              // e.g., "settings"
       label?: string
-      parentPath?: string
+      parentPath?: LogicalPath
       format: ContentFormat     // 'md' | 'mdx' | 'json'
       fields: FieldConfig[]
     }
 ```
 
 **Key Properties:**
-- `fullPath`: Absolute path from content root (e.g., `content/posts`, `content/posts/drafts`)
+- `logicalPath`: Logical path from content root (e.g., `content/posts`, `content/posts/drafts`) - branded type for type safety
 - `type`: Discriminator field for type narrowing (`'collection'` or `'singleton'`)
-- `parentPath`: For nested items, the parent collection's full path
+- `parentPath`: For nested items, the parent collection's logical path
 - Collections have `entries` config; singletons have `format` and `fields` directly
 
 ### Working with ContentStore
@@ -813,7 +813,7 @@ it('indexes all schema items', () => {
 
   expect(collections).toHaveLength(1)
   expect(singletons).toHaveLength(1)
-  expect(flat.find(item => item.name === 'posts')?.fullPath).toBe('content/posts')
+  expect(flat.find(item => item.name === 'posts')?.logicalPath).toBe('content/posts')
 })
 
 // Verify API response format

@@ -204,7 +204,7 @@ describe('ContentStore', () => {
 
     // Path: content/posts/hello -> collection=content/posts, slug=hello
     const result = store.resolvePath(['content', 'posts', 'hello'])
-    expect(result.schemaItem.fullPath).toBe('content/posts')
+    expect(result.schemaItem.logicalPath).toBe('content/posts')
     expect(result.schemaItem.type).toBe('collection')
     expect(result.slug).toBe('hello')
   })
@@ -226,7 +226,7 @@ describe('ContentStore', () => {
 
     // Path: content/settings/site -> collection entry with slug
     const result = store.resolvePath(['content', 'settings', 'site'])
-    expect(result.schemaItem.fullPath).toBe('content/settings')
+    expect(result.schemaItem.logicalPath).toBe('content/settings')
     expect(result.schemaItem.type).toBe('collection')
     expect(result.slug).toBe('site')
   })
@@ -256,7 +256,7 @@ describe('ContentStore', () => {
     // Path: content/docs/guides/getting-started
     // -> collection=content/docs/guides, slug=getting-started
     const result = store.resolvePath(['content', 'docs', 'guides', 'getting-started'])
-    expect(result.schemaItem.fullPath).toBe('content/docs/guides')
+    expect(result.schemaItem.logicalPath).toBe('content/docs/guides')
     expect(result.schemaItem.type).toBe('collection')
     expect(result.slug).toBe('getting-started')
   })
@@ -293,7 +293,7 @@ describe('ContentStore', () => {
     // Path: content/docs/api/v2/authentication
     // -> collection=content/docs/api/v2, slug=authentication
     const result = store.resolvePath(['content', 'docs', 'api', 'v2', 'authentication'])
-    expect(result.schemaItem.fullPath).toBe('content/docs/api/v2')
+    expect(result.schemaItem.logicalPath).toBe('content/docs/api/v2')
     expect(result.schemaItem.type).toBe('collection')
     expect(result.slug).toBe('authentication')
   })
@@ -337,7 +337,7 @@ describe('ContentStore', () => {
     // Path: content/docs/api/v2/endpoints/users
     // -> collection=content/docs/api/v2/endpoints, slug=users
     const result = store.resolvePath(['content', 'docs', 'api', 'v2', 'endpoints', 'users'])
-    expect(result.schemaItem.fullPath).toBe('content/docs/api/v2/endpoints')
+    expect(result.schemaItem.logicalPath).toBe('content/docs/api/v2/endpoints')
     expect(result.schemaItem.type).toBe('collection')
     expect(result.slug).toBe('users')
   })

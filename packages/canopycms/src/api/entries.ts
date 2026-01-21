@@ -11,13 +11,15 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
 import { resolveCollectionPath, extractIdFromFilename } from '../content-id-index'
-import { validateAndNormalizePath, normalizeFilesystemPath } from '../paths'
+import { validateAndNormalizePath, normalizeFilesystemPath, toLogicalPath, toPhysicalPath } from '../paths'
 import { isNotFoundError } from '../utils/error'
+import type { LogicalPath, PhysicalPath } from '../paths/types'
+
 
 type CollectionKind = 'collection' | 'entry'
 
 export interface EntryCollectionSummary {
-  path: string // Logical path (no IDs, no extensions)
+  logicalPath: LogicalPath
   contentId: string // 12-char content ID
   name: string
   label?: string
@@ -29,14 +31,14 @@ export interface EntryCollectionSummary {
 }
 
 export interface CollectionItem {
-  path: string // Logical path (no IDs, no extensions)
+  logicalPath: LogicalPath
   contentId: string // 12-char content ID
   slug: string
   collectionId: string
   collectionName: string
   format: ContentFormat
   entryType: string // The entry type name (from typed entries)
-  physicalPath: string // Physical path for access control (with IDs, used internally)
+  physicalPath: PhysicalPath
   title?: string
   updatedAt?: string
   exists?: boolean
@@ -166,7 +168,7 @@ const listCollectionEntries = async (
 
   // Resolve the full collection path with embedded IDs
   // e.g., "content/docs/api" → "content/docs.bChqT78gcaLd/api.meiuwxTSo7UN"
-  const collectionRoot = await resolveCollectionPath(root, collection.fullPath)
+  const collectionRoot = await resolveCollectionPath(root, collection.logicalPath)
 
   if (!collectionRoot) {
     // Collection directory doesn't exist yet
@@ -219,14 +221,14 @@ const listCollectionEntries = async (
       ])
 
       const item: CollectionItem = {
-        path: `${collection.fullPath}/${slug}`, // Logical path (no IDs/extensions)
+        logicalPath: toLogicalPath(`${collection.logicalPath}/${slug}`),
         contentId, // 12-char content ID extracted from filename
         slug,
-        collectionId: collection.fullPath,
+        collectionId: collection.logicalPath,
         collectionName: collection.name,
         format,
         entryType: entryTypeName || 'default',
-        physicalPath: relativePath, // Physical path for access control
+        physicalPath: toPhysicalPath(relativePath),
         title: title ?? entryType?.label, // Fall back to entry type label if no title in content
         updatedAt: stats.mtime.toISOString(),
         exists: true,
@@ -249,7 +251,7 @@ const listCollectionEntriesRecursive = async (
 ): Promise<CollectionItem[]> => {
   // Find all collections that are descendants of the target path
   const descendants = flatCollections.filter(item => {
-    return item.fullPath === targetPath || item.fullPath.startsWith(`${targetPath}/`)
+    return item.logicalPath === targetPath || item.logicalPath.startsWith(`${targetPath}/`)
   })
 
   // Parallelize listing entries from all descendant collections
@@ -278,7 +280,7 @@ const buildCollectionSummaries = async (
   // Filter to target collection and its descendants if targetId is provided
   const filtered = targetId
     ? flatCollections.filter(item =>
-        item.fullPath === targetId || item.fullPath.startsWith(`${targetId}/`)
+        item.logicalPath === targetId || item.logicalPath.startsWith(`${targetId}/`)
       )
     : flatCollections
 
@@ -292,7 +294,7 @@ const buildCollectionSummaries = async (
       const defaultEntry = getDefaultEntryType(entryTypes)
 
       // Resolve the physical path to extract contentId from directory name
-      const physicalPath = await resolveCollectionPath(root, item.fullPath)
+      const physicalPath = await resolveCollectionPath(root, item.logicalPath)
       let contentId = 'unknown' // Fallback if collection doesn't exist yet
 
       if (physicalPath) {
@@ -305,7 +307,7 @@ const buildCollectionSummaries = async (
       }
 
       return {
-        path: item.fullPath, // Logical path
+        logicalPath: toLogicalPath(item.logicalPath),
         contentId, // 12-char content ID from directory name
         name: item.name,
         label: item.label,
@@ -341,7 +343,7 @@ export const listEntriesHandler = async (
   let targetCollections = flatCollections
 
   if (targetId) {
-    const match = flatCollections.find((c) => c.fullPath === targetId)
+    const match = flatCollections.find((c) => c.logicalPath === targetId)
     if (!match) {
       return { ok: false, status: 404, error: 'Collection not found' }
     }
