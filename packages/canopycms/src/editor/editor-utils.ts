@@ -139,6 +139,7 @@ export function convertApiCollectionsToEditorCollections(
       label: col.label,
       format: col.format,
       type: col.type,
+      entryTypes: col.entryTypes, // Pass through entry types
       children: children.length > 0 ? children : undefined,
     }
   }

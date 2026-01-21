@@ -6,7 +6,7 @@ import { z } from 'zod'
 import matter from 'gray-matter'
 
 import type { FieldConfig, ContentFormat, FlatSchemaItem, EntryTypeConfig } from '../config'
-import { ContentStoreError } from '../content-store'
+import { ContentStore, ContentStoreError } from '../content-store'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
@@ -18,14 +18,28 @@ import type { LogicalPath, PhysicalPath } from '../paths/types'
 
 type CollectionKind = 'collection' | 'entry'
 
+/**
+ * Summary of an entry type for client display.
+ * Simplified from EntryTypeConfig - doesn't include full field definitions.
+ */
+export interface EntryTypeSummary {
+  name: string
+  label?: string
+  format: ContentFormat
+  default?: boolean
+  maxItems?: number
+}
+
 export interface EntryCollectionSummary {
   logicalPath: LogicalPath
   contentId: string // 12-char content ID
   name: string
   label?: string
-  format: ContentFormat
+  format: ContentFormat // Default entry type's format (for backwards compatibility)
   type: CollectionKind
-  schema: readonly FieldConfig[]
+  schema: readonly FieldConfig[] // Default entry type's schema (for backwards compatibility)
+  entryTypes?: EntryTypeSummary[] // All entry types in this collection
+  order?: readonly string[] // Embedded IDs for ordering items
   parentId?: string
   children?: EntryCollectionSummary[]
 }
@@ -115,6 +129,43 @@ const readTitle = async (filePath: string, format: ContentFormat): Promise<strin
 const getDefaultEntryType = (entries: readonly EntryTypeConfig[] | undefined): EntryTypeConfig | undefined => {
   if (!entries || entries.length === 0) return undefined
   return entries.find(e => e.default) || entries[0]
+}
+
+/**
+ * Sort entries by the collection's order array.
+ * Items in the order array come first (in order), items not in the array come at the end alphabetically by slug.
+ * @param entries - The entries to sort
+ * @param order - The order array (embedded IDs)
+ * @returns Sorted entries
+ */
+const sortEntriesByOrder = (entries: CollectionItem[], order?: readonly string[]): CollectionItem[] => {
+  if (!order || order.length === 0) {
+    // No order defined, sort alphabetically by slug
+    return entries.sort((a, b) => a.slug.localeCompare(b.slug))
+  }
+
+  // Create a map of contentId to order index
+  const orderMap = new Map<string, number>()
+  order.forEach((id, index) => orderMap.set(id, index))
+
+  return entries.sort((a, b) => {
+    const aIndex = orderMap.get(a.contentId)
+    const bIndex = orderMap.get(b.contentId)
+
+    // Both in order array: sort by order index
+    if (aIndex !== undefined && bIndex !== undefined) {
+      return aIndex - bIndex
+    }
+
+    // Only a is in order: a comes first
+    if (aIndex !== undefined) return -1
+
+    // Only b is in order: b comes first
+    if (bIndex !== undefined) return 1
+
+    // Neither in order: sort alphabetically by slug
+    return a.slug.localeCompare(b.slug)
+  })
 }
 
 /**
@@ -306,6 +357,15 @@ const buildCollectionSummaries = async (
         }
       }
 
+      // Build entry type summaries for the client
+      const entryTypeSummaries: EntryTypeSummary[] | undefined = entryTypes?.map(et => ({
+        name: et.name,
+        label: et.label,
+        format: et.format,
+        default: et.default,
+        maxItems: et.maxItems,
+      }))
+
       return {
         logicalPath: toLogicalPath(item.logicalPath),
         contentId, // 12-char content ID from directory name
@@ -314,6 +374,8 @@ const buildCollectionSummaries = async (
         format: defaultEntry?.format || 'json',
         type: 'collection' as const,
         schema: defaultEntry?.fields || [],
+        entryTypes: entryTypeSummaries,
+        order: item.order, // Embedded IDs for ordering items
         parentId: item.parentPath,
       }
     })
@@ -362,6 +424,8 @@ export const listEntriesHandler = async (
     // Recursive mode: list entries from target collection and all its children
     try {
       const items = await listCollectionEntriesRecursive(root, targetId, flatCollections)
+      // For recursive mode, we can't easily apply per-collection ordering
+      // Sort alphabetically for now (ordering is collection-specific)
       items.sort((a, b) => a.slug.localeCompare(b.slug))
       for (const item of items) {
         // Use the physicalPath for access control
@@ -390,7 +454,8 @@ export const listEntriesHandler = async (
 
       try {
         const items = await listCollectionEntries(root, item)
-        items.sort((a, b) => a.slug.localeCompare(b.slug))
+        // Sort by collection's order array (items in order first, then alphabetically)
+        sortEntriesByOrder(items, item.order)
         for (const entry of items) {
           // Use the physicalPath for access control
           const readAccess = await ctx.services.checkContentAccess(context, root, entry.physicalPath, req.user, 'read')
@@ -460,9 +525,123 @@ export const listEntries = defineEndpoint({
   handler: listEntriesHandler,
 })
 
+// ============================================================================
+// Delete Entry
+// ============================================================================
+
+/** Response type for deleting an entry */
+export type DeleteEntryResponse = ApiResponse<{ deleted: boolean; contentId?: string }>
+
+const deleteEntryParamsSchema = z.object({
+  branch: z.string().min(1),
+  entryPath: z.string().min(1), // Format: collectionPath/slug
+})
+
+/**
+ * Delete an entry and update the collection's order array.
+ * DELETE /:branch/entries/:entryPath
+ */
+const deleteEntryHandler = async (
+  ctx: ApiContext,
+  req: ApiRequest,
+  params: z.infer<typeof deleteEntryParamsSchema>
+): Promise<DeleteEntryResponse> => {
+  const context = await ctx.getBranchContext(params.branch)
+  if (!context) {
+    return { ok: false, status: 404, error: 'Branch not found' }
+  }
+
+  // Parse entryPath to get collection and slug
+  // Format: collectionPath/slug (e.g., "posts/hello-world" or "docs/api/getting-started")
+  const entryPath = decodeURIComponent(params.entryPath)
+  const lastSlash = entryPath.lastIndexOf('/')
+  if (lastSlash === -1) {
+    return { ok: false, status: 400, error: 'Invalid entry path format. Expected: collectionPath/slug' }
+  }
+
+  const collectionPath = entryPath.slice(0, lastSlash)
+  const slug = entryPath.slice(lastSlash + 1)
+
+  if (!collectionPath || !slug) {
+    return { ok: false, status: 400, error: 'Invalid entry path format. Expected: collectionPath/slug' }
+  }
+
+  // Check edit permission on the entry
+  // Build the physical path for permission check
+  const collection = ctx.services.flatSchema.find(
+    (item) => item.type === 'collection' && item.logicalPath === collectionPath
+  )
+  if (!collection) {
+    return { ok: false, status: 404, error: 'Collection not found' }
+  }
+
+  // Check edit access
+  const editAccess = await ctx.services.checkContentAccess(
+    context,
+    context.branchRoot,
+    `${collectionPath}/${slug}`,
+    req.user,
+    'edit'
+  )
+  if (!editAccess.allowed) {
+    return { ok: false, status: 403, error: 'Edit permission required to delete entry' }
+  }
+
+  try {
+    // Get the entry's content ID before deleting (for order update)
+    const contentStore = new ContentStore(context.branchRoot, ctx.services.flatSchema)
+    const contentId = await contentStore.getIdForEntry(collectionPath, slug)
+
+    // Delete the entry
+    await contentStore.delete(collectionPath, slug)
+
+    // Update the collection's order array to remove the deleted item
+    if (contentId && collection.type === 'collection' && collection.order) {
+      const { SchemaStore } = await import('../schema/schema-store')
+      const schemaStore = new SchemaStore(context.branchRoot, ctx.services.schemaRegistry)
+      const newOrder = collection.order.filter((id) => id !== contentId)
+      if (newOrder.length !== collection.order.length) {
+        await schemaStore.updateOrder(collectionPath as LogicalPath, newOrder as string[])
+      }
+    }
+
+    return {
+      ok: true,
+      status: 200,
+      data: { deleted: true, contentId: contentId || undefined },
+    }
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      return { ok: false, status: 404, error: 'Entry not found' }
+    }
+    return {
+      ok: false,
+      status: 500,
+      error: err instanceof Error ? err.message : 'Failed to delete entry',
+    }
+  }
+}
+
+/**
+ * Delete an entry
+ * DELETE /:branch/entries/:entryPath
+ */
+export const deleteEntry = defineEndpoint({
+  namespace: 'entries',
+  name: 'delete',
+  method: 'DELETE',
+  path: '/:branch/entries/:entryPath',
+  params: deleteEntryParamsSchema,
+  responseType: 'DeleteEntryResponse',
+  response: {} as DeleteEntryResponse,
+  defaultMockData: { deleted: true },
+  handler: deleteEntryHandler,
+})
+
 /**
  * Exported routes for router registration
  */
 export const ENTRY_ROUTES = {
   list: listEntries,
+  delete: deleteEntry,
 } as const

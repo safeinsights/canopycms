@@ -643,3 +643,435 @@ describe('listEntries', () => {
     expect(postEntry?.collectionId).toBe('content/posts')
   })
 })
+
+describe('sortEntriesByOrder', () => {
+  // Import the function for testing
+  // Since it's not exported, we'll test it indirectly through the list handler
+  // or we can add a describe block that tests ordering behavior
+
+  it('returns entries sorted by order array when order is provided', async () => {
+    const root = await tmpDir()
+
+    // Create collection folder with embedded ID
+    const postsId = 'q52DCVPuH4ga'
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+
+    // Create .collection.json with an order array
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/.collection.json`),
+      JSON.stringify({
+        name: 'posts',
+        label: 'Posts',
+        entries: [
+          { name: 'post', format: 'json', fields: 'postSchema' }
+        ],
+        order: ['ccc333def456', 'aaa111abc123', 'bbb222xyz789'] // Custom order
+      }),
+      'utf8'
+    )
+
+    // Create entries (alphabetically: aaa < bbb < ccc, but order says ccc, aaa, bbb)
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.alpha.aaa111abc123.json`),
+      JSON.stringify({ title: 'Alpha Post' }),
+      'utf8'
+    )
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.beta.bbb222xyz789.json`),
+      JSON.stringify({ title: 'Beta Post' }),
+      'utf8'
+    )
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.gamma.ccc333def456.json`),
+      JSON.stringify({ title: 'Gamma Post' }),
+      'utf8'
+    )
+
+    const schemaRegistry = {
+      postSchema: [{ name: 'title', type: 'string' }]
+    }
+
+    const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
+    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema,
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+      },
+      branchContext: createMockBranchContext({
+        branchName: 'main',
+        baseRoot: root,
+        branchRoot: root,
+        createdBy: 'u1',
+      }),
+    })
+
+    const res = await listEntriesHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main', collection: 'content/posts' }
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.entries).toHaveLength(3)
+
+    // Verify entries are sorted according to order array: gamma, alpha, beta
+    const slugs = res.data?.entries.map((e) => e.slug)
+    expect(slugs).toEqual(['gamma', 'alpha', 'beta'])
+  })
+
+  it('puts unordered entries at the end alphabetically', async () => {
+    const root = await tmpDir()
+
+    const postsId = 'q52DCVPuH4ga'
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+
+    // Order only has one entry
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/.collection.json`),
+      JSON.stringify({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        order: ['bbb222xyz789'] // Only beta is in the order
+      }),
+      'utf8'
+    )
+
+    // Create entries
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.alpha.aaa111abc123.json`),
+      JSON.stringify({ title: 'Alpha' }),
+      'utf8'
+    )
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.beta.bbb222xyz789.json`),
+      JSON.stringify({ title: 'Beta' }),
+      'utf8'
+    )
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.gamma.ccc333def456.json`),
+      JSON.stringify({ title: 'Gamma' }),
+      'utf8'
+    )
+
+    const schemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
+    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema,
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+      },
+      branchContext: createMockBranchContext({
+        branchName: 'main',
+        baseRoot: root,
+        branchRoot: root,
+        createdBy: 'u1',
+      }),
+    })
+
+    const res = await listEntriesHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main', collection: 'content/posts' }
+    )
+
+    expect(res.ok).toBe(true)
+    // Beta first (in order), then alpha and gamma alphabetically
+    const slugs = res.data?.entries.map((e) => e.slug)
+    expect(slugs).toEqual(['beta', 'alpha', 'gamma'])
+  })
+})
+
+describe('deleteEntry', () => {
+  it('deletes an entry and returns success', async () => {
+    const root = await tmpDir()
+
+    const postsId = 'q52DCVPuH4ga'
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/.collection.json`),
+      JSON.stringify({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+      }),
+      'utf8'
+    )
+
+    const entryId = 'abc123def456'
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.to-delete.${entryId}.json`),
+      JSON.stringify({ title: 'Delete Me' }),
+      'utf8'
+    )
+
+    const schemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
+    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema,
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+      },
+      branchContext: createMockBranchContext({
+        branchName: 'main',
+        baseRoot: root,
+        branchRoot: root,
+        createdBy: 'u1',
+      }),
+    })
+
+    // Import deleteEntry handler
+    const { deleteEntry } = await import('./entries')
+
+    const res = await deleteEntry.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main', entryPath: 'content/posts/to-delete' }
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.deleted).toBe(true)
+
+    // Verify file was deleted
+    const files = await fs.readdir(path.join(root, `content/posts.${postsId}`))
+    expect(files.filter(f => f.endsWith('.json') && f !== '.collection.json')).toHaveLength(0)
+  })
+
+  it('returns 403 when user lacks edit permission', async () => {
+    const root = await tmpDir()
+
+    const postsId = 'q52DCVPuH4ga'
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/.collection.json`),
+      JSON.stringify({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+      }),
+      'utf8'
+    )
+
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.protected.abc123def456.json`),
+      JSON.stringify({ title: 'Protected' }),
+      'utf8'
+    )
+
+    const schemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
+    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema,
+    })
+
+    // Mock edit access denied
+    const pathRules: PathPermission[] = [
+      { path: 'content/posts/protected', edit: { allowedUsers: ['admin'] } }
+    ]
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue(pathRules),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+      },
+      branchContext: createMockBranchContext({
+        branchName: 'main',
+        baseRoot: root,
+        branchRoot: root,
+        createdBy: 'u1',
+      }),
+    })
+
+    const { deleteEntry } = await import('./entries')
+
+    const res = await deleteEntry.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main', entryPath: 'content/posts/protected' }
+    )
+
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(403)
+    expect(res.error).toContain('Edit permission required')
+  })
+
+  it('returns 404 for non-existent entry', async () => {
+    const root = await tmpDir()
+
+    const postsId = 'q52DCVPuH4ga'
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/.collection.json`),
+      JSON.stringify({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+      }),
+      'utf8'
+    )
+
+    const schemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
+    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema,
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+      },
+      branchContext: createMockBranchContext({
+        branchName: 'main',
+        baseRoot: root,
+        branchRoot: root,
+        createdBy: 'u1',
+      }),
+    })
+
+    const { deleteEntry } = await import('./entries')
+
+    const res = await deleteEntry.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main', entryPath: 'content/posts/nonexistent' }
+    )
+
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(404)
+  })
+
+  it('returns 400 for invalid entry path format', async () => {
+    const root = await tmpDir()
+    await fs.mkdir(path.join(root, 'content'), { recursive: true })
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema: { collections: [] },
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        flatSchema: [],
+        schemaRegistry: {},
+        checkBranchAccess,
+        checkContentAccess,
+      },
+      branchContext: createMockBranchContext({
+        branchName: 'main',
+        baseRoot: root,
+        branchRoot: root,
+        createdBy: 'u1',
+      }),
+    })
+
+    const { deleteEntry } = await import('./entries')
+
+    // Path without slash is invalid
+    const res = await deleteEntry.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main', entryPath: 'invalid-no-slash' }
+    )
+
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(400)
+    expect(res.error).toContain('Invalid entry path format')
+  })
+})

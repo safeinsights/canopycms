@@ -31,7 +31,7 @@ export interface UseEntryManagerReturn {
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
   refreshEntries: (branch?: string) => Promise<void>
-  handleCreateEntry: (collectionId: string) => Promise<void>
+  handleCreateEntry: (collectionId: string, entryTypeName?: string) => Promise<void>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
   collectionById: Map<string, EditorCollection>
@@ -167,20 +167,54 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     }
   }
 
-  const handleCreateEntry = async (collectionId: string) => {
+  /**
+   * Create a new entry in a collection.
+   * @param collectionId - The collection's logical path
+   * @param entryTypeName - Optional entry type name. If not provided and collection has multiple types,
+   *                        uses the default type or prompts user to select one.
+   */
+  const handleCreateEntry = async (collectionId: string, entryTypeName?: string) => {
     const col = collectionById.get(collectionId)
     if (!col || col.type === 'entry') {
       console.log('Collection not found or is root entry type:', { collectionId })
       return
     }
-    const slug = window.prompt(`New ${col.label ?? col.name} slug?`, 'untitled')
+
+    // Determine which entry type to use
+    const entryTypes = col.entryTypes || []
+    let selectedType = entryTypes.find(et => et.name === entryTypeName)
+
+    if (!selectedType && entryTypes.length > 1) {
+      // Multiple types available, prompt user to select
+      const typeOptions = entryTypes.map((et, i) => `${i + 1}. ${et.label || et.name}`).join('\n')
+      const selection = window.prompt(
+        `Select entry type:\n${typeOptions}\n\nEnter number (1-${entryTypes.length}):`,
+        '1'
+      )
+      if (!selection) return
+      const index = parseInt(selection, 10) - 1
+      if (index >= 0 && index < entryTypes.length) {
+        selectedType = entryTypes[index]
+      } else {
+        notifications.show({ message: 'Invalid selection', color: 'red' })
+        return
+      }
+    } else if (!selectedType && entryTypes.length === 1) {
+      // Single type, use it
+      selectedType = entryTypes[0]
+    }
+
+    // Fall back to collection's format if no entry types defined
+    const format = selectedType?.format || col.format
+
+    const slug = window.prompt(`New ${selectedType?.label || col.label || col.name} slug?`, 'untitled')
     if (!slug) return
     options.setBusy(true)
     try {
       const payload =
-        col.format === 'json'
+        format === 'json'
           ? { format: 'json' as const, data: {} }
-          : { format: col.format, data: {}, body: '' }
+          : { format, data: {}, body: '' }
       const path = `${collectionId}/${slug}`
       const result = await apiClient.content.write(
         {
