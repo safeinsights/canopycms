@@ -62,7 +62,7 @@ export type {
 export { primitiveFieldTypes, fieldTypes } from './types'
 
 // Re-export schemas (for advanced use cases)
-export { CanopyConfigSchema } from './schemas/config'
+export { CanopyConfigSchema, getConfigDefaults } from './schemas/config'
 export {
   fieldSchema,
   blockSchema,

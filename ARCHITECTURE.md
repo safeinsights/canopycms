@@ -143,6 +143,177 @@ Some files remain at the source root because they represent core domain concepts
 
 **Why branded types for paths?** Path handling is error-prone because different contexts need different path representations (logical content paths vs physical filesystem paths). Branded types make the compiler catch misuse at development time rather than runtime.
 
+## Service Architecture
+
+CanopyCMS uses **dependency injection** to manage service lifecycle and avoid global singletons. Services are created once at initialization and passed down through the call stack.
+
+### Service Container
+
+The `CanopyServices` interface (defined in [services.ts](packages/canopycms/src/services.ts)) is the central service container that holds all global services and factory functions:
+
+```typescript
+export interface CanopyServices {
+  config: CanopyConfig                    // Validated configuration
+  flatSchema: FlatSchemaItem[]            // Flattened schema for O(1) lookups
+  checkBranchAccess: (...)                // Branch permission checker
+  checkPathAccess: (...)                  // Path permission checker
+  checkContentAccess: (...)               // Combined content access checker
+  registry?: BranchRegistry               // Branch cache (undefined in dev mode)
+  githubService?: GitHubService           // GitHub API client (if configured)
+  createGitManagerFor: (...)              // Factory for git operations
+  commitFiles: (...)                      // Helper for committing files
+  submitBranch: (...)                     // Helper for submitting branches
+}
+```
+
+**Service Creation:**
+
+Services are created once at application startup using `createCanopyServices()`:
+
+```typescript
+const services = await createCanopyServices({
+  config,
+  authPlugin,
+  schemaRegistry,
+})
+```
+
+This function:
+
+1. Validates and flattens the schema
+2. Creates authorization checkers
+3. Initializes the branch registry (prod/prod-sim modes only)
+4. Sets up GitHub integration (if configured)
+5. Returns an immutable service container
+
+### Service Access Patterns
+
+Different layers of the application access services in different ways:
+
+**API Handlers** receive services via `ApiContext`:
+
+```typescript
+const readContentHandler = async (
+  ctx: ApiContext,        // Contains services
+  req: ApiRequest,
+  params: ValidatedParams
+): Promise<ApiResponse> => {
+  const store = new ContentStore(branchRoot, ctx.services.flatSchema)
+  const hasAccess = await ctx.services.checkContentAccess(...)
+  // ...
+}
+```
+
+**Content Readers** receive services at creation:
+
+```typescript
+const reader = createContentReader({ services })
+const doc = await reader.read({ branch, path })
+```
+
+**Editor Components** use the ApiClient hook (never access services directly):
+
+```typescript
+export function MyComponent() {
+  const client = useApiClient()
+  const data = await client.content.read(...)
+}
+```
+
+**Framework Adapters** create services once and inject them:
+
+```typescript
+// apps/example1/app/lib/canopy.ts
+const canopyContextPromise = createNextCanopyContext({
+  config: config.server,
+  authPlugin: getAuthPlugin(),
+  schemaRegistry,
+})
+
+export const getHandler = async () => {
+  const context = await canopyContextPromise
+  return context.handler // Handler has services injected
+}
+```
+
+### Scoped vs Global Services
+
+**Global Services** (created once, shared across requests):
+
+- Configuration (`config`)
+- Flattened schema (`flatSchema`)
+- Authorization checkers (`checkBranchAccess`, `checkPathAccess`)
+- Branch registry (`registry`)
+- GitHub service (`githubService`)
+
+**Scoped Services** (created per-request or per-operation):
+
+- **ContentStore**: Created for each branch context (lightweight wrapper)
+- **GitManager**: Created via factory for specific repository paths
+- **ReferenceResolver**: Created when resolving references
+
+**Why this split?** Global services are stateless or contain shared caches. Scoped services are tied to specific branch contexts or operations and must be created fresh to avoid cross-contamination.
+
+### Default Value Handling
+
+CanopyCMS centralizes default values in the configuration layer using Zod schemas. The `getConfigDefaults()` helper extracts default values from schemas:
+
+```typescript
+import { getConfigDefaults } from 'canopycms/config'
+
+const defaults = getConfigDefaults()
+// { baseBranch: 'main', remoteName: 'origin', ... }
+```
+
+This ensures:
+
+- Single source of truth for defaults
+- Type safety from Zod schema validation
+- No hardcoded defaults scattered across the codebase
+
+**Usage in services:**
+
+```typescript
+const configDefaults = getConfigDefaults()
+const createGitManagerFor = (repoPath, opts?) =>
+  new GitManager({
+    repoPath,
+    baseBranch: opts?.baseBranch ?? config.defaultBaseBranch ?? configDefaults.baseBranch,
+    remote: opts?.remote ?? config.defaultRemoteName ?? configDefaults.remoteName,
+  })
+```
+
+### Testing with Services
+
+Mock services for testing by creating a minimal `CanopyServices` object:
+
+```typescript
+const mockServices: CanopyServices = {
+  config: testConfig,
+  flatSchema: flattenSchema(testConfig.schema, testConfig.contentRoot),
+  checkBranchAccess: async () => ({ allowed: true }),
+  checkPathAccess: async () => 'write',
+  checkContentAccess: async () => ({ allowed: true, level: 'write' }),
+  createGitManagerFor: () => mockGitManager,
+  // ...
+}
+
+const ctx: ApiContext = {
+  services: mockServices,
+  getBranchContext: async () => mockBranchContext,
+}
+
+await handler(ctx, req, params)
+```
+
+### Benefits of This Architecture
+
+1. **No Global State**: Services are explicitly passed, making dependencies clear
+2. **Testable**: Easy to mock services for unit tests
+3. **Type Safe**: TypeScript ensures all services are provided
+4. **Lambda-Friendly**: Services created once per Lambda instance, reused across requests
+5. **Clear Boundaries**: Each layer knows exactly what it has access to
+
 ## Storage Architecture
 
 CanopyCMS is entirely file system based. There are no external databases, no Redis/Valkey caching servers, and no separate worker processes by default. This simplifies deployment and operations.

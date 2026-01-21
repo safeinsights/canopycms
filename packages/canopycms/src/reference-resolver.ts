@@ -31,7 +31,6 @@ export class ReferenceResolver {
   constructor(
     private store: ContentStore,
     private idIndex: ContentIdIndex,
-    private contentRoot: string = 'content',
   ) {}
 
   /**
@@ -64,7 +63,7 @@ export class ReferenceResolver {
         slug: location.slug,
       }
     } catch (error) {
-      console.log('Failed to resolve reference:', { id, error })
+      console.error('Failed to resolve reference:', { id, error })
       return {
         id,
         exists: false,
@@ -123,7 +122,7 @@ export class ReferenceResolver {
           })
         } catch (error) {
           // Skip entries that can't be read
-          console.log('Failed to read entry for reference options:', {
+          console.error('Failed to read entry for reference options:', {
             collection: entry.collection,
             slug: entry.slug,
             error,
@@ -138,41 +137,11 @@ export class ReferenceResolver {
 
   /**
    * Helper to list all entries in a collection.
-   * This is a temporary implementation until ContentStore has this method.
    */
   private async listEntriesInCollection(
     collectionPath: string,
   ): Promise<Array<{ relativePath: string; collection: string; slug: string }>> {
-    // For now, we'll scan the ID index for entries in this collection
-    const entries: Array<{ relativePath: string; collection: string; slug: string }> = []
-
-    // This is inefficient but works for now
-    // TODO: Add a proper listCollectionEntries method to ContentStore
-    const allLocations = this.idIndex.getAllLocations()
-
-    // Normalize collection path - ID index stores full paths like "content/authors"
-    // but schema specifies just "authors", so we need to try both
-    const normalizedPaths = [collectionPath, `${this.contentRoot}/${collectionPath}`]
-
-    for (const location of allLocations) {
-      if (location.type === 'entry') {
-        // Check if this entry is in the target collection (try all normalized paths)
-        const matches = normalizedPaths.some(
-          (normalized) =>
-            location.collection === normalized || location.collection?.startsWith(normalized + '/'),
-        )
-
-        if (matches && location.slug) {
-          entries.push({
-            relativePath: location.relativePath,
-            collection: location.collection!,
-            slug: location.slug,
-          })
-        }
-      }
-    }
-
-    return entries
+    return this.store.listCollectionEntries(collectionPath)
   }
 
   /**

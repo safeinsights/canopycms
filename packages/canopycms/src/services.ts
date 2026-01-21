@@ -1,5 +1,5 @@
 import type { CanopyConfig, FlatSchemaItem, FieldConfig, RootCollectionConfig } from './config'
-import { flattenSchema } from './config'
+import { flattenSchema, getConfigDefaults } from './config'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
 import {
@@ -176,12 +176,12 @@ export const createCanopyServices = async (
     mode: config.mode,
     getSettingsBranchRoot,
   })
+  const configDefaults = getConfigDefaults()
   const createGitManagerFor = (repoPath: string, opts?: { baseBranch?: string; remote?: string }) =>
     new GitManager({
       repoPath,
-      // TODO DRY up default values (probably already in the schema definition)
-      baseBranch: opts?.baseBranch ?? config.defaultBaseBranch ?? 'main',
-      remote: opts?.remote ?? config.defaultRemoteName ?? 'origin',
+      baseBranch: opts?.baseBranch ?? config.defaultBaseBranch ?? configDefaults.baseBranch,
+      remote: opts?.remote ?? config.defaultRemoteName ?? configDefaults.remoteName,
     })
 
   const commitFiles = async (options: {

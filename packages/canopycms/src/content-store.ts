@@ -496,6 +496,75 @@ export class ContentStore {
   }
 
   /**
+   * List all entries in a collection.
+   * Returns array of entry metadata (relativePath, collection, slug).
+   * Returns empty array if the collection doesn't exist.
+   */
+  async listCollectionEntries(
+    collectionPath: string,
+  ): Promise<Array<{ relativePath: string; collection: string; slug: string }>> {
+    const idIndex = await this.idIndex()
+
+    // Try to find the collection in the schema index
+    // The schema index uses normalized logical paths like "content/authors"
+    // But we might receive either "authors" or "content/authors"
+    const normalized = normalizeFilesystemPath(collectionPath)
+    let item = this.schemaIndex.get(normalized)
+
+    // If not found, try all possible variations:
+    // 1. Try with each schema item's parent path prepended
+    if (!item) {
+      for (const schemaItem of this.schemaIndex.values()) {
+        if (schemaItem.type === 'collection') {
+          // Check if the collection path matches the last segment
+          const lastSegment = schemaItem.fullPath.split('/').pop()
+          if (lastSegment === collectionPath) {
+            item = schemaItem
+            break
+          }
+          // Or if it matches the full path
+          if (schemaItem.fullPath === collectionPath) {
+            item = schemaItem
+            break
+          }
+        }
+      }
+    }
+
+    // Return empty array if collection doesn't exist or isn't a collection
+    if (!item || item.type !== 'collection') {
+      return []
+    }
+
+    const collection = item
+
+    // Get all locations from the ID index
+    const allLocations = idIndex.getAllLocations()
+
+    // Match entries by collection full path
+    const entries: Array<{ relativePath: string; collection: string; slug: string }> = []
+
+    for (const location of allLocations) {
+      if (location.type === 'entry' && location.slug) {
+        // Check if this entry is in the target collection
+        // location.collection should match collection.fullPath
+        if (
+          location.collection === collection.fullPath ||
+          location.collection?.startsWith(collection.fullPath + '/')
+        ) {
+          entries.push({
+            relativePath: location.relativePath,
+            collection: location.collection!,
+            slug: location.slug,
+          })
+        }
+      }
+    }
+
+    return entries
+  }
+
+  /**
    * Recursively resolve reference fields in data.
    * This traverses objects, arrays, and blocks to find and resolve all reference fields.
    */

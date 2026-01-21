@@ -54,8 +54,7 @@ const resolveReferencesHandler = async (
   const idIndex = await store.idIndex()
 
   // Resolve each ID to full document
-  const contentRoot = ctx.services.config.contentRoot ?? 'content'
-  const resolver = new ReferenceResolver(store, idIndex, contentRoot)
+  const resolver = new ReferenceResolver(store, idIndex)
 
   const resolved: Record<string, any> = {}
 

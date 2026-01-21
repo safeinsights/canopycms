@@ -56,3 +56,18 @@ export const CanopyConfigSchema = z.object({
   editor: editorConfigSchema.optional(),
   authPlugin: z.custom<AuthPlugin>().optional(),
 })
+
+/**
+ * Helper to get schema default values.
+ * This centralizes default value extraction from Zod schemas.
+ */
+export const getConfigDefaults = () => ({
+  baseBranch: defaultBaseBranchSchema.parse(undefined),
+  remoteName: defaultRemoteNameSchema.parse(undefined),
+  pathAccess: defaultPathAccessSchema.parse(undefined),
+  branchAccess: defaultBranchAccessSchema.parse(undefined),
+  contentRoot: contentRootSchema.parse(undefined),
+  mode: operatingModeSchema.parse(undefined),
+  githubTokenEnvVar: githubTokenEnvVarSchema.parse(undefined),
+  deploymentName: deploymentNameSchema.parse(undefined),
+})
