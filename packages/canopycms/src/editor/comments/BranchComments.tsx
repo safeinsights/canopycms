@@ -14,7 +14,7 @@ export interface BranchCommentsProps {
   /** Whether user can resolve threads */
   canResolve: boolean
   /** Handler to add a comment */
-  onAddComment: (text: string, type: 'field' | 'entry' | 'branch', entryId?: string, canopyPath?: string, threadId?: string) => Promise<void>
+  onAddComment: (text: string, type: 'field' | 'entry' | 'branch', entryPath?: string, canopyPath?: string, threadId?: string) => Promise<void>
   /** Handler to resolve a thread */
   onResolveThread: (threadId: string) => Promise<void>
   /** Auto-focus and expand */

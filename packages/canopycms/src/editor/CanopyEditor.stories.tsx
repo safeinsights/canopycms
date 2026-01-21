@@ -44,7 +44,7 @@ const config = configBundle.client()
 
 const entries = [
   {
-    id: 'content/posts/hello',
+    path: 'content/posts/hello',
     label: 'Hello Post',
     status: 'page',
     schema: configBundle.server.schema!.collections![0].entries![0].fields,

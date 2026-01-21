@@ -28,7 +28,8 @@ import { useBranchActions } from './hooks/useBranchActions'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 
 export interface EditorEntry {
-  id: string
+  path: string // Logical path (no IDs/extensions)
+  contentId?: string // 12-char content ID (optional for test data)
   label: string
   status?: string
   schema: readonly FieldConfig[]
@@ -43,7 +44,8 @@ export interface EditorEntry {
 }
 
 export interface EditorCollection {
-  id: string
+  path: string // Logical path
+  contentId?: string // 12-char content ID (optional, from directory name)
   name: string
   label?: string
   format: ContentFormat
@@ -145,10 +147,10 @@ export const Editor: React.FC<EditorProps> = ({
     comments: commentsForBranchSummaries,
   })
 
-  // 2. Entry manager (depends on branchNameState, owns selectedId)
+  // 2. Entry manager (depends on branchNameState, owns selectedPath)
   const {
-    selectedId,
-    setSelectedId,
+    selectedPath,
+    setSelectedPath,
     entries: entriesState,
     setEntries: setEntriesState,
     collections: collectionsFromApi,
@@ -173,7 +175,7 @@ export const Editor: React.FC<EditorProps> = ({
   // Use collections from API (falls back to props if not loaded yet)
   const activeCollections = collectionsFromApi.length > 0 ? collectionsFromApi : collections
 
-  // 3. Draft manager (depends on branchNameState, selectedId from useEntryManager)
+  // 3. Draft manager (depends on branchNameState, selectedPath from useEntryManager)
   const {
     drafts,
     setDrafts,
@@ -189,7 +191,7 @@ export const Editor: React.FC<EditorProps> = ({
     isSelectedDirty,
   } = useDraftManager({
     branchName: branchNameState,
-    selectedId,
+    selectedPath,
     currentEntry,
     entries: entriesState,
     initialValues,
@@ -221,11 +223,11 @@ export const Editor: React.FC<EditorProps> = ({
     handleJumpToBranch,
   } = useCommentSystem({
     branchName: branchNameState,
-    selectedId,
+    selectedPath,
     currentEntry,
     currentUser,
     canResolveComments,
-    setSelectedId,
+    setSelectedPath,
     setBranchManagerOpen,
     onCommentsChange: setCommentsForBranchSummaries,
   })
@@ -258,17 +260,17 @@ export const Editor: React.FC<EditorProps> = ({
   }, [activeCollections])
   const collectionLabels = useMemo(() => buildCollectionLabels(activeCollections), [activeCollections])
   const schema = currentEntry?.schema ?? []
-  const previewKey = currentEntry?.previewSrc ?? currentEntry?.id
+  const previewKey = currentEntry?.previewSrc ?? currentEntry?.path
 
   // Effect to load entry data when selection changes
   useEffect(() => {
     const load = async () => {
-      if (!currentEntry || drafts[selectedId]) return
+      if (!currentEntry || drafts[selectedPath]) return
       setEntriesLoading(true)
       try {
         const loaded = await loadEntry(currentEntry)
-        setLoadedValues((prev) => ({ ...prev, [selectedId]: loaded }))
-        setDrafts((prev) => ({ ...prev, [selectedId]: loaded }))
+        setLoadedValues((prev) => ({ ...prev, [selectedPath]: loaded }))
+        setDrafts((prev) => ({ ...prev, [selectedPath]: loaded }))
       } catch (err) {
         console.error(err)
         notifications.show({ message: 'Failed to load entry', color: 'red' })
@@ -281,14 +283,14 @@ export const Editor: React.FC<EditorProps> = ({
       setEntriesLoading(false)
       notifications.show({ message: 'Failed to load entry', color: 'red' })
     })
-  }, [currentEntry, drafts, selectedId])
+  }, [currentEntry, drafts, selectedPath])
 
   const navCollections = useMemo<EntryNavCollection[] | undefined>(() => {
     if (!activeCollections) return undefined
 
     // Unwrap content root if it's the only top-level collection
     const collectionsToRender =
-      activeCollections.length === 1 && activeCollections[0].id === contentRoot
+      activeCollections.length === 1 && activeCollections[0].path === contentRoot
         ? activeCollections[0].children ?? []
         : activeCollections
 
@@ -296,18 +298,18 @@ export const Editor: React.FC<EditorProps> = ({
     entriesState.forEach((entry) => {
       if (!entry.collectionId) return
       const list = grouped.get(entry.collectionId) ?? []
-      list.push({ id: entry.id, label: entry.label, status: entry.status })
+      list.push({ path: entry.path, label: entry.label, status: entry.status })
       grouped.set(entry.collectionId, list)
     })
     const build = (node: EditorCollection): EntryNavCollection => ({
-      id: node.id,
+      path: node.path,
       label: node.label ?? node.name,
       type: node.type,
-      entries: grouped.get(node.id),
+      entries: grouped.get(node.path),
       children: node.children?.map((child) => build(child)),
       onAdd:
         node.type !== 'entry'
-          ? () => (onCreateEntry ? onCreateEntry(node.id) : handleCreateEntry(node.id))
+          ? () => (onCreateEntry ? onCreateEntry(node.path) : handleCreateEntry(node.path))
           : undefined,
     })
     return collectionsToRender.map((node) => build(node))
@@ -419,7 +421,7 @@ export const Editor: React.FC<EditorProps> = ({
           onNavigatorOpen={() => setNavigatorOpen(true)}
           onFileReload={handleReload}
           onFileDiscardDraft={handleDiscardFileDraft}
-          onEntrySelect={setSelectedId}
+          onEntrySelect={setSelectedPath}
           onBranchReloadData={handleReloadBranchData}
           onBranchDiscardDrafts={handleDiscardDrafts}
           onBranchManagerOpen={() => setBranchManagerOpen(true)}
@@ -459,12 +461,12 @@ export const Editor: React.FC<EditorProps> = ({
                     <FormRenderer
                       fields={schema}
                       value={effectiveValue}
-                      onChange={(next) => setDrafts((prev) => ({ ...prev, [selectedId]: next }))}
+                      onChange={(next) => setDrafts((prev) => ({ ...prev, [selectedPath]: next }))}
                       branch={branchNameState}
                       onResolvedValueChange={setPreviewData}
                       onLoadingStateChange={setPreviewLoadingState}
                       comments={comments}
-                      currentEntryId={selectedId}
+                      currentEntryPath={selectedPath}
                       currentUserId={currentUser}
                       canResolve={canResolveComments}
                       focusedFieldPath={focusedFieldPath}
@@ -543,11 +545,11 @@ export const Editor: React.FC<EditorProps> = ({
                   items={
                     navCollections
                       ? undefined
-                      : entriesState.map((e) => ({ id: e.id, label: e.label, status: e.status }))
+                      : entriesState.map((e) => ({ path: e.path, label: e.label, status: e.status }))
                   }
-                  selectedId={selectedId}
+                  selectedPath={selectedPath}
                   onSelect={(id) => {
-                    setSelectedId(id)
+                    setSelectedPath(id)
                     setNavigatorOpen(false)
                   }}
                   onTreeControllerReady={handleTreeControllerReady}

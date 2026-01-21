@@ -41,7 +41,7 @@ describe('ThreadCarousel', () => {
     {
       id: 'thread-1',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
       authorId: 'alice',
       createdAt: new Date('2024-01-01T10:00:00Z').toISOString(),
@@ -59,7 +59,7 @@ describe('ThreadCarousel', () => {
     {
       id: 'thread-2',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
       authorId: 'bob',
       createdAt: new Date('2024-01-01T11:00:00Z').toISOString(),
@@ -79,7 +79,7 @@ describe('ThreadCarousel', () => {
     {
       id: 'thread-3',
       type: 'field',
-      entryId: 'posts/hello',
+      entryPath: 'posts/hello',
       canopyPath: 'title',
       authorId: 'charlie',
       createdAt: new Date('2024-01-01T09:00:00Z').toISOString(),

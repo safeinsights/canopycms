@@ -39,7 +39,7 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
   // Helper: Perform branch switch with URL update
   const performBranchSwitch = (next: string) => {
     // Update branchName state - hooks will react:
-    // - useEntryManager clears selectedId and refreshes entries
+    // - useEntryManager clears selectedPath and refreshes entries
     // - useDraftManager clears drafts/loadedValues
     // - useCommentSystem loads comments
     options.setBranchName(next)

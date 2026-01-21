@@ -26,7 +26,7 @@ describe('useEntryManager', () => {
   let wrapper: ReturnType<typeof createApiClientWrapper>
 
   const mockEntry: EditorEntry = {
-    id: 'entry1',
+    path: 'entry1',
     label: 'Test Entry',
     collectionId: 'posts',
     collectionName: 'posts',
@@ -38,18 +38,19 @@ describe('useEntryManager', () => {
   }
 
   const mockCollectionItem = {
-    id: 'entry1',
+    path: 'entry1',
+    contentId: 'abc123XYZ789',
     slug: 'test',
     collectionId: 'posts',
     collectionName: 'posts',
     format: 'mdx' as const,
     entryType: 'post',
-    path: '/content/posts/test',
+    physicalPath: '/content/posts/test',
   }
 
   const mockCollections: EditorCollection[] = [
     {
-      id: 'posts',
+      path: 'posts',
       name: 'posts',
       label: 'Posts',
       type: 'collection',
@@ -58,12 +59,12 @@ describe('useEntryManager', () => {
   ]
 
   const mockCollectionSummary = {
-    id: 'posts',
+    path: 'posts',
+    contentId: 'def456UVW012',
     name: 'posts',
     label: 'Posts',
     type: 'collection' as const,
     format: 'mdx' as const,
-    path: '/content/posts',
     schema: [],
   }
 
@@ -91,7 +92,7 @@ describe('useEntryManager', () => {
     const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     expect(result.current.entries).toEqual([mockEntry])
-    expect(result.current.selectedId).toBe('entry1')
+    expect(result.current.selectedPath).toBe('entry1')
     expect(result.current.currentEntry).toEqual(mockEntry)
   })
 
@@ -101,7 +102,7 @@ describe('useEntryManager', () => {
       { wrapper }
     )
 
-    expect(result.current.selectedId).toBe('entry1')
+    expect(result.current.selectedPath).toBe('entry1')
   })
 
   it('builds collectionById map correctly', () => {
@@ -208,7 +209,7 @@ describe('useEntryManager', () => {
   })
 
   it('selects newly created entry after refresh', async () => {
-    const newEntry = { ...mockCollectionItem, id: 'new-entry', slug: 'new', path: '/content/posts/new' }
+    const newEntry = { ...mockCollectionItem, path: 'new-entry', slug: 'new', physicalPath: '/content/posts/new' }
     // First call is from useEffect on mount, second is from manual call
     mockClient.entries.list
       .mockResolvedValueOnce({
@@ -233,7 +234,7 @@ describe('useEntryManager', () => {
     })
 
     await waitFor(() => {
-      expect(result.current.selectedId).toBe('new-entry')
+      expect(result.current.selectedPath).toBe('new-entry')
     })
   })
 
@@ -254,7 +255,7 @@ describe('useEntryManager', () => {
       data: {
         entries: [
           mockCollectionItem,
-          { ...mockCollectionItem, id: 'new-post', slug: 'new-post', path: '/content/posts/new-post' },
+          { ...mockCollectionItem, path: 'new-post', slug: 'new-post', physicalPath: '/content/posts/new-post' },
         ],
         collections: [mockCollectionSummary],
         pagination: { hasMore: false, limit: 100 },
@@ -294,7 +295,7 @@ describe('useEntryManager', () => {
   it('does not create entry for entry collection', async () => {
     const entryCollections: EditorCollection[] = [
       {
-        id: 'config',
+        path: 'config',
         name: 'config',
         type: 'entry',
         format: 'json',
@@ -326,29 +327,29 @@ describe('useEntryManager', () => {
     expect(result.current.navigatorOpen).toBe(true)
   })
 
-  it('updates selectedId and syncs to URL', () => {
+  it('updates selectedPath and syncs to URL', () => {
     const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     act(() => {
-      result.current.setSelectedId('entry1')
+      result.current.setSelectedPath('entry1')
     })
 
-    expect(result.current.selectedId).toBe('entry1')
+    expect(result.current.selectedPath).toBe('entry1')
     expect(window.history.replaceState).toHaveBeenCalled()
   })
 
-  it('resets selectedId when selected entry is removed', () => {
-    const entries = [mockEntry, { ...mockEntry, id: 'entry2' }]
+  it('resets selectedPath when selected entry is removed', () => {
+    const entries = [mockEntry, { ...mockEntry, path: 'entry2' }]
     const { result, rerender } = renderHook((props) => useEntryManager(props), {
       initialProps: { ...defaultOptions, initialEntries: entries },
       wrapper,
     })
 
     act(() => {
-      result.current.setSelectedId('entry2')
+      result.current.setSelectedPath('entry2')
     })
 
-    expect(result.current.selectedId).toBe('entry2')
+    expect(result.current.selectedPath).toBe('entry2')
 
     act(() => {
       result.current.setEntries([mockEntry])
@@ -357,7 +358,7 @@ describe('useEntryManager', () => {
     rerender({ ...defaultOptions, initialEntries: [mockEntry] })
 
     waitFor(() => {
-      expect(result.current.selectedId).toBe('entry1')
+      expect(result.current.selectedPath).toBe('entry1')
     })
   })
 
@@ -367,7 +368,7 @@ describe('useEntryManager', () => {
     const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     waitFor(() => {
-      expect(result.current.selectedId).toBe('entry1')
+      expect(result.current.selectedPath).toBe('entry1')
     })
   })
 
@@ -377,12 +378,12 @@ describe('useEntryManager', () => {
 
     const entry1: EditorEntry = {
       ...mockEntry,
-      id: 'entry1',
+      path: 'entry1',
       slug: 'entry1',
     }
     const entry2: EditorEntry = {
       ...mockEntry,
-      id: 'entry2',
+      path: 'entry2',
       slug: 'entry2',
     }
 
@@ -396,7 +397,7 @@ describe('useEntryManager', () => {
     )
 
     // Initially no selection since no entries
-    expect(result.current.selectedId).toBe('')
+    expect(result.current.selectedPath).toBe('')
 
     // Simulate entries loading asynchronously
     act(() => {
@@ -405,7 +406,7 @@ describe('useEntryManager', () => {
 
     // Should sync from URL and select entry2, not fall back to first entry
     await waitFor(() => {
-      expect(result.current.selectedId).toBe('entry2')
+      expect(result.current.selectedPath).toBe('entry2')
     })
   })
 
@@ -415,12 +416,12 @@ describe('useEntryManager', () => {
 
     const entry1: EditorEntry = {
       ...mockEntry,
-      id: 'entry1',
+      path: 'entry1',
       slug: 'entry1',
     }
     const entry2: EditorEntry = {
       ...mockEntry,
-      id: 'entry2',
+      path: 'entry2',
       slug: 'entry2',
     }
 
@@ -431,7 +432,7 @@ describe('useEntryManager', () => {
 
     // Should fall back to first entry since URL entry doesn't exist
     await waitFor(() => {
-      expect(result.current.selectedId).toBe('entry1')
+      expect(result.current.selectedPath).toBe('entry1')
     })
   })
 
@@ -443,12 +444,12 @@ describe('useEntryManager', () => {
 
     const entry1: EditorEntry = {
       ...mockEntry,
-      id: 'entry1',
+      path: 'entry1',
       slug: 'entry1',
     }
     const entry2: EditorEntry = {
       ...mockEntry,
-      id: 'entry2',
+      path: 'entry2',
       slug: 'entry2',
     }
 
@@ -474,7 +475,7 @@ describe('useEntryManager', () => {
 
     const entry1: EditorEntry = {
       ...mockEntry,
-      id: 'entry1',
+      path: 'entry1',
       slug: 'entry1',
     }
 
@@ -496,7 +497,7 @@ describe('useEntryManager', () => {
 
     // Should preserve selection from URL on initial mount, not clear it
     await waitFor(() => {
-      expect(result.current.selectedId).toBe('entry1')
+      expect(result.current.selectedPath).toBe('entry1')
     })
   })
 })

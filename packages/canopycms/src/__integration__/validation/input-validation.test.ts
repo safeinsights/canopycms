@@ -95,7 +95,7 @@ describe('Input Validation', () => {
       // Try to add comment without text field
       const response = await editorClient.post('/api/canopycms/feature-comments/comments', {
         type: 'field',
-        entryId: 'posts/test',
+        entryPath: 'posts/test',
         canopyPath: 'title',
         // Missing: text
       } as any)
@@ -111,7 +111,7 @@ describe('Input Validation', () => {
       // Try to add comment without type field
       const response = await editorClient.post('/api/canopycms/feature-comments/comments', {
         text: 'This is a test comment',
-        entryId: 'posts/test',
+        entryPath: 'posts/test',
         canopyPath: 'title',
         // Missing: type
       } as any)
@@ -136,7 +136,7 @@ describe('Input Validation', () => {
       const response = await editorClient.post('/api/canopycms/feature-enum-test/comments', {
         text: 'Test comment',
         type: 'invalid-type',
-        entryId: 'posts/test',
+        entryPath: 'posts/test',
       } as any)
 
       expect(response.status).toBe(400)

@@ -85,7 +85,7 @@ describe('Review Workflow Integration', () => {
     const commentResponse = await reviewerClient.post('/api/canopycms/feature-review-test/comments', {
       text: 'Please add more details to the introduction',
       type: 'entry',
-      entryId: 'content/posts/test-post',
+      entryPath: 'content/posts/test-post',
     })
 
     expect(commentResponse.status).toBe(200)

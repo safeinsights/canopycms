@@ -7,7 +7,7 @@ import type { EditorEntry } from '../Editor'
  * to avoid prop drilling through 5+ component levels.
  *
  * Contains:
- * - Core navigation state (branchName, selectedId, currentEntry)
+ * - Core navigation state (branchName, selectedPath, currentEntry)
  * - Global busy state
  * - Comment system state (for FormRenderer, FieldWrapper, CommentsPanel)
  * - User context for permissions
@@ -15,7 +15,7 @@ import type { EditorEntry } from '../Editor'
 export interface EditorContextValue {
   // Core navigation (used by 5+ components)
   branchName: string
-  selectedId: string
+  selectedPath: string
   currentEntry: EditorEntry | undefined
   busy: boolean
 
@@ -37,7 +37,7 @@ export const EditorContext = createContext<EditorContextValue | undefined>(undef
  *
  * @example
  * ```tsx
- * const { branchName, selectedId, currentEntry } = useEditorContext()
+ * const { branchName, selectedPath, currentEntry } = useEditorContext()
  * ```
  */
 export function useEditorContext(): EditorContextValue {

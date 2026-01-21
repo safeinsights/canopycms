@@ -3,7 +3,7 @@ import type { ContentIdIndex, IdLocation } from '../content-id-index'
 import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig } from '../config'
 
 export interface ReferenceInfo {
-  entryId: string
+  entryPath: string
   entryTitle?: string
   collection: string
   slug: string
@@ -94,7 +94,7 @@ export class DeletionChecker {
         if (refs.length > 0) {
           const id = this.idIndex.findByPath(entry.relativePath)
           references.push({
-            entryId: id || '',
+            entryPath: id || '',
             entryTitle: doc.data.title as string | undefined,
             collection: entry.collection,
             slug: entry.slug,

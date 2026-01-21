@@ -32,7 +32,7 @@ const postFields: FieldConfig[] = [
 
 const baseEntries: EditorEntry[] = [
   {
-    id: 'home',
+    path: 'home',
     label: 'Home',
     status: 'page',
     schema: homeFields,
@@ -44,7 +44,7 @@ const baseEntries: EditorEntry[] = [
     type: 'entry',
   },
   {
-    id: 'posts/hello-world',
+    path: 'posts/hello-world',
     label: 'Hello World',
     status: 'draft',
     schema: postFields,
@@ -61,15 +61,15 @@ export const WithCollections: Story = {
   render: () => {
     const [entries, setEntries] = useState<EditorEntry[]>(baseEntries)
     const collections = [
-      { id: 'home', name: 'home', label: 'Home', format: 'json' as const, type: 'entry' as const },
-      { id: 'posts', name: 'posts', label: 'Posts', format: 'json' as const, type: 'collection' as const },
+      { path: 'home', name: 'home', label: 'Home', format: 'json' as const, type: 'entry' as const },
+      { path: 'posts', name: 'posts', label: 'Posts', format: 'json' as const, type: 'collection' as const },
     ]
 
     const handleCreateEntry = (collectionId: string) => {
       const slug = window.prompt(`New ${collectionId} slug?`, 'new-post')
       if (!slug) return
       const newEntry: EditorEntry = {
-        id: `${collectionId}/${slug}`,
+        path: `${collectionId}/${slug}`,
         label: slug,
         status: 'draft',
         schema: collectionId === 'home' ? homeFields : postFields,
@@ -93,7 +93,7 @@ export const WithCollections: Story = {
           branchName="story/branch"
           collections={collections}
           configSchema={{ collections: [] }}
-          initialSelectedId={entries[0]?.id}
+          initialSelectedId={entries[0]?.path}
           onCreateEntry={handleCreateEntry}
           operatingMode="dev"
         />

@@ -40,7 +40,7 @@ describe('InlineCommentThread', () => {
   const mockThread: CommentThread = {
     id: 'thread-1',
     type: 'field',
-    entryId: 'posts/hello',
+    entryPath: 'posts/hello',
     canopyPath: 'title',
     authorId: 'alice',
     createdAt: new Date('2024-01-01T10:00:00Z').toISOString(),

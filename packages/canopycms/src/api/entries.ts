@@ -10,17 +10,17 @@ import { ContentStoreError } from '../content-store'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
-import { resolveCollectionPath } from '../content-id-index'
+import { resolveCollectionPath, extractIdFromFilename } from '../content-id-index'
 import { validateAndNormalizePath, normalizeFilesystemPath } from '../paths'
 import { isNotFoundError } from '../utils/error'
 
 type CollectionKind = 'collection' | 'entry'
 
 export interface EntryCollectionSummary {
-  id: string
+  path: string // Logical path (no IDs, no extensions)
+  contentId: string // 12-char content ID
   name: string
   label?: string
-  path: string
   format: ContentFormat
   type: CollectionKind
   schema: readonly FieldConfig[]
@@ -29,13 +29,14 @@ export interface EntryCollectionSummary {
 }
 
 export interface CollectionItem {
-  id: string
+  path: string // Logical path (no IDs, no extensions)
+  contentId: string // 12-char content ID
   slug: string
   collectionId: string
   collectionName: string
   format: ContentFormat
   entryType: string // The entry type name (from typed entries)
-  path: string
+  physicalPath: string // Physical path for access control (with IDs, used internally)
   title?: string
   updatedAt?: string
   exists?: boolean
@@ -196,7 +197,13 @@ const listCollectionEntries = async (
       const parsed = parseTypedFilename(file.name, entryTypes)
       if (!parsed) return null
 
-      const { type: entryTypeName, slug } = parsed
+      const { type: entryTypeName, slug, id: contentId } = parsed
+
+      // contentId must be present (all entries have IDs in filenames)
+      if (!contentId) {
+        console.warn(`Entry missing contentId in filename: ${file.name}`)
+        return null
+      }
 
       // Determine the entry type and format
       let entryType: EntryTypeConfig | undefined
@@ -212,13 +219,14 @@ const listCollectionEntries = async (
       ])
 
       const item: CollectionItem = {
-        id: `${collection.fullPath}/${slug}`,
+        path: `${collection.fullPath}/${slug}`, // Logical path (no IDs/extensions)
+        contentId, // 12-char content ID extracted from filename
         slug,
         collectionId: collection.fullPath,
         collectionName: collection.name,
         format,
         entryType: entryTypeName || 'default',
-        path: relativePath,
+        physicalPath: relativePath, // Physical path for access control
         title: title ?? entryType?.label, // Fall back to entry type label if no title in content
         updatedAt: stats.mtime.toISOString(),
         exists: true,
@@ -262,10 +270,11 @@ const normalizeCollectionId = (value: string): string => normalizeFilesystemPath
  * Build collection summaries from flat schema items.
  * Only includes collections - entry types are schema metadata and not included as summaries.
  */
-const buildCollectionSummaries = (
+const buildCollectionSummaries = async (
+  root: string,
   flatCollections: FlatSchemaItem[],
   targetId?: string
-): EntryCollectionSummary[] => {
+): Promise<EntryCollectionSummary[]> => {
   // Filter to target collection and its descendants if targetId is provided
   const filtered = targetId
     ? flatCollections.filter(item =>
@@ -274,23 +283,41 @@ const buildCollectionSummaries = (
     : flatCollections
 
   // Filter to collections only and convert to summaries
-  return filtered
-    .filter(item => item.type === 'collection')
-    .map(item => {
+  const collectionItems = filtered.filter(item => item.type === 'collection')
+
+  const summaries = await Promise.all(
+    collectionItems.map(async (item) => {
       // Get default entry type for the collection summary
       const entryTypes = item.entries as readonly EntryTypeConfig[] | undefined
       const defaultEntry = getDefaultEntryType(entryTypes)
+
+      // Resolve the physical path to extract contentId from directory name
+      const physicalPath = await resolveCollectionPath(root, item.fullPath)
+      let contentId = 'unknown' // Fallback if collection doesn't exist yet
+
+      if (physicalPath) {
+        // Extract the last segment (directory name) and get ID from it
+        const dirName = path.basename(physicalPath)
+        const extractedId = extractIdFromFilename(dirName)
+        if (extractedId) {
+          contentId = extractedId
+        }
+      }
+
       return {
-        id: item.fullPath,
+        path: item.fullPath, // Logical path
+        contentId, // 12-char content ID from directory name
         name: item.name,
         label: item.label,
-        path: item.fullPath,
         format: defaultEntry?.format || 'json',
         type: 'collection' as const,
         schema: defaultEntry?.fields || [],
         parentId: item.parentPath,
       }
     })
+  )
+
+  return summaries
 }
 
 export const listEntriesHandler = async (
@@ -335,10 +362,10 @@ export const listEntriesHandler = async (
       const items = await listCollectionEntriesRecursive(root, targetId, flatCollections)
       items.sort((a, b) => a.slug.localeCompare(b.slug))
       for (const item of items) {
-        // Use the path already included in the item
-        const readAccess = await ctx.services.checkContentAccess(context, root, item.path, req.user, 'read')
+        // Use the physicalPath for access control
+        const readAccess = await ctx.services.checkContentAccess(context, root, item.physicalPath, req.user, 'read')
         if (!readAccess.allowed) continue
-        const editAccess = await ctx.services.checkContentAccess(context, root, item.path, req.user, 'edit')
+        const editAccess = await ctx.services.checkContentAccess(context, root, item.physicalPath, req.user, 'edit')
         if (search) {
           const haystack = `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
           if (!haystack.includes(search)) {
@@ -363,10 +390,10 @@ export const listEntriesHandler = async (
         const items = await listCollectionEntries(root, item)
         items.sort((a, b) => a.slug.localeCompare(b.slug))
         for (const entry of items) {
-          // Use the path already included in the item
-          const readAccess = await ctx.services.checkContentAccess(context, root, entry.path, req.user, 'read')
+          // Use the physicalPath for access control
+          const readAccess = await ctx.services.checkContentAccess(context, root, entry.physicalPath, req.user, 'read')
           if (!readAccess.allowed) continue
-          const editAccess = await ctx.services.checkContentAccess(context, root, entry.path, req.user, 'edit')
+          const editAccess = await ctx.services.checkContentAccess(context, root, entry.physicalPath, req.user, 'edit')
           if (search) {
             const haystack = `${entry.slug} ${entry.title ?? ''} ${entry.collectionName ?? ''}`.toLowerCase()
             if (!haystack.includes(search)) {
@@ -387,7 +414,7 @@ export const listEntriesHandler = async (
   const paged = entries.slice(offset, offset + limit)
   const nextCursor = offset + limit < entries.length ? String(offset + limit) : undefined
 
-  const collections = buildCollectionSummaries(flatCollections, targetId)
+  const collections = await buildCollectionSummaries(root, flatCollections, targetId)
 
   return {
     ok: true,

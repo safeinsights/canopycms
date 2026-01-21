@@ -52,12 +52,12 @@ export interface FormRendererProps {
   branch?: string  // Current branch for loading reference options
   // Comment integration
   comments?: CommentThread[]
-  currentEntryId?: string
+  currentEntryPath?: string
   currentUserId?: string
   canResolve?: boolean
   focusedFieldPath?: string
   highlightThreadId?: string
-  onAddComment?: (text: string, type: 'field' | 'entry' | 'branch', entryId?: string, canopyPath?: string, threadId?: string) => Promise<void>
+  onAddComment?: (text: string, type: 'field' | 'entry' | 'branch', entryPath?: string, canopyPath?: string, threadId?: string) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
   // Reference resolution for live preview
   onResolvedValueChange?: (resolved: FormValue) => void
@@ -71,7 +71,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   customRenderers,
   branch = 'main',
   comments = [],
-  currentEntryId,
+  currentEntryPath,
   currentUserId,
   canResolve = false,
   focusedFieldPath,
@@ -96,11 +96,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       const canopyPath = normalizeCanopyPath(path)
 
       // Filter comments for this specific field
-      const fieldThreads = currentEntryId && onAddComment
+      const fieldThreads = currentEntryPath && onAddComment
         ? comments.filter(
             (thread) =>
               thread.type === 'field' &&
-              thread.entryId === currentEntryId &&
+              thread.entryPath === currentEntryPath &&
               thread.canopyPath === canopyPath
           )
         : []
@@ -120,12 +120,12 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         )
 
         // Wrap custom fields with FieldWrapper if comments enabled
-        if (currentEntryId && currentUserId && onAddComment && onResolveThread) {
+        if (currentEntryPath && currentUserId && onAddComment && onResolveThread) {
           return (
             <FieldWrapper
               key={fieldKey(path)}
               canopyPath={canopyPath}
-              entryId={currentEntryId}
+              entryPath={currentEntryPath}
               threads={fieldThreads}
               autoFocus={focusedFieldPath === canopyPath}
               currentUserId={currentUserId}
@@ -146,11 +146,11 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
 
       // Helper to wrap field with FieldWrapper if comments enabled
       const wrapWithComments = (renderedField: React.ReactNode) => {
-        if (currentEntryId && currentUserId && onAddComment && onResolveThread) {
+        if (currentEntryPath && currentUserId && onAddComment && onResolveThread) {
           return (
             <FieldWrapper
               canopyPath={canopyPath}
-              entryId={currentEntryId}
+              entryPath={currentEntryPath}
               threads={fieldThreads}
               autoFocus={focusedFieldPath === canopyPath}
               currentUserId={currentUserId}
@@ -361,16 +361,16 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           )
       }
     },
-    [customRenderers, branch, comments, currentEntryId, currentUserId, canResolve, focusedFieldPath, highlightThreadId, onAddComment, onResolveThread]
+    [customRenderers, branch, comments, currentEntryPath, currentUserId, canResolve, focusedFieldPath, highlightThreadId, onAddComment, onResolveThread]
   )
 
   return (
     <Stack gap="md" data-form-renderer>
       {/* Entry-level comments at top of form */}
-      {currentEntryId && currentUserId && onAddComment && onResolveThread && (
+      {currentEntryPath && currentUserId && onAddComment && onResolveThread && (
         <EntryComments
           comments={comments}
-          entryId={currentEntryId}
+          entryPath={currentEntryPath}
           currentUserId={currentUserId}
           canResolve={canResolve}
           onAddComment={onAddComment}

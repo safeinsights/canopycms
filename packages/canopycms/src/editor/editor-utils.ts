@@ -118,22 +118,23 @@ export function convertApiCollectionsToEditorCollections(
   apiCollections: EntryCollectionSummary[]
 ): EditorCollection[] {
   // Build a lookup map for quick access
-  const byId = new Map<string, EntryCollectionSummary>()
-  apiCollections.forEach(col => byId.set(col.id, col))
+  const byPath = new Map<string, EntryCollectionSummary>()
+  apiCollections.forEach(col => byPath.set(col.path, col))
 
   // Find root collections (no parent or parent not in list)
   const roots = apiCollections.filter(col =>
-    !col.parentId || !byId.has(col.parentId)
+    !col.parentId || !byPath.has(col.parentId)
   )
 
   // Recursively build tree
   const buildTree = (col: EntryCollectionSummary): EditorCollection => {
     const children = apiCollections
-      .filter(c => c.parentId === col.id)
+      .filter(c => c.parentId === col.path)
       .map(c => buildTree(c))
 
     return {
-      id: col.id,
+      path: col.path, // Logical path
+      contentId: col.contentId, // 12-char content ID
       name: col.name,
       label: col.label,
       format: col.format,
@@ -167,7 +168,7 @@ export const buildEntriesFromListResponse = ({
   const schemaByCollection = new Map<string, readonly FieldConfig[]>()
   const collectSchemas = (nodes: ListEntriesResponse['collections']) => {
     nodes.forEach((node) => {
-      schemaByCollection.set(node.id, node.schema)
+      schemaByCollection.set(node.path, node.schema)
       if (node.children) collectSchemas(node.children)
     })
   }
@@ -175,7 +176,7 @@ export const buildEntriesFromListResponse = ({
   return response.entries.map((entry) => {
     const schema =
       schemaByCollection.get(entry.collectionId) ??
-      schemaByCollection.get(entry.id) ?? // For root entries, check by entry ID (entry-type fullPath)
+      schemaByCollection.get(entry.path) ?? // For root entries, check by entry path (entry-type logical path)
       existingEntries.find((e) => e.collectionId === entry.collectionId)?.schema ??
       currentEntry?.schema ??
       initialEntries.find((e) => e.collectionId === entry.collectionId)?.schema ??
@@ -188,7 +189,8 @@ export const buildEntriesFromListResponse = ({
       : `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionId)}/${encodeURIComponent(entry.slug)}`
 
     return {
-      id: entry.id,
+      path: entry.path, // Logical path
+      contentId: entry.contentId, // 12-char content ID
       label: entry.title || entry.slug || entry.collectionName || entry.collectionId,
       status: entry.exists === false ? 'missing' : entry.entryType ?? 'entry',
       schema,
@@ -217,7 +219,7 @@ export const buildCollectionLabels = (collections?: EditorCollection[]): Map<str
 
   const walk = (nodes: EditorCollection[]) => {
     for (const c of nodes) {
-      map.set(c.id, c.label ?? c.name)
+      map.set(c.path, c.label ?? c.name)
       if (c.children) {
         walk(c.children)
       }
@@ -281,7 +283,7 @@ export const buildBreadcrumbSegments = (
  * Calculates which collection nodes need to be expanded to show the path to a specific entry.
  * Recursively walks the tree to find the target entry and marks all ancestor collections as expanded.
  *
- * @param entryId - The entry ID to find (e.g., "blog/my-post")
+ * @param entryPath - The entry path to find (e.g., "blog/my-post")
  * @param treeData - The tree data structure from Mantine Tree
  * @returns Record<string, boolean> - Expanded state object where keys are collection node values
  *
@@ -304,10 +306,10 @@ export const buildBreadcrumbSegments = (
  * ```
  */
 export const calculatePathToEntry = (
-  entryId: string | undefined,
+  entryPath: string | undefined,
   treeData: TreeNodeData[]
 ): Record<string, boolean> => {
-  if (!entryId) return {}
+  if (!entryPath) return {}
 
   const pathToExpand: Record<string, boolean> = {}
 
@@ -320,7 +322,7 @@ export const calculatePathToEntry = (
   const findAndMarkPath = (nodes: TreeNodeData[], ancestors: string[]): boolean => {
     for (const node of nodes) {
       // Found the target entry
-      if (node.value === entryId) {
+      if (node.value === entryPath) {
         // Mark all ancestors as expanded
         for (const ancestor of ancestors) {
           pathToExpand[ancestor] = true

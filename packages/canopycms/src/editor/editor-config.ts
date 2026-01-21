@@ -46,7 +46,7 @@ export const buildEditorCollections = (flatSchema: FlatSchemaItem[]): EditorColl
         // Collections are always navigable
         const defaultEntry = item.entries?.find(e => e.default) || item.entries?.[0]
         results.push({
-          id: item.fullPath,
+          path: item.fullPath,
           name: item.name,
           label: item.label,
           format: defaultEntry?.format || 'json',

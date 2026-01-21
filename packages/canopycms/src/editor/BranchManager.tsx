@@ -104,7 +104,7 @@ export interface BranchManagerProps {
   comments?: CommentThread[]
   currentUserId?: string
   canResolve?: boolean
-  onAddComment?: (text: string, type: 'field' | 'entry' | 'branch', entryId?: string, canopyPath?: string, threadId?: string) => Promise<void>
+  onAddComment?: (text: string, type: 'field' | 'entry' | 'branch', entryPath?: string, canopyPath?: string, threadId?: string) => Promise<void>
   onResolveThread?: (threadId: string) => Promise<void>
   highlightThreadId?: string
   /** Optional function to fetch user metadata for displaying user badges */

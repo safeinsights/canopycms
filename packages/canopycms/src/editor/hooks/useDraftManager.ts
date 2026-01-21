@@ -6,7 +6,7 @@ import { getNotificationDuration } from '../utils/env'
 
 export interface UseDraftManagerOptions {
   branchName: string
-  selectedId: string
+  selectedPath: string
   currentEntry: EditorEntry | undefined
   entries: EditorEntry[]
   initialValues?: Record<string, FormValue>
@@ -24,12 +24,12 @@ export interface UseDraftManagerReturn {
   loadedValue: FormValue | undefined
   effectiveValue: FormValue | undefined
   modifiedCount: number
-  editedFiles: Array<{ id: string; label: string }>
+  editedFiles: Array<{ path: string; label: string }>
   handleSave: () => Promise<void>
   handleDiscardDrafts: () => void
   handleDiscardFileDraft: () => void
   handleReload: () => Promise<void>
-  isDirtyForEntry: (entryId: string) => boolean
+  isDirtyForEntry: (entryPath: string) => boolean
   isSelectedDirty: () => boolean
 }
 
@@ -53,7 +53,7 @@ export interface UseDraftManagerReturn {
  *   handleDiscardDrafts
  * } = useDraftManager({
  *   branchName,
- *   selectedId,
+ *   selectedPath,
  *   currentEntry,
  *   entries,
  *   loadEntry,
@@ -71,21 +71,21 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     [options.branchName]
   )
 
-  const selectedValue = drafts[options.selectedId]
-  const loadedValue = loadedValues[options.selectedId]
+  const selectedValue = drafts[options.selectedPath]
+  const loadedValue = loadedValues[options.selectedPath]
   const effectiveValue = selectedValue ?? loadedValue
 
   const modifiedCount = useMemo(() => Object.keys(drafts).length, [drafts])
 
   const editedFiles = useMemo(() => {
-    const draftIds = Object.keys(drafts)
-    if (draftIds.length === 0) return []
-    return draftIds
-      .map((id) => {
-        const entry = options.entries.find((e) => e.id === id)
-        return entry ? { id: entry.id, label: entry.label } : null
+    const draftPaths = Object.keys(drafts)
+    if (draftPaths.length === 0) return []
+    return draftPaths
+      .map((path) => {
+        const entry = options.entries.find((e) => e.path === path)
+        return entry ? { path: entry.path, label: entry.label } : null
       })
-      .filter((x): x is { id: string; label: string } => x !== null)
+      .filter((x): x is { path: string; label: string } => x !== null)
   }, [drafts, options.entries])
 
   // Clear drafts when branch changes (before localStorage restore)
@@ -127,8 +127,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     options.setBusy(true)
     try {
       const saved = await options.saveEntry(options.currentEntry, effectiveValue)
-      setDrafts((prev) => ({ ...prev, [options.selectedId]: saved }))
-      setLoadedValues((prev) => ({ ...prev, [options.selectedId]: saved }))
+      setDrafts((prev) => ({ ...prev, [options.selectedPath]: saved }))
+      setLoadedValues((prev) => ({ ...prev, [options.selectedPath]: saved }))
       notifications.show({
         message: 'Saved',
         color: 'green',
@@ -166,10 +166,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   const handleDiscardFileDraft = () => {
-    if (!options.selectedId) return
+    if (!options.selectedPath) return
     setDrafts((prev) => {
       const next = { ...prev }
-      delete next[options.selectedId]
+      delete next[options.selectedPath]
       return next
     })
     try {
@@ -177,7 +177,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         const raw = window.localStorage.getItem(storageKey)
         if (raw) {
           const parsed = JSON.parse(raw) as Record<string, FormValue>
-          delete parsed[options.selectedId]
+          delete parsed[options.selectedPath]
           window.localStorage.setItem(storageKey, JSON.stringify(parsed))
         }
       }
@@ -197,8 +197,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     options.setBusy(true)
     try {
       const loaded = await options.loadEntry(options.currentEntry)
-      setLoadedValues((prev) => ({ ...prev, [options.selectedId]: loaded }))
-      setDrafts((prev) => ({ ...prev, [options.selectedId]: loaded }))
+      setLoadedValues((prev) => ({ ...prev, [options.selectedPath]: loaded }))
+      setDrafts((prev) => ({ ...prev, [options.selectedPath]: loaded }))
       notifications.show({
         message: 'Reloaded',
         color: 'blue',
@@ -219,18 +219,18 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   // Compute dirty state for a given entry
-  const isDirtyForEntry = (entryId: string): boolean => {
-    if (!drafts[entryId]) return false
+  const isDirtyForEntry = (entryPath: string): boolean => {
+    if (!drafts[entryPath]) return false
     return (
-      !loadedValues[entryId] ||
-      JSON.stringify(drafts[entryId]) !== JSON.stringify(loadedValues[entryId])
+      !loadedValues[entryPath] ||
+      JSON.stringify(drafts[entryPath]) !== JSON.stringify(loadedValues[entryPath])
     )
   }
 
   // Convenience helper for checking current selection
   const isSelectedDirty = (): boolean => {
-    if (!options.selectedId) return false
-    return isDirtyForEntry(options.selectedId)
+    if (!options.selectedPath) return false
+    return isDirtyForEntry(options.selectedPath)
   }
 
   return {

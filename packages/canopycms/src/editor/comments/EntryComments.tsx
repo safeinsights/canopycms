@@ -8,14 +8,14 @@ import { ThreadCarousel } from './ThreadCarousel'
 export interface EntryCommentsProps {
   /** All comments (will be filtered for entry-level) */
   comments: CommentThread[]
-  /** Current entry ID */
-  entryId: string
+  /** Current entry path */
+  entryPath: string
   /** Current user ID */
   currentUserId: string
   /** Whether user can resolve threads */
   canResolve: boolean
   /** Handler to add a comment */
-  onAddComment: (text: string, type: 'field' | 'entry' | 'branch', entryId?: string, canopyPath?: string, threadId?: string) => Promise<void>
+  onAddComment: (text: string, type: 'field' | 'entry' | 'branch', entryPath?: string, canopyPath?: string, threadId?: string) => Promise<void>
   /** Handler to resolve a thread */
   onResolveThread: (threadId: string) => Promise<void>
   /** Auto-focus and expand */
@@ -30,7 +30,7 @@ export interface EntryCommentsProps {
  */
 export const EntryComments: React.FC<EntryCommentsProps> = ({
   comments,
-  entryId,
+  entryPath,
   currentUserId,
   canResolve,
   onAddComment,
@@ -42,8 +42,8 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
 
   // Filter for entry-level threads
   const entryThreads = useMemo(
-    () => comments.filter((t) => t.type === 'entry' && t.entryId === entryId),
-    [comments, entryId]
+    () => comments.filter((t) => t.type === 'entry' && t.entryPath === entryPath),
+    [comments, entryPath]
   )
 
   // Show carousel if threads exist or if auto-focused
@@ -51,7 +51,7 @@ export const EntryComments: React.FC<EntryCommentsProps> = ({
 
   // Wrapper to add entry context to comment handler
   const handleAddComment = async (text: string, threadId?: string) => {
-    await onAddComment(text, 'entry', entryId, undefined, threadId)
+    await onAddComment(text, 'entry', entryPath, undefined, threadId)
   }
 
   // Show "New file comment" button when no threads

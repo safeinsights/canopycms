@@ -54,7 +54,7 @@ export interface EditorHeaderProps {
   /**
    * List of edited files.
    */
-  editedFiles: Array<{ id: string; label: string }>
+  editedFiles: Array<{ path: string; label: string }>
 
   /**
    * Number of modified files.
@@ -296,9 +296,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   ) : (
                     editedFiles.slice(0, 3).map((file) => (
                       <Menu.Item
-                        key={file.id}
+                        key={file.path}
                         onClick={() => {
-                          onEntrySelect(file.id)
+                          onEntrySelect(file.path)
                           onNavigatorOpen()
                         }}
                       >
@@ -354,9 +354,9 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   ) : (
                     editedFiles.map((file) => (
                       <Menu.Item
-                        key={`branch-mod-${file.id}`}
+                        key={`branch-mod-${file.path}`}
                         onClick={() => {
-                          onEntrySelect(file.id)
+                          onEntrySelect(file.path)
                           onNavigatorOpen()
                         }}
                       >

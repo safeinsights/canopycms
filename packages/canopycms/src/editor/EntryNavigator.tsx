@@ -24,14 +24,14 @@ import { calculatePathToEntry } from './editor-utils'
 type TreeController = ReturnType<typeof useTree>
 
 export interface EntryNavItem {
-  id: string
+  path: string
   label: string
   status?: string
   collectionId?: string
 }
 
 export interface EntryNavCollection {
-  id: string
+  path: string
   label: string
   type: 'collection' | 'entry'
   entries?: EntryNavItem[]
@@ -42,7 +42,7 @@ export interface EntryNavCollection {
 export interface EntryNavigatorProps {
   items?: EntryNavItem[]
   collections?: EntryNavCollection[]
-  selectedId?: string
+  selectedPath?: string
   onSelect: (id: string) => void
   onTreeControllerReady?: (controller: TreeController) => void
   expandedStateRef?: React.MutableRefObject<Record<string, boolean>>
@@ -52,7 +52,7 @@ export interface EntryNavigatorProps {
 export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   items,
   collections,
-  selectedId,
+  selectedPath,
   onSelect,
   onTreeControllerReady,
   expandedStateRef,
@@ -70,7 +70,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         if (col.type === 'entry') {
           const entry = col.entries?.[0]
           return {
-            value: entry?.id ?? `collection:${col.id}`,
+            value: entry?.path ?? `collection:${col.path}`,
             label: entry?.label ?? col.label,
             nodeProps: { status: entry?.status, isEntry: true },
             children: [],
@@ -78,7 +78,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         }
         const entryNodes =
           col.entries?.map((entry) => ({
-            value: entry.id,
+            value: entry.path,
             label: entry.label,
             nodeProps: { status: entry.status, isEntry: true },
           })) ?? []
@@ -88,7 +88,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         // Collections should always have children array (even if empty) to show chevron
         // This matches standard file tree UI behavior where folders always show expand/collapse
         return {
-          value: `collection:${col.id}`,
+          value: `collection:${col.path}`,
           label: col.label,
           nodeProps: { isCollection: true, type: col.type, onAdd: col.onAdd },
           children: allChildren,
@@ -99,7 +99,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
 
     const flatItems = items ?? []
     return flatItems.map((item) => ({
-      value: item.id,
+      value: item.path,
       label: item.label,
       nodeProps: { status: item.status, isEntry: true },
     }))
@@ -142,14 +142,14 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Restore state on mount and when selectedId changes
+  // Restore state on mount and when selectedPath changes
   useEffect(() => {
-    if (!selectedId || !treeData) return
+    if (!selectedPath || !treeData) return
 
     const savedState = expandedStateRef?.current ?? {}
 
     // Calculate path to current entry and merge with saved state
-    const pathToEntry = calculatePathToEntry(selectedId, treeData)
+    const pathToEntry = calculatePathToEntry(selectedPath, treeData)
     const baseState = { ...savedState, ...pathToEntry }
 
     // Only update if state actually changed to avoid infinite loops
@@ -163,11 +163,11 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     }
     // Dependencies limited to data changes only to prevent infinite update loops
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, treeData])
+  }, [selectedPath, treeData])
 
   // Auto-scroll to selected entry when drawer opens
   useEffect(() => {
-    if (selectedId && selectedNodeRef.current && !hasScrolledRef.current) {
+    if (selectedPath && selectedNodeRef.current && !hasScrolledRef.current) {
       // Small delay to ensure tree expansion completes first
       const timeoutId = setTimeout(() => {
         selectedNodeRef.current?.scrollIntoView({
@@ -180,7 +180,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
 
       return () => clearTimeout(timeoutId)
     }
-  }, [selectedId, tree.expandedState])
+  }, [selectedPath, tree.expandedState])
 
   // Reset scroll flag when component mounts (drawer opens)
   useEffect(() => {
@@ -209,7 +209,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const onAdd = node.nodeProps?.onAdd as (() => void) | undefined
     const isCollection = node.nodeProps?.isCollection as boolean | undefined
     const isLeaf = !hasChildren || node.nodeProps?.isEntry
-    const selected = node.value === selectedId
+    const selected = node.value === selectedPath
 
     // For collections, always show chevron (even if empty) to match standard tree UI
     // Mantine only provides hasChildren=true if children.length > 0, but we want

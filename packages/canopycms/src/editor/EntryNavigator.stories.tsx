@@ -11,22 +11,22 @@ export default meta
 type Story = StoryObj<typeof EntryNavigator>
 
 const posts = [
-  { id: 'posts/hello-world', label: 'Hello World', collection: 'posts' },
-  { id: 'posts/mermaid-demo', label: 'Mermaid Demo', collection: 'posts' },
+  { path: 'posts/hello-world', label: 'Hello World', collection: 'posts' },
+  { path: 'posts/mermaid-demo', label: 'Mermaid Demo', collection: 'posts' },
 ]
 
-const entries = [{ id: 'home', label: 'Home', collection: 'home' }]
+const entries = [{ path: 'home', label: 'Home', collection: 'home' }]
 
 export const Grouped: Story = {
   render: () => (
     <div className="w-80">
       <EntryNavigator
-        selectedId="posts/hello-world"
+        selectedPath="posts/hello-world"
         onSelect={(id) => alert(`Select ${id}`)}
         collections={[
-          { id: 'home', label: 'Home', type: 'entry', entries: entries },
+          { path: 'home', label: 'Home', type: 'entry', entries: entries },
           {
-            id: 'posts',
+            path: 'posts',
             label: 'Posts',
             type: 'collection',
             entries: posts,
@@ -43,7 +43,7 @@ export const FlatList: Story = {
     <div className="w-80">
       <EntryNavigator
         items={[...entries, ...posts]}
-        selectedId="home"
+        selectedPath="home"
         onSelect={(id) => alert(`Select ${id}`)}
       />
     </div>

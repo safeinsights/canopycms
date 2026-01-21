@@ -68,7 +68,7 @@ const okJson = (data: unknown, status = 200) =>
 describe('Editor integration', () => {
   it('loads an entry and persists changes via the content API', async () => {
     const entry: EditorEntry = {
-      id: 'posts/hello',
+      path: 'posts/hello',
       label: 'Hello',
       status: 'entry',
       schema: [{ name: 'title', type: 'string' }],
@@ -91,7 +91,8 @@ describe('Editor integration', () => {
             data: {
               collections: [
                 {
-                  id: 'posts',
+                  path: 'posts',
+                  contentId: 'abc123XYZ789',
                   name: 'posts',
                   type: 'collection',
                   format: 'json',
@@ -100,12 +101,14 @@ describe('Editor integration', () => {
               ],
               entries: [
                 {
-                  id: entry.id,
+                  path: entry.path,
+                  contentId: 'abc123XYZ789',
                   collectionId: entry.collectionId,
                   collectionName: entry.collectionName,
                   slug: entry.slug,
                   format: entry.format,
-                  type: entry.type,
+                  entryType: 'post',
+                  physicalPath: '/content/posts/hello',
                   exists: true,
                 },
               ],
