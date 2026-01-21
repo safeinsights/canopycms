@@ -511,19 +511,13 @@ export class ContentStore {
     const normalized = normalizeFilesystemPath(collectionPath)
     let item = this.schemaIndex.get(normalized)
 
-    // If not found, try all possible variations:
-    // 1. Try with each schema item's parent path prepended
+    // If not found by full path, try matching the last segment
+    // (handles cases where caller passes "posts" instead of "content/posts")
     if (!item) {
       for (const schemaItem of this.schemaIndex.values()) {
         if (schemaItem.type === 'collection') {
-          // Check if the collection path matches the last segment
           const lastSegment = schemaItem.fullPath.split('/').pop()
           if (lastSegment === collectionPath) {
-            item = schemaItem
-            break
-          }
-          // Or if it matches the full path
-          if (schemaItem.fullPath === collectionPath) {
             item = schemaItem
             break
           }
@@ -538,16 +532,15 @@ export class ContentStore {
 
     const collection = item
 
-    // Get all locations from the ID index
-    const allLocations = idIndex.getAllLocations()
+    // Get entries directly from collection index (O(1) + O(m))
+    const baseEntries = idIndex.getEntriesInCollection(collection.fullPath)
 
-    // Match entries by collection full path
+    // Filter and map to required format
     const entries: Array<{ relativePath: string; collection: string; slug: string }> = []
 
-    for (const location of allLocations) {
+    for (const location of baseEntries) {
       if (location.type === 'entry' && location.slug) {
-        // Check if this entry is in the target collection
-        // location.collection should match collection.fullPath
+        // Include entries in this collection or subcollections
         if (
           location.collection === collection.fullPath ||
           location.collection?.startsWith(collection.fullPath + '/')

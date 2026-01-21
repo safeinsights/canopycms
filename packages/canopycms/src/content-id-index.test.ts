@@ -278,6 +278,161 @@ describe('ContentIdIndex', () => {
       )
     })
   })
+
+  describe('getEntriesInCollection', () => {
+    it('returns empty array for non-existent collection', async () => {
+      await index.buildFromFilenames('content')
+
+      const entries = index.getEntriesInCollection('content/nonexistent')
+      expect(entries).toEqual([])
+    })
+
+    it('returns empty array for empty collection', async () => {
+      await fs.mkdir(path.join(tempDir, 'content/empty'), { recursive: true })
+      await index.buildFromFilenames('content')
+
+      const entries = index.getEntriesInCollection('content/empty')
+      expect(entries).toEqual([])
+    })
+
+    it('returns all entries in a collection', async () => {
+      // Create collection with entries
+      await fs.mkdir(path.join(tempDir, 'content/posts'), { recursive: true })
+
+      const post1Id = 'p1s2t3a4b5c6'
+      const post2Id = 'x7y8z9abB1c2'
+      await fs.writeFile(path.join(tempDir, `content/posts/post.hello.${post1Id}.json`), '{}')
+      await fs.writeFile(path.join(tempDir, `content/posts/post.world.${post2Id}.json`), '{}')
+
+      await index.buildFromFilenames('content')
+
+      const entries = index.getEntriesInCollection('content/posts')
+      expect(entries).toHaveLength(2)
+      expect(entries.map((e) => e.id).sort()).toEqual([post1Id, post2Id].sort())
+      expect(entries.every((e) => e.collection === 'content/posts')).toBe(true)
+    })
+
+    it('does not include collection directories in results', async () => {
+      // Create nested collection structure
+      const collectionId = 'c1L2L3e4c5t6'
+      await fs.mkdir(path.join(tempDir, `content/posts.${collectionId}`), { recursive: true })
+
+      const entryId = 'p1s2t3a4b5c6'
+      await fs.writeFile(
+        path.join(tempDir, `content/posts.${collectionId}/post.hello.${entryId}.json`),
+        '{}',
+      )
+
+      await index.buildFromFilenames('content')
+
+      const entries = index.getEntriesInCollection(`content/posts.${collectionId}`)
+      expect(entries).toHaveLength(1)
+      expect(entries[0].type).toBe('entry')
+      expect(entries[0].id).toBe(entryId)
+    })
+
+    it('maintains index consistency after add', () => {
+      const entryId = 'n1e2w3f4i5j6'
+
+      index.add({
+        type: 'entry',
+        relativePath: `content/posts/post.new.${entryId}.json`,
+        collection: 'content/posts',
+        slug: 'new',
+      })
+
+      const entries = index.getEntriesInCollection('content/posts')
+      expect(entries).toHaveLength(1)
+      expect(entries[0].id).toBe(entryId)
+    })
+
+    it('maintains index consistency after remove', () => {
+      const entry1Id = 'e1n2t3r4y5a6'
+      const entry2Id = 'e1n2t3r4y5b7'
+
+      index.add({
+        type: 'entry',
+        relativePath: `content/posts/post.first.${entry1Id}.json`,
+        collection: 'content/posts',
+        slug: 'first',
+      })
+      index.add({
+        type: 'entry',
+        relativePath: `content/posts/post.second.${entry2Id}.json`,
+        collection: 'content/posts',
+        slug: 'second',
+      })
+
+      index.remove(entry1Id)
+
+      const entries = index.getEntriesInCollection('content/posts')
+      expect(entries).toHaveLength(1)
+      expect(entries[0].id).toBe(entry2Id)
+    })
+
+    it('cleans up empty collections after remove', () => {
+      const entryId = 'e1n2t3r4y5a6'
+
+      index.add({
+        type: 'entry',
+        relativePath: `content/posts/post.only.${entryId}.json`,
+        collection: 'content/posts',
+        slug: 'only',
+      })
+
+      index.remove(entryId)
+
+      // Should return empty array, not throw
+      const entries = index.getEntriesInCollection('content/posts')
+      expect(entries).toEqual([])
+    })
+
+    it('maintains index consistency after updatePath with collection change', () => {
+      const entryId = 'u1p2d3t4e5x6'
+
+      index.add({
+        type: 'entry',
+        relativePath: `content/posts/post.article.${entryId}.json`,
+        collection: 'content/posts',
+        slug: 'article',
+      })
+
+      // Move to different collection
+      index.updatePath(entryId, `content/pages/page.article.${entryId}.json`)
+
+      // Should be removed from old collection
+      const postsEntries = index.getEntriesInCollection('content/posts')
+      expect(postsEntries).toHaveLength(0)
+
+      // Should appear in new collection
+      const pagesEntries = index.getEntriesInCollection('content/pages')
+      expect(pagesEntries).toHaveLength(1)
+      expect(pagesEntries[0].id).toBe(entryId)
+    })
+
+    it('handles nested collections correctly', async () => {
+      // Create nested structure
+      await fs.mkdir(path.join(tempDir, 'content/docs/api'), { recursive: true })
+
+      const apiEntryId = 'a1p2i3e4n5t6'
+      await fs.writeFile(path.join(tempDir, `content/docs/api/doc.intro.${apiEntryId}.json`), '{}')
+
+      const docsEntryId = 'd1c2s3e4n5t6'
+      await fs.writeFile(path.join(tempDir, `content/docs/doc.guide.${docsEntryId}.json`), '{}')
+
+      await index.buildFromFilenames('content')
+
+      // Parent collection should only have its direct entries
+      const docsEntries = index.getEntriesInCollection('content/docs')
+      expect(docsEntries).toHaveLength(1)
+      expect(docsEntries[0].id).toBe(docsEntryId)
+
+      // Nested collection should have its entries
+      const apiEntries = index.getEntriesInCollection('content/docs/api')
+      expect(apiEntries).toHaveLength(1)
+      expect(apiEntries[0].id).toBe(apiEntryId)
+    })
+  })
 })
 
 describe('extractIdFromFilename', () => {
