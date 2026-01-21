@@ -538,6 +538,27 @@ if (strategy.supportsFeatureX()) {
 }
 ```
 
+### Git Test Repositories
+
+When testing code that involves git operations, use the `initTestRepo()` helper from `src/test-utils`:
+
+```typescript
+import { initTestRepo } from './test-utils'
+
+it('should commit changes', async () => {
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'test-'))
+
+  // Initialize a test repo with CanopyCMS marker
+  const git = await initTestRepo(tmpDir)
+
+  // Now safe to use with GitManager.ensureAuthor()
+  const manager = new GitManager({ repoPath: tmpDir })
+  await manager.ensureAuthor({ name: 'Bot', email: 'bot@test.com' })
+})
+```
+
+**Why this matters:** `GitManager.ensureAuthor()` requires repositories to be marked as CanopyCMS-managed (via `git config canopycms.managed true`). This prevents accidental pollution of non-managed repositories. The `initTestRepo()` helper automatically adds this marker along with test user config.
+
 ### Testing Strategies
 
 ```typescript

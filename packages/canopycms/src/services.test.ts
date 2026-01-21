@@ -440,7 +440,7 @@ describe('commitToSettingsBranch', () => {
       push: pushMock,
       revparse: vi.fn().mockResolvedValue('main'),
       addConfig: vi.fn().mockResolvedValue(undefined),
-      listConfig: vi.fn().mockResolvedValue({ all: { 'user.name': 'Test Bot', 'user.email': 'bot@test.com' } }),
+      listConfig: vi.fn().mockResolvedValue({ all: { 'canopycms.managed': 'true', 'user.name': 'Test Bot', 'user.email': 'bot@test.com' } }),
     }
 
     const { simpleGit } = await import('simple-git')

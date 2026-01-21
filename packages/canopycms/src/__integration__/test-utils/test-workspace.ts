@@ -5,6 +5,7 @@ import { simpleGit } from 'simple-git'
 import { vi } from 'vitest'
 import type { CanopyConfig } from '../../config'
 import { defineCanopyTestConfig } from '../../config-test'
+import { initTestRepo } from '../../test-utils'
 
 /**
  * Initialize a bare git repository with the specified default branch.
@@ -78,10 +79,7 @@ export async function createTestWorkspace(
 
     // Create and configure seed clone
     await fs.mkdir(seedPath, { recursive: true })
-    const seedGit = simpleGit({ baseDir: seedPath })
-    await seedGit.init()
-    await seedGit.addConfig('user.name', 'Test Bot')
-    await seedGit.addConfig('user.email', 'test@canopycms.local')
+    const seedGit = await initTestRepo(seedPath)
     await seedGit.raw(['branch', '-M', 'main'])
 
     // Create initial content directory

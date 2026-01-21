@@ -13,6 +13,7 @@ import { createMockAuthPlugin } from '../test-utils/multi-user'
 import { createApiClient, type ApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchResponse } from '../../api/branch'
+import { initTestRepo } from '../../test-utils'
 
 describe('Editing Workflow Integration', () => {
   let workspace: TestWorkspace
@@ -71,9 +72,8 @@ describe('Editing Workflow Integration', () => {
 
     // Commit changes (if write succeeded)
     if (writeResponse.status === 200 && branchRoot) {
+      await initTestRepo(branchRoot)
       const git = simpleGit({ baseDir: branchRoot })
-      await git.addConfig('user.name', 'Test User')
-      await git.addConfig('user.email', 'test@test.local')
       await git.add(['.'])
       await git.commit('Add hello world post')
 

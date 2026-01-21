@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
 import { GitManager } from './git-manager'
+import { initTestRepo } from './test-utils'
 
 describe('GitManager.ensureLocalSimulatedRemote', () => {
   let tmpDir: string
@@ -20,10 +21,7 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
 
   it('creates bare remote and pushes baseBranch when remote does not exist', async () => {
     // Setup: create a git repo with a commit on main
-    const git = simpleGit({ baseDir: tmpDir })
-    await git.init()
-    await git.addConfig('user.name', 'Test Bot')
-    await git.addConfig('user.email', 'test@canopycms.test')
+    const git = await initTestRepo(tmpDir)
     await git.raw(['branch', '-M', 'main'])
     await fs.writeFile(path.join(tmpDir, 'test.txt'), 'hello', 'utf8')
     await git.add(['.'])
@@ -134,10 +132,7 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
 
   it('pushes actual baseBranch content, not current HEAD', async () => {
     // Setup: create main with one commit, then feature branch with different commit
-    const git = simpleGit({ baseDir: tmpDir })
-    await git.init()
-    await git.addConfig('user.name', 'Test Bot')
-    await git.addConfig('user.email', 'test@canopycms.test')
+    const git = await initTestRepo(tmpDir)
     await git.raw(['branch', '-M', 'main'])
     await fs.writeFile(path.join(tmpDir, 'main.txt'), 'main content', 'utf8')
     await git.add(['.'])
@@ -286,10 +281,7 @@ describe('GitManager.resolveRemoteUrl', () => {
 
   it('uses sourceRoot when provided for prod-sim', async () => {
     // Setup: create git repo with subdirectory structure
-    const git = simpleGit({ baseDir: tmpDir })
-    await git.init()
-    await git.addConfig('user.name', 'Test Bot')
-    await git.addConfig('user.email', 'test@canopycms.test')
+    const git = await initTestRepo(tmpDir)
     await git.raw(['branch', '-M', 'main'])
 
     // Create subdirectory with content
@@ -338,3 +330,87 @@ describe('GitManager.resolveRemoteUrl', () => {
     }
   })
 }, 10000)
+
+describe('GitManager.ensureAuthor', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-git-test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('allows setting author in managed repository', async () => {
+    // Setup: create managed repo
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(tmpDir, 'test.txt'), 'content', 'utf8')
+    await git.add(['.'])
+    await git.commit('Initial commit')
+
+    // Create GitManager and ensure author
+    const manager = new GitManager({ repoPath: tmpDir })
+    await expect(
+      manager.ensureAuthor({ name: 'Bot User', email: 'bot@example.com' })
+    ).resolves.not.toThrow()
+
+    // Verify author was set
+    const config = await git.listConfig()
+    expect(config.all['user.name']).toBe('Bot User')
+    expect(config.all['user.email']).toBe('bot@example.com')
+  })
+
+  it('throws error when trying to set author in non-managed repository', async () => {
+    // Setup: create repo WITHOUT canopycms.managed marker
+    const git = simpleGit({ baseDir: tmpDir })
+    await git.init()
+    await git.addConfig('user.name', 'Regular User')
+    await git.addConfig('user.email', 'user@example.com')
+
+    // Create GitManager and try to ensure author - should fail
+    const manager = new GitManager({ repoPath: tmpDir })
+    await expect(
+      manager.ensureAuthor({ name: 'Bot User', email: 'bot@example.com' })
+    ).rejects.toThrow(/Cannot set git bot author in non-managed repository/)
+
+    // Verify author was NOT changed
+    const config = await git.listConfig()
+    expect(config.all['user.name']).toBe('Regular User')
+    expect(config.all['user.email']).toBe('user@example.com')
+  })
+
+  it('provides helpful error message for non-managed repos', async () => {
+    const git = simpleGit({ baseDir: tmpDir })
+    await git.init()
+
+    const manager = new GitManager({ repoPath: tmpDir })
+    await expect(
+      manager.ensureAuthor({ name: 'Bot', email: 'bot@test.com' })
+    ).rejects.toThrow(/Bot identity should only be set in CanopyCMS branch clones/)
+    await expect(
+      manager.ensureAuthor({ name: 'Bot', email: 'bot@test.com' })
+    ).rejects.toThrow(/If this is a test workspace, add "git config canopycms.managed true"/)
+  })
+
+  it('only updates author if values differ', async () => {
+    // Setup: managed repo with existing author
+    await initTestRepo(tmpDir)
+
+    const manager = new GitManager({ repoPath: tmpDir })
+    // Spy on the manager's internal git instance
+    const addConfigSpy = vi.spyOn(manager['git'], 'addConfig')
+
+    // First call: should update (values differ from Test Bot / test@canopycms.test)
+    await manager.ensureAuthor({ name: 'New Name', email: 'new@example.com' })
+    expect(addConfigSpy).toHaveBeenCalledWith('user.name', 'New Name')
+    expect(addConfigSpy).toHaveBeenCalledWith('user.email', 'new@example.com')
+
+    addConfigSpy.mockClear()
+
+    // Second call with same values: should NOT update
+    await manager.ensureAuthor({ name: 'New Name', email: 'new@example.com' })
+    expect(addConfigSpy).not.toHaveBeenCalled()
+  })
+})
