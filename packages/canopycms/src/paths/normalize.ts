@@ -122,3 +122,27 @@ export function joinPath(...segments: string[]): string {
     .filter(Boolean)
     .join('/')
 }
+
+/**
+ * Cast a string to LogicalPath type.
+ * Use this when you have a string that you know is a logical path (no embedded IDs).
+ * For constructing paths from segments, prefer createLogicalPath() which validates.
+ *
+ * @example
+ * const logicalPath = toLogicalPath('content/authors')
+ */
+export function toLogicalPath(path: string): LogicalPath {
+  return path as LogicalPath
+}
+
+/**
+ * Cast a string to PhysicalPath type.
+ * Use this when you have a string that you know is a physical path (may have embedded IDs).
+ * For constructing paths from segments, prefer createPhysicalPath() which validates.
+ *
+ * @example
+ * const physicalPath = toPhysicalPath('content/authors.q52DCVPuH4ga')
+ */
+export function toPhysicalPath(path: string): PhysicalPath {
+  return path as PhysicalPath
+}

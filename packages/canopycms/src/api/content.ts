@@ -101,7 +101,7 @@ const readContentHandler = async (
     const resolved = store.resolvePath(fullPathSegments)
     schemaItem = resolved.schemaItem
     slug = resolved.slug
-    const pathResult = await store.resolveDocumentPath(schemaItem.fullPath, slug)
+    const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, slug)
     relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
@@ -119,7 +119,7 @@ const readContentHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
-  const doc = await store.read(schemaItem.fullPath, slug)
+  const doc = await store.read(schemaItem.logicalPath, slug)
   return { ok: true, status: 200, data: doc }
 }
 
@@ -152,7 +152,7 @@ const writeContentHandler = async (
     const resolved = store.resolvePath(fullPathSegments)
     schemaItem = resolved.schemaItem
     slug = resolved.slug
-    const pathResult = await store.resolveDocumentPath(schemaItem.fullPath, slug)
+    const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, slug)
     relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
@@ -173,11 +173,11 @@ const writeContentHandler = async (
   try {
     const result =
       body.format === 'json'
-        ? await store.write(schemaItem.fullPath, slug, {
+        ? await store.write(schemaItem.logicalPath, slug, {
             format: 'json',
             data: body.data ?? {},
           })
-        : await store.write(schemaItem.fullPath, slug, {
+        : await store.write(schemaItem.logicalPath, slug, {
             format: body.format,
             data: body.data,
             body: body.body ?? '',
@@ -216,7 +216,7 @@ const validateReferencesHandler = async (
     const resolved = store.resolvePath(fullPathSegments)
     schemaItem = resolved.schemaItem
     const slug = resolved.slug
-    const pathResult = await store.resolveDocumentPath(schemaItem.fullPath, slug)
+    const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, slug)
     relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'

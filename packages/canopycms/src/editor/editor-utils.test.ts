@@ -15,6 +15,7 @@ import {
 } from './editor-utils'
 import type { EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
+import { toLogicalPath, toPhysicalPath } from '../paths'
 
 describe('buildPreviewSrc', () => {
   it('returns the provided preview without modification', () => {
@@ -163,7 +164,7 @@ describe('buildEntriesFromListResponse', () => {
   const response: ListEntriesResponse = {
     collections: [
       {
-        path: 'posts',
+        logicalPath: toLogicalPath('posts'),
         contentId: 'abc123XYZ789',
         name: 'Posts',
         format: 'mdx',
@@ -171,7 +172,7 @@ describe('buildEntriesFromListResponse', () => {
         schema: postsSchema,
       },
       {
-        path: 'pages',
+        logicalPath: toLogicalPath('pages'),
         contentId: 'def456UVW012',
         name: 'Pages',
         format: 'json',
@@ -181,26 +182,26 @@ describe('buildEntriesFromListResponse', () => {
     ],
     entries: [
       {
-        path: 'posts/hello',
+        logicalPath: toLogicalPath('posts/hello'),
         contentId: 'ghi789RST345',
         slug: 'hello world',
         collectionId: 'posts',
         collectionName: 'Posts',
         format: 'mdx',
         entryType: 'post',
-        physicalPath: 'content/posts/hello-world',
+        physicalPath: toPhysicalPath('content/posts/hello-world'),
         title: 'Hello Title',
         exists: true,
       },
       {
-        path: 'pages/home',
+        logicalPath: toLogicalPath('pages/home'),
         contentId: 'jkl012MNO678',
         slug: 'home',
         collectionId: 'pages',
         collectionName: 'Pages',
         format: 'json',
         entryType: 'page',
-        physicalPath: 'content/pages/home.json',
+        physicalPath: toPhysicalPath('content/pages/home.json'),
         exists: false,
       },
     ],
@@ -247,7 +248,7 @@ describe('buildEntriesFromListResponse', () => {
     const result = buildEntriesFromListResponse({
       response: {
         ...response,
-        collections: response.collections.filter((c) => c.path !== 'pages'),
+        collections: response.collections.filter((c) => c.logicalPath !== 'pages'),
       },
       branchName: 'feature-branch',
       resolvePreviewSrc: () => 'preview',

@@ -72,7 +72,7 @@ export class ContentStore {
 
   constructor(root: string, flatSchema: FlatSchemaItem[]) {
     this.root = path.resolve(root)
-    this.schemaIndex = new Map(flatSchema.map((item) => [item.fullPath, item]))
+    this.schemaIndex = new Map(flatSchema.map((item) => [item.logicalPath, item]))
     this._idIndex = new ContentIdIndex(this.root)
   }
 
@@ -214,12 +214,12 @@ export class ContentStore {
 
       // Resolve the full collection path with embedded IDs
       // e.g., "content/docs/api" → "content/docs.bChqT78gcaLd/api.meiuwxTSo7UN"
-      let collectionRoot = await resolveCollectionPath(this.root, schemaItem.fullPath)
+      let collectionRoot = await resolveCollectionPath(this.root, schemaItem.logicalPath)
 
       if (!collectionRoot) {
         // Collection directory doesn't exist yet - use logical path
         // (Directory will be created on write if needed)
-        collectionRoot = path.resolve(this.root, schemaItem.fullPath)
+        collectionRoot = path.resolve(this.root, schemaItem.logicalPath)
       }
 
       // Security: Prevent path traversal at collection level
@@ -342,7 +342,7 @@ export class ContentStore {
     if (format === 'json') {
       const data = JSON.parse(raw) as Record<string, unknown>
       doc = {
-        collection: schemaItem.fullPath,
+        collection: schemaItem.logicalPath,
         collectionName: schemaItem.name,
         format: 'json',
         data,
@@ -352,7 +352,7 @@ export class ContentStore {
     } else {
       const parsed = matter(raw)
       doc = {
-        collection: schemaItem.fullPath,
+        collection: schemaItem.logicalPath,
         collectionName: schemaItem.name,
         format: format,
         data: (parsed.data as Record<string, unknown>) ?? {},
@@ -412,7 +412,7 @@ export class ContentStore {
       }
 
       return {
-        collection: schemaItem.fullPath,
+        collection: schemaItem.logicalPath,
         collectionName: schemaItem.name,
         format: 'json',
         data: input.data ?? {},
@@ -444,7 +444,7 @@ export class ContentStore {
     }
 
     return {
-      collection: schemaItem.fullPath,
+      collection: schemaItem.logicalPath,
       collectionName: schemaItem.name,
       format: input.format,
       data: input.data ?? {},
@@ -516,7 +516,7 @@ export class ContentStore {
     if (!item) {
       for (const schemaItem of this.schemaIndex.values()) {
         if (schemaItem.type === 'collection') {
-          const lastSegment = schemaItem.fullPath.split('/').pop()
+          const lastSegment = schemaItem.logicalPath.split('/').pop()
           if (lastSegment === collectionPath) {
             item = schemaItem
             break
@@ -533,7 +533,7 @@ export class ContentStore {
     const collection = item
 
     // Resolve logical path to physical path with embedded IDs
-    const physicalPath = await resolveCollectionPath(this.root, collection.fullPath)
+    const physicalPath = await resolveCollectionPath(this.root, collection.logicalPath)
     if (!physicalPath) {
       return [] // Collection directory doesn't exist yet
     }
@@ -556,7 +556,7 @@ export class ContentStore {
         ) {
           entries.push({
             relativePath: location.relativePath,
-            collection: collection.fullPath, // Use logical path for consumers (store.read expects it)
+            collection: collection.logicalPath, // Use logical path for consumers (store.read expects it)
             slug: location.slug,
           })
         }
@@ -658,7 +658,7 @@ export class ContentStore {
           // Check if the physical path matches this collection
           // The physical path should start with the logical path (ignoring the ID suffix)
           // e.g., "content/authors.q52DCVPuH4ga" matches "content/authors"
-          const logicalPrefix = schemaItem.fullPath
+          const logicalPrefix = schemaItem.logicalPath
           const pathSegments = location.collection.split('/')
           const logicalSegments = logicalPrefix.split('/')
 
@@ -673,7 +673,7 @@ export class ContentStore {
             })
 
             if (matches) {
-              logicalPath = schemaItem.fullPath
+              logicalPath = schemaItem.logicalPath
               break
             }
           }

@@ -10,6 +10,7 @@ import type {
   FlatSchemaItem,
   RootCollectionConfig,
 } from './types'
+import { toLogicalPath } from '../paths/normalize'
 
 /**
  * Normalize a path value by splitting, filtering empty segments, and rejoining.
@@ -55,7 +56,7 @@ export const normalizeSchemaPathsRoot = (root: RootCollectionConfig): RootCollec
  *
  * @example
  * const flat = flattenSchema(config.schema, 'content')
- * const map = new Map(flat.map(item => [item.fullPath, item]))
+ * const map = new Map(flat.map(item => [item.logicalPath, item]))
  * const item = map.get('content/posts') // O(1) lookup
  */
 export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSchemaItem[] => {
@@ -64,7 +65,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
 
   const walkCollection = (collection: CollectionConfig, parentPath: string) => {
     const normalizedPath = normalizePathValue(collection.path)
-    // Build fullPath: if we have a parent, join with parent; otherwise use collection path
+    // Build logical path: if we have a parent, join with parent; otherwise use collection path
     let fullPath: string
     if (parentPath && parentPath !== base) {
       // Nested child collection: use only the collection name (leaf segment), not the full path
@@ -82,10 +83,10 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
     // Add the collection itself
     flat.push({
       type: 'collection',
-      fullPath: normalizedFull,
+      logicalPath: toLogicalPath(normalizedFull),
       name: collection.name,
       label: collection.label,
-      parentPath: parentPath || undefined,
+      parentPath: parentPath ? toLogicalPath(parentPath) : undefined,
       entries: collection.entries,
       collections: collection.collections,
     })
@@ -97,10 +98,10 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
         const entryTypePath = join(normalizedFull, entryType.name)
         flat.push({
           type: 'entry-type',
-          fullPath: normalizePathValue(entryTypePath),
+          logicalPath: toLogicalPath(normalizePathValue(entryTypePath)),
           name: entryType.name,
           label: entryType.label,
-          parentPath: normalizedFull,
+          parentPath: toLogicalPath(normalizedFull),
           format: entryType.format,
           fields: entryType.fields,
           default: entryType.default,
@@ -122,7 +123,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
   if (base) {
     flat.push({
       type: 'collection',
-      fullPath: base,
+      logicalPath: toLogicalPath(base),
       name: base, // Use base path as the name (e.g., 'content')
       label: undefined, // Root collection has no label
       parentPath: undefined, // No parent - this is the root
@@ -139,10 +140,10 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
       const entryTypePath = base ? join(base, entryType.name) : entryType.name
       flat.push({
         type: 'entry-type',
-        fullPath: normalizePathValue(entryTypePath),
+        logicalPath: toLogicalPath(normalizePathValue(entryTypePath)),
         name: entryType.name,
         label: entryType.label,
-        parentPath: base, // Now references the root collection (e.g., 'content')
+        parentPath: base ? toLogicalPath(base) : toLogicalPath(''), // Now references the root collection (e.g., 'content')
         format: entryType.format,
         fields: entryType.fields,
         default: entryType.default,

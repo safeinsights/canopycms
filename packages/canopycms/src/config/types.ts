@@ -6,6 +6,7 @@
 import type { CanopyGroupId, CanopyUserId } from '../types'
 import type { OperatingMode } from '../operating-mode'
 import type { AuthPlugin } from '../auth/plugin'
+import type { LogicalPath } from '../paths/types'
 
 // Field types
 export const primitiveFieldTypes = [
@@ -238,10 +239,10 @@ export type CanopyConfigFragment = Partial<CanopyConfigInput>
 export type FlatSchemaItem =
   | {
       type: 'collection'
-      fullPath: string
+      logicalPath: LogicalPath
       name: string
       label?: string
-      parentPath?: string
+      parentPath?: LogicalPath
       /** Array of entry types in this collection */
       entries?: readonly EntryTypeConfig[]
       collections?: readonly CollectionConfig[]
@@ -249,12 +250,12 @@ export type FlatSchemaItem =
   | {
       /** An entry type within a collection */
       type: 'entry-type'
-      fullPath: string
+      logicalPath: LogicalPath
       /** The entry type name (e.g., 'post', 'doc') */
       name: string
       label?: string
       /** Path of the parent collection */
-      parentPath: string
+      parentPath: LogicalPath
       format: ContentFormat
       fields: readonly FieldConfig[]
       default?: boolean

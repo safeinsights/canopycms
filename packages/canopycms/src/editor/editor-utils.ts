@@ -128,17 +128,19 @@ export function convertApiCollectionsToEditorCollections(
 ): EditorCollection[] {
   // Build a lookup map for quick access
   const byPath = new Map<string, EntryCollectionSummary>()
-  apiCollections.forEach((col) => byPath.set(col.path, col))
+  apiCollections.forEach((col) => byPath.set(col.logicalPath, col))
 
   // Find root collections (no parent or parent not in list)
   const roots = apiCollections.filter((col) => !col.parentId || !byPath.has(col.parentId))
 
   // Recursively build tree
   const buildTree = (col: EntryCollectionSummary): EditorCollection => {
-    const children = apiCollections.filter((c) => c.parentId === col.path).map((c) => buildTree(c))
+    const children = apiCollections
+      .filter((c) => c.parentId === col.logicalPath)
+      .map((c) => buildTree(c))
 
     return {
-      path: col.path, // Logical path
+      path: col.logicalPath, // Logical path
       contentId: col.contentId, // 12-char content ID
       name: col.name,
       label: col.label,
@@ -175,7 +177,7 @@ export const buildEntriesFromListResponse = ({
   const schemaByCollection = new Map<string, readonly FieldConfig[]>()
   const collectSchemas = (nodes: ListEntriesResponse['collections']) => {
     nodes.forEach((node) => {
-      schemaByCollection.set(node.path, node.schema)
+      schemaByCollection.set(node.logicalPath, node.schema)
       if (node.children) collectSchemas(node.children)
     })
   }
@@ -183,7 +185,7 @@ export const buildEntriesFromListResponse = ({
   return response.entries.map((entry) => {
     const schema =
       schemaByCollection.get(entry.collectionId) ??
-      schemaByCollection.get(entry.path) ?? // For root entries, check by entry path (entry-type logical path)
+      schemaByCollection.get(entry.logicalPath) ?? // For root entries, check by entry path (entry-type logical path)
       existingEntries.find((e) => e.collectionId === entry.collectionId)?.schema ??
       currentEntry?.schema ??
       initialEntries.find((e) => e.collectionId === entry.collectionId)?.schema ??
@@ -196,7 +198,7 @@ export const buildEntriesFromListResponse = ({
       : `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionId)}/${encodeURIComponent(entry.slug)}`
 
     return {
-      path: entry.path, // Logical path
+      path: entry.logicalPath, // Logical path
       contentId: entry.contentId, // 12-char content ID
       label: entry.title || entry.slug || entry.collectionName || entry.collectionId,
       status: entry.exists === false ? 'missing' : (entry.entryType ?? 'entry'),

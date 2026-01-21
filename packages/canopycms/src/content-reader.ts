@@ -104,8 +104,8 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     contentRoot && val.startsWith(`${contentRoot}/`) ? val.slice(contentRoot.length + 1) : val
   const baseMap = new Map<string, string>()
   flatSchema.forEach((item) => {
-    const base = stripRoot(item.fullPath)
-    baseMap.set(item.fullPath, base ? `/${base}` : '/')
+    const base = stripRoot(item.logicalPath)
+    baseMap.set(item.logicalPath, base ? `/${base}` : '/')
   })
 
   const buildEntryPath = (opts: { collectionPath: string; slug?: string; branch?: string }) => {
