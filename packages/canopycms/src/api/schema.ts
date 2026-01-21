@@ -27,8 +27,7 @@ import {
   type UpdateEntryTypeInput,
 } from '../schema/schema-store'
 import type { RootCollectionConfig, CollectionConfig, FlatSchemaItem } from '../config'
-import type { LogicalPath } from '../paths/types'
-import { toLogicalPath } from '../paths'
+import { parseLogicalPath, type LogicalPath } from '../paths'
 
 // ============================================================================
 // Response Types
@@ -44,7 +43,9 @@ export interface CollectionResponse {
 }
 
 export interface CreateCollectionResponse {
+  /** The logical path to the created collection (e.g., "posts" or "blog/posts") */
   collectionPath: LogicalPath
+  /** The unique 12-character content ID for the collection */
   contentId: string
 }
 
@@ -144,6 +145,20 @@ function checkAdminAuth(req: ApiRequest): { error: string; status: number } | nu
   return null
 }
 
+/**
+ * Validate and parse a collection path from URL params.
+ * Returns a typed LogicalPath or an error response.
+ */
+function validateCollectionPath(
+  rawPath: string
+): { ok: true; path: LogicalPath } | { ok: false; status: number; error: string } {
+  const result = parseLogicalPath(decodeURIComponent(rawPath))
+  if (!result.ok) {
+    return { ok: false, status: 400, error: result.error }
+  }
+  return { ok: true, path: result.path }
+}
+
 // ============================================================================
 // Handlers
 // ============================================================================
@@ -184,10 +199,15 @@ const getCollectionHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
+  // Validate collection path
+  const pathResult = validateCollectionPath(params.collectionPath)
+  if (!pathResult.ok) {
+    return { ok: false, status: pathResult.status, error: pathResult.error }
+  }
+
   // Find collection in flat schema
-  const collectionPath = toLogicalPath(decodeURIComponent(params.collectionPath))
   const item = ctx.services.flatSchema.find(
-    (i) => i.type === 'collection' && i.logicalPath === collectionPath
+    (i) => i.type === 'collection' && i.logicalPath === pathResult.path
   )
 
   if (!item || item.type !== 'collection') {
@@ -271,9 +291,14 @@ const updateCollectionHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
+  // Validate collection path
+  const pathResult = validateCollectionPath(params.collectionPath)
+  if (!pathResult.ok) {
+    return { ok: false, status: pathResult.status, error: pathResult.error }
+  }
+
   try {
-    const collectionPath = toLogicalPath(decodeURIComponent(params.collectionPath))
-    await storeResult.store.updateCollection(collectionPath, body as UpdateCollectionInput)
+    await storeResult.store.updateCollection(pathResult.path, body as UpdateCollectionInput)
     return {
       ok: true,
       status: 200,
@@ -307,9 +332,14 @@ const deleteCollectionHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
+  // Validate collection path
+  const pathResult = validateCollectionPath(params.collectionPath)
+  if (!pathResult.ok) {
+    return { ok: false, status: pathResult.status, error: pathResult.error }
+  }
+
   try {
-    const collectionPath = toLogicalPath(decodeURIComponent(params.collectionPath))
-    await storeResult.store.deleteCollection(collectionPath)
+    await storeResult.store.deleteCollection(pathResult.path)
     return {
       ok: true,
       status: 200,
@@ -344,9 +374,14 @@ const addEntryTypeHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
+  // Validate collection path
+  const pathResult = validateCollectionPath(params.collectionPath)
+  if (!pathResult.ok) {
+    return { ok: false, status: pathResult.status, error: pathResult.error }
+  }
+
   try {
-    const collectionPath = toLogicalPath(decodeURIComponent(params.collectionPath))
-    await storeResult.store.addEntryType(collectionPath, body as CreateEntryTypeInput)
+    await storeResult.store.addEntryType(pathResult.path, body as CreateEntryTypeInput)
     return {
       ok: true,
       status: 201,
@@ -381,10 +416,15 @@ const updateEntryTypeHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
+  // Validate collection path
+  const pathResult = validateCollectionPath(params.collectionPath)
+  if (!pathResult.ok) {
+    return { ok: false, status: pathResult.status, error: pathResult.error }
+  }
+
   try {
-    const collectionPath = toLogicalPath(decodeURIComponent(params.collectionPath))
     await storeResult.store.updateEntryType(
-      collectionPath,
+      pathResult.path,
       params.entryTypeName,
       body as UpdateEntryTypeInput
     )
@@ -421,9 +461,14 @@ const removeEntryTypeHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
+  // Validate collection path
+  const pathResult = validateCollectionPath(params.collectionPath)
+  if (!pathResult.ok) {
+    return { ok: false, status: pathResult.status, error: pathResult.error }
+  }
+
   try {
-    const collectionPath = toLogicalPath(decodeURIComponent(params.collectionPath))
-    await storeResult.store.removeEntryType(collectionPath, params.entryTypeName)
+    await storeResult.store.removeEntryType(pathResult.path, params.entryTypeName)
     return {
       ok: true,
       status: 200,
@@ -458,9 +503,14 @@ const updateOrderHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
+  // Validate collection path
+  const pathResult = validateCollectionPath(params.collectionPath)
+  if (!pathResult.ok) {
+    return { ok: false, status: pathResult.status, error: pathResult.error }
+  }
+
   try {
-    const collectionPath = toLogicalPath(decodeURIComponent(params.collectionPath))
-    await storeResult.store.updateOrder(collectionPath, body.order)
+    await storeResult.store.updateOrder(pathResult.path, body.order)
     return {
       ok: true,
       status: 200,
@@ -523,6 +573,7 @@ export const createCollection = defineEndpoint({
   responseType: 'CreateCollectionApiResponse',
   response: {} as CreateCollectionApiResponse,
   defaultMockData: { collectionPath: '', contentId: '' },
+  mockDataCasts: { collectionPath: 'toLogicalPath' },
   handler: createCollectionHandler,
 })
 
@@ -627,6 +678,9 @@ export const updateOrder = defineEndpoint({
 // ============================================================================
 // Exports
 // ============================================================================
+
+/** Body type for updateOrder endpoint */
+export type UpdateOrderBody = z.infer<typeof updateOrderBodySchema>
 
 export const SCHEMA_ROUTES = {
   get: getSchema,

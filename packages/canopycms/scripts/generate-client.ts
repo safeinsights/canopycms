@@ -33,6 +33,7 @@ import '../src/api/assets.js'
 import '../src/api/permissions.js'
 import '../src/api/groups.js'
 import '../src/api/user.js'
+import '../src/api/schema.js'
 
 // Now we can import the populated registry
 import { getAllRoutes, type RouteMetadata } from '../src/api/route-builder.js'
@@ -143,6 +144,7 @@ function namespaceToModule(namespace: string): string {
     'assets': 'assets',
     'permissions': 'permissions',
     'groups': 'groups',
+    'schema': 'schema',
   }
   return mapping[namespace] || namespace
 }
@@ -156,6 +158,11 @@ function typeNameToModule(typeName: string): string | null {
     'ResolveReferencesBody': 'resolve-references',
     'ReferenceOptionsResponse': 'reference-options',
     'RequestChangesBody': 'branch-review',
+    // Schema types come from the schema-store-types module (client-safe)
+    'CreateCollectionInput': '../schema/schema-store-types',
+    'UpdateCollectionInput': '../schema/schema-store-types',
+    'CreateEntryTypeInput': '../schema/schema-store-types',
+    'UpdateEntryTypeInput': '../schema/schema-store-types',
   }
   return mapping[typeName] || null
 }
@@ -388,17 +395,33 @@ ${methods}
   // Get unique response types for factories
   const factoryResponseTypes = getUniqueResponseTypes(namespaces)
 
+  // Track if we need path utilities import
+  let needsPathUtilities = false
+
   // Generate response factories
   const factories = Array.from(factoryResponseTypes).map(responseType => {
     const funcName = `mock${responseType.replace(/Response$/, '')}Response`
 
-    // Find the first route with this response type to get default mock data
+    // Find the first route with this response type to get default mock data and casts
     let mockData = '{}'
+    let casts: Record<string, string> | undefined
     for (const ns of namespaces) {
       const route = ns.routes.find(r => r.responseTypeName === responseType)
       if (route?.defaultMockData) {
         mockData = JSON.stringify(route.defaultMockData)
+        casts = route.mockDataCasts
         break
+      }
+    }
+
+    // Apply casts to mock data if specified
+    if (casts && Object.keys(casts).length > 0) {
+      needsPathUtilities = true
+      // Replace string values with cast function calls
+      for (const [field, castFn] of Object.entries(casts)) {
+        // Simple field replacement: "field":"value" -> "field":castFn("value")
+        const regex = new RegExp(`"${field}"\\s*:\\s*"([^"]*)"`, 'g')
+        mockData = mockData.replace(regex, `"${field}":${castFn}("$1")`)
       }
     }
 
@@ -409,6 +432,11 @@ export function ${funcName}(): ${responseType} {
   return mockSuccess(${mockData})
 }`
   }).join('\n\n')
+
+  // Path utilities import (only if needed)
+  const pathUtilitiesImport = needsPathUtilities
+    ? `import { toLogicalPath, toPhysicalPath } from '../../paths'\n`
+    : ''
 
   // Generate imports grouped by module
   const responseTypeImports = generateResponseTypeImports(namespaces)
@@ -426,7 +454,7 @@ export function ${funcName}(): ${responseType} {
 import { vi, type Mock } from 'vitest'
 import type { CanopyApiClient } from '../client'
 import type { ApiResponse } from '../types'
-${responseTypeImports}
+${pathUtilitiesImport}${responseTypeImports}
 
 /**
  * Type utility to convert CanopyApiClient methods to Vitest mocks.
