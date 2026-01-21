@@ -532,8 +532,17 @@ export class ContentStore {
 
     const collection = item
 
+    // Resolve logical path to physical path with embedded IDs
+    const physicalPath = await resolveCollectionPath(this.root, collection.fullPath)
+    if (!physicalPath) {
+      return [] // Collection directory doesn't exist yet
+    }
+
+    // Convert to relative path for ID index lookup
+    const relativePhysicalPath = path.relative(this.root, physicalPath)
+
     // Get entries directly from collection index (O(1) + O(m))
-    const baseEntries = idIndex.getEntriesInCollection(collection.fullPath)
+    const baseEntries = idIndex.getEntriesInCollection(relativePhysicalPath)
 
     // Filter and map to required format
     const entries: Array<{ relativePath: string; collection: string; slug: string }> = []
@@ -542,12 +551,12 @@ export class ContentStore {
       if (location.type === 'entry' && location.slug) {
         // Include entries in this collection or subcollections
         if (
-          location.collection === collection.fullPath ||
-          location.collection?.startsWith(collection.fullPath + '/')
+          location.collection === relativePhysicalPath ||
+          location.collection?.startsWith(relativePhysicalPath + '/')
         ) {
           entries.push({
             relativePath: location.relativePath,
-            collection: location.collection!,
+            collection: collection.fullPath, // Use logical path for consumers (store.read expects it)
             slug: location.slug,
           })
         }
@@ -638,13 +647,52 @@ export class ContentStore {
         return null
       }
 
+      // location.collection is a physical path (e.g., "content/authors.q52DCVPuH4ga")
+      // We need to find the matching logical path from the schema index
+      let logicalPath: string | undefined
+
+      // Try to match the physical path to a schema item
+      // We can match by checking if the physical path starts with the logical path
+      for (const schemaItem of this.schemaIndex.values()) {
+        if (schemaItem.type === 'collection') {
+          // Check if the physical path matches this collection
+          // The physical path should start with the logical path (ignoring the ID suffix)
+          // e.g., "content/authors.q52DCVPuH4ga" matches "content/authors"
+          const logicalPrefix = schemaItem.fullPath
+          const pathSegments = location.collection.split('/')
+          const logicalSegments = logicalPrefix.split('/')
+
+          // Check if all logical segments match the corresponding physical segments
+          // (ignoring the ID part after the dot in directory names)
+          if (pathSegments.length === logicalSegments.length) {
+            const matches = logicalSegments.every((logicalSeg, i) => {
+              const physicalSeg = pathSegments[i]
+              // Physical segment might have ID: "authors.q52DCVPuH4ga"
+              // Logical segment: "authors"
+              return physicalSeg === logicalSeg || physicalSeg.startsWith(logicalSeg + '.')
+            })
+
+            if (matches) {
+              logicalPath = schemaItem.fullPath
+              break
+            }
+          }
+        }
+      }
+
+      if (!logicalPath) {
+        // Fallback: use the physical path if we can't find a logical match
+        // This shouldn't happen in normal operation
+        logicalPath = location.collection
+      }
+
       // Read the referenced entry WITHOUT resolving its references (prevent infinite loops)
-      const doc = await this.read(location.collection, location.slug, { resolveReferences: false })
+      const doc = await this.read(logicalPath, location.slug, { resolveReferences: false })
 
       return {
         id,
         slug: location.slug,
-        collection: location.collection,
+        collection: logicalPath,
         ...doc.data,
       }
     } catch (error) {
