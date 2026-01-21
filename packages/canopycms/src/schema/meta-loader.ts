@@ -43,6 +43,7 @@ const collectionMetaSchema = z
     name: z.string().min(1),
     label: z.string().optional(),
     entries: z.array(entryTypeSchemaRefSchema).optional(),
+    order: z.array(z.string()).optional(), // Embedded IDs for ordering items
   })
   .refine((data) => data.entries && data.entries.length > 0, {
     message: 'Collection must have at least one entry type',
@@ -54,6 +55,7 @@ const collectionMetaSchema = z
  */
 const rootCollectionMetaSchema = z.object({
   entries: z.array(entryTypeSchemaRefSchema).optional(),
+  order: z.array(z.string()).optional(), // Embedded IDs for ordering items
 })
 
 export type EntryTypeMeta = {
@@ -69,10 +71,12 @@ export type CollectionMeta = {
   name: string
   label?: string
   entries?: EntryTypeMeta[]
+  order?: string[] // Embedded IDs for ordering items
 }
 
 export type RootCollectionMeta = {
   entries?: EntryTypeMeta[]
+  order?: string[] // Embedded IDs for ordering items
 }
 
 /**
@@ -251,6 +255,11 @@ function resolveCollectionMeta(
     result.entries = resolveEntryTypes(meta.entries, schemaRegistry, `collection "${meta.name}"`)
   }
 
+  // Pass through order array (embedded IDs for sorting)
+  if (meta.order) {
+    result.order = meta.order
+  }
+
   // Find nested collections (subfolders with .collection.json)
   const nestedCollections = allCollections.filter((col) => {
     // Nested if it starts with this collection's path + /
@@ -298,6 +307,11 @@ export function resolveCollectionReferences(
   // Resolve root entry types
   if (metaFiles.root?.entries && metaFiles.root.entries.length > 0) {
     result.entries = resolveEntryTypes(metaFiles.root.entries, schemaRegistry, 'root collection')
+  }
+
+  // Pass through root order array (embedded IDs for sorting)
+  if (metaFiles.root?.order) {
+    result.order = metaFiles.root.order
   }
 
   // Resolve top-level collections (no slashes in path)

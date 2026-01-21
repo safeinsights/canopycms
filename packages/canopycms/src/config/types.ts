@@ -145,6 +145,8 @@ export type CollectionConfig = {
   /** Array of entry types allowed in this collection */
   readonly entries?: readonly EntryTypeConfig[]
   readonly collections?: readonly CollectionConfig[]
+  /** Ordering of items by embedded ID. Items not in order appear at end alphabetically. */
+  readonly order?: readonly string[]
 }
 
 /**
@@ -155,6 +157,8 @@ export type RootCollectionConfig = {
   /** Entry types at the root level */
   readonly entries?: readonly EntryTypeConfig[]
   readonly collections?: readonly CollectionConfig[]
+  /** Ordering of root items by embedded ID. Items not in order appear at end alphabetically. */
+  readonly order?: readonly string[]
 }
 
 // Editor configuration
@@ -246,6 +250,8 @@ export type FlatSchemaItem =
       /** Array of entry types in this collection */
       entries?: readonly EntryTypeConfig[]
       collections?: readonly CollectionConfig[]
+      /** Ordering of items by embedded ID. Items not in order appear at end alphabetically. */
+      order?: readonly string[]
     }
   | {
       /** An entry type within a collection */

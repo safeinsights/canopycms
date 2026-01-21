@@ -49,6 +49,7 @@ collectionSchema = z.lazy(() =>
       label: z.string().optional(),
       entries: z.array(entryTypeSchema).optional(),
       collections: z.array(collectionSchema).optional(),
+      order: z.array(z.string()).optional(), // Embedded IDs for ordering items
     })
     .refine((data) => data.entries || data.collections, {
       message: 'Collection must have entries or collections',
@@ -59,6 +60,7 @@ collectionSchema = z.lazy(() =>
 export const rootCollectionSchema = z.object({
   entries: z.array(entryTypeSchema).optional(),
   collections: z.array(collectionSchema).optional(),
+  order: z.array(z.string()).optional(), // Embedded IDs for ordering items
 })
 
 export { collectionSchema }

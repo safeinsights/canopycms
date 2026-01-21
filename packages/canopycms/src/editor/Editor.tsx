@@ -52,13 +52,26 @@ export interface EditorEntry {
   canEdit?: boolean
 }
 
+/**
+ * Summary of an entry type for UI display.
+ * Contains just enough info to show type picker and create entries.
+ */
+export interface EditorEntryType {
+  name: string
+  label?: string
+  format: ContentFormat
+  default?: boolean
+  maxItems?: number
+}
+
 export interface EditorCollection {
   path: string // Logical path
   contentId?: string // 12-char content ID (optional, from directory name)
   name: string
   label?: string
-  format: ContentFormat
+  format: ContentFormat // Default entry type's format (for backwards compatibility)
   type: 'collection' | 'entry'
+  entryTypes?: EditorEntryType[] // All entry types in this collection
   children?: EditorCollection[]
 }
 

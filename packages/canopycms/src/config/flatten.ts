@@ -89,6 +89,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
       parentPath: parentPath ? toLogicalPath(parentPath) : undefined,
       entries: collection.entries,
       collections: collection.collections,
+      order: collection.order,
     })
 
     // Add entry types in this collection
@@ -129,6 +130,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
       parentPath: undefined, // No parent - this is the root
       entries: root.entries,
       collections: root.collections,
+      order: root.order,
     })
   }
 
