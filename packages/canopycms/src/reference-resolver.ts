@@ -34,6 +34,41 @@ export class ReferenceResolver {
   ) {}
 
   /**
+   * Convert a physical collection path to a logical path.
+   * The ID index stores physical paths (e.g., "content/authors.q52DCVPuH4ga"),
+   * but ContentStore.read() expects logical paths (e.g., "content/authors").
+   */
+  private getLogicalPath(physicalPath: string): string {
+    // Access the schema index through the store's internal structure
+    // We need to match the physical path to a logical path
+    const schemaIndex = (this.store as any).schemaIndex as Map<string, any>
+
+    for (const [logicalPath, schemaItem] of schemaIndex.entries()) {
+      if (schemaItem.type === 'collection') {
+        // Check if the physical path matches this collection
+        const pathSegments = physicalPath.split('/')
+        const logicalSegments = logicalPath.split('/')
+
+        if (pathSegments.length === logicalSegments.length) {
+          const matches = logicalSegments.every((logicalSeg, i) => {
+            const physicalSeg = pathSegments[i]
+            // Physical segment might have ID: "authors.q52DCVPuH4ga"
+            // Logical segment: "authors"
+            return physicalSeg === logicalSeg || physicalSeg.startsWith(logicalSeg + '.')
+          })
+
+          if (matches) {
+            return logicalPath
+          }
+        }
+      }
+    }
+
+    // Fallback: return the physical path if we can't find a match
+    return physicalPath
+  }
+
+  /**
    * Resolve a content ID to a display value.
    * Returns null if the ID doesn't exist or points to a collection.
    *
@@ -52,7 +87,9 @@ export class ReferenceResolver {
     }
 
     try {
-      const doc = await this.store.read(location.collection!, location.slug!)
+      // Convert physical path to logical path for store.read()
+      const logicalPath = this.getLogicalPath(location.collection!)
+      const doc = await this.store.read(logicalPath, location.slug!)
       const displayValue = String(
         doc.data[displayField] || doc.data.title || location.slug
       )
@@ -61,7 +98,7 @@ export class ReferenceResolver {
         id,
         exists: true,
         displayValue,
-        collection: location.collection,
+        collection: logicalPath,
         slug: location.slug
       }
     } catch (error) {
