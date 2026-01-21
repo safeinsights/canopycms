@@ -6,17 +6,17 @@ const normalizeContentRoot = (value?: string): string => {
   return trimmed
 }
 
-const stripContentRoot = (fullPath: string, contentRoot: string): string => {
+const stripContentRoot = (logicalPath: string, contentRoot: string): string => {
   const prefix = contentRoot ? `${contentRoot}/` : ''
-  if (prefix && fullPath.startsWith(prefix)) {
-    return fullPath.slice(prefix.length)
+  if (prefix && logicalPath.startsWith(prefix)) {
+    return logicalPath.slice(prefix.length)
   }
-  return fullPath
+  return logicalPath
 }
 
 /**
  * Build hierarchical editor collections from the flattened schema.
- * Uses fullPath as IDs to match API responses.
+ * Uses logicalPath as IDs to match API responses.
  * Optimized to O(n) using Map-based grouping.
  *
  * Only collections are returned - entry types are schema metadata, not navigable nodes.

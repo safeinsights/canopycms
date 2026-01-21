@@ -7,7 +7,7 @@ import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from './config'
 import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename, resolveCollectionPath } from './content-id-index'
 import { generateId } from './id'
 import { getFormatExtension } from './utils/format'
-import { normalizeFilesystemPath } from './paths'
+import { normalizeFilesystemPath, resolveLogicalPath, type LogicalPath } from './paths'
 
 export type MarkdownDocument = {
   format: 'md' | 'mdx'
@@ -81,6 +81,14 @@ export class ContentStore {
       this.indexLoaded = true
     }
     return this._idIndex
+  }
+
+  /**
+   * Get all schema items for iteration.
+   * Used internally by ReferenceResolver for path matching.
+   */
+  public getSchemaItems(): IterableIterator<FlatSchemaItem> {
+    return this.schemaIndex.values()
   }
 
   private assertSchemaItem(path: string): FlatSchemaItem {
@@ -287,7 +295,7 @@ export class ContentStore {
       throw new ContentStoreError('Empty path')
     }
 
-    const fullPath = pathSegments.join('/')
+    const logicalPath = pathSegments.join('/')
 
     // Try as collection + slug
     const slug = pathSegments[pathSegments.length - 1]
@@ -302,7 +310,7 @@ export class ContentStore {
       }
     }
 
-    throw new ContentStoreError(`No schema item found for path: ${fullPath}`)
+    throw new ContentStoreError(`No schema item found for path: ${logicalPath}`)
   }
 
   async resolveDocumentPath(schemaPath: string, slug = '') {
@@ -311,7 +319,7 @@ export class ContentStore {
   }
 
   async read(
-    collectionPath: string,
+    collectionPath: LogicalPath | string,
     slug = '',
     options: { resolveReferences?: boolean } = {}
   ): Promise<ContentDocument> {
@@ -365,7 +373,7 @@ export class ContentStore {
     return doc
   }
 
-  async write(collectionPath: string, slug = '', input: WriteInput): Promise<ContentDocument> {
+  async write(collectionPath: LogicalPath | string, slug = '', input: WriteInput): Promise<ContentDocument> {
     const idIndex = await this.idIndex()
     const schemaItem = this.assertSchemaItem(collectionPath)
 
@@ -466,7 +474,7 @@ export class ContentStore {
    * Get the ID for an entry given its collection and slug.
    * Returns null if no ID exists yet.
    */
-  async getIdForEntry(collectionPath: string, slug: string): Promise<string | null> {
+  async getIdForEntry(collectionPath: LogicalPath | string, slug: string): Promise<string | null> {
     const idIndex = await this.idIndex()
     const { relativePath } = await this.buildPaths(this.assertCollection(collectionPath), slug)
     return idIndex.findByPath(relativePath)
@@ -475,7 +483,7 @@ export class ContentStore {
   /**
    * Delete an entry and remove it from the index.
    */
-  async delete(collectionPath: string, slug: string): Promise<void> {
+  async delete(collectionPath: LogicalPath | string, slug: string): Promise<void> {
     const idIndex = await this.idIndex()
     const collection = this.assertCollection(collectionPath)
     const { absolutePath, relativePath } = await this.buildPaths(collection, slug)
@@ -498,7 +506,7 @@ export class ContentStore {
    * Returns empty array if the collection doesn't exist.
    */
   async listCollectionEntries(
-    collectionPath: string
+    collectionPath: LogicalPath | string
   ): Promise<Array<{ relativePath: string; collection: string; slug: string }>> {
     const idIndex = await this.idIndex()
 
@@ -643,43 +651,8 @@ export class ContentStore {
       }
 
       // location.collection is a physical path (e.g., "content/authors.q52DCVPuH4ga")
-      // We need to find the matching logical path from the schema index
-      let logicalPath: string | undefined
-
-      // Try to match the physical path to a schema item
-      // We can match by checking if the physical path starts with the logical path
-      for (const schemaItem of this.schemaIndex.values()) {
-        if (schemaItem.type === 'collection') {
-          // Check if the physical path matches this collection
-          // The physical path should start with the logical path (ignoring the ID suffix)
-          // e.g., "content/authors.q52DCVPuH4ga" matches "content/authors"
-          const logicalPrefix = schemaItem.logicalPath
-          const pathSegments = location.collection.split('/')
-          const logicalSegments = logicalPrefix.split('/')
-
-          // Check if all logical segments match the corresponding physical segments
-          // (ignoring the ID part after the dot in directory names)
-          if (pathSegments.length === logicalSegments.length) {
-            const matches = logicalSegments.every((logicalSeg, i) => {
-              const physicalSeg = pathSegments[i]
-              // Physical segment might have ID: "authors.q52DCVPuH4ga"
-              // Logical segment: "authors"
-              return physicalSeg === logicalSeg || physicalSeg.startsWith(logicalSeg + '.')
-            })
-
-            if (matches) {
-              logicalPath = schemaItem.logicalPath
-              break
-            }
-          }
-        }
-      }
-
-      if (!logicalPath) {
-        // Fallback: use the physical path if we can't find a logical match
-        // This shouldn't happen in normal operation
-        logicalPath = location.collection
-      }
+      // Use the shared utility to resolve it to a logical path
+      const logicalPath = resolveLogicalPath(location.collection, this.schemaIndex.values())
 
       // Read the referenced entry WITHOUT resolving its references (prevent infinite loops)
       const doc = await this.read(logicalPath, location.slug, { resolveReferences: false })
