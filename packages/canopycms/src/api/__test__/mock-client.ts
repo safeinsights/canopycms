@@ -327,7 +327,7 @@ export function mockUserInfoResponse(): UserInfoResponse {
  * Create a GetSchemaApiResponse for testing
  */
 export function mockGetSchemaApiResponse(): GetSchemaApiResponse {
-  return mockSuccess({"schema":{},"flatSchema":[]})
+  return mockSuccess({"schema":{},"flatSchema":[],"availableSchemas":[]})
 }
 
 /**
