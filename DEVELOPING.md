@@ -55,6 +55,7 @@ import {
   createLogicalPath,
   createPhysicalPath,
   validateAndNormalizePath,
+  resolveLogicalPath,
   type LogicalPath,
   type PhysicalPath,
   type CollectionPath,
@@ -63,24 +64,68 @@ import {
 
 **Path types:**
 
-| Type             | Purpose                            | Example                            |
-| ---------------- | ---------------------------------- | ---------------------------------- |
-| `LogicalPath`    | Content-relative paths             | `content/posts/my-post`            |
-| `PhysicalPath`   | Filesystem paths with embedded IDs | `content/posts/my-post.abc123.mdx` |
-| `CollectionPath` | Collection identifiers             | `posts` or `blog/posts`            |
+| Type             | Purpose                                                     | Example                                                 |
+| ---------------- | ----------------------------------------------------------- | ------------------------------------------------------- |
+| `LogicalPath`    | User-facing, schema-defined paths without IDs               | `content/posts` or `content/docs/api`                   |
+| `PhysicalPath`   | Actual filesystem paths with embedded content IDs           | `content/posts.abc123` or `content/docs.xyz/api.def456` |
+| `CollectionPath` | Collection identifiers (deprecated in favor of LogicalPath) | `posts` or `blog/posts`                                 |
+
+**Logical vs Physical Paths:**
+
+CanopyCMS embeds unique IDs in directory names to ensure stable references even when content is moved or renamed:
+
+- **Logical paths** are schema-defined and user-facing (e.g., `content/authors`)
+- **Physical paths** include embedded IDs (e.g., `content/authors.q52DCVPuH4ga`)
+
+This distinction is critical:
+
+- **ContentStore APIs** expect `LogicalPath` parameters
+- **ID index** stores `PhysicalPath` locations
+- Use `resolveLogicalPath()` to convert between them
 
 **Creating paths:**
 
 ```typescript
 // Validates and creates a logical path (throws on traversal sequences)
 const path = createLogicalPath('content', 'posts', 'my-post')
+// Type: LogicalPath
 
 // Creates a physical path (for files with embedded IDs)
 const filePath = createPhysicalPath('content', 'posts', 'my-post.ABC123.mdx')
+// Type: PhysicalPath
 
 // Normalize collection ID (strips content root if present)
 const collectionId = normalizeCollectionId('content/posts') // Returns 'posts'
 ```
+
+**Resolving physical paths to logical paths:**
+
+When working with the ID index (which stores physical paths), use `resolveLogicalPath()` to convert to logical paths before calling ContentStore methods:
+
+```typescript
+import { resolveLogicalPath } from './paths'
+
+// ID index returns physical path with embedded IDs
+const physicalPath = 'content/authors.q52DCVPuH4ga'
+
+// Resolve to logical path for ContentStore
+const logicalPath = resolveLogicalPath(physicalPath, schemaItems)
+// Returns: 'content/authors'
+
+// Now safe to use with ContentStore
+const doc = await contentStore.read(logicalPath, slug)
+```
+
+**Algorithm details:**
+
+The path matching algorithm handles:
+
+- ✅ Nested collections with IDs at multiple levels
+- ✅ Collections with similar name prefixes (e.g., `post` vs `posts`)
+- ✅ Collections with dots in their logical names (e.g., `v1.0`)
+- ✅ Exact matches without ID suffixes
+
+Matching logic: For each segment pair, match if `physicalSeg === logicalSeg OR physicalSeg.startsWith(logicalSeg + '.')`. This ensures the dot separator is required, preventing false matches.
 
 **Client/server boundary:** Client code must import from `./paths/normalize` directly because the barrel export (`./paths`) includes server-only modules that use Node.js `path`. This prevents bundler errors when code is used in the browser.
 

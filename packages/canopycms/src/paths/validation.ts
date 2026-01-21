@@ -53,8 +53,8 @@ export function validateContentPath(
   const normalizedRoot = normalizeFilesystemPath(rootPath)
   if (!normalized.startsWith(normalizedRoot) && normalized !== normalizedRoot) {
     // Allow paths that are relative within the root
-    const fullPath = `${normalizedRoot}/${normalized}`
-    if (hasTraversalSequence(fullPath)) {
+    const normalizedPath = `${normalizedRoot}/${normalized}`
+    if (hasTraversalSequence(normalizedPath)) {
       return { valid: false, error: 'Path escapes root directory' }
     }
   }

@@ -11,7 +11,7 @@ vi.mock('../content-store', () => {
   return {
     ContentStore: vi.fn().mockImplementation(() => ({
       resolvePath: vi.fn().mockReturnValue({
-        schemaItem: { fullPath: 'content/posts', type: 'collection' },
+        schemaItem: { logicalPath: 'content/posts', type: 'collection' },
         slug: 'hello',
       }),
       resolveDocumentPath: vi

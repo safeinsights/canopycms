@@ -90,7 +90,7 @@ const readContentHandler = async (
   const pathSegments = params.path.split('/').filter(Boolean)
 
   // Prepend contentRoot if not already present
-  const fullPathSegments =
+  const logicalPathSegments =
     pathSegments[0] === contentRoot ? pathSegments : [contentRoot, ...pathSegments]
 
   // Use trivial path resolution
@@ -98,7 +98,7 @@ const readContentHandler = async (
   let slug: string
   let relativePath: string
   try {
-    const resolved = store.resolvePath(fullPathSegments)
+    const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
     slug = resolved.slug
     const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, slug)
@@ -141,7 +141,7 @@ const writeContentHandler = async (
   const pathSegments = params.path.split('/').filter(Boolean)
 
   // Prepend contentRoot if not already present
-  const fullPathSegments =
+  const logicalPathSegments =
     pathSegments[0] === contentRoot ? pathSegments : [contentRoot, ...pathSegments]
 
   // Use trivial path resolution
@@ -149,7 +149,7 @@ const writeContentHandler = async (
   let slug: string
   let relativePath: string
   try {
-    const resolved = store.resolvePath(fullPathSegments)
+    const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
     slug = resolved.slug
     const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, slug)
@@ -207,13 +207,13 @@ const validateReferencesHandler = async (
   const contentRoot = ctx.services.config.contentRoot || 'content'
   const pathSegments = params.path.split('/').filter(Boolean)
 
-  const fullPathSegments =
+  const logicalPathSegments =
     pathSegments[0] === contentRoot ? pathSegments : [contentRoot, ...pathSegments]
 
   let schemaItem: any
   let relativePath: string
   try {
-    const resolved = store.resolvePath(fullPathSegments)
+    const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
     const slug = resolved.slug
     const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, slug)

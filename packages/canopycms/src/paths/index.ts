@@ -49,6 +49,9 @@ export {
   sanitizeForPath,
 } from './validation'
 
+// Path resolution utilities
+export { resolveLogicalPath } from './resolve'
+
 // Branch path utilities
 export {
   resolveBranchPath,

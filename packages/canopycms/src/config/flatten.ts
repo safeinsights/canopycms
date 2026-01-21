@@ -24,8 +24,8 @@ export const normalizePathValue = (val: string): string =>
  */
 export const normalizeSchemaPathsRoot = (root: RootCollectionConfig): RootCollectionConfig => {
   const normalizeCollection = (collection: CollectionConfig, parentPath = ''): CollectionConfig => {
-    const fullPath = parentPath ? join(parentPath, collection.path) : collection.path
-    const normalizedFull = normalizePathValue(fullPath)
+    const logicalPath = parentPath ? join(parentPath, collection.path) : collection.path
+    const normalizedFull = normalizePathValue(logicalPath)
     if (!normalizedFull || normalizedFull.includes('..')) {
       throw new Error(`Invalid path for collection "${collection.name}"`)
     }
@@ -66,19 +66,19 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
   const walkCollection = (collection: CollectionConfig, parentPath: string) => {
     const normalizedPath = normalizePathValue(collection.path)
     // Build logical path: if we have a parent, join with parent; otherwise use collection path
-    let fullPath: string
+    let logicalPath: string
     if (parentPath && parentPath !== base) {
       // Nested child collection: use only the collection name (leaf segment), not the full path
       // The full path from collection.path includes parent path segments that are already in parentPath
-      fullPath = join(parentPath, collection.name)
+      logicalPath = join(parentPath, collection.name)
     } else if (parentPath === base) {
       // Root-level collection (direct child of content root): use collection path
-      fullPath = join(base, normalizedPath)
+      logicalPath = join(base, normalizedPath)
     } else {
       // No parent and no base: use collection path as-is
-      fullPath = normalizedPath
+      logicalPath = normalizedPath
     }
-    const normalizedFull = normalizePathValue(fullPath)
+    const normalizedFull = normalizePathValue(logicalPath)
 
     // Add the collection itself
     flat.push({

@@ -614,9 +614,9 @@ export class GitManager {
 
     // Write initial files
     for (const [filePath, content] of Object.entries(initialFiles)) {
-      const fullPath = path.join(this.repoPath, filePath)
-      await fs.mkdir(path.dirname(fullPath), { recursive: true })
-      await fs.writeFile(fullPath, content, 'utf-8')
+      const absolutePath = path.join(this.repoPath, filePath)
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true })
+      await fs.writeFile(absolutePath, content, 'utf-8')
       await this.git.add(filePath)
     }
 

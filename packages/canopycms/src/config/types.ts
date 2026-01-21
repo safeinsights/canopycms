@@ -233,8 +233,8 @@ export type CanopyConfigFragment = Partial<CanopyConfigInput>
 
 /**
  * Flattened schema item for efficient lookups.
- * Discriminated union of collection or entry type with full path resolved.
- * Used for O(1) schema lookups via Map<fullPath, FlatSchemaItem>.
+ * Discriminated union of collection or entry type with logical path resolved.
+ * Used for O(1) schema lookups via Map<logicalPath, FlatSchemaItem>.
  */
 export type FlatSchemaItem =
   | {

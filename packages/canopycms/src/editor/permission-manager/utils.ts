@@ -54,12 +54,12 @@ export function convertCollectionsToTreeNodes(
   const nodes: TreeNode[] = []
 
   for (const collection of collections) {
-    // Build the full path - use collection.path directly since it already includes
+    // Build the logical path - use collection.path directly since it already includes
     // the content root prefix from buildEditorCollections
-    const fullPath = collection.path
+    const logicalPath = collection.path
 
     const node: TreeNode = {
-      path: fullPath,
+      path: logicalPath,
       name: collection.label || collection.name,
       type: collection.type === 'collection' ? 'folder' : 'file',
       children: [],
@@ -67,7 +67,7 @@ export function convertCollectionsToTreeNodes(
 
     // Recursively process nested collections
     if (collection.children) {
-      node.children = convertCollectionsToTreeNodes(collection.children, contentRoot, fullPath)
+      node.children = convertCollectionsToTreeNodes(collection.children, contentRoot, logicalPath)
     }
 
     nodes.push(node)

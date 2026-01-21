@@ -1,6 +1,7 @@
 import type { ContentStore } from '../content-store'
 import type { ContentIdIndex, IdLocation } from '../content-id-index'
 import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig } from '../config'
+import type { LogicalPath } from '../paths'
 
 export interface ReferenceInfo {
   entryPath: string
@@ -73,7 +74,7 @@ export class DeletionChecker {
    * Scan a single collection for references to the target ID.
    */
   private async scanCollection(
-    collectionPath: string,
+    collectionPath: LogicalPath | string,
     fields: FieldConfig[],
     targetId: string,
   ): Promise<ReferenceInfo[]> {
@@ -196,7 +197,7 @@ export class DeletionChecker {
    * Helper to list all entries in a collection from the ID index.
    */
   private listEntriesInCollection(
-    collectionPath: string,
+    collectionPath: LogicalPath | string,
   ): Array<{ relativePath: string; collection: string; slug: string }> {
     const entries: Array<{ relativePath: string; collection: string; slug: string }> = []
 

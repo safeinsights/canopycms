@@ -3,6 +3,7 @@ import path from 'node:path'
 import type { ContentStore } from './content-store'
 import type { ContentIdIndex } from './content-id-index'
 import { extractSlugFromFilename } from './content-id-index'
+import { resolveLogicalPath, type LogicalPath } from './paths'
 
 export interface ResolvedReference {
   id: string
@@ -38,34 +39,9 @@ export class ReferenceResolver {
    * The ID index stores physical paths (e.g., "content/authors.q52DCVPuH4ga"),
    * but ContentStore.read() expects logical paths (e.g., "content/authors").
    */
-  private getLogicalPath(physicalPath: string): string {
-    // Access the schema index through the store's internal structure
-    // We need to match the physical path to a logical path
-    const schemaIndex = (this.store as any).schemaIndex as Map<string, any>
-
-    for (const [logicalPath, schemaItem] of schemaIndex.entries()) {
-      if (schemaItem.type === 'collection') {
-        // Check if the physical path matches this collection
-        const pathSegments = physicalPath.split('/')
-        const logicalSegments = logicalPath.split('/')
-
-        if (pathSegments.length === logicalSegments.length) {
-          const matches = logicalSegments.every((logicalSeg, i) => {
-            const physicalSeg = pathSegments[i]
-            // Physical segment might have ID: "authors.q52DCVPuH4ga"
-            // Logical segment: "authors"
-            return physicalSeg === logicalSeg || physicalSeg.startsWith(logicalSeg + '.')
-          })
-
-          if (matches) {
-            return logicalPath
-          }
-        }
-      }
-    }
-
-    // Fallback: return the physical path if we can't find a match
-    return physicalPath
+  private getLogicalPath(physicalPath: string): LogicalPath | string {
+    // Use the shared utility to resolve physical path to logical path
+    return resolveLogicalPath(physicalPath, this.store.getSchemaItems())
   }
 
   /**

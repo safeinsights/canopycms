@@ -118,8 +118,8 @@ async function scanForCollectionMeta(
       // e.g., "docs.bChqT78gcaLd" -> "docs"
       const logicalName = stripEmbeddedIdFromName(folderName)
       const folderPath = relativePath ? `${relativePath}/${logicalName}` : logicalName
-      const fullPath = join(baseDir, folderName)
-      const metaPath = join(fullPath, '.collection.json')
+      const absolutePath = join(baseDir, folderName)
+      const metaPath = join(absolutePath, '.collection.json')
 
       // Try to load collection meta file
       try {
@@ -136,7 +136,7 @@ async function scanForCollectionMeta(
         })
 
         // Recursively scan for nested collection folders (they'll have their own .collection.json files)
-        const nestedCollections = await scanForCollectionMeta(fullPath, folderPath)
+        const nestedCollections = await scanForCollectionMeta(absolutePath, folderPath)
         collections.push(...nestedCollections)
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -145,7 +145,7 @@ async function scanForCollectionMeta(
           throw new Error(`Invalid .collection.json in ${folderPath}: ${(err as Error).message}`)
         }
         // No .collection.json - still scan subfolders in case they have collections
-        const nestedCollections = await scanForCollectionMeta(fullPath, folderPath)
+        const nestedCollections = await scanForCollectionMeta(absolutePath, folderPath)
         collections.push(...nestedCollections)
       }
     }
