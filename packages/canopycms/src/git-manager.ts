@@ -407,6 +407,12 @@ export class GitManager {
       await git.checkoutBranch(options.branchName)
     }
 
+    // 6. Mark this as a CanopyCMS-managed workspace
+    await git.git.addConfig('canopycms.managed', 'true')
+    log.debug('git', 'Marked workspace as CanopyCMS-managed', {
+      workspacePath: options.workspacePath,
+    })
+
     return git
   }
 
@@ -480,6 +486,18 @@ export class GitManager {
 
   async ensureAuthor(author: { name: string; email: string }): Promise<void> {
     const config = (await this.git.listConfig()) as ConfigListSummary
+
+    // Verify this is a CanopyCMS-managed workspace before setting author
+    const isManaged = config.all['canopycms.managed'] === 'true'
+    if (!isManaged) {
+      throw new Error(
+        `Cannot set git bot author in non-managed repository (${this.repoPath}). ` +
+          `Bot identity should only be set in CanopyCMS branch clones or test workspaces. ` +
+          `If this is a test workspace, add "git config canopycms.managed true" to mark it as managed.`,
+      )
+    }
+
+    // Set author identity
     const currentName = config.all['user.name']
     const currentEmail = config.all['user.email']
     if (currentName !== author.name) {

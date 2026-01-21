@@ -16,6 +16,7 @@ import { GitManager } from '../git-manager'
 import { initBareRepo } from '../__integration__/test-utils/test-workspace'
 import { BranchWorkspaceManager, loadBranchContext } from '../branch-workspace'
 import { getBranchMetadataFileManager } from '../branch-metadata'
+import { initTestRepo } from '../test-utils'
 import { CommentStore } from '../comment-store'
 import { defineCanopyTestConfig } from '../config-test'
 
@@ -185,9 +186,8 @@ describe('PR Workflow Integration', () => {
     expect(workspace.branch.pullRequestNumber).toBeUndefined()
 
     // Configure git user for test commits
+    await initTestRepo(workspace.branchRoot)
     const branchGit = simpleGit({ baseDir: workspace.branchRoot })
-    await branchGit.addConfig('user.name', 'Test User')
-    await branchGit.addConfig('user.email', 'test@example.com')
 
     // ===== STEP 2: Make changes and create a commit =====
     const contentDir = path.join(workspace.branchRoot, 'content', 'posts')
@@ -469,9 +469,8 @@ describe('PR Workflow Integration', () => {
       remoteUrl: remotePath,
     })
 
+    await initTestRepo(workspace.branchRoot)
     const branchGit = simpleGit({ baseDir: workspace.branchRoot })
-    await branchGit.addConfig('user.name', 'Test User')
-    await branchGit.addConfig('user.email', 'test@test.com')
 
     // Make changes
     await fs.mkdir(path.join(workspace.branchRoot, 'content'), { recursive: true })
