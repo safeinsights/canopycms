@@ -50,6 +50,7 @@ export interface IdLocation {
 export class ContentIdIndex {
   private idToLocation: Map<string, IdLocation> = new Map()
   private pathToId: Map<string, string> = new Map()
+  private byCollection: Map<string, Set<string>> = new Map()
   private root: string
 
   constructor(root: string) {
@@ -102,6 +103,12 @@ export class ContentIdIndex {
             const collectionPath = path.dirname(fullRelativePath)
             location.slug = slug
             location.collection = collectionPath
+
+            // Add to collection index
+            if (!this.byCollection.has(collectionPath)) {
+              this.byCollection.set(collectionPath, new Set())
+            }
+            this.byCollection.get(collectionPath)!.add(id)
           }
 
           this.idToLocation.set(id, location)
@@ -144,6 +151,31 @@ export class ContentIdIndex {
   }
 
   /**
+   * Get all entries in a collection by collection path.
+   *
+   * Performance: O(1) + O(m) where m is the number of entries in the collection.
+   *
+   * @param collectionPath - The collection path (e.g., "content/posts")
+   * @returns Array of IdLocation objects for entries in the collection
+   */
+  getEntriesInCollection(collectionPath: string): IdLocation[] {
+    const idSet = this.byCollection.get(collectionPath)
+    if (!idSet) {
+      return []
+    }
+
+    const locations: IdLocation[] = []
+    for (const id of idSet) {
+      const location = this.idToLocation.get(id)
+      if (location) {
+        locations.push(location)
+      }
+    }
+
+    return locations
+  }
+
+  /**
    * Add a new entry or collection to the index.
    * Note: This only updates the in-memory index. The file with embedded ID
    * must already exist on disk (created by ContentStore).
@@ -170,6 +202,14 @@ export class ContentIdIndex {
     }
     this.idToLocation.set(id, fullLocation)
     this.pathToId.set(location.relativePath, id)
+
+    // Add to collection index if it's an entry
+    if (fullLocation.type === 'entry' && fullLocation.collection) {
+      if (!this.byCollection.has(fullLocation.collection)) {
+        this.byCollection.set(fullLocation.collection, new Set())
+      }
+      this.byCollection.get(fullLocation.collection)!.add(id)
+    }
   }
 
   /**
@@ -179,6 +219,18 @@ export class ContentIdIndex {
   remove(id: string): void {
     const location = this.idToLocation.get(id)
     if (!location) return
+
+    // Remove from collection index if it's an entry
+    if (location.type === 'entry' && location.collection) {
+      const idSet = this.byCollection.get(location.collection)
+      if (idSet) {
+        idSet.delete(id)
+        // Clean up empty Sets to prevent memory leaks
+        if (idSet.size === 0) {
+          this.byCollection.delete(location.collection)
+        }
+      }
+    }
 
     this.idToLocation.delete(id)
     this.pathToId.delete(location.relativePath)
@@ -202,8 +254,31 @@ export class ContentIdIndex {
 
     // Update slug and collection for entries
     if (location.type === 'entry') {
+      const oldCollection = location.collection
       location.slug = extractSlugFromFilename(path.basename(newRelativePath))
       location.collection = path.dirname(newRelativePath)
+
+      // Update collection index if collection changed
+      if (oldCollection !== location.collection) {
+        // Remove from old collection
+        if (oldCollection) {
+          const oldSet = this.byCollection.get(oldCollection)
+          if (oldSet) {
+            oldSet.delete(id)
+            if (oldSet.size === 0) {
+              this.byCollection.delete(oldCollection)
+            }
+          }
+        }
+
+        // Add to new collection
+        if (location.collection) {
+          if (!this.byCollection.has(location.collection)) {
+            this.byCollection.set(location.collection, new Set())
+          }
+          this.byCollection.get(location.collection)!.add(id)
+        }
+      }
     }
 
     // Add new path mapping
