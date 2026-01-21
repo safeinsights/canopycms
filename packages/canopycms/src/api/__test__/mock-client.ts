@@ -8,6 +8,7 @@
 import { vi, type Mock } from 'vitest'
 import type { CanopyApiClient } from '../client'
 import type { ApiResponse } from '../types'
+import { toLogicalPath, toPhysicalPath } from '../../paths'
 import type {
   BranchDeleteResponse,
   BranchListResponse,
@@ -32,7 +33,7 @@ import type {
 } from '../content'
 import type { ReferenceOptionsResponse } from '../reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from '../resolve-references'
-import type { EntriesResponse } from '../entries'
+import type { DeleteEntryResponse, EntriesResponse } from '../entries'
 import type {
   AssetDeleteResponse,
   AssetUploadResponse,
@@ -53,6 +54,24 @@ import type {
   UpdateInternalGroupsResponse,
 } from '../groups'
 import type { UserInfoResponse } from '../user'
+import type {
+  AddEntryTypeApiResponse,
+  CreateCollectionApiResponse,
+  DeleteCollectionApiResponse,
+  GetCollectionApiResponse,
+  GetSchemaApiResponse,
+  RemoveEntryTypeApiResponse,
+  UpdateCollectionApiResponse,
+  UpdateEntryTypeApiResponse,
+  UpdateOrderApiResponse,
+  UpdateOrderBody,
+} from '../schema'
+import type {
+  CreateCollectionInput,
+  CreateEntryTypeInput,
+  UpdateCollectionInput,
+  UpdateEntryTypeInput,
+} from '../../schema/schema-store-types'
 
 /**
  * Type utility to convert CanopyApiClient methods to Vitest mocks.
@@ -207,6 +226,7 @@ export function createMockApiClient(): MockApiClient {
         .mockResolvedValue(
           mockSuccess({ collections: [], entries: [], pagination: { hasMore: false, limit: 50 } }),
         ),
+      delete: vi.fn().mockResolvedValue(mockSuccess({ deleted: true })),
     },
 
     assets: {
@@ -231,6 +251,20 @@ export function createMockApiClient(): MockApiClient {
 
     user: {
       whoami: vi.fn().mockResolvedValue(mockSuccess({ userId: 'mock-user', groups: [] })),
+    },
+
+    schema: {
+      get: vi.fn().mockResolvedValue(mockSuccess({ schema: {}, flatSchema: [] })),
+      getCollection: vi.fn().mockResolvedValue(mockSuccess({ collection: null })),
+      createCollection: vi
+        .fn()
+        .mockResolvedValue(mockSuccess({ collectionPath: '', contentId: '' })),
+      updateCollection: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
+      deleteCollection: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
+      addEntryType: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
+      updateEntryType: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
+      removeEntryType: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
+      updateOrder: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
     },
   } as MockApiClient
 }
@@ -369,6 +403,13 @@ export function mockEntriesResponse(): EntriesResponse {
 }
 
 /**
+ * Create a DeleteEntryResponse for testing
+ */
+export function mockDeleteEntryResponse(): DeleteEntryResponse {
+  return mockSuccess({ deleted: true })
+}
+
+/**
  * Create a AssetsListResponse for testing
  */
 export function mockAssetsListResponse(): AssetsListResponse {
@@ -443,4 +484,67 @@ export function mockExternalGroupsResponse(): ExternalGroupsResponse {
  */
 export function mockUserInfoResponse(): UserInfoResponse {
   return mockSuccess({ userId: 'mock-user', groups: [] })
+}
+
+/**
+ * Create a GetSchemaApiResponse for testing
+ */
+export function mockGetSchemaApiResponse(): GetSchemaApiResponse {
+  return mockSuccess({ schema: {}, flatSchema: [] })
+}
+
+/**
+ * Create a GetCollectionApiResponse for testing
+ */
+export function mockGetCollectionApiResponse(): GetCollectionApiResponse {
+  return mockSuccess({ collection: null })
+}
+
+/**
+ * Create a CreateCollectionApiResponse for testing
+ */
+export function mockCreateCollectionApiResponse(): CreateCollectionApiResponse {
+  return mockSuccess({ collectionPath: toLogicalPath(''), contentId: '' })
+}
+
+/**
+ * Create a UpdateCollectionApiResponse for testing
+ */
+export function mockUpdateCollectionApiResponse(): UpdateCollectionApiResponse {
+  return mockSuccess({ success: true })
+}
+
+/**
+ * Create a DeleteCollectionApiResponse for testing
+ */
+export function mockDeleteCollectionApiResponse(): DeleteCollectionApiResponse {
+  return mockSuccess({ success: true })
+}
+
+/**
+ * Create a AddEntryTypeApiResponse for testing
+ */
+export function mockAddEntryTypeApiResponse(): AddEntryTypeApiResponse {
+  return mockSuccess({ success: true })
+}
+
+/**
+ * Create a UpdateEntryTypeApiResponse for testing
+ */
+export function mockUpdateEntryTypeApiResponse(): UpdateEntryTypeApiResponse {
+  return mockSuccess({ success: true })
+}
+
+/**
+ * Create a RemoveEntryTypeApiResponse for testing
+ */
+export function mockRemoveEntryTypeApiResponse(): RemoveEntryTypeApiResponse {
+  return mockSuccess({ success: true })
+}
+
+/**
+ * Create a UpdateOrderApiResponse for testing
+ */
+export function mockUpdateOrderApiResponse(): UpdateOrderApiResponse {
+  return mockSuccess({ success: true })
 }

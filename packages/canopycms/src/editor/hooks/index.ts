@@ -16,3 +16,8 @@ export {
   type UseReferenceResolutionOptions,
   type UseReferenceResolutionResult,
 } from './useReferenceResolution'
+export {
+  useSchemaManager,
+  type UseSchemaManagerOptions,
+  type UseSchemaManagerReturn,
+} from './useSchemaManager'

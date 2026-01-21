@@ -30,7 +30,7 @@ import type {
 } from './content'
 import type { ReferenceOptionsResponse } from './reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from './resolve-references'
-import type { EntriesResponse } from './entries'
+import type { DeleteEntryResponse, EntriesResponse } from './entries'
 import type {
   AssetDeleteResponse,
   AssetUploadResponse,
@@ -51,6 +51,24 @@ import type {
   UpdateInternalGroupsResponse,
 } from './groups'
 import type { UserInfoResponse } from './user'
+import type {
+  AddEntryTypeApiResponse,
+  CreateCollectionApiResponse,
+  DeleteCollectionApiResponse,
+  GetCollectionApiResponse,
+  GetSchemaApiResponse,
+  RemoveEntryTypeApiResponse,
+  UpdateCollectionApiResponse,
+  UpdateEntryTypeApiResponse,
+  UpdateOrderApiResponse,
+  UpdateOrderBody,
+} from './schema'
+import type {
+  CreateCollectionInput,
+  CreateEntryTypeInput,
+  UpdateCollectionInput,
+  UpdateEntryTypeInput,
+} from './../schema/schema-store-types'
 
 /**
  * Options for creating an ApiClient
@@ -271,6 +289,13 @@ export class CanopyApiClient {
     list: (params: Record<string, string>): Promise<EntriesResponse> => {
       return this.request('GET', this.buildPath('/:branch/entries', params))
     },
+
+    /**
+     * delete - DELETE /:branch/entries/:entryPath
+     */
+    delete: (params: Record<string, string>): Promise<DeleteEntryResponse> => {
+      return this.request('DELETE', this.buildPath('/:branch/entries/:entryPath', params))
+    },
   }
 
   /**
@@ -374,6 +399,120 @@ export class CanopyApiClient {
      */
     whoami: (): Promise<UserInfoResponse> => {
       return this.request('GET', '/whoami')
+    },
+  }
+
+  /**
+   * schema - Auto-generated methods
+   */
+  readonly schema = {
+    /**
+     * get - GET /:branch/schema
+     */
+    get: (params: Record<string, string>): Promise<GetSchemaApiResponse> => {
+      return this.request('GET', this.buildPath('/:branch/schema', params))
+    },
+
+    /**
+     * getCollection - GET /:branch/schema/collections/:collectionPath
+     */
+    getCollection: (params: Record<string, string>): Promise<GetCollectionApiResponse> => {
+      return this.request(
+        'GET',
+        this.buildPath('/:branch/schema/collections/:collectionPath', params),
+      )
+    },
+
+    /**
+     * createCollection - POST /:branch/schema/collections
+     */
+    createCollection: (
+      params: Record<string, string>,
+      body: CreateCollectionInput,
+    ): Promise<CreateCollectionApiResponse> => {
+      return this.request('POST', this.buildPath('/:branch/schema/collections', params), body)
+    },
+
+    /**
+     * updateCollection - PATCH /:branch/schema/collections/:collectionPath
+     */
+    updateCollection: (
+      params: Record<string, string>,
+      body: UpdateCollectionInput,
+    ): Promise<UpdateCollectionApiResponse> => {
+      return this.request(
+        'PATCH',
+        this.buildPath('/:branch/schema/collections/:collectionPath', params),
+        body,
+      )
+    },
+
+    /**
+     * deleteCollection - DELETE /:branch/schema/collections/:collectionPath
+     */
+    deleteCollection: (params: Record<string, string>): Promise<DeleteCollectionApiResponse> => {
+      return this.request(
+        'DELETE',
+        this.buildPath('/:branch/schema/collections/:collectionPath', params),
+      )
+    },
+
+    /**
+     * addEntryType - POST /:branch/schema/collections/:collectionPath/entry-types
+     */
+    addEntryType: (
+      params: Record<string, string>,
+      body: CreateEntryTypeInput,
+    ): Promise<AddEntryTypeApiResponse> => {
+      return this.request(
+        'POST',
+        this.buildPath('/:branch/schema/collections/:collectionPath/entry-types', params),
+        body,
+      )
+    },
+
+    /**
+     * updateEntryType - PATCH /:branch/schema/collections/:collectionPath/entry-types/:entryTypeName
+     */
+    updateEntryType: (
+      params: Record<string, string>,
+      body: UpdateEntryTypeInput,
+    ): Promise<UpdateEntryTypeApiResponse> => {
+      return this.request(
+        'PATCH',
+        this.buildPath(
+          '/:branch/schema/collections/:collectionPath/entry-types/:entryTypeName',
+          params,
+        ),
+        body,
+      )
+    },
+
+    /**
+     * removeEntryType - DELETE /:branch/schema/collections/:collectionPath/entry-types/:entryTypeName
+     */
+    removeEntryType: (params: Record<string, string>): Promise<RemoveEntryTypeApiResponse> => {
+      return this.request(
+        'DELETE',
+        this.buildPath(
+          '/:branch/schema/collections/:collectionPath/entry-types/:entryTypeName',
+          params,
+        ),
+      )
+    },
+
+    /**
+     * updateOrder - PATCH /:branch/schema/collections/:collectionPath/order
+     */
+    updateOrder: (
+      params: Record<string, string>,
+      body: UpdateOrderBody,
+    ): Promise<UpdateOrderApiResponse> => {
+      return this.request(
+        'PATCH',
+        this.buildPath('/:branch/schema/collections/:collectionPath/order', params),
+        body,
+      )
     },
   }
 

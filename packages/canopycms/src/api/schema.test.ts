@@ -142,6 +142,28 @@ describe('Schema API', () => {
       expect(result.ok).toBe(true)
       expect(result.data?.collection).toBeNull()
     })
+
+    it('should reject paths with traversal sequences', async () => {
+      const result = await getCollection.handler(mockCtx, mockReq, {
+        branch: 'main',
+        collectionPath: '../admin/secrets',
+      })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('traversal')
+    })
+
+    it('should reject physical paths (with embedded content IDs)', async () => {
+      const result = await getCollection.handler(mockCtx, mockReq, {
+        branch: 'main',
+        collectionPath: 'posts.abc123def456',
+      })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('physical path')
+    })
   })
 
   describe('createCollection', () => {
@@ -222,6 +244,32 @@ describe('Schema API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(403)
     })
+
+    it('should reject paths with traversal sequences', async () => {
+      const result = await updateCollection.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'posts/../admin' },
+        { label: 'Hacked' },
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('traversal')
+    })
+
+    it('should reject physical paths', async () => {
+      const result = await updateCollection.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'posts.vh2WdhwAFiSL' },
+        { label: 'Updated' },
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('physical path')
+    })
   })
 
   describe('deleteCollection', () => {
@@ -255,6 +303,28 @@ describe('Schema API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(400)
       expect(result.error).toContain('Collection must be empty')
+    })
+
+    it('should reject paths with traversal sequences', async () => {
+      const result = await deleteCollection.handler(mockCtx, mockReq, {
+        branch: 'main',
+        collectionPath: 'posts/../secrets',
+      })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('traversal')
+    })
+
+    it('should reject physical paths', async () => {
+      const result = await deleteCollection.handler(mockCtx, mockReq, {
+        branch: 'main',
+        collectionPath: 'posts.abc123def456',
+      })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('physical path')
     })
   })
 
@@ -294,6 +364,32 @@ describe('Schema API', () => {
       expect(result.status).toBe(400)
       expect(result.error).toContain('already exists')
     })
+
+    it('should reject paths with traversal sequences', async () => {
+      const result = await addEntryType.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: '../admin' },
+        { name: 'entry', format: 'json', fields: 'postSchema' },
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('traversal')
+    })
+
+    it('should reject physical paths', async () => {
+      const result = await addEntryType.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'posts.tuggGbrydvYr' },
+        { name: 'entry', format: 'json', fields: 'postSchema' },
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('physical path')
+    })
   })
 
   describe('updateEntryType', () => {
@@ -317,6 +413,32 @@ describe('Schema API', () => {
         'post',
         expect.objectContaining({ label: 'Blog Post', maxItems: 100 }),
       )
+    })
+
+    it('should reject paths with traversal sequences', async () => {
+      const result = await updateEntryType.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'posts/../../etc', entryTypeName: 'post' },
+        { label: 'Hacked' },
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('traversal')
+    })
+
+    it('should reject physical paths', async () => {
+      const result = await updateEntryType.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'blog.NMNf8r3GHYkP', entryTypeName: 'post' },
+        { label: 'Updated' },
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('physical path')
     })
   })
 
@@ -353,6 +475,30 @@ describe('Schema API', () => {
       expect(result.status).toBe(400)
       expect(result.error).toContain('Cannot remove last entry type')
     })
+
+    it('should reject paths with traversal sequences', async () => {
+      const result = await removeEntryType.handler(mockCtx, mockReq, {
+        branch: 'main',
+        collectionPath: '..%2F..%2Fpasswd',
+        entryTypeName: 'post',
+      })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('traversal')
+    })
+
+    it('should reject physical paths', async () => {
+      const result = await removeEntryType.handler(mockCtx, mockReq, {
+        branch: 'main',
+        collectionPath: 'posts.Xz9kL2mN4pQr',
+        entryTypeName: 'post',
+      })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('physical path')
+    })
   })
 
   describe('updateOrder', () => {
@@ -386,6 +532,32 @@ describe('Schema API', () => {
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(403)
+    })
+
+    it('should reject paths with traversal sequences', async () => {
+      const result = await updateOrder.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'posts/../../../root' },
+        { order: ['id1'] },
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('traversal')
+    })
+
+    it('should reject physical paths', async () => {
+      const result = await updateOrder.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'articles.Y7hJ3kLm9nPq' },
+        { order: ['id1'] },
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('physical path')
     })
   })
 })

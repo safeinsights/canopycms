@@ -12,6 +12,15 @@ import type { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 
 /**
+ * Cast specification for branded types in mock data.
+ * Maps field paths to cast function names.
+ *
+ * @example
+ * { 'collectionPath': 'toLogicalPath', 'items.*.path': 'toPhysicalPath' }
+ */
+export type MockDataCasts = Record<string, 'toLogicalPath' | 'toPhysicalPath'>
+
+/**
  * Metadata for code generation
  */
 export interface RouteMetadata {
@@ -24,6 +33,8 @@ export interface RouteMetadata {
   bodyTypeName?: string
   responseTypeName: string
   defaultMockData?: any
+  /** Casts to apply to mock data fields for branded types */
+  mockDataCasts?: MockDataCasts
 }
 
 /**
@@ -101,6 +112,7 @@ interface EndpointConfig<
   responseType: string // Type name for generation: 'BranchDeleteResponse'
   response: TResponse // Type marker for TypeScript
   defaultMockData?: any // Optional: data inside mockSuccess({ ...here })
+  mockDataCasts?: MockDataCasts // Optional: casts for branded types in mock data
   handler: RouteHandler<TParams, TBody, TResponse>
 }
 
@@ -222,6 +234,7 @@ export function defineEndpoint<
     bodyTypeName: config.bodyType,
     responseTypeName: config.responseType,
     defaultMockData: config.defaultMockData,
+    mockDataCasts: config.mockDataCasts,
   })
 
   // Convert path template to pattern array for router

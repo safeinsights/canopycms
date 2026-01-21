@@ -47,6 +47,13 @@ export {
   validateContentPath,
   isValidCollectionId,
   sanitizeForPath,
+  // Path type detection and parsing
+  hasEmbeddedContentId,
+  looksLikePhysicalPath,
+  looksLikeLogicalPath,
+  parseLogicalPath,
+  parsePhysicalPath,
+  isValidContentId,
 } from './validation'
 
 // Path resolution utilities
