@@ -257,8 +257,8 @@ describe('EntryNavigator', () => {
     })
   })
 
-  describe('onAdd button', () => {
-    it('shows Add button when collection is expanded', async () => {
+  describe('onAdd in menu', () => {
+    it('shows Add Entry in collection menu when onAdd is provided', async () => {
       const user = userEvent.setup()
       const onAdd = vi.fn()
 
@@ -274,16 +274,16 @@ describe('EntryNavigator', () => {
 
       renderEntryNavigator({ collections })
 
-      // Expand the collection first
-      await user.click(screen.getByText('Posts'))
+      // Open the collection menu
+      await user.click(screen.getByTestId('collection-menu-posts'))
 
-      // Now the Add button should be visible
+      // Add Entry should be visible in the menu
       await waitFor(() => {
-        expect(screen.getByText('+ Add')).toBeTruthy()
+        expect(screen.getByText('Add Entry')).toBeTruthy()
       })
     })
 
-    it('calls onAdd when Add button is clicked', async () => {
+    it('calls onAdd when Add Entry menu item is clicked', async () => {
       const user = userEvent.setup()
       const onAdd = vi.fn()
 
@@ -299,14 +299,14 @@ describe('EntryNavigator', () => {
 
       renderEntryNavigator({ collections })
 
-      // Expand the collection
-      await user.click(screen.getByText('Posts'))
+      // Open the collection menu
+      await user.click(screen.getByTestId('collection-menu-posts'))
 
-      // Click Add button
+      // Click Add Entry menu item
       await waitFor(() => {
-        expect(screen.getByText('+ Add')).toBeTruthy()
+        expect(screen.getByText('Add Entry')).toBeTruthy()
       })
-      await user.click(screen.getByText('+ Add'))
+      await user.click(screen.getByText('Add Entry'))
 
       expect(onAdd).toHaveBeenCalled()
     })

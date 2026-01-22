@@ -6,7 +6,6 @@ import {
   ActionIcon,
   Badge,
   Box,
-  Button,
   Group,
   Menu,
   ScrollArea,
@@ -18,7 +17,7 @@ import {
   type TreeNodeData,
   rem,
 } from '@mantine/core'
-import { IconDots, IconEdit, IconFolderPlus, IconTrash } from '@tabler/icons-react'
+import { IconDots, IconEdit, IconFolderPlus, IconPlus, IconTrash } from '@tabler/icons-react'
 
 import { calculatePathToEntry } from './editor-utils'
 
@@ -238,7 +237,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const showChevron = hasChildren || Boolean(isCollection)
 
     // Determine if we should show a context menu
-    const hasCollectionMenu = isCollection && (onEdit || onAddSubCollection || onDelete)
+    const hasCollectionMenu = isCollection && (onAdd || onEdit || onAddSubCollection || onDelete)
     const hasEntryMenu = isEntry && entryPath && onDeleteEntry
 
     return (
@@ -279,21 +278,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             )}
           </Group>
           <Group gap={4} wrap="nowrap">
-            {isCollection && onAdd && expanded ? (
-              <Button
-                size="compact-xs"
-                variant="light"
-                color="accent"
-                onClick={(event) => {
-                  event.stopPropagation()
-                  onAdd()
-                }}
-              >
-                + Add
-              </Button>
-            ) : null}
             {hasCollectionMenu && (
-              <Menu shadow="md" width={180} withinPortal position="bottom-end">
+              <Menu shadow="md" width={200} withinPortal position="bottom-end">
                 <Menu.Target>
                   <ActionIcon
                     size="xs"
@@ -307,15 +293,15 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                   </ActionIcon>
                 </Menu.Target>
                 <Menu.Dropdown>
-                  {onEdit && (
+                  {onAdd && (
                     <Menu.Item
-                      leftSection={<IconEdit size={14} />}
+                      leftSection={<IconPlus size={14} />}
                       onClick={(event) => {
                         event.stopPropagation()
-                        onEdit()
+                        onAdd()
                       }}
                     >
-                      Edit Collection
+                      Add Entry
                     </Menu.Item>
                   )}
                   {onAddSubCollection && (
@@ -329,7 +315,18 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                       Add Sub-Collection
                     </Menu.Item>
                   )}
-                  {(onEdit || onAddSubCollection) && onDelete && <Menu.Divider />}
+                  {(onAdd || onAddSubCollection) && (onEdit || onDelete) && <Menu.Divider />}
+                  {onEdit && (
+                    <Menu.Item
+                      leftSection={<IconEdit size={14} />}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onEdit()
+                      }}
+                    >
+                      Edit Collection
+                    </Menu.Item>
+                  )}
                   {onDelete && (
                     <Menu.Item
                       leftSection={<IconTrash size={14} />}
