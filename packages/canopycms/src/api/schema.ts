@@ -15,6 +15,7 @@ import { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { isAdmin } from '../authorization/helpers'
+import { getErrorMessage } from '../utils/error'
 import {
   SchemaStore,
   createCollectionInputSchema,
@@ -270,7 +271,7 @@ const createCollectionHandler = async (
     return {
       ok: false,
       status: 400,
-      error: err instanceof Error ? err.message : 'Failed to create collection',
+      error: getErrorMessage(err),
     }
   }
 }
@@ -313,7 +314,7 @@ const updateCollectionHandler = async (
     return {
       ok: false,
       status: 400,
-      error: err instanceof Error ? err.message : 'Failed to update collection',
+      error: getErrorMessage(err),
     }
   }
 }
@@ -355,7 +356,7 @@ const deleteCollectionHandler = async (
     return {
       ok: false,
       status: 400,
-      error: err instanceof Error ? err.message : 'Failed to delete collection',
+      error: getErrorMessage(err),
     }
   }
 }
@@ -398,7 +399,7 @@ const addEntryTypeHandler = async (
     return {
       ok: false,
       status: 400,
-      error: err instanceof Error ? err.message : 'Failed to add entry type',
+      error: getErrorMessage(err),
     }
   }
 }
@@ -445,7 +446,7 @@ const updateEntryTypeHandler = async (
     return {
       ok: false,
       status: 400,
-      error: err instanceof Error ? err.message : 'Failed to update entry type',
+      error: getErrorMessage(err),
     }
   }
 }
@@ -487,7 +488,7 @@ const removeEntryTypeHandler = async (
     return {
       ok: false,
       status: 400,
-      error: err instanceof Error ? err.message : 'Failed to remove entry type',
+      error: getErrorMessage(err),
     }
   }
 }
@@ -530,7 +531,7 @@ const updateOrderHandler = async (
     return {
       ok: false,
       status: 400,
-      error: err instanceof Error ? err.message : 'Failed to update order',
+      error: getErrorMessage(err),
     }
   }
 }
