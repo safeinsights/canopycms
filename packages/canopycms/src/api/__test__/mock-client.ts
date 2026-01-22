@@ -254,7 +254,9 @@ export function createMockApiClient(): MockApiClient {
     },
 
     schema: {
-      get: vi.fn().mockResolvedValue(mockSuccess({ schema: {}, flatSchema: [] })),
+      get: vi
+        .fn()
+        .mockResolvedValue(mockSuccess({ schema: {}, flatSchema: [], availableSchemas: [] })),
       getCollection: vi.fn().mockResolvedValue(mockSuccess({ collection: null })),
       createCollection: vi
         .fn()

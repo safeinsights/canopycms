@@ -291,10 +291,10 @@ export class CanopyApiClient {
     },
 
     /**
-     * delete - DELETE /:branch/entries/:entryPath
+     * delete - DELETE /:branch/entries/...entryPath
      */
     delete: (params: Record<string, string>): Promise<DeleteEntryResponse> => {
-      return this.request('DELETE', this.buildPath('/:branch/entries/:entryPath', params))
+      return this.request('DELETE', this.buildPath('/:branch/entries/...entryPath', params))
     },
   }
 
@@ -414,12 +414,12 @@ export class CanopyApiClient {
     },
 
     /**
-     * getCollection - GET /:branch/schema/collections/:collectionPath
+     * getCollection - GET /:branch/schema/collection/...collectionPath
      */
     getCollection: (params: Record<string, string>): Promise<GetCollectionApiResponse> => {
       return this.request(
         'GET',
-        this.buildPath('/:branch/schema/collections/:collectionPath', params),
+        this.buildPath('/:branch/schema/collection/...collectionPath', params),
       )
     },
 
@@ -434,7 +434,7 @@ export class CanopyApiClient {
     },
 
     /**
-     * updateCollection - PATCH /:branch/schema/collections/:collectionPath
+     * updateCollection - PATCH /:branch/schema/collection/...collectionPath
      */
     updateCollection: (
       params: Record<string, string>,
@@ -442,23 +442,23 @@ export class CanopyApiClient {
     ): Promise<UpdateCollectionApiResponse> => {
       return this.request(
         'PATCH',
-        this.buildPath('/:branch/schema/collections/:collectionPath', params),
+        this.buildPath('/:branch/schema/collection/...collectionPath', params),
         body,
       )
     },
 
     /**
-     * deleteCollection - DELETE /:branch/schema/collections/:collectionPath
+     * deleteCollection - DELETE /:branch/schema/collection/...collectionPath
      */
     deleteCollection: (params: Record<string, string>): Promise<DeleteCollectionApiResponse> => {
       return this.request(
         'DELETE',
-        this.buildPath('/:branch/schema/collections/:collectionPath', params),
+        this.buildPath('/:branch/schema/collection/...collectionPath', params),
       )
     },
 
     /**
-     * addEntryType - POST /:branch/schema/collections/:collectionPath/entry-types
+     * addEntryType - POST /:branch/schema/entry-types/...collectionPath
      */
     addEntryType: (
       params: Record<string, string>,
@@ -466,13 +466,13 @@ export class CanopyApiClient {
     ): Promise<AddEntryTypeApiResponse> => {
       return this.request(
         'POST',
-        this.buildPath('/:branch/schema/collections/:collectionPath/entry-types', params),
+        this.buildPath('/:branch/schema/entry-types/...collectionPath', params),
         body,
       )
     },
 
     /**
-     * updateEntryType - PATCH /:branch/schema/collections/:collectionPath/entry-types/:entryTypeName
+     * updateEntryType - PATCH /:branch/schema/entry-types/:entryTypeName/...collectionPath
      */
     updateEntryType: (
       params: Record<string, string>,
@@ -480,29 +480,23 @@ export class CanopyApiClient {
     ): Promise<UpdateEntryTypeApiResponse> => {
       return this.request(
         'PATCH',
-        this.buildPath(
-          '/:branch/schema/collections/:collectionPath/entry-types/:entryTypeName',
-          params,
-        ),
+        this.buildPath('/:branch/schema/entry-types/:entryTypeName/...collectionPath', params),
         body,
       )
     },
 
     /**
-     * removeEntryType - DELETE /:branch/schema/collections/:collectionPath/entry-types/:entryTypeName
+     * removeEntryType - DELETE /:branch/schema/entry-types/:entryTypeName/...collectionPath
      */
     removeEntryType: (params: Record<string, string>): Promise<RemoveEntryTypeApiResponse> => {
       return this.request(
         'DELETE',
-        this.buildPath(
-          '/:branch/schema/collections/:collectionPath/entry-types/:entryTypeName',
-          params,
-        ),
+        this.buildPath('/:branch/schema/entry-types/:entryTypeName/...collectionPath', params),
       )
     },
 
     /**
-     * updateOrder - PATCH /:branch/schema/collections/:collectionPath/order
+     * updateOrder - PATCH /:branch/schema/order/...collectionPath
      */
     updateOrder: (
       params: Record<string, string>,
@@ -510,7 +504,7 @@ export class CanopyApiClient {
     ): Promise<UpdateOrderApiResponse> => {
       return this.request(
         'PATCH',
-        this.buildPath('/:branch/schema/collections/:collectionPath/order', params),
+        this.buildPath('/:branch/schema/order/...collectionPath', params),
         body,
       )
     },

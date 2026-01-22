@@ -32,9 +32,14 @@ import {
   useCommentSystem,
   useBranchManager,
   useUserContext,
+  useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
+import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
+import type { LogicalPath } from '../paths/types'
+import { toLogicalPath } from '../paths/normalize'
+import { useApiClient } from './context'
 
 export interface EditorEntry {
   path: string // Logical path (no IDs/extensions)
@@ -137,9 +142,21 @@ export const Editor: React.FC<EditorProps> = ({
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
 
+  // Schema editor state
+  const [collectionEditorOpen, setCollectionEditorOpen] = useState(false)
+  const [editingCollection, setEditingCollection] = useState<ExistingCollection | null>(null)
+  const [collectionEditorParentPath, setCollectionEditorParentPath] = useState<
+    LogicalPath | undefined
+  >(undefined)
+  const [collectionEditorError, setCollectionEditorError] = useState<string | null>(null)
+  const [availableSchemas, setAvailableSchemas] = useState<string[]>([])
+
   // Preview data with resolved references for live preview
   const [previewData, setPreviewData] = useState<FormValue>({})
   const [previewLoadingState, setPreviewLoadingState] = useState<FormValue>({})
+
+  // API client for schema operations
+  const apiClient = useApiClient()
 
   // Fetch current user context for permission checks
   const { userContext } = useUserContext()
@@ -270,6 +287,21 @@ export const Editor: React.FC<EditorProps> = ({
       isOpen: permissionManagerOpen,
     })
 
+  // 6. Schema manager (depends on branchNameState)
+  const {
+    createCollection,
+    updateCollection,
+    deleteCollection,
+    addEntryType,
+    updateEntryType,
+    removeEntryType,
+    deleteEntry,
+    isLoading: schemaLoading,
+  } = useSchemaManager({
+    branchName: branchNameState,
+    onSchemaChange: () => refreshEntries(branchNameState),
+  })
+
   const flattenedCollections = useMemo(() => {
     const all: EditorCollection[] = []
     const walk = (nodes?: EditorCollection[]) => {
@@ -313,6 +345,106 @@ export const Editor: React.FC<EditorProps> = ({
     })
   }, [currentEntry, drafts, selectedPath])
 
+  // Load available schemas when branch changes
+  useEffect(() => {
+    if (!branchNameState) return
+    const loadSchemas = async () => {
+      try {
+        const result = await apiClient.schema.get({ branch: branchNameState })
+        if (result.ok && result.data) {
+          setAvailableSchemas(result.data.availableSchemas ?? [])
+        }
+      } catch (err) {
+        console.error('Failed to load available schemas:', err)
+      }
+    }
+    loadSchemas()
+  }, [branchNameState, apiClient])
+
+  // Schema editor handlers
+  const handleOpenCollectionEditor = (collection: EditorCollection | null, parentPath?: string) => {
+    if (collection) {
+      // Edit mode - convert EditorCollection to ExistingCollection
+      const existingCollection: ExistingCollection = {
+        name: collection.name,
+        label: collection.label,
+        logicalPath: toLogicalPath(collection.path),
+        entries: (collection.entryTypes ?? []).map(
+          (et): ExistingEntryType => ({
+            name: et.name,
+            label: et.label,
+            format: et.format,
+            fields: '', // Will be populated from schema when we have full entry type data
+            default: et.default,
+            maxItems: et.maxItems,
+          }),
+        ),
+      }
+      setEditingCollection(existingCollection)
+      setCollectionEditorParentPath(undefined)
+    } else {
+      // Create mode
+      setEditingCollection(null)
+      setCollectionEditorParentPath(parentPath ? toLogicalPath(parentPath) : undefined)
+    }
+    setCollectionEditorError(null)
+    setCollectionEditorOpen(true)
+  }
+
+  const handleCloseCollectionEditor = () => {
+    setCollectionEditorOpen(false)
+    setEditingCollection(null)
+    setCollectionEditorParentPath(undefined)
+    setCollectionEditorError(null)
+  }
+
+  const handleCollectionSave = async (
+    data: Parameters<typeof createCollection>[0] | Parameters<typeof updateCollection>[1],
+    isNew: boolean,
+  ) => {
+    setCollectionEditorError(null)
+    try {
+      if (isNew) {
+        const result = await createCollection(data as Parameters<typeof createCollection>[0])
+        if (result) {
+          handleCloseCollectionEditor()
+        }
+      } else if (editingCollection) {
+        const success = await updateCollection(
+          editingCollection.logicalPath,
+          data as Parameters<typeof updateCollection>[1],
+        )
+        if (success) {
+          handleCloseCollectionEditor()
+        }
+      }
+    } catch (err) {
+      setCollectionEditorError(err instanceof Error ? err.message : 'Operation failed')
+    }
+  }
+
+  const handleDeleteCollection = async (collectionPath: string) => {
+    // Confirm deletion
+    if (
+      !window.confirm(`Are you sure you want to delete this collection? This cannot be undone.`)
+    ) {
+      return
+    }
+    await deleteCollection(collectionPath)
+  }
+
+  const handleDeleteEntry = async (entryPath: string) => {
+    // Confirm deletion
+    if (!window.confirm(`Are you sure you want to delete this entry? This cannot be undone.`)) {
+      return
+    }
+    const success = await deleteEntry(entryPath)
+    if (success && selectedPath === entryPath) {
+      // If we deleted the currently selected entry, clear selection
+      setSelectedPath('')
+    }
+  }
+
   const navCollections = useMemo<EntryNavCollection[] | undefined>(() => {
     if (!activeCollections) return undefined
 
@@ -339,6 +471,10 @@ export const Editor: React.FC<EditorProps> = ({
         node.type !== 'entry'
           ? () => (onCreateEntry ? onCreateEntry(node.path) : handleCreateEntry(node.path))
           : undefined,
+      onEdit: node.type === 'collection' ? () => handleOpenCollectionEditor(node) : undefined,
+      onAddSubCollection:
+        node.type === 'collection' ? () => handleOpenCollectionEditor(null, node.path) : undefined,
+      onDelete: node.type === 'collection' ? () => handleDeleteCollection(node.path) : undefined,
     })
     return collectionsToRender.map((node) => build(node))
   }, [activeCollections, entriesState, onCreateEntry, handleCreateEntry, contentRoot])
@@ -598,6 +734,7 @@ export const Editor: React.FC<EditorProps> = ({
                   onTreeControllerReady={handleTreeControllerReady}
                   expandedStateRef={treeExpandedStateRef}
                   onExpandedStateChange={handleExpandedStateChange}
+                  onDeleteEntry={handleDeleteEntry}
                 />
               </Box>
             </Drawer.Body>
@@ -729,6 +866,29 @@ export const Editor: React.FC<EditorProps> = ({
             onClose={() => setPermissionManagerOpen(false)}
           />
         </Drawer>
+
+        {/* Collection Editor Modal */}
+        <CollectionEditor
+          isOpen={collectionEditorOpen}
+          editingCollection={editingCollection}
+          parentPath={collectionEditorParentPath}
+          availableSchemas={availableSchemas}
+          onSave={handleCollectionSave}
+          onAddEntryType={
+            editingCollection ? (path, entryType) => addEntryType(path, entryType) : undefined
+          }
+          onUpdateEntryType={
+            editingCollection
+              ? (path, name, updates) => updateEntryType(path, name, updates)
+              : undefined
+          }
+          onRemoveEntryType={
+            editingCollection ? (path, name) => removeEntryType(path, name) : undefined
+          }
+          onClose={handleCloseCollectionEditor}
+          isSaving={schemaLoading}
+          error={collectionEditorError}
+        />
       </Box>
     </CanopyCMSProvider>
   )

@@ -120,7 +120,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           message: 'Collection updated',
           color: 'green',
         })
-        options.onSchemaChange?.()
+        await options.onSchemaChange?.()
         return true
       } catch (error) {
         handleError('Failed to update collection', error)

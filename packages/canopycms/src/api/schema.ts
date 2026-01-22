@@ -190,7 +190,8 @@ const getSchemaHandler = async (
 }
 
 /**
- * GET /:branch/schema/collections/:collectionPath - Get single collection details
+ * GET /:branch/schema/collection/...collectionPath - Get single collection details
+ * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
  */
 const getCollectionHandler = async (
   ctx: ApiContext,
@@ -275,7 +276,8 @@ const createCollectionHandler = async (
 }
 
 /**
- * PATCH /:branch/schema/collections/:collectionPath - Update collection
+ * PATCH /:branch/schema/collection/...collectionPath - Update collection
+ * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
  */
 const updateCollectionHandler = async (
   ctx: ApiContext,
@@ -317,7 +319,8 @@ const updateCollectionHandler = async (
 }
 
 /**
- * DELETE /:branch/schema/collections/:collectionPath - Delete collection
+ * DELETE /:branch/schema/collection/...collectionPath - Delete collection
+ * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
  */
 const deleteCollectionHandler = async (
   ctx: ApiContext,
@@ -358,7 +361,8 @@ const deleteCollectionHandler = async (
 }
 
 /**
- * POST /:branch/schema/collections/:collectionPath/entry-types - Add entry type
+ * POST /:branch/schema/entry-types/...collectionPath - Add entry type
+ * Note: Restructured URL with catch-all at end to support paths with slashes
  */
 const addEntryTypeHandler = async (
   ctx: ApiContext,
@@ -400,7 +404,8 @@ const addEntryTypeHandler = async (
 }
 
 /**
- * PATCH /:branch/schema/collections/:collectionPath/entry-types/:entryTypeName - Update entry type
+ * PATCH /:branch/schema/entry-types/:entryTypeName/...collectionPath - Update entry type
+ * Note: Restructured URL with entry type name before catch-all path
  */
 const updateEntryTypeHandler = async (
   ctx: ApiContext,
@@ -446,7 +451,8 @@ const updateEntryTypeHandler = async (
 }
 
 /**
- * DELETE /:branch/schema/collections/:collectionPath/entry-types/:entryTypeName - Remove entry type
+ * DELETE /:branch/schema/entry-types/:entryTypeName/...collectionPath - Remove entry type
+ * Note: Restructured URL with entry type name before catch-all path
  */
 const removeEntryTypeHandler = async (
   ctx: ApiContext,
@@ -487,7 +493,8 @@ const removeEntryTypeHandler = async (
 }
 
 /**
- * PATCH /:branch/schema/collections/:collectionPath/order - Update item order
+ * PATCH /:branch/schema/order/...collectionPath - Update item order
+ * Note: Restructured URL with catch-all at end to support paths with slashes
  */
 const updateOrderHandler = async (
   ctx: ApiContext,
@@ -548,13 +555,14 @@ export const getSchema = defineEndpoint({
 })
 
 /**
- * GET /:branch/schema/collections/:collectionPath - Get single collection
+ * GET /:branch/schema/collection/...collectionPath - Get single collection
+ * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
  */
 export const getCollection = defineEndpoint({
   namespace: 'schema',
   name: 'getCollection',
   method: 'GET',
-  path: '/:branch/schema/collections/:collectionPath',
+  path: '/:branch/schema/collection/...collectionPath',
   params: collectionParamsSchema,
   responseType: 'GetCollectionApiResponse',
   response: {} as GetCollectionApiResponse,
@@ -581,13 +589,14 @@ export const createCollection = defineEndpoint({
 })
 
 /**
- * PATCH /:branch/schema/collections/:collectionPath - Update collection
+ * PATCH /:branch/schema/collection/...collectionPath - Update collection
+ * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
  */
 export const updateCollection = defineEndpoint({
   namespace: 'schema',
   name: 'updateCollection',
   method: 'PATCH',
-  path: '/:branch/schema/collections/:collectionPath',
+  path: '/:branch/schema/collection/...collectionPath',
   params: collectionParamsSchema,
   body: updateCollectionBodySchema,
   bodyType: 'UpdateCollectionInput',
@@ -598,13 +607,14 @@ export const updateCollection = defineEndpoint({
 })
 
 /**
- * DELETE /:branch/schema/collections/:collectionPath - Delete collection
+ * DELETE /:branch/schema/collection/...collectionPath - Delete collection
+ * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
  */
 export const deleteCollection = defineEndpoint({
   namespace: 'schema',
   name: 'deleteCollection',
   method: 'DELETE',
-  path: '/:branch/schema/collections/:collectionPath',
+  path: '/:branch/schema/collection/...collectionPath',
   params: collectionParamsSchema,
   responseType: 'DeleteCollectionApiResponse',
   response: {} as DeleteCollectionApiResponse,
@@ -613,13 +623,14 @@ export const deleteCollection = defineEndpoint({
 })
 
 /**
- * POST /:branch/schema/collections/:collectionPath/entry-types - Add entry type
+ * POST /:branch/schema/entry-types/...collectionPath - Add entry type
+ * Note: Restructured URL with catch-all at end to support paths with slashes
  */
 export const addEntryType = defineEndpoint({
   namespace: 'schema',
   name: 'addEntryType',
   method: 'POST',
-  path: '/:branch/schema/collections/:collectionPath/entry-types',
+  path: '/:branch/schema/entry-types/...collectionPath',
   params: collectionParamsSchema,
   body: addEntryTypeBodySchema,
   bodyType: 'CreateEntryTypeInput',
@@ -630,13 +641,14 @@ export const addEntryType = defineEndpoint({
 })
 
 /**
- * PATCH /:branch/schema/collections/:collectionPath/entry-types/:entryTypeName - Update entry type
+ * PATCH /:branch/schema/entry-types/:entryTypeName/...collectionPath - Update entry type
+ * Note: Restructured URL with entry type name before catch-all path
  */
 export const updateEntryType = defineEndpoint({
   namespace: 'schema',
   name: 'updateEntryType',
   method: 'PATCH',
-  path: '/:branch/schema/collections/:collectionPath/entry-types/:entryTypeName',
+  path: '/:branch/schema/entry-types/:entryTypeName/...collectionPath',
   params: entryTypeParamsSchema,
   body: updateEntryTypeBodySchema,
   bodyType: 'UpdateEntryTypeInput',
@@ -647,13 +659,14 @@ export const updateEntryType = defineEndpoint({
 })
 
 /**
- * DELETE /:branch/schema/collections/:collectionPath/entry-types/:entryTypeName - Remove entry type
+ * DELETE /:branch/schema/entry-types/:entryTypeName/...collectionPath - Remove entry type
+ * Note: Restructured URL with entry type name before catch-all path
  */
 export const removeEntryType = defineEndpoint({
   namespace: 'schema',
   name: 'removeEntryType',
   method: 'DELETE',
-  path: '/:branch/schema/collections/:collectionPath/entry-types/:entryTypeName',
+  path: '/:branch/schema/entry-types/:entryTypeName/...collectionPath',
   params: entryTypeParamsSchema,
   responseType: 'RemoveEntryTypeApiResponse',
   response: {} as RemoveEntryTypeApiResponse,
@@ -662,13 +675,14 @@ export const removeEntryType = defineEndpoint({
 })
 
 /**
- * PATCH /:branch/schema/collections/:collectionPath/order - Update item order
+ * PATCH /:branch/schema/order/...collectionPath - Update item order
+ * Note: Restructured URL with catch-all at end to support paths with slashes
  */
 export const updateOrder = defineEndpoint({
   namespace: 'schema',
   name: 'updateOrder',
   method: 'PATCH',
-  path: '/:branch/schema/collections/:collectionPath/order',
+  path: '/:branch/schema/order/...collectionPath',
   params: collectionParamsSchema,
   body: updateOrderBodySchema,
   bodyType: 'UpdateOrderBody',
