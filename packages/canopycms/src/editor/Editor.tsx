@@ -2,8 +2,14 @@
 
 import React, { useEffect, useMemo, useState, useRef } from 'react'
 
-import { ActionIcon, Box, Button, Drawer, Group, Paper, Text, Title, useTree } from '@mantine/core'
-import { IconChevronDown, IconChevronUp } from '@tabler/icons-react'
+import { ActionIcon, Box, Drawer, Group, Menu, Paper, Text, Title, useTree } from '@mantine/core'
+import {
+  IconChevronDown,
+  IconChevronUp,
+  IconDots,
+  IconFolderPlus,
+  IconPlus,
+} from '@tabler/icons-react'
 import { notifications } from '@mantine/notifications'
 
 // TreeController type from Mantine's useTree hook
@@ -680,16 +686,40 @@ export const Editor: React.FC<EditorProps> = ({
             <Drawer.Header>
               <Drawer.Title>Content</Drawer.Title>
               <Group gap="xs">
-                {navCollections && navCollections.length > 0 && navCollections[0].onAdd && (
-                  <Button
-                    size="compact-xs"
-                    variant="light"
-                    color="accent"
-                    onClick={() => navCollections[0].onAdd?.()}
-                  >
-                    + Add
-                  </Button>
-                )}
+                {navCollections &&
+                  navCollections.length > 0 &&
+                  (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
+                    <Menu shadow="md" width={200} withinPortal position="bottom-end">
+                      <Menu.Target>
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          size="sm"
+                          aria-label="Content actions"
+                        >
+                          <IconDots size={16} />
+                        </ActionIcon>
+                      </Menu.Target>
+                      <Menu.Dropdown>
+                        {navCollections[0].onAdd && (
+                          <Menu.Item
+                            leftSection={<IconPlus size={14} />}
+                            onClick={() => navCollections[0].onAdd?.()}
+                          >
+                            Add Entry
+                          </Menu.Item>
+                        )}
+                        {navCollections[0].onAddSubCollection && (
+                          <Menu.Item
+                            leftSection={<IconFolderPlus size={14} />}
+                            onClick={() => navCollections[0].onAddSubCollection?.()}
+                          >
+                            Add Collection
+                          </Menu.Item>
+                        )}
+                      </Menu.Dropdown>
+                    </Menu>
+                  )}
                 <ActionIcon
                   variant="subtle"
                   color="gray"
