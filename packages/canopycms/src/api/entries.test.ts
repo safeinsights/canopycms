@@ -415,7 +415,8 @@ describe('listEntries', () => {
             format: 'json',
             fields: 'authorSchema'
           }
-        ]
+        ],
+        order: []
       }),
       'utf8'
     )
@@ -525,7 +526,8 @@ describe('listEntries', () => {
             fields: 'settingsSchema',
             maxItems: 1
           }
-        ]
+        ],
+        order: []
       }),
       'utf8'
     )
@@ -554,7 +556,8 @@ describe('listEntries', () => {
         label: 'Posts',
         entries: [
           { name: 'post', format: 'json', fields: 'postSchema' }
-        ]
+        ],
+        order: []
       }),
       'utf8'
     )
@@ -736,6 +739,10 @@ describe('sortEntriesByOrder', () => {
     // Verify entries are sorted according to order array: gamma, alpha, beta
     const slugs = res.data?.entries.map((e) => e.slug)
     expect(slugs).toEqual(['gamma', 'alpha', 'beta'])
+
+    // Verify entries have contentId
+    const contentIds = res.data?.entries.map((e) => e.contentId)
+    expect(contentIds).toEqual(['ccc333def456', 'aaa111abc123', 'bbb222xyz789'])
   })
 
   it('puts unordered entries at the end alphabetically', async () => {
@@ -833,6 +840,7 @@ describe('dynamic collection discovery', () => {
         name: 'docs',
         label: 'Documentation',
         entries: [{ name: 'doc', format: 'json', fields: 'docSchema' }],
+        order: [],
       }),
       'utf8'
     )
@@ -855,6 +863,7 @@ describe('dynamic collection discovery', () => {
         name: 'inner',
         label: 'Inner Docs',
         entries: [{ name: 'doc', format: 'json', fields: 'docSchema' }],
+        order: [],
       }),
       'utf8'
     )
@@ -945,6 +954,7 @@ describe('deleteEntry', () => {
       JSON.stringify({
         name: 'posts',
         entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        order: [],
       }),
       'utf8'
     )
@@ -1018,6 +1028,7 @@ describe('deleteEntry', () => {
       JSON.stringify({
         name: 'posts',
         entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        order: [],
       }),
       'utf8'
     )
@@ -1091,6 +1102,7 @@ describe('deleteEntry', () => {
       JSON.stringify({
         name: 'posts',
         entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        order: [],
       }),
       'utf8'
     )

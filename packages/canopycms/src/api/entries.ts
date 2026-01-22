@@ -345,8 +345,40 @@ const buildCollectionSummaries = async (
   const metaFiles = await loadCollectionMetaFiles(branchContentRoot)
 
   // If we found .collection.json files, use them as the source of truth
-  if (metaFiles.collections.length > 0) {
+  if (metaFiles.collections.length > 0 || metaFiles.root) {
     const summaries: EntryCollectionSummary[] = []
+
+    // Add root collection if it exists (for top-level ordering)
+    if (metaFiles.root) {
+      // Filter by targetId if specified (root is only included if targetId is contentRoot or not specified)
+      if (!targetId || targetId === contentRoot || contentRoot.startsWith(`${targetId}/`)) {
+        // Build entry type summaries for root
+        const rootEntryTypeSummaries: EntryTypeSummary[] = (metaFiles.root.entries ?? []).map(et => ({
+          name: et.name,
+          label: et.label,
+          format: et.format,
+          default: et.default,
+          maxItems: et.maxItems,
+        }))
+
+        // Get default entry type for format/schema
+        const rootDefaultEntry = metaFiles.root.entries?.find(e => e.default) ?? metaFiles.root.entries?.[0]
+        const rootDefaultSchema = rootDefaultEntry ? schemaRegistry[rootDefaultEntry.fields] : undefined
+
+        summaries.push({
+          logicalPath: toLogicalPath(contentRoot),
+          contentId: 'root', // Root doesn't have a content ID
+          name: contentRoot,
+          label: 'Content',
+          format: rootDefaultEntry?.format || 'json',
+          type: 'collection' as const,
+          schema: rootDefaultSchema || [],
+          entryTypes: rootEntryTypeSummaries,
+          order: metaFiles.root.order,
+          parentId: undefined, // Root has no parent
+        })
+      }
+    }
 
     for (const col of metaFiles.collections) {
       const logicalPath = `${contentRoot}/${col.path}`
@@ -380,11 +412,11 @@ const buildCollectionSummaries = async (
       const defaultEntry = col.entries?.find(e => e.default) ?? col.entries?.[0]
       const defaultSchema = defaultEntry ? schemaRegistry[defaultEntry.fields] : undefined
 
-      // Compute parent path
+      // Compute parent path - top-level collections have contentRoot as parent
       const pathParts = col.path.split('/')
       const parentPath = pathParts.length > 1
         ? `${contentRoot}/${pathParts.slice(0, -1).join('/')}`
-        : undefined
+        : contentRoot // Top-level collections have contentRoot as parent
 
       summaries.push({
         logicalPath: toLogicalPath(logicalPath),

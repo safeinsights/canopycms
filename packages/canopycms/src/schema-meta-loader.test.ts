@@ -31,6 +31,7 @@ describe('schema-meta-loader', () => {
               fields: 'homeSchema',
             },
           ],
+          order: [],
         })
       )
 
@@ -45,6 +46,7 @@ describe('schema-meta-loader', () => {
             fields: 'homeSchema',
           },
         ],
+        order: [],
       })
       expect(result.collections).toEqual([])
     })
@@ -54,7 +56,7 @@ describe('schema-meta-loader', () => {
       await fs.mkdir(contentDir, { recursive: true })
       await fs.writeFile(
         path.join(contentDir, '.collection.json'),
-        JSON.stringify({ entries: [] })
+        JSON.stringify({ entries: [], order: [] })
       )
 
       const postsDir = path.join(contentDir, 'posts')
@@ -71,6 +73,7 @@ describe('schema-meta-loader', () => {
               fields: 'postSchema',
             },
           ],
+          order: [],
         })
       )
 
@@ -88,12 +91,13 @@ describe('schema-meta-loader', () => {
               fields: 'authorSchema',
             },
           ],
+          order: [],
         })
       )
 
       const result = await loadCollectionMetaFiles(contentDir)
 
-      expect(result.root).toEqual({ entries: [] })
+      expect(result.root).toEqual({ entries: [], order: [] })
       expect(result.collections).toHaveLength(2)
       expect(result.collections).toContainEqual({
         name: 'posts',
@@ -105,6 +109,7 @@ describe('schema-meta-loader', () => {
             fields: 'postSchema',
           },
         ],
+        order: [],
         path: 'posts',
       })
       expect(result.collections).toContainEqual({
@@ -117,6 +122,7 @@ describe('schema-meta-loader', () => {
             fields: 'authorSchema',
           },
         ],
+        order: [],
         path: 'authors',
       })
     })
@@ -139,6 +145,7 @@ describe('schema-meta-loader', () => {
               fields: 'postSchema',
             },
           ],
+          order: [],
         })
       )
 
@@ -212,6 +219,7 @@ describe('schema-meta-loader', () => {
                 fields: 'homeSchema',
               },
             ],
+            order: [],
             path: 'pages',
           },
         ],
@@ -237,6 +245,7 @@ describe('schema-meta-loader', () => {
                 fields: 'postSchema',
               },
             ],
+            order: [],
             path: 'posts',
           },
           {
@@ -249,6 +258,7 @@ describe('schema-meta-loader', () => {
                 fields: 'authorSchema',
               },
             ],
+            order: [],
             path: 'authors',
           },
         ],
@@ -276,6 +286,7 @@ describe('schema-meta-loader', () => {
                 fields: 'nonexistentSchema',
               },
             ],
+            order: [],
           },
         ],
       }
@@ -300,6 +311,7 @@ describe('schema-meta-loader', () => {
                 fields: 'homeSchema',
               },
             ],
+            order: [],
           },
           {
             name: 'posts',
@@ -311,6 +323,7 @@ describe('schema-meta-loader', () => {
                 fields: 'postSchema',
               },
             ],
+            order: [],
             path: 'posts',
           },
         ],
@@ -337,6 +350,7 @@ describe('schema-meta-loader', () => {
                 fields: 'postSchema',
               },
             ],
+            order: [],
             path: 'custom-path',
           },
         ],

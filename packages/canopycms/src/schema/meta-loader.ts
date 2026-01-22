@@ -36,7 +36,7 @@ const collectionMetaSchema = z.object({
   name: z.string().min(1),
   label: z.string().optional(),
   entries: z.array(entryTypeSchemaRefSchema).optional(),
-  order: z.array(z.string()).optional(), // Embedded IDs for ordering items
+  order: z.array(z.string()), // Embedded IDs for ordering items (required)
 }).refine(
   (data) => data.entries && data.entries.length > 0,
   { message: 'Collection must have at least one entry type' }
@@ -48,7 +48,7 @@ const collectionMetaSchema = z.object({
  */
 const rootCollectionMetaSchema = z.object({
   entries: z.array(entryTypeSchemaRefSchema).optional(),
-  order: z.array(z.string()).optional(), // Embedded IDs for ordering items
+  order: z.array(z.string()), // Embedded IDs for ordering items (required)
 })
 
 export type EntryTypeMeta = {
@@ -64,12 +64,12 @@ export type CollectionMeta = {
   name: string
   label?: string
   entries?: EntryTypeMeta[]
-  order?: string[] // Embedded IDs for ordering items
+  order: string[] // Embedded IDs for ordering items (required)
 }
 
 export type RootCollectionMeta = {
   entries?: EntryTypeMeta[]
-  order?: string[] // Embedded IDs for ordering items
+  order: string[] // Embedded IDs for ordering items (required)
 }
 
 /**

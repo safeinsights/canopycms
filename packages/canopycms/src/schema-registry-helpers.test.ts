@@ -72,6 +72,7 @@ describe('validateSchemaRegistry', () => {
             fields: 'postSchema',
           },
         ],
+        order: [],
       })
     )
 
@@ -98,6 +99,7 @@ describe('validateSchemaRegistry', () => {
             fields: 'authorSchema',
           },
         ],
+        order: [],
       })
     )
 
@@ -125,6 +127,7 @@ describe('validateSchemaRegistry', () => {
             fields: 'homeSchema',
           },
         ],
+        order: [],
       })
     )
 
@@ -153,6 +156,7 @@ describe('validateSchemaRegistry', () => {
             fields: 'configSchema',
           },
         ],
+        order: [],
       })
     )
 
@@ -184,6 +188,7 @@ describe('validateSchemaRegistry', () => {
             fields: 'docSchema',
           },
         ],
+        order: [],
       })
     )
     await writeFile(
@@ -197,6 +202,7 @@ describe('validateSchemaRegistry', () => {
             fields: 'docSchema',
           },
         ],
+        order: [],
       })
     )
 

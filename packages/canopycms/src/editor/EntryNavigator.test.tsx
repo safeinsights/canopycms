@@ -321,4 +321,227 @@ describe('EntryNavigator', () => {
       expect(screen.getByText('draft')).toBeTruthy()
     })
   })
+
+  describe('entry reordering', () => {
+    it('does not show move buttons when entries lack contentId', async () => {
+      const user = userEvent.setup()
+      const onReorderEntry = vi.fn()
+      const onDeleteEntry = vi.fn()
+
+      const collections: EntryNavCollection[] = [
+        {
+          path: 'posts',
+          label: 'Posts',
+          type: 'collection',
+          entries: [
+            { path: 'posts/first', label: 'First' }, // No contentId!
+            { path: 'posts/second', label: 'Second' }, // No contentId!
+          ],
+        },
+      ]
+
+      renderEntryNavigator({ collections, onReorderEntry, onDeleteEntry })
+
+      // First expand the Posts collection
+      await user.click(screen.getByTestId('entry-nav-item-posts'))
+
+      // Wait for entries to appear
+      await waitFor(() => {
+        expect(screen.getByTestId('entry-nav-item-first')).toBeTruthy()
+      })
+
+      // Open the entry menu for the first entry - should still show due to onDeleteEntry
+      await user.click(screen.getByTestId('entry-menu-first'))
+
+      // Delete Entry should be visible
+      await waitFor(() => {
+        expect(screen.getByText('Delete Entry')).toBeTruthy()
+      })
+
+      // But Move Up/Down should NOT be visible since contentId is missing
+      expect(screen.queryByText('Move Up')).toBeNull()
+      expect(screen.queryByText('Move Down')).toBeNull()
+    })
+
+    it('shows move up/down buttons when onReorderEntry is provided', async () => {
+      const user = userEvent.setup()
+      const onReorderEntry = vi.fn()
+
+      const collections: EntryNavCollection[] = [
+        {
+          path: 'posts',
+          label: 'Posts',
+          type: 'collection',
+          entries: [
+            { path: 'posts/first', label: 'First', contentId: 'abc123456789' },
+            { path: 'posts/second', label: 'Second', contentId: 'def456789012' },
+          ],
+        },
+      ]
+
+      renderEntryNavigator({ collections, onReorderEntry })
+
+      // First expand the Posts collection by clicking on it
+      await user.click(screen.getByTestId('entry-nav-item-posts'))
+
+      // Wait for entries to appear
+      await waitFor(() => {
+        expect(screen.getByTestId('entry-nav-item-first')).toBeTruthy()
+      })
+
+      // Open the entry menu for the first entry
+      await user.click(screen.getByTestId('entry-menu-first'))
+
+      await waitFor(() => {
+        expect(screen.getByText('Move Up')).toBeTruthy()
+        expect(screen.getByText('Move Down')).toBeTruthy()
+      })
+    })
+
+    it('calls onReorderEntry with direction up when Move Up is clicked', async () => {
+      const user = userEvent.setup()
+      const onReorderEntry = vi.fn()
+
+      const collections: EntryNavCollection[] = [
+        {
+          path: 'posts',
+          label: 'Posts',
+          type: 'collection',
+          entries: [
+            { path: 'posts/first', label: 'First', contentId: 'abc123456789' },
+            { path: 'posts/second', label: 'Second', contentId: 'def456789012' },
+          ],
+        },
+      ]
+
+      renderEntryNavigator({ collections, onReorderEntry })
+
+      // First expand the Posts collection
+      await user.click(screen.getByTestId('entry-nav-item-posts'))
+
+      // Wait for entries to appear
+      await waitFor(() => {
+        expect(screen.getByTestId('entry-nav-item-second')).toBeTruthy()
+      })
+
+      // Open the entry menu for the second entry
+      await user.click(screen.getByTestId('entry-menu-second'))
+
+      await waitFor(() => {
+        expect(screen.getByText('Move Up')).toBeTruthy()
+      })
+      await user.click(screen.getByText('Move Up'))
+
+      expect(onReorderEntry).toHaveBeenCalledWith('posts', 'def456789012', 'up')
+    })
+
+    it('calls onReorderEntry with direction down when Move Down is clicked', async () => {
+      const user = userEvent.setup()
+      const onReorderEntry = vi.fn()
+
+      const collections: EntryNavCollection[] = [
+        {
+          path: 'posts',
+          label: 'Posts',
+          type: 'collection',
+          entries: [
+            { path: 'posts/first', label: 'First', contentId: 'abc123456789' },
+            { path: 'posts/second', label: 'Second', contentId: 'def456789012' },
+          ],
+        },
+      ]
+
+      renderEntryNavigator({ collections, onReorderEntry })
+
+      // First expand the Posts collection
+      await user.click(screen.getByTestId('entry-nav-item-posts'))
+
+      // Wait for entries to appear
+      await waitFor(() => {
+        expect(screen.getByTestId('entry-nav-item-first')).toBeTruthy()
+      })
+
+      // Open the entry menu for the first entry
+      await user.click(screen.getByTestId('entry-menu-first'))
+
+      await waitFor(() => {
+        expect(screen.getByText('Move Down')).toBeTruthy()
+      })
+      await user.click(screen.getByText('Move Down'))
+
+      expect(onReorderEntry).toHaveBeenCalledWith('posts', 'abc123456789', 'down')
+    })
+
+    it('disables Move Up for first entry', async () => {
+      const user = userEvent.setup()
+      const onReorderEntry = vi.fn()
+
+      const collections: EntryNavCollection[] = [
+        {
+          path: 'posts',
+          label: 'Posts',
+          type: 'collection',
+          entries: [
+            { path: 'posts/first', label: 'First', contentId: 'abc123456789' },
+            { path: 'posts/second', label: 'Second', contentId: 'def456789012' },
+          ],
+        },
+      ]
+
+      renderEntryNavigator({ collections, onReorderEntry })
+
+      // First expand the Posts collection
+      await user.click(screen.getByTestId('entry-nav-item-posts'))
+
+      // Wait for entries to appear
+      await waitFor(() => {
+        expect(screen.getByTestId('entry-nav-item-first')).toBeTruthy()
+      })
+
+      // Open the entry menu for the first entry
+      await user.click(screen.getByTestId('entry-menu-first'))
+
+      await waitFor(() => {
+        const moveUpItem = screen.getByText('Move Up').closest('button')
+        // Mantine uses data-disabled for disabled menu items
+        expect(moveUpItem?.hasAttribute('data-disabled')).toBe(true)
+      })
+    })
+
+    it('disables Move Down for last entry', async () => {
+      const user = userEvent.setup()
+      const onReorderEntry = vi.fn()
+
+      const collections: EntryNavCollection[] = [
+        {
+          path: 'posts',
+          label: 'Posts',
+          type: 'collection',
+          entries: [
+            { path: 'posts/first', label: 'First', contentId: 'abc123456789' },
+            { path: 'posts/second', label: 'Second', contentId: 'def456789012' },
+          ],
+        },
+      ]
+
+      renderEntryNavigator({ collections, onReorderEntry })
+
+      // First expand the Posts collection
+      await user.click(screen.getByTestId('entry-nav-item-posts'))
+
+      // Wait for entries to appear
+      await waitFor(() => {
+        expect(screen.getByTestId('entry-nav-item-second')).toBeTruthy()
+      })
+
+      // Open the entry menu for the last entry
+      await user.click(screen.getByTestId('entry-menu-second'))
+
+      await waitFor(() => {
+        const moveDownItem = screen.getByText('Move Down').closest('button')
+        // Mantine uses data-disabled for disabled menu items
+        expect(moveDownItem?.hasAttribute('data-disabled')).toBe(true)
+      })
+    })
+  })
 })
