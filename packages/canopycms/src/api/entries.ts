@@ -320,8 +320,32 @@ const listCollectionEntriesRecursive = async (
 const normalizeCollectionId = (value: string): string => normalizeFilesystemPath(value)
 
 /**
+ * Read collection metadata from .collection.json file.
+ * Returns fresh data from disk, not cached schema.
+ */
+const readCollectionMetaFromDisk = async (
+  collectionPhysicalPath: string
+): Promise<{ name: string; label?: string; order?: string[] } | null> => {
+  const metaPath = path.join(collectionPhysicalPath, '.collection.json')
+  try {
+    const content = await fs.readFile(metaPath, 'utf-8')
+    const parsed = JSON.parse(content)
+    return {
+      name: parsed.name,
+      label: parsed.label,
+      order: parsed.order,
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Build collection summaries from flat schema items.
  * Only includes collections - entry types are schema metadata and not included as summaries.
+ *
+ * Note: Reads labels and order from .collection.json files on disk to ensure
+ * fresh data after schema edits, since the flat schema is cached at startup.
  */
 const buildCollectionSummaries = async (
   root: string,
@@ -357,6 +381,11 @@ const buildCollectionSummaries = async (
         }
       }
 
+      // Read fresh metadata from .collection.json (for updated labels/order after schema edits)
+      const freshMeta = physicalPath ? await readCollectionMetaFromDisk(physicalPath) : null
+      const label = freshMeta?.label ?? item.label
+      const order = freshMeta?.order ?? item.order
+
       // Build entry type summaries for the client
       const entryTypeSummaries: EntryTypeSummary[] | undefined = entryTypes?.map(et => ({
         name: et.name,
@@ -369,13 +398,13 @@ const buildCollectionSummaries = async (
       return {
         logicalPath: toLogicalPath(item.logicalPath),
         contentId, // 12-char content ID from directory name
-        name: item.name,
-        label: item.label,
+        name: freshMeta?.name ?? item.name,
+        label,
         format: defaultEntry?.format || 'json',
         type: 'collection' as const,
         schema: defaultEntry?.fields || [],
         entryTypes: entryTypeSummaries,
-        order: item.order, // Embedded IDs for ordering items
+        order, // Embedded IDs for ordering items (fresh from disk)
         parentId: item.parentPath,
       }
     })
@@ -539,7 +568,8 @@ const deleteEntryParamsSchema = z.object({
 
 /**
  * Delete an entry and update the collection's order array.
- * DELETE /:branch/entries/:entryPath
+ * DELETE /:branch/entries/...entryPath
+ * Note: Uses catch-all to support paths with slashes (e.g., content/posts/hello-world)
  */
 const deleteEntryHandler = async (
   ctx: ApiContext,
@@ -624,13 +654,14 @@ const deleteEntryHandler = async (
 
 /**
  * Delete an entry
- * DELETE /:branch/entries/:entryPath
+ * DELETE /:branch/entries/...entryPath
+ * Note: Uses catch-all to support paths with slashes (e.g., content/posts/hello-world)
  */
 export const deleteEntry = defineEndpoint({
   namespace: 'entries',
   name: 'delete',
   method: 'DELETE',
-  path: '/:branch/entries/:entryPath',
+  path: '/:branch/entries/...entryPath',
   params: deleteEntryParamsSchema,
   responseType: 'DeleteEntryResponse',
   response: {} as DeleteEntryResponse,
