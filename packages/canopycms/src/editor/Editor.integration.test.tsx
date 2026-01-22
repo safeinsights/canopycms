@@ -69,12 +69,12 @@ const okJson = (data: unknown, status = 200) =>
 describe('Editor integration', () => {
   it('loads an entry and persists changes via the content API', async () => {
     const entry: EditorEntry = {
-      path: 'posts/hello',
+      path: 'content/posts/hello',
       label: 'Hello',
       status: 'entry',
       schema: [{ name: 'title', type: 'string' }],
-      apiPath: '/api/canopycms/main/content/posts/hello',
-      collectionId: 'posts',
+      apiPath: '/api/canopycms/main/content/content/posts/hello',
+      collectionId: 'content/posts',
       collectionName: 'posts',
       slug: 'hello',
       format: 'json',
@@ -94,24 +94,25 @@ describe('Editor integration', () => {
             data: {
               collections: [
                 {
-                  path: 'posts',
+                  logicalPath: 'content/posts',
                   contentId: 'abc123XYZ789',
                   name: 'posts',
                   type: 'collection',
                   format: 'json',
                   schema: entry.schema,
+                  order: [],
                 },
               ],
               entries: [
                 {
-                  path: entry.path,
-                  contentId: 'abc123XYZ789',
+                  logicalPath: entry.path,
+                  contentId: 'def456ABC123',
                   collectionId: entry.collectionId,
                   collectionName: entry.collectionName,
                   slug: entry.slug,
                   format: entry.format,
                   entryType: 'post',
-                  physicalPath: '/content/posts/hello',
+                  physicalPath: '/content/posts.abc123XYZ789/post.hello.def456ABC123.json',
                   exists: true,
                 },
               ],

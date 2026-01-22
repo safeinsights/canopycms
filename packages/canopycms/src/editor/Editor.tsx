@@ -83,6 +83,7 @@ export interface EditorCollection {
   format: ContentFormat // Default entry type's format (for backwards compatibility)
   type: 'collection' | 'entry'
   entryTypes?: EditorEntryType[] // All entry types in this collection
+  order?: readonly string[] // Embedded IDs for ordering entries and children
   children?: EditorCollection[]
 }
 
@@ -301,6 +302,7 @@ export const Editor: React.FC<EditorProps> = ({
     addEntryType,
     updateEntryType,
     removeEntryType,
+    updateOrder,
     deleteEntry,
     isLoading: schemaLoading,
   } = useSchemaManager({
@@ -451,38 +453,108 @@ export const Editor: React.FC<EditorProps> = ({
     }
   }
 
+  const handleReorderEntry = async (
+    collectionPath: string,
+    contentId: string,
+    direction: 'up' | 'down',
+  ) => {
+    // Find the collection to get its current order array
+    const findCollection = (
+      cols: EditorCollection[] | undefined,
+      path: string,
+    ): EditorCollection | undefined => {
+      if (!cols) return undefined
+      for (const col of cols) {
+        if (col.path === path) return col
+        const found = findCollection(col.children, path)
+        if (found) return found
+      }
+      return undefined
+    }
+    const collection = findCollection(activeCollections, collectionPath)
+    if (!collection) return
+
+    // Use the collection's order array as the source of truth
+    // If no order array exists, build one from current entries and children
+    let currentOrder: string[]
+    if (collection.order && collection.order.length > 0) {
+      currentOrder = [...collection.order]
+    } else {
+      // Fallback: build order from entries and children
+      const collectionEntries = entriesState.filter((e) => e.collectionId === collectionPath)
+      const entryIds = collectionEntries.map((e) => e.contentId).filter((id): id is string => !!id)
+      const subCollectionIds = (collection.children ?? [])
+        .map((child) => child.contentId)
+        .filter((id): id is string => !!id)
+      currentOrder = [...entryIds, ...subCollectionIds]
+    }
+
+    // Find current position
+    const currentIndex = currentOrder.indexOf(contentId)
+    if (currentIndex === -1) return
+
+    // Calculate new position
+    const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1
+    if (newIndex < 0 || newIndex >= currentOrder.length) return
+
+    // Swap positions
+    const newOrder = [...currentOrder]
+    ;[newOrder[currentIndex], newOrder[newIndex]] = [newOrder[newIndex], newOrder[currentIndex]]
+
+    // Update via API
+    await updateOrder(collectionPath, newOrder)
+  }
+
+  // Determine if we should hide the root collection (but keep its context for ordering)
+  const hiddenRootPath = useMemo(() => {
+    if (activeCollections?.length === 1 && activeCollections[0].path === contentRoot) {
+      return contentRoot
+    }
+    return undefined
+  }, [activeCollections, contentRoot])
+
   const navCollections = useMemo<EntryNavCollection[] | undefined>(() => {
     if (!activeCollections) return undefined
-
-    // Unwrap content root if it's the only top-level collection
-    const collectionsToRender =
-      activeCollections.length === 1 && activeCollections[0].path === contentRoot
-        ? (activeCollections[0].children ?? [])
-        : activeCollections
 
     const grouped = new Map<string, EntryNavCollection['entries']>()
     entriesState.forEach((entry) => {
       if (!entry.collectionId) return
       const list = grouped.get(entry.collectionId) ?? []
-      list.push({ path: entry.path, label: entry.label, status: entry.status })
+      list.push({
+        path: entry.path,
+        label: entry.label,
+        status: entry.status,
+        contentId: entry.contentId,
+      })
       grouped.set(entry.collectionId, list)
     })
-    const build = (node: EditorCollection): EntryNavCollection => ({
-      path: node.path,
-      label: node.label ?? node.name,
-      type: node.type,
-      entries: grouped.get(node.path),
-      children: node.children?.map((child) => build(child)),
-      onAdd:
-        node.type !== 'entry'
-          ? () => (onCreateEntry ? onCreateEntry(node.path) : handleCreateEntry(node.path))
-          : undefined,
-      onEdit: node.type === 'collection' ? () => handleOpenCollectionEditor(node) : undefined,
-      onAddSubCollection:
-        node.type === 'collection' ? () => handleOpenCollectionEditor(null, node.path) : undefined,
-      onDelete: node.type === 'collection' ? () => handleDeleteCollection(node.path) : undefined,
-    })
-    return collectionsToRender.map((node) => build(node))
+
+    const build = (node: EditorCollection): EntryNavCollection => {
+      const entries = grouped.get(node.path) ?? []
+      const children = node.children?.map((child) => build(child)) ?? []
+
+      // Pass entries, children, and order to EntryNavigator for interleaved ordering
+      return {
+        path: node.path,
+        label: node.label ?? node.name,
+        type: node.type,
+        contentId: node.contentId,
+        order: node.order,
+        entries: entries.length > 0 ? entries : undefined,
+        children: children.length > 0 ? children : undefined,
+        onAdd:
+          node.type !== 'entry'
+            ? () => (onCreateEntry ? onCreateEntry(node.path) : handleCreateEntry(node.path))
+            : undefined,
+        onEdit: node.type === 'collection' ? () => handleOpenCollectionEditor(node) : undefined,
+        onAddSubCollection:
+          node.type === 'collection'
+            ? () => handleOpenCollectionEditor(null, node.path)
+            : undefined,
+        onDelete: node.type === 'collection' ? () => handleDeleteCollection(node.path) : undefined,
+      }
+    }
+    return activeCollections.map((node) => build(node))
   }, [activeCollections, entriesState, onCreateEntry, handleCreateEntry, contentRoot])
 
   // Tree expansion state - persists across drawer close/open
@@ -765,6 +837,8 @@ export const Editor: React.FC<EditorProps> = ({
                   expandedStateRef={treeExpandedStateRef}
                   onExpandedStateChange={handleExpandedStateChange}
                   onDeleteEntry={handleDeleteEntry}
+                  onReorderEntry={handleReorderEntry}
+                  hiddenRootPath={hiddenRootPath}
                 />
               </Box>
             </Drawer.Body>

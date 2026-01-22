@@ -289,7 +289,7 @@ export class SchemaStore {
     // Create directory
     await fs.mkdir(physicalPath, { recursive: true })
 
-    // Build collection meta
+    // Build collection meta with empty order array (required for ordering support)
     const meta: CollectionMetaFile = {
       name: input.name,
       label: input.label,
@@ -301,10 +301,21 @@ export class SchemaStore {
         default: et.default,
         maxItems: et.maxItems,
       })),
+      order: [], // Initialize with empty order array
     }
 
     // Write .collection.json
     await this.writeCollectionMeta(physicalPath, meta)
+
+    // Add new collection's contentId to parent's order array
+    const parentLogicalPath = input.parentPath ? toLogicalPath(input.parentPath) : toLogicalPath('')
+    const parentMeta = await this.readCollectionMeta(parentLogicalPath)
+    if (parentMeta) {
+      // Initialize parent's order array if it doesn't exist
+      const existingOrder = parentMeta.order ?? []
+      parentMeta.order = [...existingOrder, contentId]
+      await this.writeCollectionMeta(parentPhysicalPath, parentMeta)
+    }
 
     // Build logical path
     const logicalPath = input.parentPath

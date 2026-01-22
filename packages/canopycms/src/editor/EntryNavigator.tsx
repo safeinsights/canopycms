@@ -17,7 +17,15 @@ import {
   type TreeNodeData,
   rem,
 } from '@mantine/core'
-import { IconDots, IconEdit, IconFolderPlus, IconPlus, IconTrash } from '@tabler/icons-react'
+import {
+  IconArrowDown,
+  IconArrowUp,
+  IconDots,
+  IconEdit,
+  IconFolderPlus,
+  IconPlus,
+  IconTrash,
+} from '@tabler/icons-react'
 
 import { calculatePathToEntry } from './editor-utils'
 
@@ -29,12 +37,15 @@ export interface EntryNavItem {
   label: string
   status?: string
   collectionId?: string
+  contentId?: string // 12-char embedded ID for ordering
 }
 
 export interface EntryNavCollection {
   path: string
   label: string
   type: 'collection' | 'entry'
+  contentId?: string // 12-char embedded ID for ordering
+  order?: readonly string[] // Order array for interleaving entries and children
   entries?: EntryNavItem[]
   children?: EntryNavCollection[]
   onAdd?: () => void
@@ -53,6 +64,10 @@ export interface EntryNavigatorProps {
   onExpandedStateChange?: (state: Record<string, boolean>) => void
   /** Called when user requests to delete an entry */
   onDeleteEntry?: (path: string) => void
+  /** Called when user reorders an entry within a collection */
+  onReorderEntry?: (collectionPath: string, contentId: string, direction: 'up' | 'down') => void
+  /** If provided, this collection path's node is hidden but its children are rendered at the top level */
+  hiddenRootPath?: string
 }
 
 export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
@@ -64,6 +79,8 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   expandedStateRef,
   onExpandedStateChange,
   onDeleteEntry,
+  onReorderEntry,
+  hiddenRootPath,
 }) => {
   const selectedNodeRef = useRef<HTMLDivElement>(null)
   const hasScrolledRef = useRef(false)
@@ -81,14 +98,111 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             children: [],
           }
         }
-        const entryNodes =
-          col.entries?.map((entry) => ({
+        const entries = col.entries ?? []
+        const childCollections = col.children ?? []
+        const totalChildren = entries.length + childCollections.length
+        const order = col.order ?? []
+
+        // Build entry nodes keyed by contentId
+        const entryNodesByContentId = new Map<string, TreeNodeData>()
+        entries.forEach((entry) => {
+          const node: TreeNodeData = {
             value: entry.path,
             label: entry.label,
-            nodeProps: { status: entry.status, isEntry: true, entryPath: entry.path },
-          })) ?? []
-        const childNodes = col.children?.map(toTree) ?? []
-        const allChildren = [...entryNodes, ...childNodes]
+            nodeProps: {
+              status: entry.status,
+              isEntry: true,
+              entryPath: entry.path,
+              contentId: entry.contentId,
+              parentCollectionPath: col.path,
+              childIndex: 0, // Will be set below
+              totalChildrenCount: totalChildren,
+            },
+          }
+          if (entry.contentId) {
+            entryNodesByContentId.set(entry.contentId, node)
+          }
+        })
+
+        // Build child collection nodes keyed by contentId
+        const childNodesByContentId = new Map<string, TreeNodeData>()
+        childCollections.forEach((child) => {
+          const childTree = toTree(child)
+          const node: TreeNodeData = {
+            ...childTree,
+            nodeProps: {
+              ...childTree.nodeProps,
+              contentId: child.contentId,
+              parentCollectionPath: col.path,
+              childIndex: 0, // Will be set below
+              totalChildrenCount: totalChildren,
+            },
+          }
+          if (child.contentId) {
+            childNodesByContentId.set(child.contentId, node)
+          }
+        })
+
+        // Interleave entries and children based on order array
+        const allChildren: TreeNodeData[] = []
+        const usedContentIds = new Set<string>()
+
+        // First, add items in order
+        for (const contentId of order) {
+          const entryNode = entryNodesByContentId.get(contentId)
+          if (entryNode) {
+            entryNode.nodeProps = { ...entryNode.nodeProps, childIndex: allChildren.length }
+            allChildren.push(entryNode)
+            usedContentIds.add(contentId)
+            continue
+          }
+          const childNode = childNodesByContentId.get(contentId)
+          if (childNode) {
+            childNode.nodeProps = { ...childNode.nodeProps, childIndex: allChildren.length }
+            allChildren.push(childNode)
+            usedContentIds.add(contentId)
+          }
+        }
+
+        // Add any entries not in order (alphabetically)
+        const unorderedEntries = entries
+          .filter((e) => !e.contentId || !usedContentIds.has(e.contentId))
+          .sort((a, b) => (a.label ?? '').localeCompare(b.label ?? ''))
+        for (const entry of unorderedEntries) {
+          const node: TreeNodeData = {
+            value: entry.path,
+            label: entry.label,
+            nodeProps: {
+              status: entry.status,
+              isEntry: true,
+              entryPath: entry.path,
+              contentId: entry.contentId,
+              parentCollectionPath: col.path,
+              childIndex: allChildren.length,
+              totalChildrenCount: totalChildren,
+            },
+          }
+          allChildren.push(node)
+        }
+
+        // Add any child collections not in order (alphabetically)
+        const unorderedChildren = childCollections
+          .filter((c) => !c.contentId || !usedContentIds.has(c.contentId))
+          .sort((a, b) => (a.label ?? '').localeCompare(b.label ?? ''))
+        for (const child of unorderedChildren) {
+          const childTree = toTree(child)
+          const node: TreeNodeData = {
+            ...childTree,
+            nodeProps: {
+              ...childTree.nodeProps,
+              contentId: child.contentId,
+              parentCollectionPath: col.path,
+              childIndex: allChildren.length,
+              totalChildrenCount: totalChildren,
+            },
+          }
+          allChildren.push(node)
+        }
 
         // Collections should always have children array (even if empty) to show chevron
         // This matches standard file tree UI behavior where folders always show expand/collapse
@@ -107,6 +221,14 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           children: allChildren,
         }
       }
+
+      // If hiddenRootPath is set and matches a single root collection, return its children directly
+      // This allows the root collection's order/context to be used for top-level item reordering
+      if (hiddenRootPath && collections.length === 1 && collections[0].path === hiddenRootPath) {
+        const rootNode = toTree(collections[0])
+        return rootNode.children ?? []
+      }
+
       return collections.map(toTree)
     }
 
@@ -116,7 +238,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
       label: item.label,
       nodeProps: { status: item.status, isEntry: true, entryPath: item.path },
     }))
-  }, [collections, items])
+  }, [collections, items, hiddenRootPath])
 
   // Initialize tree controller
   const tree = useTree({
@@ -230,6 +352,10 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const onAddSubCollection = node.nodeProps?.onAddSubCollection as (() => void) | undefined
     const onDelete = node.nodeProps?.onDelete as (() => void) | undefined
     const entryPath = node.nodeProps?.entryPath as string | undefined
+    const contentId = node.nodeProps?.contentId as string | undefined
+    const parentCollectionPath = node.nodeProps?.parentCollectionPath as string | undefined
+    const childIndex = node.nodeProps?.childIndex as number | undefined
+    const totalChildrenCount = node.nodeProps?.totalChildrenCount as number | undefined
     const isCollection = node.nodeProps?.isCollection as boolean | undefined
     const isEntry = node.nodeProps?.isEntry as boolean | undefined
     const isLeaf = !hasChildren || isEntry
@@ -240,9 +366,18 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     // collections to always be expandable
     const showChevron = hasChildren || Boolean(isCollection)
 
+    // Reordering is available for both entries and collections that have contentId and parent path
+    const canReorder =
+      onReorderEntry && contentId && parentCollectionPath && typeof childIndex === 'number'
+    const canMoveUp = canReorder && childIndex > 0
+    const canMoveDown =
+      canReorder && typeof totalChildrenCount === 'number' && childIndex < totalChildrenCount - 1
+
     // Determine if we should show a context menu
-    const hasCollectionMenu = isCollection && (onAdd || onEdit || onAddSubCollection || onDelete)
-    const hasEntryMenu = isEntry && entryPath && onDeleteEntry
+    // Collections show menu for add/edit/delete actions OR for reordering (subcollections)
+    const hasCollectionMenu =
+      isCollection && (onAdd || onEdit || onAddSubCollection || onDelete || canReorder)
+    const hasEntryMenu = isEntry && entryPath && (onDeleteEntry || onReorderEntry)
 
     return (
       <Box
@@ -305,6 +440,31 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                   </ActionIcon>
                 </Menu.Target>
                 <Menu.Dropdown>
+                  {canReorder && (
+                    <>
+                      <Menu.Item
+                        leftSection={<IconArrowUp size={14} />}
+                        disabled={!canMoveUp}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onReorderEntry?.(parentCollectionPath!, contentId!, 'up')
+                        }}
+                      >
+                        Move Up
+                      </Menu.Item>
+                      <Menu.Item
+                        leftSection={<IconArrowDown size={14} />}
+                        disabled={!canMoveDown}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onReorderEntry?.(parentCollectionPath!, contentId!, 'down')
+                        }}
+                      >
+                        Move Down
+                      </Menu.Item>
+                      {(onAdd || onAddSubCollection || onEdit || onDelete) && <Menu.Divider />}
+                    </>
+                  )}
                   {onAdd && (
                     <Menu.Item
                       leftSection={<IconPlus size={14} />}
@@ -371,16 +531,43 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                   </ActionIcon>
                 </Menu.Target>
                 <Menu.Dropdown>
-                  <Menu.Item
-                    leftSection={<IconTrash size={14} />}
-                    color="red"
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onDeleteEntry(entryPath)
-                    }}
-                  >
-                    Delete Entry
-                  </Menu.Item>
+                  {onReorderEntry && contentId && parentCollectionPath && (
+                    <>
+                      <Menu.Item
+                        leftSection={<IconArrowUp size={14} />}
+                        disabled={!canMoveUp}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onReorderEntry(parentCollectionPath, contentId, 'up')
+                        }}
+                      >
+                        Move Up
+                      </Menu.Item>
+                      <Menu.Item
+                        leftSection={<IconArrowDown size={14} />}
+                        disabled={!canMoveDown}
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onReorderEntry(parentCollectionPath, contentId, 'down')
+                        }}
+                      >
+                        Move Down
+                      </Menu.Item>
+                      {onDeleteEntry && <Menu.Divider />}
+                    </>
+                  )}
+                  {onDeleteEntry && (
+                    <Menu.Item
+                      leftSection={<IconTrash size={14} />}
+                      color="red"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onDeleteEntry(entryPath)
+                      }}
+                    >
+                      Delete Entry
+                    </Menu.Item>
+                  )}
                 </Menu.Dropdown>
               </Menu>
             )}

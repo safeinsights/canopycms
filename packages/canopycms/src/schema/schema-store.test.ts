@@ -440,6 +440,7 @@ describe('SchemaStore', () => {
         path.join(contentRoot, '.collection.json'),
         JSON.stringify({
           entries: [{ name: 'home', format: 'json', fields: 'pageSchema' }],
+          order: [],
         }),
       )
 
