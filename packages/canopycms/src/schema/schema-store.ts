@@ -299,8 +299,9 @@ export class SchemaStore {
     await this.writeCollectionMeta(physicalPath, meta)
 
     // Add new collection's contentId to parent's order array
+    // For root-level collections (empty parentPath), we don't update parent order
     const parentLogicalPath = input.parentPath ? toLogicalPath(input.parentPath) : toLogicalPath('')
-    const parentMeta = await this.readCollectionMeta(parentLogicalPath)
+    const parentMeta = input.parentPath ? await this.readCollectionMeta(parentLogicalPath) : null
     if (parentMeta) {
       // Initialize parent's order array if it doesn't exist
       const existingOrder = parentMeta.order ?? []
