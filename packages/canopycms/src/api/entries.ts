@@ -6,6 +6,7 @@ import { z } from 'zod'
 import matter from 'gray-matter'
 
 import type { FieldConfig, ContentFormat, FlatSchemaItem, EntryTypeConfig } from '../config'
+import { loadCollectionMetaFiles } from '../schema'
 import { ContentStore, ContentStoreError } from '../content-store'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
@@ -120,15 +121,6 @@ const readTitle = async (filePath: string, format: ContentFormat): Promise<strin
   } catch {
     return undefined
   }
-}
-
-/**
- * Get the default entry type from a collection's entries array.
- * Returns the entry marked as default, or the first one, or undefined if no entries.
- */
-const getDefaultEntryType = (entries: readonly EntryTypeConfig[] | undefined): EntryTypeConfig | undefined => {
-  if (!entries || entries.length === 0) return undefined
-  return entries.find(e => e.default) || entries[0]
 }
 
 /**
@@ -320,60 +312,54 @@ const listCollectionEntriesRecursive = async (
 const normalizeCollectionId = (value: string): string => normalizeFilesystemPath(value)
 
 /**
- * Read collection metadata from .collection.json file.
- * Returns fresh data from disk, not cached schema.
+ * Get the default entry type from a collection's entries array.
+ * Returns the entry marked as default, or the first one, or undefined if no entries.
  */
-const readCollectionMetaFromDisk = async (
-  collectionPhysicalPath: string
-): Promise<{ name: string; label?: string; order?: string[] } | null> => {
-  const metaPath = path.join(collectionPhysicalPath, '.collection.json')
-  try {
-    const content = await fs.readFile(metaPath, 'utf-8')
-    const parsed = JSON.parse(content)
-    return {
-      name: parsed.name,
-      label: parsed.label,
-      order: parsed.order,
-    }
-  } catch {
-    return null
-  }
+const getDefaultEntryType = (entries: readonly EntryTypeConfig[] | undefined): EntryTypeConfig | undefined => {
+  if (!entries || entries.length === 0) return undefined
+  return entries.find(e => e.default) || entries[0]
 }
 
 /**
- * Build collection summaries from flat schema items.
- * Only includes collections - entry types are schema metadata and not included as summaries.
+ * Build collection summaries by scanning disk for .collection.json files.
  *
- * Note: Reads labels and order from .collection.json files on disk to ensure
- * fresh data after schema edits, since the flat schema is cached at startup.
+ * This discovers collections dynamically from the branch content directory,
+ * ensuring newly created collections appear immediately without server restart.
+ * Falls back to the cached flatSchema if no .collection.json files are found
+ * (for backwards compatibility with test fixtures that don't have .collection.json files).
+ *
+ * @param branchContentRoot - The branch's content directory (e.g., .canopy-prod-sim/content-branches/main/content)
+ * @param schemaRegistry - Schema registry for resolving field references
+ * @param contentRoot - The logical content root name (e.g., "content")
+ * @param flatSchema - Cached flat schema (fallback when no .collection.json files exist)
+ * @param targetId - Optional collection path to filter results
  */
 const buildCollectionSummaries = async (
-  root: string,
-  flatCollections: FlatSchemaItem[],
+  branchContentRoot: string,
+  schemaRegistry: Record<string, readonly FieldConfig[]>,
+  contentRoot: string,
+  flatSchema: FlatSchemaItem[],
   targetId?: string
 ): Promise<EntryCollectionSummary[]> => {
-  // Filter to target collection and its descendants if targetId is provided
-  const filtered = targetId
-    ? flatCollections.filter(item =>
-        item.logicalPath === targetId || item.logicalPath.startsWith(`${targetId}/`)
-      )
-    : flatCollections
+  // Dynamically discover all .collection.json files from the branch
+  const metaFiles = await loadCollectionMetaFiles(branchContentRoot)
 
-  // Filter to collections only and convert to summaries
-  const collectionItems = filtered.filter(item => item.type === 'collection')
+  // If we found .collection.json files, use them as the source of truth
+  if (metaFiles.collections.length > 0) {
+    const summaries: EntryCollectionSummary[] = []
 
-  const summaries = await Promise.all(
-    collectionItems.map(async (item) => {
-      // Get default entry type for the collection summary
-      const entryTypes = item.entries as readonly EntryTypeConfig[] | undefined
-      const defaultEntry = getDefaultEntryType(entryTypes)
+    for (const col of metaFiles.collections) {
+      const logicalPath = `${contentRoot}/${col.path}`
 
-      // Resolve the physical path to extract contentId from directory name
-      const physicalPath = await resolveCollectionPath(root, item.logicalPath)
-      let contentId = 'unknown' // Fallback if collection doesn't exist yet
+      // Filter by targetId if specified
+      if (targetId && logicalPath !== targetId && !logicalPath.startsWith(`${targetId}/`)) {
+        continue
+      }
 
+      // Resolve physical path to get content ID
+      const physicalPath = await resolveCollectionPath(branchContentRoot, col.path)
+      let contentId = 'unknown'
       if (physicalPath) {
-        // Extract the last segment (directory name) and get ID from it
         const dirName = path.basename(physicalPath)
         const extractedId = extractIdFromFilename(dirName)
         if (extractedId) {
@@ -381,12 +367,71 @@ const buildCollectionSummaries = async (
         }
       }
 
-      // Read fresh metadata from .collection.json (for updated labels/order after schema edits)
-      const freshMeta = physicalPath ? await readCollectionMetaFromDisk(physicalPath) : null
-      const label = freshMeta?.label ?? item.label
-      const order = freshMeta?.order ?? item.order
+      // Build entry type summaries
+      const entryTypeSummaries: EntryTypeSummary[] = (col.entries ?? []).map(et => ({
+        name: et.name,
+        label: et.label,
+        format: et.format,
+        default: et.default,
+        maxItems: et.maxItems,
+      }))
 
-      // Build entry type summaries for the client
+      // Get default entry type for format/schema
+      const defaultEntry = col.entries?.find(e => e.default) ?? col.entries?.[0]
+      const defaultSchema = defaultEntry ? schemaRegistry[defaultEntry.fields] : undefined
+
+      // Compute parent path
+      const pathParts = col.path.split('/')
+      const parentPath = pathParts.length > 1
+        ? `${contentRoot}/${pathParts.slice(0, -1).join('/')}`
+        : undefined
+
+      summaries.push({
+        logicalPath: toLogicalPath(logicalPath),
+        contentId,
+        name: col.name,
+        label: col.label,
+        format: defaultEntry?.format || 'json',
+        type: 'collection' as const,
+        schema: defaultSchema || [],
+        entryTypes: entryTypeSummaries,
+        order: col.order,
+        parentId: parentPath,
+      })
+    }
+
+    return summaries
+  }
+
+  // Fallback: use cached flatSchema (for tests and legacy setups without .collection.json)
+  const filtered = targetId
+    ? flatSchema.filter(item =>
+        item.logicalPath === targetId || item.logicalPath.startsWith(`${targetId}/`)
+      )
+    : flatSchema
+
+  const collectionItems = filtered.filter(item => item.type === 'collection')
+
+  const summaries = await Promise.all(
+    collectionItems.map(async (item) => {
+      const entryTypes = item.entries as readonly EntryTypeConfig[] | undefined
+      const defaultEntry = getDefaultEntryType(entryTypes)
+
+      // Resolve physical path to get content ID
+      // Strip contentRoot prefix from logical path to get relative path for resolution
+      const relativePath = item.logicalPath.startsWith(`${contentRoot}/`)
+        ? item.logicalPath.slice(contentRoot.length + 1)
+        : item.logicalPath
+      const physicalPath = await resolveCollectionPath(branchContentRoot, relativePath)
+      let contentId = 'unknown'
+      if (physicalPath) {
+        const dirName = path.basename(physicalPath)
+        const extractedId = extractIdFromFilename(dirName)
+        if (extractedId) {
+          contentId = extractedId
+        }
+      }
+
       const entryTypeSummaries: EntryTypeSummary[] | undefined = entryTypes?.map(et => ({
         name: et.name,
         label: et.label,
@@ -397,14 +442,14 @@ const buildCollectionSummaries = async (
 
       return {
         logicalPath: toLogicalPath(item.logicalPath),
-        contentId, // 12-char content ID from directory name
-        name: freshMeta?.name ?? item.name,
-        label,
+        contentId,
+        name: item.name,
+        label: item.label,
         format: defaultEntry?.format || 'json',
         type: 'collection' as const,
         schema: defaultEntry?.fields || [],
         entryTypes: entryTypeSummaries,
-        order, // Embedded IDs for ordering items (fresh from disk)
+        order: item.order,
         parentId: item.parentPath,
       }
     })
@@ -510,7 +555,16 @@ export const listEntriesHandler = async (
   const paged = entries.slice(offset, offset + limit)
   const nextCursor = offset + limit < entries.length ? String(offset + limit) : undefined
 
-  const collections = await buildCollectionSummaries(root, flatCollections, targetId)
+  // Build collection summaries by dynamically scanning the branch's content directory
+  const contentRoot = ctx.services.config.contentRoot || 'content'
+  const branchContentRoot = path.join(root, contentRoot)
+  const collections = await buildCollectionSummaries(
+    branchContentRoot,
+    ctx.services.schemaRegistry,
+    contentRoot,
+    flatCollections,
+    targetId
+  )
 
   return {
     ok: true,

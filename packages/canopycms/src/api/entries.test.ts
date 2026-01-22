@@ -819,6 +819,120 @@ describe('sortEntriesByOrder', () => {
   })
 })
 
+describe('dynamic collection discovery', () => {
+  it('discovers collections from .collection.json files not in flatSchema', async () => {
+    const root = await tmpDir()
+
+    // Create initial collection folder
+    const docsId = 'bChqT78gcaLd'
+    await fs.mkdir(path.join(root, `content/docs.${docsId}`), { recursive: true })
+
+    await fs.writeFile(
+      path.join(root, `content/docs.${docsId}/.collection.json`),
+      JSON.stringify({
+        name: 'docs',
+        label: 'Documentation',
+        entries: [{ name: 'doc', format: 'json', fields: 'docSchema' }],
+      }),
+      'utf8'
+    )
+
+    // Create an entry in docs
+    await fs.writeFile(
+      path.join(root, `content/docs.${docsId}/doc.overview.gnVmHnnMjWrD.json`),
+      JSON.stringify({ title: 'Overview' }),
+      'utf8'
+    )
+
+    // Now simulate a dynamically created subcollection that is NOT in the flatSchema
+    // This is the scenario where a user creates a collection via the schema API
+    const innerId = '2XWmsdeEU2Li'
+    await fs.mkdir(path.join(root, `content/docs.${docsId}/inner.${innerId}`), { recursive: true })
+
+    await fs.writeFile(
+      path.join(root, `content/docs.${docsId}/inner.${innerId}/.collection.json`),
+      JSON.stringify({
+        name: 'inner',
+        label: 'Inner Docs',
+        entries: [{ name: 'doc', format: 'json', fields: 'docSchema' }],
+      }),
+      'utf8'
+    )
+
+    const schemaRegistry = {
+      docSchema: [
+        { name: 'title', type: 'string' },
+        { name: 'body', type: 'markdown' },
+      ],
+    }
+
+    // Only load the ORIGINAL schema (docs only, not inner)
+    // This simulates the flatSchema being cached at startup before "inner" was created
+    const originalSchema = {
+      collections: [
+        {
+          name: 'docs',
+          label: 'Documentation',
+          path: 'docs',
+          entries: [{ name: 'doc', format: 'json' as const, fields: schemaRegistry.docSchema }],
+        },
+      ],
+    }
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema: originalSchema,
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        // flatSchema only knows about 'docs', NOT 'docs/inner'
+        flatSchema: flattenSchema(originalSchema, config.contentRoot),
+        schemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+      },
+      branchContext: createMockBranchContext({
+        branchName: 'main',
+        baseRoot: root,
+        branchRoot: root,
+        createdBy: 'u1',
+      }),
+    })
+
+    const res = await listEntriesHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main' }
+    )
+
+    expect(res.ok).toBe(true)
+
+    // The collections array should include BOTH docs AND inner (dynamically discovered)
+    const collectionPaths = res.data?.collections.map((c) => c.logicalPath)
+    expect(collectionPaths).toContain('content/docs')
+    expect(collectionPaths).toContain('content/docs/inner') // Dynamically discovered!
+
+    // Verify the inner collection has proper metadata
+    const innerCollection = res.data?.collections.find((c) => c.logicalPath === 'content/docs/inner')
+    expect(innerCollection).toBeDefined()
+    expect(innerCollection?.name).toBe('inner')
+    expect(innerCollection?.label).toBe('Inner Docs')
+    expect(innerCollection?.parentId).toBe('content/docs')
+    expect(innerCollection?.contentId).toBe(innerId)
+  })
+})
+
 describe('deleteEntry', () => {
   it('deletes an entry and returns success', async () => {
     const root = await tmpDir()
