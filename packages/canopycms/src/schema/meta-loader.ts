@@ -54,6 +54,7 @@ const collectionMetaSchema = z
  * Like other collections but no name/path (derived from contentRoot)
  */
 const rootCollectionMetaSchema = z.object({
+  label: z.string().optional(),
   entries: z.array(entryTypeSchemaRefSchema).optional(),
   order: z.array(z.string()), // Embedded IDs for ordering items (required)
 })
@@ -75,6 +76,7 @@ export type CollectionMeta = {
 }
 
 export type RootCollectionMeta = {
+  label?: string
   entries?: EntryTypeMeta[]
   order: string[] // Embedded IDs for ordering items (required)
 }
@@ -303,6 +305,11 @@ export function resolveCollectionReferences(
 ): RootCollectionConfig {
   // Build result object dynamically to avoid readonly conflicts
   const result: any = {}
+
+  // Pass through root label if present
+  if (metaFiles.root?.label) {
+    result.label = metaFiles.root.label
+  }
 
   // Resolve root entry types
   if (metaFiles.root?.entries && metaFiles.root.entries.length > 0) {

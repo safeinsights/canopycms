@@ -56,6 +56,7 @@ interface CollectionMetaFile {
  * Raw root collection meta as stored in content/.collection.json
  */
 interface RootCollectionMetaFile {
+  label?: string
   entries?: Array<{
     name: string
     label?: string
@@ -339,14 +340,38 @@ export class SchemaStore {
       throw new Error(`Invalid input: ${parseResult.error.message}`)
     }
 
-    // Resolve path
-    const physicalPath = await resolveCollectionPath(this.contentRoot, collectionPath)
+    // Check if this is the root collection (path equals contentRoot, e.g., "content")
+    if (collectionPath === this.contentRoot) {
+      // Update root collection meta
+      let meta = await this.readRootCollectionMeta()
+      if (!meta) {
+        meta = {}
+      }
+      // Root only supports label and order updates (no name)
+      if (updates.label !== undefined) {
+        meta.label = updates.label
+      }
+      if (updates.order !== undefined) {
+        meta.order = updates.order
+      }
+      await this.writeRootCollectionMeta(meta)
+      return
+    }
+
+    // Strip contentRoot prefix to get relative path for regular collection
+    // E.g., "content/posts" -> "posts"
+    const relativePath = collectionPath.startsWith(`${this.contentRoot}/`)
+      ? collectionPath.slice(this.contentRoot.length + 1)
+      : collectionPath
+
+    // Resolve path for regular collection
+    const physicalPath = await resolveCollectionPath(this.contentRoot, relativePath)
     if (!physicalPath) {
       throw new Error(`Collection not found: ${collectionPath}`)
     }
 
     // Read existing meta
-    const meta = await this.readCollectionMeta(collectionPath)
+    const meta = await this.readCollectionMeta(relativePath as LogicalPath)
     if (!meta) {
       throw new Error(`Collection meta not found: ${collectionPath}`)
     }
@@ -541,8 +566,8 @@ export class SchemaStore {
    * Update the order of items in a collection
    */
   async updateOrder(collectionPath: LogicalPath, order: string[]): Promise<void> {
-    // Check if this is the root collection
-    if (!collectionPath || collectionPath === this.contentRoot) {
+    // Check if this is the root collection (path equals contentRoot, e.g., "content")
+    if (collectionPath === this.contentRoot) {
       // Update root collection meta
       let meta = await this.readRootCollectionMeta()
       if (!meta) {
@@ -553,7 +578,7 @@ export class SchemaStore {
       return
     }
 
-    // Update regular collection
+    // Update regular collection (handles contentRoot prefix stripping internally)
     await this.updateCollection(collectionPath, { order })
   }
 }

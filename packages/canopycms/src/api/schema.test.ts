@@ -271,6 +271,25 @@ describe('Schema API', () => {
       expect(result.status).toBe(400)
       expect(result.error).toContain('physical path')
     })
+
+    it('should update root collection label with contentRoot path', async () => {
+      const mockStore = {
+        updateCollection: vi.fn().mockResolvedValue(undefined),
+      }
+      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+
+      const result = await updateCollection.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'content' },
+        { label: 'All Content' },
+      )
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+      expect(result.data?.success).toBe(true)
+      expect(mockStore.updateCollection).toHaveBeenCalledWith('content', { label: 'All Content' })
+    })
   })
 
   describe('deleteCollection', () => {

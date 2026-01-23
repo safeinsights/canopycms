@@ -297,7 +297,7 @@ const updateCollectionHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  // Validate collection path
+  // Validate collection path (now expects contentRoot-prefixed paths like "content" or "content/posts")
   const pathResult = validateCollectionPath(params.collectionPath)
   if (!pathResult.ok) {
     return { ok: false, status: pathResult.status, error: pathResult.error }
