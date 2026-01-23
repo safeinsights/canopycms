@@ -449,7 +449,7 @@ describe('SchemaStore', () => {
       )
 
       const order = ['rootId1', 'rootId2']
-      await store.updateOrder(toLogicalPath(''), order)
+      await store.updateOrder(toLogicalPath('content'), order)
 
       const rootMeta = await store.readRootCollectionMeta()
       expect(rootMeta!.order).toEqual(order)
@@ -457,7 +457,7 @@ describe('SchemaStore', () => {
 
     it('should create root meta if it does not exist', async () => {
       const order = ['rootId1']
-      await store.updateOrder(toLogicalPath(''), order)
+      await store.updateOrder(toLogicalPath('content'), order)
 
       const rootMeta = await store.readRootCollectionMeta()
       expect(rootMeta!.order).toEqual(order)
