@@ -32,6 +32,7 @@ export interface UseEntryManagerReturn {
   setNavigatorOpen: (open: boolean) => void
   refreshEntries: (branch?: string) => Promise<void>
   handleCreateEntry: (collectionId: string, entryTypeName?: string) => Promise<void>
+  renameEntry: (path: string, newSlug: string) => Promise<void>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
   collectionById: Map<string, EditorCollection>
@@ -248,6 +249,42 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     }
   }
 
+  /**
+   * Rename an entry's slug
+   */
+  const renameEntry = async (path: string, newSlug: string): Promise<void> => {
+    options.setBusy(true)
+    try {
+      const result = await apiClient.content.renameEntry(
+        {
+          branch: options.branchName,
+          path,
+        },
+        { newSlug },
+      )
+      if (!result.ok) {
+        const errorMsg = 'error' in result ? result.error : `Rename failed: ${result.status}`
+        throw new Error(errorMsg)
+      }
+
+      // Update the selected path if the renamed entry is currently selected
+      if (selectedPath === path && result.data) {
+        setSelectedPath(result.data.newPath)
+      }
+
+      // Refresh entries to get updated paths
+      await refreshEntries()
+      notifications.show({ message: 'Entry renamed successfully', color: 'green' })
+    } catch (err) {
+      console.error(err)
+      const errorMessage = err instanceof Error ? err.message : 'Rename failed'
+      notifications.show({ message: errorMessage, color: 'red' })
+      throw err
+    } finally {
+      options.setBusy(false)
+    }
+  }
+
   // Clear selection and refresh entries when branch changes (reactive pattern)
   useEffect(() => {
     if (options.branchName) {
@@ -314,6 +351,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     setNavigatorOpen,
     refreshEntries,
     handleCreateEntry,
+    renameEntry,
     loadEntry,
     saveEntry,
     collectionById,

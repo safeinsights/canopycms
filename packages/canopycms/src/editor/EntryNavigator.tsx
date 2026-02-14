@@ -64,6 +64,8 @@ export interface EntryNavigatorProps {
   onExpandedStateChange?: (state: Record<string, boolean>) => void
   /** Called when user requests to delete an entry */
   onDeleteEntry?: (path: string) => void
+  /** Called when user requests to rename an entry */
+  onRenameEntry?: (path: string) => void
   /** Called when user reorders an entry within a collection */
   onReorderEntry?: (collectionPath: string, contentId: string, direction: 'up' | 'down') => void
   /** If provided, this collection path's node is hidden but its children are rendered at the top level */
@@ -79,6 +81,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   expandedStateRef,
   onExpandedStateChange,
   onDeleteEntry,
+  onRenameEntry,
   onReorderEntry,
   hiddenRootPath,
 }) => {
@@ -377,7 +380,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     // Collections show menu for add/edit/delete actions OR for reordering (subcollections)
     const hasCollectionMenu =
       isCollection && (onAdd || onEdit || onAddSubCollection || onDelete || canReorder)
-    const hasEntryMenu = isEntry && entryPath && (onDeleteEntry || onReorderEntry)
+    const hasEntryMenu = isEntry && entryPath && (onDeleteEntry || onRenameEntry || onReorderEntry)
 
     return (
       <Box
@@ -553,8 +556,19 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                       >
                         Move Down
                       </Menu.Item>
-                      {onDeleteEntry && <Menu.Divider />}
+                      {(onRenameEntry || onDeleteEntry) && <Menu.Divider />}
                     </>
+                  )}
+                  {onRenameEntry && (
+                    <Menu.Item
+                      leftSection={<IconEdit size={14} />}
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        onRenameEntry(entryPath)
+                      }}
+                    >
+                      Rename Entry
+                    </Menu.Item>
                   )}
                   {onDeleteEntry && (
                     <Menu.Item

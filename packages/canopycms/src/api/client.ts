@@ -25,6 +25,8 @@ import type {
   ContentReadResponse,
   ContentWriteResponse,
   ReferenceValidationResponse,
+  RenameEntryBody,
+  RenameEntryResponse,
   ValidateReferencesBody,
   WriteContentBody,
 } from './content'
@@ -259,6 +261,16 @@ export class CanopyApiClient {
         this.buildPath('/:branch/validate-references/...path', params),
         body,
       )
+    },
+
+    /**
+     * renameEntry - PATCH /:branch/rename-entry/...path
+     */
+    renameEntry: (
+      params: Record<string, string>,
+      body: RenameEntryBody,
+    ): Promise<RenameEntryResponse> => {
+      return this.request('PATCH', this.buildPath('/:branch/rename-entry/...path', params), body)
     },
 
     /**

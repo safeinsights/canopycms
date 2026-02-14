@@ -42,6 +42,7 @@ import {
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
+import { RenameEntryModal } from './components/RenameEntryModal'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath } from '../paths/types'
 import { toLogicalPath } from '../paths/normalize'
@@ -156,6 +157,12 @@ export const Editor: React.FC<EditorProps> = ({
   const [collectionEditorError, setCollectionEditorError] = useState<string | null>(null)
   const [availableSchemas, setAvailableSchemas] = useState<string[]>([])
 
+  // Rename entry modal state
+  const [renameModalOpen, setRenameModalOpen] = useState(false)
+  const [renamingEntry, setRenamingEntry] = useState<EditorEntry | null>(null)
+  const [renameModalError, setRenameModalError] = useState<string | null>(null)
+  const [renameModalSaving, setRenameModalSaving] = useState(false)
+
   // Preview data with resolved references for live preview
   const [previewData, setPreviewData] = useState<FormValue>({})
   const [previewLoadingState, setPreviewLoadingState] = useState<FormValue>({})
@@ -204,6 +211,7 @@ export const Editor: React.FC<EditorProps> = ({
     setNavigatorOpen,
     refreshEntries,
     handleCreateEntry,
+    renameEntry,
     loadEntry,
     saveEntry,
   } = useEntryManager({
@@ -331,12 +339,13 @@ export const Editor: React.FC<EditorProps> = ({
   // Effect to load entry data when selection changes
   useEffect(() => {
     const load = async () => {
-      if (!currentEntry || drafts[selectedPath]) return
+      const contentId = currentEntry?.contentId
+      if (!currentEntry || !contentId || drafts[contentId]) return
       setEntriesLoading(true)
       try {
         const loaded = await loadEntry(currentEntry)
-        setLoadedValues((prev) => ({ ...prev, [selectedPath]: loaded }))
-        setDrafts((prev) => ({ ...prev, [selectedPath]: loaded }))
+        setLoadedValues((prev) => ({ ...prev, [contentId]: loaded }))
+        setDrafts((prev) => ({ ...prev, [contentId]: loaded }))
       } catch (err) {
         console.error(err)
         notifications.show({ message: 'Failed to load entry', color: 'red' })
@@ -511,6 +520,34 @@ export const Editor: React.FC<EditorProps> = ({
     if (success && selectedPath === entryPath) {
       // If we deleted the currently selected entry, clear selection
       setSelectedPath('')
+    }
+  }
+
+  const handleRenameEntry = (entryPath: string) => {
+    // Find the entry being renamed
+    const entry = entriesState.find((e) => e.path === entryPath)
+    if (!entry) {
+      notifications.show({ message: 'Entry not found', color: 'red' })
+      return
+    }
+    setRenamingEntry(entry)
+    setRenameModalError(null)
+    setRenameModalOpen(true)
+  }
+
+  const handleRenameSubmit = async (newSlug: string) => {
+    if (!renamingEntry) return
+    setRenameModalSaving(true)
+    setRenameModalError(null)
+    try {
+      await renameEntry(renamingEntry.path, newSlug)
+      setRenameModalOpen(false)
+      setRenamingEntry(null)
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Rename failed'
+      setRenameModalError(errorMessage)
+    } finally {
+      setRenameModalSaving(false)
     }
   }
 
@@ -898,6 +935,7 @@ export const Editor: React.FC<EditorProps> = ({
                   expandedStateRef={treeExpandedStateRef}
                   onExpandedStateChange={handleExpandedStateChange}
                   onDeleteEntry={handleDeleteEntry}
+                  onRenameEntry={handleRenameEntry}
                   onReorderEntry={handleReorderEntry}
                   hiddenRootPath={hiddenRootPath}
                 />
@@ -1053,6 +1091,23 @@ export const Editor: React.FC<EditorProps> = ({
           isSaving={schemaLoading}
           error={collectionEditorError}
         />
+
+        {/* Rename Entry Modal */}
+        {renamingEntry && (
+          <RenameEntryModal
+            isOpen={renameModalOpen}
+            entryLabel={renamingEntry.label}
+            currentSlug={renamingEntry.slug || ''}
+            onSave={handleRenameSubmit}
+            onClose={() => {
+              setRenameModalOpen(false)
+              setRenamingEntry(null)
+              setRenameModalError(null)
+            }}
+            isSaving={renameModalSaving}
+            error={renameModalError}
+          />
+        )}
       </Box>
     </CanopyCMSProvider>
   )

@@ -37,6 +37,7 @@ describe('useCommentSystem', () => {
     format: 'mdx',
     schema: [],
     previewSrc: 'preview-entry1',
+    contentId: 'test123456789',
   }
 
   const mockComments: CommentThread[] = [
