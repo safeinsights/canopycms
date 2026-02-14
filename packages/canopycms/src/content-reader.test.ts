@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
 import { createContentReader } from './content-reader'
-import { createCanopyServices } from './services'
+import { createTestCanopyServices } from './services'
 import { defineCanopyTestConfig } from './config-test'
 import { ANONYMOUS_USER } from './user'
 import type { BranchContext } from './types'
@@ -43,37 +43,46 @@ describe('createContentReader', () => {
       'utf8',
     )
 
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+        {
+          name: 'pages',
+          path: 'pages',
+          entries: [
+            {
+              name: 'page',
+              format: 'json' as const,
+              fields: [
+                {
+                  name: 'hero',
+                  type: 'object' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [
-              { name: 'post', format: 'json', fields: [{ name: 'title', type: 'string' }] },
-            ],
-          },
-          {
-            name: 'pages',
-            path: 'pages',
-            entries: [
-              {
-                name: 'page',
-                format: 'json',
-                fields: [
-                  { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
-                ],
-              },
-            ],
-          },
-        ],
-      },
+      schema,
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createCanopyServices(config, { schema: config.schema }),
+      services: await createTestCanopyServices(config, schema),
       allowCreateBranch: false,
       getBranchContext: async (branch) => (branch === 'main' ? branchContext : null),
     })
@@ -102,37 +111,46 @@ describe('createContentReader', () => {
       'utf8',
     )
 
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+        {
+          name: 'pages',
+          path: 'pages',
+          entries: [
+            {
+              name: 'page',
+              format: 'json' as const,
+              fields: [
+                {
+                  name: 'hero',
+                  type: 'object' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [
-              { name: 'post', format: 'json', fields: [{ name: 'title', type: 'string' }] },
-            ],
-          },
-          {
-            name: 'pages',
-            path: 'pages',
-            entries: [
-              {
-                name: 'page',
-                format: 'json',
-                fields: [
-                  { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
-                ],
-              },
-            ],
-          },
-        ],
-      },
+      schema,
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createCanopyServices(config, { schema: config.schema }),
+      services: await createTestCanopyServices(config, schema),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -153,23 +171,28 @@ describe('createContentReader', () => {
     const root = await tmpDir()
     const pagesDir = path.join(root, 'content/pages')
     await fs.mkdir(pagesDir, { recursive: true })
+    const schema = {
+      collections: [
+        {
+          name: 'pages',
+          path: 'pages',
+          entries: [
+            {
+              name: 'page',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    }
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'deny',
-      schema: {
-        collections: [
-          {
-            name: 'pages',
-            path: 'pages',
-            entries: [
-              { name: 'page', format: 'json', fields: [{ name: 'title', type: 'string' }] },
-            ],
-          },
-        ],
-      },
+      schema,
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createCanopyServices(config, { schema: config.schema }),
+      services: await createTestCanopyServices(config, schema),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -202,31 +225,40 @@ describe('createContentReader', () => {
       'utf8',
     )
 
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+        {
+          name: 'pages',
+          path: 'pages',
+          entries: [
+            {
+              name: 'page',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    }
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [
-              { name: 'post', format: 'json', fields: [{ name: 'title', type: 'string' }] },
-            ],
-          },
-          {
-            name: 'pages',
-            path: 'pages',
-            entries: [
-              { name: 'page', format: 'json', fields: [{ name: 'title', type: 'string' }] },
-            ],
-          },
-        ],
-      },
+      schema,
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createCanopyServices(config, { schema: config.schema }),
+      services: await createTestCanopyServices(config, schema),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -265,32 +297,37 @@ describe('createContentReader', () => {
     await git.add(['.'])
     await git.commit('init')
 
+    const schema = {
+      collections: [
+        {
+          name: 'pages',
+          path: 'pages',
+          entries: [
+            {
+              name: 'page',
+              format: 'json' as const,
+              fields: [
+                {
+                  name: 'hero',
+                  type: 'object' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
       mode: 'prod-sim',
-      schema: {
-        collections: [
-          {
-            name: 'pages',
-            path: 'pages',
-            entries: [
-              {
-                name: 'page',
-                format: 'json',
-                fields: [
-                  { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
-                ],
-              },
-            ],
-          },
-        ],
-      },
+      schema,
     })
 
     try {
       const reader = createContentReader({
-        services: await createCanopyServices(config, { schema: config.schema }),
+        services: await createTestCanopyServices(config, schema),
         basePathOverride: root,
       })
       const doc = await reader.read<{ hero: { title: string } }>({
@@ -325,25 +362,30 @@ describe('createContentReader', () => {
       'utf8',
     )
 
+    const schema = {
+      collections: [
+        {
+          name: 'pages',
+          path: 'pages',
+          entries: [
+            {
+              name: 'page',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    }
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'deny', // Deny by default
-      schema: {
-        collections: [
-          {
-            name: 'pages',
-            path: 'pages',
-            entries: [
-              { name: 'page', format: 'json', fields: [{ name: 'title', type: 'string' }] },
-            ],
-          },
-        ],
-      },
+      schema,
     })
 
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createCanopyServices(config, { schema: config.schema }),
+      services: await createTestCanopyServices(config, schema),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })

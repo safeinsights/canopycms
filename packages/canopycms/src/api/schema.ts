@@ -183,7 +183,7 @@ const getSchemaHandler = async (
     ok: true,
     status: 200,
     data: {
-      schema: ctx.services.config.schema || {},
+      schema: ctx.services.schema,
       flatSchema: ctx.services.flatSchema,
       availableSchemas: Object.keys(ctx.services.schemaRegistry),
     },

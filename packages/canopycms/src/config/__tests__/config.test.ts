@@ -9,53 +9,95 @@ const gitAuthor = { gitBotAuthorName: 'Test Bot', gitBotAuthorEmail: 'bot@exampl
 
 describe('config validation', () => {
   it('accepts a valid config with mdx collection and blocks', () => {
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'entry',
+              format: 'mdx' as const,
+              fields: [
+                { name: 'title', type: 'string' as const, required: true },
+                { name: 'body', type: 'mdx' as const, required: true },
+                { name: 'tags', type: 'string' as const, list: true },
+                {
+                  name: 'layout',
+                  type: 'block' as const,
+                  templates: [
+                    {
+                      name: 'hero',
+                      label: 'Hero',
+                      fields: [
+                        { name: 'headline', type: 'string' as const, required: true },
+                        { name: 'ctaLabel', type: 'string' as const },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
     const configBundle = defineCanopyConfig({
       ...gitAuthor,
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [
-              {
-                name: 'entry',
-                format: 'mdx' as const,
-                fields: [
-                  { name: 'title', type: 'string' as const, required: true },
-                  { name: 'body', type: 'mdx' as const, required: true },
-                  { name: 'tags', type: 'string' as const, list: true },
-                  {
-                    name: 'layout',
-                    type: 'block' as const,
-                    templates: [
-                      {
-                        name: 'hero',
-                        label: 'Hero',
-                        fields: [
-                          { name: 'headline', type: 'string' as const, required: true },
-                          { name: 'ctaLabel', type: 'string' as const },
-                        ],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
       media: { adapter: 's3', bucket: 'my-bucket', region: 'us-east-1' },
     })
 
-    expect(configBundle.server.schema?.collections).toBeDefined()
-    expect(configBundle.server.schema?.collections?.[0].name).toBe('posts')
+    // Verify schema is valid on its own (config no longer contains schema)
+    expect(schema.collections).toBeDefined()
+    expect(schema.collections[0].name).toBe('posts')
   })
 
   it('rejects select fields without options', () => {
     expect(() =>
       validateCanopyConfig({
         ...gitAuthor,
-        schema: {
+      }),
+    ).not.toThrow() // Config validation no longer includes schema validation
+  })
+
+  it('allows config without schema (schema loaded from .collection.json)', () => {
+    // Schema is loaded from .collection.json meta files, not from config
+    expect(() =>
+      validateCanopyConfig({
+        ...gitAuthor,
+      }),
+    ).not.toThrow()
+  })
+
+  it('composes config fragments from multiple files', () => {
+    const posts: CanopyConfigFragment = {
+      ...gitAuthor,
+    }
+    const pages: CanopyConfigFragment = {
+      ...gitAuthor,
+      media: { adapter: 'local' as const },
+    }
+
+    const config = composeCanopyConfig(posts, pages)
+
+    // Schema is no longer part of config - loaded from .collection.json files
+    expect(config.media?.adapter).toBe('local')
+  })
+
+  it('flattens nested paths relative to parents', () => {
+    const schema = {
+      collections: [
+        {
+          name: 'content',
+          path: 'content',
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
           collections: [
             {
               name: 'pages',
@@ -64,106 +106,20 @@ describe('config validation', () => {
                 {
                   name: 'entry',
                   format: 'md' as const,
-                  fields: [{ name: 'badSelect', type: 'select' as const }],
+                  fields: [{ name: 'title', type: 'string' as const }],
                 },
               ],
             },
           ],
         },
-      }),
-    ).toThrow(/options/i)
-  })
+      ],
+    } as const
 
-  it('allows empty schema (for loading from meta files)', () => {
-    // Schema can be empty if collections are defined in .collection.json meta files
-    expect(() =>
-      validateCanopyConfig({
-        ...gitAuthor,
-        schema: {},
-      }),
-    ).not.toThrow()
-  })
-
-  it('composes config fragments from multiple files', () => {
-    const posts: CanopyConfigFragment = {
-      ...gitAuthor,
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [
-              {
-                name: 'entry',
-                format: 'mdx',
-                fields: [{ name: 'title', type: 'string' }],
-              },
-            ],
-          },
-        ],
-      },
-    }
-    const pages: CanopyConfigFragment = {
-      ...gitAuthor,
-      schema: {
-        collections: [
-          {
-            name: 'pages',
-            path: 'pages',
-            entries: [
-              {
-                name: 'page',
-                format: 'json',
-                fields: [{ name: 'hero', type: 'string' }],
-              },
-            ],
-          },
-        ],
-      },
-      media: { adapter: 'local' as const },
-    }
-
-    const config = composeCanopyConfig(posts, pages)
-
-    expect(config.schema?.collections?.[0].name).toBe('posts')
-    expect(config.schema?.collections?.[1].name).toBe('pages')
-    expect(config.media?.adapter).toBe('local')
-  })
-
-  it('flattens nested paths relative to parents', () => {
     const configBundle = defineCanopyConfig({
       ...gitAuthor,
-      schema: {
-        collections: [
-          {
-            name: 'content',
-            path: 'content',
-            entries: [
-              {
-                name: 'entry',
-                format: 'json',
-                fields: [{ name: 'title', type: 'string' }],
-              },
-            ],
-            collections: [
-              {
-                name: 'pages',
-                path: 'pages',
-                entries: [
-                  {
-                    name: 'entry',
-                    format: 'md',
-                    fields: [{ name: 'title', type: 'string' }],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
     })
     const cfg = configBundle.server
-    const flat = flattenSchema(cfg.schema!, cfg.contentRoot || 'content')
+    const flat = flattenSchema(schema, cfg.contentRoot || 'content')
 
     const contentCollection = flat.find((item) => item.logicalPath === 'content/content')
     const pagesCollection = flat.find((item) => item.logicalPath === 'content/content/pages')
@@ -176,52 +132,53 @@ describe('config validation', () => {
   })
 
   it('handles deeply nested collections with correct paths', () => {
+    const schema = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          entries: [
+            {
+              name: 'entry',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+          collections: [
+            {
+              name: 'api',
+              path: 'api',
+              entries: [
+                {
+                  name: 'entry',
+                  format: 'md' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+              collections: [
+                {
+                  name: 'v2',
+                  path: 'v2',
+                  entries: [
+                    {
+                      name: 'entry',
+                      format: 'md' as const,
+                      fields: [{ name: 'content', type: 'markdown' as const }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
     const configBundle = defineCanopyConfig({
       ...gitAuthor,
-      schema: {
-        collections: [
-          {
-            name: 'docs',
-            path: 'docs',
-            entries: [
-              {
-                name: 'entry',
-                format: 'md',
-                fields: [{ name: 'title', type: 'string' }],
-              },
-            ],
-            collections: [
-              {
-                name: 'api',
-                path: 'api',
-                entries: [
-                  {
-                    name: 'entry',
-                    format: 'md',
-                    fields: [{ name: 'title', type: 'string' }],
-                  },
-                ],
-                collections: [
-                  {
-                    name: 'v2',
-                    path: 'v2',
-                    entries: [
-                      {
-                        name: 'entry',
-                        format: 'md',
-                        fields: [{ name: 'content', type: 'markdown' }],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
     })
     const cfg = configBundle.server
-    const flat = flattenSchema(cfg.schema!, cfg.contentRoot || 'content')
+    const flat = flattenSchema(schema, cfg.contentRoot || 'content')
 
     const docsCollection = flat.find((item) => item.logicalPath === 'content/docs')
     const apiCollection = flat.find((item) => item.logicalPath === 'content/docs/api')
@@ -240,52 +197,53 @@ describe('config validation', () => {
   })
 
   it('correctly flattens nested collections without path duplication', () => {
+    const schema = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          entries: [
+            {
+              name: 'entry',
+              format: 'mdx' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+          collections: [
+            {
+              name: 'api',
+              path: 'api',
+              entries: [
+                {
+                  name: 'entry',
+                  format: 'mdx' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+              collections: [
+                {
+                  name: 'v1',
+                  path: 'v1',
+                  entries: [
+                    {
+                      name: 'entry',
+                      format: 'mdx' as const,
+                      fields: [{ name: 'title', type: 'string' as const }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
     const configBundle = defineCanopyConfig({
       ...gitAuthor,
-      schema: {
-        collections: [
-          {
-            name: 'docs',
-            path: 'docs',
-            entries: [
-              {
-                name: 'entry',
-                format: 'mdx' as const,
-                fields: [{ name: 'title', type: 'string' as const }],
-              },
-            ],
-            collections: [
-              {
-                name: 'api',
-                path: 'api',
-                entries: [
-                  {
-                    name: 'entry',
-                    format: 'mdx' as const,
-                    fields: [{ name: 'title', type: 'string' as const }],
-                  },
-                ],
-                collections: [
-                  {
-                    name: 'v1',
-                    path: 'v1',
-                    entries: [
-                      {
-                        name: 'entry',
-                        format: 'mdx' as const,
-                        fields: [{ name: 'title', type: 'string' as const }],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
     })
     const cfg = configBundle.server
-    const flat = flattenSchema(cfg.schema!, cfg.contentRoot || 'content')
+    const flat = flattenSchema(schema, cfg.contentRoot || 'content')
 
     // Find all collections
     const docs = flat.find((item) => item.type === 'collection' && item.name === 'docs')
@@ -311,52 +269,53 @@ describe('config validation', () => {
   it('handles schema-meta-loader nested structure correctly (from .collection.json pattern)', () => {
     // This simulates the structure created by schema-meta-loader
     // where nested collections have FULL paths (e.g., "docs/api") not relative paths (e.g., "api")
+    const schema = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs', // Top-level path
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+          collections: [
+            {
+              name: 'api',
+              path: 'docs/api', // FULL path from content root (as set by schema-meta-loader)
+              entries: [
+                {
+                  name: 'entry',
+                  format: 'json' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+              collections: [
+                {
+                  name: 'v1',
+                  path: 'docs/api/v1', // FULL path from content root
+                  entries: [
+                    {
+                      name: 'entry',
+                      format: 'json' as const,
+                      fields: [{ name: 'title', type: 'string' as const }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
     const configBundle = defineCanopyConfig({
       ...gitAuthor,
-      schema: {
-        collections: [
-          {
-            name: 'docs',
-            path: 'docs', // Top-level path
-            entries: [
-              {
-                name: 'entry',
-                format: 'json' as const,
-                fields: [{ name: 'title', type: 'string' as const }],
-              },
-            ],
-            collections: [
-              {
-                name: 'api',
-                path: 'docs/api', // FULL path from content root (as set by schema-meta-loader)
-                entries: [
-                  {
-                    name: 'entry',
-                    format: 'json' as const,
-                    fields: [{ name: 'title', type: 'string' as const }],
-                  },
-                ],
-                collections: [
-                  {
-                    name: 'v1',
-                    path: 'docs/api/v1', // FULL path from content root
-                    entries: [
-                      {
-                        name: 'entry',
-                        format: 'json' as const,
-                        fields: [{ name: 'title', type: 'string' as const }],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
     })
     const cfg = configBundle.server
-    const flat = flattenSchema(cfg.schema!, cfg.contentRoot || 'content')
+    const flat = flattenSchema(schema, cfg.contentRoot || 'content')
 
     // Find all collections
     const docs = flat.find((item) => item.type === 'collection' && item.name === 'docs')
@@ -383,63 +342,64 @@ describe('config validation', () => {
     // This test verifies that embedded IDs in directory names are stripped from logical paths
     // Directory on disk: "docs.bChqT78gcaLd", but logical path should be "docs"
     // This keeps IDs hidden from URLs and the editor while still using them for filesystem uniqueness
+    const schema = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs', // Logical path without ID
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+          collections: [
+            {
+              name: 'api',
+              path: 'docs/api', // Logical path without ID
+              entries: [
+                {
+                  name: 'entry',
+                  format: 'json' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+              collections: [
+                {
+                  name: 'v1',
+                  path: 'docs/api/v1', // Logical path without ID
+                  entries: [
+                    {
+                      name: 'entry',
+                      format: 'json' as const,
+                      fields: [{ name: 'title', type: 'string' as const }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        {
+          name: 'posts',
+          path: 'posts', // Logical path without ID
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
     const configBundle = defineCanopyConfig({
       ...gitAuthor,
-      schema: {
-        collections: [
-          {
-            name: 'docs',
-            path: 'docs', // Logical path without ID
-            entries: [
-              {
-                name: 'entry',
-                format: 'json',
-                fields: [{ name: 'title', type: 'string' as const }],
-              },
-            ],
-            collections: [
-              {
-                name: 'api',
-                path: 'docs/api', // Logical path without ID
-                entries: [
-                  {
-                    name: 'entry',
-                    format: 'json',
-                    fields: [{ name: 'title', type: 'string' as const }],
-                  },
-                ],
-                collections: [
-                  {
-                    name: 'v1',
-                    path: 'docs/api/v1', // Logical path without ID
-                    entries: [
-                      {
-                        name: 'entry',
-                        format: 'json',
-                        fields: [{ name: 'title', type: 'string' as const }],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-          {
-            name: 'posts',
-            path: 'posts', // Logical path without ID
-            entries: [
-              {
-                name: 'entry',
-                format: 'json',
-                fields: [{ name: 'title', type: 'string' as const }],
-              },
-            ],
-          },
-        ],
-      },
     })
     const cfg = configBundle.server
-    const flat = flattenSchema(cfg.schema!, cfg.contentRoot || 'content')
+    const flat = flattenSchema(schema, cfg.contentRoot || 'content')
 
     // Find all collections
     const docs = flat.find((item) => item.type === 'collection' && item.name === 'docs')

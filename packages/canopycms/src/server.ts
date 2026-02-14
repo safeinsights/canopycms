@@ -9,6 +9,7 @@ export {
   loadCollectionMetaFiles,
   resolveCollectionReferences,
   watchCollectionMetaFiles,
+  resolveSchema,
 } from './schema'
 export type { CollectionMeta, RootCollectionMeta } from './schema'
 export { createSchemaRegistry } from './schema-registry-helpers'

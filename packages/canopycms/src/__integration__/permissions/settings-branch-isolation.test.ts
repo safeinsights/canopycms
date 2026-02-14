@@ -16,7 +16,7 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import { BranchWorkspaceManager } from '../../branch-workspace'
 import { SettingsWorkspaceManager } from '../../settings-workspace'
-import { createCanopyServices } from '../../services'
+import { createTestCanopyServices } from '../../services'
 import type { PathPermission } from '../../config'
 import type { AuthenticatedUser } from '../../user'
 import { operatingStrategy } from '../../operating-mode'
@@ -117,13 +117,13 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Create services with prod-sim mode
-    const services = await createCanopyServices(
+    const services = await createTestCanopyServices(
       {
         ...workspace.config,
         mode: 'prod-sim',
         settingsBranch: 'canopycms-settings',
       },
-      { schema: BLOG_SCHEMA },
+      BLOG_SCHEMA,
     )
 
     // Check access for restrictedUser on main branch
@@ -213,13 +213,13 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Create services
-    const services = await createCanopyServices(
+    const services = await createTestCanopyServices(
       {
         ...workspace.config,
         mode: 'prod-sim',
         settingsBranch: 'canopycms-settings',
       },
-      { schema: BLOG_SCHEMA },
+      BLOG_SCHEMA,
     )
 
     // Check access - should fall back to defaultPathAccess (deny)
@@ -290,13 +290,13 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Create services in prod-sim mode
-    const services = await createCanopyServices(
+    const services = await createTestCanopyServices(
       {
         ...workspace.config,
         mode: 'prod-sim',
         settingsBranch: 'canopycms-settings',
       },
-      { schema: BLOG_SCHEMA },
+      BLOG_SCHEMA,
     )
 
     // Check access on feature branch

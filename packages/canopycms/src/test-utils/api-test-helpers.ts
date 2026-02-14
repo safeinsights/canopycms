@@ -136,6 +136,7 @@ export function createMockGitManager() {
  */
 export interface MockServicesOptions {
   config?: Partial<CanopyConfig>
+  schema?: any
   flatSchema?: any[]
   schemaRegistry?: any
   checkBranchAccess?: any
@@ -164,7 +165,6 @@ export interface MockServicesOptions {
  */
 export function createMockServices(options: MockServicesOptions = {}): CanopyServices {
   const defaultConfig: Partial<CanopyConfig> = {
-    schema: {},
     defaultBaseBranch: 'main',
     mode: 'dev',
     ...options.config,
@@ -172,6 +172,7 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
 
   return {
     config: defaultConfig as any,
+    schema: options.schema ?? {},
     flatSchema: options.flatSchema ?? [],
     schemaRegistry: options.schemaRegistry ?? {},
     checkBranchAccess:

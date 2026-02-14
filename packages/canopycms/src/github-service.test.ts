@@ -45,17 +45,6 @@ describe('GitHubService', () => {
 
   describe('createGitHubService', () => {
     const mockConfig: CanopyConfig = {
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [
-              { name: 'post', format: 'json', fields: [{ name: 'title', type: 'string' }] },
-            ],
-          },
-        ],
-      },
       gitBotAuthorName: 'Bot',
       gitBotAuthorEmail: 'bot@example.com',
       defaultBaseBranch: 'main',

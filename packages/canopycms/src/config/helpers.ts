@@ -2,7 +2,6 @@
  * Helper functions for authoring CanopyCMS configuration files.
  */
 
-import { flattenSchema } from './flatten'
 import { validateCanopyConfig } from './validation'
 import type {
   CanopyConfig,
@@ -10,19 +9,16 @@ import type {
   CanopyConfigInput,
   CanopyClientConfig,
   ClientOnlyFields,
-  CollectionConfig,
   ContentRoot,
   DefaultBaseBranch,
   DefaultBranchAccess,
   DefaultPathAccess,
   DefaultRemoteName,
   DefaultRemoteUrl,
-  EntryTypeConfig,
   GitBotAuthorEmail,
   GitBotAuthorName,
   CanopyOperatingMode,
   MediaConfig,
-  RootCollectionConfig,
   SourceRoot,
 } from './types'
 
@@ -35,9 +31,7 @@ type DeepReadonly<T> = T extends (infer U)[]
     ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
     : T
 
-export type CanopyConfigAuthoring = Omit<CanopyConfigInput, 'schema'> & {
-  schema: DeepReadonly<CanopyConfigInput['schema']>
-}
+export type CanopyConfigAuthoring = CanopyConfigInput
 
 /**
  * Helper for authoring typed config files (canopycms.config.ts).
@@ -66,15 +60,15 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
     server: validated,
 
     // Client config helper - extracts safe subset and merges overrides
+    // Note: flatSchema is loaded dynamically by the editor via API (from .collection.json files)
     client: (clientOverrides?: ClientOnlyFields): CanopyClientConfig => {
-      const { schema, defaultBaseBranch, contentRoot, editor, mode } = validated
+      const { defaultBaseBranch, contentRoot, editor, mode } = validated
       const clientConfig: CanopyClientConfig = {
-        schema,
         defaultBaseBranch,
         contentRoot,
         editor,
         mode,
-        flatSchema: schema ? flattenSchema(schema, contentRoot) : [],
+        flatSchema: [], // Loaded dynamically by editor via API
       }
 
       // Merge client overrides (e.g., auth handlers from useClerkAuthConfig)
@@ -95,22 +89,22 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
  * Useful for splitting large configurations into domain-specific modules.
  * Later fragments can override media.
  *
+ * Note: Schema is no longer composed via config - use .collection.json files instead.
+ *
  * @example
  * ```ts
  * // posts.config.ts
- * export const postsConfig = { schema: { collections: [...] } }
+ * export const postsConfig = { media: {...}, contentRoot: 'content/posts' }
  *
  * // canopycms.config.ts
  * import { composeCanopyConfig } from 'canopycms'
  * import { postsConfig } from './posts.config'
  * import { pagesConfig } from './pages.config'
  *
- * export const config = composeCanopyConfig(postsConfig, pagesConfig, { media: {...} })
+ * export const config = composeCanopyConfig(postsConfig, pagesConfig)
  * ```
  */
 export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): CanopyConfig => {
-  const collections: CollectionConfig[] = []
-  const entries: EntryTypeConfig[] = []
   let media: MediaConfig | undefined
   let contentRoot: ContentRoot | undefined
   let sourceRoot: SourceRoot | undefined
@@ -125,14 +119,6 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
   let deploymentName: string | undefined
 
   for (const fragment of fragments) {
-    if (fragment.schema) {
-      if (fragment.schema.collections) {
-        collections.push(...fragment.schema.collections)
-      }
-      if (fragment.schema.entries) {
-        entries.push(...fragment.schema.entries)
-      }
-    }
     if (fragment.media) {
       media = fragment.media
     }
@@ -171,13 +157,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     }
   }
 
-  const schema: RootCollectionConfig = {
-    ...(collections.length > 0 ? { collections } : {}),
-    ...(entries.length > 0 ? { entries } : {}),
-  }
-
   const merged: CanopyConfigInput = {
-    schema,
     gitBotAuthorName: gitBotAuthorName as string,
     gitBotAuthorEmail: gitBotAuthorEmail as string,
     ...(media ? { media } : {}),

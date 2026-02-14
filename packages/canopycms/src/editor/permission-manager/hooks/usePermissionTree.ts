@@ -3,7 +3,7 @@
  */
 
 import { useState, useMemo, useEffect, useCallback } from 'react'
-import type { CanopyConfig } from '../../../config'
+import type { RootCollectionConfig } from '../../../config'
 import type {
   TreeNode,
   ContentNode,
@@ -15,7 +15,7 @@ import type { EditorCollection } from '../../Editor'
 import { buildTree, annotateTreeWithPermissions, findTreeNode } from '../utils'
 
 export interface UsePermissionTreeOptions {
-  schema?: CanopyConfig['schema']
+  schema?: RootCollectionConfig
   collections?: EditorCollection[]
   contentRoot?: string
   permissions: PathPermission[]

@@ -5,7 +5,7 @@
 
 import type { CanopyRequest } from '../../http/types'
 import { createCanopyRequestHandler } from '../../http/handler'
-import { createCanopyServices, type CreateCanopyServicesOptions } from '../../services'
+import { createTestCanopyServices, type CreateCanopyServicesOptions } from '../../services'
 import type { CanopyConfig, RootCollectionConfig } from '../../config'
 import type { AuthPlugin } from '../../auth/plugin'
 import { CanopyApiClient } from '../../api/client'
@@ -27,10 +27,18 @@ export interface ApiClientOptions {
  * that routes through the handler directly instead of making network requests.
  */
 export async function createApiClient(options: ApiClientOptions) {
-  const services = await createCanopyServices(options.config, {
-    schema: options.schema,
-    schemaRegistry: options.schemaRegistry,
-  })
+  // Use test services if schema is provided, otherwise use production services
+  const services = options.schema
+    ? await createTestCanopyServices(options.config, options.schema, {
+        schemaRegistry: options.schemaRegistry,
+      })
+    : await createTestCanopyServices(
+        options.config,
+        { collections: [] },
+        {
+          schemaRegistry: options.schemaRegistry,
+        },
+      )
   const handler = createCanopyRequestHandler({
     services,
     authPlugin: options.authPlugin,

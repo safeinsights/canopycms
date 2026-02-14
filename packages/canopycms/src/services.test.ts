@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 import { defineCanopyTestConfig } from './config-test'
-import { createCanopyServices, getBootstrapAdminIds } from './services'
+import { createTestCanopyServices, getBootstrapAdminIds } from './services'
 import { authResultToCanopyUser } from './user'
 import { RESERVED_GROUPS } from './authorization'
 import type { AuthenticationResult } from './auth/types'
@@ -46,7 +46,7 @@ describe('createCanopyServices', () => {
       defaultBranchAccess: 'deny',
     })
 
-    const services = await createCanopyServices(cfg, { schema })
+    const services = await createTestCanopyServices(cfg, schema)
 
     // Path permissions are now loaded from JSON file at runtime, not from config
     // Service creates checkPathAccess with empty rules (default deny)
@@ -97,7 +97,7 @@ describe('createCanopyServices', () => {
       defaultBaseBranch: 'main',
       defaultRemoteName: 'origin',
     })
-    const services = await createCanopyServices(cfg, { schema })
+    const services = await createTestCanopyServices(cfg, schema)
     const gm = services.createGitManagerFor('/tmp/repo')
     const status = await gm.status()
     expect(status.current).toBe('main')
@@ -401,7 +401,7 @@ describe('commitToSettingsBranch', () => {
       // settingsBranch not specified - should default to 'canopycms-settings'
     })
 
-    const services = await createCanopyServices(cfg, { schema })
+    const services = await createTestCanopyServices(cfg, schema)
 
     await services.commitToSettingsBranch({
       branchRoot: '/tmp/repo',
@@ -455,7 +455,7 @@ describe('commitToSettingsBranch', () => {
       settingsBranch: 'my-settings',
     })
 
-    const services = await createCanopyServices(cfg, { schema })
+    const services = await createTestCanopyServices(cfg, schema)
 
     await services.commitToSettingsBranch({
       branchRoot: '/tmp/repo',
@@ -524,7 +524,7 @@ describe('commitToSettingsBranch', () => {
       settingsBranch: 'custom-settings-branch',
     })
 
-    const services = await createCanopyServices(cfg, { schema })
+    const services = await createTestCanopyServices(cfg, schema)
 
     await services.commitToSettingsBranch({
       branchRoot: '/tmp/repo',

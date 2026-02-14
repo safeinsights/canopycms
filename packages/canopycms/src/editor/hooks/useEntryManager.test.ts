@@ -64,16 +64,6 @@ describe('useEntryManager', () => {
     },
   ]
 
-  const mockCollectionSummary = {
-    logicalPath: toLogicalPath('posts'),
-    contentId: 'def456UVW012',
-    name: 'posts',
-    label: 'Posts',
-    type: 'collection' as const,
-    format: 'mdx' as const,
-    schema: [],
-  }
-
   const defaultOptions = {
     initialEntries: [mockEntry],
     branchName: 'main',
@@ -194,18 +184,13 @@ describe('useEntryManager', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: {
-          entries: [],
-          collections: [mockCollectionSummary],
-          pagination: { hasMore: false, limit: 100 },
-        },
+        data: { entries: [], pagination: { hasMore: false, limit: 100 } },
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
         data: {
           entries: mockRefreshed,
-          collections: [mockCollectionSummary],
           pagination: { hasMore: false, limit: 100 },
         },
       })
@@ -235,18 +220,13 @@ describe('useEntryManager', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: {
-          entries: [mockCollectionItem],
-          collections: [mockCollectionSummary],
-          pagination: { hasMore: false, limit: 100 },
-        },
+        data: { entries: [mockCollectionItem], pagination: { hasMore: false, limit: 100 } },
       })
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
         data: {
           entries: [mockCollectionItem, newEntry],
-          collections: [mockCollectionSummary],
           pagination: { hasMore: false, limit: 100 },
         },
       })
@@ -286,7 +266,6 @@ describe('useEntryManager', () => {
             physicalPath: toPhysicalPath('/content/posts/new-post'),
           },
         ],
-        collections: [mockCollectionSummary],
         pagination: { hasMore: false, limit: 100 },
       },
     })
@@ -510,7 +489,6 @@ describe('useEntryManager', () => {
       status: 200,
       data: {
         entries: [mockCollectionItem],
-        collections: [mockCollectionSummary],
         pagination: { hasMore: false, limit: 100 },
       },
     })

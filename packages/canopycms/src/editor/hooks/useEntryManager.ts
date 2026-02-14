@@ -140,14 +140,22 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   const refreshEntries = async (branch: string = options.branchName) => {
     if (!branch) return
+
+    // Fetch collections from schema API
+    const schemaResult = await apiClient.schema.get({ branch })
+    if (schemaResult.ok && schemaResult.data) {
+      const { convertSchemaTreeToEditorCollections } = await import('../editor-utils')
+      const collections = convertSchemaTreeToEditorCollections(
+        schemaResult.data.schema,
+        options.contentRoot || 'content',
+      )
+      setCollectionsState(collections)
+    }
+
+    // Fetch entries from entries API
     const result = await apiClient.entries.list({ branch })
     if (!result.ok) throw new Error(`Refresh failed: ${result.status}`)
     const data = result.data as ListEntriesResponse
-
-    // Store collections from API response
-    const { convertApiCollectionsToEditorCollections } = await import('../editor-utils')
-    const collections = convertApiCollectionsToEditorCollections(data.collections)
-    setCollectionsState(collections)
 
     const refreshed = buildEntriesFromListResponse({
       response: data,

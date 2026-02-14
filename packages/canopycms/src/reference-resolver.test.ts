@@ -35,29 +35,30 @@ describe('ReferenceResolver', () => {
     )
 
     // Initialize store and index
+    const schema = {
+      collections: [
+        {
+          name: 'authors',
+          path: 'authors',
+          entries: [
+            {
+              name: 'author',
+              format: 'json' as const,
+              fields: [{ name: 'name', type: 'string' as const, label: 'Name' }],
+            },
+          ],
+        },
+      ],
+    } as const
+
     const config: CanopyConfig = {
       contentRoot: 'content',
       gitBotAuthorName: 'Test Bot',
       gitBotAuthorEmail: 'test@example.com',
       mode: 'prod',
-      schema: {
-        collections: [
-          {
-            name: 'authors',
-            path: 'authors',
-            entries: [
-              {
-                name: 'author',
-                format: 'json',
-                fields: [{ name: 'name', type: 'string', label: 'Name' }],
-              },
-            ],
-          },
-        ],
-      },
     }
 
-    store = new ContentStore(tempDir, flattenSchema(config.schema!, config.contentRoot))
+    store = new ContentStore(tempDir, flattenSchema(schema, config.contentRoot))
     idIndex = await store.idIndex()
     resolver = new ReferenceResolver(store, idIndex)
   })

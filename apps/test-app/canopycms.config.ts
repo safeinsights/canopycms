@@ -1,6 +1,7 @@
 import { defineCanopyConfig } from 'canopycms'
 
-import { homeSchema, postSchema } from './app/schemas'
+// NOTE: Schema is now loaded from .collection.json files in the content directory
+// See content/posts/.collection.json and content/pages/.collection.json
 
 export default defineCanopyConfig({
   defaultBranchAccess: 'allow',
@@ -18,35 +19,5 @@ export default defineCanopyConfig({
         neutral: '#0f172a',
       },
     },
-  },
-  schema: {
-    collections: [
-      {
-        name: 'posts',
-        label: 'Posts',
-        path: 'posts',
-        entries: [
-          {
-            name: 'post',
-            format: 'json',
-            fields: postSchema,
-          },
-        ],
-      },
-      {
-        name: 'pages',
-        label: 'Pages',
-        path: 'pages',
-        entries: [
-          {
-            name: 'home',
-            label: 'Home',
-            format: 'json',
-            fields: homeSchema,
-            maxItems: 1, // Singleton-like behavior
-          },
-        ],
-      },
-    ],
   },
 })

@@ -6,12 +6,11 @@ import { z } from 'zod'
 import matter from 'gray-matter'
 
 import type { FieldConfig, ContentFormat, FlatSchemaItem, EntryTypeConfig } from '../config'
-import { loadCollectionMetaFiles } from '../schema'
 import { ContentStore, ContentStoreError } from '../content-store'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
-import { resolveCollectionPath, extractIdFromFilename } from '../content-id-index'
+import { resolveCollectionPath } from '../content-id-index'
 import {
   validateAndNormalizePath,
   normalizeFilesystemPath,
@@ -74,7 +73,6 @@ export interface ListEntriesParams {
 }
 
 export interface ListEntriesResponse {
-  collections: EntryCollectionSummary[]
   entries: CollectionItem[]
   pagination: {
     cursor?: string
@@ -326,191 +324,6 @@ const listCollectionEntriesRecursive = async (
 /** Normalize a collection ID for consistent comparison */
 const normalizeCollectionId = (value: string): string => normalizeFilesystemPath(value)
 
-/**
- * Get the default entry type from a collection's entries array.
- * Returns the entry marked as default, or the first one, or undefined if no entries.
- */
-const getDefaultEntryType = (
-  entries: readonly EntryTypeConfig[] | undefined,
-): EntryTypeConfig | undefined => {
-  if (!entries || entries.length === 0) return undefined
-  return entries.find((e) => e.default) || entries[0]
-}
-
-/**
- * Build collection summaries by scanning disk for .collection.json files.
- *
- * This discovers collections dynamically from the branch content directory,
- * ensuring newly created collections appear immediately without server restart.
- * Falls back to the cached flatSchema if no .collection.json files are found
- * (for backwards compatibility with test fixtures that don't have .collection.json files).
- *
- * @param branchContentRoot - The branch's content directory (e.g., .canopy-prod-sim/content-branches/main/content)
- * @param schemaRegistry - Schema registry for resolving field references
- * @param contentRoot - The logical content root name (e.g., "content")
- * @param flatSchema - Cached flat schema (fallback when no .collection.json files exist)
- * @param targetId - Optional collection path to filter results
- */
-const buildCollectionSummaries = async (
-  branchContentRoot: string,
-  schemaRegistry: Record<string, readonly FieldConfig[]>,
-  contentRoot: string,
-  flatSchema: FlatSchemaItem[],
-  targetId?: string,
-): Promise<EntryCollectionSummary[]> => {
-  // Dynamically discover all .collection.json files from the branch
-  const metaFiles = await loadCollectionMetaFiles(branchContentRoot)
-
-  // If we found .collection.json files, use them as the source of truth
-  if (metaFiles.collections.length > 0 || metaFiles.root) {
-    const summaries: EntryCollectionSummary[] = []
-
-    // Add root collection if it exists (for top-level ordering)
-    if (metaFiles.root) {
-      // Filter by targetId if specified (root is only included if targetId is contentRoot or not specified)
-      if (!targetId || targetId === contentRoot || contentRoot.startsWith(`${targetId}/`)) {
-        // Build entry type summaries for root
-        const rootEntryTypeSummaries: EntryTypeSummary[] = (metaFiles.root.entries ?? []).map(
-          (et) => ({
-            name: et.name,
-            label: et.label,
-            format: et.format,
-            default: et.default,
-            maxItems: et.maxItems,
-          }),
-        )
-
-        // Get default entry type for format/schema
-        const rootDefaultEntry =
-          metaFiles.root.entries?.find((e) => e.default) ?? metaFiles.root.entries?.[0]
-        const rootDefaultSchema = rootDefaultEntry
-          ? schemaRegistry[rootDefaultEntry.fields]
-          : undefined
-
-        summaries.push({
-          logicalPath: toLogicalPath(contentRoot),
-          contentId: 'root', // Root doesn't have a content ID
-          name: contentRoot,
-          label: 'Content',
-          format: rootDefaultEntry?.format || 'json',
-          type: 'collection' as const,
-          schema: rootDefaultSchema || [],
-          entryTypes: rootEntryTypeSummaries,
-          order: metaFiles.root.order,
-          parentId: undefined, // Root has no parent
-        })
-      }
-    }
-
-    for (const col of metaFiles.collections) {
-      const logicalPath = `${contentRoot}/${col.path}`
-
-      // Filter by targetId if specified
-      if (targetId && logicalPath !== targetId && !logicalPath.startsWith(`${targetId}/`)) {
-        continue
-      }
-
-      // Resolve physical path to get content ID
-      const physicalPath = await resolveCollectionPath(branchContentRoot, col.path)
-      let contentId = 'unknown'
-      if (physicalPath) {
-        const dirName = path.basename(physicalPath)
-        const extractedId = extractIdFromFilename(dirName)
-        if (extractedId) {
-          contentId = extractedId
-        }
-      }
-
-      // Build entry type summaries
-      const entryTypeSummaries: EntryTypeSummary[] = (col.entries ?? []).map((et) => ({
-        name: et.name,
-        label: et.label,
-        format: et.format,
-        default: et.default,
-        maxItems: et.maxItems,
-      }))
-
-      // Get default entry type for format/schema
-      const defaultEntry = col.entries?.find((e) => e.default) ?? col.entries?.[0]
-      const defaultSchema = defaultEntry ? schemaRegistry[defaultEntry.fields] : undefined
-
-      // Compute parent path - top-level collections have contentRoot as parent
-      const pathParts = col.path.split('/')
-      const parentPath =
-        pathParts.length > 1 ? `${contentRoot}/${pathParts.slice(0, -1).join('/')}` : contentRoot // Top-level collections have contentRoot as parent
-
-      summaries.push({
-        logicalPath: toLogicalPath(logicalPath),
-        contentId,
-        name: col.name,
-        label: col.label,
-        format: defaultEntry?.format || 'json',
-        type: 'collection' as const,
-        schema: defaultSchema || [],
-        entryTypes: entryTypeSummaries,
-        order: col.order,
-        parentId: parentPath,
-      })
-    }
-
-    return summaries
-  }
-
-  // Fallback: use cached flatSchema (for tests and legacy setups without .collection.json)
-  const filtered = targetId
-    ? flatSchema.filter(
-        (item) => item.logicalPath === targetId || item.logicalPath.startsWith(`${targetId}/`),
-      )
-    : flatSchema
-
-  const collectionItems = filtered.filter((item) => item.type === 'collection')
-
-  const summaries = await Promise.all(
-    collectionItems.map(async (item) => {
-      const entryTypes = item.entries as readonly EntryTypeConfig[] | undefined
-      const defaultEntry = getDefaultEntryType(entryTypes)
-
-      // Resolve physical path to get content ID
-      // Strip contentRoot prefix from logical path to get relative path for resolution
-      const relativePath = item.logicalPath.startsWith(`${contentRoot}/`)
-        ? item.logicalPath.slice(contentRoot.length + 1)
-        : item.logicalPath
-      const physicalPath = await resolveCollectionPath(branchContentRoot, relativePath)
-      let contentId = 'unknown'
-      if (physicalPath) {
-        const dirName = path.basename(physicalPath)
-        const extractedId = extractIdFromFilename(dirName)
-        if (extractedId) {
-          contentId = extractedId
-        }
-      }
-
-      const entryTypeSummaries: EntryTypeSummary[] | undefined = entryTypes?.map((et) => ({
-        name: et.name,
-        label: et.label,
-        format: et.format,
-        default: et.default,
-        maxItems: et.maxItems,
-      }))
-
-      return {
-        logicalPath: toLogicalPath(item.logicalPath),
-        contentId,
-        name: item.name,
-        label: item.label,
-        format: defaultEntry?.format || 'json',
-        type: 'collection' as const,
-        schema: defaultEntry?.fields || [],
-        entryTypes: entryTypeSummaries,
-        order: item.order,
-        parentId: item.parentPath,
-      }
-    }),
-  )
-
-  return summaries
-}
-
 export const listEntriesHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
@@ -634,22 +447,10 @@ export const listEntriesHandler = async (
   const paged = entries.slice(offset, offset + limit)
   const nextCursor = offset + limit < entries.length ? String(offset + limit) : undefined
 
-  // Build collection summaries by dynamically scanning the branch's content directory
-  const contentRoot = ctx.services.config.contentRoot || 'content'
-  const branchContentRoot = path.join(root, contentRoot)
-  const collections = await buildCollectionSummaries(
-    branchContentRoot,
-    ctx.services.schemaRegistry,
-    contentRoot,
-    flatCollections,
-    targetId,
-  )
-
   return {
     ok: true,
     status: 200,
     data: {
-      collections,
       entries: paged,
       pagination: {
         cursor: nextCursor,

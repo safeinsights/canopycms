@@ -35,19 +35,25 @@ describe('listEntries', () => {
       'utf8',
     )
 
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [
-              { name: 'entry', format: 'json', fields: [{ name: 'title', type: 'string' }] },
-            ],
-          },
-        ],
-      },
+      schema,
     })
 
     // Mock loadPathPermissions to return rules that hide 'entry.hidden.xyz789abcDEF.json' from user 'u1'
@@ -68,7 +74,8 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
       },
@@ -146,41 +153,51 @@ describe('listEntries', () => {
       'utf8',
     )
 
+    const schema = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+          collections: [
+            {
+              name: 'api',
+              path: 'api',
+              entries: [
+                {
+                  name: 'entry',
+                  format: 'json' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+              collections: [
+                {
+                  name: 'v2',
+                  path: 'v2',
+                  entries: [
+                    {
+                      name: 'entry',
+                      format: 'json' as const,
+                      fields: [{ name: 'title', type: 'string' as const }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
-      schema: {
-        collections: [
-          {
-            name: 'docs',
-            path: 'docs',
-            entries: [
-              { name: 'entry', format: 'json', fields: [{ name: 'title', type: 'string' }] },
-            ],
-            collections: [
-              {
-                name: 'api',
-                path: 'api',
-                entries: [
-                  { name: 'entry', format: 'json', fields: [{ name: 'title', type: 'string' }] },
-                ],
-                collections: [
-                  {
-                    name: 'v2',
-                    path: 'v2',
-                    entries: [
-                      {
-                        name: 'entry',
-                        format: 'json',
-                        fields: [{ name: 'title', type: 'string' }],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
+      schema,
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')
@@ -194,7 +211,8 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
       },
@@ -275,28 +293,30 @@ describe('listEntries', () => {
       'utf8',
     )
 
+    const schema = {
+      collections: [
+        {
+          name: 'pages',
+          label: 'Pages',
+          path: 'pages',
+          entries: [
+            {
+              name: 'page',
+              format: 'json' as const,
+              fields: [
+                { name: 'title', type: 'string' as const },
+                { name: 'tagline', type: 'string' as const },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       contentRoot: 'content',
-      schema: {
-        collections: [
-          {
-            name: 'pages',
-            label: 'Pages',
-            path: 'pages',
-            entries: [
-              {
-                name: 'page',
-                format: 'json',
-                fields: [
-                  { name: 'title', type: 'string' },
-                  { name: 'tagline', type: 'string' },
-                ],
-              },
-            ],
-          },
-        ],
-      },
+      schema,
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')
@@ -310,7 +330,8 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
       },
@@ -335,13 +356,7 @@ describe('listEntries', () => {
     expect(homeEntry).toBeDefined()
     expect(homeEntry?.collectionId).toBe('content/pages')
 
-    // Verify collection is in collections array with schema
-    const pagesCollection = res.data?.collections.find((c) => c.logicalPath === 'content/pages')
-    expect(pagesCollection).toBeDefined()
-    expect(pagesCollection?.type).toBe('collection')
-    expect(pagesCollection?.schema).toHaveLength(2)
-    expect(pagesCollection?.schema[0].name).toBe('title')
-    expect(pagesCollection?.schema[1].name).toBe('tagline')
+    // Collections are now fetched from schema API, not entries API
   })
 
   it('includes canEdit flag based on edit permissions', async () => {
@@ -358,19 +373,25 @@ describe('listEntries', () => {
       'utf8',
     )
 
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [
-              { name: 'entry', format: 'json', fields: [{ name: 'title', type: 'string' }] },
-            ],
-          },
-        ],
-      },
+      schema,
     })
 
     // Mock loadPathPermissions: 'entry.readonly.def456UVW012.json' is read-only for user 'u1'
@@ -394,7 +415,8 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
       },
@@ -494,7 +516,8 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
@@ -628,7 +651,8 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
@@ -742,7 +766,8 @@ describe('sortEntriesByOrder', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
@@ -828,7 +853,8 @@ describe('sortEntriesByOrder', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
@@ -955,20 +981,9 @@ describe('dynamic collection discovery', () => {
 
     expect(res.ok).toBe(true)
 
-    // The collections array should include BOTH docs AND inner (dynamically discovered)
-    const collectionPaths = res.data?.collections.map((c) => c.logicalPath)
-    expect(collectionPaths).toContain('content/docs')
-    expect(collectionPaths).toContain('content/docs/inner') // Dynamically discovered!
-
-    // Verify the inner collection has proper metadata
-    const innerCollection = res.data?.collections.find(
-      (c) => c.logicalPath === 'content/docs/inner',
-    )
-    expect(innerCollection).toBeDefined()
-    expect(innerCollection?.name).toBe('inner')
-    expect(innerCollection?.label).toBe('Inner Docs')
-    expect(innerCollection?.parentId).toBe('content/docs')
-    expect(innerCollection?.contentId).toBe(innerId)
+    // Dynamic collection discovery has moved to schema API
+    // This test now only verifies entries API returns entries, not collections
+    expect(res.data?.entries).toBeDefined()
   })
 })
 
@@ -1017,7 +1032,8 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
@@ -1095,7 +1111,8 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
@@ -1158,7 +1175,8 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: flattenSchema(config.schema!, config.contentRoot),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,

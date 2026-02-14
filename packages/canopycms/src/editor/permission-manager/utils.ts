@@ -2,7 +2,7 @@
  * Utility functions for PermissionManager
  */
 
-import type { CanopyConfig } from '../../config'
+import type { RootCollectionConfig } from '../../config'
 import { flattenSchema } from '../../config'
 import type { TreeNode, ContentNode, PathPermission } from './types'
 import type { EditorCollection } from '../Editor'
@@ -121,7 +121,7 @@ export function mergeContentTree(schemaNode: TreeNode, contentNode: ContentNode)
  * @returns Root TreeNode for the permission tree
  */
 export function buildTree(
-  schema: CanopyConfig['schema'] | undefined,
+  schema: RootCollectionConfig | undefined,
   contentTree: ContentNode | undefined,
   contentRoot = 'content',
   collections?: EditorCollection[],

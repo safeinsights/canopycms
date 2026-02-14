@@ -13,18 +13,24 @@ const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
 describe('ContentStore', () => {
   it('writes and reads markdown content', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await store.write('content/posts', 'hello-world', {
       format: 'md',
@@ -41,18 +47,24 @@ describe('ContentStore', () => {
 
   it('writes and reads mdx content with frontmatter', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'pages',
-            path: 'pages',
-            entries: [{ name: 'page', format: 'mdx', fields: [{ name: 'title', type: 'string' }] }],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'pages',
+          path: 'pages',
+          entries: [
+            {
+              name: 'page',
+              format: 'mdx' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await store.write('content/pages', 'landing', {
       format: 'mdx',
@@ -69,20 +81,24 @@ describe('ContentStore', () => {
 
   it('writes and reads json content', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'settings',
-            path: 'config',
-            entries: [
-              { name: 'setting', format: 'json', fields: [{ name: 'siteName', type: 'string' }] },
-            ],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'settings',
+          path: 'config',
+          entries: [
+            {
+              name: 'setting',
+              format: 'json' as const,
+              fields: [{ name: 'siteName', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await store.write('content/config', 'site', {
       format: 'json',
@@ -96,18 +112,24 @@ describe('ContentStore', () => {
 
   it('prevents path traversal outside root', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await expect(
       store.write('content/posts', '../escape', {
@@ -120,20 +142,24 @@ describe('ContentStore', () => {
 
   it('reads and writes entry items with a slug', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'settings',
-            path: 'settings',
-            entries: [
-              { name: 'setting', format: 'json', fields: [{ name: 'siteName', type: 'string' }] },
-            ],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'settings',
+          path: 'settings',
+          entries: [
+            {
+              name: 'setting',
+              format: 'json' as const,
+              fields: [{ name: 'siteName', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await store.write('content/settings', 'site', {
       format: 'json',
@@ -149,18 +175,24 @@ describe('ContentStore', () => {
 
   it('rejects slugs with forward slashes', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await expect(
       store.write('content/posts', '2024/hello', {
@@ -173,18 +205,24 @@ describe('ContentStore', () => {
 
   it('rejects slugs with backslashes', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await expect(
       store.write('content/posts', 'bad\\slug', {
@@ -197,18 +235,24 @@ describe('ContentStore', () => {
 
   it('resolves paths using trivial algorithm: collection + slug', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'posts',
-            path: 'posts',
-            entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     // Path: content/posts/hello -> collection=content/posts, slug=hello
     const result = store.resolvePath(['content', 'posts', 'hello'])
@@ -219,20 +263,24 @@ describe('ContentStore', () => {
 
   it('resolves paths for collection entries with slug', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'settings',
-            path: 'settings',
-            entries: [
-              { name: 'setting', format: 'json', fields: [{ name: 'siteName', type: 'string' }] },
-            ],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'settings',
+          path: 'settings',
+          entries: [
+            {
+              name: 'setting',
+              format: 'json' as const,
+              fields: [{ name: 'siteName', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     // Path: content/settings/site -> collection entry with slug
     const result = store.resolvePath(['content', 'settings', 'site'])
@@ -243,27 +291,37 @@ describe('ContentStore', () => {
 
   it('resolves nested collection paths', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'docs',
-            path: 'docs',
-            entries: [{ name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
-            collections: [
-              {
-                name: 'guides',
-                path: 'guides',
-                entries: [
-                  { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          entries: [
+            {
+              name: 'entry',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+          collections: [
+            {
+              name: 'guides',
+              path: 'guides',
+              entries: [
+                {
+                  name: 'entry',
+                  format: 'md' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     // Path: content/docs/guides/getting-started
     // -> collection=content/docs/guides, slug=getting-started
@@ -275,36 +333,50 @@ describe('ContentStore', () => {
 
   it('resolves 3-level nested collection paths', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'docs',
-            path: 'docs',
-            entries: [{ name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
-            collections: [
-              {
-                name: 'api',
-                path: 'api',
-                entries: [
-                  { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
-                ],
-                collections: [
-                  {
-                    name: 'v2',
-                    path: 'v2',
-                    entries: [
-                      { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          entries: [
+            {
+              name: 'entry',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+          collections: [
+            {
+              name: 'api',
+              path: 'api',
+              entries: [
+                {
+                  name: 'entry',
+                  format: 'md' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+              collections: [
+                {
+                  name: 'v2',
+                  path: 'v2',
+                  entries: [
+                    {
+                      name: 'entry',
+                      format: 'md' as const,
+                      fields: [{ name: 'title', type: 'string' as const }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     // Path: content/docs/api/v2/authentication
     // -> collection=content/docs/api/v2, slug=authentication
@@ -316,49 +388,63 @@ describe('ContentStore', () => {
 
   it('resolves 4-level nested collection paths', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'docs',
-            path: 'docs',
-            entries: [{ name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
-            collections: [
-              {
-                name: 'api',
-                path: 'api',
-                entries: [
-                  { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
-                ],
-                collections: [
-                  {
-                    name: 'v2',
-                    path: 'v2',
-                    entries: [
-                      { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
-                    ],
-                    collections: [
-                      {
-                        name: 'endpoints',
-                        path: 'endpoints',
-                        entries: [
-                          {
-                            name: 'entry',
-                            format: 'md',
-                            fields: [{ name: 'title', type: 'string' }],
-                          },
-                        ],
-                      },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          entries: [
+            {
+              name: 'entry',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+          collections: [
+            {
+              name: 'api',
+              path: 'api',
+              entries: [
+                {
+                  name: 'entry',
+                  format: 'md' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+              collections: [
+                {
+                  name: 'v2',
+                  path: 'v2',
+                  entries: [
+                    {
+                      name: 'entry',
+                      format: 'md' as const,
+                      fields: [{ name: 'title', type: 'string' as const }],
+                    },
+                  ],
+                  collections: [
+                    {
+                      name: 'endpoints',
+                      path: 'endpoints',
+                      entries: [
+                        {
+                          name: 'entry',
+                          format: 'md' as const,
+                          fields: [{ name: 'title', type: 'string' as const }],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     // Path: content/docs/api/v2/endpoints/users
     // -> collection=content/docs/api/v2/endpoints, slug=users
@@ -370,36 +456,50 @@ describe('ContentStore', () => {
 
   it('writes and reads content in deeply nested collections', async () => {
     const root = await tmpDir()
-    const config = defineCanopyTestConfig({
-      schema: {
-        collections: [
-          {
-            name: 'docs',
-            path: 'docs',
-            entries: [{ name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] }],
-            collections: [
-              {
-                name: 'api',
-                path: 'api',
-                entries: [
-                  { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
-                ],
-                collections: [
-                  {
-                    name: 'v2',
-                    path: 'v2',
-                    entries: [
-                      { name: 'entry', format: 'md', fields: [{ name: 'title', type: 'string' }] },
-                    ],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-    })
-    const store = new ContentStore(root, flattenSchema(config.schema!, config.contentRoot))
+    const schema = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          entries: [
+            {
+              name: 'entry',
+              format: 'md' as const,
+              fields: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+          collections: [
+            {
+              name: 'api',
+              path: 'api',
+              entries: [
+                {
+                  name: 'entry',
+                  format: 'md' as const,
+                  fields: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+              collections: [
+                {
+                  name: 'v2',
+                  path: 'v2',
+                  entries: [
+                    {
+                      name: 'entry',
+                      format: 'md' as const,
+                      fields: [{ name: 'title', type: 'string' as const }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     // Write to 3-level nested collection
     await store.write('content/docs/api/v2', 'authentication', {

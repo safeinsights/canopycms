@@ -1,7 +1,7 @@
 import type { CanopyConfig, CanopyConfigInput, RootCollectionConfig } from './config'
 import { defineCanopyConfig } from './config'
 import {
-  createCanopyServices,
+  createTestCanopyServices,
   type CanopyServices,
   type CreateCanopyServicesOptions,
 } from './services'
@@ -21,27 +21,30 @@ type TestConfigInput = Omit<
 /**
  * Test-only helper that fills required author fields for convenience.
  * Do not use in production code; prefer defineCanopyConfig.
+ * Note: schema is NOT included in the returned config - it's loaded from .collection.json or passed separately to createTestCanopyServices.
  */
 export const defineCanopyTestConfig = (
   config: TestConfigInput,
   overrides?: Partial<CanopyConfigInput>,
 ): CanopyConfig => {
+  // Destructure to exclude schema from being spread into defineCanopyConfig
+  const { schema: _schema, ...configWithoutSchema } = config
   return defineCanopyConfig({
     ...FALLBACK_AUTHOR,
-    ...config,
+    ...configWithoutSchema,
     ...(overrides ?? {}),
   }).server
 }
 
 /**
  * Test-only helper that creates CanopyServices with inline schema.
- * Automatically passes the schema from config to avoid .collection.json files.
+ * Automatically passes the schema from config to createTestCanopyServices to avoid .collection.json files.
  * Do not use in production code; use createCanopyServices with schemaRegistry.
  */
 export const createTestServices = async (
   config: TestConfigInput,
-  options?: Omit<CreateCanopyServicesOptions, 'schema'>,
+  options?: CreateCanopyServicesOptions,
 ): Promise<CanopyServices> => {
   const canopyConfig = defineCanopyTestConfig(config)
-  return createCanopyServices(canopyConfig, { ...options, schema: config.schema })
+  return createTestCanopyServices(canopyConfig, config.schema, options)
 }
