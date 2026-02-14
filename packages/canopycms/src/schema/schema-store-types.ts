@@ -40,6 +40,7 @@ export interface CreateEntryTypeInput {
 export interface UpdateCollectionInput {
   name?: string
   label?: string
+  slug?: string // Directory name for renaming (e.g., "posts" in "posts.{id}/")
   order?: string[] // Embedded IDs for ordering
 }
 

@@ -501,6 +501,107 @@ export class ContentStore {
   }
 
   /**
+   * Rename an entry by changing its slug (middle segment of filename).
+   * Entry filename pattern: {entryTypeName}.{slug}.{id}.{ext}
+   *
+   * @param collectionPath - Logical path to the collection
+   * @param currentSlug - Current slug of the entry
+   * @param newSlug - New slug (must be unique within collection)
+   * @returns Object with new logical path
+   * @throws ContentStoreError if entry doesn't exist, new slug conflicts, or validation fails
+   */
+  async renameEntry(
+    collectionPath: LogicalPath | string,
+    currentSlug: string,
+    newSlug: string
+  ): Promise<{ newPath: LogicalPath }> {
+    const idIndex = await this.idIndex()
+    const collection = this.assertCollection(collectionPath)
+
+    // Validate new slug format
+    validateSlug(newSlug)
+    const safeNewSlug = newSlug.replace(/^\/+/, '')
+    if (!safeNewSlug) {
+      throw new ContentStoreError('New slug cannot be empty')
+    }
+    if (!/^[a-z0-9][a-z0-9-]*$/.test(safeNewSlug)) {
+      throw new ContentStoreError(
+        'Slug must start with a letter or number and contain only lowercase letters, numbers, and hyphens'
+      )
+    }
+
+    // Get current file path
+    const { absolutePath: currentPath, relativePath: currentRelPath, id } = await this.buildPaths(
+      collection,
+      currentSlug
+    )
+
+    // Verify current file exists
+    try {
+      await fs.access(currentPath)
+    } catch {
+      throw new ContentStoreError(`Entry not found: ${currentSlug}`)
+    }
+
+    // If slugs are the same, no-op
+    if (currentSlug === safeNewSlug) {
+      return { newPath: `${collectionPath}/${currentSlug}` as LogicalPath }
+    }
+
+    // Extract entry type name and extension from current filename
+    const currentFilename = path.basename(currentPath)
+    const parts = currentFilename.split('.')
+    if (parts.length < 4) {
+      throw new ContentStoreError(`Invalid entry filename format: ${currentFilename}`)
+    }
+
+    const entryTypeName = parts[0]
+    const contentId = parts[parts.length - 2]
+    const ext = `.${parts[parts.length - 1]}`
+
+    // Build new filename with new slug
+    const newFilename = `${entryTypeName}.${safeNewSlug}.${contentId}${ext}`
+    const parentDir = path.dirname(currentPath)
+    const newPath = path.join(parentDir, newFilename)
+
+    // Check if any file with the new slug already exists (regardless of ID)
+    // Need to check for pattern: {entryTypeName}.{newSlug}.{any-id}{ext}
+    try {
+      const entries = await fs.readdir(parentDir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.isDirectory()) continue
+
+        // Extract slug from filename using the same pattern
+        const existingSlug = extractSlugFromFilename(entry.name, entryTypeName)
+        if (existingSlug === safeNewSlug) {
+          throw new ContentStoreError(
+            `Entry with slug "${safeNewSlug}" already exists in collection "${collectionPath}"`
+          )
+        }
+      }
+    } catch (err) {
+      // Re-throw "already exists" errors
+      if ((err as Error).message.includes('already exists')) {
+        throw err
+      }
+      // Ignore other errors (e.g., ENOENT if parent dir doesn't exist)
+    }
+
+    // Atomically rename the file
+    await fs.rename(currentPath, newPath)
+
+    // Update the ID index
+    const newRelativePath = path.relative(this.root, newPath)
+    if (id) {
+      idIndex.updatePath(id, newRelativePath)
+    }
+
+    // Return new logical path
+    const newLogicalPath = `${collectionPath}/${safeNewSlug}` as LogicalPath
+    return { newPath: newLogicalPath }
+  }
+
+  /**
    * List all entries in a collection.
    * Returns array of entry metadata (relativePath, collection, slug).
    * Returns empty array if the collection doesn't exist.

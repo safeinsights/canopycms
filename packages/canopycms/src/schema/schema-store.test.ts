@@ -190,6 +190,100 @@ describe('SchemaStore', () => {
         store.updateCollection(toLogicalPath('nonexistent'), { label: 'Test' })
       ).rejects.toThrow('Collection not found')
     })
+
+    it('should rename collection directory when slug changes', async () => {
+      const result = await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+      })
+
+      // Rename slug from "posts" to "blog"
+      await store.updateCollection(toLogicalPath('posts'), { slug: 'blog' })
+
+      // Verify old directory no longer exists
+      const oldDirName = `posts.${result.contentId}`
+      await expect(fs.access(path.join(contentRoot, oldDirName))).rejects.toThrow()
+
+      // Verify new directory exists with same content ID
+      const newDirName = `blog.${result.contentId}`
+      const newDirPath = path.join(contentRoot, newDirName)
+      await fs.access(newDirPath) // Should not throw
+
+      // Verify meta file still exists and is correct
+      const meta = JSON.parse(
+        await fs.readFile(path.join(newDirPath, '.collection.json'), 'utf-8')
+      )
+      expect(meta.name).toBe('posts') // Name unchanged (unless also updated)
+    })
+
+    it('should update both name and slug together', async () => {
+      const result = await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+      })
+
+      // Update both name (metadata) and slug (directory)
+      await store.updateCollection(toLogicalPath('posts'), { name: 'articles', slug: 'blog' })
+
+      // Verify directory was renamed
+      const newDirName = `blog.${result.contentId}`
+      const newDirPath = path.join(contentRoot, newDirName)
+      await fs.access(newDirPath)
+
+      // Verify name was updated in meta
+      const meta = JSON.parse(
+        await fs.readFile(path.join(newDirPath, '.collection.json'), 'utf-8')
+      )
+      expect(meta.name).toBe('articles')
+    })
+
+    it('should throw when slug already exists', async () => {
+      // Create two collections
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+      })
+      await store.createCollection({
+        name: 'articles',
+        entries: [{ name: 'article', format: 'json', fields: 'pageSchema' }],
+      })
+
+      // Try to rename posts to use articles' slug
+      await expect(
+        store.updateCollection(toLogicalPath('posts'), { slug: 'articles' })
+      ).rejects.toThrow('already exists')
+    })
+
+    it('should validate slug format', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+      })
+
+      // Invalid slug (uppercase)
+      await expect(
+        store.updateCollection(toLogicalPath('posts'), { slug: 'Blog-Posts' })
+      ).rejects.toThrow('must start with a letter')
+
+      // Invalid slug (starts with number)
+      await expect(
+        store.updateCollection(toLogicalPath('posts'), { slug: '2024-posts' })
+      ).rejects.toThrow('must start with a letter')
+    })
+
+    it('should not rename if slug is same as current', async () => {
+      const result = await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+      })
+
+      // Update with same slug - should not error or rename
+      await store.updateCollection(toLogicalPath('posts'), { slug: 'posts' })
+
+      // Verify directory still exists with same name
+      const dirName = `posts.${result.contentId}`
+      await fs.access(path.join(contentRoot, dirName))
+    })
   })
 
   describe('deleteCollection', () => {

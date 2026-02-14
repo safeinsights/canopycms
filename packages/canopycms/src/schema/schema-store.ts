@@ -91,6 +91,7 @@ const createCollectionInputSchema = z.object({
 const updateCollectionInputSchema = z.object({
   name: z.string().min(1).optional(),
   label: z.string().optional(),
+  slug: z.string().min(1).optional(), // Directory name (e.g., "posts" in "posts.{id}/")
   order: z.array(z.string()).optional(),
 })
 
@@ -365,7 +366,62 @@ export class SchemaStore {
       throw new Error(`Collection meta not found: ${collectionPath}`)
     }
 
-    // Apply updates
+    // Handle slug change (directory rename) if provided
+    let finalPhysicalPath = physicalPath
+    if (updates.slug !== undefined) {
+      // Extract current slug and ID from physical path
+      // Format: /path/to/{slug}.{12-char-id}
+      const dirName = path.basename(physicalPath)
+      const parts = dirName.split('.')
+
+      if (parts.length !== 2 || !isValidId(parts[1])) {
+        throw new Error(`Invalid collection directory format: ${dirName}`)
+      }
+
+      const currentSlug = parts[0]
+      const contentId = parts[1]
+
+      // Only rename if slug is actually different
+      if (updates.slug !== currentSlug) {
+        // Validate new slug (alphanumeric + hyphens, lowercase)
+        if (!/^[a-z][a-z0-9-]*$/.test(updates.slug)) {
+          throw new Error('Slug must start with a letter and contain only lowercase letters, numbers, and hyphens')
+        }
+
+        // Build new path with new slug + same ID
+        const parentDir = path.dirname(physicalPath)
+        const newDirName = `${updates.slug}.${contentId}`
+        const newPhysicalPath = path.join(parentDir, newDirName)
+
+        // Check if any collection with this slug already exists
+        // Need to check for any directory matching {slug}.{any-id}
+        try {
+          const entries = await fs.readdir(parentDir, { withFileTypes: true })
+          for (const entry of entries) {
+            if (entry.isDirectory() && entry.name.startsWith(`${updates.slug}.`)) {
+              const parts = entry.name.split('.')
+              if (parts.length === 2 && isValidId(parts[1])) {
+                throw new Error(`Collection with slug "${updates.slug}" already exists`)
+              }
+            }
+          }
+        } catch (err) {
+          // Re-throw "already exists" errors
+          if ((err as Error).message.includes('already exists')) {
+            throw err
+          }
+          // Ignore other errors (e.g., ENOENT if parent dir doesn't exist somehow)
+        }
+
+        // Atomically rename the directory
+        await fs.rename(physicalPath, newPhysicalPath)
+        finalPhysicalPath = newPhysicalPath
+
+        // Note: Content ID index will rebuild lazily on next access
+      }
+    }
+
+    // Apply metadata updates
     if (updates.name !== undefined) {
       meta.name = updates.name
     }
@@ -376,8 +432,8 @@ export class SchemaStore {
       meta.order = updates.order
     }
 
-    // Write back
-    await this.writeCollectionMeta(physicalPath, meta)
+    // Write back to the (potentially renamed) path
+    await this.writeCollectionMeta(finalPhysicalPath, meta)
   }
 
   /**

@@ -31,6 +31,11 @@ export type ReferenceValidationResponse = ApiResponse<{
   }>
 }>
 
+/** Response type for entry rename operations */
+export type RenameEntryResponse = ApiResponse<{
+  newPath: string
+}>
+
 export interface WriteContentBody {
   format: 'json' | 'md' | 'mdx'
   data?: Record<string, unknown>
@@ -39,6 +44,10 @@ export interface WriteContentBody {
 
 export interface ValidateReferencesBody {
   data: Record<string, unknown>
+}
+
+export interface RenameEntryBody {
+  newSlug: string
 }
 
 /** Response type for reference options - re-exported for convenience */
@@ -71,6 +80,15 @@ const validateReferencesParamsSchema = z.object({
 
 const validateReferencesBodySchema = z.object({
   data: z.record(z.unknown()),
+})
+
+const renameEntryParamsSchema = z.object({
+  branch: z.string().min(1),
+  path: z.string().min(1),
+})
+
+const renameEntryBodySchema = z.object({
+  newSlug: z.string().min(1),
 })
 
 const readContentHandler = async (
@@ -237,6 +255,59 @@ const validateReferencesHandler = async (
   }
 }
 
+const renameEntryHandler = async (
+  ctx: ApiContext,
+  req: ApiRequest,
+  params: z.infer<typeof renameEntryParamsSchema>,
+  body: z.infer<typeof renameEntryBodySchema>
+): Promise<RenameEntryResponse> => {
+  const context = await ctx.getBranchContext(params.branch)
+  if (!context) {
+    return { ok: false, status: 404, error: 'Branch not found' }
+  }
+
+  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
+
+  // Parse path segments
+  const contentRoot = ctx.services.config.contentRoot || 'content'
+  const pathSegments = params.path.split('/').filter(Boolean)
+
+  // Prepend contentRoot if not already present
+  const logicalPathSegments = pathSegments[0] === contentRoot
+    ? pathSegments
+    : [contentRoot, ...pathSegments]
+
+  // Resolve to collection and slug
+  let schemaItem: any
+  let currentSlug: string
+  let relativePath: string
+  try {
+    const resolved = store.resolvePath(logicalPathSegments)
+    schemaItem = resolved.schemaItem
+    currentSlug = resolved.slug
+    const pathResult = await store.resolveDocumentPath(schemaItem.logicalPath, currentSlug)
+    relativePath = pathResult.relativePath
+  } catch (err) {
+    const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
+    return { ok: false, status: 400, error: message }
+  }
+
+  // Check edit permission on current path
+  const access = await ctx.services.checkContentAccess(context, context.branchRoot, relativePath, req.user, 'edit')
+  if (!access.allowed) {
+    return { ok: false, status: 403, error: 'Forbidden' }
+  }
+
+  // Rename the entry
+  try {
+    const result = await store.renameEntry(schemaItem.logicalPath, currentSlug, body.newSlug)
+    return { ok: true, status: 200, data: { newPath: result.newPath } }
+  } catch (err) {
+    const message = err instanceof ContentStoreError ? err.message : 'Rename failed'
+    return { ok: false, status: 400, error: message }
+  }
+}
+
 // ============================================================================
 // Route Definitions with defineEndpoint
 // ============================================================================
@@ -297,10 +368,30 @@ const validateReferences = defineEndpoint({
 })
 
 /**
+ * Rename an entry by changing its slug
+ * PATCH /:branch/content/:path/rename
+ * Example: /main/content/posts/old-slug/rename
+ */
+const renameEntry = defineEndpoint({
+  namespace: 'content',
+  name: 'renameEntry',
+  method: 'PATCH',
+  path: '/:branch/content/...path/rename',
+  params: renameEntryParamsSchema,
+  body: renameEntryBodySchema,
+  bodyType: 'RenameEntryBody',
+  responseType: 'RenameEntryResponse',
+  response: {} as RenameEntryResponse,
+  defaultMockData: { newPath: 'content/posts/new-slug' },
+  handler: renameEntryHandler,
+})
+
+/**
  * Exported routes for router registration
  */
 export const CONTENT_ROUTES = {
   read: readContent,
   write: writeContent,
   validateReferences,
+  renameEntry,
 } as const

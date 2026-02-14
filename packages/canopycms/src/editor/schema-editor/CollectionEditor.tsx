@@ -176,11 +176,13 @@ export function CollectionEditor({
     if (isEditMode) {
       // Only include changed fields for update
       const updates: UpdateCollectionInput = {}
+      if (formData.name !== (editingCollection?.name || '')) {
+        updates.name = formData.name.trim() || undefined
+      }
       if (formData.label !== (editingCollection?.label || '')) {
         updates.label = formData.label || undefined
       }
-      // Note: name changes would require renaming the directory, which is complex
-      // For now, we only allow label changes in edit mode
+      // Note: slug changes (directory renames) can be added in the future
       onSave(updates, false)
     } else {
       // Create new collection
@@ -279,14 +281,13 @@ export function CollectionEditor({
             </Alert>
           )}
 
-          {/* Name - only editable in create mode */}
+          {/* Name - metadata field in .collection.json, independent of directory slug */}
           <TextInput
             label="Name"
             description="Machine-readable identifier (e.g., posts, pages, articles)"
             placeholder="posts"
             value={formData.name}
             onChange={(e) => updateField('name', e.target.value)}
-            disabled={isEditMode}
             required={!isEditMode}
           />
 
