@@ -36,6 +36,7 @@ describe('useEntryManager', () => {
     apiPath: '/api/canopycms/main/content/posts/test',
     format: 'mdx',
     schema: [],
+    contentId: 'test123456789',
   }
 
   const mockCollectionItem = {

@@ -356,6 +356,7 @@ describe('buildBreadcrumbSegments', () => {
       label: 'Test',
       schema: [],
       apiPath: '/api/test',
+      contentId: 'test123456789',
     }
     const labels = new Map<string, string>()
     expect(buildBreadcrumbSegments(entry, labels)).toEqual(['All Files'])
@@ -369,6 +370,7 @@ describe('buildBreadcrumbSegments', () => {
       apiPath: '/api/test',
       collectionId: 'posts',
       slug: 'hello',
+      contentId: 'test123456789',
     }
     const labels = new Map([['posts', 'Posts']])
     // Single-level collection: parts = ['posts'], loop starts at i=1 which is >= length, so no segments added
@@ -383,6 +385,7 @@ describe('buildBreadcrumbSegments', () => {
       apiPath: '/api/test',
       collectionId: 'content/docs/guides',
       slug: 'config',
+      contentId: 'test123456789',
     }
     const labels = new Map([
       ['content', 'Content'],
@@ -404,6 +407,7 @@ describe('buildBreadcrumbSegments', () => {
       apiPath: '/api/test',
       collectionId: 'content/docs/api/v2',
       slug: 'endpoint',
+      contentId: 'test123456789',
     }
     const labels = new Map([
       ['content', 'Content'],
@@ -425,6 +429,7 @@ describe('buildBreadcrumbSegments', () => {
       apiPath: '/api/test',
       collectionId: 'content/docs/guides',
       slug: 'config',
+      contentId: 'test123456789',
     }
     const labels = new Map([
       ['content', 'Content'],
@@ -446,6 +451,7 @@ describe('buildBreadcrumbSegments', () => {
       apiPath: '/api/test',
       collectionId: 'posts',
       slug: '2024/01/new-year',
+      contentId: 'test123456789',
     }
     const labels = new Map([['posts', 'Posts']])
 
@@ -463,6 +469,7 @@ describe('buildBreadcrumbSegments', () => {
       apiPath: '/api/test',
       collectionId: 'content/posts',
       slug: '2024/01/new-year',
+      contentId: 'test123456789',
     }
     const labels = new Map([
       ['content', 'Content'],
@@ -483,6 +490,7 @@ describe('buildBreadcrumbSegments', () => {
       apiPath: '/api/test',
       collectionId: 'content/settings',
       type: 'entry',
+      contentId: 'test123456789',
     }
     const labels = new Map([
       ['content', 'Content'],

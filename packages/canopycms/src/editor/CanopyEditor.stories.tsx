@@ -55,6 +55,7 @@ const entries = [
     slug: 'hello',
     format: 'json' as const,
     type: 'entry' as const,
+    contentId: 'test123456789',
   },
 ]
 

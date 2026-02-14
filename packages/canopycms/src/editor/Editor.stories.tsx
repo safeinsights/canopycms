@@ -42,6 +42,7 @@ const baseEntries: EditorEntry[] = [
     collectionName: 'home',
     format: 'json',
     type: 'entry',
+    contentId: 'test123456789',
   },
   {
     path: 'posts/hello-world',
@@ -54,6 +55,7 @@ const baseEntries: EditorEntry[] = [
     collectionName: 'posts',
     format: 'json',
     type: 'entry',
+    contentId: 'abc987XYZ654',
   },
 ]
 
@@ -80,6 +82,7 @@ export const WithCollections: Story = {
         slug,
         format: 'json',
         type: collectionId === 'home' ? 'entry' : 'entry',
+        contentId: `new${Date.now()}`,
       }
       setEntries((prev) => [...prev, newEntry])
     }

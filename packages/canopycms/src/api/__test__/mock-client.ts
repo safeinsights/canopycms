@@ -13,7 +13,7 @@ import type { BranchDeleteResponse, BranchListResponse, BranchResponse, CreateBr
 import type { BranchMergeResponse } from '../branch-status'
 import type { RequestChangesBody } from '../branch-review'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
-import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, ValidateReferencesBody, WriteContentBody } from '../content'
+import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from '../content'
 import type { ReferenceOptionsResponse } from '../reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from '../resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from '../entries'
@@ -68,6 +68,7 @@ export function createMockApiClient(): MockApiClient {
     read: vi.fn().mockResolvedValue(mockSuccess({"format":"json","data":{}})),
     write: vi.fn().mockResolvedValue(mockSuccess({"format":"json","data":{}})),
     validateReferences: vi.fn().mockResolvedValue(mockSuccess({"valid":true})),
+    renameEntry: vi.fn().mockResolvedValue(mockSuccess({"newPath":"content/posts/new-slug"})),
     getReferenceOptions: vi.fn().mockResolvedValue(mockSuccess({"options":[]})),
     resolveReferences: vi.fn().mockResolvedValue(mockSuccess({"resolved":{}})),
   },
@@ -216,6 +217,13 @@ export function mockContentWriteResponse(): ContentWriteResponse {
  */
 export function mockReferenceValidationResponse(): ReferenceValidationResponse {
   return mockSuccess({"valid":true})
+}
+
+/**
+ * Create a RenameEntryResponse for testing
+ */
+export function mockRenameEntryResponse(): RenameEntryResponse {
+  return mockSuccess({"newPath":"content/posts/new-slug"})
 }
 
 /**

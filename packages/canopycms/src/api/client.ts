@@ -10,7 +10,7 @@ import type { BranchDeleteResponse, BranchListResponse, BranchResponse, CreateBr
 import type { BranchMergeResponse } from './branch-status'
 import type { RequestChangesBody } from './branch-review'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
-import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, ValidateReferencesBody, WriteContentBody } from './content'
+import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
 import type { ReferenceOptionsResponse } from './reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from './resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from './entries'
@@ -194,6 +194,13 @@ export class CanopyApiClient {
      */
     validateReferences: (params: Record<string, string>, body: ValidateReferencesBody): Promise<ReferenceValidationResponse> => {
       return this.request('POST', this.buildPath('/:branch/validate-references/...path', params), body)
+    },
+
+    /**
+     * renameEntry - PATCH /:branch/rename-entry/...path
+     */
+    renameEntry: (params: Record<string, string>, body: RenameEntryBody): Promise<RenameEntryResponse> => {
+      return this.request('PATCH', this.buildPath('/:branch/rename-entry/...path', params), body)
     },
 
     /**

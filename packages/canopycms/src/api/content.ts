@@ -369,14 +369,14 @@ const validateReferences = defineEndpoint({
 
 /**
  * Rename an entry by changing its slug
- * PATCH /:branch/content/:path/rename
- * Example: /main/content/posts/old-slug/rename
+ * PATCH /:branch/rename-entry/:path
+ * Example: /main/rename-entry/posts/old-slug
  */
 const renameEntry = defineEndpoint({
   namespace: 'content',
   name: 'renameEntry',
   method: 'PATCH',
-  path: '/:branch/content/...path/rename',
+  path: '/:branch/rename-entry/...path',
   params: renameEntryParamsSchema,
   body: renameEntryBodySchema,
   bodyType: 'RenameEntryBody',
