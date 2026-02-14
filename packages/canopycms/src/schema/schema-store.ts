@@ -15,7 +15,7 @@ import { z } from 'zod'
 
 import type { ContentFormat, FieldConfig } from '../config'
 import { resolveCollectionPath } from '../content-id-index'
-import { generateId } from '../id'
+import { generateId, isValidId } from '../id'
 import { toLogicalPath, validateAndNormalizePath } from '../paths'
 import type { LogicalPath } from '../paths/types'
 
@@ -557,6 +557,76 @@ export class SchemaStore {
 
     // Write back
     await this.writeCollectionMeta(physicalPath, meta)
+  }
+
+  // --------------------------------------------------------------------------
+  // Usage Counting
+  // --------------------------------------------------------------------------
+
+  /**
+   * Count the number of entries using a specific entry type in a collection.
+   * This is used to prevent breaking changes to entry types that have existing content.
+   *
+   * @param collectionPath - Logical path to the collection (e.g., "content/posts")
+   * @param entryTypeName - Name of the entry type to count
+   * @returns Number of entries using this entry type
+   *
+   * @example
+   * ```ts
+   * const count = await store.countEntriesUsingType('content/posts', 'post')
+   * if (count > 0) {
+   *   // Cannot modify schema/format
+   * }
+   * ```
+   */
+  async countEntriesUsingType(collectionPath: LogicalPath, entryTypeName: string): Promise<number> {
+    // Resolve collection physical path
+    const physicalPath = await resolveCollectionPath(this.contentRoot, collectionPath)
+    if (!physicalPath) {
+      // Collection doesn't exist yet - return 0
+      return 0
+    }
+
+    try {
+      // Read directory entries
+      const entries = await fs.readdir(physicalPath, { withFileTypes: true })
+
+      // Count files matching pattern: {entryTypeName}.{slug}.{id}.{ext}
+      let count = 0
+      for (const entry of entries) {
+        // Skip directories and hidden files
+        if (entry.isDirectory() || entry.name.startsWith('.')) {
+          continue
+        }
+
+        // Parse filename: type.slug.id.ext
+        const parts = entry.name.split('.')
+
+        // Need at least 4 parts: type, slug, id, ext
+        if (parts.length < 4) {
+          continue
+        }
+
+        // Check if first part matches entry type name
+        if (parts[0] !== entryTypeName) {
+          continue
+        }
+
+        // Check if second-to-last part is a valid 12-char ID
+        const candidateId = parts[parts.length - 2]
+        if (isValidId(candidateId)) {
+          count++
+        }
+      }
+
+      return count
+    } catch (err) {
+      // Directory might not exist yet
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+        return 0
+      }
+      throw err
+    }
   }
 
   // --------------------------------------------------------------------------
