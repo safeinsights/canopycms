@@ -69,6 +69,7 @@ describe('Editor integration', () => {
   it('loads an entry and persists changes via the content API', async () => {
     const entry: EditorEntry = {
       path: 'content/posts/hello',
+      contentId: 'testid123456', // 12-char content ID
       label: 'Hello',
       status: 'entry',
       schema: [{ name: 'title', type: 'string' }],
