@@ -424,6 +424,154 @@ describe('SchemaStore', () => {
     })
   })
 
+  describe('countEntriesUsingType', () => {
+    it('should count entries with matching entry type', async () => {
+      // Create collection
+      const result = await store.createCollection({
+        name: 'posts',
+        entries: [
+          { name: 'post', format: 'json', fields: 'postSchema' },
+          { name: 'page', format: 'json', fields: 'pageSchema' },
+        ],
+      })
+
+      // Create some entry files with valid IDs (base58-like: no 0, l, I, O)
+      const collectionPath = path.join(contentRoot, `posts.${result.contentId}`)
+      await fs.writeFile(
+        path.join(collectionPath, 'post.first.abc123def456.json'),
+        JSON.stringify({ title: 'First Post' })
+      )
+      await fs.writeFile(
+        path.join(collectionPath, 'post.second.xyz789uvw123.json'),
+        JSON.stringify({ title: 'Second Post' })
+      )
+      await fs.writeFile(
+        path.join(collectionPath, 'page.about.pqr345stu678.json'),
+        JSON.stringify({ title: 'About Page' })
+      )
+
+      const postCount = await store.countEntriesUsingType(toLogicalPath('posts'), 'post')
+      const pageCount = await store.countEntriesUsingType(toLogicalPath('posts'), 'page')
+
+      expect(postCount).toBe(2)
+      expect(pageCount).toBe(1)
+    })
+
+    it('should return 0 for entry type with no entries', async () => {
+      const result = await store.createCollection({
+        name: 'posts',
+        entries: [
+          { name: 'post', format: 'json', fields: 'postSchema' },
+          { name: 'draft', format: 'json', fields: 'postSchema' },
+        ],
+      })
+
+      // Create only post entries, no drafts
+      const collectionPath = path.join(contentRoot, `posts.${result.contentId}`)
+      await fs.writeFile(
+        path.join(collectionPath, 'post.first.abc123def456.json'),
+        JSON.stringify({ title: 'First Post' })
+      )
+
+      const draftCount = await store.countEntriesUsingType(toLogicalPath('posts'), 'draft')
+      expect(draftCount).toBe(0)
+    })
+
+    it('should return 0 for non-existent collection', async () => {
+      const count = await store.countEntriesUsingType(toLogicalPath('nonexistent'), 'post')
+      expect(count).toBe(0)
+    })
+
+    it('should ignore files without valid IDs', async () => {
+      const result = await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+      })
+
+      const collectionPath = path.join(contentRoot, `posts.${result.contentId}`)
+
+      // Valid entry (base58-like ID: no 0, l, I, O)
+      await fs.writeFile(
+        path.join(collectionPath, 'post.valid.abc123def456.json'),
+        JSON.stringify({ title: 'Valid' })
+      )
+
+      // Invalid: ID too short
+      await fs.writeFile(
+        path.join(collectionPath, 'post.invalid.abc123.json'),
+        JSON.stringify({ title: 'Invalid ID' })
+      )
+
+      // Invalid: no ID
+      await fs.writeFile(
+        path.join(collectionPath, 'post.noid.json'),
+        JSON.stringify({ title: 'No ID' })
+      )
+
+      const count = await store.countEntriesUsingType(toLogicalPath('posts'), 'post')
+      expect(count).toBe(1) // Only the valid one
+    })
+
+    it('should ignore hidden files and directories', async () => {
+      const result = await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+      })
+
+      const collectionPath = path.join(contentRoot, `posts.${result.contentId}`)
+
+      // Valid entry (base58-like ID: no 0, l, I, O)
+      await fs.writeFile(
+        path.join(collectionPath, 'post.valid.abc123def456.json'),
+        JSON.stringify({ title: 'Valid' })
+      )
+
+      // Hidden file (should be ignored)
+      await fs.writeFile(
+        path.join(collectionPath, '.post.hidden.xyz789uvw123.json'),
+        JSON.stringify({ title: 'Hidden' })
+      )
+
+      // Collection meta (should be ignored)
+      await fs.writeFile(
+        path.join(collectionPath, '.collection.json'),
+        JSON.stringify({ name: 'posts' })
+      )
+
+      const count = await store.countEntriesUsingType(toLogicalPath('posts'), 'post')
+      expect(count).toBe(1) // Only the visible one
+    })
+
+    it('should only count files with matching entry type prefix', async () => {
+      const result = await store.createCollection({
+        name: 'posts',
+        entries: [
+          { name: 'post', format: 'json', fields: 'postSchema' },
+          { name: 'page', format: 'json', fields: 'pageSchema' },
+        ],
+      })
+
+      const collectionPath = path.join(contentRoot, `posts.${result.contentId}`)
+
+      // Mix of post and page entries
+      await fs.writeFile(
+        path.join(collectionPath, 'post.first.abc123def456.json'),
+        JSON.stringify({ title: 'Post 1' })
+      )
+      await fs.writeFile(
+        path.join(collectionPath, 'page.about.xyz789uvw012.json'),
+        JSON.stringify({ title: 'About' })
+      )
+      await fs.writeFile(
+        path.join(collectionPath, 'post.second.pqr345stu678.json'),
+        JSON.stringify({ title: 'Post 2' })
+      )
+
+      const postCount = await store.countEntriesUsingType(toLogicalPath('posts'), 'post')
+      expect(postCount).toBe(2) // Should not include the page entry
+    })
+  })
+
   describe('updateOrder', () => {
     it('should update order array for collection', async () => {
       await store.createCollection({

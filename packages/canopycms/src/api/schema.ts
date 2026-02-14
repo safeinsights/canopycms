@@ -27,7 +27,7 @@ import {
   type CreateEntryTypeInput,
   type UpdateEntryTypeInput,
 } from '../schema/schema-store'
-import type { RootCollectionConfig, CollectionConfig, FlatSchemaItem } from '../config'
+import type { RootCollectionConfig, CollectionConfig, FlatSchemaItem, ContentFormat } from '../config'
 import { parseLogicalPath, type LogicalPath } from '../paths'
 
 // ============================================================================
@@ -41,8 +41,21 @@ export interface SchemaResponse {
   availableSchemas: string[]
 }
 
+export interface EntryTypeWithUsage {
+  name: string
+  label?: string
+  format: ContentFormat
+  fields: string
+  default?: boolean
+  maxItems?: number
+  /** Number of entries using this entry type (for locking validation) */
+  usageCount: number
+}
+
 export interface CollectionResponse {
   collection: CollectionConfig | null
+  /** Entry types with usage counts (only present when collection exists) */
+  entryTypesWithUsage?: EntryTypeWithUsage[]
 }
 
 export interface CreateCollectionResponse {
@@ -233,10 +246,39 @@ const getCollectionHandler = async (
     order: item.order,
   }
 
+  // Compute usage counts for each entry type
+  // Read from raw collection meta to get schema registry keys (strings), not resolved FieldConfig[]
+  let entryTypesWithUsage: EntryTypeWithUsage[] | undefined
+  if (item.entries && item.entries.length > 0) {
+    const storeResult = await getSchemaStore(ctx, params.branch)
+    if ('error' in storeResult) {
+      return { ok: false, status: storeResult.status, error: storeResult.error }
+    }
+
+    // Read raw collection meta to get string schema references
+    const rawMeta = await storeResult.store.readCollectionMeta(pathResult.path)
+    if (rawMeta?.entries) {
+      entryTypesWithUsage = await Promise.all(
+        rawMeta.entries.map(async (et) => {
+          const usageCount = await storeResult.store.countEntriesUsingType(pathResult.path, et.name)
+          return {
+            name: et.name,
+            label: et.label,
+            format: et.format,
+            fields: et.fields, // String reference to schema registry
+            default: et.default,
+            maxItems: et.maxItems,
+            usageCount,
+          }
+        })
+      )
+    }
+  }
+
   return {
     ok: true,
     status: 200,
-    data: { collection },
+    data: { collection, entryTypesWithUsage },
   }
 }
 
@@ -429,6 +471,21 @@ const updateEntryTypeHandler = async (
   const pathResult = validateCollectionPath(params.collectionPath)
   if (!pathResult.ok) {
     return { ok: false, status: pathResult.status, error: pathResult.error }
+  }
+
+  // Check if format or fields are being changed (breaking changes)
+  const isBreakingChange = body.format !== undefined || body.fields !== undefined
+  if (isBreakingChange) {
+    // Count existing entries using this type
+    const usageCount = await storeResult.store.countEntriesUsingType(pathResult.path, params.entryTypeName)
+    if (usageCount > 0) {
+      const entryWord = usageCount === 1 ? 'entry' : 'entries'
+      return {
+        ok: false,
+        status: 400,
+        error: `Cannot modify schema or format for entry type with existing ${entryWord}. ${usageCount} ${entryWord} currently use this type.`,
+      }
+    }
   }
 
   try {

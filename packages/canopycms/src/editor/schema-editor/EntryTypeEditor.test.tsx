@@ -104,6 +104,33 @@ describe('EntryTypeEditor', () => {
 
       expect(props.onClose).toHaveBeenCalled()
     })
+
+    it('validates against duplicate entry type names', async () => {
+      const user = userEvent.setup()
+      const { props } = renderEntryTypeEditor({
+        existingEntryTypeNames: ['post', 'page', 'article'],
+      })
+
+      await user.type(screen.getByLabelText(/^Name/), 'post') // Duplicate name
+      const buttons = screen.getAllByRole('button', { name: /Add Entry Type/i })
+      await user.click(buttons[0])
+
+      expect(screen.getByText(/already exists in this collection/i)).toBeTruthy()
+      expect(props.onSave).not.toHaveBeenCalled()
+    })
+
+    it('allows name that does not duplicate existing entry types', async () => {
+      const user = userEvent.setup()
+      const { props } = renderEntryTypeEditor({
+        existingEntryTypeNames: ['post', 'page'],
+      })
+
+      await user.type(screen.getByLabelText(/^Name/), 'article') // Not a duplicate
+      const buttons = screen.getAllByRole('button', { name: /Add Entry Type/i })
+      await user.click(buttons[0])
+
+      expect(props.onSave).toHaveBeenCalled()
+    })
   })
 
   describe('edit mode', () => {

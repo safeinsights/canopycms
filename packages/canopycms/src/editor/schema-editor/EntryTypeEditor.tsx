@@ -24,8 +24,9 @@ import {
   Button,
   Text,
   Alert,
+  Tooltip,
 } from '@mantine/core'
-import { IconAlertCircle } from '@tabler/icons-react'
+import { IconAlertCircle, IconLock } from '@tabler/icons-react'
 
 import type { ContentFormat } from '../../config'
 import type { CreateEntryTypeInput, UpdateEntryTypeInput } from '../../schema/schema-store-types'
@@ -47,9 +48,11 @@ export interface EntryTypeEditorProps {
   /** Whether the modal is open */
   isOpen: boolean
   /** Entry type being edited (null for create mode) */
-  editingEntryType: { name: string; label?: string; format: ContentFormat; fields: string; default?: boolean; maxItems?: number } | null
+  editingEntryType: { name: string; label?: string; format: ContentFormat; fields: string; default?: boolean; maxItems?: number; usageCount?: number } | null
   /** Available schema keys from the registry */
   availableSchemas: string[]
+  /** Existing entry type names in the collection (for duplicate validation) */
+  existingEntryTypeNames?: string[]
   /** Called when save is clicked */
   onSave: (data: CreateEntryTypeInput | UpdateEntryTypeInput, isNew: boolean) => void
   /** Called when modal is closed */
@@ -78,12 +81,15 @@ export function EntryTypeEditor({
   isOpen,
   editingEntryType,
   availableSchemas,
+  existingEntryTypeNames = [],
   onSave,
   onClose,
   isSaving = false,
   error = null,
 }: EntryTypeEditorProps) {
   const isEditMode = editingEntryType !== null
+  const usageCount = editingEntryType?.usageCount ?? 0
+  const isLocked = isEditMode && usageCount > 0
 
   // Form state
   const [formData, setFormData] = useState<EntryTypeFormData>({
@@ -143,12 +149,17 @@ export function EntryTypeEditor({
       setValidationError('Name must start with a letter and contain only lowercase letters, numbers, and hyphens')
       return false
     }
+    // Check for duplicate names (only in create mode)
+    if (!isEditMode && existingEntryTypeNames.includes(formData.name.trim())) {
+      setValidationError('Entry type with this name already exists in this collection')
+      return false
+    }
     if (!formData.fields) {
       setValidationError('Schema is required')
       return false
     }
     return true
-  }, [formData, isEditMode])
+  }, [formData, isEditMode, existingEntryTypeNames])
 
   // Handle save
   const handleSave = useCallback(() => {
@@ -242,26 +253,42 @@ export function EntryTypeEditor({
         />
 
         {/* Format */}
-        <Select
-          label="Format"
-          description="Content file format"
-          data={FORMAT_OPTIONS}
-          value={formData.format}
-          onChange={(value) => value && updateField('format', value as ContentFormat)}
-          allowDeselect={false}
-        />
+        <Tooltip
+          label={isLocked ? `Cannot change format: ${usageCount} ${usageCount === 1 ? 'entry' : 'entries'} use this type` : ''}
+          disabled={!isLocked}
+          withinPortal
+        >
+          <Select
+            label="Format"
+            description={isLocked ? `Locked (${usageCount} ${usageCount === 1 ? 'entry' : 'entries'} exist)` : 'Content file format'}
+            data={FORMAT_OPTIONS}
+            value={formData.format}
+            onChange={(value) => value && updateField('format', value as ContentFormat)}
+            allowDeselect={false}
+            disabled={isLocked}
+            rightSection={isLocked ? <IconLock size={14} /> : undefined}
+          />
+        </Tooltip>
 
         {/* Schema */}
-        <Select
-          label="Schema"
-          description="Field definitions for this entry type"
-          data={schemaOptions}
-          value={formData.fields}
-          onChange={(value) => value && updateField('fields', value)}
-          searchable
-          required
-          placeholder="Select a schema"
-        />
+        <Tooltip
+          label={isLocked ? `Cannot change schema: ${usageCount} ${usageCount === 1 ? 'entry' : 'entries'} use this type` : ''}
+          disabled={!isLocked}
+          withinPortal
+        >
+          <Select
+            label="Schema"
+            description={isLocked ? `Locked (${usageCount} ${usageCount === 1 ? 'entry' : 'entries'} exist)` : 'Field definitions for this entry type'}
+            data={schemaOptions}
+            value={formData.fields}
+            onChange={(value) => value && updateField('fields', value)}
+            searchable
+            required
+            placeholder="Select a schema"
+            disabled={isLocked}
+            rightSection={isLocked ? <IconLock size={14} /> : undefined}
+          />
+        </Tooltip>
 
         {/* Default toggle */}
         <Switch

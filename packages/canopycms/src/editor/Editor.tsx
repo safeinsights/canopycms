@@ -344,23 +344,77 @@ export const Editor: React.FC<EditorProps> = ({
   }, [branchNameState, apiClient])
 
   // Schema editor handlers
-  const handleOpenCollectionEditor = (collection: EditorCollection | null, parentPath?: string) => {
+  const handleOpenCollectionEditor = async (collection: EditorCollection | null, parentPath?: string) => {
     if (collection) {
-      // Edit mode - convert EditorCollection to ExistingCollection
-      const existingCollection: ExistingCollection = {
-        name: collection.name,
-        label: collection.label,
-        logicalPath: toLogicalPath(collection.path),
-        entries: (collection.entryTypes ?? []).map((et): ExistingEntryType => ({
-          name: et.name,
-          label: et.label,
-          format: et.format,
-          fields: '', // Will be populated from schema when we have full entry type data
-          default: et.default,
-          maxItems: et.maxItems,
-        })),
+      // Edit mode - fetch full collection data with usage counts
+      try {
+        const result = await apiClient.schema.getCollection({
+          branch: branchName,
+          collectionPath: collection.path,
+        })
+
+        if (result.ok && result.data && result.data.collection) {
+          // Use entry types with usage counts from API if available
+          const entries: ExistingEntryType[] = result.data.entryTypesWithUsage
+            ? result.data.entryTypesWithUsage.map((et): ExistingEntryType => ({
+                name: et.name,
+                label: et.label,
+                format: et.format,
+                fields: et.fields,
+                default: et.default,
+                maxItems: et.maxItems,
+                usageCount: et.usageCount,
+              }))
+            : (collection.entryTypes ?? []).map((et): ExistingEntryType => ({
+                name: et.name,
+                label: et.label,
+                format: et.format,
+                fields: '', // Fallback if entryTypesWithUsage not available
+                default: et.default,
+                maxItems: et.maxItems,
+              }))
+
+          const existingCollection: ExistingCollection = {
+            name: collection.name,
+            label: collection.label,
+            logicalPath: toLogicalPath(collection.path),
+            entries,
+          }
+          setEditingCollection(existingCollection)
+        } else {
+          // Fallback to using EditorCollection data
+          const existingCollection: ExistingCollection = {
+            name: collection.name,
+            label: collection.label,
+            logicalPath: toLogicalPath(collection.path),
+            entries: (collection.entryTypes ?? []).map((et): ExistingEntryType => ({
+              name: et.name,
+              label: et.label,
+              format: et.format,
+              fields: '',
+              default: et.default,
+              maxItems: et.maxItems,
+            })),
+          }
+          setEditingCollection(existingCollection)
+        }
+      } catch (err) {
+        // Fallback on error
+        const existingCollection: ExistingCollection = {
+          name: collection.name,
+          label: collection.label,
+          logicalPath: toLogicalPath(collection.path),
+          entries: (collection.entryTypes ?? []).map((et): ExistingEntryType => ({
+            name: et.name,
+            label: et.label,
+            format: et.format,
+            fields: '',
+            default: et.default,
+            maxItems: et.maxItems,
+          })),
+        }
+        setEditingCollection(existingCollection)
       }
-      setEditingCollection(existingCollection)
       setCollectionEditorParentPath(undefined)
     } else {
       // Create mode

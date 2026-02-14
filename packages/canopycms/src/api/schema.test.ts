@@ -17,6 +17,8 @@ vi.mock('../schema/schema-store', async (importOriginal) => {
       removeEntryType: vi.fn(),
       updateOrder: vi.fn(),
       isCollectionEmpty: vi.fn(),
+      countEntriesUsingType: vi.fn(),
+      readCollectionMeta: vi.fn(),
     })),
   }
 })
@@ -133,6 +135,79 @@ describe('Schema API', () => {
         label: 'Posts',
         path: 'posts',
       })
+    })
+
+    it('should include entry types with usage counts', async () => {
+      const mockStore = {
+        readCollectionMeta: vi.fn().mockResolvedValue({
+          name: 'posts',
+          label: 'Posts',
+          entries: [
+            { name: 'post', format: 'json', fields: 'postSchema', default: true },
+            { name: 'page', format: 'mdx', fields: 'pageSchema' },
+          ],
+        }),
+        countEntriesUsingType: vi.fn()
+          .mockResolvedValueOnce(3) // post has 3 entries
+          .mockResolvedValueOnce(0), // page has 0 entries
+      }
+      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+
+      const result = await getCollection.handler(mockCtx, mockReq, {
+        branch: 'main',
+        collectionPath: 'posts',
+      })
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+      expect(result.data?.entryTypesWithUsage).toHaveLength(2)
+      expect(result.data?.entryTypesWithUsage).toEqual([
+        expect.objectContaining({
+          name: 'post',
+          format: 'json',
+          fields: 'postSchema',
+          usageCount: 3,
+        }),
+        expect.objectContaining({
+          name: 'page',
+          format: 'mdx',
+          fields: 'pageSchema',
+          usageCount: 0,
+        }),
+      ])
+      expect(mockStore.countEntriesUsingType).toHaveBeenCalledTimes(2)
+      expect(mockStore.countEntriesUsingType).toHaveBeenCalledWith('posts', 'post')
+      expect(mockStore.countEntriesUsingType).toHaveBeenCalledWith('posts', 'page')
+    })
+
+    it('should not include usage counts when collection has no entries', async () => {
+      // Test collection without entry types (edge case)
+      const mockFlatSchemaWithoutEntries: FlatSchemaItem[] = [
+        {
+          type: 'collection',
+          logicalPath: 'empty' as LogicalPath,
+          name: 'empty',
+          label: 'Empty',
+          entries: [], // No entry types
+        },
+      ]
+
+      const customCtx = {
+        ...mockCtx,
+        services: {
+          ...mockCtx.services,
+          flatSchema: mockFlatSchemaWithoutEntries,
+        },
+      }
+
+      const result = await getCollection.handler(customCtx, mockReq, {
+        branch: 'main',
+        collectionPath: 'empty',
+      })
+
+      expect(result.ok).toBe(true)
+      expect(result.data?.collection).toBeDefined()
+      expect(result.data?.entryTypesWithUsage).toBeUndefined() // No usage counts for empty collection
     })
 
     it('should return null for non-existent collection', async () => {
@@ -417,6 +492,7 @@ describe('Schema API', () => {
     it('should update entry type when user is admin', async () => {
       const mockStore = {
         updateEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesUsingType: vi.fn().mockResolvedValue(0),
       }
       vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
 
@@ -434,6 +510,132 @@ describe('Schema API', () => {
         'post',
         expect.objectContaining({ label: 'Blog Post', maxItems: 100 })
       )
+    })
+
+    it('should allow label/maxItems updates when entries exist', async () => {
+      const mockStore = {
+        updateEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesUsingType: vi.fn().mockResolvedValue(5),
+      }
+      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+
+      const result = await updateEntryType.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'posts', entryTypeName: 'post' },
+        { label: 'Updated Label', maxItems: 10 }
+      )
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+      expect(mockStore.updateEntryType).toHaveBeenCalled()
+      // Should not check usage count since non-breaking changes
+      expect(mockStore.countEntriesUsingType).not.toHaveBeenCalled()
+    })
+
+    it('should block format change when entries exist', async () => {
+      const mockStore = {
+        updateEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesUsingType: vi.fn().mockResolvedValue(3),
+      }
+      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+
+      const result = await updateEntryType.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'posts', entryTypeName: 'post' },
+        { format: 'mdx' }
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('Cannot modify schema or format')
+      expect(result.error).toContain('3 entries')
+      expect(mockStore.countEntriesUsingType).toHaveBeenCalledWith('posts', 'post')
+      expect(mockStore.updateEntryType).not.toHaveBeenCalled()
+    })
+
+    it('should block fields change when entries exist', async () => {
+      const mockStore = {
+        updateEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesUsingType: vi.fn().mockResolvedValue(1),
+      }
+      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+
+      const result = await updateEntryType.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'posts', entryTypeName: 'post' },
+        { fields: 'newSchema' }
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('Cannot modify schema or format')
+      expect(result.error).toContain('1 entry')
+      expect(mockStore.countEntriesUsingType).toHaveBeenCalledWith('posts', 'post')
+      expect(mockStore.updateEntryType).not.toHaveBeenCalled()
+    })
+
+    it('should allow format/fields change when no entries exist', async () => {
+      const mockStore = {
+        updateEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesUsingType: vi.fn().mockResolvedValue(0),
+      }
+      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+
+      const result = await updateEntryType.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'posts', entryTypeName: 'post' },
+        { format: 'mdx', fields: 'newSchema' }
+      )
+
+      expect(result.ok).toBe(true)
+      expect(result.status).toBe(200)
+      expect(mockStore.countEntriesUsingType).toHaveBeenCalledWith('posts', 'post')
+      expect(mockStore.updateEntryType).toHaveBeenCalled()
+    })
+
+    it('should block simultaneous format and fields change when entries exist', async () => {
+      const mockStore = {
+        updateEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesUsingType: vi.fn().mockResolvedValue(5),
+      }
+      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+
+      const result = await updateEntryType.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'posts', entryTypeName: 'post' },
+        { format: 'mdx', fields: 'newSchema' }
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(400)
+      expect(result.error).toContain('Cannot modify schema or format')
+      expect(result.error).toContain('5 entries')
+      expect(mockStore.countEntriesUsingType).toHaveBeenCalledWith('posts', 'post')
+      expect(mockStore.updateEntryType).not.toHaveBeenCalled()
+    })
+
+    it('should use singular "entry" in error message for count=1', async () => {
+      const mockStore = {
+        updateEntryType: vi.fn().mockResolvedValue(undefined),
+        countEntriesUsingType: vi.fn().mockResolvedValue(1),
+      }
+      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+
+      const result = await updateEntryType.handler(
+        mockCtx,
+        mockReq,
+        { branch: 'main', collectionPath: 'posts', entryTypeName: 'post' },
+        { format: 'mdx' }
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.error).toContain('1 entry') // Singular
+      expect(result.error).not.toContain('entries') // Not plural
     })
 
     it('should reject paths with traversal sequences', async () => {

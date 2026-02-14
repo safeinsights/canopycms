@@ -52,6 +52,8 @@ export interface ExistingEntryType {
   fields: string
   default?: boolean
   maxItems?: number
+  /** Number of entries using this type (for locking validation) */
+  usageCount?: number
 }
 
 /** Collection info for edit mode */
@@ -391,6 +393,7 @@ export function CollectionEditor({
         isOpen={entryTypeEditorOpen}
         editingEntryType={editingEntryType}
         availableSchemas={availableSchemas}
+        existingEntryTypeNames={displayEntryTypes.map(et => et.name)}
         onSave={handleEntryTypeSave}
         onClose={() => {
           setEntryTypeEditorOpen(false)
