@@ -2,8 +2,6 @@
  * Utility functions for PermissionManager
  */
 
-import type { RootCollectionConfig } from '../../config'
-import { flattenSchema } from '../../config'
 import type { TreeNode, ContentNode, PathPermission } from './types'
 import type { EditorCollection } from '../Editor'
 
@@ -107,21 +105,14 @@ export function mergeContentTree(schemaNode: TreeNode, contentNode: ContentNode)
 }
 
 /**
- * Main entry point: Creates permission tree root node and delegates to collection
- * or schema-based building.
+ * Build tree structure from EditorCollections.
  *
- * Has two modes:
- * 1. Collections-based (when collections provided): Uses API/editor collections
- * 2. Schema-based (fallback): Flattens schema and builds hierarchy from parentPath relationships
- *
- * @param schema - CanopyConfig schema (optional)
  * @param contentTree - Actual filesystem content from API (optional)
  * @param contentRoot - The content root path, defaults to "content"
  * @param collections - Optional EditorCollection[] from API
  * @returns Root TreeNode for the permission tree
  */
 export function buildTree(
-  schema: RootCollectionConfig | undefined,
   contentTree: ContentNode | undefined,
   contentRoot = 'content',
   collections?: EditorCollection[]
@@ -133,7 +124,7 @@ export function buildTree(
     children: [],
   }
 
-  // If collections are provided (from API), use them instead of schema
+  // Build from collections if provided
   if (collections && collections.length > 0) {
     root.children = convertCollectionsToTreeNodes(collections, contentRoot)
 
@@ -141,67 +132,6 @@ export function buildTree(
     if (contentTree) {
       mergeContentTree(root, contentTree)
     }
-
-    return root
-  }
-
-  // Handle undefined schema gracefully
-  if (!schema) {
-    return root
-  }
-
-  // Flatten schema to get all collections and entry types
-  const flatSchema = flattenSchema(schema, contentRoot)
-
-  // Create a map of path -> TreeNode for fast lookup
-  const nodeMap = new Map<string, TreeNode>()
-  nodeMap.set(contentRoot, root)
-
-  // First pass: Create all nodes (skip content root since we already have it)
-  flatSchema.forEach((item) => {
-    // Skip the content root itself - we already created it as the root node
-    if (item.logicalPath === contentRoot) {
-      return
-    }
-
-    const pathSegments = item.logicalPath.split('/').filter(Boolean)
-    const displayName = pathSegments[pathSegments.length - 1] || item.name
-
-    const node: TreeNode = {
-      path: item.logicalPath,
-      name: displayName,
-      type: item.type === 'collection' ? 'folder' : 'file',
-      children: [],
-    }
-
-    nodeMap.set(item.logicalPath, node)
-  })
-
-  // Second pass: Build hierarchy using parentPath
-  flatSchema.forEach((item) => {
-    // Skip the content root itself
-    if (item.logicalPath === contentRoot) {
-      return
-    }
-
-    const node = nodeMap.get(item.logicalPath)
-    if (!node) return
-
-    // Determine parent path (or use root if no parent)
-    const parentPath = item.parentPath || contentRoot
-    const parentNode = nodeMap.get(parentPath)
-
-    if (parentNode) {
-      parentNode.children.push(node)
-    } else {
-      // Fallback: add to root if parent not found
-      root.children.push(node)
-    }
-  })
-
-  // Merge contentTree if provided (for actual files not in schema)
-  if (contentTree) {
-    mergeContentTree(root, contentTree)
   }
 
   return root

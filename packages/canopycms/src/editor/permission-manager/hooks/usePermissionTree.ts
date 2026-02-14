@@ -3,13 +3,11 @@
  */
 
 import { useState, useMemo, useEffect, useCallback } from 'react'
-import type { RootCollectionConfig } from '../../../config'
 import type { TreeNode, ContentNode, PathPermission, PermissionLevel, PermissionTarget } from '../types'
 import type { EditorCollection } from '../../Editor'
 import { buildTree, annotateTreeWithPermissions, findTreeNode } from '../utils'
 
 export interface UsePermissionTreeOptions {
-  schema?: RootCollectionConfig
   collections?: EditorCollection[]
   contentRoot?: string
   permissions: PathPermission[]
@@ -46,7 +44,6 @@ export interface UsePermissionTreeResult {
 }
 
 export function usePermissionTree({
-  schema,
   collections,
   contentRoot = 'content',
   permissions,
@@ -57,10 +54,10 @@ export function usePermissionTree({
   const [localPermissions, setLocalPermissions] = useState<PathPermission[]>(permissions)
   const [isDirty, setIsDirty] = useState(false)
 
-  // Build tree from schema (or collections) + contentTree
+  // Build tree from collections + contentTree
   const tree = useMemo(
-    () => buildTree(schema, contentTree, contentRoot, collections),
-    [schema, collections, contentTree, contentRoot]
+    () => buildTree(contentTree, contentRoot, collections),
+    [collections, contentTree, contentRoot]
   )
 
   // Annotate tree with permissions

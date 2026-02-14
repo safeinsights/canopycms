@@ -89,8 +89,6 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
  * Useful for splitting large configurations into domain-specific modules.
  * Later fragments can override media.
  *
- * Note: Schema is no longer composed via config - use .collection.json files instead.
- *
  * @example
  * ```ts
  * // posts.config.ts

@@ -1,0 +1,11 @@
+{
+  "name": "posts",
+  "label": "Posts",
+  "entries": [
+    {
+      "name": "post",
+      "format": "json",
+      "fields": "postSchema"
+    }
+  ]
+}

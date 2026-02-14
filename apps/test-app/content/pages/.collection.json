@@ -1,0 +1,13 @@
+{
+  "name": "pages",
+  "label": "Pages",
+  "entries": [
+    {
+      "name": "home",
+      "label": "Home",
+      "format": "json",
+      "fields": "homeSchema",
+      "maxItems": 1
+    }
+  ]
+}

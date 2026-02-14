@@ -9,7 +9,7 @@ import { notifications } from '@mantine/notifications'
 // TreeController type from Mantine's useTree hook
 type TreeController = ReturnType<typeof useTree>
 
-import type { ContentFormat, FieldConfig, RootCollectionConfig } from '../config'
+import type { ContentFormat, FieldConfig } from '../config'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
@@ -80,7 +80,6 @@ export interface EditorProps {
   branchName?: string
   operatingMode: OperatingMode
   collections?: EditorCollection[]
-  configSchema?: RootCollectionConfig
   contentRoot?: string
   initialSelectedId?: string
   initialValues?: Record<string, FormValue>
@@ -108,7 +107,6 @@ export const Editor: React.FC<EditorProps> = ({
   siteSubtitle = subtitle,
   branchName = '',
   collections,
-  configSchema,
   contentRoot,
   initialSelectedId,
   initialValues,
@@ -900,7 +898,6 @@ export const Editor: React.FC<EditorProps> = ({
           overlayProps={{ blur: 2 }}
         >
           <PermissionManager
-            schema={configSchema}
             collections={activeCollections}
             contentRoot={contentRoot}
             permissions={permissionsData}

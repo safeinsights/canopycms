@@ -139,34 +139,37 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const refreshEntries = async (branch: string = options.branchName) => {
     if (!branch) return
 
-    // Fetch collections from schema API
+    // Fetch schema from schema API
     const schemaResult = await apiClient.schema.get({ branch })
-    if (schemaResult.ok && schemaResult.data) {
-      const { convertSchemaTreeToEditorCollections } = await import('../editor-utils')
-      const collections = convertSchemaTreeToEditorCollections(
-        schemaResult.data.schema,
-        options.contentRoot || 'content'
-      )
-      setCollectionsState(collections)
+    if (!schemaResult.ok || !schemaResult.data) {
+      throw new Error(`Schema fetch failed: ${schemaResult.status}`)
     }
+
+    // Convert schema tree to editor collections
+    const { convertSchemaTreeToEditorCollections } = await import('../editor-utils')
+    const collections = convertSchemaTreeToEditorCollections(
+      schemaResult.data.schema,
+      options.contentRoot || 'content'
+    )
+    setCollectionsState(collections)
 
     // Fetch entries from entries API
     const result = await apiClient.entries.list({ branch })
     if (!result.ok) throw new Error(`Refresh failed: ${result.status}`)
     const data = result.data as ListEntriesResponse
 
+    // Build entries with resolved schemas from flatSchema
     const refreshed = buildEntriesFromListResponse({
       response: data,
       branchName: branch,
       resolvePreviewSrc: (entry) => options.resolvePreviewSrc(entry) ?? '',
-      existingEntries: entriesState,
-      currentEntry,
-      initialEntries: options.initialEntries,
       contentRoot: options.contentRoot || 'content',
+      flatSchema: schemaResult.data.flatSchema,
     })
+
     setEntriesState(refreshed)
+
     // Only auto-select newly created entry if there were already entries before
-    // (i.e., this is a true refresh after user action, not initial load)
     if (entriesState.length > 0) {
       const newlyCreated = refreshed.find((e) => !entriesState.find((old) => old.path === e.path))
       if (newlyCreated) {

@@ -14,7 +14,6 @@ type TestConfigInput = Omit<CanopyConfigInput, 'gitBotAuthorName' | 'gitBotAutho
 /**
  * Test-only helper that fills required author fields for convenience.
  * Do not use in production code; prefer defineCanopyConfig.
- * Note: schema is NOT included in the returned config - it's loaded from .collection.json or passed separately to createTestCanopyServices.
  */
 export const defineCanopyTestConfig = (config: TestConfigInput, overrides?: Partial<CanopyConfigInput>): CanopyConfig => {
   // Destructure to exclude schema from being spread into defineCanopyConfig

@@ -1,8 +1,5 @@
 import { defineCanopyConfig } from 'canopycms'
 
-// NOTE: Schema is now loaded from .collection.json files in the content directory
-// See content/posts/.collection.json and content/pages/.collection.json
-
 export default defineCanopyConfig({
   defaultBranchAccess: 'allow',
   mode: 'prod-sim',

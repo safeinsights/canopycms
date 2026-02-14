@@ -92,7 +92,6 @@ export const WithCollections: Story = {
           subtitle="Schema-driven editing with preview"
           branchName="story/branch"
           collections={collections}
-          configSchema={{ collections: [] }}
           initialSelectedId={entries[0]?.path}
           onCreateEntry={handleCreateEntry}
           operatingMode="dev"
