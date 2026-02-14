@@ -518,4 +518,203 @@ describe('ContentStore', () => {
       /^content\/docs\/api\/v2\/entry\.authentication\.[a-zA-Z0-9]{12}\.md$/,
     )
   })
+
+  describe('renameEntry', () => {
+    it('renames an entry by changing its slug', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [
+              {
+                name: 'post',
+                format: 'md' as const,
+                fields: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Create an entry
+      await store.write('content/posts', 'old-slug', {
+        format: 'md',
+        data: { title: 'Test Post' },
+        body: 'Content here',
+      })
+
+      // Rename it
+      const result = await store.renameEntry('content/posts', 'old-slug', 'new-slug')
+
+      // Verify new path is returned
+      expect(result.newPath).toBe('content/posts/new-slug')
+
+      // Verify old path doesn't exist anymore
+      await expect(store.read('content/posts', 'old-slug')).rejects.toThrow()
+
+      // Verify new path works
+      const doc = await store.read('content/posts', 'new-slug')
+      if (doc.format === 'json') throw new Error('expected markdown')
+      expect(doc.data.title).toBe('Test Post')
+      expect(doc.body).toContain('Content here')
+    })
+
+    it('throws when entry does not exist', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [{ name: 'post', format: 'json' as const, fields: [] }],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      await expect(store.renameEntry('content/posts', 'nonexistent', 'new-slug')).rejects.toThrow(
+        'Entry not found: nonexistent',
+      )
+    })
+
+    it('throws when new slug already exists', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [{ name: 'post', format: 'json' as const, fields: [] }],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Create two entries
+      await store.write('content/posts', 'first-post', {
+        format: 'json',
+        data: { title: 'First' },
+      })
+      await store.write('content/posts', 'second-post', {
+        format: 'json',
+        data: { title: 'Second' },
+      })
+
+      // Try to rename first-post to second-post (conflict)
+      await expect(store.renameEntry('content/posts', 'first-post', 'second-post')).rejects.toThrow(
+        'already exists',
+      )
+    })
+
+    it('validates slug format', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [{ name: 'post', format: 'json' as const, fields: [] }],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Create an entry
+      await store.write('content/posts', 'test-post', {
+        format: 'json',
+        data: { title: 'Test' },
+      })
+
+      // Try invalid slug with slash
+      await expect(store.renameEntry('content/posts', 'test-post', 'invalid/slug')).rejects.toThrow(
+        'cannot contain forward slashes',
+      )
+
+      // Try invalid slug with uppercase
+      await expect(store.renameEntry('content/posts', 'test-post', 'Invalid-Slug')).rejects.toThrow(
+        'must start with a letter or number',
+      )
+    })
+
+    it('handles no-op when slug is unchanged', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [{ name: 'post', format: 'json' as const, fields: [] }],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Create an entry
+      await store.write('content/posts', 'same-slug', {
+        format: 'json',
+        data: { title: 'Test' },
+      })
+
+      // Rename to same slug (no-op)
+      const result = await store.renameEntry('content/posts', 'same-slug', 'same-slug')
+
+      // Should return the same path
+      expect(result.newPath).toBe('content/posts/same-slug')
+
+      // Entry should still be readable
+      const doc = await store.read('content/posts', 'same-slug')
+      expect(doc.format).toBe('json')
+      if (doc.format === 'json') {
+        expect(doc.data.title).toBe('Test')
+      }
+    })
+
+    it('preserves content ID through rename', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [{ name: 'post', format: 'json' as const, fields: [] }],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Create an entry
+      await store.write('content/posts', 'original', {
+        format: 'json',
+        data: { title: 'Test' },
+      })
+
+      // Get the content ID before rename
+      const idBefore = await store.getIdForEntry('content/posts', 'original')
+
+      // Rename the entry
+      await store.renameEntry('content/posts', 'original', 'renamed')
+
+      // Get the content ID after rename
+      const idAfter = await store.getIdForEntry('content/posts', 'renamed')
+
+      // IDs should match (preserved through rename)
+      expect(idBefore).toBe(idAfter)
+      expect(idBefore).toBeTruthy()
+    })
+  })
 })

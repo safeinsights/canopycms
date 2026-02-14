@@ -157,7 +157,7 @@ describe('CollectionEditor', () => {
       expect(screen.getByText(/Edit Collection: posts/)).toBeTruthy()
       const nameInput = screen.getByLabelText(/^Name/) as HTMLInputElement
       expect(nameInput.value).toBe('posts')
-      expect(nameInput.disabled).toBe(true)
+      expect(nameInput.disabled).toBe(false) // Name field is now editable (it's just metadata)
       const labelInput = screen.getByLabelText(/^Label/) as HTMLInputElement
       expect(labelInput.value).toBe('Blog Posts')
     })
