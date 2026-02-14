@@ -68,18 +68,20 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
   const storageKey = useMemo(() => `canopycms:drafts:${options.branchName}`, [options.branchName])
 
-  const selectedValue = drafts[options.selectedPath]
-  const loadedValue = loadedValues[options.selectedPath]
+  // Draft keys are now content IDs, not paths
+  const currentId = options.currentEntry?.contentId
+  const selectedValue = currentId ? drafts[currentId] : undefined
+  const loadedValue = currentId ? loadedValues[currentId] : undefined
   const effectiveValue = selectedValue ?? loadedValue
 
   const modifiedCount = useMemo(() => Object.keys(drafts).length, [drafts])
 
   const editedFiles = useMemo(() => {
-    const draftPaths = Object.keys(drafts)
-    if (draftPaths.length === 0) return []
-    return draftPaths
-      .map((path) => {
-        const entry = options.entries.find((e) => e.path === path)
+    const draftIds = Object.keys(drafts)
+    if (draftIds.length === 0) return []
+    return draftIds
+      .map((id) => {
+        const entry = options.entries.find((e) => e.contentId === id)
         return entry ? { path: entry.path, label: entry.label } : null
       })
       .filter((x): x is { path: string; label: string } => x !== null)
@@ -120,12 +122,12 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }, [drafts, storageKey])
 
   const handleSave = async () => {
-    if (!options.currentEntry || !effectiveValue) return
+    if (!options.currentEntry || !effectiveValue || !currentId) return
     options.setBusy(true)
     try {
       const saved = await options.saveEntry(options.currentEntry, effectiveValue)
-      setDrafts((prev) => ({ ...prev, [options.selectedPath]: saved }))
-      setLoadedValues((prev) => ({ ...prev, [options.selectedPath]: saved }))
+      setDrafts((prev) => ({ ...prev, [currentId]: saved }))
+      setLoadedValues((prev) => ({ ...prev, [currentId]: saved }))
       notifications.show({
         message: 'Saved',
         color: 'green',
@@ -163,10 +165,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   const handleDiscardFileDraft = () => {
-    if (!options.selectedPath) return
+    if (!currentId) return
     setDrafts((prev) => {
       const next = { ...prev }
-      delete next[options.selectedPath]
+      delete next[currentId]
       return next
     })
     try {
@@ -174,7 +176,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         const raw = window.localStorage.getItem(storageKey)
         if (raw) {
           const parsed = JSON.parse(raw) as Record<string, FormValue>
-          delete parsed[options.selectedPath]
+          delete parsed[currentId]
           window.localStorage.setItem(storageKey, JSON.stringify(parsed))
         }
       }
@@ -190,12 +192,12 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   const handleReload = async () => {
-    if (!options.currentEntry) return
+    if (!options.currentEntry || !currentId) return
     options.setBusy(true)
     try {
       const loaded = await options.loadEntry(options.currentEntry)
-      setLoadedValues((prev) => ({ ...prev, [options.selectedPath]: loaded }))
-      setDrafts((prev) => ({ ...prev, [options.selectedPath]: loaded }))
+      setLoadedValues((prev) => ({ ...prev, [currentId]: loaded }))
+      setDrafts((prev) => ({ ...prev, [currentId]: loaded }))
       notifications.show({
         message: 'Reloaded',
         color: 'blue',
@@ -217,17 +219,23 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
   // Compute dirty state for a given entry
   const isDirtyForEntry = (entryPath: string): boolean => {
-    if (!drafts[entryPath]) return false
-    return (
-      !loadedValues[entryPath] ||
-      JSON.stringify(drafts[entryPath]) !== JSON.stringify(loadedValues[entryPath])
-    )
+    // Find entry by path to get its content ID
+    const entry = options.entries.find((e) => e.path === entryPath)
+    if (!entry) return false
+
+    const id = entry.contentId
+    if (!drafts[id]) return false
+    return !loadedValues[id] || JSON.stringify(drafts[id]) !== JSON.stringify(loadedValues[id])
   }
 
   // Convenience helper for checking current selection
   const isSelectedDirty = (): boolean => {
-    if (!options.selectedPath) return false
-    return isDirtyForEntry(options.selectedPath)
+    if (!currentId) return false
+    if (!drafts[currentId]) return false
+    return (
+      !loadedValues[currentId] ||
+      JSON.stringify(drafts[currentId]) !== JSON.stringify(loadedValues[currentId])
+    )
   }
 
   return {

@@ -49,7 +49,7 @@ import { useApiClient } from './context'
 
 export interface EditorEntry {
   path: string // Logical path (no IDs/extensions)
-  contentId?: string // 12-char content ID (optional for test data)
+  contentId: string // 12-char content ID (required - used for draft keying)
   label: string
   status?: string
   schema: readonly FieldConfig[]
