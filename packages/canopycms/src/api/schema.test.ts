@@ -83,6 +83,7 @@ describe('Schema API', () => {
       }),
       services: {
         config: { schema: mockSchema },
+        schema: mockSchema,
         flatSchema: mockFlatSchema,
         schemaRegistry: mockSchemaRegistry,
         checkContentAccess: vi.fn().mockResolvedValue({ allowed: true }),

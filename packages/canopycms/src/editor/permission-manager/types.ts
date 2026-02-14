@@ -2,14 +2,13 @@
  * Types for PermissionManager component
  */
 
-import type { PathPermission, PermissionLevel, PermissionTarget } from '../../config'
+import type { PathPermission, PermissionLevel, PermissionTarget, RootCollectionConfig } from '../../config'
 import type { UserSearchResult, GroupMetadata } from '../../auth/types'
-import type { CanopyConfig } from '../../config'
 import type { EditorCollection } from '../Editor'
 
 export interface PermissionManagerProps {
   /** Content schema to build tree from (optional - can use collections instead) */
-  schema?: CanopyConfig['schema']
+  schema?: RootCollectionConfig
   /** Collections from API (alternative to schema for file-based configs) */
   collections?: EditorCollection[]
   /** Content root path (default: 'content') */

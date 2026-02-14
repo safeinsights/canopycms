@@ -153,27 +153,22 @@ describe('buildEntriesFromListResponse', () => {
       format: 'json',
       type: 'entry',
     },
+    {
+      path: 'posts/hello',
+      label: 'Hello',
+      status: 'post',
+      schema: postsSchema,
+      apiPath: '/api/canopycms/feature-branch/content/posts/hello',
+      previewSrc: '/preview/posts/hello',
+      collectionId: 'posts',
+      collectionName: 'Posts',
+      slug: 'hello',
+      format: 'mdx',
+      type: 'entry',
+    },
   ]
 
   const response: ListEntriesResponse = {
-    collections: [
-      {
-        logicalPath: toLogicalPath('posts'),
-        contentId: 'abc123XYZ789',
-        name: 'Posts',
-        format: 'mdx',
-        type: 'collection',
-        schema: postsSchema,
-      },
-      {
-        logicalPath: toLogicalPath('pages'),
-        contentId: 'def456UVW012',
-        name: 'Pages',
-        format: 'json',
-        type: 'collection',
-        schema: [],
-      },
-    ],
     entries: [
       {
         logicalPath: toLogicalPath('posts/hello'),
@@ -226,7 +221,7 @@ describe('buildEntriesFromListResponse', () => {
     expect(post?.previewSrc).toBe('preview-hello world')
 
     const page = result.find((item) => item.collectionId === 'pages')
-    expect(page?.schema).toEqual([])
+    expect(page?.schema).toEqual(fallbackSchema)
     expect(page?.status).toBe('missing')
     expect(page?.apiPath).toBe('/api/canopycms/feature-branch/content/pages/home')
     expect(page?.slug).toBe('home')
@@ -234,9 +229,9 @@ describe('buildEntriesFromListResponse', () => {
     expect(resolvePreviewSrc).toHaveBeenCalledTimes(2)
   })
 
-  it('falls back to existing schemas when collection metadata is missing', () => {
+  it('uses schemas from existing entries', () => {
     const result = buildEntriesFromListResponse({
-      response: { ...response, collections: response.collections.filter((c) => c.logicalPath !== 'pages') },
+      response,
       branchName: 'feature-branch',
       resolvePreviewSrc: () => 'preview',
       existingEntries,
@@ -246,6 +241,9 @@ describe('buildEntriesFromListResponse', () => {
 
     const page = result.find((item) => item.collectionId === 'pages')
     expect(page?.schema).toEqual(fallbackSchema)
+
+    const post = result.find((item) => item.collectionId === 'posts')
+    expect(post?.schema).toEqual(postsSchema)
   })
 })
 

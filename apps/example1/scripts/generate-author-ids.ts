@@ -1,11 +1,14 @@
 import { flattenSchema } from 'canopycms'
-import { ContentStore } from 'canopycms/server'
+import { ContentStore, resolveSchema } from 'canopycms/server'
 import path from 'path'
 import config from '../canopycms.config'
 
 async function generateIds() {
   const root = path.resolve(__dirname, '..')
-  const flatSchema = flattenSchema(config.server.schema!, config.server.contentRoot)
+
+  // Load schema from .collection.json files
+  const { schema } = await resolveSchema(path.join(root, config.server.contentRoot), {})
+  const flatSchema = flattenSchema(schema, config.server.contentRoot)
   const store = new ContentStore(root, flatSchema)
   const idIndex = await store.idIndex()
 

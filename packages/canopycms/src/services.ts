@@ -34,6 +34,8 @@ export const getBootstrapAdminIds = (): Set<string> => {
 
 export interface CanopyServices {
   config: CanopyConfig
+  /** Resolved schema tree (loaded from .collection.json files or config) */
+  schema: RootCollectionConfig
   /** Cached flattened schema for O(1) lookups */
   flatSchema: FlatSchemaItem[]
   /** Schema registry for access by admin UI */
@@ -67,7 +69,7 @@ export interface CanopyServices {
 }
 
 /**
- * Options for createCanopyServices.
+ * Options for createCanopyServices and createTestCanopyServices.
  */
 export interface CreateCanopyServicesOptions {
   /**
@@ -75,13 +77,6 @@ export interface CreateCanopyServicesOptions {
    * Maps schema names to field definitions.
    */
   schemaRegistry?: Record<string, readonly FieldConfig[]>
-
-  /**
-   * Pre-resolved schema (bypasses .collection.json loading).
-   * Use this for tests that define schemas inline.
-   * In production, always use .collection.json files.
-   */
-  schema?: RootCollectionConfig
 }
 
 /**
@@ -89,39 +84,70 @@ export interface CreateCanopyServicesOptions {
  * Intended to be called once at startup and injected where needed
  * (e.g., request handlers, loaders).
  *
+ * Production function - always loads schema from .collection.json files.
+ * For tests, use createTestCanopyServices() instead.
+ *
  * @param config - Validated Canopy configuration
- * @param options - Optional settings including schema registry or pre-resolved schema
+ * @param options - Optional settings including schema registry
  */
 export const createCanopyServices = async (
   config: CanopyConfig,
   options: CreateCanopyServicesOptions = {}
 ): Promise<CanopyServices> => {
+  // Load schema from .collection.json files (single source of truth)
+  const schemaRegistry = options.schemaRegistry ?? {}
+  const result = await resolveSchema(config.contentRoot, schemaRegistry)
+  const schema = result.schema
+
+  // Validate that schema has content
+  if (!isValidSchema(schema)) {
+    throw new Error(
+      'No schema found. Create .collection.json files in your content directory ' +
+        'with references to field schemas defined in your schema registry.'
+    )
+  }
+
+  // Delegate to internal implementation
+  return _createCanopyServicesInternal(config, schema, options)
+}
+
+/**
+ * Create services with an injected test schema (bypasses .collection.json loading).
+ * This is a test-only function - use createCanopyServices() in production.
+ *
+ * @param config - Validated Canopy configuration
+ * @param testSchema - Pre-resolved schema for testing
+ * @param options - Optional settings including schema registry
+ */
+export const createTestCanopyServices = async (
+  config: CanopyConfig,
+  testSchema: RootCollectionConfig,
+  options: CreateCanopyServicesOptions = {}
+): Promise<CanopyServices> => {
+  // Validate test schema
+  if (!isValidSchema(testSchema)) {
+    throw new Error('Test schema is invalid')
+  }
+
+  // Delegate to internal implementation
+  return _createCanopyServicesInternal(config, testSchema, options)
+}
+
+/**
+ * Internal implementation shared by both production and test functions.
+ * Not exported - use createCanopyServices() or createTestCanopyServices().
+ */
+async function _createCanopyServicesInternal(
+  config: CanopyConfig,
+  schema: RootCollectionConfig,
+  options: CreateCanopyServicesOptions
+): Promise<CanopyServices> {
   // Validate mode-specific requirements (e.g., prod requires git bot credentials for GitHub)
   const strategy = operatingStrategy(config.mode)
   strategy.validateConfig(config)
 
   // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
-
-  // Resolve schema: use pre-resolved schema if provided (for tests), otherwise load from .collection.json
-  let schema: RootCollectionConfig
-  if (options.schema) {
-    // Use pre-resolved schema (test mode)
-    schema = options.schema
-  } else {
-    // Production path: Load from .collection.json files (single source of truth)
-    const schemaRegistry = options.schemaRegistry ?? {}
-    const result = await resolveSchema(config.contentRoot, schemaRegistry)
-    schema = result.schema
-  }
-
-  // Validate that schema has content
-  if (!isValidSchema(schema)) {
-    throw new Error(
-      'No schema found. Create .collection.json files in your content directory ' +
-      'with references to field schemas defined in your schema registry.'
-    )
-  }
 
   // Flatten schema once for O(1) lookups throughout the app
   const flatSchema = flattenSchema(schema, config.contentRoot)
@@ -308,6 +334,7 @@ export const createCanopyServices = async (
 
   return {
     config,
+    schema,
     flatSchema,
     schemaRegistry: options.schemaRegistry ?? {},
     checkBranchAccess,

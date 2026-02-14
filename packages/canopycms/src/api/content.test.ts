@@ -24,6 +24,7 @@ vi.mock('../content-store', () => {
 const allowedCtx = (): ApiContext => ({
   services: {
     config: { schema: [] } as any,
+    schema: { collections: [] },
     flatSchema: [],
     schemaRegistry: {},
     checkBranchAccess: vi.fn(),
@@ -49,6 +50,7 @@ describe('content api', () => {
     const ctx: ApiContext = {
       services: {
         config: { schema: [] } as any,
+        schema: { collections: [] },
         flatSchema: [],
         schemaRegistry: {},
         checkBranchAccess: vi.fn(),

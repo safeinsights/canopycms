@@ -49,7 +49,7 @@ const collectionMetaSchema = z.object({
 const rootCollectionMetaSchema = z.object({
   label: z.string().optional(),
   entries: z.array(entryTypeSchemaRefSchema).optional(),
-  order: z.array(z.string()), // Embedded IDs for ordering items (required)
+  order: z.array(z.string()).optional(), // Embedded IDs for ordering items
 })
 
 export type EntryTypeMeta = {
@@ -71,7 +71,7 @@ export type CollectionMeta = {
 export type RootCollectionMeta = {
   label?: string
   entries?: EntryTypeMeta[]
-  order: string[] // Embedded IDs for ordering items (required)
+  order?: string[] // Embedded IDs for ordering items
 }
 
 /**
@@ -186,16 +186,26 @@ export async function loadCollectionMetaFiles(
 
   try {
     await fs.access(rootMetaPath)
+  } catch (err) {
+    // No root .collection.json - that's okay
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      // File doesn't exist, that's fine
+    } else {
+      throw err
+    }
+  }
+
+  // If file exists, try to read and parse it
+  try {
     const content = await fs.readFile(rootMetaPath, 'utf-8')
     const parsed = JSON.parse(content)
     root = rootCollectionMetaSchema.parse(parsed) as RootCollectionMeta
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-      // File exists but is invalid
-      console.error(`Error loading ${rootMetaPath}:`, err)
-      throw new Error(`Invalid root .collection.json: ${(err as Error).message}`)
+    // Only handle errors if the file exists (not ENOENT)
+    const errno = (err as NodeJS.ErrnoException).code
+    if (errno !== 'ENOENT') {
+      throw new Error(`Invalid root .collection.json`)
     }
-    // No root .collection.json - that's okay
   }
 
   // Scan for collection folders

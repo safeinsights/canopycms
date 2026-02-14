@@ -12,6 +12,7 @@ const deleteAsset = ASSET_ROUTES.delete.handler
 const makeCtx = (): ApiContext => ({
   services: {
     config: { schema: [] } as any,
+    schema: { collections: [] },
     flatSchema: [],
     schemaRegistry: {},
     checkBranchAccess: () => ({ allowed: true, reason: 'no_acl' }),

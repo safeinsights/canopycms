@@ -328,8 +328,9 @@ export class SchemaStore {
       throw new Error(`Invalid input: ${parseResult.error.message}`)
     }
 
-    // Check if this is the root collection (path equals contentRoot, e.g., "content")
-    if (collectionPath === this.contentRoot) {
+    // Check if this is the root collection (path equals contentRoot basename, e.g., "content")
+    const contentRootName = path.basename(this.contentRoot)
+    if (collectionPath === contentRootName) {
       // Update root collection meta
       let meta = await this.readRootCollectionMeta()
       if (!meta) {
@@ -348,8 +349,8 @@ export class SchemaStore {
 
     // Strip contentRoot prefix to get relative path for regular collection
     // E.g., "content/posts" -> "posts"
-    const relativePath = collectionPath.startsWith(`${this.contentRoot}/`)
-      ? collectionPath.slice(this.contentRoot.length + 1)
+    const relativePath = collectionPath.startsWith(`${contentRootName}/`)
+      ? collectionPath.slice(contentRootName.length + 1)
       : collectionPath
 
     // Resolve path for regular collection
@@ -552,8 +553,9 @@ export class SchemaStore {
    * Update the order of items in a collection
    */
   async updateOrder(collectionPath: LogicalPath, order: string[]): Promise<void> {
-    // Check if this is the root collection (path equals contentRoot, e.g., "content")
-    if (collectionPath === this.contentRoot) {
+    // Check if this is the root collection (path equals contentRoot basename, e.g., "content")
+    const contentRootName = path.basename(this.contentRoot)
+    if (collectionPath === contentRootName) {
       // Update root collection meta
       let meta = await this.readRootCollectionMeta()
       if (!meta) {

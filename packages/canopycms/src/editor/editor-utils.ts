@@ -1,7 +1,7 @@
 import type { CollectionItem, ListEntriesResponse, EntryCollectionSummary } from '../api/entries'
-import type { ContentFormat, FieldConfig } from '../config'
+import type { ContentFormat, CollectionConfig, RootCollectionConfig, EntryTypeConfig } from '../config'
 import type { FormValue } from './FormRenderer'
-import type { EditorEntry, EditorCollection } from './Editor'
+import type { EditorEntry, EditorCollection, EditorEntryType } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
 // Import directly from normalize to avoid pulling in server-only branch.ts
 import { normalizeCollectionId } from '../paths/normalize'
@@ -113,6 +113,9 @@ export const buildWritePayload = (entry: { collectionId?: string; slug?: string;
 /**
  * Converts API collection summaries to Editor collection tree structure.
  * The API returns a flat list with parentId references; this builds a tree.
+ *
+ * @deprecated Use convertSchemaTreeToEditorCollections instead. This will be removed
+ * once the Editor is fully migrated to use the schema API for collections.
  */
 export function convertApiCollectionsToEditorCollections(
   apiCollections: EntryCollectionSummary[]
@@ -148,6 +151,82 @@ export function convertApiCollectionsToEditorCollections(
   return roots.map(buildTree)
 }
 
+/**
+ * Converts schema tree (from schema API) to Editor collection tree structure.
+ * This is the new approach where collections come from the schema API instead of entries API.
+ *
+ * Returns an array with a single root collection that contains all child collections.
+ * The EntryNavigator expects collections[0] to be the root with path === contentRoot.
+ */
+export function convertSchemaTreeToEditorCollections(
+  schemaTree: RootCollectionConfig | undefined,
+  contentRoot: string
+): EditorCollection[] {
+  // Handle undefined or null schema tree - return empty array to fall back to flatSchema
+  if (!schemaTree) {
+    return []
+  }
+
+  // If schema has no collections and no entries, return empty array to fall back to flatSchema
+  if (!schemaTree.collections?.length && !schemaTree.entries?.length) {
+    return []
+  }
+
+  // Helper to convert EntryTypeConfig to EditorEntryType
+  const convertEntryTypes = (entries: readonly EntryTypeConfig[] | undefined): EditorEntryType[] | undefined => {
+    if (!entries || entries.length === 0) return undefined
+    return entries.map(et => ({
+      name: et.name,
+      label: et.label,
+      format: et.format,
+      default: et.default,
+      maxItems: et.maxItems,
+    }))
+  }
+
+  // Helper to get default format from entry types
+  const getDefaultFormat = (entries: readonly EntryTypeConfig[] | undefined): ContentFormat => {
+    if (!entries || entries.length === 0) return 'json'
+    const defaultEntry = entries.find(e => e.default) ?? entries[0]
+    return defaultEntry?.format || 'json'
+  }
+
+  // Recursively convert CollectionConfig to EditorCollection
+  const convertCollection = (col: CollectionConfig, parentPath: string): EditorCollection => {
+    const logicalPath = `${parentPath}/${col.path}`
+
+    return {
+      path: logicalPath,
+      contentId: undefined, // Will need to be populated separately by fetching physical paths
+      name: col.name,
+      label: col.label,
+      format: getDefaultFormat(col.entries),
+      type: 'collection' as const,
+      entryTypes: convertEntryTypes(col.entries),
+      order: col.order,
+      children: col.collections?.map(c => convertCollection(c, logicalPath)),
+    }
+  }
+
+  // Convert child collections
+  const childCollections = schemaTree.collections?.map(col => convertCollection(col, contentRoot)) ?? []
+
+  // Create root collection node (required by EntryNavigator)
+  const rootCollection: EditorCollection = {
+    path: contentRoot,
+    contentId: undefined, // Root doesn't have a content ID
+    name: contentRoot,
+    label: schemaTree.label ?? 'Content',
+    format: getDefaultFormat(schemaTree.entries),
+    type: 'collection' as const,
+    entryTypes: convertEntryTypes(schemaTree.entries),
+    order: schemaTree.order,
+    children: childCollections.length > 0 ? childCollections : undefined,
+  }
+
+  return [rootCollection]
+}
+
 interface BuildEntriesFromListParams {
   response: ListEntriesResponse
   branchName: string
@@ -167,18 +246,10 @@ export const buildEntriesFromListResponse = ({
   initialEntries,
   contentRoot,
 }: BuildEntriesFromListParams): EditorEntry[] => {
-  const schemaByCollection = new Map<string, readonly FieldConfig[]>()
-  const collectSchemas = (nodes: ListEntriesResponse['collections']) => {
-    nodes.forEach((node) => {
-      schemaByCollection.set(node.logicalPath, node.schema)
-      if (node.children) collectSchemas(node.children)
-    })
-  }
-  collectSchemas(response.collections)
   return response.entries.map((entry) => {
+    // Schema is now determined from the schema registry, not from collections
+    // Fall back to existing entries if available
     const schema =
-      schemaByCollection.get(entry.collectionId) ??
-      schemaByCollection.get(entry.logicalPath) ?? // For root entries, check by entry path (entry-type logical path)
       existingEntries.find((e) => e.collectionId === entry.collectionId)?.schema ??
       currentEntry?.schema ??
       initialEntries.find((e) => e.collectionId === entry.collectionId)?.schema ??

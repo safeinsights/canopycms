@@ -183,9 +183,9 @@ export type SourceRoot = string | undefined
 
 /**
  * Validated CanopyConfig - the runtime configuration object.
+ * Schema is always loaded from .collection.json files in the content directory.
  */
 export interface CanopyConfig {
-  schema?: RootCollectionConfig
   media?: MediaConfig
   defaultBranchAccess?: DefaultBranchAccess
   defaultPathAccess?: DefaultPathAccess
@@ -207,9 +207,9 @@ export interface CanopyConfig {
 
 /**
  * Input type for config authoring (allows looser types before validation)
+ * Schema is always loaded from .collection.json files in the content directory.
  */
 export interface CanopyConfigInput {
-  schema?: RootCollectionConfig
   media?: MediaConfig
   defaultBranchAccess?: DefaultBranchAccess
   defaultPathAccess?: DefaultPathAccess
@@ -266,11 +266,12 @@ export type FlatSchemaItem =
 
 /**
  * Client config - subset safe for browser (DRY - derived from CanopyConfig)
- * Use services.flatSchema for O(1) cached access to the flattened schema structure.
+ * Use flatSchema for O(1) cached access to the flattened schema structure.
+ * Schema is loaded from .collection.json files on the server and provided as flatSchema.
  */
 export type CanopyClientConfig = Pick<
   CanopyConfig,
-  'schema' | 'defaultBaseBranch' | 'contentRoot' | 'editor' | 'mode'
+  'defaultBaseBranch' | 'contentRoot' | 'editor' | 'mode'
 > & {
   flatSchema: FlatSchemaItem[]
 }

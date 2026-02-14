@@ -1,10 +1,10 @@
-import type { CanopyConfig } from '../../config'
+import type { RootCollectionConfig } from '../../config'
 
 /**
  * Blog schema for testing content workflows
  * Contains posts collection
  */
-export const BLOG_SCHEMA: CanopyConfig['schema'] = {
+export const BLOG_SCHEMA: RootCollectionConfig = {
   collections: [
     {
       name: 'posts',
@@ -30,7 +30,7 @@ export const BLOG_SCHEMA: CanopyConfig['schema'] = {
  * E-commerce schema for testing complex permission scenarios
  * Contains products and categories
  */
-export const ECOMMERCE_SCHEMA: CanopyConfig['schema'] = {
+export const ECOMMERCE_SCHEMA: RootCollectionConfig = {
   collections: [
     {
       name: 'products',

@@ -12,23 +12,24 @@ const meta: Meta<typeof CanopyEditor> = {
 export default meta
 type Story = StoryObj<typeof CanopyEditor>
 
+const schema = {
+  collections: [
+    {
+      name: 'posts',
+      label: 'Posts',
+      path: 'posts',
+      entries: [
+        {
+          name: 'entry',
+          format: 'json' as const,
+          fields: [{ name: 'title', type: 'string' as const }],
+        },
+      ],
+    },
+  ],
+} as const
+
 const configBundle = defineCanopyConfig({
-  schema: {
-    collections: [
-      {
-        name: 'posts',
-        label: 'Posts',
-        path: 'posts',
-        entries: [
-          {
-            name: 'entry',
-            format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
-          },
-        ],
-      },
-    ],
-  },
   contentRoot: 'content',
   defaultBaseBranch: 'main',
   gitBotAuthorName: 'Canopy Bot',
@@ -47,7 +48,7 @@ const entries = [
     path: 'content/posts/hello',
     label: 'Hello Post',
     status: 'page',
-    schema: configBundle.server.schema!.collections![0].entries![0].fields,
+    schema: schema.collections[0].entries[0].fields,
     apiPath: '/api/canopycms/main/content/posts/hello',
     collectionId: 'content/posts',
     collectionName: 'posts',
