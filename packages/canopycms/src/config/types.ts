@@ -189,7 +189,6 @@ export type SourceRoot = string | undefined
 
 /**
  * Validated CanopyConfig - the runtime configuration object.
- * Schema is always loaded from .collection.json files in the content directory.
  */
 export interface CanopyConfig {
   media?: MediaConfig
@@ -213,7 +212,6 @@ export interface CanopyConfig {
 
 /**
  * Input type for config authoring (allows looser types before validation)
- * Schema is always loaded from .collection.json files in the content directory.
  */
 export interface CanopyConfigInput {
   media?: MediaConfig

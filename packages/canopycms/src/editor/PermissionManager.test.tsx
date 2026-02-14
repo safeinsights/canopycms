@@ -4,6 +4,7 @@ import { MantineProvider } from '@mantine/core'
 import { PermissionManager } from './PermissionManager'
 import type { PathPermission } from '../config'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
+import type { EditorCollection } from './Editor'
 
 afterEach(() => {
   cleanup()
@@ -16,52 +17,50 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
 )
 
 describe('PermissionManager', () => {
-  const mockSchema = {
-    collections: [
-      {
-        name: 'Posts',
-        path: 'posts',
-        entries: [
-          {
-            name: 'entry',
-            format: 'mdx' as const,
-            fields: [
-              { name: 'title', type: 'string' as const },
-              { name: 'content', type: 'markdown' as const },
-            ],
-          },
-        ],
-      },
-      {
-        name: 'Pages',
-        path: 'pages',
-        entries: [
-          {
-            name: 'entry',
-            format: 'mdx' as const,
-            fields: [
-              { name: 'title', type: 'string' as const },
-              { name: 'body', type: 'markdown' as const },
-            ],
-          },
-        ],
-      },
-      {
-        name: 'About',
-        path: 'about',
-        entries: [
-          {
-            name: 'entry',
-            format: 'mdx' as const,
-            fields: [
-              { name: 'title', type: 'string' as const },
-              { name: 'bio', type: 'markdown' as const },
-            ],
-          },
-        ],
-      },
-    ],
-  }
+  const mockCollections: EditorCollection[] = [
+    {
+      path: 'content/posts',
+      name: 'posts',
+      label: 'Posts',
+      format: 'mdx',
+      type: 'collection',
+      entryTypes: [
+        {
+          name: 'entry',
+          label: 'Entry',
+          format: 'mdx',
+        },
+      ],
+    },
+    {
+      path: 'content/pages',
+      name: 'pages',
+      label: 'Pages',
+      format: 'mdx',
+      type: 'collection',
+      entryTypes: [
+        {
+          name: 'entry',
+          label: 'Entry',
+          format: 'mdx',
+        },
+      ],
+    },
+    {
+      path: 'content/about',
+      name: 'about',
+      label: 'About',
+      format: 'mdx',
+      type: 'collection',
+      entryTypes: [
+        {
+          name: 'entry',
+          label: 'Entry',
+          format: 'mdx',
+        },
+      ],
+    },
+  ]
 
   const mockPermissions: PathPermission[] = [
     {
@@ -98,7 +97,7 @@ describe('PermissionManager', () => {
     it('renders with permissions', () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -116,7 +115,7 @@ describe('PermissionManager', () => {
     it('renders loading state', () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={[]}
           canEdit={true}
           loading={true}
@@ -133,7 +132,7 @@ describe('PermissionManager', () => {
     it('renders read-only warning for non-admin users', () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={false}
           onSearchUsers={mockOnSearchUsers}
@@ -151,7 +150,7 @@ describe('PermissionManager', () => {
     it('shows content node by default', () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -167,7 +166,7 @@ describe('PermissionManager', () => {
     it('expands and shows child nodes when content is expanded', async () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -179,16 +178,16 @@ describe('PermissionManager', () => {
 
       // Content is expanded by default, wait for children to appear after Collapse animation
       await waitFor(() => {
-        expect(screen.getByText('posts')).toBeTruthy()
-        expect(screen.getByText('pages')).toBeTruthy()
-        expect(screen.getByText('about')).toBeTruthy()
+        expect(screen.getByText('Posts')).toBeTruthy()
+        expect(screen.getByText('Pages')).toBeTruthy()
+        expect(screen.getByText('About')).toBeTruthy()
       })
     })
 
     it('expands all nodes when Expand All clicked', async () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -202,15 +201,15 @@ describe('PermissionManager', () => {
       fireEvent.click(expandAllButton)
 
       await waitFor(() => {
-        expect(screen.getByText('posts')).toBeTruthy()
-        expect(screen.getByText('pages')).toBeTruthy()
+        expect(screen.getByText('Posts')).toBeTruthy()
+        expect(screen.getByText('Pages')).toBeTruthy()
       })
     })
 
     it('collapses all nodes when Collapse All clicked', async () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -225,7 +224,7 @@ describe('PermissionManager', () => {
       fireEvent.click(expandAllButton)
 
       await waitFor(() => {
-        expect(screen.getByText('posts')).toBeTruthy()
+        expect(screen.getByText('Posts')).toBeTruthy()
       })
 
       // Then collapse all
@@ -240,50 +239,57 @@ describe('PermissionManager', () => {
     })
 
     it('preserves nested collection hierarchy in tree', async () => {
-      // Schema with nested collections
-      const nestedSchema = {
-        collections: [
-          {
-            name: 'docs',
-            path: 'docs',
-            entries: [
-              {
-                name: 'entry',
-                format: 'md' as const,
-                fields: [{ name: 'title', type: 'string' as const }],
-              },
-            ],
-            collections: [
-              {
-                name: 'api',
-                path: 'api',
-                entries: [
-                  {
-                    name: 'entry',
-                    format: 'md' as const,
-                    fields: [{ name: 'title', type: 'string' as const }],
-                  },
-                ],
-              },
-              {
-                name: 'guides',
-                path: 'guides',
-                entries: [
-                  {
-                    name: 'entry',
-                    format: 'md' as const,
-                    fields: [{ name: 'title', type: 'string' as const }],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      }
+      // Collections with nested structure
+      const nestedCollections: EditorCollection[] = [
+        {
+          path: 'content/docs',
+          name: 'docs',
+          label: 'Docs',
+          format: 'md',
+          type: 'collection',
+          entryTypes: [
+            {
+              name: 'entry',
+              label: 'Entry',
+              format: 'md',
+            },
+          ],
+          children: [
+            {
+              path: 'content/docs/api',
+              name: 'api',
+              label: 'API',
+              format: 'md',
+              type: 'collection',
+              entryTypes: [
+                {
+                  name: 'entry',
+                  label: 'Entry',
+                  format: 'md',
+                },
+              ],
+            },
+            {
+              path: 'content/docs/guides',
+              name: 'guides',
+              label: 'Guides',
+              format: 'md',
+              type: 'collection',
+              entryTypes: [
+                {
+                  name: 'entry',
+                  label: 'Entry',
+                  format: 'md',
+                },
+              ],
+            },
+          ],
+        },
+      ]
 
       render(
         <PermissionManager
-          schema={nestedSchema}
+          collections={nestedCollections}
           permissions={[]}
           canEdit={true}
           onSave={mockOnSave}
@@ -298,19 +304,19 @@ describe('PermissionManager', () => {
       fireEvent.click(contentNode)
 
       await waitFor(() => {
-        expect(screen.getByText('docs')).toBeTruthy()
+        expect(screen.getByText('Docs')).toBeTruthy()
       })
 
       // Expand the docs collection
-      const docsNode = screen.getByText('docs')
+      const docsNode = screen.getByText('Docs')
       fireEvent.click(docsNode)
 
       // Wait for nested items to appear
       await waitFor(
         () => {
           // CRITICAL: Nested items should appear under 'docs', not at root level
-          const apiNode = screen.queryByText('api')
-          const guidesNode = screen.queryByText('guides')
+          const apiNode = screen.queryByText('API')
+          const guidesNode = screen.queryByText('Guides')
 
           // These items should exist when docs is expanded
           expect(apiNode).not.toBeNull()
@@ -325,7 +331,7 @@ describe('PermissionManager', () => {
     it('shows permission editor when node is clicked', async () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -339,9 +345,9 @@ describe('PermissionManager', () => {
       const expandAllButton = screen.getByText('Expand All')
       fireEvent.click(expandAllButton)
 
-      await waitFor(() => screen.getByText('posts'))
+      await waitFor(() => screen.getByText('Posts'))
 
-      const postsNode = screen.getByText('posts')
+      const postsNode = screen.getByText('Posts')
       fireEvent.click(postsNode)
 
       await waitFor(() => {
@@ -358,7 +364,7 @@ describe('PermissionManager', () => {
     it('shows group badges on nodes with permissions', async () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -369,10 +375,10 @@ describe('PermissionManager', () => {
       )
 
       // Content is expanded by default - posts should be visible
-      expect(screen.getByText('posts')).toBeTruthy()
+      expect(screen.getByText('Posts')).toBeTruthy()
 
       // Click posts node to see its permissions (posts has group 'editors' assigned)
-      fireEvent.click(screen.getByText('posts'))
+      fireEvent.click(screen.getByText('Posts'))
 
       // Wait for group badges to appear in the permission editor
       await waitFor(() => {
@@ -384,7 +390,7 @@ describe('PermissionManager', () => {
     it('shows user badges on nodes with user permissions', async () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -395,10 +401,10 @@ describe('PermissionManager', () => {
       )
 
       // Content is expanded by default - about should be visible
-      expect(screen.getByText('about')).toBeTruthy()
+      expect(screen.getByText('About')).toBeTruthy()
 
       // Click about node to see its permissions (about has user 'alice' assigned)
-      fireEvent.click(screen.getByText('about'))
+      fireEvent.click(screen.getByText('About'))
 
       // Wait for user badges to appear in the permission editor
       await waitFor(() => {
@@ -412,7 +418,7 @@ describe('PermissionManager', () => {
     it('loads groups on mount when canEdit is true', async () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -430,7 +436,7 @@ describe('PermissionManager', () => {
     it('does not load groups when canEdit is false', () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={false}
           onSearchUsers={mockOnSearchUsers}
@@ -448,7 +454,7 @@ describe('PermissionManager', () => {
 
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -470,7 +476,7 @@ describe('PermissionManager', () => {
     it('shows group search panel when Add Groups clicked', async () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -484,10 +490,10 @@ describe('PermissionManager', () => {
       const expandAllButton = screen.getByText('Expand All')
       fireEvent.click(expandAllButton)
 
-      await waitFor(() => screen.getByText('posts'))
+      await waitFor(() => screen.getByText('Posts'))
 
       // Click posts node to select it
-      const postsNode = screen.getByText('posts')
+      const postsNode = screen.getByText('Posts')
       fireEvent.click(postsNode)
 
       let addGroupsButton: HTMLElement
@@ -508,7 +514,7 @@ describe('PermissionManager', () => {
     it('filters groups as user types', async () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -522,10 +528,10 @@ describe('PermissionManager', () => {
       const expandAllButton = screen.getByText('Expand All')
       fireEvent.click(expandAllButton)
 
-      await waitFor(() => screen.getByText('posts'))
+      await waitFor(() => screen.getByText('Posts'))
 
       // Open group search
-      fireEvent.click(screen.getByText('posts'))
+      fireEvent.click(screen.getByText('Posts'))
 
       let addGroupsButton: HTMLElement
       await waitFor(() => {
@@ -552,7 +558,7 @@ describe('PermissionManager', () => {
     it('closes search panel when Cancel clicked', async () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -566,9 +572,9 @@ describe('PermissionManager', () => {
       const expandAllButton = screen.getByText('Expand All')
       fireEvent.click(expandAllButton)
 
-      await waitFor(() => screen.getByText('posts'))
+      await waitFor(() => screen.getByText('Posts'))
 
-      fireEvent.click(screen.getByText('posts'))
+      fireEvent.click(screen.getByText('Posts'))
 
       let addGroupsButton: HTMLElement
       await waitFor(() => {
@@ -594,7 +600,7 @@ describe('PermissionManager', () => {
     it('shows user search panel when Add User clicked', async () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -608,9 +614,9 @@ describe('PermissionManager', () => {
       const expandAllButton = screen.getByText('Expand All')
       fireEvent.click(expandAllButton)
 
-      await waitFor(() => screen.getByText('posts'))
+      await waitFor(() => screen.getByText('Posts'))
 
-      fireEvent.click(screen.getByText('posts'))
+      fireEvent.click(screen.getByText('Posts'))
 
       let addUserButton: HTMLElement
       await waitFor(() => {
@@ -632,7 +638,7 @@ describe('PermissionManager', () => {
       try {
         render(
           <PermissionManager
-            schema={mockSchema}
+            collections={mockCollections}
             permissions={mockPermissions}
             canEdit={true}
             onSave={mockOnSave}
@@ -647,11 +653,11 @@ describe('PermissionManager', () => {
         const expandAllButton = screen.getByText('Expand All')
         fireEvent.click(expandAllButton)
 
-        await waitFor(() => screen.getByText('posts'))
+        await waitFor(() => screen.getByText('Posts'))
         vi.useFakeTimers()
 
         // Open user search
-        fireEvent.click(screen.getByText('posts'))
+        fireEvent.click(screen.getByText('Posts'))
 
         vi.useRealTimers()
         let addUserButton: HTMLElement
@@ -689,7 +695,7 @@ describe('PermissionManager', () => {
 
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -703,9 +709,9 @@ describe('PermissionManager', () => {
       const expandAllButton = screen.getByText('Expand All')
       fireEvent.click(expandAllButton)
 
-      await waitFor(() => screen.getByText('posts'))
+      await waitFor(() => screen.getByText('Posts'))
 
-      fireEvent.click(screen.getByText('posts'))
+      fireEvent.click(screen.getByText('Posts'))
 
       let addUserButton: HTMLElement
       await waitFor(() => {
@@ -735,7 +741,7 @@ describe('PermissionManager', () => {
     it('saves changes and calls onSave', async () => {
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockOnSave}
@@ -749,10 +755,10 @@ describe('PermissionManager', () => {
       const expandAllButton = screen.getByText('Expand All')
       fireEvent.click(expandAllButton)
 
-      await waitFor(() => screen.getByText('posts'))
+      await waitFor(() => screen.getByText('Posts'))
 
       // Open posts node and add a user
-      fireEvent.click(screen.getByText('posts'))
+      fireEvent.click(screen.getByText('Posts'))
 
       let addUserButton: HTMLElement
       await waitFor(() => {
@@ -800,7 +806,7 @@ describe('PermissionManager', () => {
 
       render(
         <PermissionManager
-          schema={mockSchema}
+          collections={mockCollections}
           permissions={mockPermissions}
           canEdit={true}
           onSave={mockError}
@@ -814,10 +820,10 @@ describe('PermissionManager', () => {
       const expandAllButton = screen.getByText('Expand All')
       fireEvent.click(expandAllButton)
 
-      await waitFor(() => screen.getByText('posts'))
+      await waitFor(() => screen.getByText('Posts'))
 
       // Make a change by adding a user
-      fireEvent.click(screen.getByText('posts'))
+      fireEvent.click(screen.getByText('Posts'))
 
       let addUserButton: HTMLElement
       await waitFor(() => {

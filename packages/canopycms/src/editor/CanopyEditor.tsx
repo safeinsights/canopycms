@@ -17,7 +17,6 @@ export interface CanopyEditorProps extends Omit<
   | 'subtitle'
   | 'themeOptions'
   | 'entries'
-  | 'configSchema'
   | 'contentRoot'
   | 'operatingMode'
 > {
@@ -60,7 +59,6 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
         renderPreview={renderPreview}
         onCreateEntry={onCreateEntry}
         collections={collections}
-        configSchema={undefined} // Schema loaded via API, PermissionManager uses collections instead
         contentRoot={config.contentRoot}
         previewBaseByCollection={previewBase}
         themeOptions={resolvedTheme}

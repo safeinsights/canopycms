@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { FieldConfig } from '../config'
+import type { FieldConfig, FlatSchemaItem } from '../config'
 import type { ListEntriesResponse } from '../api/entries'
 import type { EditorEntry } from './Editor'
 import {
@@ -12,6 +12,7 @@ import {
   buildBreadcrumbSegments,
   calculatePathToEntry,
   normalizeCollectionPath,
+  convertSchemaTreeToEditorCollections,
 } from './editor-utils'
 import type { EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
@@ -143,34 +144,24 @@ describe('buildWritePayload', () => {
 
 describe('buildEntriesFromListResponse', () => {
   const postsSchema: FieldConfig[] = [{ name: 'title', type: 'string' }]
-  const fallbackSchema: FieldConfig[] = [{ name: 'fallback', type: 'string' }]
+  const pagesSchema: FieldConfig[] = [{ name: 'body', type: 'mdx' }]
 
-  const existingEntries: EditorEntry[] = [
+  const flatSchema: FlatSchemaItem[] = [
     {
-      path: 'pages/home',
-      label: 'Home Page',
-      status: 'entry',
-      schema: fallbackSchema,
-      apiPath: '/api/canopycms/feature-branch/content/pages/home',
-      previewSrc: '/preview/pages/home',
-      collectionId: 'pages',
-      collectionName: 'Pages',
-      slug: 'home',
-      format: 'json',
-      type: 'entry',
+      type: 'entry-type',
+      logicalPath: toLogicalPath('posts/post'),
+      name: 'post',
+      parentPath: toLogicalPath('posts'),
+      format: 'mdx',
+      fields: postsSchema,
     },
     {
-      path: 'posts/hello',
-      label: 'Hello',
-      status: 'post',
-      schema: postsSchema,
-      apiPath: '/api/canopycms/feature-branch/content/posts/hello',
-      previewSrc: '/preview/posts/hello',
-      collectionId: 'posts',
-      collectionName: 'Posts',
-      slug: 'hello',
-      format: 'mdx',
-      type: 'entry',
+      type: 'entry-type',
+      logicalPath: toLogicalPath('pages/page'),
+      name: 'page',
+      parentPath: toLogicalPath('pages'),
+      format: 'json',
+      fields: pagesSchema,
     },
   ]
 
@@ -216,9 +207,8 @@ describe('buildEntriesFromListResponse', () => {
       response,
       branchName: 'feature-branch',
       resolvePreviewSrc,
-      existingEntries,
-      initialEntries: existingEntries,
       contentRoot: 'content',
+      flatSchema,
     })
 
     expect(result).toHaveLength(2)
@@ -231,7 +221,7 @@ describe('buildEntriesFromListResponse', () => {
     expect(post?.previewSrc).toBe('preview-hello world')
 
     const page = result.find((item) => item.collectionId === 'pages')
-    expect(page?.schema).toEqual(fallbackSchema)
+    expect(page?.schema).toEqual(pagesSchema)
     expect(page?.status).toBe('missing')
     expect(page?.apiPath).toBe('/api/canopycms/feature-branch/content/pages/home')
     expect(page?.slug).toBe('home')
@@ -239,21 +229,73 @@ describe('buildEntriesFromListResponse', () => {
     expect(resolvePreviewSrc).toHaveBeenCalledTimes(2)
   })
 
-  it('uses schemas from existing entries', () => {
+  it('resolves schema from flatSchema by matching parentPath and entryType', () => {
     const result = buildEntriesFromListResponse({
       response,
       branchName: 'feature-branch',
       resolvePreviewSrc: () => 'preview',
-      existingEntries,
-      initialEntries: existingEntries,
       contentRoot: 'content',
+      flatSchema,
     })
 
     const page = result.find((item) => item.collectionId === 'pages')
-    expect(page?.schema).toEqual(fallbackSchema)
+    expect(page?.schema).toEqual(pagesSchema)
 
     const post = result.find((item) => item.collectionId === 'posts')
     expect(post?.schema).toEqual(postsSchema)
+  })
+
+  it('returns empty schema when entry type not in flatSchema', () => {
+    const result = buildEntriesFromListResponse({
+      response: {
+        entries: [
+          {
+            logicalPath: toLogicalPath('posts/unknown'),
+            contentId: 'abc123def456',
+            slug: 'unknown',
+            collectionId: 'posts',
+            collectionName: 'Posts',
+            format: 'mdx',
+            entryType: 'unknown-type',
+            physicalPath: toPhysicalPath('content/posts/unknown'),
+            exists: true,
+          },
+        ],
+        pagination: { hasMore: false, limit: 50 },
+      },
+      branchName: 'main',
+      resolvePreviewSrc: () => '',
+      contentRoot: 'content',
+      flatSchema,
+    })
+
+    expect(result[0].schema).toEqual([])
+  })
+
+  it('returns empty schema when entry missing entryType', () => {
+    const result = buildEntriesFromListResponse({
+      response: {
+        entries: [
+          {
+            logicalPath: toLogicalPath('posts/no-type'),
+            contentId: 'abc123def456',
+            slug: 'no-type',
+            collectionId: 'posts',
+            collectionName: 'Posts',
+            format: 'mdx',
+            physicalPath: toPhysicalPath('content/posts/no-type'),
+            exists: true,
+          } as any, // Type assertion needed to test missing entryType
+        ],
+        pagination: { hasMore: false, limit: 50 },
+      },
+      branchName: 'main',
+      resolvePreviewSrc: () => '',
+      contentRoot: 'content',
+      flatSchema,
+    })
+
+    expect(result[0].schema).toEqual([])
   })
 })
 
@@ -687,5 +729,145 @@ describe('normalizeCollectionPath', () => {
 
   it('handles empty string', () => {
     expect(normalizeCollectionPath('')).toBe('')
+  })
+})
+
+describe('convertSchemaTreeToEditorCollections', () => {
+  it('converts flat schema to editor collections', () => {
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          label: 'Blog Posts',
+          entries: [{ name: 'post', format: 'mdx' as const, fields: [] }],
+        },
+        {
+          name: 'pages',
+          path: 'pages',
+          entries: [{ name: 'page', format: 'json' as const, fields: [] }],
+        },
+      ],
+    }
+
+    const result = convertSchemaTreeToEditorCollections(schema, 'content')
+
+    expect(result).toHaveLength(1) // Returns single root collection
+    expect(result[0].path).toBe('content')
+    expect(result[0].children).toHaveLength(2)
+    expect(result[0].children?.[0].path).toBe('content/posts')
+    expect(result[0].children?.[0].name).toBe('posts')
+    expect(result[0].children?.[0].label).toBe('Blog Posts')
+    expect(result[0].children?.[1].path).toBe('content/pages')
+  })
+
+  it('converts nested collections with correct paths (regression test)', () => {
+    // This is a regression test for the bug where nested collection paths
+    // were doubled (e.g., "content/docs/docs/api" instead of "content/docs/api")
+    const schema = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          label: 'Documentation',
+          entries: [{ name: 'doc', format: 'json' as const, fields: [] }],
+          collections: [
+            {
+              name: 'api',
+              path: 'docs/api', // Full path from content root
+              label: 'API Reference',
+              entries: [{ name: 'doc', format: 'json' as const, fields: [] }],
+              collections: [
+                {
+                  name: 'v1',
+                  path: 'docs/api/v1', // Full path from content root
+                  label: 'Version 1',
+                  entries: [{ name: 'doc', format: 'json' as const, fields: [] }],
+                },
+                {
+                  name: 'v2',
+                  path: 'docs/api/v2', // Full path from content root
+                  label: 'Version 2',
+                  entries: [{ name: 'doc', format: 'json' as const, fields: [] }],
+                },
+              ],
+            },
+            {
+              name: 'guides',
+              path: 'docs/guides', // Full path from content root
+              entries: [{ name: 'doc', format: 'json' as const, fields: [] }],
+            },
+          ],
+        },
+      ],
+    }
+
+    const result = convertSchemaTreeToEditorCollections(schema, 'content')
+
+    expect(result).toHaveLength(1)
+    expect(result[0].path).toBe('content')
+
+    const docs = result[0].children?.[0]
+    expect(docs?.path).toBe('content/docs')
+    expect(docs?.name).toBe('docs')
+    expect(docs?.label).toBe('Documentation')
+
+    // Check nested api collection
+    const api = docs?.children?.[0]
+    expect(api?.path).toBe('content/docs/api') // Should NOT be 'content/docs/docs/api'
+    expect(api?.name).toBe('api')
+    expect(api?.label).toBe('API Reference')
+
+    // Check deeply nested v1 and v2 collections
+    const v1 = api?.children?.[0]
+    expect(v1?.path).toBe('content/docs/api/v1') // Should NOT be 'content/docs/api/docs/api/v1'
+    expect(v1?.name).toBe('v1')
+    expect(v1?.label).toBe('Version 1')
+
+    const v2 = api?.children?.[1]
+    expect(v2?.path).toBe('content/docs/api/v2')
+    expect(v2?.name).toBe('v2')
+    expect(v2?.label).toBe('Version 2')
+
+    // Check guides collection at same level as api
+    const guides = docs?.children?.[1]
+    expect(guides?.path).toBe('content/docs/guides') // Should NOT be 'content/docs/docs/guides'
+    expect(guides?.name).toBe('guides')
+  })
+
+  it('returns empty array for undefined schema', () => {
+    const result = convertSchemaTreeToEditorCollections(undefined, 'content')
+    expect(result).toEqual([])
+  })
+
+  it('returns empty array for schema with no collections or entries', () => {
+    const result = convertSchemaTreeToEditorCollections({}, 'content')
+    expect(result).toEqual([])
+  })
+
+  it('preserves entry types and order from schema', () => {
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            { name: 'post', format: 'mdx' as const, fields: [], default: true },
+            { name: 'draft', format: 'mdx' as const, fields: [], label: 'Draft Post' },
+          ],
+          order: ['abc123', 'def456'],
+        },
+      ],
+    }
+
+    const result = convertSchemaTreeToEditorCollections(schema, 'content')
+
+    const posts = result[0].children?.[0]
+    expect(posts?.entryTypes).toHaveLength(2)
+    expect(posts?.entryTypes?.[0].name).toBe('post')
+    expect(posts?.entryTypes?.[0].default).toBe(true)
+    expect(posts?.entryTypes?.[1].name).toBe('draft')
+    expect(posts?.entryTypes?.[1].label).toBe('Draft Post')
+    expect(posts?.order).toEqual(['abc123', 'def456'])
   })
 })

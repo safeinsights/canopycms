@@ -18,7 +18,6 @@ import { PermissionTree } from './PermissionTree'
 import { findTreeNode } from './utils'
 
 export const PermissionManager: React.FC<PermissionManagerProps> = ({
-  schema,
   collections,
   contentRoot = 'content',
   permissions,
@@ -50,7 +49,6 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
     resetPermissions,
     setIsDirty,
   } = usePermissionTree({
-    schema,
     collections,
     contentRoot,
     permissions,

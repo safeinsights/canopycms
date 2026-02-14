@@ -1,7 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react'
 import { PermissionManager } from './PermissionManager'
-import type { PathPermission, RootCollectionConfig } from '../config'
+import type { PathPermission } from '../config'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
+import type { EditorCollection } from './Editor'
 
 const meta: Meta<typeof PermissionManager> = {
   title: 'Editor/PermissionManager',
@@ -11,41 +12,37 @@ const meta: Meta<typeof PermissionManager> = {
 export default meta
 type Story = StoryObj<typeof PermissionManager>
 
-// Mock schema using proper RootCollectionConfig structure
-const mockSchema: RootCollectionConfig = {
-  collections: [
-    {
-      name: 'posts',
-      label: 'Posts',
-      path: 'posts',
-      entries: [
-        {
-          name: 'post',
-          format: 'mdx',
-          fields: [
-            { name: 'title', type: 'string' },
-            { name: 'content', type: 'markdown' },
-          ],
-        },
-      ],
-    },
-    {
-      name: 'pages',
-      label: 'Pages',
-      path: 'pages',
-      entries: [
-        {
-          name: 'page',
-          format: 'mdx',
-          fields: [
-            { name: 'title', type: 'string' },
-            { name: 'body', type: 'markdown' },
-          ],
-        },
-      ],
-    },
-  ],
-}
+// Mock collections using EditorCollection structure
+const mockCollections: EditorCollection[] = [
+  {
+    path: 'content/posts',
+    name: 'posts',
+    label: 'Posts',
+    format: 'mdx',
+    type: 'collection',
+    entryTypes: [
+      {
+        name: 'post',
+        label: 'Post',
+        format: 'mdx',
+      },
+    ],
+  },
+  {
+    path: 'content/pages',
+    name: 'pages',
+    label: 'Pages',
+    format: 'mdx',
+    type: 'collection',
+    entryTypes: [
+      {
+        name: 'page',
+        label: 'Page',
+        format: 'mdx',
+      },
+    ],
+  },
+]
 
 // Mock permissions
 const mockPermissions: PathPermission[] = [
@@ -105,7 +102,7 @@ const mockSave = async (permissions: PathPermission[]): Promise<void> => {
 
 export const Default: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     permissions: mockPermissions,
     canEdit: true,
     onSave: mockSave,
@@ -117,7 +114,7 @@ export const Default: Story = {
 
 export const Empty: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     permissions: [],
     canEdit: true,
     onSave: mockSave,
@@ -129,7 +126,7 @@ export const Empty: Story = {
 
 export const ReadOnly: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     permissions: mockPermissions,
     canEdit: false,
     onSearchUsers: mockSearchUsers,
@@ -140,7 +137,7 @@ export const ReadOnly: Story = {
 
 export const Loading: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     permissions: [],
     canEdit: true,
     loading: true,
@@ -153,7 +150,7 @@ export const Loading: Story = {
 
 export const WithInheritance: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     permissions: [
       {
         path: 'content/**',
@@ -174,7 +171,7 @@ export const WithInheritance: Story = {
 
 export const ComplexPermissions: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     permissions: [
       {
         path: 'content/**',
@@ -205,44 +202,52 @@ export const ComplexPermissions: Story = {
   },
 }
 
-const largeSchema: RootCollectionConfig = {
-  collections: [
-    {
-      name: 'posts',
-      label: 'Posts',
-      path: 'posts',
-      entries: [{ name: 'post', format: 'mdx', fields: [{ name: 'title', type: 'string' }] }],
-    },
-    {
-      name: 'pages',
-      label: 'Pages',
-      path: 'pages',
-      entries: [{ name: 'page', format: 'mdx', fields: [{ name: 'title', type: 'string' }] }],
-    },
-    {
-      name: 'products',
-      label: 'Products',
-      path: 'products',
-      entries: [{ name: 'product', format: 'json', fields: [{ name: 'name', type: 'string' }] }],
-    },
-    {
-      name: 'categories',
-      label: 'Categories',
-      path: 'categories',
-      entries: [{ name: 'category', format: 'json', fields: [{ name: 'name', type: 'string' }] }],
-    },
-    {
-      name: 'authors',
-      label: 'Authors',
-      path: 'authors',
-      entries: [{ name: 'author', format: 'json', fields: [{ name: 'name', type: 'string' }] }],
-    },
-  ],
-}
+const largeCollections: EditorCollection[] = [
+  {
+    path: 'content/posts',
+    name: 'posts',
+    label: 'Posts',
+    format: 'mdx',
+    type: 'collection',
+    entryTypes: [{ name: 'post', label: 'Post', format: 'mdx' }],
+  },
+  {
+    path: 'content/pages',
+    name: 'pages',
+    label: 'Pages',
+    format: 'mdx',
+    type: 'collection',
+    entryTypes: [{ name: 'page', label: 'Page', format: 'mdx' }],
+  },
+  {
+    path: 'content/products',
+    name: 'products',
+    label: 'Products',
+    format: 'json',
+    type: 'collection',
+    entryTypes: [{ name: 'product', label: 'Product', format: 'json' }],
+  },
+  {
+    path: 'content/categories',
+    name: 'categories',
+    label: 'Categories',
+    format: 'json',
+    type: 'collection',
+    entryTypes: [{ name: 'category', label: 'Category', format: 'json' }],
+  },
+  {
+    path: 'content/authors',
+    name: 'authors',
+    label: 'Authors',
+    format: 'json',
+    type: 'collection',
+    entryTypes: [{ name: 'author', label: 'Author', format: 'json' }],
+  },
+]
 
 export const LargeSchema: Story = {
   args: {
-    schema: largeSchema,
+    collections: largeCollections,
     contentTree: {
       path: 'content',
       name: 'content',
@@ -304,7 +309,7 @@ export const LargeSchema: Story = {
 
 export const NoAuthPlugin: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     permissions: mockPermissions,
     canEdit: true,
     onSave: mockSave,
@@ -315,7 +320,7 @@ export const NoAuthPlugin: Story = {
 
 export const SaveError: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     permissions: mockPermissions,
     canEdit: true,
     onSave: async () => {
@@ -330,7 +335,7 @@ export const SaveError: Story = {
 
 export const GroupLoadError: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     permissions: mockPermissions,
     canEdit: true,
     onSave: mockSave,
@@ -345,7 +350,7 @@ export const GroupLoadError: Story = {
 
 export const ManyPermissionsOnNode: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     permissions: [
       {
         path: 'content/posts/**',
@@ -365,7 +370,7 @@ export const ManyPermissionsOnNode: Story = {
 
 export const LongNames: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     permissions: [
       {
         path: 'content/posts/**',
@@ -385,7 +390,7 @@ export const LongNames: Story = {
 
 export const DeepNesting: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     contentTree: {
       path: 'content',
       name: 'content',
@@ -438,7 +443,7 @@ export const DeepNesting: Story = {
 
 export const PermissionOverrides: Story = {
   args: {
-    schema: mockSchema,
+    collections: mockCollections,
     permissions: [
       // Parent folder has managers access
       { path: 'content/**', edit: { allowedGroups: ['managers'] } },

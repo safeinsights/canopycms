@@ -4,6 +4,7 @@ import type {
   CollectionConfig,
   RootCollectionConfig,
   EntryTypeConfig,
+  FlatSchemaItem,
 } from '../config'
 import type { FormValue } from './FormRenderer'
 import type { EditorEntry, EditorCollection, EditorEntryType } from './Editor'
@@ -206,8 +207,15 @@ export function convertSchemaTreeToEditorCollections(
   }
 
   // Recursively convert CollectionConfig to EditorCollection
-  const convertCollection = (col: CollectionConfig, parentPath: string): EditorCollection => {
-    const logicalPath = `${parentPath}/${col.path}`
+  const convertCollection = (
+    col: CollectionConfig,
+    parentPath: string,
+    isTopLevel: boolean,
+  ): EditorCollection => {
+    // For root-level collections, use col.path; for nested, use col.name to avoid duplication
+    // (col.path contains the full path for nested collections, but we only want the segment)
+    const pathSegment = isTopLevel ? col.path : col.name
+    const logicalPath = `${parentPath}/${pathSegment}`
 
     return {
       path: logicalPath,
@@ -218,13 +226,13 @@ export function convertSchemaTreeToEditorCollections(
       type: 'collection' as const,
       entryTypes: convertEntryTypes(col.entries),
       order: col.order,
-      children: col.collections?.map((c) => convertCollection(c, logicalPath)),
+      children: col.collections?.map((c) => convertCollection(c, logicalPath, false)),
     }
   }
 
-  // Convert child collections
+  // Convert child collections (these are top-level relative to contentRoot)
   const childCollections =
-    schemaTree.collections?.map((col) => convertCollection(col, contentRoot)) ?? []
+    schemaTree.collections?.map((col) => convertCollection(col, contentRoot, true)) ?? []
 
   // Create root collection node (required by EntryNavigator)
   const rootCollection: EditorCollection = {
@@ -248,39 +256,40 @@ interface BuildEntriesFromListParams {
   resolvePreviewSrc: (
     entry: Pick<CollectionItem, 'collectionId' | 'collectionName' | 'slug' | 'entryType'>,
   ) => string
-  existingEntries: EditorEntry[]
-  initialEntries: EditorEntry[]
-  currentEntry?: EditorEntry
   contentRoot: string
+  flatSchema: FlatSchemaItem[]
 }
 
 export const buildEntriesFromListResponse = ({
   response,
   branchName,
   resolvePreviewSrc,
-  existingEntries,
-  currentEntry,
-  initialEntries,
   contentRoot,
+  flatSchema,
 }: BuildEntriesFromListParams): EditorEntry[] => {
   return response.entries.map((entry) => {
-    // Schema is now determined from the schema registry, not from collections
-    // Fall back to existing entries if available
-    const schema =
-      existingEntries.find((e) => e.collectionId === entry.collectionId)?.schema ??
-      currentEntry?.schema ??
-      initialEntries.find((e) => e.collectionId === entry.collectionId)?.schema ??
-      []
+    // Resolve schema from flatSchema using parentPath + name
+    let schema: readonly import('../config').FieldConfig[] = []
+    if (entry.collectionId && entry.entryType) {
+      const entryTypeItem = flatSchema.find(
+        (item) =>
+          item.type === 'entry-type' &&
+          item.parentPath === entry.collectionId &&
+          item.name === entry.entryType,
+      )
+      if (entryTypeItem && entryTypeItem.type === 'entry-type') {
+        schema = entryTypeItem.fields
+      }
+    }
 
-    // Detect root-level entries (collectionId === contentRoot)
     const isRootEntry = entry.collectionId === contentRoot
     const apiPath = isRootEntry
       ? `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.slug)}`
       : `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionId)}/${encodeURIComponent(entry.slug)}`
 
     return {
-      path: entry.logicalPath, // Logical path
-      contentId: entry.contentId, // 12-char content ID
+      path: entry.logicalPath,
+      contentId: entry.contentId,
       label: entry.title || entry.slug || entry.collectionName || entry.collectionId,
       status: entry.exists === false ? 'missing' : (entry.entryType ?? 'entry'),
       schema,

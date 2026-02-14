@@ -81,7 +81,6 @@ describe('config validation', () => {
 
     const config = composeCanopyConfig(posts, pages)
 
-    // Schema is no longer part of config - loaded from .collection.json files
     expect(config.media?.adapter).toBe('local')
   })
 
