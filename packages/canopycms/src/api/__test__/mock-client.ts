@@ -21,7 +21,7 @@ import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse, Uplo
 import type { GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from '../permissions'
 import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from '../groups'
 import type { UserInfoResponse } from '../user'
-import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from '../schema'
+import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from '../schema'
 import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from '../../schema/schema-store-types'
 
 /**
@@ -112,6 +112,7 @@ export function createMockApiClient(): MockApiClient {
     updateEntryType: vi.fn().mockResolvedValue(mockSuccess({"success":true})),
     removeEntryType: vi.fn().mockResolvedValue(mockSuccess({"success":true})),
     updateOrder: vi.fn().mockResolvedValue(mockSuccess({"success":true})),
+    invalidateSchemaCache: vi.fn().mockResolvedValue(mockSuccess({"success":true,"message":"Cache invalidated"})),
   },
   } as MockApiClient
 }
@@ -392,4 +393,11 @@ export function mockRemoveEntryTypeApiResponse(): RemoveEntryTypeApiResponse {
  */
 export function mockUpdateOrderApiResponse(): UpdateOrderApiResponse {
   return mockSuccess({"success":true})
+}
+
+/**
+ * Create a InvalidateSchemaCacheApiResponse for testing
+ */
+export function mockInvalidateSchemaCacheApiResponse(): InvalidateSchemaCacheApiResponse {
+  return mockSuccess({"success":true,"message":"Cache invalidated"})
 }

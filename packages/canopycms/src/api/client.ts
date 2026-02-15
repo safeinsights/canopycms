@@ -18,7 +18,7 @@ import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse, Uplo
 import type { GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from './permissions'
 import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from './groups'
 import type { UserInfoResponse } from './user'
-import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from './schema'
+import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from './schema'
 import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from './../schema/schema-store-types'
 
 /**
@@ -406,6 +406,13 @@ export class CanopyApiClient {
      */
     updateOrder: (params: Record<string, string>, body: UpdateOrderBody): Promise<UpdateOrderApiResponse> => {
       return this.request('PATCH', this.buildPath('/:branch/schema/order/...collectionPath', params), body)
+    },
+
+    /**
+     * invalidateSchemaCache - POST /:branch/schema/invalidate-cache
+     */
+    invalidateSchemaCache: (params: Record<string, string>): Promise<InvalidateSchemaCacheApiResponse> => {
+      return this.request('POST', this.buildPath('/:branch/schema/invalidate-cache', params))
     },
   }
 
