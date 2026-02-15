@@ -62,6 +62,7 @@ import type {
   DeleteCollectionApiResponse,
   GetCollectionApiResponse,
   GetSchemaApiResponse,
+  InvalidateSchemaCacheApiResponse,
   RemoveEntryTypeApiResponse,
   UpdateCollectionApiResponse,
   UpdateEntryTypeApiResponse,
@@ -270,6 +271,9 @@ export function createMockApiClient(): MockApiClient {
       updateEntryType: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
       removeEntryType: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
       updateOrder: vi.fn().mockResolvedValue(mockSuccess({ success: true })),
+      invalidateSchemaCache: vi
+        .fn()
+        .mockResolvedValue(mockSuccess({ success: true, message: 'Cache invalidated' })),
     },
   } as MockApiClient
 }
@@ -559,4 +563,11 @@ export function mockRemoveEntryTypeApiResponse(): RemoveEntryTypeApiResponse {
  */
 export function mockUpdateOrderApiResponse(): UpdateOrderApiResponse {
   return mockSuccess({ success: true })
+}
+
+/**
+ * Create a InvalidateSchemaCacheApiResponse for testing
+ */
+export function mockInvalidateSchemaCacheApiResponse(): InvalidateSchemaCacheApiResponse {
+  return mockSuccess({ success: true, message: 'Cache invalidated' })
 }

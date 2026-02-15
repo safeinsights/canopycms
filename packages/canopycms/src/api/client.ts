@@ -59,6 +59,7 @@ import type {
   DeleteCollectionApiResponse,
   GetCollectionApiResponse,
   GetSchemaApiResponse,
+  InvalidateSchemaCacheApiResponse,
   RemoveEntryTypeApiResponse,
   UpdateCollectionApiResponse,
   UpdateEntryTypeApiResponse,
@@ -519,6 +520,15 @@ export class CanopyApiClient {
         this.buildPath('/:branch/schema/order/...collectionPath', params),
         body,
       )
+    },
+
+    /**
+     * invalidateSchemaCache - POST /:branch/schema/invalidate-cache
+     */
+    invalidateSchemaCache: (
+      params: Record<string, string>,
+    ): Promise<InvalidateSchemaCacheApiResponse> => {
+      return this.request('POST', this.buildPath('/:branch/schema/invalidate-cache', params))
     },
   }
 
