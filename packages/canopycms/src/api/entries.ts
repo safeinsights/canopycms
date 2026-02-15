@@ -339,7 +339,7 @@ export const listEntriesHandler = async (
   }
 
   const root = context.branchRoot
-  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const flatSchema = context.flatSchema!
   const flatCollections = flatSchema
 
   const targetId = params.collection ? normalizeCollectionId(params.collection) : undefined
@@ -539,7 +539,7 @@ const deleteEntryHandler = async (
     }
   }
 
-  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const flatSchema = context.flatSchema!
 
   // Check edit permission on the entry
   // Build the physical path for permission check

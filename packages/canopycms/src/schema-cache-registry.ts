@@ -4,7 +4,7 @@ import path from 'node:path'
 import type { RootCollectionConfig } from './config'
 import type { FlatSchemaItem, FieldConfig } from './config/types'
 import type { OperatingMode } from './operating-mode'
-import { resolveSchema } from './schema/resolver'
+import { resolveSchema, isValidSchema } from './schema/resolver'
 import { flattenSchema } from './config/flatten'
 
 /**
@@ -53,6 +53,15 @@ export class SchemaCacheRegistry {
       if (!this.devModeCache) {
         const contentRoot = path.join(branchRoot, contentRootName)
         const result = await resolveSchema(contentRoot, schemaRegistry)
+
+        // Validate schema has content
+        if (!isValidSchema(result.schema)) {
+          throw new Error(
+            `No schema found in ${contentRoot}. Create .collection.json files ` +
+              'with references to field schemas defined in your schema registry.',
+          )
+        }
+
         // Use configured contentRoot name as base path for logical paths
         const flatSchema = flattenSchema(result.schema, contentRootName)
         this.devModeCache = {
@@ -102,6 +111,15 @@ export class SchemaCacheRegistry {
 
     // Cache miss or stale - regenerate
     const result = await resolveSchema(contentRoot, schemaRegistry)
+
+    // Validate schema has content
+    if (!isValidSchema(result.schema)) {
+      throw new Error(
+        `No schema found in ${contentRoot}. Create .collection.json files ` +
+          'with references to field schemas defined in your schema registry.',
+      )
+    }
+
     // Use configured contentRoot name as base path for logical paths
     const flatSchema = flattenSchema(result.schema, contentRootName)
 

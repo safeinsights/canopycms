@@ -1,5 +1,5 @@
-import type { CanopyConfig, FlatSchemaItem, FieldConfig, RootCollectionConfig } from './config'
-import { flattenSchema, getConfigDefaults } from './config'
+import type { CanopyConfig, FieldConfig } from './config'
+import { getConfigDefaults } from './config'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
 import {
@@ -15,7 +15,6 @@ import { SettingsWorkspaceManager } from './settings-workspace'
 import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
 import { operatingStrategy } from './operating-mode'
-import { resolveSchema, isValidSchema } from './schema'
 import { SchemaCacheRegistry } from './schema-cache-registry'
 
 /**
@@ -35,18 +34,6 @@ export const getBootstrapAdminIds = (): Set<string> => {
 
 export interface CanopyServices {
   config: CanopyConfig
-  /**
-   * Base schema tree (loaded from config.contentRoot at startup).
-   * For per-branch operations, prefer context.schema instead.
-   * @deprecated Will be removed in Phase 4 - temporary during migration
-   */
-  schema: RootCollectionConfig
-  /**
-   * Base flattened schema for O(1) lookups.
-   * For per-branch operations, prefer context.flatSchema instead.
-   * @deprecated Will be removed in Phase 4 - temporary during migration
-   */
-  flatSchema: FlatSchemaItem[]
   /** Schema registry for access by admin UI */
   schemaRegistry: Record<string, readonly FieldConfig[]>
   /** Per-branch schema cache registry */
@@ -98,6 +85,12 @@ export interface CreateCanopyServicesOptions {
    * Maps schema names to field definitions.
    */
   schemaRegistry?: Record<string, readonly FieldConfig[]>
+  /**
+   * Test-only: Custom schema cache registry.
+   * When provided, bypasses the default SchemaCacheRegistry creation.
+   * @internal
+   */
+  schemaCacheRegistry?: SchemaCacheRegistry
 }
 
 /**
@@ -105,8 +98,7 @@ export interface CreateCanopyServicesOptions {
  * Intended to be called once at startup and injected where needed
  * (e.g., request handlers, loaders).
  *
- * Production function - always loads schema from .collection.json files.
- * For tests, use createTestCanopyServices() instead.
+ * Schema is now loaded per-branch via SchemaCacheRegistry, not at startup.
  *
  * @param config - Validated Canopy configuration
  * @param options - Optional settings including schema registry
@@ -115,43 +107,21 @@ export const createCanopyServices = async (
   config: CanopyConfig,
   options: CreateCanopyServicesOptions = {},
 ): Promise<CanopyServices> => {
-  // Load schema from .collection.json files (single source of truth)
-  const schemaRegistry = options.schemaRegistry ?? {}
-  const result = await resolveSchema(config.contentRoot, schemaRegistry)
-  const schema = result.schema
-
-  // Validate that schema has content
-  if (!isValidSchema(schema)) {
-    throw new Error(
-      'No schema found. Create .collection.json files in your content directory ' +
-        'with references to field schemas defined in your schema registry.',
-    )
-  }
-
-  // Delegate to internal implementation
-  return _createCanopyServicesInternal(config, schema, options)
+  return _createCanopyServicesInternal(config, options)
 }
 
 /**
- * Create services with an injected test schema (bypasses .collection.json loading).
- * This is a test-only function - use createCanopyServices() in production.
+ * Create services for testing.
+ * Schema is loaded per-branch via SchemaCacheRegistry.
  *
  * @param config - Validated Canopy configuration
- * @param testSchema - Pre-resolved schema for testing
  * @param options - Optional settings including schema registry
  */
 export const createTestCanopyServices = async (
   config: CanopyConfig,
-  testSchema: RootCollectionConfig,
   options: CreateCanopyServicesOptions = {},
 ): Promise<CanopyServices> => {
-  // Validate test schema
-  if (!isValidSchema(testSchema)) {
-    throw new Error('Test schema is invalid')
-  }
-
-  // Delegate to internal implementation
-  return _createCanopyServicesInternal(config, testSchema, options)
+  return _createCanopyServicesInternal(config, options)
 }
 
 /**
@@ -160,7 +130,6 @@ export const createTestCanopyServices = async (
  */
 async function _createCanopyServicesInternal(
   config: CanopyConfig,
-  schema: RootCollectionConfig,
   options: CreateCanopyServicesOptions,
 ): Promise<CanopyServices> {
   // Validate mode-specific requirements (e.g., prod requires git bot credentials for GitHub)
@@ -170,11 +139,8 @@ async function _createCanopyServicesInternal(
   // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
 
-  // Flatten schema once for O(1) lookups throughout the app
-  const flatSchema = flattenSchema(schema, config.contentRoot)
-
-  // Create per-branch schema cache registry
-  const schemaCacheRegistry = new SchemaCacheRegistry(config.mode)
+  // Create per-branch schema cache registry (or use provided one for testing)
+  const schemaCacheRegistry = options.schemaCacheRegistry ?? new SchemaCacheRegistry(config.mode)
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
   // Path permissions are loaded dynamically from settings branch or .canopy-dev/permissions.json at request time.
@@ -363,8 +329,6 @@ async function _createCanopyServicesInternal(
 
   return {
     config,
-    schema,
-    flatSchema,
     schemaRegistry: options.schemaRegistry ?? {},
     schemaCacheRegistry,
     checkBranchAccess,

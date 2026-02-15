@@ -5,7 +5,8 @@
 
 import type { CanopyRequest } from '../../http/types'
 import { createCanopyRequestHandler } from '../../http/handler'
-import { createTestCanopyServices, type CreateCanopyServicesOptions } from '../../services'
+import { createTestServices } from '../../config-test'
+import type { CreateCanopyServicesOptions } from '../../services'
 import type { CanopyConfig, RootCollectionConfig } from '../../config'
 import type { AuthPlugin } from '../../auth/plugin'
 import { CanopyApiClient } from '../../api/client'
@@ -27,27 +28,41 @@ export interface ApiClientOptions {
  * that routes through the handler directly instead of making network requests.
  */
 export async function createApiClient(options: ApiClientOptions) {
-  // Use test services if schema is provided, otherwise use production services
-  const services = options.schema
-    ? await createTestCanopyServices(options.config, options.schema, {
-        schemaRegistry: options.schemaRegistry,
-      })
-    : await createTestCanopyServices(
-        options.config,
-        { collections: [] },
-        {
-          schemaRegistry: options.schemaRegistry,
-        },
-      )
+  // Use test services with schema
+  const services = await createTestServices(
+    {
+      ...options.config,
+      schema: options.schema ?? { collections: [] },
+    },
+    {
+      schemaRegistry: options.schemaRegistry,
+    },
+  )
   const handler = createCanopyRequestHandler({
     services,
     authPlugin: options.authPlugin,
-    getBranchContext: async (branchName: string) => {
+    getBranchContext: async (branchName: string, opts?: { loadSchema?: boolean }) => {
       if (!services.registry) {
         throw new Error('Branch registry not available in dev mode')
       }
       const context = await services.registry.get(branchName)
-      return context ?? null
+      if (!context) {
+        return null
+      }
+
+      // Load per-branch schema if requested
+      if (opts?.loadSchema) {
+        const contentRootName = services.config.contentRoot || 'content'
+        const cached = await services.schemaCacheRegistry.getSchema(
+          context.branchRoot,
+          services.schemaRegistry,
+          contentRootName,
+        )
+        context.schema = cached.schema
+        context.flatSchema = cached.flatSchema
+      }
+
+      return context
     },
   })
 

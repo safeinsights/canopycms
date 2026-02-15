@@ -1,5 +1,5 @@
 import type { CanopyConfig, CanopyConfigInput, RootCollectionConfig } from './config'
-import { defineCanopyConfig } from './config'
+import { defineCanopyConfig, flattenSchema } from './config'
 import {
   createTestCanopyServices,
   type CanopyServices,
@@ -37,7 +37,7 @@ export const defineCanopyTestConfig = (
 
 /**
  * Test-only helper that creates CanopyServices with inline schema.
- * Automatically passes the schema from config to createTestCanopyServices to avoid .collection.json files.
+ * Creates a mock schemaCacheRegistry that returns the test schema without requiring .collection.json files.
  * Do not use in production code; use createCanopyServices with schemaRegistry.
  */
 export const createTestServices = async (
@@ -45,5 +45,20 @@ export const createTestServices = async (
   options?: CreateCanopyServicesOptions,
 ): Promise<CanopyServices> => {
   const canopyConfig = defineCanopyTestConfig(config)
-  return createTestCanopyServices(canopyConfig, config.schema, options)
+  const flatSchema = flattenSchema(config.schema, canopyConfig.contentRoot)
+
+  // Create a mock schemaCacheRegistry that returns the test schema
+  const mockSchemaCacheRegistry = {
+    getSchema: async () => ({
+      schema: config.schema,
+      flatSchema,
+    }),
+    invalidate: async () => {},
+    clearAll: async () => {},
+  }
+
+  return createTestCanopyServices(canopyConfig, {
+    ...options,
+    schemaCacheRegistry: mockSchemaCacheRegistry as any,
+  })
 }

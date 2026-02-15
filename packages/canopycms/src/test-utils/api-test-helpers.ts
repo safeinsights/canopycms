@@ -136,8 +136,6 @@ export function createMockGitManager() {
  */
 export interface MockServicesOptions {
   config?: Partial<CanopyConfig>
-  schema?: any
-  flatSchema?: any[]
   schemaRegistry?: any
   schemaCacheRegistry?: any
   checkBranchAccess?: any
@@ -173,15 +171,13 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
 
   return {
     config: defaultConfig as any,
-    schema: options.schema ?? {},
-    flatSchema: options.flatSchema ?? [],
     schemaRegistry: options.schemaRegistry ?? {},
     schemaCacheRegistry:
       options.schemaCacheRegistry ??
       ({
         getSchema: vi.fn().mockResolvedValue({
-          schema: options.schema ?? {},
-          flatSchema: options.flatSchema ?? [],
+          schema: {},
+          flatSchema: [],
         }),
         invalidate: vi.fn().mockResolvedValue(undefined),
         clearAll: vi.fn().mockResolvedValue(undefined),
