@@ -11,6 +11,7 @@
  */
 
 import { z } from 'zod'
+import path from 'node:path'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
@@ -89,6 +90,11 @@ export interface UpdateOrderResponse {
   success: boolean
 }
 
+export interface InvalidateSchemaCacheResponse {
+  success: boolean
+  message: string
+}
+
 export type GetSchemaApiResponse = ApiResponse<SchemaResponse>
 export type GetCollectionApiResponse = ApiResponse<CollectionResponse>
 export type CreateCollectionApiResponse = ApiResponse<CreateCollectionResponse>
@@ -98,6 +104,7 @@ export type AddEntryTypeApiResponse = ApiResponse<AddEntryTypeResponse>
 export type UpdateEntryTypeApiResponse = ApiResponse<UpdateEntryTypeResponse>
 export type RemoveEntryTypeApiResponse = ApiResponse<RemoveEntryTypeResponse>
 export type UpdateOrderApiResponse = ApiResponse<UpdateOrderResponse>
+export type InvalidateSchemaCacheApiResponse = ApiResponse<InvalidateSchemaCacheResponse>
 
 // ============================================================================
 // Zod Schemas for Params
@@ -147,7 +154,8 @@ async function getSchemaStore(
     return { error: 'Branch not found', status: 404 }
   }
 
-  const store = new SchemaStore(context.branchRoot, ctx.services.schemaRegistry)
+  const contentRoot = path.join(context.branchRoot, 'content')
+  const store = new SchemaStore(contentRoot, ctx.services.schemaRegistry, ctx.services)
   return { store, branchRoot: context.branchRoot }
 }
 
@@ -187,7 +195,7 @@ const getSchemaHandler = async (
   req: ApiRequest,
   params: z.infer<typeof branchParamsSchema>
 ): Promise<GetSchemaApiResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
+  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -196,8 +204,8 @@ const getSchemaHandler = async (
     ok: true,
     status: 200,
     data: {
-      schema: ctx.services.schema,
-      flatSchema: ctx.services.flatSchema,
+      schema: context.schema ?? ctx.services.schema,
+      flatSchema: context.flatSchema ?? ctx.services.flatSchema,
       availableSchemas: Object.keys(ctx.services.schemaRegistry),
     },
   }
@@ -212,7 +220,7 @@ const getCollectionHandler = async (
   req: ApiRequest,
   params: z.infer<typeof collectionParamsSchema>
 ): Promise<GetCollectionApiResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
+  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -223,8 +231,9 @@ const getCollectionHandler = async (
     return { ok: false, status: pathResult.status, error: pathResult.error }
   }
 
-  // Find collection in flat schema
-  const item = ctx.services.flatSchema.find(
+  // Find collection in per-branch flat schema
+  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const item = flatSchema.find(
     (i) => i.type === 'collection' && i.logicalPath === pathResult.path
   )
 
@@ -593,6 +602,44 @@ const updateOrderHandler = async (
   }
 }
 
+/**
+ * POST /:branch/schema/invalidate-cache - Invalidate schema cache (for debugging/manual refresh)
+ */
+const invalidateSchemaCacheHandler = async (
+  ctx: ApiContext,
+  req: ApiRequest,
+  params: z.infer<typeof branchParamsSchema>
+): Promise<InvalidateSchemaCacheApiResponse> => {
+  // Check admin auth
+  const authError = checkAdminAuth(req)
+  if (authError) {
+    return { ok: false, status: authError.status, error: authError.error }
+  }
+
+  const context = await ctx.getBranchContext(params.branch)
+  if (!context) {
+    return { ok: false, status: 404, error: 'Branch not found' }
+  }
+
+  try {
+    await ctx.services.schemaCacheRegistry.invalidate(context.branchRoot)
+    return {
+      ok: true,
+      status: 200,
+      data: {
+        success: true,
+        message: 'Schema cache invalidated. Next schema load will regenerate cache.',
+      },
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      status: 500,
+      error: getErrorMessage(err),
+    }
+  }
+}
+
 // ============================================================================
 // Route Definitions
 // ============================================================================
@@ -750,6 +797,21 @@ export const updateOrder = defineEndpoint({
   handler: updateOrderHandler,
 })
 
+/**
+ * POST /:branch/schema/invalidate-cache - Invalidate schema cache
+ */
+export const invalidateSchemaCache = defineEndpoint({
+  namespace: 'schema',
+  name: 'invalidateSchemaCache',
+  method: 'POST',
+  path: '/:branch/schema/invalidate-cache',
+  params: branchParamsSchema,
+  responseType: 'InvalidateSchemaCacheApiResponse',
+  response: {} as InvalidateSchemaCacheApiResponse,
+  defaultMockData: { success: true, message: 'Cache invalidated' },
+  handler: invalidateSchemaCacheHandler,
+})
+
 // ============================================================================
 // Exports
 // ============================================================================
@@ -767,4 +829,5 @@ export const SCHEMA_ROUTES = {
   updateEntryType,
   removeEntryType,
   updateOrder,
+  invalidateSchemaCache,
 } as const

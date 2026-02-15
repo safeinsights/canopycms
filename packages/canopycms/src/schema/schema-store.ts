@@ -18,6 +18,7 @@ import { resolveCollectionPath } from '../content-id-index'
 import { generateId, isValidId } from '../id'
 import { toLogicalPath, validateAndNormalizePath } from '../paths'
 import type { LogicalPath } from '../paths/types'
+import type { CanopyServices } from '../services'
 
 // Re-export types from client-safe module
 export type {
@@ -110,8 +111,25 @@ const updateEntryTypeInputSchema = z.object({
 export class SchemaStore {
   constructor(
     private readonly contentRoot: string,
-    private readonly schemaRegistry: Record<string, readonly FieldConfig[]>
+    private readonly schemaRegistry: Record<string, readonly FieldConfig[]>,
+    private readonly services?: CanopyServices
   ) {}
+
+  // --------------------------------------------------------------------------
+  // Cache Invalidation
+  // --------------------------------------------------------------------------
+
+  /**
+   * Invalidate schema cache for this branch after mutations.
+   * This marks the cache as stale so the next schema load will regenerate it.
+   */
+  private async invalidateSchemaCache(): Promise<void> {
+    if (this.services) {
+      // Get branchRoot from contentRoot (parent directory)
+      const branchRoot = path.dirname(this.contentRoot)
+      await this.services.schemaCacheRegistry.invalidate(branchRoot)
+    }
+  }
 
   // --------------------------------------------------------------------------
   // Validation Helpers
@@ -316,6 +334,9 @@ export class SchemaStore {
       ? toLogicalPath(`${input.parentPath}/${input.name}`)
       : toLogicalPath(input.name)
 
+    // Invalidate schema cache after mutation
+    await this.invalidateSchemaCache()
+
     return { collectionPath: logicalPath, contentId }
   }
 
@@ -345,6 +366,8 @@ export class SchemaStore {
         meta.order = updates.order
       }
       await this.writeRootCollectionMeta(meta)
+      // Invalidate schema cache after mutation
+      await this.invalidateSchemaCache()
       return
     }
 
@@ -434,6 +457,9 @@ export class SchemaStore {
 
     // Write back to the (potentially renamed) path
     await this.writeCollectionMeta(finalPhysicalPath, meta)
+
+    // Invalidate schema cache after mutation
+    await this.invalidateSchemaCache()
   }
 
   /**
@@ -454,6 +480,9 @@ export class SchemaStore {
 
     // Delete the directory (including .collection.json)
     await fs.rm(physicalPath, { recursive: true })
+
+    // Invalidate schema cache after mutation
+    await this.invalidateSchemaCache()
   }
 
   // --------------------------------------------------------------------------
@@ -506,6 +535,9 @@ export class SchemaStore {
 
     // Write back
     await this.writeCollectionMeta(physicalPath, meta)
+
+    // Invalidate schema cache after mutation
+    await this.invalidateSchemaCache()
   }
 
   /**
@@ -565,6 +597,9 @@ export class SchemaStore {
 
     // Write back
     await this.writeCollectionMeta(physicalPath, meta)
+
+    // Invalidate schema cache after mutation
+    await this.invalidateSchemaCache()
   }
 
   /**
@@ -599,6 +634,9 @@ export class SchemaStore {
 
     // Write back
     await this.writeCollectionMeta(physicalPath, meta)
+
+    // Invalidate schema cache after mutation
+    await this.invalidateSchemaCache()
   }
 
   // --------------------------------------------------------------------------
@@ -689,10 +727,13 @@ export class SchemaStore {
       }
       meta.order = order
       await this.writeRootCollectionMeta(meta)
+      // Invalidate schema cache after mutation
+      await this.invalidateSchemaCache()
       return
     }
 
     // Update regular collection (handles contentRoot prefix stripping internally)
+    // Note: updateCollection already invalidates cache, so no need to do it again
     await this.updateCollection(collectionPath, { order })
   }
 }
