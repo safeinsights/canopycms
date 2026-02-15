@@ -82,11 +82,11 @@ describe('Schema API', () => {
       getBranchContext: vi.fn().mockResolvedValue({
         branchRoot: '/test/branch',
         branchName: 'main',
+        schema: mockSchema,
+        flatSchema: mockFlatSchema,
       }),
       services: {
         config: { schema: mockSchema },
-        schema: mockSchema,
-        flatSchema: mockFlatSchema,
         schemaRegistry: mockSchemaRegistry,
         checkContentAccess: vi.fn().mockResolvedValue({ allowed: true }),
       },

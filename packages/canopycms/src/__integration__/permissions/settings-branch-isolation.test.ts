@@ -16,7 +16,7 @@ import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-work
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import { BranchWorkspaceManager } from '../../branch-workspace'
 import { SettingsWorkspaceManager } from '../../settings-workspace'
-import { createTestCanopyServices } from '../../services'
+import { createTestServices } from '../../config-test'
 import type { PathPermission } from '../../config'
 import type { AuthenticatedUser } from '../../user'
 import { operatingStrategy } from '../../operating-mode'
@@ -115,11 +115,12 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Create services with prod-sim mode
-    const services = await createTestCanopyServices({
+    const services = await createTestServices({
       ...workspace.config,
+      schema: BLOG_SCHEMA,
       mode: 'prod-sim',
       settingsBranch: 'canopycms-settings',
-    }, BLOG_SCHEMA)
+    })
 
     // Check access for restrictedUser on main branch
     // This should read from settings branch (restrictive), not main branch (permissive)
@@ -208,11 +209,12 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Create services
-    const services = await createTestCanopyServices({
+    const services = await createTestServices({
       ...workspace.config,
+      schema: BLOG_SCHEMA,
       mode: 'prod-sim',
       settingsBranch: 'canopycms-settings',
-    }, BLOG_SCHEMA)
+    })
 
     // Check access - should fall back to defaultPathAccess (deny)
     // NOT use the permissive rule from main branch
@@ -282,11 +284,12 @@ describe('Settings Branch Isolation', () => {
     )
 
     // Create services in prod-sim mode
-    const services = await createTestCanopyServices({
+    const services = await createTestServices({
       ...workspace.config,
+      schema: BLOG_SCHEMA,
       mode: 'prod-sim',
       settingsBranch: 'canopycms-settings',
-    }, BLOG_SCHEMA)
+    })
 
     // Check access on feature branch
     // Should read from settings branch (empty), not feature branch (permissive)

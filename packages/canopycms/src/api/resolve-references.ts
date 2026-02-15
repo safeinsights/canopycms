@@ -48,7 +48,7 @@ const resolveReferencesHandler = async (
 
   const { ids } = bodyValidation.data
 
-  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const flatSchema = context.flatSchema!
   const store = new ContentStore(context.branchRoot, flatSchema)
 
   // Get ID index (automatically loads if needed)

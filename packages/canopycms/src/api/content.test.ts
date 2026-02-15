@@ -27,8 +27,6 @@ vi.mock('../content-store', () => {
 const allowedCtx = (): ApiContext => ({
   services: {
     config: { schema: [] } as any,
-    schema: { collections: [] },
-    flatSchema: [],
     schemaRegistry: {},
     schemaCacheRegistry: {
       getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
@@ -58,9 +56,7 @@ describe('content api', () => {
     const ctx: ApiContext = {
       services: {
         config: { schema: [] } as any,
-        schema: { collections: [] },
-        flatSchema: [],
-        schemaRegistry: {},
+                schemaRegistry: {},
         schemaCacheRegistry: {
           getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
           invalidate: vi.fn().mockResolvedValue(undefined),
@@ -124,9 +120,7 @@ describe('content api', () => {
       const ctx: ApiContext = {
         services: {
           config: { schema: [] } as any,
-          schema: { collections: [] },
-          flatSchema: [],
-          schemaRegistry: {},
+                      schemaRegistry: {},
           schemaCacheRegistry: {
             getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
             invalidate: vi.fn().mockResolvedValue(undefined),
@@ -163,9 +157,7 @@ describe('content api', () => {
       const ctx: ApiContext = {
         services: {
           config: { schema: [] } as any,
-          schema: { collections: [] },
-          flatSchema: [],
-          schemaRegistry: {},
+                      schemaRegistry: {},
           schemaCacheRegistry: {
             getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
             invalidate: vi.fn().mockResolvedValue(undefined),

@@ -66,17 +66,19 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schema,
-        flatSchema: flattenSchema(schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
     })
 
     // Request limit=2 to get entries
@@ -175,17 +177,19 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schema,
-        flatSchema: flattenSchema(schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
     })
 
     // Test 1: Without collectionId - lists entries from all collections (flat list)
@@ -294,17 +298,19 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schema,
-        flatSchema: flattenSchema(schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
     })
 
     const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'main' })
@@ -369,17 +375,19 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schema,
-        flatSchema: flattenSchema(schema, config.contentRoot),
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
     })
 
     const res = await listEntriesHandler(
@@ -470,18 +478,20 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schema,
-        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
     })
 
     const res = await listEntriesHandler(
@@ -609,18 +619,20 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schema,
-        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
     })
 
     const res = await listEntriesHandler(
@@ -722,18 +734,20 @@ describe('sortEntriesByOrder', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schema,
-        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
     })
 
     const res = await listEntriesHandler(
@@ -809,18 +823,20 @@ describe('sortEntriesByOrder', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schema,
-        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
     })
 
     const res = await listEntriesHandler(
@@ -915,18 +931,21 @@ describe('dynamic collection discovery', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        // flatSchema only knows about 'docs', NOT 'docs/inner'
-        flatSchema: flattenSchema(originalSchema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema: originalSchema,
+        // flatSchema only knows about 'docs', NOT 'docs/inner'
+        flatSchema: flattenSchema(originalSchema, config.contentRoot),
+      },
     })
 
     const res = await listEntriesHandler(
@@ -988,18 +1007,20 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schema,
-        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
     })
 
     // Import deleteEntry handler
@@ -1067,18 +1088,20 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schema,
-        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
     })
 
     const { deleteEntry } = await import('./entries')
@@ -1131,18 +1154,20 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schema,
-        flatSchema: flattenSchema(schema, config.contentRoot),
         schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema,
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
     })
 
     const { deleteEntry } = await import('./entries')
@@ -1178,17 +1203,20 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        flatSchema: [],
         schemaRegistry: {},
         checkBranchAccess,
         checkContentAccess,
       },
-      branchContext: createMockBranchContext({
-        branchName: 'main',
-        baseRoot: root,
-        branchRoot: root,
-        createdBy: 'u1',
-      }),
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        schema: { collections: [] },
+        flatSchema: [],
+      },
     })
 
     const { deleteEntry } = await import('./entries')

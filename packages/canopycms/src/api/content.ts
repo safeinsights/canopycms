@@ -102,7 +102,7 @@ const readContentHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const flatSchema = context.flatSchema!
   const store = new ContentStore(context.branchRoot, flatSchema)
 
   // Parse path segments: params.path is like "content/posts/hello"
@@ -150,7 +150,7 @@ const writeContentHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const flatSchema = context.flatSchema!
   const store = new ContentStore(context.branchRoot, flatSchema)
 
   // Parse path segments: params.path is like "content/posts/hello" or "posts/hello"
@@ -223,7 +223,7 @@ const validateReferencesHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const flatSchema = context.flatSchema!
   const store = new ContentStore(context.branchRoot, flatSchema)
 
   // Parse path segments to get collection/schema info
@@ -280,7 +280,7 @@ const renameEntryHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const flatSchema = context.flatSchema!
   const store = new ContentStore(context.branchRoot, flatSchema)
 
   // Parse path segments

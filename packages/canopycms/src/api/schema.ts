@@ -204,8 +204,8 @@ const getSchemaHandler = async (
     ok: true,
     status: 200,
     data: {
-      schema: context.schema ?? ctx.services.schema,
-      flatSchema: context.flatSchema ?? ctx.services.flatSchema,
+      schema: context.schema!,
+      flatSchema: context.flatSchema!,
       availableSchemas: Object.keys(ctx.services.schemaRegistry),
     },
   }
@@ -232,7 +232,7 @@ const getCollectionHandler = async (
   }
 
   // Find collection in per-branch flat schema
-  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const flatSchema = context.flatSchema!
   const item = flatSchema.find(
     (i) => i.type === 'collection' && i.logicalPath === pathResult.path
   )

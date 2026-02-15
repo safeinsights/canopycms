@@ -1,6 +1,5 @@
 import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
-// FlatSchemaItem used via services.flatSchema
 import { resolveBranchPaths } from './paths'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
@@ -69,10 +68,20 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const resolveStore = async (branchName: string) => {
     const context = await resolveBranchContext(branchName)
     const { branchRoot } = resolveBranchPaths(context, operatingMode, basePathOverride)
+
+    // Load per-branch schema dynamically
+    const schemaCacheRegistry = services.schemaCacheRegistry
+    const contentRootName = services.config.contentRoot || 'content'
+    const { flatSchema: branchFlatSchema } = await schemaCacheRegistry.getSchema(
+      branchRoot,
+      services.schemaRegistry,
+      contentRootName
+    )
+
     return {
       context,
       branchRoot,
-      store: new ContentStore(branchRoot, services.flatSchema),
+      store: new ContentStore(branchRoot, branchFlatSchema),
     }
   }
 
@@ -85,9 +94,6 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     return { entryPath, slug: input.slug, branchName, user: input.user }
   }
 
-  // Cache flattened schema for O(1) lookups
-  const flatSchema = services.flatSchema
-
   const encodeSlug = (value?: string): string =>
     (value ?? '')
       .split('/')
@@ -95,18 +101,15 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       .map((segment) => encodeURIComponent(segment))
       .join('/')
 
-  // Build preview path mapping once (uses cached flatSchema)
+  // Build preview paths using simple path construction
   const contentRoot = (services.config.contentRoot ?? 'content').replace(/^\/+|\/+$/g, '')
   const stripRoot = (val: string) => (contentRoot && val.startsWith(`${contentRoot}/`) ? val.slice(contentRoot.length + 1) : val)
-  const baseMap = new Map<string, string>()
-  flatSchema.forEach((item) => {
-    const base = stripRoot(item.logicalPath)
-    baseMap.set(item.logicalPath, base ? `/${base}` : '/')
-  })
 
   const buildEntryPath = (opts: { collectionPath: string; slug?: string; branch?: string }) => {
-    const baseResolvedPath = opts.collectionPath
-    const base = baseMap.get(baseResolvedPath) ?? '/'
+    // Construct preview path from collectionPath
+    const stripped = stripRoot(opts.collectionPath)
+    const base = stripped ? `/${stripped}` : '/'
+
     const appendBranch = (url: string) =>
       opts.branch ? `${url}${url.includes('?') ? '&' : '?'}branch=${encodeURIComponent(opts.branch)}` : url
     const trimmed = base.endsWith('/') ? base.slice(0, -1) : base
