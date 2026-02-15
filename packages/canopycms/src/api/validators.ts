@@ -54,7 +54,7 @@ export const branchNameSchema = z.string().min(1).transform((val, ctx) => {
     return z.NEVER
   }
   return result.name
-}) as z.ZodType<BranchName>
+}) as unknown as z.ZodType<BranchName>
 
 /**
  * Zod schema for LogicalPath - validates and brands logical content paths.
@@ -74,7 +74,7 @@ export const logicalPathSchema = z.string().min(1).transform((val, ctx) => {
     return z.NEVER
   }
   return result.path
-}) as z.ZodType<LogicalPath>
+}) as unknown as z.ZodType<LogicalPath>
 
 /**
  * Zod schema for ContentId - validates 12-char Base58 IDs.
@@ -93,7 +93,7 @@ export const contentIdSchema = z.string().transform((val, ctx) => {
     return z.NEVER
   }
   return result.id
-}) as z.ZodType<ContentId>
+}) as unknown as z.ZodType<ContentId>
 
 /**
  * Zod schema for EntrySlug - validates entry slugs.
@@ -114,7 +114,7 @@ export const entrySlugSchema = z.string().min(1).transform((val, ctx) => {
     return z.NEVER
   }
   return result.slug as EntrySlug
-}) as z.ZodType<EntrySlug>
+}) as unknown as z.ZodType<EntrySlug>
 
 /**
  * Zod schema for CollectionSlug - validates collection slugs.
@@ -135,4 +135,4 @@ export const collectionSlugSchema = z.string().min(1).transform((val, ctx) => {
     return z.NEVER
   }
   return result.slug as CollectionSlug
-}) as z.ZodType<CollectionSlug>
+}) as unknown as z.ZodType<CollectionSlug>

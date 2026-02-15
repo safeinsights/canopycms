@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { CONTENT_ROUTES } from './content'
 import type { ApiContext } from './types'
+import { toBranchName, toLogicalPath, toEntrySlug } from '../paths'
 
 // Extract handlers for testing
 const readContent = CONTENT_ROUTES.read.handler
@@ -79,14 +80,14 @@ describe('content api', () => {
         branch: { name: 'feature/x', status: 'editing', access: {}, createdBy: 'u1', createdAt: 'now', updatedAt: 'now' },
       }),
     }
-    const res = await readContent(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x', path: 'posts/hello' })
+    const res = await readContent(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/x'), path: toLogicalPath('posts/hello') })
     expect(res.status).toBe(403)
     expect(res.ok).toBe(false)
   })
 
   it('reads content when allowed', async () => {
     const ctx = allowedCtx()
-    const res = await readContent(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x', path: 'posts/hello' })
+    const res = await readContent(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/x'), path: toLogicalPath('posts/hello') })
     expect(res.ok).toBe(true)
   })
 
@@ -95,7 +96,7 @@ describe('content api', () => {
     const res = await writeContent(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x', path: 'posts/hello' },
+      { branch: toBranchName('feature/x'), path: toLogicalPath('posts/hello') },
       { format: 'json', data: { title: 'hi' } }
     )
     expect(res.ok).toBe(true)
@@ -107,8 +108,8 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: 'feature/x', path: 'posts/old-slug' },
-        { newSlug: 'new-slug' }
+        { branch: toBranchName('feature/x'), path: toLogicalPath('posts/old-slug') },
+        { newSlug: toEntrySlug('new-slug') }
       )
       expect(res.ok).toBe(true)
       if (res.ok && res.data) {
@@ -146,8 +147,8 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: 'feature/x', path: 'posts/old-slug' },
-        { newSlug: 'new-slug' }
+        { branch: toBranchName('feature/x'), path: toLogicalPath('posts/old-slug') },
+        { newSlug: toEntrySlug('new-slug') }
       )
       expect(res.status).toBe(403)
       expect(res.ok).toBe(false)
@@ -179,8 +180,8 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: 'nonexistent', path: 'posts/old-slug' },
-        { newSlug: 'new-slug' }
+        { branch: toBranchName('nonexistent'), path: toLogicalPath('posts/old-slug') },
+        { newSlug: toEntrySlug('new-slug') }
       )
       expect(res.status).toBe(404)
       expect(res.ok).toBe(false)
@@ -208,8 +209,8 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: 'feature/x', path: 'posts/nonexistent' },
-        { newSlug: 'new-slug' }
+        { branch: toBranchName('feature/x'), path: toLogicalPath('posts/nonexistent') },
+        { newSlug: toEntrySlug('new-slug') }
       )
       expect(res.status).toBe(400)
       expect(res.ok).toBe(false)
@@ -237,8 +238,8 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: 'feature/x', path: 'posts/old-slug' },
-        { newSlug: 'existing-slug' }
+        { branch: toBranchName('feature/x'), path: toLogicalPath('posts/old-slug') },
+        { newSlug: toEntrySlug('existing-slug') }
       )
       expect(res.status).toBe(400)
       expect(res.ok).toBe(false)

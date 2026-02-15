@@ -408,3 +408,30 @@ export function branchNameToString(name: BranchName): string {
 export function slugToString(slug: CollectionSlug | EntrySlug): string {
   return slug as string
 }
+
+/**
+ * Test helper: Cast a string to BranchName without validation.
+ * Only use in tests where you control the input.
+ *
+ * @param name - The branch name string
+ * @returns The string cast to BranchName
+ */
+export const toBranchName = (name: string): BranchName => name as BranchName
+
+/**
+ * Test helper: Cast a string to EntrySlug without validation.
+ * Only use in tests where you control the input.
+ *
+ * @param slug - The entry slug string
+ * @returns The string cast to EntrySlug
+ */
+export const toEntrySlug = (slug: string): EntrySlug => slug as EntrySlug
+
+/**
+ * Test helper: Cast a string to CollectionSlug without validation.
+ * Only use in tests where you control the input.
+ *
+ * @param slug - The collection slug string
+ * @returns The string cast to CollectionSlug
+ */
+export const toCollectionSlug = (slug: string): CollectionSlug => slug as CollectionSlug

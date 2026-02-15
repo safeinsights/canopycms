@@ -17,6 +17,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { isAdmin } from '../authorization/helpers'
 import { getErrorMessage } from '../utils/error'
+import { branchNameSchema, logicalPathSchema } from './validators'
 import {
   SchemaStore,
   createCollectionInputSchema,
@@ -111,17 +112,17 @@ export type InvalidateSchemaCacheApiResponse = ApiResponse<InvalidateSchemaCache
 // ============================================================================
 
 const branchParamsSchema = z.object({
-  branch: z.string().min(1),
+  branch: branchNameSchema,
 })
 
 const collectionParamsSchema = z.object({
-  branch: z.string().min(1),
-  collectionPath: z.string().min(1),
+  branch: branchNameSchema,
+  collectionPath: logicalPathSchema,
 })
 
 const entryTypeParamsSchema = z.object({
-  branch: z.string().min(1),
-  collectionPath: z.string().min(1),
+  branch: branchNameSchema,
+  collectionPath: logicalPathSchema,
   entryTypeName: z.string().min(1),
 })
 

@@ -12,6 +12,7 @@ import type { PathPermission } from '../config'
 import { listEntriesHandler } from './entries'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
 import { loadCollectionMetaFiles, resolveCollectionReferences } from '../schema'
+import { toBranchName, toLogicalPath } from '../paths'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-entries-'))
 
@@ -82,7 +83,7 @@ describe('listEntries', () => {
     })
 
     // Request limit=2 to get entries
-    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'main', limit: 2 })
+    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('main'), limit: 2 })
 
     expect(res.ok).toBe(true)
     // Should include posts but not hidden.json (restricted by permission)
@@ -92,7 +93,7 @@ describe('listEntries', () => {
 
   it('returns 404 when branch is missing', async () => {
     const ctx = createMockApiContext({ branchContext: null })
-    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'missing' })
+    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('missing') })
     expect(res.status).toBe(404)
     expect(res.ok).toBe(false)
   })
@@ -196,7 +197,7 @@ describe('listEntries', () => {
     const allEntriesRes = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main' }
+      { branch: toBranchName('main') }
     )
 
     expect(allEntriesRes.ok).toBe(true)
@@ -210,7 +211,7 @@ describe('listEntries', () => {
     const docsNonRecursiveRes = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main', collection: 'content/docs' }
+      { branch: toBranchName('main'), collection: toLogicalPath('content/docs') }
     )
 
     expect(docsNonRecursiveRes.ok).toBe(true)
@@ -223,7 +224,7 @@ describe('listEntries', () => {
     const docsRecursiveRes = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main', collection: 'content/docs', recursive: true }
+      { branch: toBranchName('main'), collection: toLogicalPath('content/docs'), recursive: true }
     )
 
     expect(docsRecursiveRes.ok).toBe(true)
@@ -237,7 +238,7 @@ describe('listEntries', () => {
     const apiRecursiveRes = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main', collection: 'content/docs/api', recursive: true }
+      { branch: toBranchName('main'), collection: toLogicalPath('content/docs/api'), recursive: true }
     )
 
     expect(apiRecursiveRes.ok).toBe(true)
@@ -313,7 +314,7 @@ describe('listEntries', () => {
       },
     })
 
-    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'main' })
+    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('main') })
 
     expect(res.ok).toBe(true)
 
@@ -393,7 +394,7 @@ describe('listEntries', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main' }
+      { branch: toBranchName('main') }
     )
 
     expect(res.ok).toBe(true)
@@ -497,7 +498,7 @@ describe('listEntries', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main' }
+      { branch: toBranchName('main') }
     )
 
     expect(res.ok).toBe(true)
@@ -638,7 +639,7 @@ describe('listEntries', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main' }
+      { branch: toBranchName('main') }
     )
 
     expect(res.ok).toBe(true)
@@ -753,7 +754,7 @@ describe('sortEntriesByOrder', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main', collection: 'content/posts' }
+      { branch: toBranchName('main'), collection: toLogicalPath('content/posts') }
     )
 
     expect(res.ok).toBe(true)
@@ -842,7 +843,7 @@ describe('sortEntriesByOrder', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main', collection: 'content/posts' }
+      { branch: toBranchName('main'), collection: toLogicalPath('content/posts') }
     )
 
     expect(res.ok).toBe(true)
@@ -951,7 +952,7 @@ describe('dynamic collection discovery', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main' }
+      { branch: toBranchName('main') }
     )
 
     expect(res.ok).toBe(true)
@@ -1029,7 +1030,7 @@ describe('deleteEntry', () => {
     const res = await deleteEntry.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main', entryPath: 'content/posts/to-delete' }
+      { branch: toBranchName('main'), entryPath: toLogicalPath('content/posts/to-delete') }
     )
 
     expect(res.ok).toBe(true)
@@ -1109,7 +1110,7 @@ describe('deleteEntry', () => {
     const res = await deleteEntry.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main', entryPath: 'content/posts/protected' }
+      { branch: toBranchName('main'), entryPath: toLogicalPath('content/posts/protected') }
     )
 
     expect(res.ok).toBe(false)
@@ -1175,7 +1176,7 @@ describe('deleteEntry', () => {
     const res = await deleteEntry.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main', entryPath: 'content/posts/nonexistent' }
+      { branch: toBranchName('main'), entryPath: toLogicalPath('content/posts/nonexistent') }
     )
 
     expect(res.ok).toBe(false)
@@ -1225,7 +1226,7 @@ describe('deleteEntry', () => {
     const res = await deleteEntry.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'main', entryPath: 'invalid-no-slash' }
+      { branch: toBranchName('main'), entryPath: toLogicalPath('invalid-no-slash') }
     )
 
     expect(res.ok).toBe(false)

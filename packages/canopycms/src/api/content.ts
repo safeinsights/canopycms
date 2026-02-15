@@ -5,6 +5,7 @@ import { ContentStore, ContentStoreError } from '../content-store'
 import type { ContentFormat } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
+import { branchNameSchema, logicalPathSchema, entrySlugSchema } from './validators'
 
 /** Response type for content read operations */
 export type ContentReadResponse = ApiResponse<{
@@ -58,13 +59,13 @@ export type { ReferenceOptionsResponse } from './reference-options'
 // ============================================================================
 
 const readContentParamsSchema = z.object({
-  branch: z.string().min(1),
-  path: z.string().min(1), // Will be split into segments in handler
+  branch: branchNameSchema,
+  path: logicalPathSchema,
 })
 
 const writeContentParamsSchema = z.object({
-  branch: z.string().min(1),
-  path: z.string().min(1), // Will be split into segments in handler
+  branch: branchNameSchema,
+  path: logicalPathSchema,
   entryType: z.string().optional(), // Optional entry type name for collections with multiple entry types
 })
 
@@ -75,8 +76,8 @@ const writeContentBodySchema = z.object({
 })
 
 const validateReferencesParamsSchema = z.object({
-  branch: z.string().min(1),
-  path: z.string().min(1),
+  branch: branchNameSchema,
+  path: logicalPathSchema,
 })
 
 const validateReferencesBodySchema = z.object({
@@ -84,12 +85,12 @@ const validateReferencesBodySchema = z.object({
 })
 
 const renameEntryParamsSchema = z.object({
-  branch: z.string().min(1),
-  path: z.string().min(1),
+  branch: branchNameSchema,
+  path: logicalPathSchema,
 })
 
 const renameEntryBodySchema = z.object({
-  newSlug: z.string().min(1),
+  newSlug: entrySlugSchema,
 })
 
 const readContentHandler = async (

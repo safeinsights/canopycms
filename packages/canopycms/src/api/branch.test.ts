@@ -55,6 +55,7 @@ import type { ApiContext } from './types'
 import { RESERVED_GROUPS } from '../authorization'
 import { createMockApiContext, createMockBranchContext, createMockRegistry } from '../test-utils'
 import * as authorization from '../authorization'
+import { toBranchName } from '../paths'
 
 // Alias for convenience (tests reference permissionsLoader)
 const permissionsLoader = {
@@ -165,7 +166,7 @@ describe('canCreateBranch', () => {
 
 describe('branch api', () => {
   it('creates branch via workspace manager', async () => {
-    const res = await createBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/test' })
+    const res = await createBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/test') })
     expect(res.ok).toBe(true)
     expect(res.data?.branch.name).toBe('feature/test')
   })
@@ -175,7 +176,7 @@ describe('branch api', () => {
     vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([
       { path: 'content/**', edit: { allowedUsers: ['other-user'] } },
     ])
-    const res = await createBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/test' })
+    const res = await createBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/test') })
     expect(res.ok).toBe(false)
     expect(res.status).toBe(403)
     expect(res.error).toBe('You do not have permission to create branches')
@@ -186,7 +187,7 @@ describe('branch api', () => {
     vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([
       { path: 'content/**', edit: { allowedUsers: ['other-user'] } },
     ])
-    const res = await createBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'feature/test' })
+    const res = await createBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: toBranchName('feature/test') })
     expect(res.ok).toBe(true)
   })
 
@@ -195,7 +196,7 @@ describe('branch api', () => {
     const mockPermissions = [{ path: 'content/**', edit: { allowedUsers: ['u1'] } }]
     vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue(mockPermissions)
 
-    const res = await createBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/test' })
+    const res = await createBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/test') })
 
     expect(res.ok).toBe(true)
     expect(permissionsLoader.loadPathPermissions).toHaveBeenCalled()
@@ -285,41 +286,41 @@ describe('deleteBranch api', () => {
   }
 
   it('returns 400 in modes that do not support branching', async () => {
-    const res = await deleteBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    const res = await deleteBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/x') })
     expect(res.status).toBe(400)
     expect(res.error).toBe('Cannot delete branches in this operating mode')
   })
 
   it('returns 404 if branch not found', async () => {
     const ctx = { ...deleteCtx, getBranchContext: vi.fn().mockResolvedValue(null) }
-    const res = await deleteBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/missing' })
+    const res = await deleteBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/missing') })
     expect(res.status).toBe(404)
   })
 
   it('returns 403 if user not authorized', async () => {
     const ctx = { ...deleteCtx, getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('other')) }
-    const res = await deleteBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    const res = await deleteBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/x') })
     expect(res.status).toBe(403)
     expect(res.error).toBe('You do not have permission to delete this branch')
   })
 
   it('returns 400 if branch has submitted status', async () => {
     const ctx = { ...deleteCtx, getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1', 'submitted')) }
-    const res = await deleteBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    const res = await deleteBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/x') })
     expect(res.status).toBe(400)
     expect(res.error).toBe('Cannot delete branch with open pull request')
   })
 
   it('deletes branch when user is creator', async () => {
     const ctx = { ...deleteCtx, getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1')) }
-    const res = await deleteBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' })
+    const res = await deleteBranch(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/x') })
     expect(res.ok).toBe(true)
     expect(res.data?.deleted).toBe(true)
   })
 
   it('deletes branch when user is admin', async () => {
     const ctx = { ...deleteCtx, getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('other')) }
-    const res = await deleteBranch(ctx, { user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: 'feature/x' })
+    const res = await deleteBranch(ctx, { user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: toBranchName('feature/x') })
     expect(res.ok).toBe(true)
     expect(res.data?.deleted).toBe(true)
   })
@@ -360,13 +361,13 @@ describe('updateBranchAccess api', () => {
 
   it('returns 404 if branch not found', async () => {
     const ctx = { ...baseCtx, getBranchContext: vi.fn().mockResolvedValue(null) }
-    const res = await updateBranchAccess(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/missing' }, {})
+    const res = await updateBranchAccess(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/missing') }, {})
     expect(res.status).toBe(404)
   })
 
   it('returns 403 if user not authorized', async () => {
     const ctx = { ...baseCtx, getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('other')) }
-    const res = await updateBranchAccess(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: 'feature/x' }, {})
+    const res = await updateBranchAccess(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/x') }, {})
     expect(res.status).toBe(403)
     expect(res.error).toBe('You do not have permission to modify this branch')
   })
@@ -376,7 +377,7 @@ describe('updateBranchAccess api', () => {
     const res = await updateBranchAccess(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' },
+      { branch: toBranchName('feature/x') },
       { allowedUsers: ['u2', 'u3'] }
     )
     expect(res.ok).toBe(true)
@@ -388,7 +389,7 @@ describe('updateBranchAccess api', () => {
     const res = await updateBranchAccess(
       ctx,
       { user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] } },
-      { branch: 'feature/x' },
+      { branch: toBranchName('feature/x') },
       { allowedGroups: ['editors'] }
     )
     expect(res.ok).toBe(true)
