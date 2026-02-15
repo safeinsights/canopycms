@@ -16,6 +16,7 @@ import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
 import { operatingStrategy } from './operating-mode'
 import { resolveSchema, isValidSchema } from './schema'
+import { SchemaCacheRegistry } from './schema-cache-registry'
 
 /**
  * Parse bootstrap admin IDs from environment variable.
@@ -34,12 +35,22 @@ export const getBootstrapAdminIds = (): Set<string> => {
 
 export interface CanopyServices {
   config: CanopyConfig
-  /** Resolved schema tree (loaded from .collection.json files or config) */
+  /**
+   * Base schema tree (loaded from config.contentRoot at startup).
+   * For per-branch operations, prefer context.schema instead.
+   * @deprecated Will be removed in Phase 4 - temporary during migration
+   */
   schema: RootCollectionConfig
-  /** Cached flattened schema for O(1) lookups */
+  /**
+   * Base flattened schema for O(1) lookups.
+   * For per-branch operations, prefer context.flatSchema instead.
+   * @deprecated Will be removed in Phase 4 - temporary during migration
+   */
   flatSchema: FlatSchemaItem[]
   /** Schema registry for access by admin UI */
   schemaRegistry: Record<string, readonly FieldConfig[]>
+  /** Per-branch schema cache registry */
+  schemaCacheRegistry: import('./schema-cache-registry').SchemaCacheRegistry
   checkBranchAccess: (
     context: BranchContext,
     user: CanopyUser,
@@ -161,6 +172,9 @@ async function _createCanopyServicesInternal(
 
   // Flatten schema once for O(1) lookups throughout the app
   const flatSchema = flattenSchema(schema, config.contentRoot)
+
+  // Create per-branch schema cache registry
+  const schemaCacheRegistry = new SchemaCacheRegistry(config.mode)
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
   // Path permissions are loaded dynamically from settings branch or .canopy-dev/permissions.json at request time.
@@ -352,6 +366,7 @@ async function _createCanopyServicesInternal(
     schema,
     flatSchema,
     schemaRegistry: options.schemaRegistry ?? {},
+    schemaCacheRegistry,
     checkBranchAccess,
     checkPathAccess,
     checkContentAccess,

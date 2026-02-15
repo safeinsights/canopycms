@@ -139,6 +139,7 @@ export interface MockServicesOptions {
   schema?: any
   flatSchema?: any[]
   schemaRegistry?: any
+  schemaCacheRegistry?: any
   checkBranchAccess?: any
   checkPathAccess?: any
   checkContentAccess?: any
@@ -175,6 +176,16 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
     schema: options.schema ?? {},
     flatSchema: options.flatSchema ?? [],
     schemaRegistry: options.schemaRegistry ?? {},
+    schemaCacheRegistry:
+      options.schemaCacheRegistry ??
+      ({
+        getSchema: vi.fn().mockResolvedValue({
+          schema: options.schema ?? {},
+          flatSchema: options.flatSchema ?? [],
+        }),
+        invalidate: vi.fn().mockResolvedValue(undefined),
+        clearAll: vi.fn().mockResolvedValue(undefined),
+      } as any),
     checkBranchAccess:
       options.checkBranchAccess ?? vi.fn().mockReturnValue({ allowed: true, reason: 'allowed' }),
     checkPathAccess: options.checkPathAccess ?? (undefined as any),
