@@ -28,6 +28,7 @@ import { useBranchActions } from './hooks/useBranchActions'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { EntryCreateModal } from './components/EntryCreateModal'
+import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath } from '../paths/types'
 import { toLogicalPath } from '../paths/normalize'
@@ -145,6 +146,13 @@ export const Editor: React.FC<EditorProps> = ({
   const [renamingEntry, setRenamingEntry] = useState<EditorEntry | null>(null)
   const [renameModalError, setRenameModalError] = useState<string | null>(null)
   const [renameModalSaving, setRenameModalSaving] = useState(false)
+
+  // Delete confirmation modal state
+  const [deleteCollectionModalOpen, setDeleteCollectionModalOpen] = useState(false)
+  const [deletingCollectionPath, setDeletingCollectionPath] = useState<string | null>(null)
+  const [deleteEntryModalOpen, setDeleteEntryModalOpen] = useState(false)
+  const [deletingEntryPath, setDeletingEntryPath] = useState<string | null>(null)
+  const [deleteInProgress, setDeleteInProgress] = useState(false)
 
   // Preview data with resolved references for live preview
   const [previewData, setPreviewData] = useState<FormValue>({})
@@ -467,23 +475,41 @@ export const Editor: React.FC<EditorProps> = ({
     }
   }
 
-  const handleDeleteCollection = async (collectionPath: string) => {
-    // Confirm deletion
-    if (!window.confirm(`Are you sure you want to delete this collection? This cannot be undone.`)) {
-      return
-    }
-    await deleteCollection(collectionPath)
+  const handleDeleteCollection = (collectionPath: string) => {
+    setDeletingCollectionPath(collectionPath)
+    setDeleteCollectionModalOpen(true)
   }
 
-  const handleDeleteEntry = async (entryPath: string) => {
-    // Confirm deletion
-    if (!window.confirm(`Are you sure you want to delete this entry? This cannot be undone.`)) {
-      return
+  const confirmDeleteCollection = async () => {
+    if (!deletingCollectionPath) return
+    setDeleteInProgress(true)
+    try {
+      await deleteCollection(deletingCollectionPath)
+      setDeleteCollectionModalOpen(false)
+      setDeletingCollectionPath(null)
+    } finally {
+      setDeleteInProgress(false)
     }
-    const success = await deleteEntry(entryPath)
-    if (success && selectedPath === entryPath) {
-      // If we deleted the currently selected entry, clear selection
-      setSelectedPath('')
+  }
+
+  const handleDeleteEntry = (entryPath: string) => {
+    setDeletingEntryPath(entryPath)
+    setDeleteEntryModalOpen(true)
+  }
+
+  const confirmDeleteEntry = async () => {
+    if (!deletingEntryPath) return
+    setDeleteInProgress(true)
+    try {
+      const success = await deleteEntry(deletingEntryPath)
+      if (success && selectedPath === deletingEntryPath) {
+        // If we deleted the currently selected entry, clear selection
+        setSelectedPath('')
+      }
+      setDeleteEntryModalOpen(false)
+      setDeletingEntryPath(null)
+    } finally {
+      setDeleteInProgress(false)
     }
   }
 
@@ -1065,6 +1091,34 @@ export const Editor: React.FC<EditorProps> = ({
             error={createModalError}
           />
         )}
+
+        {/* Delete Collection Confirmation Modal */}
+        <ConfirmDeleteModal
+          isOpen={deleteCollectionModalOpen}
+          title="Delete Collection"
+          message="Are you sure you want to delete this collection? This cannot be undone."
+          confirmLabel="Delete Collection"
+          onConfirm={confirmDeleteCollection}
+          onClose={() => {
+            setDeleteCollectionModalOpen(false)
+            setDeletingCollectionPath(null)
+          }}
+          loading={deleteInProgress}
+        />
+
+        {/* Delete Entry Confirmation Modal */}
+        <ConfirmDeleteModal
+          isOpen={deleteEntryModalOpen}
+          title="Delete Entry"
+          message="Are you sure you want to delete this entry? This cannot be undone."
+          confirmLabel="Delete Entry"
+          onConfirm={confirmDeleteEntry}
+          onClose={() => {
+            setDeleteEntryModalOpen(false)
+            setDeletingEntryPath(null)
+          }}
+          loading={deleteInProgress}
+        />
       </Box>
     </CanopyCMSProvider>
   )
