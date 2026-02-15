@@ -10,8 +10,12 @@ export interface ApiContext {
   /**
    * Load a branch context for the requested branch name.
    * Can be backed by BranchRegistry + BranchMetadataFileManager.
+   *
+   * @param branchName - Name of the branch to load
+   * @param options - Optional configuration
+   * @param options.loadSchema - If true, loads per-branch schema into context.schema and context.flatSchema
    */
-  getBranchContext: (branchName: string) => Promise<BranchContext | null>
+  getBranchContext: (branchName: string, options?: { loadSchema?: boolean }) => Promise<BranchContext | null>
   /**
    * Auth plugin for user/group search (optional)
    */

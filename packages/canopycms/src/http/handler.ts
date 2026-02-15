@@ -39,10 +39,19 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
 
   const getBranchContext =
     options.getBranchContext ??
-    (async (branch: string): Promise<BranchContext | null> => {
+    (async (branch: string, opts?: { loadSchema?: boolean }): Promise<BranchContext | null> => {
       // Try to load existing branch
       const existing = await loadBranchContext({ branchName: branch, mode: operatingMode })
       if (existing) {
+        // Optionally load per-branch schema
+        if (opts?.loadSchema) {
+          const cached = await services.schemaCacheRegistry.getSchema(
+            existing.branchRoot,
+            services.schemaRegistry
+          )
+          existing.schema = cached.schema
+          existing.flatSchema = cached.flatSchema
+        }
         return existing
       }
 
@@ -58,6 +67,17 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
           mode: operatingMode,
           createdBy: 'canopycms-system',
         })
+
+        // Optionally load per-branch schema for auto-created branches
+        if (opts?.loadSchema && context) {
+          const cached = await services.schemaCacheRegistry.getSchema(
+            context.branchRoot,
+            services.schemaRegistry
+          )
+          context.schema = cached.schema
+          context.flatSchema = cached.flatSchema
+        }
+
         return context
       }
 
