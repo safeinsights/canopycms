@@ -73,9 +73,14 @@ interface RootCollectionMetaFile {
 // Zod Schemas for Validation
 // ============================================================================
 
+/** Max length for names and slugs (filesystem path safety) */
+const MAX_NAME_LENGTH = 64
+/** Max length for labels */
+const MAX_LABEL_LENGTH = 128
+
 const entryTypeInputSchema = z.object({
-  name: z.string().min(1),
-  label: z.string().optional(),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  label: z.string().max(MAX_LABEL_LENGTH).optional(),
   format: z.enum(['md', 'mdx', 'json']),
   fields: z.string().min(1),
   default: z.boolean().optional(),
@@ -83,21 +88,21 @@ const entryTypeInputSchema = z.object({
 })
 
 const createCollectionInputSchema = z.object({
-  name: z.string().min(1),
-  label: z.string().optional(),
+  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  label: z.string().max(MAX_LABEL_LENGTH).optional(),
   parentPath: z.string().optional(),
   entries: z.array(entryTypeInputSchema).min(1, 'Collection must have at least one entry type'),
 })
 
 const updateCollectionInputSchema = z.object({
-  name: z.string().min(1).optional(),
-  label: z.string().optional(),
-  slug: z.string().min(1).optional(), // Directory name (e.g., "posts" in "posts.{id}/")
+  name: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
+  label: z.string().max(MAX_LABEL_LENGTH).optional(),
+  slug: z.string().min(1).max(MAX_NAME_LENGTH).optional(), // Directory name (e.g., "posts" in "posts.{id}/")
   order: z.array(z.string()).optional(),
 })
 
 const updateEntryTypeInputSchema = z.object({
-  label: z.string().optional(),
+  label: z.string().max(MAX_LABEL_LENGTH).optional(),
   format: z.enum(['md', 'mdx', 'json']).optional(),
   fields: z.string().min(1).optional(),
   default: z.boolean().optional(),
@@ -212,7 +217,7 @@ export class SchemaStore {
   }
 
   /**
-   * Check if a collection is empty (has no content files)
+   * Check if a collection is empty (has no content files or child collections)
    */
   async isCollectionEmpty(collectionPath: LogicalPath): Promise<boolean> {
     const physicalPath = await resolveCollectionPath(this.contentRoot, collectionPath)
@@ -223,10 +228,19 @@ export class SchemaStore {
 
     try {
       const entries = await fs.readdir(physicalPath, { withFileTypes: true })
-      // Check for content files (not .collection.json or subdirectories that are collections)
       for (const entry of entries) {
+        // Content files mean not empty
         if (entry.isFile() && entry.name !== '.collection.json') {
           return false
+        }
+        // Child collection directories mean not empty
+        if (entry.isDirectory()) {
+          try {
+            await fs.access(path.join(physicalPath, entry.name, '.collection.json'))
+            return false
+          } catch {
+            // Not a collection directory, ignore
+          }
         }
       }
       return true
@@ -627,6 +641,15 @@ export class SchemaStore {
     // Ensure at least one entry type remains
     if (meta.entries!.length === 1) {
       throw new Error('Cannot remove last entry type. Collection must have at least one entry type.')
+    }
+
+    // Check for entries still using this type
+    const usageCount = await this.countEntriesUsingType(collectionPath, entryTypeName)
+    if (usageCount > 0) {
+      throw new Error(
+        `Cannot remove entry type "${entryTypeName}": ${usageCount} ${usageCount === 1 ? 'entry still uses' : 'entries still use'} it. ` +
+        'Delete or migrate those entries first.'
+      )
     }
 
     // Remove entry type

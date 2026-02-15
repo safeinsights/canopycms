@@ -355,6 +355,41 @@ describe('SchemaStore', () => {
       expect(isEmpty).toBe(false)
     })
 
+    it('should return false for collection with child collections', async () => {
+      // Create parent collection
+      await store.createCollection({
+        name: 'docs',
+        entries: [{ name: 'doc', format: 'md', fields: 'postSchema' }],
+      })
+
+      // Create child collection inside it
+      const docsPath = toLogicalPath('docs')
+      await store.createCollection({
+        name: 'guides',
+        parentPath: docsPath,
+        entries: [{ name: 'guide', format: 'md', fields: 'postSchema' }],
+      })
+
+      // Parent has no files but has a child collection — not empty
+      const isEmpty = await store.isCollectionEmpty(docsPath)
+      expect(isEmpty).toBe(false)
+    })
+
+    it('should return true for collection with non-collection directories', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+      })
+
+      // Add a plain directory (no .collection.json)
+      const dirs = await fs.readdir(contentRoot)
+      const collectionDir = path.join(contentRoot, dirs[0])
+      await fs.mkdir(path.join(collectionDir, 'assets'), { recursive: true })
+
+      const isEmpty = await store.isCollectionEmpty(toLogicalPath('posts'))
+      expect(isEmpty).toBe(true)
+    })
+
     it('should return true for non-existent collection', async () => {
       const isEmpty = await store.isCollectionEmpty(toLogicalPath('nonexistent'))
       expect(isEmpty).toBe(true)
@@ -515,6 +550,52 @@ describe('SchemaStore', () => {
       await expect(
         store.removeEntryType(toLogicalPath('posts'), 'nonexistent')
       ).rejects.toThrow('Entry type "nonexistent" not found')
+    })
+
+    it('should throw when entry type still has entries using it', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [
+          { name: 'post', format: 'json', fields: 'postSchema' },
+          { name: 'featured', format: 'json', fields: 'postSchema' },
+        ],
+      })
+
+      // Create an entry using the 'post' entry type
+      const dirs = await fs.readdir(contentRoot)
+      const collectionDir = path.join(contentRoot, dirs[0])
+      await fs.writeFile(
+        path.join(collectionDir, 'post.hello.abc123def456.json'),
+        JSON.stringify({ title: 'Hello' })
+      )
+
+      await expect(
+        store.removeEntryType(toLogicalPath('posts'), 'post')
+      ).rejects.toThrow('Cannot remove entry type "post": 1 entry still uses it')
+    })
+
+    it('should allow removing entry type with no entries using it', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [
+          { name: 'post', format: 'json', fields: 'postSchema' },
+          { name: 'featured', format: 'json', fields: 'postSchema' },
+        ],
+      })
+
+      // Create an entry using 'post' but NOT 'featured'
+      const dirs = await fs.readdir(contentRoot)
+      const collectionDir = path.join(contentRoot, dirs[0])
+      await fs.writeFile(
+        path.join(collectionDir, 'post.hello.abc123def456.json'),
+        JSON.stringify({ title: 'Hello' })
+      )
+
+      // Should succeed — 'featured' has no entries
+      await store.removeEntryType(toLogicalPath('posts'), 'featured')
+      const meta = await store.readCollectionMeta(toLogicalPath('posts'))
+      expect(meta!.entries).toHaveLength(1)
+      expect(meta!.entries![0].name).toBe('post')
     })
   })
 

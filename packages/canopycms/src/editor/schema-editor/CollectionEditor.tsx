@@ -176,6 +176,10 @@ export function CollectionEditor({
       setValidationError('Name must start with a letter and contain only lowercase letters, numbers, and hyphens')
       return false
     }
+    if (formData.name.length > 64) {
+      setValidationError('Name must be 64 characters or less')
+      return false
+    }
     if (!isEditMode && formData.entries.length === 0) {
       setValidationError('At least one entry type is required')
       return false
