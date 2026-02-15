@@ -44,6 +44,7 @@ import type {
 } from '../../schema/schema-store-types'
 import type { LogicalPath } from '../../paths/types'
 import { EntryTypeEditor } from './EntryTypeEditor'
+import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal'
 
 // ============================================================================
 // Types
@@ -130,6 +131,9 @@ export function CollectionEditor({
     entries: [],
   })
 
+  // Slug field state (edit mode only)
+  const [slug, setSlug] = useState('')
+
   // Local validation error
   const [validationError, setValidationError] = useState<string | null>(null)
 
@@ -137,6 +141,13 @@ export function CollectionEditor({
   const [entryTypeEditorOpen, setEntryTypeEditorOpen] = useState(false)
   const [editingEntryType, setEditingEntryType] = useState<ExistingEntryType | null>(null)
   const [editingEntryTypeIndex, setEditingEntryTypeIndex] = useState<number | null>(null)
+
+  // Delete entry type confirmation state
+  const [deleteEntryTypeModalOpen, setDeleteEntryTypeModalOpen] = useState(false)
+  const [deletingEntryType, setDeletingEntryType] = useState<{
+    entryType: ExistingEntryType | CreateEntryTypeInput
+    index: number
+  } | null>(null)
 
   // Reset form when modal opens or editing item changes
   useEffect(() => {
@@ -147,12 +158,18 @@ export function CollectionEditor({
           label: editingCollection.label || '',
           entries: [], // Entry types are managed separately in edit mode
         })
+        // Extract slug from logical path (e.g., "content/posts.abc123" → "posts")
+        const pathParts = editingCollection.logicalPath.split('/')
+        const lastPart = pathParts[pathParts.length - 1]
+        const slugPart = lastPart?.split('.')[0] || ''
+        setSlug(slugPart)
       } else {
         setFormData({
           name: '',
           label: '',
           entries: [],
         })
+        setSlug('')
       }
       setValidationError(null)
     }
@@ -199,7 +216,13 @@ export function CollectionEditor({
       if (formData.label !== (editingCollection?.label || '')) {
         updates.label = formData.label || undefined
       }
-      // Note: slug changes (directory renames) can be added in the future
+      // Include slug if changed
+      const pathParts = editingCollection?.logicalPath.split('/') || []
+      const lastPart = pathParts[pathParts.length - 1]
+      const currentSlug = lastPart?.split('.')[0] || ''
+      if (slug && slug !== currentSlug) {
+        updates.slug = slug
+      }
       onSave(updates, false)
     } else {
       // Create new collection
@@ -215,7 +238,7 @@ export function CollectionEditor({
       }
       onSave(createData, true)
     }
-  }, [formData, isEditMode, editingCollection, parentPath, validate, onSave])
+  }, [formData, slug, isEditMode, editingCollection, parentPath, validate, onSave])
 
   // Entry type management (create mode)
   const handleOpenAddEntryType = useCallback(() => {
@@ -271,17 +294,29 @@ export function CollectionEditor({
 
   const handleRemoveEntryType = useCallback(
     (entryType: ExistingEntryType | CreateEntryTypeInput, index: number) => {
-      if (isEditMode && editingCollection) {
-        onRemoveEntryType?.(editingCollection.logicalPath, entryType.name)
-      } else {
-        setFormData((prev) => ({
-          ...prev,
-          entries: prev.entries.filter((_, i) => i !== index),
-        }))
-      }
+      setDeletingEntryType({ entryType, index })
+      setDeleteEntryTypeModalOpen(true)
     },
-    [isEditMode, editingCollection, onRemoveEntryType],
+    [],
   )
+
+  const confirmRemoveEntryType = useCallback(() => {
+    if (!deletingEntryType) return
+
+    const { entryType, index } = deletingEntryType
+
+    if (isEditMode && editingCollection) {
+      onRemoveEntryType?.(editingCollection.logicalPath, entryType.name)
+    } else {
+      setFormData((prev) => ({
+        ...prev,
+        entries: prev.entries.filter((_, i) => i !== index),
+      }))
+    }
+
+    setDeleteEntryTypeModalOpen(false)
+    setDeletingEntryType(null)
+  }, [deletingEntryType, isEditMode, editingCollection, onRemoveEntryType])
 
   // Get entry types to display
   const displayEntryTypes: (ExistingEntryType | CreateEntryTypeInput)[] = isEditMode
@@ -329,6 +364,20 @@ export function CollectionEditor({
             value={formData.label}
             onChange={(e) => updateField('label', e.target.value)}
           />
+
+          {/* Slug - only shown in edit mode */}
+          {isEditMode && (
+            <TextInput
+              label="Slug"
+              description="Directory name (filesystem path). Changing this renames the directory."
+              placeholder="posts"
+              value={slug}
+              onChange={(e) => {
+                setSlug(e.target.value)
+                setValidationError(null)
+              }}
+            />
+          )}
 
           {parentPath && !isEditMode && (
             <Text size="sm" c="dimmed">
@@ -437,6 +486,25 @@ export function CollectionEditor({
           setEntryTypeEditorOpen(false)
           setEditingEntryType(null)
           setEditingEntryTypeIndex(null)
+        }}
+      />
+
+      {/* Delete Entry Type Confirmation Modal */}
+      <ConfirmDeleteModal
+        isOpen={deleteEntryTypeModalOpen}
+        title="Remove Entry Type"
+        message={
+          deletingEntryType &&
+          'usageCount' in deletingEntryType.entryType &&
+          deletingEntryType.entryType.usageCount
+            ? `This entry type is used by ${deletingEntryType.entryType.usageCount} ${deletingEntryType.entryType.usageCount === 1 ? 'entry' : 'entries'}. Removing it will prevent editing those entries. Are you sure you want to remove this entry type?`
+            : 'Are you sure you want to remove this entry type? This cannot be undone.'
+        }
+        confirmLabel="Remove Entry Type"
+        onConfirm={confirmRemoveEntryType}
+        onClose={() => {
+          setDeleteEntryTypeModalOpen(false)
+          setDeletingEntryType(null)
         }}
       />
     </>
