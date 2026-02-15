@@ -10,7 +10,14 @@ import {
   toLogicalPath,
   toPhysicalPath,
 } from './normalize'
-import type { LogicalPath, PhysicalPath } from './types'
+import type {
+  LogicalPath,
+  PhysicalPath,
+  ContentId,
+  BranchName,
+  EntrySlug,
+  CollectionSlug,
+} from './types'
 
 /**
  * Base58 alphabet used for content IDs (excludes ambiguous: 0, O, I, l)
@@ -253,4 +260,168 @@ export function parsePhysicalPath(
  */
 export function isValidContentId(id: string): boolean {
   return CONTENT_ID_PATTERN.test(id) && id.length === 12
+}
+
+/**
+ * Parse and validate a ContentId from a string.
+ * Validates Base58 format and 12-character length.
+ *
+ * @param id - The string to validate
+ * @returns Object with success flag and either the typed ID or an error
+ *
+ * @example
+ * ```ts
+ * const result = parseContentId(fileId)
+ * if (!result.ok) {
+ *   throw new Error(result.error)
+ * }
+ * const contentId: ContentId = result.id
+ * ```
+ */
+export function parseContentId(
+  id: string,
+): { ok: true; id: ContentId } | { ok: false; error: string } {
+  if (!id || typeof id !== 'string') {
+    return { ok: false, error: 'Content ID is required' }
+  }
+
+  if (!isValidContentId(id)) {
+    return {
+      ok: false,
+      error: `Invalid content ID format (expected 12 Base58 characters, got: ${id})`,
+    }
+  }
+
+  return { ok: true, id: id as ContentId }
+}
+
+/**
+ * Parse and validate a BranchName.
+ * Checks git branch naming rules.
+ *
+ * @param name - The branch name to validate
+ * @returns Object with success flag and either the typed name or an error
+ *
+ * @example
+ * ```ts
+ * const result = parseBranchName(params.branch)
+ * if (!result.ok) {
+ *   return { ok: false, status: 400, error: result.error }
+ * }
+ * const branchName: BranchName = result.name
+ * ```
+ */
+export function parseBranchName(
+  name: string,
+): { ok: true; name: BranchName } | { ok: false; error: string } {
+  if (!name || typeof name !== 'string') {
+    return { ok: false, error: 'Branch name is required' }
+  }
+
+  // Git branch name rules
+  if (name.includes('..')) {
+    return { ok: false, error: 'Branch name cannot contain ".."' }
+  }
+
+  if (name.startsWith('/') || name.endsWith('/') || name.includes('//')) {
+    return { ok: false, error: 'Invalid branch name format (invalid slashes)' }
+  }
+
+  if (name.includes(' ')) {
+    return { ok: false, error: 'Branch name cannot contain spaces' }
+  }
+
+  // Additional git restrictions
+  if (name.startsWith('.') || name.endsWith('.')) {
+    return { ok: false, error: 'Branch name cannot start or end with a dot' }
+  }
+
+  if (name.includes('@{')) {
+    return { ok: false, error: 'Branch name cannot contain "@{"' }
+  }
+
+  return { ok: true, name: name as BranchName }
+}
+
+/**
+ * Parse and validate a slug (collection or entry).
+ * Validates format and length constraints.
+ *
+ * @param slug - The slug to validate
+ * @param type - Whether this is a collection or entry slug
+ * @returns Object with success flag and either the typed slug or an error
+ *
+ * @example
+ * ```ts
+ * const result = parseSlug(params.slug, 'entry')
+ * if (!result.ok) {
+ *   return { ok: false, status: 400, error: result.error }
+ * }
+ * const entrySlug: EntrySlug = result.slug
+ * ```
+ */
+export function parseSlug(
+  slug: string,
+  type: 'collection' | 'entry',
+): { ok: true; slug: CollectionSlug | EntrySlug } | { ok: false; error: string } {
+  if (!slug || typeof slug !== 'string') {
+    return {
+      ok: false,
+      error: `${type === 'collection' ? 'Collection' : 'Entry'} slug is required`,
+    }
+  }
+
+  // Check length first (before isValidSlug which also checks it)
+  if (slug.length > 64) {
+    return { ok: false, error: 'Slug too long (max 64 characters)' }
+  }
+
+  // Check for path separators and traversal
+  if (slug.includes('/') || slug.includes('\\')) {
+    return {
+      ok: false,
+      error: 'Slug cannot contain path separators',
+    }
+  }
+
+  if (slug === '.' || slug === '..') {
+    return {
+      ok: false,
+      error: 'Slug cannot be a traversal sequence',
+    }
+  }
+
+  // Validation from ContentStore.renameEntry
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) {
+    return {
+      ok: false,
+      error:
+        'Slug must start with a letter or number and contain only lowercase letters, numbers, and hyphens',
+    }
+  }
+
+  // Cast to appropriate branded type
+  return { ok: true, slug: slug as CollectionSlug | EntrySlug }
+}
+
+/**
+ * Convert a branded ContentId back to string for storage/serialization.
+ * This is a type-safe way to extract the underlying string value.
+ */
+export function contentIdToString(id: ContentId): string {
+  return id as string
+}
+
+/**
+ * Convert a branded BranchName back to string for storage/serialization.
+ */
+export function branchNameToString(name: BranchName): string {
+  return name as string
+}
+
+/**
+ * Convert a branded slug back to string for storage/serialization.
+ */
+export function slugToString(slug: CollectionSlug | EntrySlug): string {
+  return slug as string
 }

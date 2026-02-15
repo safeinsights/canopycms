@@ -32,6 +32,31 @@ export type CollectionPath = string & { readonly __brand: 'CollectionPath' }
 export type SanitizedBranchName = string & { readonly __brand: 'SanitizedBranchName' }
 
 /**
+ * A git branch name (before sanitization for filesystem use).
+ * Example: "feature/add-dark-mode" or "main"
+ */
+export type BranchName = string & { readonly __brand: 'BranchName' }
+
+/**
+ * A 12-character Base58-encoded content ID.
+ * Used to uniquely identify entries and collections in filenames.
+ * Example: "bChqT78gcaLd"
+ */
+export type ContentId = string & { readonly __brand: 'ContentId' }
+
+/**
+ * A collection slug (validated segment of a collection path).
+ * Example: "posts" or "api-docs"
+ */
+export type CollectionSlug = string & { readonly __brand: 'CollectionSlug' }
+
+/**
+ * An entry slug (last segment of an entry path, used in URLs and filenames).
+ * Example: "my-first-post" or "getting-started"
+ */
+export type EntrySlug = string & { readonly __brand: 'EntrySlug' }
+
+/**
  * Context for path resolution operations.
  */
 export interface PathContext {

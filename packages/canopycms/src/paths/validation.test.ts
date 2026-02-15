@@ -6,6 +6,9 @@ import {
   parseLogicalPath,
   parsePhysicalPath,
   isValidContentId,
+  parseContentId,
+  parseBranchName,
+  parseSlug,
 } from './validation'
 
 describe('path validation utilities', () => {
@@ -155,6 +158,245 @@ describe('path validation utilities', () => {
       if (!result.ok) {
         expect(result.error).toContain('logical path')
       }
+    })
+  })
+
+  describe('parseContentId', () => {
+    it('returns typed ContentId for valid IDs', () => {
+      const result = parseContentId('vh2WdhwAFiSL')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.id).toBe('vh2WdhwAFiSL')
+      }
+    })
+
+    it('accepts various valid Base58 IDs', () => {
+      const validIds = ['abc123def456', 'XYZabc123def', 'vh2WdhwAFiSL', '123456789ABC']
+      validIds.forEach((id) => {
+        const result = parseContentId(id)
+        expect(result.ok).toBe(true)
+      })
+    })
+
+    it('rejects empty or invalid IDs', () => {
+      const result = parseContentId('')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('required')
+      }
+    })
+
+    it('rejects IDs with wrong length', () => {
+      const result = parseContentId('abc123')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('12 Base58 characters')
+      }
+    })
+
+    it('rejects IDs with invalid Base58 characters', () => {
+      // 0, O, I, l are excluded from Base58
+      const invalidIds = ['0abc23def456', 'Oabc23def456', 'Iabc23def456', 'labc23def456']
+      invalidIds.forEach((id) => {
+        const result = parseContentId(id)
+        expect(result.ok).toBe(false)
+      })
+    })
+
+    it('rejects IDs with special characters', () => {
+      const result = parseContentId('abc-23def456')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('12 Base58 characters')
+      }
+    })
+  })
+
+  describe('parseBranchName', () => {
+    it('returns typed BranchName for valid branch names', () => {
+      const result = parseBranchName('main')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.name).toBe('main')
+      }
+    })
+
+    it('accepts various valid branch names', () => {
+      const validNames = ['main', 'develop', 'feature/add-dark-mode', 'fix/bug-123', 'release/v1.0']
+      validNames.forEach((name) => {
+        const result = parseBranchName(name)
+        expect(result.ok).toBe(true)
+      })
+    })
+
+    it('rejects empty branch names', () => {
+      const result = parseBranchName('')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('required')
+      }
+    })
+
+    it('rejects branch names with double dots', () => {
+      const result = parseBranchName('feature..bug')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('".."')
+      }
+    })
+
+    it('rejects branch names starting or ending with slash', () => {
+      let result = parseBranchName('/feature')
+      expect(result.ok).toBe(false)
+
+      result = parseBranchName('feature/')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('slash')
+      }
+    })
+
+    it('rejects branch names with spaces', () => {
+      const result = parseBranchName('my branch')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('space')
+      }
+    })
+
+    it('rejects branch names starting or ending with dot', () => {
+      let result = parseBranchName('.feature')
+      expect(result.ok).toBe(false)
+
+      result = parseBranchName('feature.')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('dot')
+      }
+    })
+
+    it('rejects branch names with @{', () => {
+      const result = parseBranchName('feature@{tag}')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('@{')
+      }
+    })
+
+    it('rejects branch names with double slashes', () => {
+      const result = parseBranchName('feature//bug')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('slash')
+      }
+    })
+  })
+
+  describe('parseSlug', () => {
+    describe('entry slugs', () => {
+      it('returns typed EntrySlug for valid slugs', () => {
+        const result = parseSlug('my-first-post', 'entry')
+        expect(result.ok).toBe(true)
+        if (result.ok) {
+          expect(result.slug).toBe('my-first-post')
+        }
+      })
+
+      it('accepts various valid entry slugs', () => {
+        const validSlugs = ['hello', 'hello-world', 'my-first-post', 'post123', '2023-update']
+        validSlugs.forEach((slug) => {
+          const result = parseSlug(slug, 'entry')
+          expect(result.ok).toBe(true)
+        })
+      })
+
+      it('rejects empty slugs', () => {
+        const result = parseSlug('', 'entry')
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(result.error).toContain('required')
+        }
+      })
+
+      it('rejects slugs with path separators', () => {
+        let result = parseSlug('posts/hello', 'entry')
+        expect(result.ok).toBe(false)
+
+        result = parseSlug('posts\\hello', 'entry')
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(result.error).toContain('separator')
+        }
+      })
+
+      it('rejects slugs not starting with alphanumeric', () => {
+        const result = parseSlug('-hello', 'entry')
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(result.error).toContain('start with a letter or number')
+        }
+      })
+
+      it('rejects slugs with uppercase letters', () => {
+        const result = parseSlug('HelloWorld', 'entry')
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(result.error).toContain('lowercase')
+        }
+      })
+
+      it('rejects slugs with special characters', () => {
+        const invalidSlugs = ['hello_world', 'hello.world', 'hello world', 'hello@world']
+        invalidSlugs.forEach((slug) => {
+          const result = parseSlug(slug, 'entry')
+          expect(result.ok).toBe(false)
+        })
+      })
+
+      it('rejects slugs longer than 64 characters', () => {
+        const longSlug = 'a'.repeat(65)
+        const result = parseSlug(longSlug, 'entry')
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(result.error).toContain('too long')
+        }
+      })
+    })
+
+    describe('collection slugs', () => {
+      it('returns typed CollectionSlug for valid slugs', () => {
+        const result = parseSlug('posts', 'collection')
+        expect(result.ok).toBe(true)
+        if (result.ok) {
+          expect(result.slug).toBe('posts')
+        }
+      })
+
+      it('accepts various valid collection slugs', () => {
+        const validSlugs = ['posts', 'blog-posts', 'api-docs', '2023-articles']
+        validSlugs.forEach((slug) => {
+          const result = parseSlug(slug, 'collection')
+          expect(result.ok).toBe(true)
+        })
+      })
+
+      it('applies same validation rules as entry slugs', () => {
+        // Empty
+        let result = parseSlug('', 'collection')
+        expect(result.ok).toBe(false)
+
+        // With separator
+        result = parseSlug('posts/items', 'collection')
+        expect(result.ok).toBe(false)
+
+        // Not starting with alphanumeric
+        result = parseSlug('-posts', 'collection')
+        expect(result.ok).toBe(false)
+
+        // Uppercase
+        result = parseSlug('Posts', 'collection')
+        expect(result.ok).toBe(false)
+      })
     })
   })
 })
