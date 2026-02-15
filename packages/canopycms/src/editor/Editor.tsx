@@ -400,7 +400,7 @@ export const Editor: React.FC<EditorProps> = ({
       // Edit mode - fetch full collection data with usage counts
       try {
         const result = await apiClient.schema.getCollection({
-          branch: branchName,
+          branch: branchNameState,
           collectionPath: collection.path,
         })
 

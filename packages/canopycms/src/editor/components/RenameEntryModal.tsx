@@ -60,6 +60,9 @@ export function RenameEntryModal({
     if (!/^[a-z0-9][-a-z0-9]*$/.test(slug)) {
       return 'Slug must start with letter/number and contain only lowercase letters, numbers, and hyphens'
     }
+    if (slug.length > 64) {
+      return 'Slug must be 64 characters or less'
+    }
     return null
   }
 

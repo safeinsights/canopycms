@@ -159,6 +159,10 @@ export function EntryTypeEditor({
       )
       return false
     }
+    if (formData.name.length > 64) {
+      setValidationError('Name must be 64 characters or less')
+      return false
+    }
     // Check for duplicate names (only in create mode)
     if (!isEditMode && existingEntryTypeNames.includes(formData.name.trim())) {
       setValidationError('Entry type with this name already exists in this collection')

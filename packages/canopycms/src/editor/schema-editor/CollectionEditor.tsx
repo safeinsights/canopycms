@@ -196,6 +196,10 @@ export function CollectionEditor({
       )
       return false
     }
+    if (formData.name.length > 64) {
+      setValidationError('Name must be 64 characters or less')
+      return false
+    }
     if (!isEditMode && formData.entries.length === 0) {
       setValidationError('At least one entry type is required')
       return false

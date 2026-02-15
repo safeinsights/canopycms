@@ -85,6 +85,9 @@ export function EntryCreateModal({
     if (!/^[a-z0-9][-a-z0-9]*$/.test(value)) {
       return 'Slug must start with letter/number and contain only lowercase letters, numbers, and hyphens'
     }
+    if (value.length > 64) {
+      return 'Slug must be 64 characters or less'
+    }
     return null
   }
 

@@ -42,6 +42,11 @@ export function isValidSlug(slug: string): boolean {
     return false
   }
 
+  // Max length (filesystem path safety)
+  if (slug.length > 64) {
+    return false
+  }
+
   // No path separators
   if (slug.includes('/') || slug.includes('\\')) {
     return false
