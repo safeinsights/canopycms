@@ -579,4 +579,132 @@ describe('ContentStore', () => {
       expect(idBefore).toBeTruthy()
     })
   })
+
+  describe('multiple entry types', () => {
+    it('creates entries with specified entry type', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'content',
+            path: 'content',
+            entries: [
+              { name: 'post', format: 'mdx' as const, fields: [], default: true },
+              { name: 'article', format: 'md' as const, fields: [] },
+              { name: 'note', format: 'json' as const, fields: [] },
+            ],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Create entries of different types
+      const post = await store.write('content/content', 'my-post', { format: 'mdx', data: {}, body: 'Post content' }, 'post')
+      const article = await store.write('content/content', 'my-article', { format: 'md', data: {}, body: 'Article content' }, 'article')
+      const note = await store.write('content/content', 'my-note', { format: 'json', data: { text: 'Note' } }, 'note')
+
+      // Verify filenames include correct entry type (check the returned paths)
+      const postFile = path.basename(post.relativePath)
+      const articleFile = path.basename(article.relativePath)
+      const noteFile = path.basename(note.relativePath)
+
+      expect(postFile.startsWith('post.my-post.')).toBe(true)
+      expect(postFile.endsWith('.mdx')).toBe(true)
+      expect(articleFile.startsWith('article.my-article.')).toBe(true)
+      expect(articleFile.endsWith('.md')).toBe(true)
+      expect(noteFile.startsWith('note.my-note.')).toBe(true)
+      expect(noteFile.endsWith('.json')).toBe(true)
+    })
+
+    it('throws error for invalid entry type', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [{ name: 'post', format: 'mdx' as const, fields: [] }],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      await expect(
+        store.write('content/posts', 'test', { format: 'mdx', data: {}, body: '' }, 'invalid-type')
+      ).rejects.toThrow("Entry type 'invalid-type' not found in collection")
+    })
+
+    it('uses default entry type when not specified', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'docs',
+            path: 'docs',
+            entries: [
+              { name: 'guide', format: 'md' as const, fields: [] },
+              { name: 'tutorial', format: 'mdx' as const, fields: [], default: true },
+            ],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Write without specifying entry type - should use default (tutorial)
+      const doc = await store.write('content/docs', 'my-doc', { format: 'mdx', data: {}, body: 'Content' })
+
+      const tutorialFile = path.basename(doc.relativePath)
+      expect(tutorialFile.startsWith('tutorial.my-doc.')).toBe(true)
+      expect(tutorialFile.endsWith('.mdx')).toBe(true)
+    })
+
+    it('preserves entry type for existing entries (immutable after creation)', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'content',
+            path: 'content',
+            entries: [
+              { name: 'post', format: 'mdx' as const, fields: [] },
+              { name: 'article', format: 'md' as const, fields: [] },
+            ],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Create an entry with entry type "post"
+      const created = await store.write('content/content', 'my-content', { format: 'mdx', data: {}, body: 'Original' }, 'post')
+      const createdFile = path.basename(created.relativePath)
+      expect(createdFile.startsWith('post.my-content.')).toBe(true)
+
+      // Update the same entry WITHOUT specifying entry type
+      // The entry type should be automatically preserved from the existing file
+      const updated = await store.write('content/content', 'my-content', { format: 'mdx', data: {}, body: 'Updated' })
+      const updatedFile = path.basename(updated.relativePath)
+
+      // Entry type should still be "post" (preserved from existing file)
+      expect(updatedFile.startsWith('post.my-content.')).toBe(true)
+      expect(updatedFile).toBe(createdFile) // Filename should be exactly the same
+
+      // Verify the content was updated
+      const read = await store.read('content/content', 'my-content')
+      if (read.format === 'json') throw new Error('Expected mdx')
+      expect(read.body.trim()).toBe('Updated')
+
+      // Also verify that even if we specify a different entry type, it gets ignored (preserved)
+      const updated2 = await store.write('content/content', 'my-content', { format: 'mdx', data: {}, body: 'Updated again' }, 'post')
+      const updated2File = path.basename(updated2.relativePath)
+      expect(updated2File).toBe(createdFile) // Still the same filename
+    })
+  })
 })

@@ -27,6 +27,7 @@ import { useEditorLayout, useDraftManager, useEntryManager, useGroupManager, use
 import { useBranchActions } from './hooks/useBranchActions'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
+import { EntryCreateModal } from './components/EntryCreateModal'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath } from '../paths/types'
 import { toLogicalPath } from '../paths/normalize'
@@ -195,6 +196,12 @@ export const Editor: React.FC<EditorProps> = ({
     renameEntry,
     loadEntry,
     saveEntry,
+    createModalOpen,
+    createModalCollection,
+    createModalError,
+    createModalCreating,
+    handleCreateModalSubmit,
+    closeCreateModal,
   } = useEntryManager({
     initialEntries: entries,
     initialSelectedId,
@@ -752,7 +759,12 @@ export const Editor: React.FC<EditorProps> = ({
                     <FormRenderer
                       fields={schema}
                       value={effectiveValue}
-                      onChange={(next) => setDrafts((prev) => ({ ...prev, [selectedPath]: next }))}
+                      onChange={(next) => {
+                        const contentId = currentEntry?.contentId
+                        if (contentId) {
+                          setDrafts((prev) => ({ ...prev, [contentId]: next }))
+                        }
+                      }}
                       branch={branchNameState}
                       onResolvedValueChange={setPreviewData}
                       onLoadingStateChange={setPreviewLoadingState}
@@ -1032,6 +1044,25 @@ export const Editor: React.FC<EditorProps> = ({
             }}
             isSaving={renameModalSaving}
             error={renameModalError}
+          />
+        )}
+
+        {/* Entry Create Modal */}
+        {createModalCollection && (
+          <EntryCreateModal
+            isOpen={createModalOpen}
+            collectionLabel={createModalCollection.label || createModalCollection.name}
+            entryTypes={createModalCollection.entryTypes?.map(et => ({
+              name: et.name,
+              label: et.label,
+              format: et.format,
+              default: et.default,
+              maxItems: et.maxItems,
+            })) || []}
+            onCreate={handleCreateModalSubmit}
+            onClose={closeCreateModal}
+            isCreating={createModalCreating}
+            error={createModalError}
           />
         )}
       </Box>

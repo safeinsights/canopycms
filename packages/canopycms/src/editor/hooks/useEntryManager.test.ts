@@ -52,7 +52,7 @@ describe('useEntryManager', () => {
 
   const mockCollections: EditorCollection[] = [
     {
-      path: 'posts',
+      path: 'content/posts',
       name: 'posts',
       label: 'Posts',
       type: 'collection',
@@ -100,7 +100,7 @@ describe('useEntryManager', () => {
   it('builds collectionById map correctly', () => {
     const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
-    expect(result.current.collectionById.get('posts')).toEqual(mockCollections[0])
+    expect(result.current.collectionById.get('content/posts')).toEqual(mockCollections[0])
   })
 
   it('loads entry successfully', async () => {
@@ -228,9 +228,22 @@ describe('useEntryManager', () => {
     })
   })
 
-  it('creates new entry successfully', async () => {
-    window.prompt = vi.fn(() => 'new-post')
+  it('opens create modal when creating entry', async () => {
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
+    await act(async () => {
+      await result.current.handleCreateEntry('content/posts')
+    })
+
+    expect(result.current.createModalOpen).toBe(true)
+    expect(result.current.createModalCollection).toEqual(expect.objectContaining({
+      name: 'posts',
+      label: 'Posts',
+    }))
+    expect(mockClient.content.write).not.toHaveBeenCalled()
+  })
+
+  it('creates new entry successfully via modal', async () => {
     // Mock content.write for the create operation
     mockClient.content.write.mockResolvedValueOnce({
       ok: true,
@@ -253,38 +266,50 @@ describe('useEntryManager', () => {
 
     const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
+    // Open modal
     await act(async () => {
-      await result.current.handleCreateEntry('posts')
+      await result.current.handleCreateEntry('content/posts')
     })
 
-    expect(window.prompt).toHaveBeenCalledWith('New Posts slug?', 'untitled')
+    expect(result.current.createModalOpen).toBe(true)
+
+    // Submit via modal
+    await act(async () => {
+      await result.current.handleCreateModalSubmit('new-post', 'post')
+    })
+
     expect(mockClient.content.write).toHaveBeenCalledWith(
-      { branch: 'main', path: 'posts/new-post' },
+      { branch: 'main', path: 'content/posts/new-post', entryType: 'post' },
       expect.objectContaining({
         format: 'mdx',
       })
     )
-    expect(defaultOptions.setBusy).toHaveBeenCalledWith(true)
-    expect(defaultOptions.setBusy).toHaveBeenCalledWith(false)
+    expect(result.current.createModalOpen).toBe(false)
   })
 
-  it('does not create entry when prompt is cancelled', async () => {
-    window.prompt = vi.fn(() => null)
-
+  it('closes modal without creating entry', async () => {
     const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     await act(async () => {
-      await result.current.handleCreateEntry('posts')
+      await result.current.handleCreateEntry('content/posts')
+    })
+
+    expect(result.current.createModalOpen).toBe(true)
+
+    await act(async () => {
+      result.current.closeCreateModal()
     })
 
     // Should not call content.write
     expect(mockClient.content.write).not.toHaveBeenCalled()
+    expect(result.current.createModalOpen).toBe(false)
+    expect(result.current.createModalCollection).toBeNull()
   })
 
   it('does not create entry for entry collection', async () => {
     const entryCollections: EditorCollection[] = [
       {
-        path: 'config',
+        path: 'content/config',
         name: 'config',
         type: 'entry',
         format: 'json',
@@ -297,7 +322,7 @@ describe('useEntryManager', () => {
     )
 
     await act(async () => {
-      await result.current.handleCreateEntry('config')
+      await result.current.handleCreateEntry('content/config')
     })
 
     // Should not call content.write for entry

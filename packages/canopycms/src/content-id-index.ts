@@ -370,6 +370,34 @@ export async function resolveCollectionPath(root: string, logicalPath: string): 
 }
 
 /**
+ * Extract entry type name from filename.
+ * For collection entry files with pattern type.slug.id.ext, returns the type (first part).
+ *
+ * Examples:
+ * - "post.my-slug.a1b2c3d4e5f6.json" → "post"
+ * - "article.test.a1b2c3d4e5f6.md" → "article"
+ * - "posts.a1b2c3d4e5f6" → null (directory, not an entry file)
+ *
+ * @param filename - The filename to parse
+ * @returns Entry type name or null if not a valid entry file
+ */
+export function extractEntryTypeFromFilename(filename: string): string | null {
+  if (filename.startsWith('.')) return null
+
+  const parts = filename.split('.')
+
+  // Need at least 4 parts for type.slug.id.ext
+  if (parts.length >= 4) {
+    const possibleId = parts[parts.length - 2]
+    if (isValidId(possibleId)) {
+      return parts[0] // Entry type is first part
+    }
+  }
+
+  return null
+}
+
+/**
  * Extract slug from filename.
  *
  * Collection entries: type.slug.id.ext → slug is parts[1...-2] (between type and ID)
