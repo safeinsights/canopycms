@@ -8,6 +8,7 @@ import {
   ContentIdIndex,
   extractIdFromFilename,
   extractSlugFromFilename,
+  extractEntryTypeFromFilename,
   resolveCollectionPath,
 } from './content-id-index'
 import { generateId } from './id'
@@ -128,11 +129,12 @@ export class ContentStore {
    * ensuring permission checks happen before any file system access.
    *
    * @param options.existingId - Optional ID to use (for edits). If not provided, generates new ID.
+   * @param options.entryTypeName - For collections with multiple entry types, specify which one to use. Defaults to the default entry type.
    */
   private async buildPaths(
     schemaItem: FlatSchemaItem,
     slug: string,
-    options: { existingId?: string } = {},
+    options: { existingId?: string; entryTypeName?: string } = {},
   ): Promise<{ absolutePath: string; relativePath: string; id?: string }> {
     const rootWithSep = this.root.endsWith(path.sep) ? this.root : `${this.root}${path.sep}`
 
@@ -215,10 +217,24 @@ export class ContentStore {
       // Security: Validate slug format (prevents ../../../etc/passwd)
       validateSlug(safeSlug)
 
-      const defaultEntry = getDefaultEntryType(schemaItem.entries)
-      const format = defaultEntry?.format || 'json'
+      // Determine which entry type to use
+      let entryTypeConfig: EntryTypeConfig | undefined
+      if (options.entryTypeName) {
+        // Use specified entry type
+        entryTypeConfig = schemaItem.entries?.find((e) => e.name === options.entryTypeName)
+        if (!entryTypeConfig) {
+          throw new ContentStoreError(
+            `Entry type '${options.entryTypeName}' not found in collection`,
+          )
+        }
+      } else {
+        // Use default entry type
+        entryTypeConfig = getDefaultEntryType(schemaItem.entries)
+      }
+
+      const format = entryTypeConfig?.format || 'json'
       const ext = getFormatExtension(format)
-      const entryTypeName = defaultEntry?.name || 'entry'
+      const entryTypeName = entryTypeConfig?.name || 'entry'
 
       // Resolve the full collection path with embedded IDs
       // e.g., "content/docs/api" → "content/docs.bChqT78gcaLd/api.meiuwxTSo7UN"
@@ -238,13 +254,16 @@ export class ContentStore {
       // Check if file already exists (editing case)
       let id = options.existingId
       let existingFilename: string | undefined
+      let existingEntryType: string | undefined
 
       if (!id) {
         // Try to find existing file with this slug
         const entries = await fs.readdir(collectionRoot, { withFileTypes: true }).catch(() => [])
         const existingFile = entries.find((entry) => {
           if (entry.isDirectory()) return false
-          const existingSlug = extractSlugFromFilename(entry.name, entryTypeName)
+          // Extract entry type from filename to check slug properly
+          const fileEntryType = extractEntryTypeFromFilename(entry.name)
+          const existingSlug = extractSlugFromFilename(entry.name, fileEntryType || undefined)
           return existingSlug === safeSlug
         })
 
@@ -252,8 +271,14 @@ export class ContentStore {
           id = extractIdFromFilename(existingFile.name) || undefined
           // Remember original filename for legacy files without IDs
           existingFilename = existingFile.name
+          // Extract and preserve entry type from existing file (immutable after creation)
+          existingEntryType = extractEntryTypeFromFilename(existingFile.name) || undefined
         }
       }
+
+      // For existing entries, preserve the entry type (immutable after creation)
+      // For new entries, use the specified entry type
+      const finalEntryTypeName = existingEntryType || entryTypeName
 
       // Build filename: use existing filename if found, or generate new one with ID
       let filename: string
@@ -266,7 +291,8 @@ export class ContentStore {
           id = generateId()
         }
         // Build filename with embedded ID: type.slug.id.ext
-        filename = `${entryTypeName}.${safeSlug}.${id}${ext}`
+        // Use finalEntryTypeName to preserve entry type for existing entries
+        filename = `${finalEntryTypeName}.${safeSlug}.${id}${ext}`
       }
       const resolved = path.resolve(collectionRoot, filename)
       const collectionRootWithSep = collectionRoot.endsWith(path.sep)
@@ -382,22 +408,35 @@ export class ContentStore {
     collectionPath: LogicalPath | string,
     slug = '',
     input: WriteInput,
+    entryTypeName?: string,
   ): Promise<ContentDocument> {
     const idIndex = await this.idIndex()
     const schemaItem = this.assertSchemaItem(collectionPath)
 
+    // Determine expected format based on entry type
     let expectedFormat: ContentFormat
     if (schemaItem.type === 'entry-type') {
       expectedFormat = schemaItem.format
     } else {
-      const defaultEntry = getDefaultEntryType(schemaItem.entries)
-      expectedFormat = defaultEntry?.format || 'json'
+      // For collections, determine format from specified or default entry type
+      let entryTypeConfig: EntryTypeConfig | undefined
+      if (entryTypeName) {
+        entryTypeConfig = schemaItem.entries?.find((e) => e.name === entryTypeName)
+        if (!entryTypeConfig) {
+          throw new ContentStoreError(`Entry type '${entryTypeName}' not found in collection`)
+        }
+      } else {
+        entryTypeConfig = getDefaultEntryType(schemaItem.entries)
+      }
+      expectedFormat = entryTypeConfig?.format || 'json'
     }
 
     if (expectedFormat !== input.format) {
       throw new ContentStoreError(`Format mismatch: expects ${expectedFormat}, got ${input.format}`)
     }
-    const { absolutePath, relativePath, id } = await this.buildPaths(schemaItem, slug)
+    const { absolutePath, relativePath, id } = await this.buildPaths(schemaItem, slug, {
+      entryTypeName,
+    })
     await fs.mkdir(path.dirname(absolutePath), { recursive: true })
 
     if (input.format === 'json') {

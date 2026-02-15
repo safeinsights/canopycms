@@ -65,6 +65,7 @@ const readContentParamsSchema = z.object({
 const writeContentParamsSchema = z.object({
   branch: z.string().min(1),
   path: z.string().min(1), // Will be split into segments in handler
+  entryType: z.string().optional(), // Optional entry type name for collections with multiple entry types
 })
 
 const writeContentBodySchema = z.object({
@@ -191,15 +192,25 @@ const writeContentHandler = async (
   try {
     const result =
       body.format === 'json'
-        ? await store.write(schemaItem.logicalPath, slug, {
-            format: 'json',
-            data: body.data ?? {},
-          })
-        : await store.write(schemaItem.logicalPath, slug, {
-            format: body.format,
-            data: body.data,
-            body: body.body ?? '',
-          })
+        ? await store.write(
+            schemaItem.logicalPath,
+            slug,
+            {
+              format: 'json',
+              data: body.data ?? {},
+            },
+            params.entryType,
+          )
+        : await store.write(
+            schemaItem.logicalPath,
+            slug,
+            {
+              format: body.format,
+              data: body.data,
+              body: body.body ?? '',
+            },
+            params.entryType,
+          )
 
     return { ok: true, status: 200, data: result }
   } catch (err) {

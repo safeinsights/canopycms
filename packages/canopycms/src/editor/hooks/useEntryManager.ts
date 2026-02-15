@@ -36,6 +36,13 @@ export interface UseEntryManagerReturn {
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
   collectionById: Map<string, EditorCollection>
+  // Entry create modal state
+  createModalOpen: boolean
+  createModalCollection: EditorCollection | null
+  createModalError: string | null
+  createModalCreating: boolean
+  handleCreateModalSubmit: (slug: string, entryTypeName: string) => Promise<void>
+  closeCreateModal: () => void
 }
 
 /**
@@ -80,6 +87,12 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const isInitialMount = useRef(true)
   const hasSyncedFromUrl = useRef(false)
 
+  // Entry create modal state
+  const [createModalOpen, setCreateModalOpen] = useState(false)
+  const [createModalCollection, setCreateModalCollection] = useState<EditorCollection | null>(null)
+  const [createModalError, setCreateModalError] = useState<string | null>(null)
+  const [createModalCreating, setCreateModalCreating] = useState(false)
+
   // Store the URL entry param on mount (before any effects change the URL)
   const initialUrlEntry = useRef<string | null>(null)
   if (typeof window !== 'undefined' && initialUrlEntry.current === null) {
@@ -89,18 +102,17 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   const collectionById = useMemo(() => {
     const map = new Map<string, EditorCollection>()
-    if (!options.collections) return map
     const walk = (collections: EditorCollection[]) => {
       for (const c of collections) {
-        map.set(c.name, c)
+        map.set(c.path, c)
         if (c.children) {
           walk(c.children)
         }
       }
     }
-    walk(options.collections)
+    walk(collectionsState)
     return map
-  }, [options.collections])
+  }, [collectionsState])
 
   const currentEntry = useMemo(
     () => entriesState.find((e) => e.path === selectedPath),
@@ -182,10 +194,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   }
 
   /**
-   * Create a new entry in a collection.
-   * @param collectionId - The collection's logical path
-   * @param entryTypeName - Optional entry type name. If not provided and collection has multiple types,
-   *                        uses the default type or prompts user to select one.
+   * Open the create entry modal for the specified collection
    */
   const handleCreateEntry = async (collectionId: string, entryTypeName?: string) => {
     const col = collectionById.get(collectionId)
@@ -194,59 +203,71 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       return
     }
 
-    // Determine which entry type to use
-    const entryTypes = col.entryTypes || []
-    let selectedType = entryTypes.find((et) => et.name === entryTypeName)
+    console.log('Opening create modal for collection:', {
+      collectionId,
+      name: col.name,
+      entryTypes: col.entryTypes,
+      entryTypesCount: col.entryTypes?.length,
+    })
 
-    if (!selectedType && entryTypes.length > 1) {
-      // Multiple types available, prompt user to select
-      const typeOptions = entryTypes.map((et, i) => `${i + 1}. ${et.label || et.name}`).join('\n')
-      const selection = window.prompt(
-        `Select entry type:\n${typeOptions}\n\nEnter number (1-${entryTypes.length}):`,
-        '1',
-      )
-      if (!selection) return
-      const index = parseInt(selection, 10) - 1
-      if (index >= 0 && index < entryTypes.length) {
-        selectedType = entryTypes[index]
-      } else {
-        notifications.show({ message: 'Invalid selection', color: 'red' })
-        return
-      }
-    } else if (!selectedType && entryTypes.length === 1) {
-      // Single type, use it
-      selectedType = entryTypes[0]
-    }
+    setCreateModalCollection(col)
+    setCreateModalError(null)
+    setCreateModalOpen(true)
+  }
 
-    // Fall back to collection's format if no entry types defined
-    const format = selectedType?.format || col.format
+  /**
+   * Handle entry creation from the modal
+   */
+  const handleCreateModalSubmit = async (slug: string, entryTypeName: string) => {
+    if (!createModalCollection) return
 
-    const slug = window.prompt(
-      `New ${selectedType?.label || col.label || col.name} slug?`,
-      'untitled',
-    )
-    if (!slug) return
-    options.setBusy(true)
+    setCreateModalCreating(true)
+    setCreateModalError(null)
+
     try {
+      const selectedType = createModalCollection.entryTypes?.find((et) => et.name === entryTypeName)
+      const format = selectedType?.format || createModalCollection.format
+
       const payload =
         format === 'json' ? { format: 'json' as const, data: {} } : { format, data: {}, body: '' }
-      const path = `${collectionId}/${slug}`
+
+      // Use collection path (e.g., "content/posts") not name (e.g., "posts")
+      const path = `${createModalCollection.path}/${slug}`
       const result = await apiClient.content.write(
         {
           branch: options.branchName,
           path,
+          entryType: entryTypeName,
         },
         payload as any,
       )
-      if (!result.ok) throw new Error(`Create failed: ${result.status}`)
+
+      if (!result.ok) {
+        const errorMsg = 'error' in result ? result.error : `Create failed: ${result.status}`
+        throw new Error(errorMsg)
+      }
+
       await refreshEntries()
       notifications.show({ message: 'Created new entry', color: 'green' })
+      setCreateModalOpen(false)
+      setCreateModalCollection(null)
     } catch (err) {
       console.error(err)
-      notifications.show({ message: 'Create failed', color: 'red' })
+      const errorMessage = err instanceof Error ? err.message : 'Create failed'
+      setCreateModalError(errorMessage)
     } finally {
-      options.setBusy(false)
+      setCreateModalCreating(false)
     }
+  }
+
+  /**
+   * Close the create entry modal
+   */
+  const closeCreateModal = () => {
+    setCreateModalOpen(false)
+    setCreateModalCollection(null)
+    setCreateModalError(null)
+    setCreateModalCreating(false)
   }
 
   /**
@@ -355,5 +376,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     loadEntry,
     saveEntry,
     collectionById,
+    createModalOpen,
+    createModalCollection,
+    createModalError,
+    createModalCreating,
+    handleCreateModalSubmit,
+    closeCreateModal,
   }
 }
