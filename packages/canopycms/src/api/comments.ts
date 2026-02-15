@@ -6,6 +6,7 @@ import { CommentStore } from '../comment-store'
 import { isReviewer } from '../authorization'
 import { defineEndpoint } from './route-builder'
 import { guardBranchAccess, guardBranchExists, isBranchAccessError } from './middleware'
+import { branchNameSchema } from './validators'
 
 export interface AddCommentBody {
   text: string
@@ -33,11 +34,11 @@ export type ResolveCommentResponse = ApiResponse<{ resolved: boolean }>
 // ============================================================================
 
 const branchParamSchema = z.object({
-  branch: z.string().min(1),
+  branch: branchNameSchema,
 })
 
 const threadParamSchema = z.object({
-  branch: z.string().min(1),
+  branch: branchNameSchema,
   threadId: z.string().min(1),
 })
 

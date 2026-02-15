@@ -66,6 +66,10 @@ export {
   contentIdToString,
   branchNameToString,
   slugToString,
+  // Test helpers (unsafe casts - use only in tests)
+  toBranchName,
+  toEntrySlug,
+  toCollectionSlug,
 } from './validation'
 
 // Path resolution utilities

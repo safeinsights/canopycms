@@ -19,6 +19,7 @@ import {
 } from '../paths'
 import { isNotFoundError } from '../utils/error'
 import type { LogicalPath, PhysicalPath } from '../paths/types'
+import { branchNameSchema, logicalPathSchema } from './validators'
 
 type CollectionKind = 'collection' | 'entry'
 
@@ -89,8 +90,8 @@ export type EntriesResponse = ApiResponse<ListEntriesResponse>
 // ============================================================================
 
 const listEntriesParamsSchema = z.object({
-  branch: z.string().min(1),
-  collection: z.string().optional(),
+  branch: branchNameSchema,
+  collection: logicalPathSchema.optional(),
   limit: z.number().optional(),
   cursor: z.string().optional(),
   q: z.string().optional(),
@@ -497,8 +498,8 @@ export const listEntries = defineEndpoint({
 export type DeleteEntryResponse = ApiResponse<{ deleted: boolean; contentId?: string }>
 
 const deleteEntryParamsSchema = z.object({
-  branch: z.string().min(1),
-  entryPath: z.string().min(1), // Format: collectionPath/slug
+  branch: branchNameSchema,
+  entryPath: logicalPathSchema, // Format: collectionPath/slug
 })
 
 /**

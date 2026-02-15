@@ -63,6 +63,7 @@ import type { ApiContext } from './types'
 import { RESERVED_GROUPS } from '../authorization'
 import { createMockApiContext, createMockBranchContext, createMockRegistry } from '../test-utils'
 import * as authorization from '../authorization'
+import { toBranchName } from '../paths'
 
 // Alias for convenience (tests reference permissionsLoader)
 const permissionsLoader = {
@@ -183,7 +184,7 @@ describe('branch api', () => {
     const res = await createBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/test' },
+      { branch: toBranchName('feature/test') },
     )
     expect(res.ok).toBe(true)
     expect(res.data?.branch.name).toBe('feature/test')
@@ -197,7 +198,7 @@ describe('branch api', () => {
     const res = await createBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/test' },
+      { branch: toBranchName('feature/test') },
     )
     expect(res.ok).toBe(false)
     expect(res.status).toBe(403)
@@ -212,7 +213,7 @@ describe('branch api', () => {
     const res = await createBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
-      { branch: 'feature/test' },
+      { branch: toBranchName('feature/test') },
     )
     expect(res.ok).toBe(true)
   })
@@ -225,7 +226,7 @@ describe('branch api', () => {
     const res = await createBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/test' },
+      { branch: toBranchName('feature/test') },
     )
 
     expect(res.ok).toBe(true)
@@ -341,7 +342,7 @@ describe('deleteBranch api', () => {
     const res = await deleteBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' },
+      { branch: toBranchName('feature/x') },
     )
     expect(res.status).toBe(400)
     expect(res.error).toBe('Cannot delete branches in this operating mode')
@@ -352,7 +353,7 @@ describe('deleteBranch api', () => {
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/missing' },
+      { branch: toBranchName('feature/missing') },
     )
     expect(res.status).toBe(404)
   })
@@ -365,7 +366,7 @@ describe('deleteBranch api', () => {
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' },
+      { branch: toBranchName('feature/x') },
     )
     expect(res.status).toBe(403)
     expect(res.error).toBe('You do not have permission to delete this branch')
@@ -379,7 +380,7 @@ describe('deleteBranch api', () => {
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' },
+      { branch: toBranchName('feature/x') },
     )
     expect(res.status).toBe(400)
     expect(res.error).toBe('Cannot delete branch with open pull request')
@@ -393,7 +394,7 @@ describe('deleteBranch api', () => {
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' },
+      { branch: toBranchName('feature/x') },
     )
     expect(res.ok).toBe(true)
     expect(res.data?.deleted).toBe(true)
@@ -407,7 +408,7 @@ describe('deleteBranch api', () => {
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] } },
-      { branch: 'feature/x' },
+      { branch: toBranchName('feature/x') },
     )
     expect(res.ok).toBe(true)
     expect(res.data?.deleted).toBe(true)
@@ -464,7 +465,7 @@ describe('updateBranchAccess api', () => {
     const res = await updateBranchAccess(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/missing' },
+      { branch: toBranchName('feature/missing') },
       {},
     )
     expect(res.status).toBe(404)
@@ -478,7 +479,7 @@ describe('updateBranchAccess api', () => {
     const res = await updateBranchAccess(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' },
+      { branch: toBranchName('feature/x') },
       {},
     )
     expect(res.status).toBe(403)
@@ -490,7 +491,7 @@ describe('updateBranchAccess api', () => {
     const res = await updateBranchAccess(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' },
+      { branch: toBranchName('feature/x') },
       { allowedUsers: ['u2', 'u3'] },
     )
     expect(res.ok).toBe(true)
@@ -505,7 +506,7 @@ describe('updateBranchAccess api', () => {
     const res = await updateBranchAccess(
       ctx,
       { user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] } },
-      { branch: 'feature/x' },
+      { branch: toBranchName('feature/x') },
       { allowedGroups: ['editors'] },
     )
     expect(res.ok).toBe(true)
