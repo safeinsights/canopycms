@@ -32,7 +32,11 @@ export type {
   PathPermissionResult,
   ContentAccessResult,
   ContentAccessDeps,
+  PermissionPath,
 } from './types'
+
+// Validation
+export { parsePermissionPath, permissionPathToString } from './validation'
 
 // Main content access (recommended for most cases)
 export { checkContentAccess, createCheckContentAccess } from './content'

@@ -11,6 +11,13 @@ import type { CanopyUserId, CanopyGroupId } from '../types'
 export type { CanopyUserId, CanopyGroupId }
 
 /**
+ * A path used in permission rules.
+ * SECURITY CRITICAL: Always validated to prevent path traversal.
+ * Example: "content/posts" or "content/settings/config"
+ */
+export type PermissionPath = string & { readonly __brand: 'PermissionPath' }
+
+/**
  * Result of checking branch-level access
  */
 export interface BranchAccessResult {

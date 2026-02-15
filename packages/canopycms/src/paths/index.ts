@@ -20,6 +20,10 @@ export type {
   PhysicalPath,
   CollectionPath,
   SanitizedBranchName,
+  BranchName,
+  ContentId,
+  CollectionSlug,
+  EntrySlug,
   PathContext,
   PathValidationResult,
 } from './types'
@@ -54,6 +58,14 @@ export {
   parseLogicalPath,
   parsePhysicalPath,
   isValidContentId,
+  // Branded type validation and parsing
+  parseContentId,
+  parseBranchName,
+  parseSlug,
+  // Branded type conversion to string
+  contentIdToString,
+  branchNameToString,
+  slugToString,
 } from './validation'
 
 // Path resolution utilities
