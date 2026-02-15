@@ -97,12 +97,13 @@ const readContentHandler = async (
   req: ApiRequest,
   params: z.infer<typeof readContentParamsSchema>
 ): Promise<ContentReadResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
+  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
+  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const store = new ContentStore(context.branchRoot, flatSchema)
 
   // Parse path segments: params.path is like "content/posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -144,12 +145,13 @@ const writeContentHandler = async (
   params: z.infer<typeof writeContentParamsSchema>,
   body: z.infer<typeof writeContentBodySchema>
 ): Promise<ContentWriteResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
+  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
+  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const store = new ContentStore(context.branchRoot, flatSchema)
 
   // Parse path segments: params.path is like "content/posts/hello" or "posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -216,12 +218,13 @@ const validateReferencesHandler = async (
   params: z.infer<typeof validateReferencesParamsSchema>,
   body: z.infer<typeof validateReferencesBodySchema>
 ): Promise<ReferenceValidationResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
+  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
+  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const store = new ContentStore(context.branchRoot, flatSchema)
 
   // Parse path segments to get collection/schema info
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -272,12 +275,13 @@ const renameEntryHandler = async (
   params: z.infer<typeof renameEntryParamsSchema>,
   body: z.infer<typeof renameEntryBodySchema>
 ): Promise<RenameEntryResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
+  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
+  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const store = new ContentStore(context.branchRoot, flatSchema)
 
   // Parse path segments
   const contentRoot = ctx.services.config.contentRoot || 'content'

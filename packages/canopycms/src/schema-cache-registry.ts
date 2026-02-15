@@ -40,27 +40,31 @@ export class SchemaCacheRegistry {
    *
    * @param branchRoot - Root directory of the branch (e.g., .canopy-prod-sim/content-branches/main)
    * @param schemaRegistry - Map of schema names to field definitions
+   * @param contentRootName - Name of content directory (e.g., "content") from config
    * @returns Resolved schema tree and flattened schema
    */
   async getSchema(
     branchRoot: string,
-    schemaRegistry: Record<string, readonly FieldConfig[]>
+    schemaRegistry: Record<string, readonly FieldConfig[]>,
+    contentRootName: string = 'content'
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
     // Dev mode: use in-memory singleton
     if (this.mode === 'dev') {
       if (!this.devModeCache) {
-        const contentRoot = path.join(branchRoot, 'content')
+        const contentRoot = path.join(branchRoot, contentRootName)
         const result = await resolveSchema(contentRoot, schemaRegistry)
+        // Use configured contentRoot name as base path for logical paths
+        const flatSchema = flattenSchema(result.schema, contentRootName)
         this.devModeCache = {
           schema: result.schema,
-          flatSchema: flattenSchema(result.schema, contentRoot),
+          flatSchema,
         }
       }
       return this.devModeCache
     }
 
     // Prod/prod-sim: use file-based cache with stale marker invalidation
-    return this.loadFromCacheOrResolve(branchRoot, schemaRegistry)
+    return this.loadFromCacheOrResolve(branchRoot, schemaRegistry, contentRootName)
   }
 
   /**
@@ -68,9 +72,10 @@ export class SchemaCacheRegistry {
    */
   private async loadFromCacheOrResolve(
     branchRoot: string,
-    schemaRegistry: Record<string, readonly FieldConfig[]>
+    schemaRegistry: Record<string, readonly FieldConfig[]>,
+    contentRootName: string
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
-    const contentRoot = path.join(branchRoot, 'content')
+    const contentRoot = path.join(branchRoot, contentRootName)
     const cacheDir = path.join(branchRoot, '.canopy-meta')
     const cachePath = path.join(cacheDir, 'schema-cache.json')
     const stalePath = path.join(cacheDir, 'schema-cache.stale')
@@ -84,7 +89,7 @@ export class SchemaCacheRegistry {
         .catch(() => false)
       if (!staleExists) {
         const cacheContent = await fs.readFile(cachePath, 'utf-8')
-        cacheData = JSON.parse(cacheContent)
+        cacheData = JSON.parse(cacheContent) as BranchSchemaCache
       }
     } catch {
       // Cache doesn't exist or can't be read
@@ -97,7 +102,8 @@ export class SchemaCacheRegistry {
 
     // Cache miss or stale - regenerate
     const result = await resolveSchema(contentRoot, schemaRegistry)
-    const flatSchema = flattenSchema(result.schema, contentRoot)
+    // Use configured contentRoot name as base path for logical paths
+    const flatSchema = flattenSchema(result.schema, contentRootName)
 
     // Save to cache
     await fs.mkdir(cacheDir, { recursive: true })
