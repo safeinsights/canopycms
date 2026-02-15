@@ -31,7 +31,7 @@ const resolveReferencesHandler = async (
   req: ApiRequest,
   params: z.infer<typeof resolveReferencesParamsSchema>,
 ): Promise<ResolveReferencesResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
+  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -48,7 +48,8 @@ const resolveReferencesHandler = async (
 
   const { ids } = bodyValidation.data
 
-  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
+  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const store = new ContentStore(context.branchRoot, flatSchema)
 
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()

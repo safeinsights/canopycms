@@ -27,7 +27,7 @@ const getReferenceOptionsHandler = async (
   req: ApiRequest,
   params: z.infer<typeof getReferenceOptionsParamsSchema>,
 ): Promise<ReferenceOptionsResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
+  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -41,7 +41,8 @@ const getReferenceOptionsHandler = async (
   const displayField = (req.query?.displayField as string) || 'title'
   const search = req.query?.search as string | undefined
 
-  const store = new ContentStore(context.branchRoot, ctx.services.flatSchema)
+  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const store = new ContentStore(context.branchRoot, flatSchema)
 
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()

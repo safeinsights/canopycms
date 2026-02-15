@@ -333,13 +333,14 @@ export const listEntriesHandler = async (
     return { ok: false, status: 400, error: 'branch is required' }
   }
 
-  const context = await ctx.getBranchContext(params.branch)
+  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
   const root = context.branchRoot
-  const flatCollections = ctx.services.flatSchema
+  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+  const flatCollections = flatSchema
 
   const targetId = params.collection ? normalizeCollectionId(params.collection) : undefined
   let targetCollections = flatCollections
@@ -510,7 +511,7 @@ const deleteEntryHandler = async (
   req: ApiRequest,
   params: z.infer<typeof deleteEntryParamsSchema>,
 ): Promise<DeleteEntryResponse> => {
-  const context = await ctx.getBranchContext(params.branch)
+  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -538,9 +539,11 @@ const deleteEntryHandler = async (
     }
   }
 
+  const flatSchema = context.flatSchema ?? ctx.services.flatSchema
+
   // Check edit permission on the entry
   // Build the physical path for permission check
-  const collection = ctx.services.flatSchema.find(
+  const collection = flatSchema.find(
     (item) => item.type === 'collection' && item.logicalPath === collectionPath,
   )
   if (!collection) {
@@ -561,7 +564,7 @@ const deleteEntryHandler = async (
 
   try {
     // Get the entry's content ID before deleting (for order update)
-    const contentStore = new ContentStore(context.branchRoot, ctx.services.flatSchema)
+    const contentStore = new ContentStore(context.branchRoot, flatSchema)
     const contentId = await contentStore.getIdForEntry(collectionPath, slug)
 
     // Delete the entry

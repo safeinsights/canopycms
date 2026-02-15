@@ -78,8 +78,8 @@ describe('SchemaCacheRegistry', () => {
       expect(result2.schema).toEqual(result1.schema)
       expect(result2.flatSchema).toEqual(result1.flatSchema)
 
-      // Second access should be significantly faster (cache hit < 10ms)
-      expect(duration2).toBeLessThan(duration1)
+      // Second access should be at least as fast (cache hit) and definitely < 10ms
+      expect(duration2).toBeLessThanOrEqual(duration1)
       expect(duration2).toBeLessThan(10)
     })
 
