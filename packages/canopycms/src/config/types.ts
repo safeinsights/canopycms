@@ -7,6 +7,7 @@ import type { CanopyGroupId, CanopyUserId } from '../types'
 import type { OperatingMode } from '../operating-mode'
 import type { AuthPlugin } from '../auth/plugin'
 import type { LogicalPath } from '../paths/types'
+import type { PermissionPath } from '../authorization/types'
 
 // Field types
 export const primitiveFieldTypes = [
@@ -43,7 +44,7 @@ export interface PermissionTarget {
 }
 
 export interface PathPermission {
-  path: string
+  path: PermissionPath
   read?: PermissionTarget
   edit?: PermissionTarget
   review?: PermissionTarget

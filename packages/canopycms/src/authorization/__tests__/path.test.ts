@@ -1,14 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
-import { checkPathAccess, RESERVED_GROUPS } from '../'
+import { checkPathAccess, RESERVED_GROUPS, toPermissionPath } from '../'
 import type { PathPermission } from '../../config'
 import type { CanopyUser } from '../../user'
+import { toPhysicalPath } from '../../paths'
 
 // Path permission rules (previously from config.pathPermissions, now from .canopycms/permissions.json)
 const rules: PathPermission[] = [
-  { path: 'content/admin/**', edit: {} },
-  { path: 'content/partners/**', edit: { allowedGroups: ['partner-org'] } },
-  { path: 'content/restricted/**', edit: { allowedUsers: ['user-a'] } },
+  { path: toPermissionPath('content/admin/**'), edit: {} },
+  { path: toPermissionPath('content/partners/**'), edit: { allowedGroups: ['partner-org'] } },
+  { path: toPermissionPath('content/restricted/**'), edit: { allowedUsers: ['user-a'] } },
 ]
 
 // Helper to create authenticated users
@@ -22,7 +23,7 @@ describe('path permissions', () => {
   it('allows admin', () => {
     const result = checkPathAccess({
       rules,
-      relativePath: 'content/admin/secret.md',
+      relativePath: toPhysicalPath('content/admin/secret.md'),
       user: createUser('any', [RESERVED_GROUPS.ADMINS]),
       defaultAccess: 'deny',
       level: 'edit',
@@ -34,7 +35,7 @@ describe('path permissions', () => {
   it('allows user when edit rule has no constraints', () => {
     const result = checkPathAccess({
       rules,
-      relativePath: 'content/admin/secret.md',
+      relativePath: toPhysicalPath('content/admin/secret.md'),
       user: createUser('any', []),
       defaultAccess: 'deny',
       level: 'edit',
@@ -45,7 +46,7 @@ describe('path permissions', () => {
   it('denies when user does not match allowedUsers or allowedGroups', () => {
     const result = checkPathAccess({
       rules,
-      relativePath: 'content/restricted/secret.md',
+      relativePath: toPhysicalPath('content/restricted/secret.md'),
       user: createUser('user-b', ['partner-org']),
       defaultAccess: 'deny',
       level: 'edit',
@@ -56,7 +57,7 @@ describe('path permissions', () => {
   it('allows group membership', () => {
     const result = checkPathAccess({
       rules,
-      relativePath: 'content/partners/page.md',
+      relativePath: toPhysicalPath('content/partners/page.md'),
       user: createUser('user-x', ['partner-org']),
       defaultAccess: 'deny',
       level: 'edit',
@@ -67,7 +68,7 @@ describe('path permissions', () => {
   it('denies missing group membership', () => {
     const result = checkPathAccess({
       rules,
-      relativePath: 'content/partners/page.md',
+      relativePath: toPhysicalPath('content/partners/page.md'),
       user: createUser('user-x', ['other-org']),
       defaultAccess: 'deny',
       level: 'edit',
@@ -78,7 +79,7 @@ describe('path permissions', () => {
   it('defaults to allow when no rule matches', () => {
     const result = checkPathAccess({
       rules,
-      relativePath: 'content/open/page.md',
+      relativePath: toPhysicalPath('content/open/page.md'),
       user: createUser('user-x'),
       defaultAccess: 'allow',
       level: 'edit',
@@ -89,7 +90,7 @@ describe('path permissions', () => {
   it('uses defaultAccess=allow when no rule matches and explicitly set', () => {
     const result = checkPathAccess({
       rules,
-      relativePath: 'content/open/page.md',
+      relativePath: toPhysicalPath('content/open/page.md'),
       user: createUser('user-x'),
       defaultAccess: 'allow',
       level: 'edit',
@@ -101,7 +102,7 @@ describe('path permissions', () => {
   it('uses defaultAccess=deny when no rule matches', () => {
     const result = checkPathAccess({
       rules,
-      relativePath: 'content/open/page.md',
+      relativePath: toPhysicalPath('content/open/page.md'),
       user: createUser('user-x'),
       defaultAccess: 'deny',
       level: 'edit',
@@ -114,7 +115,7 @@ describe('path permissions', () => {
     // Even with defaultAccess=allow, a matching rule that denies should deny
     const result = checkPathAccess({
       rules,
-      relativePath: 'content/restricted/secret.md',
+      relativePath: toPhysicalPath('content/restricted/secret.md'),
       user: createUser('regular-user', []),
       defaultAccess: 'allow',
       level: 'edit',

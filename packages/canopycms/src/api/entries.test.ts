@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from '../config-test'
 import { flattenSchema } from '../config'
-import { createCheckBranchAccess } from '../authorization'
+import { createCheckBranchAccess, toPermissionPath } from '../authorization'
 import { createCheckContentAccess } from '../authorization'
 import type { PathPermission } from '../config'
 import { listEntriesHandler } from './entries'
@@ -60,7 +60,10 @@ describe('listEntries', () => {
     // Mock loadPathPermissions to return rules that hide 'entry.hidden.xyz789abcDEF.json' from user 'u1'
     // Use 'read' access restriction to actually hide the file from listing
     const pathRules: PathPermission[] = [
-      { path: 'content/posts/entry.hidden.xyz789abcDEF.json', read: { allowedUsers: ['other'] } },
+      {
+        path: toPermissionPath('content/posts/entry.hidden.xyz789abcDEF.json'),
+        read: { allowedUsers: ['other'] },
+      },
     ]
     const mockLoadPermissions = vi.fn().mockResolvedValue(pathRules)
 
@@ -408,7 +411,7 @@ describe('listEntries', () => {
     // Mock loadPathPermissions: 'entry.readonly.def456UVW012.json' is read-only for user 'u1'
     const pathRules: PathPermission[] = [
       {
-        path: 'content/posts/entry.readonly.def456UVW012.json',
+        path: toPermissionPath('content/posts/entry.readonly.def456UVW012.json'),
         read: { allowedUsers: ['u1'] },
         edit: { allowedUsers: ['admin'] }, // u1 cannot edit
       },
@@ -1123,7 +1126,7 @@ describe('deleteEntry', () => {
 
     // Mock edit access denied
     const pathRules: PathPermission[] = [
-      { path: 'content/posts/protected', edit: { allowedUsers: ['admin'] } },
+      { path: toPermissionPath('content/posts/protected'), edit: { allowedUsers: ['admin'] } },
     ]
 
     const checkBranchAccess = createCheckBranchAccess('allow')

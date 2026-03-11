@@ -12,6 +12,7 @@ import type {
 } from '../types'
 import type { EditorCollection } from '../../Editor'
 import { buildTree, annotateTreeWithPermissions, findTreeNode } from '../utils'
+import { toPermissionPath } from '../../../authorization/validation'
 
 export interface UsePermissionTreeOptions {
   collections?: EditorCollection[]
@@ -121,7 +122,9 @@ export function usePermissionTree({
 
         // Find the tree node to determine correct path pattern
         const treeNode = findTreeNode(annotatedTree, nodePath)
-        const permissionPath = treeNode?.type === 'folder' ? `${nodePath}/**` : nodePath
+        const permissionPath = toPermissionPath(
+          treeNode?.type === 'folder' ? `${nodePath}/**` : nodePath,
+        )
 
         const existingIndex = newPermissions.findIndex((p) => p.path === permissionPath)
 

@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createCheckBranchAccess, createCheckContentAccess, RESERVED_GROUPS } from '../'
+import {
+  createCheckBranchAccess,
+  createCheckContentAccess,
+  RESERVED_GROUPS,
+  toPermissionPath,
+} from '../'
 import type { PathPermission } from '../../config'
+import { toPhysicalPath } from '../../paths'
 
 const branchContext = {
   baseRoot: '/tmp/base',
@@ -19,7 +25,7 @@ const branchContext = {
 // Path permission rules (from .canopycms/permissions.json)
 // Rule with explicit constraints - only Admins group can edit admin paths
 const pathRules: PathPermission[] = [
-  { path: 'content/admin/**', edit: { allowedGroups: ['Admins'] } },
+  { path: toPermissionPath('content/admin/**'), edit: { allowedGroups: ['Admins'] } },
 ]
 
 describe('checkContentAccess', () => {
@@ -35,7 +41,7 @@ describe('checkContentAccess', () => {
     const res = await checkContent(
       branchContext,
       '/repo',
-      'content/pages/foo.md',
+      toPhysicalPath('content/pages/foo.md'),
       { type: 'authenticated', userId: 'u1', groups: [] },
       'edit',
     )
@@ -57,7 +63,7 @@ describe('checkContentAccess', () => {
     const res = await checkContent(
       branchContext,
       '/repo',
-      'content/pages/foo.md',
+      toPhysicalPath('content/pages/foo.md'),
       {
         type: 'authenticated',
         userId: 'u1',
@@ -82,7 +88,7 @@ describe('checkContentAccess', () => {
     const res = await checkContent(
       branchContext,
       '/repo',
-      'content/admin/secret.md',
+      toPhysicalPath('content/admin/secret.md'),
       { type: 'authenticated', userId: 'u1', groups: [] },
       'edit',
     )
@@ -103,7 +109,7 @@ describe('checkContentAccess', () => {
     const res = await checkContent(
       branchContext,
       '/repo',
-      'content/open/page.md',
+      toPhysicalPath('content/open/page.md'),
       { type: 'authenticated', userId: 'u1', groups: [] },
       'edit',
     )
@@ -125,7 +131,7 @@ describe('checkContentAccess', () => {
     const res = await checkContent(
       branchContext,
       '/repo',
-      'content/open/page.md',
+      toPhysicalPath('content/open/page.md'),
       { type: 'authenticated', userId: 'u1', groups: [] },
       'edit',
     )

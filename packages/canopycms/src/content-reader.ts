@@ -1,6 +1,6 @@
 import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
-import { resolveBranchPaths, toLogicalPath, toEntrySlug } from './paths'
+import { resolveBranchPaths, toLogicalPath, toEntrySlug, toPhysicalPath } from './paths'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
@@ -144,7 +144,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       const access = await services.checkContentAccess(
         context,
         branchRoot,
-        relativePath,
+        toPhysicalPath(relativePath),
         user,
         'read',
       )

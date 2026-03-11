@@ -556,7 +556,7 @@ const deleteEntryHandler = async (
   const editAccess = await ctx.services.checkContentAccess(
     context,
     context.branchRoot,
-    `${collectionPath}/${slug}`,
+    toPhysicalPath(`${collectionPath}/${slug}`),
     req.user,
     'edit',
   )

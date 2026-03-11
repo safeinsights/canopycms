@@ -6,7 +6,7 @@ import type { ContentFormat } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 import { branchNameSchema, logicalPathSchema, entrySlugSchema } from './validators'
-import { toLogicalPath, toEntrySlug } from '../paths'
+import { toLogicalPath, toEntrySlug, toPhysicalPath } from '../paths'
 
 /** Response type for content read operations */
 export type ContentReadResponse = ApiResponse<{
@@ -133,7 +133,7 @@ const readContentHandler = async (
   const access = await ctx.services.checkContentAccess(
     context,
     context.branchRoot,
-    relativePath,
+    toPhysicalPath(relativePath),
     req.user,
     'read',
   )
@@ -185,7 +185,7 @@ const writeContentHandler = async (
   const access = await ctx.services.checkContentAccess(
     context,
     context.branchRoot,
-    relativePath,
+    toPhysicalPath(relativePath),
     req.user,
     'edit',
   )
@@ -260,7 +260,7 @@ const validateReferencesHandler = async (
   const access = await ctx.services.checkContentAccess(
     context,
     context.branchRoot,
-    relativePath,
+    toPhysicalPath(relativePath),
     req.user,
     'read',
   )
@@ -326,7 +326,7 @@ const renameEntryHandler = async (
   const access = await ctx.services.checkContentAccess(
     context,
     context.branchRoot,
-    relativePath,
+    toPhysicalPath(relativePath),
     req.user,
     'edit',
   )

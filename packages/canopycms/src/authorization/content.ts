@@ -21,6 +21,7 @@ import type { CanopyUser } from '../user'
 import { operatingStrategy } from '../operating-mode'
 import { createCheckPathAccess } from './path'
 import type { ContentAccessResult, ContentAccessDeps } from './types'
+import type { PhysicalPath } from '../paths/types'
 
 /**
  * Check content access by evaluating both branch and path permissions.
@@ -29,7 +30,7 @@ import type { ContentAccessResult, ContentAccessDeps } from './types'
  * @param deps - Dependencies including branch access checker and path permissions loader
  * @param context - Branch context containing branch metadata
  * @param branchRoot - Root directory of the branch
- * @param relativePath - Path relative to branch root
+ * @param relativePath - Physical path relative to branch root (with embedded IDs)
  * @param user - User to check access for
  * @param level - Permission level to check ('read', 'edit', or 'review')
  */
@@ -37,7 +38,7 @@ export async function checkContentAccess(
   deps: ContentAccessDeps,
   context: BranchContext,
   branchRoot: string,
-  relativePath: string,
+  relativePath: PhysicalPath,
   user: CanopyUser,
   level: PermissionLevel,
 ): Promise<ContentAccessResult> {
@@ -84,7 +85,7 @@ export function createCheckContentAccess(deps: ContentAccessDeps) {
   return (
     context: BranchContext,
     branchRoot: string,
-    relativePath: string,
+    relativePath: PhysicalPath,
     user: CanopyUser,
     level: PermissionLevel,
   ): Promise<ContentAccessResult> =>

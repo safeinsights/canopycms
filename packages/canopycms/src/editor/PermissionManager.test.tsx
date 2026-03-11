@@ -5,6 +5,7 @@ import { PermissionManager } from './PermissionManager'
 import type { PathPermission } from '../config'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
 import type { EditorCollection } from './Editor'
+import { toPermissionPath } from '../authorization/validation'
 
 afterEach(() => {
   cleanup()
@@ -64,11 +65,11 @@ describe('PermissionManager', () => {
 
   const mockPermissions: PathPermission[] = [
     {
-      path: 'content/posts/**',
+      path: toPermissionPath('content/posts/**'),
       read: { allowedGroups: ['editors'] },
     },
     {
-      path: 'content/about/**',
+      path: toPermissionPath('content/about/**'),
       read: { allowedUsers: ['alice'] },
     },
   ]

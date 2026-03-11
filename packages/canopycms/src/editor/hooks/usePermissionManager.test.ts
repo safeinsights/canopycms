@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePermissionManager } from './usePermissionManager'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, setupMockConsole, createApiClientWrapper } from './__test__/test-utils'
+import { toPermissionPath } from '../../authorization/validation'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -42,8 +43,8 @@ describe('usePermissionManager', () => {
 
   it('loads permissions when isOpen becomes true', async () => {
     const mockPermissions = [
-      { path: '/content/pages', groups: ['editors'], access: 'write' },
-      { path: '/content/posts', groups: ['writers'], access: 'read' },
+      { path: toPermissionPath('/content/pages'), edit: { allowedGroups: ['editors'] } },
+      { path: toPermissionPath('/content/posts'), read: { allowedGroups: ['writers'] } },
     ]
 
     mockClient.permissions.get.mockResolvedValueOnce({
@@ -83,7 +84,9 @@ describe('usePermissionManager', () => {
   })
 
   it('saves permissions successfully', async () => {
-    const mockPermissions = [{ path: '/content/pages', groups: ['editors'], access: 'write' }]
+    const mockPermissions = [
+      { path: toPermissionPath('/content/pages'), edit: { allowedGroups: ['editors'] } },
+    ]
 
     // Mock initial load
     mockClient.permissions.get.mockResolvedValueOnce({
@@ -173,7 +176,9 @@ describe('usePermissionManager', () => {
   })
 
   it('can manually reload permissions', async () => {
-    const mockPermissions = [{ path: '/content/pages', groups: ['editors'], access: 'write' }]
+    const mockPermissions = [
+      { path: toPermissionPath('/content/pages'), edit: { allowedGroups: ['editors'] } },
+    ]
 
     mockClient.permissions.get.mockResolvedValueOnce({
       ok: true,
