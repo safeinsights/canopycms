@@ -5,6 +5,7 @@ import type { EditorEntry } from '../Editor'
 import type { CommentThread } from '../../comment-store'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, setupMockConsole, createApiClientWrapper } from './__test__/test-utils'
+import { unsafeAsLogicalPath } from '../../paths/test-utils'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -27,7 +28,7 @@ describe('useCommentSystem', () => {
   let wrapper: ReturnType<typeof createApiClientWrapper>
 
   const mockEntry: EditorEntry = {
-    path: 'entry1',
+    path: unsafeAsLogicalPath('entry1'),
     label: 'Test Entry',
     collectionId: 'posts',
     collectionName: 'posts',

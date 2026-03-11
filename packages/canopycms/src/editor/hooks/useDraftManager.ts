@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { EditorEntry } from '../Editor'
+import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
 import { getNotificationDuration } from '../utils/env'
 
@@ -24,7 +25,7 @@ export interface UseDraftManagerReturn {
   loadedValue: FormValue | undefined
   effectiveValue: FormValue | undefined
   modifiedCount: number
-  editedFiles: Array<{ path: string; label: string }>
+  editedFiles: Array<{ path: LogicalPath; label: string }>
   handleSave: () => Promise<void>
   handleDiscardDrafts: () => void
   handleDiscardFileDraft: () => void
@@ -84,7 +85,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         const entry = options.entries.find((e) => e.contentId === id)
         return entry ? { path: entry.path, label: entry.label } : null
       })
-      .filter((x): x is { path: string; label: string } => x !== null)
+      .filter((x): x is { path: LogicalPath; label: string } => x !== null)
   }, [drafts, options.entries])
 
   // Clear drafts when branch changes (before localStorage restore)

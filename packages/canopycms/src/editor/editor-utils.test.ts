@@ -307,8 +307,14 @@ describe('buildCollectionLabels', () => {
 
   it('builds flat map of collection IDs to labels', () => {
     const collections: EditorCollection[] = [
-      { path: 'posts', name: 'posts', label: 'Posts', type: 'collection', format: 'mdx' },
-      { path: 'pages', name: 'pages', type: 'collection', format: 'mdx' },
+      {
+        path: unsafeAsLogicalPath('posts'),
+        name: 'posts',
+        label: 'Posts',
+        type: 'collection',
+        format: 'mdx',
+      },
+      { path: unsafeAsLogicalPath('pages'), name: 'pages', type: 'collection', format: 'mdx' },
     ]
 
     const result = buildCollectionLabels(collections)
@@ -320,21 +326,21 @@ describe('buildCollectionLabels', () => {
   it('handles nested collections', () => {
     const collections: EditorCollection[] = [
       {
-        path: 'content',
+        path: unsafeAsLogicalPath('content'),
         name: 'content',
         label: 'Content',
         type: 'collection',
         format: 'mdx',
         children: [
           {
-            path: 'content/docs',
+            path: unsafeAsLogicalPath('content/docs'),
             name: 'docs',
             label: 'Documentation',
             type: 'collection',
             format: 'mdx',
             children: [
               {
-                path: 'content/docs/guides',
+                path: unsafeAsLogicalPath('content/docs/guides'),
                 name: 'guides',
                 label: 'Guides',
                 type: 'collection',
@@ -362,7 +368,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('returns only "All Files" for entry without collectionId', () => {
     const entry: EditorEntry = {
-      path: 'test',
+      path: unsafeAsLogicalPath('test'),
       label: 'Test',
       schema: [],
       apiPath: '/api/test',
@@ -374,7 +380,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('returns "All Files" for single-level collection (root level)', () => {
     const entry: EditorEntry = {
-      path: 'posts/hello',
+      path: unsafeAsLogicalPath('posts/hello'),
       label: 'Hello',
       schema: [],
       apiPath: '/api/test',
@@ -389,7 +395,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('shows hierarchy for nested collections', () => {
     const entry: EditorEntry = {
-      path: 'content/docs/guides/config',
+      path: unsafeAsLogicalPath('content/docs/guides/config'),
       label: 'Configuration Guide',
       schema: [],
       apiPath: '/api/test',
@@ -411,7 +417,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('shows hierarchy for deeply nested collections', () => {
     const entry: EditorEntry = {
-      path: 'content/docs/api/v2/endpoint',
+      path: unsafeAsLogicalPath('content/docs/api/v2/endpoint'),
       label: 'Endpoint',
       schema: [],
       apiPath: '/api/test',
@@ -433,7 +439,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('skips missing labels in hierarchy', () => {
     const entry: EditorEntry = {
-      path: 'content/docs/guides/config',
+      path: unsafeAsLogicalPath('content/docs/guides/config'),
       label: 'Configuration Guide',
       schema: [],
       apiPath: '/api/test',
@@ -455,7 +461,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('includes slug path segments for nested slugs', () => {
     const entry: EditorEntry = {
-      path: 'posts/2024/01/new-year',
+      path: unsafeAsLogicalPath('posts/2024/01/new-year'),
       label: 'New Year Post',
       schema: [],
       apiPath: '/api/test',
@@ -473,7 +479,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('combines collection hierarchy and slug segments', () => {
     const entry: EditorEntry = {
-      path: 'content/posts/2024/01/new-year',
+      path: unsafeAsLogicalPath('content/posts/2024/01/new-year'),
       label: 'New Year Post',
       schema: [],
       apiPath: '/api/test',
@@ -494,7 +500,7 @@ describe('buildBreadcrumbSegments', () => {
 
   it('works for root entry types with maxItems: 1', () => {
     const entry: EditorEntry = {
-      path: 'content/settings',
+      path: unsafeAsLogicalPath('content/settings'),
       label: 'Site Settings',
       schema: [],
       apiPath: '/api/test',

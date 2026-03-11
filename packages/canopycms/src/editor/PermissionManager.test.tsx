@@ -6,6 +6,7 @@ import type { PathPermission } from '../config'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
 import type { EditorCollection } from './Editor'
 import { unsafeAsPermissionPath } from '../authorization/test-utils'
+import { unsafeAsLogicalPath } from '../paths/test-utils'
 
 afterEach(() => {
   cleanup()
@@ -20,7 +21,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
 describe('PermissionManager', () => {
   const mockCollections: EditorCollection[] = [
     {
-      path: 'content/posts',
+      path: unsafeAsLogicalPath('content/posts'),
       name: 'posts',
       label: 'Posts',
       format: 'mdx',
@@ -34,7 +35,7 @@ describe('PermissionManager', () => {
       ],
     },
     {
-      path: 'content/pages',
+      path: unsafeAsLogicalPath('content/pages'),
       name: 'pages',
       label: 'Pages',
       format: 'mdx',
@@ -48,7 +49,7 @@ describe('PermissionManager', () => {
       ],
     },
     {
-      path: 'content/about',
+      path: unsafeAsLogicalPath('content/about'),
       name: 'about',
       label: 'About',
       format: 'mdx',
@@ -243,7 +244,7 @@ describe('PermissionManager', () => {
       // Collections with nested structure
       const nestedCollections: EditorCollection[] = [
         {
-          path: 'content/docs',
+          path: unsafeAsLogicalPath('content/docs'),
           name: 'docs',
           label: 'Docs',
           format: 'md',
@@ -257,7 +258,7 @@ describe('PermissionManager', () => {
           ],
           children: [
             {
-              path: 'content/docs/api',
+              path: unsafeAsLogicalPath('content/docs/api'),
               name: 'api',
               label: 'API',
               format: 'md',
@@ -271,7 +272,7 @@ describe('PermissionManager', () => {
               ],
             },
             {
-              path: 'content/docs/guides',
+              path: unsafeAsLogicalPath('content/docs/guides'),
               name: 'guides',
               label: 'Guides',
               format: 'md',

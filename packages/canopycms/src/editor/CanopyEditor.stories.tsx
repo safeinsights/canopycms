@@ -3,6 +3,7 @@ import React, { useEffect } from 'react'
 
 import { defineCanopyConfig } from '../config'
 import { CanopyEditor } from './CanopyEditor'
+import { unsafeAsLogicalPath } from '../paths/test-utils'
 
 const meta: Meta<typeof CanopyEditor> = {
   title: 'Editor/CanopyEditor',
@@ -45,7 +46,7 @@ const config = configBundle.client()
 
 const entries = [
   {
-    path: 'content/posts/hello',
+    path: unsafeAsLogicalPath('content/posts/hello'),
     label: 'Hello Post',
     status: 'page',
     schema: schema.collections[0].entries[0].fields,

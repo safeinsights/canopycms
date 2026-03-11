@@ -7,6 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
+import { unsafeAsLogicalPath } from '../paths/test-utils'
 
 // Mock @mantine/modals
 vi.mock('@mantine/modals', () => ({
@@ -69,7 +70,7 @@ const okJson = (data: unknown, status = 200) =>
 describe('Editor integration', () => {
   it('loads an entry and persists changes via the content API', async () => {
     const entry: EditorEntry = {
-      path: 'content/posts/hello',
+      path: unsafeAsLogicalPath('content/posts/hello'),
       contentId: 'def456ABC123', // 12-char content ID (must match API response)
       label: 'Hello',
       status: 'entry',
@@ -87,6 +88,28 @@ describe('Editor integration', () => {
         typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url.endsWith('/api/canopycms/branches'))
         return Promise.resolve(okJson({ ok: false, status: 404 }, 404))
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'entry-type',
+                  logicalPath: 'content/posts/post',
+                  name: 'post',
+                  parentPath: 'content/posts',
+                  format: 'json',
+                  fields: [{ name: 'title', type: 'string' }],
+                },
+              ],
+              availableSchemas: [],
+            },
+          }),
+        )
+      }
       if (url.includes('/entries')) {
         return Promise.resolve(
           okJson({
