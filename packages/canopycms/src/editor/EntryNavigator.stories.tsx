@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react'
 
 import { EntryNavigator } from './EntryNavigator'
+import { unsafeAsLogicalPath } from '../paths/test-utils'
 
 const meta: Meta<typeof EntryNavigator> = {
   title: 'Editor/EntryNavigator',
@@ -11,11 +12,11 @@ export default meta
 type Story = StoryObj<typeof EntryNavigator>
 
 const posts = [
-  { path: 'posts/hello-world', label: 'Hello World', collection: 'posts' },
-  { path: 'posts/mermaid-demo', label: 'Mermaid Demo', collection: 'posts' },
+  { path: unsafeAsLogicalPath('posts/hello-world'), label: 'Hello World', collection: 'posts' },
+  { path: unsafeAsLogicalPath('posts/mermaid-demo'), label: 'Mermaid Demo', collection: 'posts' },
 ]
 
-const entries = [{ path: 'home', label: 'Home', collection: 'home' }]
+const entries = [{ path: unsafeAsLogicalPath('home'), label: 'Home', collection: 'home' }]
 
 export const Grouped: Story = {
   render: () => (
@@ -24,9 +25,9 @@ export const Grouped: Story = {
         selectedPath="posts/hello-world"
         onSelect={(id) => alert(`Select ${id}`)}
         collections={[
-          { path: 'home', label: 'Home', type: 'entry', entries: entries },
+          { path: unsafeAsLogicalPath('home'), label: 'Home', type: 'entry', entries: entries },
           {
-            path: 'posts',
+            path: unsafeAsLogicalPath('posts'),
             label: 'Posts',
             type: 'collection',
             entries: posts,

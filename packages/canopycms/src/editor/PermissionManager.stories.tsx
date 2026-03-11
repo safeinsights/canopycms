@@ -4,6 +4,7 @@ import type { PathPermission } from '../config'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
 import type { EditorCollection } from './Editor'
 import { unsafeAsPermissionPath } from '../authorization/test-utils'
+import { unsafeAsLogicalPath } from '../paths/test-utils'
 
 const meta: Meta<typeof PermissionManager> = {
   title: 'Editor/PermissionManager',
@@ -16,7 +17,7 @@ type Story = StoryObj<typeof PermissionManager>
 // Mock collections using EditorCollection structure
 const mockCollections: EditorCollection[] = [
   {
-    path: 'content/posts',
+    path: unsafeAsLogicalPath('content/posts'),
     name: 'posts',
     label: 'Posts',
     format: 'mdx',
@@ -30,7 +31,7 @@ const mockCollections: EditorCollection[] = [
     ],
   },
   {
-    path: 'content/pages',
+    path: unsafeAsLogicalPath('content/pages'),
     name: 'pages',
     label: 'Pages',
     format: 'mdx',
@@ -205,7 +206,7 @@ export const ComplexPermissions: Story = {
 
 const largeCollections: EditorCollection[] = [
   {
-    path: 'content/posts',
+    path: unsafeAsLogicalPath('content/posts'),
     name: 'posts',
     label: 'Posts',
     format: 'mdx',
@@ -213,7 +214,7 @@ const largeCollections: EditorCollection[] = [
     entryTypes: [{ name: 'post', label: 'Post', format: 'mdx' }],
   },
   {
-    path: 'content/pages',
+    path: unsafeAsLogicalPath('content/pages'),
     name: 'pages',
     label: 'Pages',
     format: 'mdx',
@@ -221,7 +222,7 @@ const largeCollections: EditorCollection[] = [
     entryTypes: [{ name: 'page', label: 'Page', format: 'mdx' }],
   },
   {
-    path: 'content/products',
+    path: unsafeAsLogicalPath('content/products'),
     name: 'products',
     label: 'Products',
     format: 'json',
@@ -229,7 +230,7 @@ const largeCollections: EditorCollection[] = [
     entryTypes: [{ name: 'product', label: 'Product', format: 'json' }],
   },
   {
-    path: 'content/categories',
+    path: unsafeAsLogicalPath('content/categories'),
     name: 'categories',
     label: 'Categories',
     format: 'json',
@@ -237,7 +238,7 @@ const largeCollections: EditorCollection[] = [
     entryTypes: [{ name: 'category', label: 'Category', format: 'json' }],
   },
   {
-    path: 'content/authors',
+    path: unsafeAsLogicalPath('content/authors'),
     name: 'authors',
     label: 'Authors',
     format: 'json',

@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import { CanopyCMSProvider } from './theme'
+import { unsafeAsLogicalPath } from '../paths/test-utils'
 
 // Setup browser APIs
 beforeAll(() => {
@@ -66,8 +67,8 @@ describe('EntryNavigator', () => {
     it('renders flat items', () => {
       renderEntryNavigator({
         items: [
-          { path: 'posts/hello', label: 'Hello World' },
-          { path: 'posts/goodbye', label: 'Goodbye World' },
+          { path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' },
+          { path: unsafeAsLogicalPath('posts/goodbye'), label: 'Goodbye World' },
         ],
       })
 
@@ -78,12 +79,12 @@ describe('EntryNavigator', () => {
     it('renders collections with entries', () => {
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           entries: [
-            { path: 'posts/hello', label: 'Hello' },
-            { path: 'posts/goodbye', label: 'Goodbye' },
+            { path: unsafeAsLogicalPath('posts/hello'), label: 'Hello' },
+            { path: unsafeAsLogicalPath('posts/goodbye'), label: 'Goodbye' },
           ],
         },
       ]
@@ -98,7 +99,7 @@ describe('EntryNavigator', () => {
       const onSelect = vi.fn()
 
       renderEntryNavigator({
-        items: [{ path: 'posts/hello', label: 'Hello World' }],
+        items: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }],
         onSelect,
       })
 
@@ -111,7 +112,7 @@ describe('EntryNavigator', () => {
     it('shows context menu button on collections with actions', async () => {
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           onEdit: vi.fn(),
@@ -131,7 +132,7 @@ describe('EntryNavigator', () => {
 
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           onEdit,
@@ -158,7 +159,7 @@ describe('EntryNavigator', () => {
 
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           onAddSubCollection,
@@ -183,7 +184,7 @@ describe('EntryNavigator', () => {
 
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           onDelete,
@@ -205,7 +206,7 @@ describe('EntryNavigator', () => {
     it('does not show menu button when no actions provided', () => {
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
         },
@@ -222,7 +223,7 @@ describe('EntryNavigator', () => {
       const onDeleteEntry = vi.fn()
 
       renderEntryNavigator({
-        items: [{ path: 'posts/hello', label: 'Hello World' }],
+        items: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }],
         onDeleteEntry,
       })
 
@@ -234,7 +235,7 @@ describe('EntryNavigator', () => {
       const onDeleteEntry = vi.fn()
 
       renderEntryNavigator({
-        items: [{ path: 'posts/hello', label: 'Hello World' }],
+        items: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }],
         onDeleteEntry,
       })
 
@@ -250,7 +251,7 @@ describe('EntryNavigator', () => {
 
     it('does not show delete menu when onDeleteEntry is not provided', () => {
       renderEntryNavigator({
-        items: [{ path: 'posts/hello', label: 'Hello World' }],
+        items: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }],
       })
 
       expect(screen.queryByTestId('entry-menu-hello-world')).toBeNull()
@@ -264,11 +265,11 @@ describe('EntryNavigator', () => {
 
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           onAdd,
-          entries: [{ path: 'posts/hello', label: 'Hello' }],
+          entries: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello' }],
         },
       ]
 
@@ -289,11 +290,11 @@ describe('EntryNavigator', () => {
 
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           onAdd,
-          entries: [{ path: 'posts/hello', label: 'Hello' }],
+          entries: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello' }],
         },
       ]
 
@@ -315,7 +316,7 @@ describe('EntryNavigator', () => {
   describe('entry status badge', () => {
     it('shows status badge on entries with status', () => {
       renderEntryNavigator({
-        items: [{ path: 'posts/hello', label: 'Hello World', status: 'draft' }],
+        items: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World', status: 'draft' }],
       })
 
       expect(screen.getByText('draft')).toBeTruthy()
@@ -330,12 +331,12 @@ describe('EntryNavigator', () => {
 
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           entries: [
-            { path: 'posts/first', label: 'First' }, // No contentId!
-            { path: 'posts/second', label: 'Second' }, // No contentId!
+            { path: unsafeAsLogicalPath('posts/first'), label: 'First' }, // No contentId!
+            { path: unsafeAsLogicalPath('posts/second'), label: 'Second' }, // No contentId!
           ],
         },
       ]
@@ -369,12 +370,12 @@ describe('EntryNavigator', () => {
 
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           entries: [
-            { path: 'posts/first', label: 'First', contentId: 'abc123456789' },
-            { path: 'posts/second', label: 'Second', contentId: 'def456789012' },
+            { path: unsafeAsLogicalPath('posts/first'), label: 'First', contentId: 'abc123456789' },
+            { path: unsafeAsLogicalPath('posts/second'), label: 'Second', contentId: 'def456789012' },
           ],
         },
       ]
@@ -404,12 +405,12 @@ describe('EntryNavigator', () => {
 
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           entries: [
-            { path: 'posts/first', label: 'First', contentId: 'abc123456789' },
-            { path: 'posts/second', label: 'Second', contentId: 'def456789012' },
+            { path: unsafeAsLogicalPath('posts/first'), label: 'First', contentId: 'abc123456789' },
+            { path: unsafeAsLogicalPath('posts/second'), label: 'Second', contentId: 'def456789012' },
           ],
         },
       ]
@@ -441,12 +442,12 @@ describe('EntryNavigator', () => {
 
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           entries: [
-            { path: 'posts/first', label: 'First', contentId: 'abc123456789' },
-            { path: 'posts/second', label: 'Second', contentId: 'def456789012' },
+            { path: unsafeAsLogicalPath('posts/first'), label: 'First', contentId: 'abc123456789' },
+            { path: unsafeAsLogicalPath('posts/second'), label: 'Second', contentId: 'def456789012' },
           ],
         },
       ]
@@ -478,12 +479,12 @@ describe('EntryNavigator', () => {
 
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           entries: [
-            { path: 'posts/first', label: 'First', contentId: 'abc123456789' },
-            { path: 'posts/second', label: 'Second', contentId: 'def456789012' },
+            { path: unsafeAsLogicalPath('posts/first'), label: 'First', contentId: 'abc123456789' },
+            { path: unsafeAsLogicalPath('posts/second'), label: 'Second', contentId: 'def456789012' },
           ],
         },
       ]
@@ -514,12 +515,12 @@ describe('EntryNavigator', () => {
 
       const collections: EntryNavCollection[] = [
         {
-          path: 'posts',
+          path: unsafeAsLogicalPath('posts'),
           label: 'Posts',
           type: 'collection',
           entries: [
-            { path: 'posts/first', label: 'First', contentId: 'abc123456789' },
-            { path: 'posts/second', label: 'Second', contentId: 'def456789012' },
+            { path: unsafeAsLogicalPath('posts/first'), label: 'First', contentId: 'abc123456789' },
+            { path: unsafeAsLogicalPath('posts/second'), label: 'Second', contentId: 'def456789012' },
           ],
         },
       ]

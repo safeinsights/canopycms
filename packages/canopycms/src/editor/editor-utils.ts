@@ -5,6 +5,7 @@ import type { EditorEntry, EditorCollection, EditorEntryType } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
 // Import directly from normalize to avoid pulling in server-only branch.ts
 import { normalizeCollectionId } from '../paths/normalize'
+import type { LogicalPath } from '../paths/types'
 
 export interface PreviewContext {
   branchName?: string
@@ -196,7 +197,8 @@ export function convertSchemaTreeToEditorCollections(
     // For root-level collections, use col.path; for nested, use col.name to avoid duplication
     // (col.path contains the full path for nested collections, but we only want the segment)
     const pathSegment = isTopLevel ? col.path : col.name
-    const logicalPath = `${parentPath}/${pathSegment}`
+    // Safe: constructed from trusted config strings (parentPath and pathSegment are validated on schema load)
+    const logicalPath = `${parentPath}/${pathSegment}` as LogicalPath
 
     return {
       path: logicalPath,
@@ -216,7 +218,8 @@ export function convertSchemaTreeToEditorCollections(
 
   // Create root collection node (required by EntryNavigator)
   const rootCollection: EditorCollection = {
-    path: contentRoot,
+    // Safe: contentRoot comes from canopy config, validated at startup
+    path: contentRoot as LogicalPath,
     contentId: undefined, // Root doesn't have a content ID
     name: contentRoot,
     label: schemaTree.label ?? 'Content',

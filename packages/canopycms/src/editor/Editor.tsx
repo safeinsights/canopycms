@@ -34,7 +34,7 @@ import type { LogicalPath } from '../paths/types'
 import { useApiClient } from './context'
 
 export interface EditorEntry {
-  path: string // Logical path (no IDs/extensions)
+  path: LogicalPath // Logical path (no IDs/extensions)
   contentId: string // 12-char content ID (required - used for draft keying)
   label: string
   status?: string
@@ -62,7 +62,7 @@ export interface EditorEntryType {
 }
 
 export interface EditorCollection {
-  path: string // Logical path
+  path: LogicalPath // Logical path
   contentId?: string // 12-char content ID (optional, from directory name)
   name: string
   label?: string
@@ -367,7 +367,7 @@ export const Editor: React.FC<EditorProps> = ({
   }, [branchNameState, apiClient])
 
   // Schema editor handlers
-  const handleOpenCollectionEditor = async (collection: EditorCollection | null, parentPath?: string) => {
+  const handleOpenCollectionEditor = async (collection: EditorCollection | null, parentPath?: LogicalPath) => {
     if (collection) {
       // Edit mode - fetch full collection data with usage counts
       try {
@@ -400,7 +400,7 @@ export const Editor: React.FC<EditorProps> = ({
           const existingCollection: ExistingCollection = {
             name: collection.name,
             label: collection.label,
-            logicalPath: collection.path as LogicalPath,
+            logicalPath: collection.path,
             entries,
           }
           setEditingCollection(existingCollection)
@@ -409,7 +409,7 @@ export const Editor: React.FC<EditorProps> = ({
           const existingCollection: ExistingCollection = {
             name: collection.name,
             label: collection.label,
-            logicalPath: collection.path as LogicalPath,
+            logicalPath: collection.path,
             entries: (collection.entryTypes ?? []).map((et): ExistingEntryType => ({
               name: et.name,
               label: et.label,
@@ -426,7 +426,7 @@ export const Editor: React.FC<EditorProps> = ({
         const existingCollection: ExistingCollection = {
           name: collection.name,
           label: collection.label,
-          logicalPath: collection.path as LogicalPath,
+          logicalPath: collection.path,
           entries: (collection.entryTypes ?? []).map((et): ExistingEntryType => ({
             name: et.name,
             label: et.label,
@@ -442,7 +442,7 @@ export const Editor: React.FC<EditorProps> = ({
     } else {
       // Create mode
       setEditingCollection(null)
-      setCollectionEditorParentPath(parentPath ? parentPath as LogicalPath : undefined)
+      setCollectionEditorParentPath(parentPath)
     }
     setCollectionEditorError(null)
     setCollectionEditorOpen(true)

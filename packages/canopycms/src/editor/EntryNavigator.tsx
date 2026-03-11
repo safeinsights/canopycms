@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useMemo, useRef, useEffect } from 'react'
+import type { LogicalPath } from '../paths/types'
 
 import {
   ActionIcon,
@@ -25,15 +26,15 @@ import { calculatePathToEntry } from './editor-utils'
 type TreeController = ReturnType<typeof useTree>
 
 export interface EntryNavItem {
-  path: string
+  path: LogicalPath
   label: string
   status?: string
-  collectionId?: string
+  collectionId?: LogicalPath
   contentId?: string // 12-char embedded ID for ordering
 }
 
 export interface EntryNavCollection {
-  path: string
+  path: LogicalPath
   label: string
   type: 'collection' | 'entry'
   contentId?: string // 12-char embedded ID for ordering

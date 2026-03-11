@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDraftManager } from './useDraftManager'
 import type { EditorEntry } from '../Editor'
+import { unsafeAsLogicalPath } from '../../paths/test-utils'
 
 // Mock notifications
 vi.mock('@mantine/notifications', () => ({
@@ -12,7 +13,7 @@ vi.mock('@mantine/notifications', () => ({
 
 describe('useDraftManager', () => {
   const mockEntry: EditorEntry = {
-    path: 'entry1',
+    path: unsafeAsLogicalPath('entry1'),
     contentId: 'abc123def456', // 12-char content ID
     label: 'Test Entry',
     collectionId: 'posts',
@@ -126,8 +127,8 @@ describe('useDraftManager', () => {
   it('computes editedFiles correctly', () => {
     const entries = [
       mockEntry,
-      { ...mockEntry, path: 'entry2', contentId: 'xyz789uvw123', label: 'Entry 2' },
-      { ...mockEntry, path: 'entry3', contentId: 'mno456pqr789', label: 'Entry 3' },
+      { ...mockEntry, path: unsafeAsLogicalPath('entry2'), contentId: 'xyz789uvw123', label: 'Entry 2' },
+      { ...mockEntry, path: unsafeAsLogicalPath('entry3'), contentId: 'mno456pqr789', label: 'Entry 3' },
     ]
 
     const { result } = renderHook(() => useDraftManager({ ...defaultOptions, entries }))

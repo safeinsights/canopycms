@@ -27,7 +27,7 @@ describe('useEntryManager', () => {
   let wrapper: ReturnType<typeof createApiClientWrapper>
 
   const mockEntry: EditorEntry = {
-    path: 'entry1',
+    path: unsafeAsLogicalPath('entry1'),
     label: 'Test Entry',
     collectionId: 'posts',
     collectionName: 'posts',
@@ -52,7 +52,7 @@ describe('useEntryManager', () => {
 
   const mockCollections: EditorCollection[] = [
     {
-      path: 'content/posts',
+      path: unsafeAsLogicalPath('content/posts'),
       name: 'posts',
       label: 'Posts',
       type: 'collection',
@@ -309,7 +309,7 @@ describe('useEntryManager', () => {
   it('does not create entry for entry collection', async () => {
     const entryCollections: EditorCollection[] = [
       {
-        path: 'content/config',
+        path: unsafeAsLogicalPath('content/config'),
         name: 'config',
         type: 'entry',
         format: 'json',
@@ -353,7 +353,7 @@ describe('useEntryManager', () => {
   })
 
   it('resets selectedPath when selected entry is removed', () => {
-    const entries = [mockEntry, { ...mockEntry, path: 'entry2' }]
+    const entries = [mockEntry, { ...mockEntry, path: unsafeAsLogicalPath('entry2') }]
     const { result, rerender } = renderHook((props) => useEntryManager(props), {
       initialProps: { ...defaultOptions, initialEntries: entries },
       wrapper,
@@ -392,12 +392,12 @@ describe('useEntryManager', () => {
 
     const entry1: EditorEntry = {
       ...mockEntry,
-      path: 'entry1',
+      path: unsafeAsLogicalPath('entry1'),
       slug: 'entry1',
     }
     const entry2: EditorEntry = {
       ...mockEntry,
-      path: 'entry2',
+      path: unsafeAsLogicalPath('entry2'),
       slug: 'entry2',
     }
 
@@ -430,12 +430,12 @@ describe('useEntryManager', () => {
 
     const entry1: EditorEntry = {
       ...mockEntry,
-      path: 'entry1',
+      path: unsafeAsLogicalPath('entry1'),
       slug: 'entry1',
     }
     const entry2: EditorEntry = {
       ...mockEntry,
-      path: 'entry2',
+      path: unsafeAsLogicalPath('entry2'),
       slug: 'entry2',
     }
 
@@ -458,12 +458,12 @@ describe('useEntryManager', () => {
 
     const entry1: EditorEntry = {
       ...mockEntry,
-      path: 'entry1',
+      path: unsafeAsLogicalPath('entry1'),
       slug: 'entry1',
     }
     const entry2: EditorEntry = {
       ...mockEntry,
-      path: 'entry2',
+      path: unsafeAsLogicalPath('entry2'),
       slug: 'entry2',
     }
 
@@ -489,7 +489,7 @@ describe('useEntryManager', () => {
 
     const entry1: EditorEntry = {
       ...mockEntry,
-      path: 'entry1',
+      path: unsafeAsLogicalPath('entry1'),
       slug: 'entry1',
     }
 

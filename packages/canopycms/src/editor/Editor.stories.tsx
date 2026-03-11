@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type { FieldConfig } from '../config'
 import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
+import { unsafeAsLogicalPath } from '../paths/test-utils'
 
 const meta: Meta<typeof Editor> = {
   title: 'Editor/Editor',
@@ -32,7 +33,7 @@ const postFields: FieldConfig[] = [
 
 const baseEntries: EditorEntry[] = [
   {
-    path: 'home',
+    path: unsafeAsLogicalPath('home'),
     label: 'Home',
     status: 'page',
     schema: homeFields,
@@ -45,7 +46,7 @@ const baseEntries: EditorEntry[] = [
     contentId: 'test123456789',
   },
   {
-    path: 'posts/hello-world',
+    path: unsafeAsLogicalPath('posts/hello-world'),
     label: 'Hello World',
     status: 'draft',
     schema: postFields,
@@ -63,15 +64,15 @@ export const WithCollections: Story = {
   render: () => {
     const [entries, setEntries] = useState<EditorEntry[]>(baseEntries)
     const collections = [
-      { path: 'home', name: 'home', label: 'Home', format: 'json' as const, type: 'entry' as const },
-      { path: 'posts', name: 'posts', label: 'Posts', format: 'json' as const, type: 'collection' as const },
+      { path: unsafeAsLogicalPath('home'), name: 'home', label: 'Home', format: 'json' as const, type: 'entry' as const },
+      { path: unsafeAsLogicalPath('posts'), name: 'posts', label: 'Posts', format: 'json' as const, type: 'collection' as const },
     ]
 
     const handleCreateEntry = (collectionId: string) => {
       const slug = window.prompt(`New ${collectionId} slug?`, 'new-post')
       if (!slug) return
       const newEntry: EditorEntry = {
-        path: `${collectionId}/${slug}`,
+        path: unsafeAsLogicalPath(`${collectionId}/${slug}`),
         label: slug,
         status: 'draft',
         schema: collectionId === 'home' ? homeFields : postFields,

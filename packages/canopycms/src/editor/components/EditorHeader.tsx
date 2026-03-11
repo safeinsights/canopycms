@@ -5,6 +5,7 @@ import { GoGitBranch } from 'react-icons/go'
 import type { OperatingMode } from '../../operating-mode'
 import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
+import type { LogicalPath } from '../../paths/types'
 import { clientOperatingStrategy } from '../../operating-mode/client'
 
 /**
@@ -54,7 +55,7 @@ export interface EditorHeaderProps {
   /**
    * List of edited files.
    */
-  editedFiles: Array<{ path: string; label: string }>
+  editedFiles: Array<{ path: LogicalPath; label: string }>
 
   /**
    * Number of modified files.
