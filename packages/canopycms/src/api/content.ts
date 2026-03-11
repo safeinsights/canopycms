@@ -6,7 +6,7 @@ import type { ContentFormat } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 import { branchNameSchema, logicalPathSchema, entrySlugSchema } from './validators'
-import { toLogicalPath, toEntrySlug } from '../paths'
+import { toLogicalPath, toEntrySlug, toPhysicalPath } from '../paths'
 
 /** Response type for content read operations */
 export type ContentReadResponse = ApiResponse<{
@@ -131,7 +131,7 @@ const readContentHandler = async (
     return { ok: false, status: 400, error: message }
   }
 
-  const access = await ctx.services.checkContentAccess(context, context.branchRoot, relativePath, req.user, 'read')
+  const access = await ctx.services.checkContentAccess(context, context.branchRoot, toPhysicalPath(relativePath), req.user, 'read')
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
@@ -179,7 +179,7 @@ const writeContentHandler = async (
     return { ok: false, status: 400, error: message }
   }
 
-  const access = await ctx.services.checkContentAccess(context, context.branchRoot, relativePath, req.user, 'edit')
+  const access = await ctx.services.checkContentAccess(context, context.branchRoot, toPhysicalPath(relativePath), req.user, 'edit')
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
@@ -249,7 +249,7 @@ const validateReferencesHandler = async (
     return { ok: false, status: 400, error: message }
   }
 
-  const access = await ctx.services.checkContentAccess(context, context.branchRoot, relativePath, req.user, 'read')
+  const access = await ctx.services.checkContentAccess(context, context.branchRoot, toPhysicalPath(relativePath), req.user, 'read')
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }
@@ -310,7 +310,7 @@ const renameEntryHandler = async (
   }
 
   // Check edit permission on current path
-  const access = await ctx.services.checkContentAccess(context, context.branchRoot, relativePath, req.user, 'edit')
+  const access = await ctx.services.checkContentAccess(context, context.branchRoot, toPhysicalPath(relativePath), req.user, 'edit')
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
   }

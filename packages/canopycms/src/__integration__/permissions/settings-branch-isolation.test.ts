@@ -20,6 +20,8 @@ import { createTestServices } from '../../config-test'
 import type { PathPermission } from '../../config'
 import type { AuthenticatedUser } from '../../user'
 import { operatingStrategy } from '../../operating-mode'
+import { toPermissionPath } from '../../authorization'
+import { toPhysicalPath } from '../../paths'
 
 describe('Settings Branch Isolation', () => {
   let workspace: TestWorkspace
@@ -77,7 +79,7 @@ describe('Settings Branch Isolation', () => {
     const mainPermissionsFile = path.join(mainPermissionsDir, 'permissions.json')
     const permissiveRules: PathPermission[] = [
       {
-        path: 'content/**',
+        path: toPermissionPath('content/**'),
         read: {
           allowedUsers: [restrictedUser.userId, allowedUser.userId, 'anonymous'],
         },
@@ -98,7 +100,7 @@ describe('Settings Branch Isolation', () => {
     const settingsPermissionsFile = path.join(settingsRoot, 'permissions.json')
     const restrictiveRules: PathPermission[] = [
       {
-        path: 'content/posts/hello.mdx',
+        path: toPermissionPath('content/posts/hello.mdx'),
         read: {
           allowedUsers: [allowedUser.userId], // Only allowedUser can read
         },
@@ -127,7 +129,7 @@ describe('Settings Branch Isolation', () => {
     const restrictedUserAccess = await services.checkContentAccess(
       mainBranch,
       mainBranch.branchRoot,
-      'content/posts/hello.mdx',
+      toPhysicalPath('content/posts/hello.mdx'),
       restrictedUser,
       'read'
     )
@@ -144,7 +146,7 @@ describe('Settings Branch Isolation', () => {
     const allowedUserAccess = await services.checkContentAccess(
       mainBranch,
       mainBranch.branchRoot,
-      'content/posts/hello.mdx',
+      toPhysicalPath('content/posts/hello.mdx'),
       allowedUser,
       'read'
     )
@@ -181,7 +183,7 @@ describe('Settings Branch Isolation', () => {
         updatedBy: 'test',
         pathPermissions: [
           {
-            path: 'content/**',
+            path: toPermissionPath('content/**'),
             read: { allowedUsers: [user.userId] },
           },
         ],
@@ -221,7 +223,7 @@ describe('Settings Branch Isolation', () => {
     const access = await services.checkContentAccess(
       mainBranch,
       mainBranch.branchRoot,
-      'content/posts/test.mdx',
+      toPhysicalPath('content/posts/test.mdx'),
       user,
       'read'
     )
@@ -259,7 +261,7 @@ describe('Settings Branch Isolation', () => {
         version: 1,
         updatedAt: new Date().toISOString(),
         updatedBy: 'test',
-        pathPermissions: [{ path: 'content/**', read: { allowedUsers: [user.userId] } }],
+        pathPermissions: [{ path: toPermissionPath('content/**'), read: { allowedUsers: [user.userId] } }],
       })
     )
 
@@ -296,7 +298,7 @@ describe('Settings Branch Isolation', () => {
     const access = await services.checkContentAccess(
       featureBranch,
       featureBranch.branchRoot,
-      'content/posts/test.mdx',
+      toPhysicalPath('content/posts/test.mdx'),
       user,
       'read'
     )

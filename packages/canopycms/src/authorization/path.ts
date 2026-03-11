@@ -12,20 +12,21 @@ import type { PathPermission, DefaultPathAccess, PermissionLevel, PermissionTarg
 import { isAdmin } from './helpers'
 import type { CanopyUser } from '../user'
 import type { PathPermissionResult } from './types'
+import type { PhysicalPath } from '../paths/types'
 
 /**
  * Normalize a path for consistent matching
  */
-function normalize(p: string): string {
-  const normalized = p.split(path.sep).join('/')
-  return normalized.replace(/^\.?\/*/, '')
+function normalize(p: PhysicalPath): PhysicalPath {
+  const normalized = (p as string).split(path.sep).join('/')
+  return normalized.replace(/^\.?\/*/, '') as PhysicalPath
 }
 
 /**
  * Check if a path matches a permission rule
  */
-function matchesRule(rule: PathPermission, relativePath: string): boolean {
-  return minimatch(relativePath, rule.path, { dot: true })
+function matchesRule(rule: PathPermission, relativePath: PhysicalPath): boolean {
+  return minimatch(relativePath as string, rule.path, { dot: true })
 }
 
 /**
@@ -59,7 +60,7 @@ export function checkPathAccess({
   level,
 }: {
   rules: PathPermission[]
-  relativePath: string
+  relativePath: PhysicalPath
   user: CanopyUser
   defaultAccess: DefaultPathAccess
   level: PermissionLevel
@@ -99,7 +100,7 @@ export function checkPathAccess({
  */
 export function createCheckPathAccess(rules: PathPermission[], defaultAccess: DefaultPathAccess) {
   return (input: {
-    relativePath: string
+    relativePath: PhysicalPath
     user: CanopyUser
     level: PermissionLevel
   }): PathPermissionResult => checkPathAccess({ ...input, rules, defaultAccess })

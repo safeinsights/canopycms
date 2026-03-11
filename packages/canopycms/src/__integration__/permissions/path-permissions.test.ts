@@ -14,7 +14,9 @@ import {
   loadPathPermissions,
   savePathPermissions,
   createCheckPathAccess,
+  toPermissionPath,
 } from '../../authorization'
+import { toPhysicalPath } from '../../paths'
 
 describe('Path Permission Integration', () => {
   let workspace: TestWorkspace
@@ -47,7 +49,7 @@ describe('Path Permission Integration', () => {
       branch.branchRoot,
       [
         {
-          path: 'content/posts/**',
+          path: toPermissionPath('content/posts/**'),
           edit: { allowedGroups: ['BlogAuthors'] },
         },
       ],
@@ -60,7 +62,7 @@ describe('Path Permission Integration', () => {
     const pathChecker = createCheckPathAccess(rules, workspace.config.defaultPathAccess ?? 'deny')
 
     const access = pathChecker({
-      relativePath: 'content/posts/hello.mdx',
+      relativePath: toPhysicalPath('content/posts/hello.mdx'),
       user: editor,
       level: 'edit',
     })
@@ -91,7 +93,7 @@ describe('Path Permission Integration', () => {
       branch.branchRoot,
       [
         {
-          path: 'content/posts/**',
+          path: toPermissionPath('content/posts/**'),
           edit: { allowedGroups: ['BlogAuthors'] },
         },
       ],
@@ -105,7 +107,7 @@ describe('Path Permission Integration', () => {
 
     // Path check alone would fail for non-BlogAuthors
     const pathAccess = pathChecker({
-      relativePath: 'content/posts/restricted.mdx',
+      relativePath: toPhysicalPath('content/posts/restricted.mdx'),
       user: admin,
       level: 'edit',
     })
@@ -133,11 +135,11 @@ describe('Path Permission Integration', () => {
       branch.branchRoot,
       [
         {
-          path: 'content/posts/public-*',
+          path: toPermissionPath('content/posts/public-*'),
           edit: { allowedGroups: ['ContentEditors'] }, // Allow ContentEditors to edit public posts
         },
         {
-          path: 'content/posts/**',
+          path: toPermissionPath('content/posts/**'),
           edit: { allowedGroups: ['BlogAuthors'] }, // Restrict all other posts to BlogAuthors
         },
       ],
@@ -150,7 +152,7 @@ describe('Path Permission Integration', () => {
 
     // Check access to public post (should match first rule)
     const publicAccess = pathChecker({
-      relativePath: 'content/posts/public-announcement.mdx',
+      relativePath: toPhysicalPath('content/posts/public-announcement.mdx'),
       user: editor,
       level: 'edit',
     })
@@ -159,7 +161,7 @@ describe('Path Permission Integration', () => {
 
     // Check access to private post (should match second rule and be denied)
     const privateAccess = pathChecker({
-      relativePath: 'content/posts/private-draft.mdx',
+      relativePath: toPhysicalPath('content/posts/private-draft.mdx'),
       user: editor,
       level: 'edit',
     })
@@ -185,7 +187,7 @@ describe('Path Permission Integration', () => {
       branch.branchRoot,
       [
         {
-          path: 'content/posts/**',
+          path: toPermissionPath('content/posts/**'),
           // No read restriction (defaults to allow if defaultPathAccess is 'allow')
           edit: { allowedGroups: ['ContentEditors'] }, // Only editors can edit
           review: { allowedGroups: ['Reviewers', 'Admins'] }, // Only reviewers can review
@@ -200,21 +202,21 @@ describe('Path Permission Integration', () => {
 
     // Reviewer can read and review, but not edit
     const reviewerReadAccess = pathChecker({
-      relativePath: 'content/posts/test.mdx',
+      relativePath: toPhysicalPath('content/posts/test.mdx'),
       user: reviewer,
       level: 'read',
     })
     expect(reviewerReadAccess.allowed).toBe(true)
 
     const reviewerReviewAccess = pathChecker({
-      relativePath: 'content/posts/test.mdx',
+      relativePath: toPhysicalPath('content/posts/test.mdx'),
       user: reviewer,
       level: 'review',
     })
     expect(reviewerReviewAccess.allowed).toBe(true)
 
     const reviewerEditAccess = pathChecker({
-      relativePath: 'content/posts/test.mdx',
+      relativePath: toPhysicalPath('content/posts/test.mdx'),
       user: reviewer,
       level: 'edit',
     })
@@ -222,21 +224,21 @@ describe('Path Permission Integration', () => {
 
     // Editor can read and edit, but not review
     const editorReadAccess = pathChecker({
-      relativePath: 'content/posts/test.mdx',
+      relativePath: toPhysicalPath('content/posts/test.mdx'),
       user: editor,
       level: 'read',
     })
     expect(editorReadAccess.allowed).toBe(true)
 
     const editorEditAccess = pathChecker({
-      relativePath: 'content/posts/test.mdx',
+      relativePath: toPhysicalPath('content/posts/test.mdx'),
       user: editor,
       level: 'edit',
     })
     expect(editorEditAccess.allowed).toBe(true)
 
     const editorReviewAccess = pathChecker({
-      relativePath: 'content/posts/test.mdx',
+      relativePath: toPhysicalPath('content/posts/test.mdx'),
       user: editor,
       level: 'review',
     })
@@ -260,7 +262,7 @@ describe('Path Permission Integration', () => {
       branch.branchRoot,
       [
         {
-          path: 'content/about.md',
+          path: toPermissionPath('content/about.md'),
           edit: { allowedGroups: ['ContentEditors'] },
         },
       ],
@@ -273,7 +275,7 @@ describe('Path Permission Integration', () => {
 
     // Editor should have access to about page
     const access = pathChecker({
-      relativePath: 'content/about.md',
+      relativePath: toPhysicalPath('content/about.md'),
       user: editor,
       level: 'edit',
     })
@@ -296,7 +298,7 @@ describe('Path Permission Integration', () => {
     // Set up permissions
     const initialRules: any[] = [
       {
-        path: 'content/posts/**',
+        path: toPermissionPath('content/posts/**'),
         edit: { allowedGroups: ['BlogAuthors'] },
       },
     ]

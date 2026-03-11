@@ -52,7 +52,7 @@ vi.mock('../branch-workspace', () => ({
 
 import { createBranchHandler as createBranch, listBranchesHandler as listBranches, deleteBranchHandler as deleteBranch, updateBranchAccessHandler as updateBranchAccess, canCreateBranch, canDeleteBranch, canModifyBranchAccess } from './branch'
 import type { ApiContext } from './types'
-import { RESERVED_GROUPS } from '../authorization'
+import { RESERVED_GROUPS, toPermissionPath } from '../authorization'
 import { createMockApiContext, createMockBranchContext, createMockRegistry } from '../test-utils'
 import * as authorization from '../authorization'
 import { toBranchName } from '../paths'
@@ -100,7 +100,7 @@ describe('canCreateBranch', () => {
   it('allows admins to create branches', () => {
     const result = canCreateBranch(
       { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] },
-      [{ path: 'content/**', edit: { allowedUsers: ['other'] } }]
+      [{ path: toPermissionPath('content/**'), edit: { allowedUsers: ['other'] } }]
     )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('privileged_user')
@@ -109,7 +109,7 @@ describe('canCreateBranch', () => {
   it('allows reviewers to create branches', () => {
     const result = canCreateBranch(
       { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.REVIEWERS] },
-      [{ path: 'content/**', edit: { allowedUsers: ['other'] } }]
+      [{ path: toPermissionPath('content/**'), edit: { allowedUsers: ['other'] } }]
     )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('privileged_user')
@@ -122,25 +122,25 @@ describe('canCreateBranch', () => {
   })
 
   it('allows user with matching userId in path rule', () => {
-    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [{ path: 'content/**', edit: { allowedUsers: ['u1', 'u2'] } }])
+    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [{ path: toPermissionPath('content/**'), edit: { allowedUsers: ['u1', 'u2'] } }])
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('path_access')
   })
 
   it('allows user with matching group in path rule', () => {
-    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: ['editors'] }, [{ path: 'content/**', edit: { allowedGroups: ['editors'] } }])
+    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: ['editors'] }, [{ path: toPermissionPath('content/**'), edit: { allowedGroups: ['editors'] } }])
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('path_access')
   })
 
   it('allows anyone for open path rules (no user/group constraints)', () => {
-    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [{ path: 'content/**', edit: {} }])
+    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [{ path: toPermissionPath('content/**'), edit: {} }])
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('open_path_rule')
   })
 
   it('denies user with no matching path access', () => {
-    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [{ path: 'content/**', edit: { allowedUsers: ['other'] } }])
+    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [{ path: toPermissionPath('content/**'), edit: { allowedUsers: ['other'] } }])
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('no_path_access')
   })
@@ -149,8 +149,8 @@ describe('canCreateBranch', () => {
     const result = canCreateBranch(
       { type: 'authenticated', userId: 'u1', groups: [] },
       [
-        { path: 'admin/**', edit: { allowedUsers: ['admin-only'] } },
-        { path: 'content/**', edit: { allowedUsers: ['u1'] } },
+        { path: toPermissionPath('admin/**'), edit: { allowedUsers: ['admin-only'] } },
+        { path: toPermissionPath('content/**'), edit: { allowedUsers: ['u1'] } },
       ]
     )
     expect(result.allowed).toBe(true)
@@ -158,7 +158,7 @@ describe('canCreateBranch', () => {
   })
 
   it('denies when all rules restrict to other users', () => {
-    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [{ path: 'admin/**', edit: { allowedUsers: ['admin-only'] } }])
+    const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [{ path: toPermissionPath('admin/**'), edit: { allowedUsers: ['admin-only'] } }])
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('no_path_access')
   })
@@ -174,7 +174,7 @@ describe('branch api', () => {
   it('rejects branch creation when user has no path access', async () => {
     // Mock permissions loaded from JSON file
     vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([
-      { path: 'content/**', edit: { allowedUsers: ['other-user'] } },
+      { path: toPermissionPath('content/**'), edit: { allowedUsers: ['other-user'] } },
     ])
     const res = await createBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/test') })
     expect(res.ok).toBe(false)
@@ -185,7 +185,7 @@ describe('branch api', () => {
   it('allows admin to create branch even with restrictions', async () => {
     // Mock permissions loaded from JSON file
     vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([
-      { path: 'content/**', edit: { allowedUsers: ['other-user'] } },
+      { path: toPermissionPath('content/**'), edit: { allowedUsers: ['other-user'] } },
     ])
     const res = await createBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } }, { branch: toBranchName('feature/test') })
     expect(res.ok).toBe(true)
@@ -193,7 +193,7 @@ describe('branch api', () => {
 
   it('loads permissions from JSON file via main branch', async () => {
     // This test verifies the new behavior: permissions come from JSON, not config
-    const mockPermissions = [{ path: 'content/**', edit: { allowedUsers: ['u1'] } }]
+    const mockPermissions = [{ path: toPermissionPath('content/**'), edit: { allowedUsers: ['u1'] } }]
     vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue(mockPermissions)
 
     const res = await createBranch(baseCtx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/test') })
