@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { defineCanopyTestConfig } from './config-test'
 import { flattenSchema } from './config'
 import { ContentStore, ContentStoreError } from './content-store'
-import { toLogicalPath, toEntrySlug } from './paths'
+import { unsafeAsLogicalPath, unsafeAsEntrySlug } from './paths/test-utils'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
 
@@ -33,13 +33,16 @@ describe('ContentStore', () => {
     const config = defineCanopyTestConfig({ schema })
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
-    await store.write(toLogicalPath('content/posts'), toEntrySlug('hello-world'), {
+    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('hello-world'), {
       format: 'md',
       data: { title: 'Hello' },
       body: 'Body text',
     })
 
-    const doc = await store.read(toLogicalPath('content/posts'), toEntrySlug('hello-world'))
+    const doc = await store.read(
+      unsafeAsLogicalPath('content/posts'),
+      unsafeAsEntrySlug('hello-world'),
+    )
     if (doc.format === 'json') throw new Error('expected markdown')
     expect(doc.data.title).toBe('Hello')
     expect(doc.body).toContain('Body text')
@@ -67,13 +70,13 @@ describe('ContentStore', () => {
     const config = defineCanopyTestConfig({ schema })
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
-    await store.write(toLogicalPath('content/pages'), toEntrySlug('landing'), {
+    await store.write(unsafeAsLogicalPath('content/pages'), unsafeAsEntrySlug('landing'), {
       format: 'mdx',
       data: { title: 'Landing' },
       body: '<Hero title="Hi" />',
     })
 
-    const doc = await store.read(toLogicalPath('content/pages'), toEntrySlug('landing'))
+    const doc = await store.read(unsafeAsLogicalPath('content/pages'), unsafeAsEntrySlug('landing'))
     if (doc.format === 'json') throw new Error('expected mdx')
     expect(doc.data.title).toBe('Landing')
     expect(doc.body?.includes('<Hero')).toBe(true)
@@ -101,12 +104,12 @@ describe('ContentStore', () => {
     const config = defineCanopyTestConfig({ schema })
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
-    await store.write(toLogicalPath('content/config'), toEntrySlug('site'), {
+    await store.write(unsafeAsLogicalPath('content/config'), unsafeAsEntrySlug('site'), {
       format: 'json',
       data: { siteName: 'CanopyCMS' },
     })
 
-    const doc = await store.read(toLogicalPath('content/config'), toEntrySlug('site'))
+    const doc = await store.read(unsafeAsLogicalPath('content/config'), unsafeAsEntrySlug('site'))
     expect(doc.data.siteName).toBe('CanopyCMS')
     expect(doc.relativePath.endsWith('.json')).toBe(true)
   })
@@ -133,7 +136,7 @@ describe('ContentStore', () => {
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await expect(
-      store.write(toLogicalPath('content/posts'), toEntrySlug('../escape'), {
+      store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('../escape'), {
         format: 'md',
         data: { title: 'bad' },
         body: 'x',
@@ -162,12 +165,12 @@ describe('ContentStore', () => {
     const config = defineCanopyTestConfig({ schema })
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
-    await store.write(toLogicalPath('content/settings'), toEntrySlug('site'), {
+    await store.write(unsafeAsLogicalPath('content/settings'), unsafeAsEntrySlug('site'), {
       format: 'json',
       data: { siteName: 'CanopyCMS' },
     })
 
-    const doc = await store.read(toLogicalPath('content/settings'), toEntrySlug('site'))
+    const doc = await store.read(unsafeAsLogicalPath('content/settings'), unsafeAsEntrySlug('site'))
     expect(doc.format).toBe('json')
     expect(doc.data.siteName).toBe('CanopyCMS')
     // Pattern: {type}.{slug}.{id}.{ext}
@@ -196,7 +199,7 @@ describe('ContentStore', () => {
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await expect(
-      store.write(toLogicalPath('content/posts'), toEntrySlug('2024/hello'), {
+      store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('2024/hello'), {
         format: 'md',
         data: { title: 'Bad Slug' },
         body: 'Content',
@@ -226,7 +229,7 @@ describe('ContentStore', () => {
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await expect(
-      store.write(toLogicalPath('content/posts'), toEntrySlug('bad\\slug'), {
+      store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('bad\\slug'), {
         format: 'md',
         data: { title: 'Bad Slug' },
         body: 'Content',
@@ -503,16 +506,20 @@ describe('ContentStore', () => {
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     // Write to 3-level nested collection
-    await store.write(toLogicalPath('content/docs/api/v2'), toEntrySlug('authentication'), {
-      format: 'md',
-      data: { title: 'Authentication Guide' },
-      body: '# Authentication\n\nHow to authenticate.',
-    })
+    await store.write(
+      unsafeAsLogicalPath('content/docs/api/v2'),
+      unsafeAsEntrySlug('authentication'),
+      {
+        format: 'md',
+        data: { title: 'Authentication Guide' },
+        body: '# Authentication\n\nHow to authenticate.',
+      },
+    )
 
     // Read it back
     const doc = await store.read(
-      toLogicalPath('content/docs/api/v2'),
-      toEntrySlug('authentication'),
+      unsafeAsLogicalPath('content/docs/api/v2'),
+      unsafeAsEntrySlug('authentication'),
     )
     if (doc.format === 'json') throw new Error('expected markdown')
     expect(doc.data.title).toBe('Authentication Guide')
@@ -546,7 +553,7 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Create an entry
-      await store.write(toLogicalPath('content/posts'), toEntrySlug('old-slug'), {
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('old-slug'), {
         format: 'md',
         data: { title: 'Test Post' },
         body: 'Content here',
@@ -554,9 +561,9 @@ describe('ContentStore', () => {
 
       // Rename it
       const result = await store.renameEntry(
-        toLogicalPath('content/posts'),
-        toEntrySlug('old-slug'),
-        toEntrySlug('new-slug'),
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsEntrySlug('old-slug'),
+        unsafeAsEntrySlug('new-slug'),
       )
 
       // Verify new path is returned
@@ -564,11 +571,14 @@ describe('ContentStore', () => {
 
       // Verify old path doesn't exist anymore
       await expect(
-        store.read(toLogicalPath('content/posts'), toEntrySlug('old-slug')),
+        store.read(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('old-slug')),
       ).rejects.toThrow()
 
       // Verify new path works
-      const doc = await store.read(toLogicalPath('content/posts'), toEntrySlug('new-slug'))
+      const doc = await store.read(
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsEntrySlug('new-slug'),
+      )
       if (doc.format === 'json') throw new Error('expected markdown')
       expect(doc.data.title).toBe('Test Post')
       expect(doc.body).toContain('Content here')
@@ -591,9 +601,9 @@ describe('ContentStore', () => {
 
       await expect(
         store.renameEntry(
-          toLogicalPath('content/posts'),
-          toEntrySlug('nonexistent'),
-          toEntrySlug('new-slug'),
+          unsafeAsLogicalPath('content/posts'),
+          unsafeAsEntrySlug('nonexistent'),
+          unsafeAsEntrySlug('new-slug'),
         ),
       ).rejects.toThrow('Entry not found: nonexistent')
     })
@@ -614,11 +624,11 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Create two entries
-      await store.write(toLogicalPath('content/posts'), toEntrySlug('first-post'), {
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('first-post'), {
         format: 'json',
         data: { title: 'First' },
       })
-      await store.write(toLogicalPath('content/posts'), toEntrySlug('second-post'), {
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('second-post'), {
         format: 'json',
         data: { title: 'Second' },
       })
@@ -626,9 +636,9 @@ describe('ContentStore', () => {
       // Try to rename first-post to second-post (conflict)
       await expect(
         store.renameEntry(
-          toLogicalPath('content/posts'),
-          toEntrySlug('first-post'),
-          toEntrySlug('second-post'),
+          unsafeAsLogicalPath('content/posts'),
+          unsafeAsEntrySlug('first-post'),
+          unsafeAsEntrySlug('second-post'),
         ),
       ).rejects.toThrow('already exists')
     })
@@ -649,7 +659,7 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Create an entry
-      await store.write(toLogicalPath('content/posts'), toEntrySlug('test-post'), {
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('test-post'), {
         format: 'json',
         data: { title: 'Test' },
       })
@@ -657,18 +667,18 @@ describe('ContentStore', () => {
       // Try invalid slug with slash
       await expect(
         store.renameEntry(
-          toLogicalPath('content/posts'),
-          toEntrySlug('test-post'),
-          toEntrySlug('invalid/slug'),
+          unsafeAsLogicalPath('content/posts'),
+          unsafeAsEntrySlug('test-post'),
+          unsafeAsEntrySlug('invalid/slug'),
         ),
       ).rejects.toThrow('cannot contain forward slashes')
 
       // Try invalid slug with uppercase
       await expect(
         store.renameEntry(
-          toLogicalPath('content/posts'),
-          toEntrySlug('test-post'),
-          toEntrySlug('Invalid-Slug'),
+          unsafeAsLogicalPath('content/posts'),
+          unsafeAsEntrySlug('test-post'),
+          unsafeAsEntrySlug('Invalid-Slug'),
         ),
       ).rejects.toThrow('must start with a letter or number')
     })
@@ -689,23 +699,26 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Create an entry
-      await store.write(toLogicalPath('content/posts'), toEntrySlug('same-slug'), {
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('same-slug'), {
         format: 'json',
         data: { title: 'Test' },
       })
 
       // Rename to same slug (no-op)
       const result = await store.renameEntry(
-        toLogicalPath('content/posts'),
-        toEntrySlug('same-slug'),
-        toEntrySlug('same-slug'),
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsEntrySlug('same-slug'),
+        unsafeAsEntrySlug('same-slug'),
       )
 
       // Should return the same path
       expect(result.newPath).toBe('content/posts/same-slug')
 
       // Entry should still be readable
-      const doc = await store.read(toLogicalPath('content/posts'), toEntrySlug('same-slug'))
+      const doc = await store.read(
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsEntrySlug('same-slug'),
+      )
       expect(doc.format).toBe('json')
       if (doc.format === 'json') {
         expect(doc.data.title).toBe('Test')
@@ -728,28 +741,28 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Create an entry
-      await store.write(toLogicalPath('content/posts'), toEntrySlug('original'), {
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('original'), {
         format: 'json',
         data: { title: 'Test' },
       })
 
       // Get the content ID before rename
       const idBefore = await store.getIdForEntry(
-        toLogicalPath('content/posts'),
-        toEntrySlug('original'),
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsEntrySlug('original'),
       )
 
       // Rename the entry
       await store.renameEntry(
-        toLogicalPath('content/posts'),
-        toEntrySlug('original'),
-        toEntrySlug('renamed'),
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsEntrySlug('original'),
+        unsafeAsEntrySlug('renamed'),
       )
 
       // Get the content ID after rename
       const idAfter = await store.getIdForEntry(
-        toLogicalPath('content/posts'),
-        toEntrySlug('renamed'),
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsEntrySlug('renamed'),
       )
 
       // IDs should match (preserved through rename)
@@ -780,20 +793,20 @@ describe('ContentStore', () => {
 
       // Create entries of different types
       const post = await store.write(
-        toLogicalPath('content/content'),
-        toEntrySlug('my-post'),
+        unsafeAsLogicalPath('content/content'),
+        unsafeAsEntrySlug('my-post'),
         { format: 'mdx', data: {}, body: 'Post content' },
         'post',
       )
       const article = await store.write(
-        toLogicalPath('content/content'),
-        toEntrySlug('my-article'),
+        unsafeAsLogicalPath('content/content'),
+        unsafeAsEntrySlug('my-article'),
         { format: 'md', data: {}, body: 'Article content' },
         'article',
       )
       const note = await store.write(
-        toLogicalPath('content/content'),
-        toEntrySlug('my-note'),
+        unsafeAsLogicalPath('content/content'),
+        unsafeAsEntrySlug('my-note'),
         { format: 'json', data: { text: 'Note' } },
         'note',
       )
@@ -828,8 +841,8 @@ describe('ContentStore', () => {
 
       await expect(
         store.write(
-          toLogicalPath('content/posts'),
-          toEntrySlug('test'),
+          unsafeAsLogicalPath('content/posts'),
+          unsafeAsEntrySlug('test'),
           { format: 'mdx', data: {}, body: '' },
           'invalid-type',
         ),
@@ -855,11 +868,11 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Write without specifying entry type - should use default (tutorial)
-      const doc = await store.write(toLogicalPath('content/docs'), toEntrySlug('my-doc'), {
-        format: 'mdx',
-        data: {},
-        body: 'Content',
-      })
+      const doc = await store.write(
+        unsafeAsLogicalPath('content/docs'),
+        unsafeAsEntrySlug('my-doc'),
+        { format: 'mdx', data: {}, body: 'Content' },
+      )
 
       const tutorialFile = path.basename(doc.relativePath)
       expect(tutorialFile.startsWith('tutorial.my-doc.')).toBe(true)
@@ -886,8 +899,8 @@ describe('ContentStore', () => {
 
       // Create an entry with entry type "post"
       const created = await store.write(
-        toLogicalPath('content/content'),
-        toEntrySlug('my-content'),
+        unsafeAsLogicalPath('content/content'),
+        unsafeAsEntrySlug('my-content'),
         { format: 'mdx', data: {}, body: 'Original' },
         'post',
       )
@@ -897,8 +910,8 @@ describe('ContentStore', () => {
       // Update the same entry WITHOUT specifying entry type
       // The entry type should be automatically preserved from the existing file
       const updated = await store.write(
-        toLogicalPath('content/content'),
-        toEntrySlug('my-content'),
+        unsafeAsLogicalPath('content/content'),
+        unsafeAsEntrySlug('my-content'),
         { format: 'mdx', data: {}, body: 'Updated' },
       )
       const updatedFile = path.basename(updated.relativePath)
@@ -908,14 +921,17 @@ describe('ContentStore', () => {
       expect(updatedFile).toBe(createdFile) // Filename should be exactly the same
 
       // Verify the content was updated
-      const read = await store.read(toLogicalPath('content/content'), toEntrySlug('my-content'))
+      const read = await store.read(
+        unsafeAsLogicalPath('content/content'),
+        unsafeAsEntrySlug('my-content'),
+      )
       if (read.format === 'json') throw new Error('Expected mdx')
       expect(read.body.trim()).toBe('Updated')
 
       // Also verify that even if we specify a different entry type, it gets ignored (preserved)
       const updated2 = await store.write(
-        toLogicalPath('content/content'),
-        toEntrySlug('my-content'),
+        unsafeAsLogicalPath('content/content'),
+        unsafeAsEntrySlug('my-content'),
         { format: 'mdx', data: {}, body: 'Updated again' },
         'post',
       )

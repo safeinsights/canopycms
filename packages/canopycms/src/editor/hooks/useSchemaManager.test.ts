@@ -5,7 +5,7 @@ import { useSchemaManager } from './useSchemaManager'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, createApiClientWrapper } from './__test__/test-utils'
 import { mockSuccess, mockError } from '../../api/__test__/mock-client'
-import { toLogicalPath } from '../../paths'
+import { unsafeAsLogicalPath } from '../../paths/test-utils'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -36,7 +36,7 @@ describe('useSchemaManager', () => {
   describe('createCollection', () => {
     it('creates collection successfully', async () => {
       mockClient.schema.createCollection.mockResolvedValueOnce(
-        mockSuccess({ collectionPath: toLogicalPath('posts'), contentId: 'abc123def456' }),
+        mockSuccess({ collectionPath: unsafeAsLogicalPath('posts'), contentId: 'abc123def456' }),
       )
 
       const onSchemaChange = vi.fn()
@@ -55,7 +55,7 @@ describe('useSchemaManager', () => {
       })
 
       expect(createResult).toEqual({
-        collectionPath: toLogicalPath('posts'),
+        collectionPath: unsafeAsLogicalPath('posts'),
         contentId: 'abc123def456',
       })
       expect(mockClient.schema.createCollection).toHaveBeenCalledWith(
@@ -339,7 +339,7 @@ describe('useSchemaManager', () => {
       // Complete the operation
       await act(async () => {
         resolvePromise!(
-          mockSuccess({ collectionPath: toLogicalPath('posts'), contentId: 'abc123' }),
+          mockSuccess({ collectionPath: unsafeAsLogicalPath('posts'), contentId: 'abc123' }),
         )
         await createPromise
       })

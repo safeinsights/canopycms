@@ -21,12 +21,6 @@ export type LogicalPath = string & { readonly __brand: 'LogicalPath' }
 export type PhysicalPath = string & { readonly __brand: 'PhysicalPath' }
 
 /**
- * A normalized collection ID path (no content/ prefix, forward slashes).
- * Example: "posts" or "blog/posts"
- */
-export type CollectionPath = string & { readonly __brand: 'CollectionPath' }
-
-/**
  * A branch name that has been sanitized for filesystem use.
  */
 export type SanitizedBranchName = string & { readonly __brand: 'SanitizedBranchName' }

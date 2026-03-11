@@ -67,12 +67,3 @@ export function parsePermissionPath(
 export function permissionPathToString(path: PermissionPath): string {
   return path as string
 }
-
-/**
- * Unsafe cast to PermissionPath without validation.
- * USE ONLY in tests or when you're certain the path is valid.
- * For production code, use parsePermissionPath() instead.
- */
-export function toPermissionPath(path: string): PermissionPath {
-  return path as PermissionPath
-}

@@ -16,7 +16,7 @@ import { z } from 'zod'
 import type { ContentFormat, FieldConfig } from '../config'
 import { resolveCollectionPath } from '../content-id-index'
 import { generateId, isValidId } from '../id'
-import { toLogicalPath, validateAndNormalizePath } from '../paths'
+import { createLogicalPath, validateAndNormalizePath } from '../paths'
 import type { LogicalPath } from '../paths/types'
 import type { CanopyServices } from '../services'
 
@@ -343,7 +343,9 @@ export class SchemaStore {
 
     // Add new collection's contentId to parent's order array
     // For root-level collections (empty parentPath), we don't update parent order
-    const parentLogicalPath = input.parentPath ? toLogicalPath(input.parentPath) : toLogicalPath('')
+    const parentLogicalPath = input.parentPath
+      ? createLogicalPath(input.parentPath)
+      : createLogicalPath('')
     const parentMeta = input.parentPath ? await this.readCollectionMeta(parentLogicalPath) : null
     if (parentMeta) {
       // Initialize parent's order array if it doesn't exist
@@ -354,8 +356,8 @@ export class SchemaStore {
 
     // Build logical path
     const logicalPath = input.parentPath
-      ? toLogicalPath(`${input.parentPath}/${input.name}`)
-      : toLogicalPath(input.name)
+      ? createLogicalPath(`${input.parentPath}/${input.name}`)
+      : createLogicalPath(input.name)
 
     // Invalidate schema cache after mutation
     await this.invalidateSchemaCache()
@@ -404,7 +406,10 @@ export class SchemaStore {
       : collectionPath
 
     // Resolve path for regular collection
-    const physicalPath = await resolveCollectionPath(this.contentRoot, relativePath)
+    const physicalPath = await resolveCollectionPath(
+      this.contentRoot,
+      createLogicalPath(relativePath),
+    )
     if (!physicalPath) {
       throw new Error(`Collection not found: ${collectionPath}`)
     }

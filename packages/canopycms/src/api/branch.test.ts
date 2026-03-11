@@ -60,10 +60,11 @@ import {
   canModifyBranchAccess,
 } from './branch'
 import type { ApiContext } from './types'
-import { RESERVED_GROUPS, toPermissionPath } from '../authorization'
+import { RESERVED_GROUPS } from '../authorization'
+import { unsafeAsPermissionPath } from '../authorization/test-utils'
 import { createMockApiContext, createMockBranchContext, createMockRegistry } from '../test-utils'
 import * as authorization from '../authorization'
-import { toBranchName } from '../paths'
+import { unsafeAsBranchName } from '../paths/test-utils'
 
 // Alias for convenience (tests reference permissionsLoader)
 const permissionsLoader = {
@@ -108,7 +109,7 @@ describe('canCreateBranch', () => {
   it('allows admins to create branches', () => {
     const result = canCreateBranch(
       { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] },
-      [{ path: toPermissionPath('content/**'), edit: { allowedUsers: ['other'] } }],
+      [{ path: unsafeAsPermissionPath('content/**'), edit: { allowedUsers: ['other'] } }],
     )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('privileged_user')
@@ -117,7 +118,7 @@ describe('canCreateBranch', () => {
   it('allows reviewers to create branches', () => {
     const result = canCreateBranch(
       { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.REVIEWERS] },
-      [{ path: toPermissionPath('content/**'), edit: { allowedUsers: ['other'] } }],
+      [{ path: unsafeAsPermissionPath('content/**'), edit: { allowedUsers: ['other'] } }],
     )
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('privileged_user')
@@ -131,7 +132,7 @@ describe('canCreateBranch', () => {
 
   it('allows user with matching userId in path rule', () => {
     const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [
-      { path: toPermissionPath('content/**'), edit: { allowedUsers: ['u1', 'u2'] } },
+      { path: unsafeAsPermissionPath('content/**'), edit: { allowedUsers: ['u1', 'u2'] } },
     ])
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('path_access')
@@ -139,7 +140,7 @@ describe('canCreateBranch', () => {
 
   it('allows user with matching group in path rule', () => {
     const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: ['editors'] }, [
-      { path: toPermissionPath('content/**'), edit: { allowedGroups: ['editors'] } },
+      { path: unsafeAsPermissionPath('content/**'), edit: { allowedGroups: ['editors'] } },
     ])
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('path_access')
@@ -147,7 +148,7 @@ describe('canCreateBranch', () => {
 
   it('allows anyone for open path rules (no user/group constraints)', () => {
     const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [
-      { path: toPermissionPath('content/**'), edit: {} },
+      { path: unsafeAsPermissionPath('content/**'), edit: {} },
     ])
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('open_path_rule')
@@ -155,7 +156,7 @@ describe('canCreateBranch', () => {
 
   it('denies user with no matching path access', () => {
     const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [
-      { path: toPermissionPath('content/**'), edit: { allowedUsers: ['other'] } },
+      { path: unsafeAsPermissionPath('content/**'), edit: { allowedUsers: ['other'] } },
     ])
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('no_path_access')
@@ -163,8 +164,8 @@ describe('canCreateBranch', () => {
 
   it('allows user with matching userId in path rule with edit permissions', () => {
     const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [
-      { path: toPermissionPath('admin/**'), edit: { allowedUsers: ['admin-only'] } },
-      { path: toPermissionPath('content/**'), edit: { allowedUsers: ['u1'] } },
+      { path: unsafeAsPermissionPath('admin/**'), edit: { allowedUsers: ['admin-only'] } },
+      { path: unsafeAsPermissionPath('content/**'), edit: { allowedUsers: ['u1'] } },
     ])
     expect(result.allowed).toBe(true)
     expect(result.reason).toBe('path_access')
@@ -172,7 +173,7 @@ describe('canCreateBranch', () => {
 
   it('denies when all rules restrict to other users', () => {
     const result = canCreateBranch({ type: 'authenticated', userId: 'u1', groups: [] }, [
-      { path: toPermissionPath('admin/**'), edit: { allowedUsers: ['admin-only'] } },
+      { path: unsafeAsPermissionPath('admin/**'), edit: { allowedUsers: ['admin-only'] } },
     ])
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('no_path_access')
@@ -184,7 +185,7 @@ describe('branch api', () => {
     const res = await createBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('feature/test') },
+      { branch: unsafeAsBranchName('feature/test') },
     )
     expect(res.ok).toBe(true)
     expect(res.data?.branch.name).toBe('feature/test')
@@ -193,12 +194,12 @@ describe('branch api', () => {
   it('rejects branch creation when user has no path access', async () => {
     // Mock permissions loaded from JSON file
     vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([
-      { path: toPermissionPath('content/**'), edit: { allowedUsers: ['other-user'] } },
+      { path: unsafeAsPermissionPath('content/**'), edit: { allowedUsers: ['other-user'] } },
     ])
     const res = await createBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('feature/test') },
+      { branch: unsafeAsBranchName('feature/test') },
     )
     expect(res.ok).toBe(false)
     expect(res.status).toBe(403)
@@ -208,12 +209,12 @@ describe('branch api', () => {
   it('allows admin to create branch even with restrictions', async () => {
     // Mock permissions loaded from JSON file
     vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([
-      { path: toPermissionPath('content/**'), edit: { allowedUsers: ['other-user'] } },
+      { path: unsafeAsPermissionPath('content/**'), edit: { allowedUsers: ['other-user'] } },
     ])
     const res = await createBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
-      { branch: toBranchName('feature/test') },
+      { branch: unsafeAsBranchName('feature/test') },
     )
     expect(res.ok).toBe(true)
   })
@@ -221,14 +222,14 @@ describe('branch api', () => {
   it('loads permissions from JSON file via main branch', async () => {
     // This test verifies the new behavior: permissions come from JSON, not config
     const mockPermissions = [
-      { path: toPermissionPath('content/**'), edit: { allowedUsers: ['u1'] } },
+      { path: unsafeAsPermissionPath('content/**'), edit: { allowedUsers: ['u1'] } },
     ]
     vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue(mockPermissions)
 
     const res = await createBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('feature/test') },
+      { branch: unsafeAsBranchName('feature/test') },
     )
 
     expect(res.ok).toBe(true)
@@ -344,7 +345,7 @@ describe('deleteBranch api', () => {
     const res = await deleteBranch(
       baseCtx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('feature/x') },
+      { branch: unsafeAsBranchName('feature/x') },
     )
     expect(res.status).toBe(400)
     expect(res.error).toBe('Cannot delete branches in this operating mode')
@@ -355,7 +356,7 @@ describe('deleteBranch api', () => {
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('feature/missing') },
+      { branch: unsafeAsBranchName('feature/missing') },
     )
     expect(res.status).toBe(404)
   })
@@ -368,7 +369,7 @@ describe('deleteBranch api', () => {
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('feature/x') },
+      { branch: unsafeAsBranchName('feature/x') },
     )
     expect(res.status).toBe(403)
     expect(res.error).toBe('You do not have permission to delete this branch')
@@ -382,7 +383,7 @@ describe('deleteBranch api', () => {
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('feature/x') },
+      { branch: unsafeAsBranchName('feature/x') },
     )
     expect(res.status).toBe(400)
     expect(res.error).toBe('Cannot delete branch with open pull request')
@@ -396,7 +397,7 @@ describe('deleteBranch api', () => {
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('feature/x') },
+      { branch: unsafeAsBranchName('feature/x') },
     )
     expect(res.ok).toBe(true)
     expect(res.data?.deleted).toBe(true)
@@ -410,7 +411,7 @@ describe('deleteBranch api', () => {
     const res = await deleteBranch(
       ctx,
       { user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] } },
-      { branch: toBranchName('feature/x') },
+      { branch: unsafeAsBranchName('feature/x') },
     )
     expect(res.ok).toBe(true)
     expect(res.data?.deleted).toBe(true)
@@ -467,7 +468,7 @@ describe('updateBranchAccess api', () => {
     const res = await updateBranchAccess(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('feature/missing') },
+      { branch: unsafeAsBranchName('feature/missing') },
       {},
     )
     expect(res.status).toBe(404)
@@ -481,7 +482,7 @@ describe('updateBranchAccess api', () => {
     const res = await updateBranchAccess(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('feature/x') },
+      { branch: unsafeAsBranchName('feature/x') },
       {},
     )
     expect(res.status).toBe(403)
@@ -493,7 +494,7 @@ describe('updateBranchAccess api', () => {
     const res = await updateBranchAccess(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('feature/x') },
+      { branch: unsafeAsBranchName('feature/x') },
       { allowedUsers: ['u2', 'u3'] },
     )
     expect(res.ok).toBe(true)
@@ -508,7 +509,7 @@ describe('updateBranchAccess api', () => {
     const res = await updateBranchAccess(
       ctx,
       { user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] } },
-      { branch: toBranchName('feature/x') },
+      { branch: unsafeAsBranchName('feature/x') },
       { allowedGroups: ['editors'] },
     )
     expect(res.ok).toBe(true)

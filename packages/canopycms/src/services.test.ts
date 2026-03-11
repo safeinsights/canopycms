@@ -6,7 +6,7 @@ import { authResultToCanopyUser } from './user'
 import { RESERVED_GROUPS } from './authorization'
 import type { AuthenticationResult } from './auth/types'
 import type { InternalGroup } from './authorization'
-import { toPhysicalPath } from './paths'
+import { unsafeAsPhysicalPath } from './paths/test-utils'
 
 vi.mock('simple-git', () => {
   const stub = vi.fn(() => ({
@@ -52,7 +52,7 @@ describe('createCanopyServices', () => {
     // Path permissions are now loaded from JSON file at runtime, not from config
     // Service creates checkPathAccess with empty rules (default deny)
     const pathResult = services.checkPathAccess({
-      relativePath: toPhysicalPath('content/any/file.md'),
+      relativePath: unsafeAsPhysicalPath('content/any/file.md'),
       user: { type: 'authenticated', userId: 'user-1', groups: [] },
       level: 'read',
     })

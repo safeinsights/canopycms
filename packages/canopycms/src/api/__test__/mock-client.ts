@@ -8,7 +8,7 @@
 import { vi, type Mock } from 'vitest'
 import type { CanopyApiClient } from '../client'
 import type { ApiResponse } from '../types'
-import { toLogicalPath, toPhysicalPath } from '../../paths'
+import { unsafeAsLogicalPath, unsafeAsPhysicalPath } from '../../paths/test-utils'
 import type {
   BranchDeleteResponse,
   BranchListResponse,
@@ -520,7 +520,7 @@ export function mockGetCollectionApiResponse(): GetCollectionApiResponse {
  * Create a CreateCollectionApiResponse for testing
  */
 export function mockCreateCollectionApiResponse(): CreateCollectionApiResponse {
-  return mockSuccess({ collectionPath: toLogicalPath(''), contentId: '' })
+  return mockSuccess({ collectionPath: unsafeAsLogicalPath(''), contentId: '' })
 }
 
 /**

@@ -1,37 +1,37 @@
 import { describe, it, expect } from 'vitest'
 import { resolveLogicalPath } from '../resolve'
-import { toLogicalPath } from '../normalize'
+import { unsafeAsLogicalPath } from '../test-utils'
 import type { FlatSchemaItem } from '../../config'
 
 describe('resolveLogicalPath', () => {
   const createMockSchemaItems = (): FlatSchemaItem[] => [
     {
       type: 'collection',
-      logicalPath: toLogicalPath('content/authors'),
+      logicalPath: unsafeAsLogicalPath('content/authors'),
       name: 'authors',
       label: 'Authors',
     } as FlatSchemaItem,
     {
       type: 'collection',
-      logicalPath: toLogicalPath('content/posts'),
+      logicalPath: unsafeAsLogicalPath('content/posts'),
       name: 'posts',
       label: 'Posts',
     } as FlatSchemaItem,
     {
       type: 'collection',
-      logicalPath: toLogicalPath('content/docs'),
+      logicalPath: unsafeAsLogicalPath('content/docs'),
       name: 'docs',
       label: 'Docs',
     } as FlatSchemaItem,
     {
       type: 'collection',
-      logicalPath: toLogicalPath('content/docs/api'),
+      logicalPath: unsafeAsLogicalPath('content/docs/api'),
       name: 'api',
       label: 'API',
     } as FlatSchemaItem,
     {
       type: 'collection',
-      logicalPath: toLogicalPath('content/post'),
+      logicalPath: unsafeAsLogicalPath('content/post'),
       name: 'post',
       label: 'Post (singular)',
     } as FlatSchemaItem,
@@ -122,7 +122,7 @@ describe('resolveLogicalPath', () => {
       const deepSchemaItems: FlatSchemaItem[] = [
         {
           type: 'collection',
-          logicalPath: toLogicalPath('content/level1/level2/level3/level4/level5'),
+          logicalPath: unsafeAsLogicalPath('content/level1/level2/level3/level4/level5'),
           name: 'level5',
           label: 'Level 5',
         } as FlatSchemaItem,
@@ -141,7 +141,7 @@ describe('resolveLogicalPath', () => {
       const schemaItems: FlatSchemaItem[] = [
         {
           type: 'collection',
-          logicalPath: toLogicalPath('content/v1.0'),
+          logicalPath: unsafeAsLogicalPath('content/v1.0'),
           name: 'v1.0',
           label: 'Version 1.0',
         } as FlatSchemaItem,
@@ -172,7 +172,7 @@ describe('resolveLogicalPath', () => {
       const schemaItems: FlatSchemaItem[] = [
         {
           type: 'collection',
-          logicalPath: toLogicalPath('content'),
+          logicalPath: unsafeAsLogicalPath('content'),
           name: 'content',
           label: 'Content',
         } as FlatSchemaItem,
@@ -188,13 +188,13 @@ describe('resolveLogicalPath', () => {
       const schemaItems: FlatSchemaItem[] = [
         {
           type: 'entry-type',
-          logicalPath: toLogicalPath('content/posts/article'),
+          logicalPath: unsafeAsLogicalPath('content/posts/article'),
           name: 'article',
           label: 'Article',
         } as FlatSchemaItem,
         {
           type: 'collection',
-          logicalPath: toLogicalPath('content/posts'),
+          logicalPath: unsafeAsLogicalPath('content/posts'),
           name: 'posts',
           label: 'Posts',
         } as FlatSchemaItem,

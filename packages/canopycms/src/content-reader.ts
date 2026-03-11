@@ -1,6 +1,6 @@
 import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
-import { resolveBranchPaths, toLogicalPath, toEntrySlug, toPhysicalPath } from './paths'
+import { resolveBranchPaths, type LogicalPath, type PhysicalPath, type EntrySlug } from './paths'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
@@ -109,7 +109,11 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const stripRoot = (val: string) =>
     contentRoot && val.startsWith(`${contentRoot}/`) ? val.slice(contentRoot.length + 1) : val
 
-  const buildEntryPath = (opts: { collectionPath: string; slug?: string; branch?: string }) => {
+  const buildEntryPath = (opts: {
+    collectionPath: LogicalPath
+    slug?: string
+    branch?: string
+  }) => {
     // Construct preview path from collectionPath
     const stripped = stripRoot(opts.collectionPath)
     const base = stripped ? `/${stripped}` : '/'
@@ -128,10 +132,13 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const { entryPath, slug, branchName, user } = resolveTarget(input)
     const { context, branchRoot, store } = await resolveStore(branchName)
 
+    // entryPath is a schema-validated logical path supplied by the caller
+    const logicalEntryPath = entryPath as LogicalPath
+
     // Get the path WITHOUT reading the file
-    let relativePath: string
+    let relativePath: PhysicalPath
     try {
-      const resolved = await store.resolveDocumentPath(toLogicalPath(entryPath), slug ?? '')
+      const resolved = await store.resolveDocumentPath(logicalEntryPath, slug ?? '')
       relativePath = resolved.relativePath
     } catch (err) {
       const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
@@ -144,7 +151,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       const access = await services.checkContentAccess(
         context,
         branchRoot,
-        toPhysicalPath(relativePath),
+        relativePath,
         user,
         'read',
       )
@@ -156,7 +163,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     // ONLY if permissions pass, read the file
     try {
       const slugValue = slug ?? ''
-      return await store.read(toLogicalPath(entryPath), slugValue ? toEntrySlug(slugValue) : '', {
+      return await store.read(logicalEntryPath, slugValue ? (slugValue as EntrySlug) : '', {
         resolveReferences: input.resolveReferences ?? true,
       })
     } catch (err: unknown) {
@@ -176,7 +183,11 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       throw new ContentStoreError(message ?? defaultMessage)
     }
     const data = (doc as any).data as T
-    const path = buildEntryPath({ collectionPath: entryPath, slug, branch: branchName })
+    const path = buildEntryPath({
+      collectionPath: entryPath as LogicalPath,
+      slug,
+      branch: branchName,
+    })
     return { data, path }
   }
 

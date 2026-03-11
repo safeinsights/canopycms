@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { CollectionEditor, type ExistingCollection } from './CollectionEditor'
 import { CanopyCMSProvider } from '../theme'
-import { toLogicalPath } from '../../paths'
+import { unsafeAsLogicalPath } from '../../paths/test-utils'
 
 // Setup browser APIs
 beforeAll(() => {
@@ -124,7 +124,7 @@ describe('CollectionEditor', () => {
     })
 
     it('shows parent path when provided', () => {
-      renderCollectionEditor({ parentPath: toLogicalPath('blog') })
+      renderCollectionEditor({ parentPath: unsafeAsLogicalPath('blog') })
 
       expect(screen.getByText(/created inside/i)).toBeTruthy()
       expect(screen.getByText('blog')).toBeTruthy()
@@ -144,7 +144,7 @@ describe('CollectionEditor', () => {
     const existingCollection: ExistingCollection = {
       name: 'posts',
       label: 'Blog Posts',
-      logicalPath: toLogicalPath('posts'),
+      logicalPath: unsafeAsLogicalPath('posts'),
       entries: [
         { name: 'post', label: 'Post', format: 'mdx', fields: 'postSchema', default: true },
         { name: 'featured', label: 'Featured', format: 'json', fields: 'postSchema' },
@@ -195,7 +195,7 @@ describe('CollectionEditor', () => {
     it('shows singleton badge for single entry collection', () => {
       const singleEntryCollection: ExistingCollection = {
         name: 'settings',
-        logicalPath: toLogicalPath('settings'),
+        logicalPath: unsafeAsLogicalPath('settings'),
         entries: [{ name: 'config', format: 'json', fields: 'postSchema', maxItems: 1 }],
       }
 

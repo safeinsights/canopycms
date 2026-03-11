@@ -11,15 +11,9 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
 import { resolveCollectionPath } from '../content-id-index'
-import {
-  validateAndNormalizePath,
-  normalizeFilesystemPath,
-  toLogicalPath,
-  toPhysicalPath,
-  toEntrySlug,
-} from '../paths'
+import { validateAndNormalizePath, normalizeFilesystemPath } from '../paths'
 import { isNotFoundError } from '../utils/error'
-import type { LogicalPath, PhysicalPath } from '../paths/types'
+import type { LogicalPath, PhysicalPath, EntrySlug } from '../paths/types'
 import { branchNameSchema, logicalPathSchema } from './validators'
 
 type CollectionKind = 'collection' | 'entry'
@@ -67,7 +61,7 @@ export interface CollectionItem {
 
 export interface ListEntriesParams {
   branch: string
-  collection?: string
+  collection?: LogicalPath
   limit?: number
   cursor?: string
   q?: string
@@ -279,14 +273,15 @@ const listCollectionEntries = async (
       ])
 
       const item: CollectionItem = {
-        logicalPath: toLogicalPath(`${collection.logicalPath}/${slug}`),
+        // collection.logicalPath is already LogicalPath; slug is from validated filename
+        logicalPath: `${collection.logicalPath}/${slug}` as LogicalPath,
         contentId, // 12-char content ID extracted from filename
         slug,
         collectionId: collection.logicalPath,
         collectionName: collection.name,
         format,
         entryType: entryTypeName || 'default',
-        physicalPath: toPhysicalPath(relativePath),
+        physicalPath: relativePath as PhysicalPath,
         title: title ?? entryType?.label, // Fall back to entry type label if no title in content
         updatedAt: stats.mtime.toISOString(),
         exists: true,
@@ -552,11 +547,28 @@ const deleteEntryHandler = async (
     return { ok: false, status: 404, error: 'Collection not found' }
   }
 
-  // Check edit access
+  const contentStore = new ContentStore(context.branchRoot, flatSchema)
+  // collectionPath is a slice of a validated LogicalPath; slug is from the same validated path
+  const collectionLogicalPath = collectionPath as LogicalPath
+  const entrySlug = slug as EntrySlug
+
+  // Resolve the real physical path before checking permissions
+  let physicalPath: PhysicalPath
+  try {
+    const resolved = await contentStore.resolveDocumentPath(collectionLogicalPath, entrySlug)
+    physicalPath = resolved.relativePath
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      return { ok: false, status: 404, error: 'Entry not found' }
+    }
+    return { ok: false, status: 400, error: 'Invalid entry path' }
+  }
+
+  // Check edit access using the real physical path
   const editAccess = await ctx.services.checkContentAccess(
     context,
     context.branchRoot,
-    toPhysicalPath(`${collectionPath}/${slug}`),
+    physicalPath,
     req.user,
     'edit',
   )
@@ -566,14 +578,10 @@ const deleteEntryHandler = async (
 
   try {
     // Get the entry's content ID before deleting (for order update)
-    const contentStore = new ContentStore(context.branchRoot, flatSchema)
-    const contentId = await contentStore.getIdForEntry(
-      toLogicalPath(collectionPath),
-      toEntrySlug(slug),
-    )
+    const contentId = await contentStore.getIdForEntry(collectionLogicalPath, entrySlug)
 
     // Delete the entry
-    await contentStore.delete(toLogicalPath(collectionPath), toEntrySlug(slug))
+    await contentStore.delete(collectionLogicalPath, entrySlug)
 
     // Update the collection's order array to remove the deleted item
     if (contentId && collection.type === 'collection' && collection.order) {

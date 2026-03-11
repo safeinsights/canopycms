@@ -6,7 +6,7 @@ import type { ContentFormat } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 import { branchNameSchema, logicalPathSchema, entrySlugSchema } from './validators'
-import { toLogicalPath, toEntrySlug, toPhysicalPath } from '../paths'
+import type { LogicalPath, EntrySlug, PhysicalPath } from '../paths'
 
 /** Response type for content read operations */
 export type ContentReadResponse = ApiResponse<{
@@ -118,7 +118,7 @@ const readContentHandler = async (
   // Use trivial path resolution
   let schemaItem: any
   let slug: string
-  let relativePath: string
+  let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
@@ -133,7 +133,7 @@ const readContentHandler = async (
   const access = await ctx.services.checkContentAccess(
     context,
     context.branchRoot,
-    toPhysicalPath(relativePath),
+    relativePath,
     req.user,
     'read',
   )
@@ -141,7 +141,7 @@ const readContentHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
-  const doc = await store.read(toLogicalPath(schemaItem.logicalPath), toEntrySlug(slug))
+  const doc = await store.read(schemaItem.logicalPath as LogicalPath, slug as EntrySlug)
   return { ok: true, status: 200, data: doc }
 }
 
@@ -170,7 +170,7 @@ const writeContentHandler = async (
   // Use trivial path resolution
   let schemaItem: any
   let slug: string
-  let relativePath: string
+  let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
@@ -185,7 +185,7 @@ const writeContentHandler = async (
   const access = await ctx.services.checkContentAccess(
     context,
     context.branchRoot,
-    toPhysicalPath(relativePath),
+    relativePath,
     req.user,
     'edit',
   )
@@ -197,8 +197,8 @@ const writeContentHandler = async (
     const result =
       body.format === 'json'
         ? await store.write(
-            toLogicalPath(schemaItem.logicalPath),
-            toEntrySlug(slug),
+            schemaItem.logicalPath as LogicalPath,
+            slug as EntrySlug,
             {
               format: 'json',
               data: body.data ?? {},
@@ -206,8 +206,8 @@ const writeContentHandler = async (
             params.entryType,
           )
         : await store.write(
-            toLogicalPath(schemaItem.logicalPath),
-            toEntrySlug(slug),
+            schemaItem.logicalPath as LogicalPath,
+            slug as EntrySlug,
             {
               format: body.format,
               data: body.data,
@@ -245,7 +245,7 @@ const validateReferencesHandler = async (
     pathSegments[0] === contentRoot ? pathSegments : [contentRoot, ...pathSegments]
 
   let schemaItem: any
-  let relativePath: string
+  let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
@@ -260,7 +260,7 @@ const validateReferencesHandler = async (
   const access = await ctx.services.checkContentAccess(
     context,
     context.branchRoot,
-    toPhysicalPath(relativePath),
+    relativePath,
     req.user,
     'read',
   )
@@ -310,7 +310,7 @@ const renameEntryHandler = async (
   // Resolve to collection and slug
   let schemaItem: any
   let currentSlug: string
-  let relativePath: string
+  let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
     schemaItem = resolved.schemaItem
@@ -326,7 +326,7 @@ const renameEntryHandler = async (
   const access = await ctx.services.checkContentAccess(
     context,
     context.branchRoot,
-    toPhysicalPath(relativePath),
+    relativePath,
     req.user,
     'edit',
   )
@@ -337,8 +337,8 @@ const renameEntryHandler = async (
   // Rename the entry
   try {
     const result = await store.renameEntry(
-      toLogicalPath(schemaItem.logicalPath),
-      toEntrySlug(currentSlug),
+      schemaItem.logicalPath as LogicalPath,
+      currentSlug as EntrySlug,
       body.newSlug,
     )
     return { ok: true, status: 200, data: { newPath: result.newPath } }

@@ -9,8 +9,8 @@ import {
   loadPermissionsFile,
   isAdmin,
   isReviewer,
-  toPermissionPath,
 } from '../authorization'
+import { permissionPathSchema } from './validators'
 import { defineEndpoint } from './route-builder'
 import { getSettingsBranchContext, commitSettings } from './settings-helpers'
 
@@ -36,7 +36,7 @@ const permissionTargetSchema = z.object({
 })
 
 const pathPermissionSchema = z.object({
-  path: z.string().min(1).transform(toPermissionPath),
+  path: permissionPathSchema,
   read: permissionTargetSchema.optional(),
   edit: permissionTargetSchema.optional(),
   review: permissionTargetSchema.optional(),
