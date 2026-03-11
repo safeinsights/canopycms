@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { loadPathPermissions, savePathPermissions, ensurePermissionsFile } from '../permissions'
-import { toPermissionPath } from '../validation'
+import { unsafeAsPermissionPath } from '../test-utils'
 import { mockConsole } from '../../test-utils/console-spy.js'
 
 describe('permissions loader', () => {
@@ -100,11 +100,11 @@ describe('permissions loader', () => {
     it('saves permissions to file', async () => {
       const permissions = [
         {
-          path: toPermissionPath('content/admin/**'),
+          path: unsafeAsPermissionPath('content/admin/**'),
           edit: {},
         },
         {
-          path: toPermissionPath('content/users/**'),
+          path: unsafeAsPermissionPath('content/users/**'),
           edit: { allowedUsers: ['user-1', 'user-2'] },
         },
       ]
@@ -137,10 +137,10 @@ describe('permissions loader', () => {
     })
 
     it('overwrites existing file', async () => {
-      const firstPermissions = [{ path: toPermissionPath('content/first/**'), edit: { allowedUsers: ['user-1'] } }]
+      const firstPermissions = [{ path: unsafeAsPermissionPath('content/first/**'), edit: { allowedUsers: ['user-1'] } }]
       await savePathPermissions(testRoot, firstPermissions, 'admin-1', 'prod')
 
-      const secondPermissions = [{ path: toPermissionPath('content/second/**'), edit: { allowedUsers: ['user-2'] } }]
+      const secondPermissions = [{ path: unsafeAsPermissionPath('content/second/**'), edit: { allowedUsers: ['user-2'] } }]
       await savePathPermissions(testRoot, secondPermissions, 'admin-2', 'prod')
 
       const loaded = await loadPathPermissions(testRoot, 'prod')
@@ -164,7 +164,7 @@ describe('permissions loader', () => {
     })
 
     it('does nothing if file already exists', async () => {
-      const existingPermissions = [{ path: toPermissionPath('content/**'), edit: { allowedUsers: ['existing'] } }]
+      const existingPermissions = [{ path: unsafeAsPermissionPath('content/**'), edit: { allowedUsers: ['existing'] } }]
       await savePathPermissions(testRoot, existingPermissions, 'original-admin', 'prod')
 
       await ensurePermissionsFile(testRoot, 'new-admin', 'prod')

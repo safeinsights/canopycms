@@ -7,7 +7,7 @@ import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from './config'
 import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename, extractEntryTypeFromFilename, resolveCollectionPath } from './content-id-index'
 import { generateId } from './id'
 import { getFormatExtension } from './utils/format'
-import { normalizeFilesystemPath, resolveLogicalPath, toLogicalPath, toPhysicalPath, type LogicalPath, type PhysicalPath, type EntrySlug, type ContentId } from './paths'
+import { normalizeFilesystemPath, type LogicalPath, type PhysicalPath, type EntrySlug, type ContentId } from './paths'
 
 export type MarkdownDocument = {
   format: 'md' | 'mdx'
@@ -129,7 +129,7 @@ export class ContentStore {
     schemaItem: FlatSchemaItem,
     slug: string,
     options: { existingId?: string; entryTypeName?: string } = {}
-  ): Promise<{ absolutePath: string; relativePath: string; id?: string }> {
+  ): Promise<{ absolutePath: string; relativePath: PhysicalPath; id?: string }> {
     const rootWithSep = this.root.endsWith(path.sep) ? this.root : `${this.root}${path.sep}`
 
     // Entry-type items (root-level entries with maxItems: 1):
@@ -197,7 +197,7 @@ export class ContentStore {
 
       return {
         absolutePath: resolved,
-        relativePath: path.relative(this.root, resolved),
+        relativePath: path.relative(this.root, resolved) as PhysicalPath,
         id,
       }
     }
@@ -298,7 +298,7 @@ export class ContentStore {
 
       return {
         absolutePath: resolved,
-        relativePath: path.relative(this.root, resolved),
+        relativePath: path.relative(this.root, resolved) as PhysicalPath,
         id,
       }
     }
@@ -368,22 +368,22 @@ export class ContentStore {
     if (format === 'json') {
       const data = JSON.parse(raw) as Record<string, unknown>
       doc = {
-        collection: toLogicalPath(schemaItem.logicalPath),
+        collection: schemaItem.logicalPath,
         collectionName: schemaItem.name,
         format: 'json',
         data,
-        relativePath: toPhysicalPath(relativePath),
+        relativePath,
         absolutePath,
       }
     } else {
       const parsed = matter(raw)
       doc = {
-        collection: toLogicalPath(schemaItem.logicalPath),
+        collection: schemaItem.logicalPath,
         collectionName: schemaItem.name,
         format: format,
         data: (parsed.data as Record<string, unknown>) ?? {},
         body: parsed.content,
-        relativePath: toPhysicalPath(relativePath),
+        relativePath,
         absolutePath,
       }
     }
@@ -449,17 +449,17 @@ export class ContentStore {
             type: 'entry',
             relativePath,
             collection: collectionPath,
-            slug,
+            slug: slug || undefined,
           })
         }
       }
 
       return {
-        collection: toLogicalPath(schemaItem.logicalPath),
+        collection: schemaItem.logicalPath,
         collectionName: schemaItem.name,
         format: 'json',
         data: input.data ?? {},
-        relativePath: toPhysicalPath(relativePath),
+        relativePath,
         absolutePath,
       }
     }
@@ -481,18 +481,18 @@ export class ContentStore {
           type: 'entry',
           relativePath,
           collection: collectionPath,
-          slug,
+          slug: slug || undefined,
         })
       }
     }
 
     return {
-      collection: toLogicalPath(schemaItem.logicalPath),
+      collection: schemaItem.logicalPath,
       collectionName: schemaItem.name,
       format: input.format,
       data: input.data ?? {},
       body: input.body,
-      relativePath: toPhysicalPath(relativePath),
+      relativePath,
       absolutePath,
     }
   }
@@ -505,7 +505,7 @@ export class ContentStore {
     const idIndex = await this.idIndex()
     const location = idIndex.findById(id)
     if (!location || location.type !== 'entry') return null
-    return this.read(toLogicalPath(location.collection!), location.slug! as EntrySlug)
+    return this.read(location.collection!, location.slug!)
   }
 
   /**
@@ -516,6 +516,7 @@ export class ContentStore {
     const idIndex = await this.idIndex()
     const { relativePath } = await this.buildPaths(this.assertCollection(collectionPath), slug)
     const id = idIndex.findByPath(relativePath)
+    // IDs in the index were validated on write (12-char Base58); safe to cast
     return id ? (id as ContentId) : null
   }
 
@@ -677,17 +678,9 @@ export class ContentStore {
 
     const collection = item
 
-    // Resolve logical path to physical path with embedded IDs
-    const physicalPath = await resolveCollectionPath(this.root, collection.logicalPath)
-    if (!physicalPath) {
-      return []  // Collection directory doesn't exist yet
-    }
-
-    // Convert to relative path for ID index lookup
-    const relativePhysicalPath = path.relative(this.root, physicalPath)
-
     // Get entries directly from collection index (O(1) + O(m))
-    const baseEntries = idIndex.getEntriesInCollection(relativePhysicalPath)
+    // The index now stores logical collection paths, so we can look up directly
+    const baseEntries = idIndex.getEntriesInCollection(collection.logicalPath)
 
     // Filter and map to required format
     const entries: Array<{ relativePath: string; collection: string; slug: string }> = []
@@ -695,11 +688,11 @@ export class ContentStore {
     for (const location of baseEntries) {
       if (location.type === 'entry' && location.slug) {
         // Include entries in this collection or subcollections
-        if (location.collection === relativePhysicalPath ||
-            location.collection?.startsWith(relativePhysicalPath + '/')) {
+        if (location.collection === collection.logicalPath ||
+            location.collection?.startsWith(collection.logicalPath + '/')) {
           entries.push({
             relativePath: location.relativePath,
-            collection: collection.logicalPath, // Use logical path for consumers (store.read expects it)
+            collection: location.collection,
             slug: location.slug
           })
         }
@@ -790,18 +783,13 @@ export class ContentStore {
         return null
       }
 
-      // location.collection is a physical path (e.g., "content/authors.q52DCVPuH4ga")
-      // Use the shared utility to resolve it to a logical path
-      const logicalPathStr = resolveLogicalPath(location.collection, this.schemaIndex.values())
-      const logicalPath = toLogicalPath(logicalPathStr)
-
       // Read the referenced entry WITHOUT resolving its references (prevent infinite loops)
-      const doc = await this.read(logicalPath, location.slug as EntrySlug, { resolveReferences: false })
+      const doc = await this.read(location.collection, location.slug, { resolveReferences: false })
 
       return {
         id,
         slug: location.slug,
-        collection: logicalPath,
+        collection: location.collection,
         ...doc.data,
       }
     } catch (error) {

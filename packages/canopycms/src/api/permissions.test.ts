@@ -24,7 +24,7 @@ vi.mock('../authorization', async (importOriginal) => {
 
 import { PERMISSION_ROUTES } from './permissions'
 import * as authorization from '../authorization'
-import { toPermissionPath } from '../authorization/validation'
+import { unsafeAsPermissionPath } from '../authorization/test-utils'
 
 // Alias for convenience (tests reference permissionsLoader)
 const permissionsLoader = {
@@ -77,8 +77,8 @@ describe('permissions API', () => {
   describe('getPermissions', () => {
     it('returns permissions for admin user', async () => {
       const mockPermissions: PathPermission[] = [
-        { path: toPermissionPath('content/admin/**'), edit: {} },
-        { path: toPermissionPath('content/public/**'), edit: { allowedUsers: ['user-1'] } },
+        { path: unsafeAsPermissionPath('content/admin/**'), edit: {} },
+        { path: unsafeAsPermissionPath('content/public/**'), edit: { allowedUsers: ['user-1'] } },
       ]
 
       mockContext.getBranchContext = vi.fn().mockResolvedValue(
@@ -123,7 +123,7 @@ describe('permissions API', () => {
   describe('updatePermissions', () => {
     it('updates permissions for admin user', async () => {
       const newPermissions: PathPermission[] = [
-        { path: toPermissionPath('content/updated/**'), edit: { allowedGroups: ['new-group'] } },
+        { path: unsafeAsPermissionPath('content/updated/**'), edit: { allowedGroups: ['new-group'] } },
       ]
 
       mockContext.getBranchContext = vi.fn().mockResolvedValue(

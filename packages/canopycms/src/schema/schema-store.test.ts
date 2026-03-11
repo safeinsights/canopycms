@@ -12,7 +12,7 @@ describe('SchemaStore', () => {
   let schemaRegistry: Record<string, readonly FieldConfig[]>
   let store: SchemaStore
 
-  const toLogicalPath = (p: string): LogicalPath => p as LogicalPath
+  const unsafeAsLogicalPath = (p: string): LogicalPath => p as LogicalPath
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-schema-store-test-'))
@@ -92,7 +92,7 @@ describe('SchemaStore', () => {
       // Then create child
       const childResult = await store.createCollection({
         name: 'api',
-        parentPath: toLogicalPath('docs'),
+        parentPath: unsafeAsLogicalPath('docs'),
         entries: [{ name: 'api-doc', format: 'mdx', fields: 'pageSchema' }],
       })
 
@@ -142,14 +142,14 @@ describe('SchemaStore', () => {
         entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
       })
 
-      const meta = await store.readCollectionMeta(toLogicalPath('posts'))
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
       expect(meta).not.toBeNull()
       expect(meta!.name).toBe('posts')
       expect(meta!.label).toBe('Posts')
     })
 
     it('should return null for non-existent collection', async () => {
-      const meta = await store.readCollectionMeta(toLogicalPath('nonexistent'))
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('nonexistent'))
       expect(meta).toBeNull()
     })
   })
@@ -162,12 +162,12 @@ describe('SchemaStore', () => {
         entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
       })
 
-      await store.updateCollection(toLogicalPath('posts'), {
+      await store.updateCollection(unsafeAsLogicalPath('posts'), {
         name: 'articles',
         label: 'Blog Articles',
       })
 
-      const meta = await store.readCollectionMeta(toLogicalPath('posts'))
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
       expect(meta!.name).toBe('articles')
       expect(meta!.label).toBe('Blog Articles')
     })
@@ -179,15 +179,15 @@ describe('SchemaStore', () => {
       })
 
       const order = ['abc123def456', 'ghi789jkl012']
-      await store.updateCollection(toLogicalPath('posts'), { order })
+      await store.updateCollection(unsafeAsLogicalPath('posts'), { order })
 
-      const meta = await store.readCollectionMeta(toLogicalPath('posts'))
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
       expect(meta!.order).toEqual(order)
     })
 
     it('should throw for non-existent collection', async () => {
       await expect(
-        store.updateCollection(toLogicalPath('nonexistent'), { label: 'Test' })
+        store.updateCollection(unsafeAsLogicalPath('nonexistent'), { label: 'Test' })
       ).rejects.toThrow('Collection not found')
     })
 
@@ -198,7 +198,7 @@ describe('SchemaStore', () => {
       })
 
       // Rename slug from "posts" to "blog"
-      await store.updateCollection(toLogicalPath('posts'), { slug: 'blog' })
+      await store.updateCollection(unsafeAsLogicalPath('posts'), { slug: 'blog' })
 
       // Verify old directory no longer exists
       const oldDirName = `posts.${result.contentId}`
@@ -223,7 +223,7 @@ describe('SchemaStore', () => {
       })
 
       // Update both name (metadata) and slug (directory)
-      await store.updateCollection(toLogicalPath('posts'), { name: 'articles', slug: 'blog' })
+      await store.updateCollection(unsafeAsLogicalPath('posts'), { name: 'articles', slug: 'blog' })
 
       // Verify directory was renamed
       const newDirName = `blog.${result.contentId}`
@@ -250,7 +250,7 @@ describe('SchemaStore', () => {
 
       // Try to rename posts to use articles' slug
       await expect(
-        store.updateCollection(toLogicalPath('posts'), { slug: 'articles' })
+        store.updateCollection(unsafeAsLogicalPath('posts'), { slug: 'articles' })
       ).rejects.toThrow('already exists')
     })
 
@@ -262,12 +262,12 @@ describe('SchemaStore', () => {
 
       // Invalid slug (uppercase)
       await expect(
-        store.updateCollection(toLogicalPath('posts'), { slug: 'Blog-Posts' })
+        store.updateCollection(unsafeAsLogicalPath('posts'), { slug: 'Blog-Posts' })
       ).rejects.toThrow('must start with a letter')
 
       // Invalid slug (starts with number)
       await expect(
-        store.updateCollection(toLogicalPath('posts'), { slug: '2024-posts' })
+        store.updateCollection(unsafeAsLogicalPath('posts'), { slug: '2024-posts' })
       ).rejects.toThrow('must start with a letter')
     })
 
@@ -278,7 +278,7 @@ describe('SchemaStore', () => {
       })
 
       // Update with same slug - should not error or rename
-      await store.updateCollection(toLogicalPath('posts'), { slug: 'posts' })
+      await store.updateCollection(unsafeAsLogicalPath('posts'), { slug: 'posts' })
 
       // Verify directory still exists with same name
       const dirName = `posts.${result.contentId}`
@@ -293,7 +293,7 @@ describe('SchemaStore', () => {
         entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
       })
 
-      await store.deleteCollection(toLogicalPath('posts'))
+      await store.deleteCollection(unsafeAsLogicalPath('posts'))
 
       // Verify directory was removed
       const dirs = await fs.readdir(contentRoot)
@@ -314,13 +314,13 @@ describe('SchemaStore', () => {
         JSON.stringify({ title: 'Test' })
       )
 
-      await expect(store.deleteCollection(toLogicalPath('posts'))).rejects.toThrow(
+      await expect(store.deleteCollection(unsafeAsLogicalPath('posts'))).rejects.toThrow(
         'Collection must be empty'
       )
     })
 
     it('should throw for non-existent collection', async () => {
-      await expect(store.deleteCollection(toLogicalPath('nonexistent'))).rejects.toThrow(
+      await expect(store.deleteCollection(unsafeAsLogicalPath('nonexistent'))).rejects.toThrow(
         'Collection not found'
       )
     })
@@ -333,7 +333,7 @@ describe('SchemaStore', () => {
         entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
       })
 
-      const isEmpty = await store.isCollectionEmpty(toLogicalPath('posts'))
+      const isEmpty = await store.isCollectionEmpty(unsafeAsLogicalPath('posts'))
       expect(isEmpty).toBe(true)
     })
 
@@ -351,7 +351,7 @@ describe('SchemaStore', () => {
         JSON.stringify({ title: 'Test' })
       )
 
-      const isEmpty = await store.isCollectionEmpty(toLogicalPath('posts'))
+      const isEmpty = await store.isCollectionEmpty(unsafeAsLogicalPath('posts'))
       expect(isEmpty).toBe(false)
     })
 
@@ -363,7 +363,7 @@ describe('SchemaStore', () => {
       })
 
       // Create child collection inside it
-      const docsPath = toLogicalPath('docs')
+      const docsPath = unsafeAsLogicalPath('docs')
       await store.createCollection({
         name: 'guides',
         parentPath: docsPath,
@@ -386,12 +386,12 @@ describe('SchemaStore', () => {
       const collectionDir = path.join(contentRoot, dirs[0])
       await fs.mkdir(path.join(collectionDir, 'assets'), { recursive: true })
 
-      const isEmpty = await store.isCollectionEmpty(toLogicalPath('posts'))
+      const isEmpty = await store.isCollectionEmpty(unsafeAsLogicalPath('posts'))
       expect(isEmpty).toBe(true)
     })
 
     it('should return true for non-existent collection', async () => {
-      const isEmpty = await store.isCollectionEmpty(toLogicalPath('nonexistent'))
+      const isEmpty = await store.isCollectionEmpty(unsafeAsLogicalPath('nonexistent'))
       expect(isEmpty).toBe(true)
     })
   })
@@ -403,7 +403,7 @@ describe('SchemaStore', () => {
         entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
       })
 
-      await store.addEntryType(toLogicalPath('posts'), {
+      await store.addEntryType(unsafeAsLogicalPath('posts'), {
         name: 'featured-post',
         label: 'Featured Post',
         format: 'mdx',
@@ -411,7 +411,7 @@ describe('SchemaStore', () => {
         default: false,
       })
 
-      const meta = await store.readCollectionMeta(toLogicalPath('posts'))
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
       expect(meta!.entries).toHaveLength(2)
       expect(meta!.entries![1].name).toBe('featured-post')
       expect(meta!.entries![1].format).toBe('mdx')
@@ -424,7 +424,7 @@ describe('SchemaStore', () => {
       })
 
       await expect(
-        store.addEntryType(toLogicalPath('posts'), {
+        store.addEntryType(unsafeAsLogicalPath('posts'), {
           name: 'post', // duplicate
           format: 'mdx',
           fields: 'postSchema',
@@ -439,7 +439,7 @@ describe('SchemaStore', () => {
       })
 
       await expect(
-        store.addEntryType(toLogicalPath('posts'), {
+        store.addEntryType(unsafeAsLogicalPath('posts'), {
           name: 'page',
           format: 'json',
           fields: 'invalidSchema',
@@ -457,13 +457,13 @@ describe('SchemaStore', () => {
         ],
       })
 
-      await store.updateEntryType(toLogicalPath('posts'), 'post', {
+      await store.updateEntryType(unsafeAsLogicalPath('posts'), 'post', {
         label: 'Blog Post',
         format: 'mdx',
         maxItems: 10,
       })
 
-      const meta = await store.readCollectionMeta(toLogicalPath('posts'))
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
       expect(meta!.entries![0].label).toBe('Blog Post')
       expect(meta!.entries![0].format).toBe('mdx')
       expect(meta!.entries![0].maxItems).toBe(10)
@@ -475,11 +475,11 @@ describe('SchemaStore', () => {
         entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
       })
 
-      await store.updateEntryType(toLogicalPath('posts'), 'post', {
+      await store.updateEntryType(unsafeAsLogicalPath('posts'), 'post', {
         fields: 'pageSchema',
       })
 
-      const meta = await store.readCollectionMeta(toLogicalPath('posts'))
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
       expect(meta!.entries![0].fields).toBe('pageSchema')
     })
 
@@ -490,7 +490,7 @@ describe('SchemaStore', () => {
       })
 
       await expect(
-        store.updateEntryType(toLogicalPath('posts'), 'post', {
+        store.updateEntryType(unsafeAsLogicalPath('posts'), 'post', {
           fields: 'invalidSchema',
         })
       ).rejects.toThrow('Schema reference "invalidSchema" not found')
@@ -503,7 +503,7 @@ describe('SchemaStore', () => {
       })
 
       await expect(
-        store.updateEntryType(toLogicalPath('posts'), 'nonexistent', {
+        store.updateEntryType(unsafeAsLogicalPath('posts'), 'nonexistent', {
           label: 'Test',
         })
       ).rejects.toThrow('Entry type "nonexistent" not found')
@@ -520,9 +520,9 @@ describe('SchemaStore', () => {
         ],
       })
 
-      await store.removeEntryType(toLogicalPath('posts'), 'featured')
+      await store.removeEntryType(unsafeAsLogicalPath('posts'), 'featured')
 
-      const meta = await store.readCollectionMeta(toLogicalPath('posts'))
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
       expect(meta!.entries).toHaveLength(1)
       expect(meta!.entries![0].name).toBe('post')
     })
@@ -534,7 +534,7 @@ describe('SchemaStore', () => {
       })
 
       await expect(
-        store.removeEntryType(toLogicalPath('posts'), 'post')
+        store.removeEntryType(unsafeAsLogicalPath('posts'), 'post')
       ).rejects.toThrow('Cannot remove last entry type')
     })
 
@@ -548,7 +548,7 @@ describe('SchemaStore', () => {
       })
 
       await expect(
-        store.removeEntryType(toLogicalPath('posts'), 'nonexistent')
+        store.removeEntryType(unsafeAsLogicalPath('posts'), 'nonexistent')
       ).rejects.toThrow('Entry type "nonexistent" not found')
     })
 
@@ -570,7 +570,7 @@ describe('SchemaStore', () => {
       )
 
       await expect(
-        store.removeEntryType(toLogicalPath('posts'), 'post')
+        store.removeEntryType(unsafeAsLogicalPath('posts'), 'post')
       ).rejects.toThrow('Cannot remove entry type "post": 1 entry still uses it')
     })
 
@@ -592,8 +592,8 @@ describe('SchemaStore', () => {
       )
 
       // Should succeed — 'featured' has no entries
-      await store.removeEntryType(toLogicalPath('posts'), 'featured')
-      const meta = await store.readCollectionMeta(toLogicalPath('posts'))
+      await store.removeEntryType(unsafeAsLogicalPath('posts'), 'featured')
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
       expect(meta!.entries).toHaveLength(1)
       expect(meta!.entries![0].name).toBe('post')
     })
@@ -625,8 +625,8 @@ describe('SchemaStore', () => {
         JSON.stringify({ title: 'About Page' })
       )
 
-      const postCount = await store.countEntriesUsingType(toLogicalPath('posts'), 'post')
-      const pageCount = await store.countEntriesUsingType(toLogicalPath('posts'), 'page')
+      const postCount = await store.countEntriesUsingType(unsafeAsLogicalPath('posts'), 'post')
+      const pageCount = await store.countEntriesUsingType(unsafeAsLogicalPath('posts'), 'page')
 
       expect(postCount).toBe(2)
       expect(pageCount).toBe(1)
@@ -648,12 +648,12 @@ describe('SchemaStore', () => {
         JSON.stringify({ title: 'First Post' })
       )
 
-      const draftCount = await store.countEntriesUsingType(toLogicalPath('posts'), 'draft')
+      const draftCount = await store.countEntriesUsingType(unsafeAsLogicalPath('posts'), 'draft')
       expect(draftCount).toBe(0)
     })
 
     it('should return 0 for non-existent collection', async () => {
-      const count = await store.countEntriesUsingType(toLogicalPath('nonexistent'), 'post')
+      const count = await store.countEntriesUsingType(unsafeAsLogicalPath('nonexistent'), 'post')
       expect(count).toBe(0)
     })
 
@@ -683,7 +683,7 @@ describe('SchemaStore', () => {
         JSON.stringify({ title: 'No ID' })
       )
 
-      const count = await store.countEntriesUsingType(toLogicalPath('posts'), 'post')
+      const count = await store.countEntriesUsingType(unsafeAsLogicalPath('posts'), 'post')
       expect(count).toBe(1) // Only the valid one
     })
 
@@ -713,7 +713,7 @@ describe('SchemaStore', () => {
         JSON.stringify({ name: 'posts' })
       )
 
-      const count = await store.countEntriesUsingType(toLogicalPath('posts'), 'post')
+      const count = await store.countEntriesUsingType(unsafeAsLogicalPath('posts'), 'post')
       expect(count).toBe(1) // Only the visible one
     })
 
@@ -742,7 +742,7 @@ describe('SchemaStore', () => {
         JSON.stringify({ title: 'Post 2' })
       )
 
-      const postCount = await store.countEntriesUsingType(toLogicalPath('posts'), 'post')
+      const postCount = await store.countEntriesUsingType(unsafeAsLogicalPath('posts'), 'post')
       expect(postCount).toBe(2) // Should not include the page entry
     })
   })
@@ -755,9 +755,9 @@ describe('SchemaStore', () => {
       })
 
       const order = ['id1', 'id2', 'id3']
-      await store.updateOrder(toLogicalPath('posts'), order)
+      await store.updateOrder(unsafeAsLogicalPath('posts'), order)
 
-      const meta = await store.readCollectionMeta(toLogicalPath('posts'))
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
       expect(meta!.order).toEqual(order)
     })
 
@@ -772,7 +772,7 @@ describe('SchemaStore', () => {
       )
 
       const order = ['rootId1', 'rootId2']
-      await store.updateOrder(toLogicalPath('content'), order)
+      await store.updateOrder(unsafeAsLogicalPath('content'), order)
 
       const rootMeta = await store.readRootCollectionMeta()
       expect(rootMeta!.order).toEqual(order)
@@ -780,7 +780,7 @@ describe('SchemaStore', () => {
 
     it('should create root meta if it does not exist', async () => {
       const order = ['rootId1']
-      await store.updateOrder(toLogicalPath('content'), order)
+      await store.updateOrder(unsafeAsLogicalPath('content'), order)
 
       const rootMeta = await store.readRootCollectionMeta()
       expect(rootMeta!.order).toEqual(order)

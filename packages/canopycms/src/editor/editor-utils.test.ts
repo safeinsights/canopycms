@@ -16,7 +16,7 @@ import {
 } from './editor-utils'
 import type { EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
-import { toLogicalPath, toPhysicalPath } from '../paths'
+import { unsafeAsLogicalPath, unsafeAsPhysicalPath } from '../paths/test-utils'
 
 describe('buildPreviewSrc', () => {
   it('returns the provided preview without modification', () => {
@@ -143,17 +143,17 @@ describe('buildEntriesFromListResponse', () => {
   const flatSchema: FlatSchemaItem[] = [
     {
       type: 'entry-type',
-      logicalPath: toLogicalPath('posts/post'),
+      logicalPath: unsafeAsLogicalPath('posts/post'),
       name: 'post',
-      parentPath: toLogicalPath('posts'),
+      parentPath: unsafeAsLogicalPath('posts'),
       format: 'mdx',
       fields: postsSchema,
     },
     {
       type: 'entry-type',
-      logicalPath: toLogicalPath('pages/page'),
+      logicalPath: unsafeAsLogicalPath('pages/page'),
       name: 'page',
-      parentPath: toLogicalPath('pages'),
+      parentPath: unsafeAsLogicalPath('pages'),
       format: 'json',
       fields: pagesSchema,
     },
@@ -162,26 +162,26 @@ describe('buildEntriesFromListResponse', () => {
   const response: ListEntriesResponse = {
     entries: [
       {
-        logicalPath: toLogicalPath('posts/hello'),
+        logicalPath: unsafeAsLogicalPath('posts/hello'),
         contentId: 'ghi789RST345',
         slug: 'hello world',
         collectionId: 'posts',
         collectionName: 'Posts',
         format: 'mdx',
         entryType: 'post',
-        physicalPath: toPhysicalPath('content/posts/hello-world'),
+        physicalPath: unsafeAsPhysicalPath('content/posts/hello-world'),
         title: 'Hello Title',
         exists: true,
       },
       {
-        logicalPath: toLogicalPath('pages/home'),
+        logicalPath: unsafeAsLogicalPath('pages/home'),
         contentId: 'jkl012MNO678',
         slug: 'home',
         collectionId: 'pages',
         collectionName: 'Pages',
         format: 'json',
         entryType: 'page',
-        physicalPath: toPhysicalPath('content/pages/home.json'),
+        physicalPath: unsafeAsPhysicalPath('content/pages/home.json'),
         exists: false,
       },
     ],
@@ -240,14 +240,14 @@ describe('buildEntriesFromListResponse', () => {
       response: {
         entries: [
           {
-            logicalPath: toLogicalPath('posts/unknown'),
+            logicalPath: unsafeAsLogicalPath('posts/unknown'),
             contentId: 'abc123def456',
             slug: 'unknown',
             collectionId: 'posts',
             collectionName: 'Posts',
             format: 'mdx',
             entryType: 'unknown-type',
-            physicalPath: toPhysicalPath('content/posts/unknown'),
+            physicalPath: unsafeAsPhysicalPath('content/posts/unknown'),
             exists: true,
           },
         ],
@@ -267,13 +267,13 @@ describe('buildEntriesFromListResponse', () => {
       response: {
         entries: [
           {
-            logicalPath: toLogicalPath('posts/no-type'),
+            logicalPath: unsafeAsLogicalPath('posts/no-type'),
             contentId: 'abc123def456',
             slug: 'no-type',
             collectionId: 'posts',
             collectionName: 'Posts',
             format: 'mdx',
-            physicalPath: toPhysicalPath('content/posts/no-type'),
+            physicalPath: unsafeAsPhysicalPath('content/posts/no-type'),
             exists: true,
           } as any, // Type assertion needed to test missing entryType
         ],

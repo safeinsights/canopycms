@@ -6,7 +6,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react'
 import type { TreeNode, ContentNode, PathPermission, PermissionLevel, PermissionTarget } from '../types'
 import type { EditorCollection } from '../../Editor'
 import { buildTree, annotateTreeWithPermissions, findTreeNode } from '../utils'
-import { toPermissionPath } from '../../../authorization/validation'
+import { parsePermissionPath } from '../../../authorization/validation'
 
 export interface UsePermissionTreeOptions {
   collections?: EditorCollection[]
@@ -112,7 +112,13 @@ export function usePermissionTree({
 
         // Find the tree node to determine correct path pattern
         const treeNode = findTreeNode(annotatedTree, nodePath)
-        const permissionPath = toPermissionPath(treeNode?.type === 'folder' ? `${nodePath}/**` : nodePath)
+        const rawPath = treeNode?.type === 'folder' ? `${nodePath}/**` : nodePath
+        const parsed = parsePermissionPath(rawPath)
+        if (!parsed.ok) {
+          console.warn(`Invalid permission path skipped: ${rawPath} — ${parsed.error}`)
+          return prev
+        }
+        const permissionPath = parsed.path
 
         const existingIndex = newPermissions.findIndex((p) => p.path === permissionPath)
 

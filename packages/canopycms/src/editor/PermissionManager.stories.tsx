@@ -3,7 +3,7 @@ import { PermissionManager } from './PermissionManager'
 import type { PathPermission } from '../config'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
 import type { EditorCollection } from './Editor'
-import { toPermissionPath } from '../authorization/validation'
+import { unsafeAsPermissionPath } from '../authorization/test-utils'
 
 const meta: Meta<typeof PermissionManager> = {
   title: 'Editor/PermissionManager',
@@ -48,11 +48,11 @@ const mockCollections: EditorCollection[] = [
 // Mock permissions
 const mockPermissions: PathPermission[] = [
   {
-    path: toPermissionPath('content/posts/**'),
+    path: unsafeAsPermissionPath('content/posts/**'),
     edit: { allowedGroups: ['editors', 'content-team'] },
   },
   {
-    path: toPermissionPath('content/pages/**'),
+    path: unsafeAsPermissionPath('content/pages/**'),
     edit: { allowedUsers: ['alice'], allowedGroups: ['marketing'] },
   },
 ]
@@ -154,11 +154,11 @@ export const WithInheritance: Story = {
     collections: mockCollections,
     permissions: [
       {
-        path: toPermissionPath('content/**'),
+        path: unsafeAsPermissionPath('content/**'),
         edit: { allowedGroups: ['managers'] },
       },
       {
-        path: toPermissionPath('content/posts/**'),
+        path: unsafeAsPermissionPath('content/posts/**'),
         edit: { allowedGroups: ['editors'], allowedUsers: ['alice'] },
       },
     ],
@@ -175,23 +175,23 @@ export const ComplexPermissions: Story = {
     collections: mockCollections,
     permissions: [
       {
-        path: toPermissionPath('content/**'),
+        path: unsafeAsPermissionPath('content/**'),
         edit: { allowedGroups: ['managers'] },
       },
       {
-        path: toPermissionPath('content/posts/**'),
+        path: unsafeAsPermissionPath('content/posts/**'),
         edit: { allowedGroups: ['editors', 'content-team'], allowedUsers: ['alice', 'bob'] },
       },
       {
-        path: toPermissionPath('content/pages/**'),
+        path: unsafeAsPermissionPath('content/pages/**'),
         edit: { allowedUsers: ['alice'], allowedGroups: ['marketing'] },
       },
       {
-        path: toPermissionPath('content/about.md'),
+        path: unsafeAsPermissionPath('content/about.md'),
         edit: { allowedUsers: ['diana'] },
       },
       {
-        path: toPermissionPath('content/settings.json'),
+        path: unsafeAsPermissionPath('content/settings.json'),
         edit: { allowedGroups: ['engineering'] },
       },
     ],
@@ -285,12 +285,12 @@ export const LargeSchema: Story = {
       ],
     },
     permissions: [
-      { path: toPermissionPath('content/posts/**'), edit: { allowedGroups: ['editors'] } },
-      { path: toPermissionPath('content/posts/getting-started.mdx'), edit: { allowedUsers: ['alice', 'bob'] } },
-      { path: toPermissionPath('content/pages/**'), edit: { allowedGroups: ['marketing'] } },
-      { path: toPermissionPath('content/products/**'), edit: { allowedGroups: ['engineering'] } },
-      { path: toPermissionPath('content/categories/**'), edit: { allowedGroups: ['content-team'] } },
-      { path: toPermissionPath('content/authors/**'), edit: { allowedUsers: ['alice'] } },
+      { path: unsafeAsPermissionPath('content/posts/**'), edit: { allowedGroups: ['editors'] } },
+      { path: unsafeAsPermissionPath('content/posts/getting-started.mdx'), edit: { allowedUsers: ['alice', 'bob'] } },
+      { path: unsafeAsPermissionPath('content/pages/**'), edit: { allowedGroups: ['marketing'] } },
+      { path: unsafeAsPermissionPath('content/products/**'), edit: { allowedGroups: ['engineering'] } },
+      { path: unsafeAsPermissionPath('content/categories/**'), edit: { allowedGroups: ['content-team'] } },
+      { path: unsafeAsPermissionPath('content/authors/**'), edit: { allowedUsers: ['alice'] } },
     ],
     canEdit: true,
     onSave: mockSave,
@@ -346,7 +346,7 @@ export const ManyPermissionsOnNode: Story = {
     collections: mockCollections,
     permissions: [
       {
-        path: toPermissionPath('content/posts/**'),
+        path: unsafeAsPermissionPath('content/posts/**'),
         edit: {
           allowedGroups: ['editors', 'content-team', 'marketing', 'managers', 'customer-support'],
           allowedUsers: ['alice', 'bob', 'charlie', 'diana'],
@@ -366,7 +366,7 @@ export const LongNames: Story = {
     collections: mockCollections,
     permissions: [
       {
-        path: toPermissionPath('content/posts/**'),
+        path: unsafeAsPermissionPath('content/posts/**'),
         edit: {
           allowedGroups: ['very-long-group-name-that-might-cause-layout-issues'],
           allowedUsers: ['user-with-an-extremely-long-email-address@verylongdomain.example.com'],
@@ -415,8 +415,8 @@ export const DeepNesting: Story = {
       ],
     },
     permissions: [
-      { path: toPermissionPath('content/posts/2024/january/**'), edit: { allowedGroups: ['editors'] } },
-      { path: toPermissionPath('content/posts/2024/january/week1.mdx'), edit: { allowedUsers: ['alice'] } },
+      { path: unsafeAsPermissionPath('content/posts/2024/january/**'), edit: { allowedGroups: ['editors'] } },
+      { path: unsafeAsPermissionPath('content/posts/2024/january/week1.mdx'), edit: { allowedUsers: ['alice'] } },
     ],
     canEdit: true,
     onSave: mockSave,
@@ -431,11 +431,11 @@ export const PermissionOverrides: Story = {
     collections: mockCollections,
     permissions: [
       // Parent folder has managers access
-      { path: toPermissionPath('content/**'), edit: { allowedGroups: ['managers'] } },
+      { path: unsafeAsPermissionPath('content/**'), edit: { allowedGroups: ['managers'] } },
       // Child folder overrides with editors
-      { path: toPermissionPath('content/posts/**'), edit: { allowedGroups: ['editors'] } },
+      { path: unsafeAsPermissionPath('content/posts/**'), edit: { allowedGroups: ['editors'] } },
       // Specific file overrides with specific user
-      { path: toPermissionPath('content/posts/sensitive-post.mdx'), edit: { allowedUsers: ['alice'] } },
+      { path: unsafeAsPermissionPath('content/posts/sensitive-post.mdx'), edit: { allowedUsers: ['alice'] } },
     ],
     contentTree: {
       path: 'content',

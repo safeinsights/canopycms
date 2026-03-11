@@ -4,7 +4,7 @@ import { useEntryManager } from './useEntryManager'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, setupMockLocation, setupMockHistory, createApiClientWrapper } from './__test__/test-utils'
-import { toLogicalPath, toPhysicalPath } from '../../paths'
+import { unsafeAsLogicalPath, unsafeAsPhysicalPath } from '../../paths/test-utils'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -40,14 +40,14 @@ describe('useEntryManager', () => {
   }
 
   const mockCollectionItem = {
-    logicalPath: toLogicalPath('entry1'),
+    logicalPath: unsafeAsLogicalPath('entry1'),
     contentId: 'abc123XYZ789',
     slug: 'test',
     collectionId: 'posts',
     collectionName: 'posts',
     format: 'mdx' as const,
     entryType: 'post',
-    physicalPath: toPhysicalPath('/content/posts/test'),
+    physicalPath: unsafeAsPhysicalPath('/content/posts/test'),
   }
 
   const mockCollections: EditorCollection[] = [
@@ -168,7 +168,7 @@ describe('useEntryManager', () => {
   it('refreshes entries successfully', async () => {
     const mockRefreshed = [
       mockCollectionItem,
-      { ...mockCollectionItem, id: 'entry2', slug: 'test2', logicalPath: toLogicalPath('/content/posts/test2') },
+      { ...mockCollectionItem, id: 'entry2', slug: 'test2', logicalPath: unsafeAsLogicalPath('/content/posts/test2') },
     ]
     // First call is from useEffect on mount, second is from manual call
     mockClient.entries.list
@@ -200,7 +200,7 @@ describe('useEntryManager', () => {
   })
 
   it('selects newly created entry after refresh', async () => {
-    const newEntry = { ...mockCollectionItem, logicalPath: toLogicalPath('new-entry'), slug: 'new', physicalPath: toPhysicalPath('/content/posts/new') }
+    const newEntry = { ...mockCollectionItem, logicalPath: unsafeAsLogicalPath('new-entry'), slug: 'new', physicalPath: unsafeAsPhysicalPath('/content/posts/new') }
     // First call is from useEffect on mount, second is from manual call
     mockClient.entries.list
       .mockResolvedValueOnce({
@@ -258,7 +258,7 @@ describe('useEntryManager', () => {
       data: {
         entries: [
           mockCollectionItem,
-          { ...mockCollectionItem, logicalPath: toLogicalPath('new-post'), slug: 'new-post', physicalPath: toPhysicalPath('/content/posts/new-post') },
+          { ...mockCollectionItem, logicalPath: unsafeAsLogicalPath('new-post'), slug: 'new-post', physicalPath: unsafeAsPhysicalPath('/content/posts/new-post') },
         ],
         pagination: { hasMore: false, limit: 100 },
       },

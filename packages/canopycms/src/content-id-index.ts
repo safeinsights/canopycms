@@ -4,13 +4,28 @@ import path from 'node:path'
 
 import { generateId, isValidId } from './id'
 import { isNotFoundError } from './utils/error'
+import { type LogicalPath, type EntrySlug } from './paths'
+
+/** Logical path representing entries stored at the branch root (no parent collection). Rare in practice. */
+const EMPTY_LOGICAL_PATH = '' as LogicalPath
+
+/**
+ * Strips embedded IDs from each physical path segment to produce a logical path.
+ * e.g. "content/posts.a1b2c3d4e5f6" → "content/posts"
+ * This is a module-private helper for internal path conversion only.
+ */
+function toLogicalCollectionPath(physicalPath: string): LogicalPath {
+  if (physicalPath === '.') return EMPTY_LOGICAL_PATH
+  // extractSlugFromFilename strips the ID (and extension) from each segment
+  return physicalPath.split('/').map(seg => extractSlugFromFilename(seg)).join('/') as LogicalPath
+}
 
 export interface IdLocation {
   id: string
   type: 'entry' | 'collection'
   relativePath: string // e.g. 'content/posts/dune.a1b2c3d4e5f6.json'
-  collection?: string // e.g. 'content/posts' (for entries only)
-  slug?: string // e.g. 'dune' (for entries only)
+  collection?: LogicalPath // e.g. 'content/posts' (for entries only) — always logical, never physical
+  slug?: EntrySlug // e.g. 'dune' (for entries only)
 }
 
 /**
@@ -100,8 +115,11 @@ export class ContentIdIndex {
           // Extract slug and collection for entries
           if (!entry.isDirectory()) {
             const slug = extractSlugFromFilename(entry.name)
-            const collectionPath = path.dirname(fullRelativePath)
-            location.slug = slug
+            // Convert physical collection path to logical by stripping embedded IDs from each segment
+            // e.g., "content/posts.a1b2c3d4e5f6" → "content/posts"
+            const physicalCollection = path.dirname(fullRelativePath)
+            const collectionPath = toLogicalCollectionPath(physicalCollection)
+            location.slug = slug as EntrySlug // slug extracted from validated filename
             location.collection = collectionPath
 
             // Add to collection index
@@ -158,7 +176,7 @@ export class ContentIdIndex {
    * @param collectionPath - The collection path (e.g., "content/posts")
    * @returns Array of IdLocation objects for entries in the collection
    */
-  getEntriesInCollection(collectionPath: string): IdLocation[] {
+  getEntriesInCollection(collectionPath: LogicalPath): IdLocation[] {
     const idSet = this.byCollection.get(collectionPath)
     if (!idSet) {
       return []
@@ -255,8 +273,9 @@ export class ContentIdIndex {
     // Update slug and collection for entries
     if (location.type === 'entry') {
       const oldCollection = location.collection
-      location.slug = extractSlugFromFilename(path.basename(newRelativePath))
-      location.collection = path.dirname(newRelativePath)
+      location.slug = extractSlugFromFilename(path.basename(newRelativePath)) as EntrySlug // from validated filename
+      const physicalCollection = path.dirname(newRelativePath)
+      location.collection = toLogicalCollectionPath(physicalCollection)
 
       // Update collection index if collection changed
       if (oldCollection !== location.collection) {
@@ -337,7 +356,7 @@ export function extractIdFromFilename(filename: string): string | null {
  * @param logicalPath - Logical path from schema (e.g., "content/docs/api")
  * @returns Absolute filesystem path with embedded IDs, or null if path doesn't exist
  */
-export async function resolveCollectionPath(root: string, logicalPath: string): Promise<string | null> {
+export async function resolveCollectionPath(root: string, logicalPath: LogicalPath): Promise<string | null> {
   const fs = await import('node:fs/promises')
   const path = await import('node:path')
 

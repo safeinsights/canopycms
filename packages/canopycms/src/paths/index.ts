@@ -18,7 +18,6 @@
 export type {
   LogicalPath,
   PhysicalPath,
-  CollectionPath,
   SanitizedBranchName,
   BranchName,
   ContentId,
@@ -35,8 +34,6 @@ export {
   hasTraversalSequence,
   createLogicalPath,
   createPhysicalPath,
-  toLogicalPath,
-  toPhysicalPath,
   logicalPathToString,
   physicalPathToString,
   joinPath,
@@ -66,10 +63,6 @@ export {
   contentIdToString,
   branchNameToString,
   slugToString,
-  // Test helpers (unsafe casts - use only in tests)
-  toBranchName,
-  toEntrySlug,
-  toCollectionSlug,
 } from './validation'
 
 // Path resolution utilities

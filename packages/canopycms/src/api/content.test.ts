@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { CONTENT_ROUTES } from './content'
 import type { ApiContext } from './types'
-import { toBranchName, toLogicalPath, toEntrySlug } from '../paths'
+import { unsafeAsBranchName, unsafeAsLogicalPath, unsafeAsEntrySlug } from '../paths/test-utils'
 
 // Extract handlers for testing
 const readContent = CONTENT_ROUTES.read.handler
@@ -80,14 +80,14 @@ describe('content api', () => {
         branch: { name: 'feature/x', status: 'editing', access: {}, createdBy: 'u1', createdAt: 'now', updatedAt: 'now' },
       }),
     }
-    const res = await readContent(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/x'), path: toLogicalPath('posts/hello') })
+    const res = await readContent(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') })
     expect(res.status).toBe(403)
     expect(res.ok).toBe(false)
   })
 
   it('reads content when allowed', async () => {
     const ctx = allowedCtx()
-    const res = await readContent(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('feature/x'), path: toLogicalPath('posts/hello') })
+    const res = await readContent(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') })
     expect(res.ok).toBe(true)
   })
 
@@ -96,7 +96,7 @@ describe('content api', () => {
     const res = await writeContent(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('feature/x'), path: toLogicalPath('posts/hello') },
+      { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
       { format: 'json', data: { title: 'hi' } }
     )
     expect(res.ok).toBe(true)
@@ -108,8 +108,8 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: toBranchName('feature/x'), path: toLogicalPath('posts/old-slug') },
-        { newSlug: toEntrySlug('new-slug') }
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/old-slug') },
+        { newSlug: unsafeAsEntrySlug('new-slug') }
       )
       expect(res.ok).toBe(true)
       if (res.ok && res.data) {
@@ -147,8 +147,8 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: toBranchName('feature/x'), path: toLogicalPath('posts/old-slug') },
-        { newSlug: toEntrySlug('new-slug') }
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/old-slug') },
+        { newSlug: unsafeAsEntrySlug('new-slug') }
       )
       expect(res.status).toBe(403)
       expect(res.ok).toBe(false)
@@ -180,8 +180,8 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: toBranchName('nonexistent'), path: toLogicalPath('posts/old-slug') },
-        { newSlug: toEntrySlug('new-slug') }
+        { branch: unsafeAsBranchName('nonexistent'), path: unsafeAsLogicalPath('posts/old-slug') },
+        { newSlug: unsafeAsEntrySlug('new-slug') }
       )
       expect(res.status).toBe(404)
       expect(res.ok).toBe(false)
@@ -209,8 +209,8 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: toBranchName('feature/x'), path: toLogicalPath('posts/nonexistent') },
-        { newSlug: toEntrySlug('new-slug') }
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/nonexistent') },
+        { newSlug: unsafeAsEntrySlug('new-slug') }
       )
       expect(res.status).toBe(400)
       expect(res.ok).toBe(false)
@@ -238,8 +238,8 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: toBranchName('feature/x'), path: toLogicalPath('posts/old-slug') },
-        { newSlug: toEntrySlug('existing-slug') }
+        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/old-slug') },
+        { newSlug: unsafeAsEntrySlug('existing-slug') }
       )
       expect(res.status).toBe(400)
       expect(res.ok).toBe(false)

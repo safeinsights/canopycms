@@ -32,6 +32,7 @@ import {
   type EntrySlug,
   type CollectionSlug,
 } from '../paths'
+import { parsePermissionPath, type PermissionPath } from '../authorization'
 
 /**
  * Zod schema for BranchName - validates git branch naming rules and brands.
@@ -136,3 +137,25 @@ export const collectionSlugSchema = z.string().min(1).transform((val, ctx) => {
   }
   return result.slug as CollectionSlug
 }) as unknown as z.ZodType<CollectionSlug>
+
+/**
+ * Zod schema for PermissionPath - validates permission rule paths.
+ *
+ * SECURITY: Prevents path traversal attacks in permission rules.
+ *
+ * Validates:
+ * - No path traversal sequences (..)
+ * - No leading/trailing slashes
+ * - No consecutive slashes
+ */
+export const permissionPathSchema = z.string().min(1).transform((val, ctx) => {
+  const result = parsePermissionPath(val)
+  if (!result.ok) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: result.error,
+    })
+    return z.NEVER
+  }
+  return result.path
+}) as unknown as z.ZodType<PermissionPath>

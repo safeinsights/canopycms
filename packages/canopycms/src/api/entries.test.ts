@@ -6,13 +6,14 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from '../config-test'
 import { flattenSchema } from '../config'
-import { createCheckBranchAccess, toPermissionPath } from '../authorization'
+import { createCheckBranchAccess } from '../authorization'
 import { createCheckContentAccess } from '../authorization'
+import { unsafeAsPermissionPath } from '../authorization/test-utils'
 import type { PathPermission } from '../config'
 import { listEntriesHandler } from './entries'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
 import { loadCollectionMetaFiles, resolveCollectionReferences } from '../schema'
-import { toBranchName, toLogicalPath } from '../paths'
+import { unsafeAsBranchName, unsafeAsLogicalPath } from '../paths/test-utils'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-entries-'))
 
@@ -53,7 +54,7 @@ describe('listEntries', () => {
 
     // Mock loadPathPermissions to return rules that hide 'entry.hidden.xyz789abcDEF.json' from user 'u1'
     // Use 'read' access restriction to actually hide the file from listing
-    const pathRules: PathPermission[] = [{ path: toPermissionPath('content/posts/entry.hidden.xyz789abcDEF.json'), read: { allowedUsers: ['other'] } }]
+    const pathRules: PathPermission[] = [{ path: unsafeAsPermissionPath('content/posts/entry.hidden.xyz789abcDEF.json'), read: { allowedUsers: ['other'] } }]
     const mockLoadPermissions = vi.fn().mockResolvedValue(pathRules)
 
     const checkBranchAccess = createCheckBranchAccess('allow')
@@ -83,7 +84,7 @@ describe('listEntries', () => {
     })
 
     // Request limit=2 to get entries
-    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('main'), limit: 2 })
+    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: unsafeAsBranchName('main'), limit: 2 })
 
     expect(res.ok).toBe(true)
     // Should include posts but not hidden.json (restricted by permission)
@@ -93,7 +94,7 @@ describe('listEntries', () => {
 
   it('returns 404 when branch is missing', async () => {
     const ctx = createMockApiContext({ branchContext: null })
-    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('missing') })
+    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: unsafeAsBranchName('missing') })
     expect(res.status).toBe(404)
     expect(res.ok).toBe(false)
   })
@@ -197,7 +198,7 @@ describe('listEntries', () => {
     const allEntriesRes = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main') }
+      { branch: unsafeAsBranchName('main') }
     )
 
     expect(allEntriesRes.ok).toBe(true)
@@ -211,7 +212,7 @@ describe('listEntries', () => {
     const docsNonRecursiveRes = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main'), collection: toLogicalPath('content/docs') }
+      { branch: unsafeAsBranchName('main'), collection: unsafeAsLogicalPath('content/docs') }
     )
 
     expect(docsNonRecursiveRes.ok).toBe(true)
@@ -224,7 +225,7 @@ describe('listEntries', () => {
     const docsRecursiveRes = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main'), collection: toLogicalPath('content/docs'), recursive: true }
+      { branch: unsafeAsBranchName('main'), collection: unsafeAsLogicalPath('content/docs'), recursive: true }
     )
 
     expect(docsRecursiveRes.ok).toBe(true)
@@ -238,7 +239,7 @@ describe('listEntries', () => {
     const apiRecursiveRes = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main'), collection: toLogicalPath('content/docs/api'), recursive: true }
+      { branch: unsafeAsBranchName('main'), collection: unsafeAsLogicalPath('content/docs/api'), recursive: true }
     )
 
     expect(apiRecursiveRes.ok).toBe(true)
@@ -314,7 +315,7 @@ describe('listEntries', () => {
       },
     })
 
-    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: toBranchName('main') })
+    const res = await listEntriesHandler(ctx, { user: { type: 'authenticated', userId: 'u1', groups: [] } }, { branch: unsafeAsBranchName('main') })
 
     expect(res.ok).toBe(true)
 
@@ -358,7 +359,7 @@ describe('listEntries', () => {
     // Mock loadPathPermissions: 'entry.readonly.def456UVW012.json' is read-only for user 'u1'
     const pathRules: PathPermission[] = [
       {
-        path: toPermissionPath('content/posts/entry.readonly.def456UVW012.json'),
+        path: unsafeAsPermissionPath('content/posts/entry.readonly.def456UVW012.json'),
         read: { allowedUsers: ['u1'] },
         edit: { allowedUsers: ['admin'] }, // u1 cannot edit
       },
@@ -394,7 +395,7 @@ describe('listEntries', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main') }
+      { branch: unsafeAsBranchName('main') }
     )
 
     expect(res.ok).toBe(true)
@@ -498,7 +499,7 @@ describe('listEntries', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main') }
+      { branch: unsafeAsBranchName('main') }
     )
 
     expect(res.ok).toBe(true)
@@ -639,7 +640,7 @@ describe('listEntries', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main') }
+      { branch: unsafeAsBranchName('main') }
     )
 
     expect(res.ok).toBe(true)
@@ -754,7 +755,7 @@ describe('sortEntriesByOrder', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main'), collection: toLogicalPath('content/posts') }
+      { branch: unsafeAsBranchName('main'), collection: unsafeAsLogicalPath('content/posts') }
     )
 
     expect(res.ok).toBe(true)
@@ -843,7 +844,7 @@ describe('sortEntriesByOrder', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main'), collection: toLogicalPath('content/posts') }
+      { branch: unsafeAsBranchName('main'), collection: unsafeAsLogicalPath('content/posts') }
     )
 
     expect(res.ok).toBe(true)
@@ -952,7 +953,7 @@ describe('dynamic collection discovery', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main') }
+      { branch: unsafeAsBranchName('main') }
     )
 
     expect(res.ok).toBe(true)
@@ -1030,7 +1031,7 @@ describe('deleteEntry', () => {
     const res = await deleteEntry.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main'), entryPath: toLogicalPath('content/posts/to-delete') }
+      { branch: unsafeAsBranchName('main'), entryPath: unsafeAsLogicalPath('content/posts/to-delete') }
     )
 
     expect(res.ok).toBe(true)
@@ -1075,7 +1076,7 @@ describe('deleteEntry', () => {
 
     // Mock edit access denied
     const pathRules: PathPermission[] = [
-      { path: toPermissionPath('content/posts/protected'), edit: { allowedUsers: ['admin'] } }
+      { path: unsafeAsPermissionPath(`content/posts.${postsId}/post.protected.abc123def456.json`), edit: { allowedUsers: ['admin'] } }
     ]
 
     const checkBranchAccess = createCheckBranchAccess('allow')
@@ -1110,7 +1111,7 @@ describe('deleteEntry', () => {
     const res = await deleteEntry.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main'), entryPath: toLogicalPath('content/posts/protected') }
+      { branch: unsafeAsBranchName('main'), entryPath: unsafeAsLogicalPath('content/posts/protected') }
     )
 
     expect(res.ok).toBe(false)
@@ -1176,7 +1177,7 @@ describe('deleteEntry', () => {
     const res = await deleteEntry.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main'), entryPath: toLogicalPath('content/posts/nonexistent') }
+      { branch: unsafeAsBranchName('main'), entryPath: unsafeAsLogicalPath('content/posts/nonexistent') }
     )
 
     expect(res.ok).toBe(false)
@@ -1226,7 +1227,7 @@ describe('deleteEntry', () => {
     const res = await deleteEntry.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: toBranchName('main'), entryPath: toLogicalPath('invalid-no-slash') }
+      { branch: unsafeAsBranchName('main'), entryPath: unsafeAsLogicalPath('invalid-no-slash') }
     )
 
     expect(res.ok).toBe(false)

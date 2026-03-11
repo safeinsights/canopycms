@@ -5,6 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename } from './content-id-index'
+import { unsafeAsLogicalPath, unsafeAsEntrySlug } from './paths/test-utils'
 
 describe('ContentIdIndex', () => {
   let tempDir: string
@@ -173,8 +174,8 @@ describe('ContentIdIndex', () => {
       index.add({
         type: 'entry',
         relativePath: `content/new.${testId}.json`,
-        collection: 'content',
-        slug: 'new',
+        collection: unsafeAsLogicalPath('content'),
+        slug: unsafeAsEntrySlug('new'),
       })
 
       // Verify index updated
@@ -188,8 +189,8 @@ describe('ContentIdIndex', () => {
       index.add({
         type: 'entry',
         relativePath: `content/file1.${testId}.json`,
-        collection: 'content',
-        slug: 'file1',
+        collection: unsafeAsLogicalPath('content'),
+        slug: unsafeAsEntrySlug('file1'),
       })
 
       // Attempt to add duplicate ID
@@ -197,8 +198,8 @@ describe('ContentIdIndex', () => {
         index.add({
           type: 'entry',
           relativePath: `content/file2.${testId}.json`,
-          collection: 'content',
-          slug: 'file2',
+          collection: unsafeAsLogicalPath('content'),
+          slug: unsafeAsEntrySlug('file2'),
         })
       ).toThrow('ID collision')
     })
@@ -208,8 +209,8 @@ describe('ContentIdIndex', () => {
         index.add({
           type: 'entry',
           relativePath: 'content/no-id.json',
-          collection: 'content',
-          slug: 'no-id',
+          collection: unsafeAsLogicalPath('content'),
+          slug: unsafeAsEntrySlug('no-id'),
         })
       ).toThrow('Cannot add location without ID')
     })
@@ -234,8 +235,8 @@ describe('ContentIdIndex', () => {
       index.add({
         type: 'entry',
         relativePath: `content/test.${testId}.json`,
-        collection: 'content',
-        slug: 'test',
+        collection: unsafeAsLogicalPath('content'),
+        slug: unsafeAsEntrySlug('test'),
       })
 
       // Remove
@@ -257,8 +258,8 @@ describe('ContentIdIndex', () => {
       index.add({
         type: 'entry',
         relativePath: `content/old.${testId}.json`,
-        collection: 'content',
-        slug: 'old',
+        collection: unsafeAsLogicalPath('content'),
+        slug: unsafeAsEntrySlug('old'),
       })
 
       // Update path
@@ -283,7 +284,7 @@ describe('ContentIdIndex', () => {
     it('returns empty array for non-existent collection', async () => {
       await index.buildFromFilenames('content')
 
-      const entries = index.getEntriesInCollection('content/nonexistent')
+      const entries = index.getEntriesInCollection(unsafeAsLogicalPath('content/nonexistent'))
       expect(entries).toEqual([])
     })
 
@@ -291,7 +292,7 @@ describe('ContentIdIndex', () => {
       await fs.mkdir(path.join(tempDir, 'content/empty'), { recursive: true })
       await index.buildFromFilenames('content')
 
-      const entries = index.getEntriesInCollection('content/empty')
+      const entries = index.getEntriesInCollection(unsafeAsLogicalPath('content/empty'))
       expect(entries).toEqual([])
     })
 
@@ -312,7 +313,7 @@ describe('ContentIdIndex', () => {
 
       await index.buildFromFilenames('content')
 
-      const entries = index.getEntriesInCollection('content/posts')
+      const entries = index.getEntriesInCollection(unsafeAsLogicalPath('content/posts'))
       expect(entries).toHaveLength(2)
       expect(entries.map(e => e.id).sort()).toEqual([post1Id, post2Id].sort())
       expect(entries.every(e => e.collection === 'content/posts')).toBe(true)
@@ -334,7 +335,7 @@ describe('ContentIdIndex', () => {
 
       await index.buildFromFilenames('content')
 
-      const entries = index.getEntriesInCollection(`content/posts.${collectionId}`)
+      const entries = index.getEntriesInCollection(unsafeAsLogicalPath('content/posts'))
       expect(entries).toHaveLength(1)
       expect(entries[0].type).toBe('entry')
       expect(entries[0].id).toBe(entryId)
@@ -346,11 +347,11 @@ describe('ContentIdIndex', () => {
       index.add({
         type: 'entry',
         relativePath: `content/posts/post.new.${entryId}.json`,
-        collection: 'content/posts',
-        slug: 'new',
+        collection: unsafeAsLogicalPath('content/posts'),
+        slug: unsafeAsEntrySlug('new'),
       })
 
-      const entries = index.getEntriesInCollection('content/posts')
+      const entries = index.getEntriesInCollection(unsafeAsLogicalPath('content/posts'))
       expect(entries).toHaveLength(1)
       expect(entries[0].id).toBe(entryId)
     })
@@ -362,19 +363,19 @@ describe('ContentIdIndex', () => {
       index.add({
         type: 'entry',
         relativePath: `content/posts/post.first.${entry1Id}.json`,
-        collection: 'content/posts',
-        slug: 'first',
+        collection: unsafeAsLogicalPath('content/posts'),
+        slug: unsafeAsEntrySlug('first'),
       })
       index.add({
         type: 'entry',
         relativePath: `content/posts/post.second.${entry2Id}.json`,
-        collection: 'content/posts',
-        slug: 'second',
+        collection: unsafeAsLogicalPath('content/posts'),
+        slug: unsafeAsEntrySlug('second'),
       })
 
       index.remove(entry1Id)
 
-      const entries = index.getEntriesInCollection('content/posts')
+      const entries = index.getEntriesInCollection(unsafeAsLogicalPath('content/posts'))
       expect(entries).toHaveLength(1)
       expect(entries[0].id).toBe(entry2Id)
     })
@@ -385,14 +386,14 @@ describe('ContentIdIndex', () => {
       index.add({
         type: 'entry',
         relativePath: `content/posts/post.only.${entryId}.json`,
-        collection: 'content/posts',
-        slug: 'only',
+        collection: unsafeAsLogicalPath('content/posts'),
+        slug: unsafeAsEntrySlug('only'),
       })
 
       index.remove(entryId)
 
       // Should return empty array, not throw
-      const entries = index.getEntriesInCollection('content/posts')
+      const entries = index.getEntriesInCollection(unsafeAsLogicalPath('content/posts'))
       expect(entries).toEqual([])
     })
 
@@ -402,19 +403,19 @@ describe('ContentIdIndex', () => {
       index.add({
         type: 'entry',
         relativePath: `content/posts/post.article.${entryId}.json`,
-        collection: 'content/posts',
-        slug: 'article',
+        collection: unsafeAsLogicalPath('content/posts'),
+        slug: unsafeAsEntrySlug('article'),
       })
 
       // Move to different collection
       index.updatePath(entryId, `content/pages/page.article.${entryId}.json`)
 
       // Should be removed from old collection
-      const postsEntries = index.getEntriesInCollection('content/posts')
+      const postsEntries = index.getEntriesInCollection(unsafeAsLogicalPath('content/posts'))
       expect(postsEntries).toHaveLength(0)
 
       // Should appear in new collection
-      const pagesEntries = index.getEntriesInCollection('content/pages')
+      const pagesEntries = index.getEntriesInCollection(unsafeAsLogicalPath('content/pages'))
       expect(pagesEntries).toHaveLength(1)
       expect(pagesEntries[0].id).toBe(entryId)
     })
@@ -438,12 +439,12 @@ describe('ContentIdIndex', () => {
       await index.buildFromFilenames('content')
 
       // Parent collection should only have its direct entries
-      const docsEntries = index.getEntriesInCollection('content/docs')
+      const docsEntries = index.getEntriesInCollection(unsafeAsLogicalPath('content/docs'))
       expect(docsEntries).toHaveLength(1)
       expect(docsEntries[0].id).toBe(docsEntryId)
 
       // Nested collection should have its entries
-      const apiEntries = index.getEntriesInCollection('content/docs/api')
+      const apiEntries = index.getEntriesInCollection(unsafeAsLogicalPath('content/docs/api'))
       expect(apiEntries).toHaveLength(1)
       expect(apiEntries[0].id).toBe(apiEntryId)
     })

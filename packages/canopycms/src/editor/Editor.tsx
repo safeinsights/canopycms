@@ -31,7 +31,6 @@ import { EntryCreateModal } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath } from '../paths/types'
-import { toLogicalPath } from '../paths/normalize'
 import { useApiClient } from './context'
 
 export interface EditorEntry {
@@ -401,7 +400,7 @@ export const Editor: React.FC<EditorProps> = ({
           const existingCollection: ExistingCollection = {
             name: collection.name,
             label: collection.label,
-            logicalPath: toLogicalPath(collection.path),
+            logicalPath: collection.path as LogicalPath,
             entries,
           }
           setEditingCollection(existingCollection)
@@ -410,7 +409,7 @@ export const Editor: React.FC<EditorProps> = ({
           const existingCollection: ExistingCollection = {
             name: collection.name,
             label: collection.label,
-            logicalPath: toLogicalPath(collection.path),
+            logicalPath: collection.path as LogicalPath,
             entries: (collection.entryTypes ?? []).map((et): ExistingEntryType => ({
               name: et.name,
               label: et.label,
@@ -427,7 +426,7 @@ export const Editor: React.FC<EditorProps> = ({
         const existingCollection: ExistingCollection = {
           name: collection.name,
           label: collection.label,
-          logicalPath: toLogicalPath(collection.path),
+          logicalPath: collection.path as LogicalPath,
           entries: (collection.entryTypes ?? []).map((et): ExistingEntryType => ({
             name: et.name,
             label: et.label,
@@ -443,7 +442,7 @@ export const Editor: React.FC<EditorProps> = ({
     } else {
       // Create mode
       setEditingCollection(null)
-      setCollectionEditorParentPath(parentPath ? toLogicalPath(parentPath) : undefined)
+      setCollectionEditorParentPath(parentPath ? parentPath as LogicalPath : undefined)
     }
     setCollectionEditorError(null)
     setCollectionEditorOpen(true)

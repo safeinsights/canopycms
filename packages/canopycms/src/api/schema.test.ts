@@ -36,7 +36,7 @@ import {
   updateOrder,
 } from './schema'
 import { SchemaStore } from '../schema/schema-store'
-import { toBranchName, toLogicalPath, toCollectionSlug } from '../paths'
+import { unsafeAsBranchName, unsafeAsCollectionSlug, unsafeAsLogicalPath } from '../paths/test-utils'
 
 describe('Schema API', () => {
   const mockFlatSchema: FlatSchemaItem[] = [
@@ -103,7 +103,7 @@ describe('Schema API', () => {
 
   describe('getSchema', () => {
     it('should return full schema, flatSchema, and availableSchemas', async () => {
-      const result = await getSchema.handler(mockCtx, mockReq, { branch: toBranchName('main') })
+      const result = await getSchema.handler(mockCtx, mockReq, { branch: unsafeAsBranchName('main') })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
@@ -115,7 +115,7 @@ describe('Schema API', () => {
     it('should return 404 for non-existent branch', async () => {
       vi.mocked(mockCtx.getBranchContext).mockResolvedValue(null)
 
-      const result = await getSchema.handler(mockCtx, mockReq, { branch: toBranchName('nonexistent') })
+      const result = await getSchema.handler(mockCtx, mockReq, { branch: unsafeAsBranchName('nonexistent') })
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(404)
@@ -125,8 +125,8 @@ describe('Schema API', () => {
   describe('getCollection', () => {
     it('should return collection details', async () => {
       const result = await getCollection.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('posts'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('posts'),
       })
 
       expect(result.ok).toBe(true)
@@ -155,8 +155,8 @@ describe('Schema API', () => {
       vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
 
       const result = await getCollection.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('posts'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('posts'),
       })
 
       expect(result.ok).toBe(true)
@@ -202,8 +202,8 @@ describe('Schema API', () => {
       }
 
       const result = await getCollection.handler(customCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('empty'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('empty'),
       })
 
       expect(result.ok).toBe(true)
@@ -213,8 +213,8 @@ describe('Schema API', () => {
 
     it('should return null for non-existent collection', async () => {
       const result = await getCollection.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('nonexistent'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('nonexistent'),
       })
 
       expect(result.ok).toBe(true)
@@ -223,8 +223,8 @@ describe('Schema API', () => {
 
     it('should reject paths with traversal sequences', async () => {
       const result = await getCollection.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('../admin/secrets'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('../admin/secrets'),
       })
 
       expect(result.ok).toBe(false)
@@ -234,8 +234,8 @@ describe('Schema API', () => {
 
     it('should reject physical paths (with embedded content IDs)', async () => {
       const result = await getCollection.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('posts.abc123def456'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('posts.abc123def456'),
       })
 
       expect(result.ok).toBe(false)
@@ -257,7 +257,7 @@ describe('Schema API', () => {
       const result = await createCollection.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main') },
+        { branch: unsafeAsBranchName('main') },
         {
           name: 'newcol',
           entries: [{ name: 'item', format: 'json', fields: 'postSchema' }],
@@ -276,7 +276,7 @@ describe('Schema API', () => {
       const result = await createCollection.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main') },
+        { branch: unsafeAsBranchName('main') },
         {
           name: 'newcol',
           entries: [{ name: 'item', format: 'json', fields: 'postSchema' }],
@@ -299,7 +299,7 @@ describe('Schema API', () => {
       const result = await updateCollection.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts') },
         { label: 'Updated Posts' }
       )
 
@@ -315,7 +315,7 @@ describe('Schema API', () => {
       const result = await updateCollection.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts') },
         { label: 'Updated' }
       )
 
@@ -327,7 +327,7 @@ describe('Schema API', () => {
       const result = await updateCollection.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts/../admin') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts/../admin') },
         { label: 'Hacked' }
       )
 
@@ -340,7 +340,7 @@ describe('Schema API', () => {
       const result = await updateCollection.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts.vh2WdhwAFiSL') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts.vh2WdhwAFiSL') },
         { label: 'Updated' }
       )
 
@@ -358,7 +358,7 @@ describe('Schema API', () => {
       const result = await updateCollection.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('content') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('content') },
         { label: 'All Content' }
       )
 
@@ -377,8 +377,8 @@ describe('Schema API', () => {
       vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
 
       const result = await deleteCollection.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('posts'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('posts'),
       })
 
       expect(result.ok).toBe(true)
@@ -393,8 +393,8 @@ describe('Schema API', () => {
       vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
 
       const result = await deleteCollection.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('posts'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('posts'),
       })
 
       expect(result.ok).toBe(false)
@@ -404,8 +404,8 @@ describe('Schema API', () => {
 
     it('should reject paths with traversal sequences', async () => {
       const result = await deleteCollection.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('posts/../secrets'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('posts/../secrets'),
       })
 
       expect(result.ok).toBe(false)
@@ -415,8 +415,8 @@ describe('Schema API', () => {
 
     it('should reject physical paths', async () => {
       const result = await deleteCollection.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('posts.abc123def456'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('posts.abc123def456'),
       })
 
       expect(result.ok).toBe(false)
@@ -435,7 +435,7 @@ describe('Schema API', () => {
       const result = await addEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts') },
         { name: 'featured', format: 'mdx', fields: 'postSchema' }
       )
 
@@ -453,7 +453,7 @@ describe('Schema API', () => {
       const result = await addEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts') },
         { name: 'post', format: 'json', fields: 'postSchema' }
       )
 
@@ -466,7 +466,7 @@ describe('Schema API', () => {
       const result = await addEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('../admin') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('../admin') },
         { name: 'entry', format: 'json', fields: 'postSchema' }
       )
 
@@ -479,7 +479,7 @@ describe('Schema API', () => {
       const result = await addEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts.tuggGbrydvYr') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts.tuggGbrydvYr') },
         { name: 'entry', format: 'json', fields: 'postSchema' }
       )
 
@@ -500,7 +500,7 @@ describe('Schema API', () => {
       const result = await updateEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts'), entryTypeName: 'post' },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts'), entryTypeName: 'post' },
         { label: 'Blog Post', maxItems: 100 }
       )
 
@@ -523,7 +523,7 @@ describe('Schema API', () => {
       const result = await updateEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts'), entryTypeName: 'post' },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts'), entryTypeName: 'post' },
         { label: 'Updated Label', maxItems: 10 }
       )
 
@@ -544,7 +544,7 @@ describe('Schema API', () => {
       const result = await updateEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts'), entryTypeName: 'post' },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts'), entryTypeName: 'post' },
         { format: 'mdx' }
       )
 
@@ -566,7 +566,7 @@ describe('Schema API', () => {
       const result = await updateEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts'), entryTypeName: 'post' },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts'), entryTypeName: 'post' },
         { fields: 'newSchema' }
       )
 
@@ -588,7 +588,7 @@ describe('Schema API', () => {
       const result = await updateEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts'), entryTypeName: 'post' },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts'), entryTypeName: 'post' },
         { format: 'mdx', fields: 'newSchema' }
       )
 
@@ -608,7 +608,7 @@ describe('Schema API', () => {
       const result = await updateEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts'), entryTypeName: 'post' },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts'), entryTypeName: 'post' },
         { format: 'mdx', fields: 'newSchema' }
       )
 
@@ -630,7 +630,7 @@ describe('Schema API', () => {
       const result = await updateEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts'), entryTypeName: 'post' },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts'), entryTypeName: 'post' },
         { format: 'mdx' }
       )
 
@@ -643,7 +643,7 @@ describe('Schema API', () => {
       const result = await updateEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts/../../etc'), entryTypeName: 'post' },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts/../../etc'), entryTypeName: 'post' },
         { label: 'Hacked' }
       )
 
@@ -656,7 +656,7 @@ describe('Schema API', () => {
       const result = await updateEntryType.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('blog.NMNf8r3GHYkP'), entryTypeName: 'post' },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('blog.NMNf8r3GHYkP'), entryTypeName: 'post' },
         { label: 'Updated' }
       )
 
@@ -674,8 +674,8 @@ describe('Schema API', () => {
       vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
 
       const result = await removeEntryType.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('posts'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('posts'),
         entryTypeName: 'featured',
       })
 
@@ -690,8 +690,8 @@ describe('Schema API', () => {
       vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
 
       const result = await removeEntryType.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('posts'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('posts'),
         entryTypeName: 'post',
       })
 
@@ -702,8 +702,8 @@ describe('Schema API', () => {
 
     it('should reject paths with traversal sequences', async () => {
       const result = await removeEntryType.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('..%2F..%2Fpasswd'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('..%2F..%2Fpasswd'),
         entryTypeName: 'post',
       })
 
@@ -714,8 +714,8 @@ describe('Schema API', () => {
 
     it('should reject physical paths', async () => {
       const result = await removeEntryType.handler(mockCtx, mockReq, {
-        branch: toBranchName('main'),
-        collectionPath: toLogicalPath('posts.Xz9kL2mN4pQr'),
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('posts.Xz9kL2mN4pQr'),
         entryTypeName: 'post',
       })
 
@@ -735,7 +735,7 @@ describe('Schema API', () => {
       const result = await updateOrder.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts') },
         { order: ['id3', 'id1', 'id2'] }
       )
 
@@ -750,7 +750,7 @@ describe('Schema API', () => {
       const result = await updateOrder.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts') },
         { order: ['id1'] }
       )
 
@@ -762,7 +762,7 @@ describe('Schema API', () => {
       const result = await updateOrder.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('posts/../../../root') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts/../../../root') },
         { order: ['id1'] }
       )
 
@@ -775,7 +775,7 @@ describe('Schema API', () => {
       const result = await updateOrder.handler(
         mockCtx,
         mockReq,
-        { branch: toBranchName('main'), collectionPath: toLogicalPath('articles.Y7hJ3kLm9nPq') },
+        { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('articles.Y7hJ3kLm9nPq') },
         { order: ['id1'] }
       )
 

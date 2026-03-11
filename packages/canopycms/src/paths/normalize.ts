@@ -8,7 +8,7 @@
  * Server-only functions that depend on Node.js 'path' module are in normalize-server.ts.
  */
 
-import type { CollectionPath, LogicalPath, PhysicalPath } from './types'
+import type { LogicalPath, PhysicalPath } from './types'
 
 /**
  * Normalize a filesystem path by:
@@ -38,13 +38,13 @@ export function normalizeFilesystemPath(path: string): string {
  * normalizeCollectionId('content\\blog\\posts') // 'blog/posts'
  * normalizeCollectionId('posts') // 'posts'
  */
-export function normalizeCollectionId(collectionId: string, contentRoot = 'content'): CollectionPath {
+export function normalizeCollectionId(collectionId: string, contentRoot = 'content'): string {
   const normalized = normalizeFilesystemPath(collectionId)
   const prefix = `${contentRoot}/`
   if (normalized.startsWith(prefix)) {
-    return normalized.slice(prefix.length) as CollectionPath
+    return normalized.slice(prefix.length)
   }
-  return normalized as CollectionPath
+  return normalized
 }
 
 /**
@@ -120,26 +120,3 @@ export function joinPath(...segments: string[]): string {
     .join('/')
 }
 
-/**
- * Cast a string to LogicalPath type.
- * Use this when you have a string that you know is a logical path (no embedded IDs).
- * For constructing paths from segments, prefer createLogicalPath() which validates.
- *
- * @example
- * const logicalPath = toLogicalPath('content/authors')
- */
-export function toLogicalPath(path: string): LogicalPath {
-  return path as LogicalPath
-}
-
-/**
- * Cast a string to PhysicalPath type.
- * Use this when you have a string that you know is a physical path (may have embedded IDs).
- * For constructing paths from segments, prefer createPhysicalPath() which validates.
- *
- * @example
- * const physicalPath = toPhysicalPath('content/authors.q52DCVPuH4ga')
- */
-export function toPhysicalPath(path: string): PhysicalPath {
-  return path as PhysicalPath
-}

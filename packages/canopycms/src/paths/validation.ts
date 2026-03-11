@@ -4,7 +4,7 @@
  * Security-focused validation for content paths and slugs.
  */
 
-import { normalizeFilesystemPath, hasTraversalSequence, toLogicalPath, toPhysicalPath } from './normalize'
+import { normalizeFilesystemPath, hasTraversalSequence } from './normalize'
 import type { LogicalPath, PhysicalPath, ContentId, BranchName, EntrySlug, CollectionSlug } from './types'
 
 /**
@@ -204,7 +204,7 @@ export function parseLogicalPath(path: string):
     }
   }
 
-  return { ok: true, path: toLogicalPath(path) }
+  return { ok: true, path: path as LogicalPath }
 }
 
 /**
@@ -237,7 +237,7 @@ export function parsePhysicalPath(path: string):
     }
   }
 
-  return { ok: true, path: toPhysicalPath(path) }
+  return { ok: true, path: path as PhysicalPath }
 }
 
 /**
@@ -328,6 +328,15 @@ export function parseBranchName(name: string):
     return { ok: false, error: 'Branch name cannot contain "@{"' }
   }
 
+  // Git-forbidden characters: ~ ^ : ? * [ \ and control chars
+  if (/[~^:?*[\\\x00-\x1f\x7f]/.test(name)) {
+    return { ok: false, error: 'Branch name contains invalid characters' }
+  }
+
+  if (name.endsWith('.lock')) {
+    return { ok: false, error: 'Branch name cannot end with ".lock"' }
+  }
+
   return { ok: true, name: name as BranchName }
 }
 
@@ -409,29 +418,3 @@ export function slugToString(slug: CollectionSlug | EntrySlug): string {
   return slug as string
 }
 
-/**
- * Test helper: Cast a string to BranchName without validation.
- * Only use in tests where you control the input.
- *
- * @param name - The branch name string
- * @returns The string cast to BranchName
- */
-export const toBranchName = (name: string): BranchName => name as BranchName
-
-/**
- * Test helper: Cast a string to EntrySlug without validation.
- * Only use in tests where you control the input.
- *
- * @param slug - The entry slug string
- * @returns The string cast to EntrySlug
- */
-export const toEntrySlug = (slug: string): EntrySlug => slug as EntrySlug
-
-/**
- * Test helper: Cast a string to CollectionSlug without validation.
- * Only use in tests where you control the input.
- *
- * @param slug - The collection slug string
- * @returns The string cast to CollectionSlug
- */
-export const toCollectionSlug = (slug: string): CollectionSlug => slug as CollectionSlug

@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { ContentStore } from './content-store'
 import type { ContentIdIndex } from './content-id-index'
 import { extractSlugFromFilename } from './content-id-index'
-import { resolveLogicalPath, toLogicalPath, toEntrySlug, type LogicalPath } from './paths'
+import type { LogicalPath, EntrySlug } from './paths'
 
 export interface ResolvedReference {
   id: string
@@ -35,16 +35,6 @@ export class ReferenceResolver {
   ) {}
 
   /**
-   * Convert a physical collection path to a logical path.
-   * The ID index stores physical paths (e.g., "content/authors.q52DCVPuH4ga"),
-   * but ContentStore.read() expects logical paths (e.g., "content/authors").
-   */
-  private getLogicalPath(physicalPath: string): LogicalPath | string {
-    // Use the shared utility to resolve physical path to logical path
-    return resolveLogicalPath(physicalPath, this.store.getSchemaItems())
-  }
-
-  /**
    * Resolve a content ID to a display value.
    * Returns null if the ID doesn't exist or points to a collection.
    *
@@ -63,10 +53,7 @@ export class ReferenceResolver {
     }
 
     try {
-      // Convert physical path to logical path for store.read()
-      const logicalPathStr = this.getLogicalPath(location.collection!)
-      const logicalPath = toLogicalPath(logicalPathStr)
-      const doc = await this.store.read(logicalPath, toEntrySlug(location.slug!))
+      const doc = await this.store.read(location.collection!, location.slug!)
       const displayValue = String(
         doc.data[displayField] || doc.data.title || location.slug
       )
@@ -75,7 +62,7 @@ export class ReferenceResolver {
         id,
         exists: true,
         displayValue,
-        collection: logicalPath,
+        collection: location.collection,
         slug: location.slug
       }
     } catch (error) {
@@ -123,7 +110,7 @@ export class ReferenceResolver {
           const filename = path.basename(entry.relativePath)
           const normalizedSlug = extractSlugFromFilename(filename)
 
-          const doc = await this.store.read(toLogicalPath(entry.collection), toEntrySlug(normalizedSlug))
+          const doc = await this.store.read(entry.collection as LogicalPath, normalizedSlug as EntrySlug)
           const label = String(doc.data[displayField] || doc.data.title || normalizedSlug)
 
           // Apply search filter if provided
@@ -153,7 +140,8 @@ export class ReferenceResolver {
   private async listEntriesInCollection(
     collectionPath: string
   ): Promise<Array<{ relativePath: string; collection: string; slug: string }>> {
-    return this.store.listCollectionEntries(toLogicalPath(collectionPath))
+    // collectionPath comes from schema field.collections config (schema-defined logical paths)
+    return this.store.listCollectionEntries(collectionPath as LogicalPath)
   }
 
   /**

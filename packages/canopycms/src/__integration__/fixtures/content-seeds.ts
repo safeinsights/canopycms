@@ -1,5 +1,5 @@
 import type { ContentStore } from '../../content-store'
-import { toLogicalPath, toEntrySlug } from '../../paths'
+import { unsafeAsLogicalPath, unsafeAsEntrySlug } from '../../paths/test-utils'
 
 /**
  * Sample blog posts for seeding test content
@@ -77,7 +77,7 @@ export const SAMPLE_PRODUCTS = [
 export async function seedBlogContent(store: ContentStore): Promise<void> {
   // Seed posts
   for (const post of SAMPLE_POSTS) {
-    await store.write(toLogicalPath('content/posts'), toEntrySlug(post.slug), {
+    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug(post.slug), {
       format: 'mdx',
       data: post.data,
       body: post.data.body as string,
@@ -85,7 +85,7 @@ export async function seedBlogContent(store: ContentStore): Promise<void> {
   }
 
   // Seed about page
-  await store.write(toLogicalPath('content/about.md'), '', {
+  await store.write(unsafeAsLogicalPath('content/about.md'), '', {
     format: 'mdx',
     data: SAMPLE_ABOUT,
     body: SAMPLE_ABOUT.bio as string,
@@ -97,7 +97,7 @@ export async function seedBlogContent(store: ContentStore): Promise<void> {
  */
 export async function seedEcommerceContent(store: ContentStore): Promise<void> {
   for (const product of SAMPLE_PRODUCTS) {
-    await store.write(toLogicalPath('content/products'), toEntrySlug(product.slug), {
+    await store.write(unsafeAsLogicalPath('content/products'), unsafeAsEntrySlug(product.slug), {
       format: 'json',
       data: product.data,
     })

@@ -399,23 +399,86 @@ await ctx.services.submitBranch({ context })
 
 | File | Purpose |
 |------|---------|
-| types.ts | Branded types (LogicalPath, PhysicalPath, CollectionPath, SanitizedBranchName) |
-| normalize.ts | Client-safe normalization functions |
+| types.ts | Branded types: LogicalPath, PhysicalPath, BranchName, SanitizedBranchName, ContentId, CollectionSlug, EntrySlug |
+| normalize.ts | Client-safe normalization; createLogicalPath, createPhysicalPath, unsafeAsLogicalPath, unsafeAsPhysicalPath |
 | normalize-server.ts | Server-only functions (requires Node.js path) |
-| validation.ts | Security validation (isValidSlug, validateContentPath) |
+| validation.ts | Security validation; parseLogicalPath, parsePhysicalPath, parseBranchName, parseContentId, parseSlug, unsafeAsEntrySlug |
+| resolve.ts | resolveLogicalPath for path resolution |
 | branch.ts | Branch workspace path resolution |
+| test-utils.ts | Test-only casts: unsafeAsBranchName, unsafeAsCollectionSlug (NOT exported from index) |
 
 **Branded Types** provide type safety for different path semantics:
-- LogicalPath: Content-relative paths (e.g., "posts/my-post.mdx")
-- PhysicalPath: Absolute filesystem paths
-- CollectionPath: Collection identifiers
+- `LogicalPath`: Content-relative paths without embedded IDs (e.g., "content/posts/my-post"); used for all collection paths
+- `PhysicalPath`: Filesystem paths that may contain embedded content IDs
+- `BranchName`: Git branch names (validated against git naming rules)
+- `SanitizedBranchName`: Branch name safe for filesystem use
+- `ContentId`: 12-character Base58-encoded content ID
+- `CollectionSlug`: Single collection path segment (e.g., "posts")
+- `EntrySlug`: Single entry slug (e.g., "my-first-post")
+
+Note: `CollectionPath` brand was eliminated; use `LogicalPath` with a `content/` prefix for all collection paths.
+
+### Branded Type Conventions
+
+**Boundary validation** (`parse*` functions) - validate before branding, use at API/input boundaries:
+```typescript
+import { parseLogicalPath, parseBranchName, parseContentId, parseSlug } from '../paths'
+
+const result = parseLogicalPath(params.path)
+if (!result.ok) return { status: 400, error: result.error }
+const path: LogicalPath = result.path
+```
+
+**Trusted internal construction** (`create*` functions) - validate segments, throw on traversal:
+```typescript
+import { createLogicalPath, createPhysicalPath } from '../paths'
+
+const path = createLogicalPath('content', 'posts', 'my-post')
+```
+
+**Unsafe production casts** (`unsafeAs*` in normalize.ts/validation.ts) - NO validation, for trusted internal data only:
+```typescript
+import { unsafeAsLogicalPath, unsafeAsPhysicalPath } from '../paths'
+import { unsafeAsEntrySlug } from '../paths'
+
+// OK: data already validated on write, read from internal storage
+const logicalPath = unsafeAsLogicalPath(entry.collection)
+```
+
+**Test-only casts** (in test-utils.ts, NOT exported from index):
+```typescript
+import { unsafeAsBranchName, unsafeAsCollectionSlug } from '../paths/test-utils'
+```
+
+### Zod Validators for API Boundaries
+
+**Location**: packages/canopycms/src/api/validators.ts
+
+| Schema | Branded Type | Validates |
+|--------|-------------|-----------|
+| branchNameSchema | BranchName | Git naming rules |
+| logicalPathSchema | LogicalPath | No traversal, not a physical path |
+| contentIdSchema | ContentId | 12-char Base58 |
+| entrySlugSchema | EntrySlug | Lowercase, hyphens, max 64 chars |
+| collectionSlugSchema | CollectionSlug | Lowercase, hyphens, max 64 chars |
+| permissionPathSchema | PermissionPath | No traversal, from authorization module |
 
 ```typescript
-import { createLogicalPath, validateContentPath } from '../paths'
+import { branchNameSchema, logicalPathSchema } from '../api/validators'
 
-const path = createLogicalPath('posts/my-post.mdx')
-const validation = validateContentPath(path, contentRoot)
+const paramsSchema = z.object({
+  branch: branchNameSchema,
+  path: logicalPathSchema,
+})
+const params = paramsSchema.parse(req.params)
+// params.branch is BranchName, params.path is LogicalPath
 ```
+
+### PermissionPath (authorization module)
+
+`PermissionPath` is a branded type defined in `authorization/types.ts`, not in `paths/`.
+- Production: use `permissionPathSchema` from `api/validators.ts` or `parsePermissionPath` from `authorization`
+- Tests: use `unsafeAsPermissionPath` from `authorization/test-utils.ts`
 
 ## Validation Module
 
