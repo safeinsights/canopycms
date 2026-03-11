@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { defineCanopyTestConfig } from './config-test'
 import { flattenSchema } from './config'
 import { ContentStore, ContentStoreError } from './content-store'
+import { toLogicalPath, toEntrySlug } from './paths'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
 
@@ -26,13 +27,13 @@ describe('ContentStore', () => {
     const config = defineCanopyTestConfig({ schema })
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
-    await store.write('content/posts', 'hello-world', {
+    await store.write(toLogicalPath('content/posts'), toEntrySlug('hello-world'), {
       format: 'md',
       data: { title: 'Hello' },
       body: 'Body text',
     })
 
-    const doc = await store.read('content/posts', 'hello-world')
+    const doc = await store.read(toLogicalPath('content/posts'), toEntrySlug('hello-world'))
     if (doc.format === 'json') throw new Error('expected markdown')
     expect(doc.data.title).toBe('Hello')
     expect(doc.body).toContain('Body text')
@@ -54,13 +55,13 @@ describe('ContentStore', () => {
     const config = defineCanopyTestConfig({ schema })
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
-    await store.write('content/pages', 'landing', {
+    await store.write(toLogicalPath('content/pages'), toEntrySlug('landing'), {
       format: 'mdx',
       data: { title: 'Landing' },
       body: '<Hero title="Hi" />',
     })
 
-    const doc = await store.read('content/pages', 'landing')
+    const doc = await store.read(toLogicalPath('content/pages'), toEntrySlug('landing'))
     if (doc.format === 'json') throw new Error('expected mdx')
     expect(doc.data.title).toBe('Landing')
     expect(doc.body?.includes('<Hero')).toBe(true)
@@ -82,12 +83,12 @@ describe('ContentStore', () => {
     const config = defineCanopyTestConfig({ schema })
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
-    await store.write('content/config', 'site', {
+    await store.write(toLogicalPath('content/config'), toEntrySlug('site'), {
       format: 'json',
       data: { siteName: 'CanopyCMS' },
     })
 
-    const doc = await store.read('content/config', 'site')
+    const doc = await store.read(toLogicalPath('content/config'), toEntrySlug('site'))
     expect(doc.data.siteName).toBe('CanopyCMS')
     expect(doc.relativePath.endsWith('.json')).toBe(true)
   })
@@ -108,7 +109,7 @@ describe('ContentStore', () => {
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await expect(
-      store.write('content/posts', '../escape', { format: 'md', data: { title: 'bad' }, body: 'x' })
+      store.write(toLogicalPath('content/posts'), toEntrySlug('../escape'), { format: 'md', data: { title: 'bad' }, body: 'x' })
     ).rejects.toBeInstanceOf(ContentStoreError)
   })
 
@@ -127,12 +128,12 @@ describe('ContentStore', () => {
     const config = defineCanopyTestConfig({ schema })
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
-    await store.write('content/settings', 'site', {
+    await store.write(toLogicalPath('content/settings'), toEntrySlug('site'), {
       format: 'json',
       data: { siteName: 'CanopyCMS' },
     })
 
-    const doc = await store.read('content/settings', 'site')
+    const doc = await store.read(toLogicalPath('content/settings'), toEntrySlug('site'))
     expect(doc.format).toBe('json')
     expect(doc.data.siteName).toBe('CanopyCMS')
     // Pattern: {type}.{slug}.{id}.{ext}
@@ -155,7 +156,7 @@ describe('ContentStore', () => {
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await expect(
-      store.write('content/posts', '2024/hello', {
+      store.write(toLogicalPath('content/posts'), toEntrySlug('2024/hello'), {
         format: 'md',
         data: { title: 'Bad Slug' },
         body: 'Content',
@@ -179,7 +180,7 @@ describe('ContentStore', () => {
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     await expect(
-      store.write('content/posts', 'bad\\slug', {
+      store.write(toLogicalPath('content/posts'), toEntrySlug('bad\\slug'), {
         format: 'md',
         data: { title: 'Bad Slug' },
         body: 'Content',
@@ -372,14 +373,14 @@ describe('ContentStore', () => {
     const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
     // Write to 3-level nested collection
-    await store.write('content/docs/api/v2', 'authentication', {
+    await store.write(toLogicalPath('content/docs/api/v2'), toEntrySlug('authentication'), {
       format: 'md',
       data: { title: 'Authentication Guide' },
       body: '# Authentication\n\nHow to authenticate.',
     })
 
     // Read it back
-    const doc = await store.read('content/docs/api/v2', 'authentication')
+    const doc = await store.read(toLogicalPath('content/docs/api/v2'), toEntrySlug('authentication'))
     if (doc.format === 'json') throw new Error('expected markdown')
     expect(doc.data.title).toBe('Authentication Guide')
     expect(doc.body).toContain('How to authenticate')
@@ -404,23 +405,23 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Create an entry
-      await store.write('content/posts', 'old-slug', {
+      await store.write(toLogicalPath('content/posts'), toEntrySlug('old-slug'), {
         format: 'md',
         data: { title: 'Test Post' },
         body: 'Content here',
       })
 
       // Rename it
-      const result = await store.renameEntry('content/posts', 'old-slug', 'new-slug')
+      const result = await store.renameEntry(toLogicalPath('content/posts'), toEntrySlug('old-slug'), toEntrySlug('new-slug'))
 
       // Verify new path is returned
       expect(result.newPath).toBe('content/posts/new-slug')
 
       // Verify old path doesn't exist anymore
-      await expect(store.read('content/posts', 'old-slug')).rejects.toThrow()
+      await expect(store.read(toLogicalPath('content/posts'), toEntrySlug('old-slug'))).rejects.toThrow()
 
       // Verify new path works
-      const doc = await store.read('content/posts', 'new-slug')
+      const doc = await store.read(toLogicalPath('content/posts'), toEntrySlug('new-slug'))
       if (doc.format === 'json') throw new Error('expected markdown')
       expect(doc.data.title).toBe('Test Post')
       expect(doc.body).toContain('Content here')
@@ -442,7 +443,7 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       await expect(
-        store.renameEntry('content/posts', 'nonexistent', 'new-slug')
+        store.renameEntry(toLogicalPath('content/posts'), toEntrySlug('nonexistent'), toEntrySlug('new-slug'))
       ).rejects.toThrow('Entry not found: nonexistent')
     })
 
@@ -462,18 +463,18 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Create two entries
-      await store.write('content/posts', 'first-post', {
+      await store.write(toLogicalPath('content/posts'), toEntrySlug('first-post'), {
         format: 'json',
         data: { title: 'First' },
       })
-      await store.write('content/posts', 'second-post', {
+      await store.write(toLogicalPath('content/posts'), toEntrySlug('second-post'), {
         format: 'json',
         data: { title: 'Second' },
       })
 
       // Try to rename first-post to second-post (conflict)
       await expect(
-        store.renameEntry('content/posts', 'first-post', 'second-post')
+        store.renameEntry(toLogicalPath('content/posts'), toEntrySlug('first-post'), toEntrySlug('second-post'))
       ).rejects.toThrow('already exists')
     })
 
@@ -493,19 +494,19 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Create an entry
-      await store.write('content/posts', 'test-post', {
+      await store.write(toLogicalPath('content/posts'), toEntrySlug('test-post'), {
         format: 'json',
         data: { title: 'Test' },
       })
 
       // Try invalid slug with slash
       await expect(
-        store.renameEntry('content/posts', 'test-post', 'invalid/slug')
+        store.renameEntry(toLogicalPath('content/posts'), toEntrySlug('test-post'), toEntrySlug('invalid/slug'))
       ).rejects.toThrow('cannot contain forward slashes')
 
       // Try invalid slug with uppercase
       await expect(
-        store.renameEntry('content/posts', 'test-post', 'Invalid-Slug')
+        store.renameEntry(toLogicalPath('content/posts'), toEntrySlug('test-post'), toEntrySlug('Invalid-Slug'))
       ).rejects.toThrow('must start with a letter or number')
     })
 
@@ -525,19 +526,19 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Create an entry
-      await store.write('content/posts', 'same-slug', {
+      await store.write(toLogicalPath('content/posts'), toEntrySlug('same-slug'), {
         format: 'json',
         data: { title: 'Test' },
       })
 
       // Rename to same slug (no-op)
-      const result = await store.renameEntry('content/posts', 'same-slug', 'same-slug')
+      const result = await store.renameEntry(toLogicalPath('content/posts'), toEntrySlug('same-slug'), toEntrySlug('same-slug'))
 
       // Should return the same path
       expect(result.newPath).toBe('content/posts/same-slug')
 
       // Entry should still be readable
-      const doc = await store.read('content/posts', 'same-slug')
+      const doc = await store.read(toLogicalPath('content/posts'), toEntrySlug('same-slug'))
       expect(doc.format).toBe('json')
       if (doc.format === 'json') {
         expect(doc.data.title).toBe('Test')
@@ -560,19 +561,19 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Create an entry
-      await store.write('content/posts', 'original', {
+      await store.write(toLogicalPath('content/posts'), toEntrySlug('original'), {
         format: 'json',
         data: { title: 'Test' },
       })
 
       // Get the content ID before rename
-      const idBefore = await store.getIdForEntry('content/posts', 'original')
+      const idBefore = await store.getIdForEntry(toLogicalPath('content/posts'), toEntrySlug('original'))
 
       // Rename the entry
-      await store.renameEntry('content/posts', 'original', 'renamed')
+      await store.renameEntry(toLogicalPath('content/posts'), toEntrySlug('original'), toEntrySlug('renamed'))
 
       // Get the content ID after rename
-      const idAfter = await store.getIdForEntry('content/posts', 'renamed')
+      const idAfter = await store.getIdForEntry(toLogicalPath('content/posts'), toEntrySlug('renamed'))
 
       // IDs should match (preserved through rename)
       expect(idBefore).toBe(idAfter)
@@ -601,9 +602,9 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Create entries of different types
-      const post = await store.write('content/content', 'my-post', { format: 'mdx', data: {}, body: 'Post content' }, 'post')
-      const article = await store.write('content/content', 'my-article', { format: 'md', data: {}, body: 'Article content' }, 'article')
-      const note = await store.write('content/content', 'my-note', { format: 'json', data: { text: 'Note' } }, 'note')
+      const post = await store.write(toLogicalPath('content/content'), toEntrySlug('my-post'), { format: 'mdx', data: {}, body: 'Post content' }, 'post')
+      const article = await store.write(toLogicalPath('content/content'), toEntrySlug('my-article'), { format: 'md', data: {}, body: 'Article content' }, 'article')
+      const note = await store.write(toLogicalPath('content/content'), toEntrySlug('my-note'), { format: 'json', data: { text: 'Note' } }, 'note')
 
       // Verify filenames include correct entry type (check the returned paths)
       const postFile = path.basename(post.relativePath)
@@ -634,7 +635,7 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       await expect(
-        store.write('content/posts', 'test', { format: 'mdx', data: {}, body: '' }, 'invalid-type')
+        store.write(toLogicalPath('content/posts'), toEntrySlug('test'), { format: 'mdx', data: {}, body: '' }, 'invalid-type')
       ).rejects.toThrow("Entry type 'invalid-type' not found in collection")
     })
 
@@ -657,7 +658,7 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Write without specifying entry type - should use default (tutorial)
-      const doc = await store.write('content/docs', 'my-doc', { format: 'mdx', data: {}, body: 'Content' })
+      const doc = await store.write(toLogicalPath('content/docs'), toEntrySlug('my-doc'), { format: 'mdx', data: {}, body: 'Content' })
 
       const tutorialFile = path.basename(doc.relativePath)
       expect(tutorialFile.startsWith('tutorial.my-doc.')).toBe(true)
@@ -683,13 +684,13 @@ describe('ContentStore', () => {
       const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
 
       // Create an entry with entry type "post"
-      const created = await store.write('content/content', 'my-content', { format: 'mdx', data: {}, body: 'Original' }, 'post')
+      const created = await store.write(toLogicalPath('content/content'), toEntrySlug('my-content'), { format: 'mdx', data: {}, body: 'Original' }, 'post')
       const createdFile = path.basename(created.relativePath)
       expect(createdFile.startsWith('post.my-content.')).toBe(true)
 
       // Update the same entry WITHOUT specifying entry type
       // The entry type should be automatically preserved from the existing file
-      const updated = await store.write('content/content', 'my-content', { format: 'mdx', data: {}, body: 'Updated' })
+      const updated = await store.write(toLogicalPath('content/content'), toEntrySlug('my-content'), { format: 'mdx', data: {}, body: 'Updated' })
       const updatedFile = path.basename(updated.relativePath)
 
       // Entry type should still be "post" (preserved from existing file)
@@ -697,12 +698,12 @@ describe('ContentStore', () => {
       expect(updatedFile).toBe(createdFile) // Filename should be exactly the same
 
       // Verify the content was updated
-      const read = await store.read('content/content', 'my-content')
+      const read = await store.read(toLogicalPath('content/content'), toEntrySlug('my-content'))
       if (read.format === 'json') throw new Error('Expected mdx')
       expect(read.body.trim()).toBe('Updated')
 
       // Also verify that even if we specify a different entry type, it gets ignored (preserved)
-      const updated2 = await store.write('content/content', 'my-content', { format: 'mdx', data: {}, body: 'Updated again' }, 'post')
+      const updated2 = await store.write(toLogicalPath('content/content'), toEntrySlug('my-content'), { format: 'mdx', data: {}, body: 'Updated again' }, 'post')
       const updated2File = path.basename(updated2.relativePath)
       expect(updated2File).toBe(createdFile) // Still the same filename
     })

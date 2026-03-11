@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { ContentStore } from './content-store'
 import type { ContentIdIndex } from './content-id-index'
 import { extractSlugFromFilename } from './content-id-index'
-import { resolveLogicalPath, type LogicalPath } from './paths'
+import { resolveLogicalPath, toLogicalPath, toEntrySlug, type LogicalPath } from './paths'
 
 export interface ResolvedReference {
   id: string
@@ -64,8 +64,9 @@ export class ReferenceResolver {
 
     try {
       // Convert physical path to logical path for store.read()
-      const logicalPath = this.getLogicalPath(location.collection!)
-      const doc = await this.store.read(logicalPath, location.slug!)
+      const logicalPathStr = this.getLogicalPath(location.collection!)
+      const logicalPath = toLogicalPath(logicalPathStr)
+      const doc = await this.store.read(logicalPath, toEntrySlug(location.slug!))
       const displayValue = String(
         doc.data[displayField] || doc.data.title || location.slug
       )
@@ -122,7 +123,7 @@ export class ReferenceResolver {
           const filename = path.basename(entry.relativePath)
           const normalizedSlug = extractSlugFromFilename(filename)
 
-          const doc = await this.store.read(entry.collection, normalizedSlug)
+          const doc = await this.store.read(toLogicalPath(entry.collection), toEntrySlug(normalizedSlug))
           const label = String(doc.data[displayField] || doc.data.title || normalizedSlug)
 
           // Apply search filter if provided
@@ -152,7 +153,7 @@ export class ReferenceResolver {
   private async listEntriesInCollection(
     collectionPath: string
   ): Promise<Array<{ relativePath: string; collection: string; slug: string }>> {
-    return this.store.listCollectionEntries(collectionPath)
+    return this.store.listCollectionEntries(toLogicalPath(collectionPath))
   }
 
   /**

@@ -7,7 +7,7 @@ import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from './config'
 import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename, extractEntryTypeFromFilename, resolveCollectionPath } from './content-id-index'
 import { generateId } from './id'
 import { getFormatExtension } from './utils/format'
-import { normalizeFilesystemPath, resolveLogicalPath, type LogicalPath } from './paths'
+import { normalizeFilesystemPath, resolveLogicalPath, toLogicalPath, toPhysicalPath, type LogicalPath, type PhysicalPath, type EntrySlug, type ContentId } from './paths'
 
 export type MarkdownDocument = {
   format: 'md' | 'mdx'
@@ -21,9 +21,9 @@ export type JsonDocument = {
 }
 
 export type ContentDocument = (MarkdownDocument | JsonDocument) & {
-  collection: string
+  collection: LogicalPath
   collectionName: string
-  relativePath: string
+  relativePath: PhysicalPath
   absolutePath: string
 }
 
@@ -91,7 +91,7 @@ export class ContentStore {
     return this.schemaIndex.values()
   }
 
-  private assertSchemaItem(path: string): FlatSchemaItem {
+  private assertSchemaItem(path: LogicalPath): FlatSchemaItem {
     const normalized = normalizeFilesystemPath(path)
     const item = this.schemaIndex.get(normalized)
     if (!item) {
@@ -100,7 +100,7 @@ export class ContentStore {
     return item
   }
 
-  private assertCollection(collectionPath: string): FlatSchemaItem & { type: 'collection' } {
+  private assertCollection(collectionPath: LogicalPath): FlatSchemaItem & { type: 'collection' } {
     const item = this.assertSchemaItem(collectionPath)
     if (item.type !== 'collection') {
       throw new ContentStoreError(`Path is not a collection: ${collectionPath}`)
@@ -336,14 +336,14 @@ export class ContentStore {
     throw new ContentStoreError(`No schema item found for path: ${logicalPath}`)
   }
 
-  async resolveDocumentPath(schemaPath: string, slug = '') {
+  async resolveDocumentPath(schemaPath: LogicalPath, slug = '') {
     const schemaItem = this.assertSchemaItem(schemaPath)
     return await this.buildPaths(schemaItem, slug)
   }
 
   async read(
-    collectionPath: LogicalPath | string,
-    slug = '',
+    collectionPath: LogicalPath,
+    slug: EntrySlug | '' = '',
     options: { resolveReferences?: boolean } = {}
   ): Promise<ContentDocument> {
     const schemaItem = this.assertSchemaItem(collectionPath)
@@ -368,22 +368,22 @@ export class ContentStore {
     if (format === 'json') {
       const data = JSON.parse(raw) as Record<string, unknown>
       doc = {
-        collection: schemaItem.logicalPath,
+        collection: toLogicalPath(schemaItem.logicalPath),
         collectionName: schemaItem.name,
         format: 'json',
         data,
-        relativePath,
+        relativePath: toPhysicalPath(relativePath),
         absolutePath,
       }
     } else {
       const parsed = matter(raw)
       doc = {
-        collection: schemaItem.logicalPath,
+        collection: toLogicalPath(schemaItem.logicalPath),
         collectionName: schemaItem.name,
         format: format,
         data: (parsed.data as Record<string, unknown>) ?? {},
         body: parsed.content,
-        relativePath,
+        relativePath: toPhysicalPath(relativePath),
         absolutePath,
       }
     }
@@ -397,8 +397,8 @@ export class ContentStore {
   }
 
   async write(
-    collectionPath: LogicalPath | string,
-    slug = '',
+    collectionPath: LogicalPath,
+    slug: EntrySlug | '' = '',
     input: WriteInput,
     entryTypeName?: string
   ): Promise<ContentDocument> {
@@ -455,11 +455,11 @@ export class ContentStore {
       }
 
       return {
-        collection: schemaItem.logicalPath,
+        collection: toLogicalPath(schemaItem.logicalPath),
         collectionName: schemaItem.name,
         format: 'json',
         data: input.data ?? {},
-        relativePath,
+        relativePath: toPhysicalPath(relativePath),
         absolutePath,
       }
     }
@@ -487,12 +487,12 @@ export class ContentStore {
     }
 
     return {
-      collection: schemaItem.logicalPath,
+      collection: toLogicalPath(schemaItem.logicalPath),
       collectionName: schemaItem.name,
       format: input.format,
       data: input.data ?? {},
       body: input.body,
-      relativePath,
+      relativePath: toPhysicalPath(relativePath),
       absolutePath,
     }
   }
@@ -501,27 +501,28 @@ export class ContentStore {
    * Read an entry by its ID (UUID).
    * Returns null if the ID doesn't exist or points to a collection.
    */
-  async readById(id: string): Promise<ContentDocument | null> {
+  async readById(id: ContentId): Promise<ContentDocument | null> {
     const idIndex = await this.idIndex()
     const location = idIndex.findById(id)
     if (!location || location.type !== 'entry') return null
-    return this.read(location.collection!, location.slug!)
+    return this.read(toLogicalPath(location.collection!), location.slug! as EntrySlug)
   }
 
   /**
    * Get the ID for an entry given its collection and slug.
    * Returns null if no ID exists yet.
    */
-  async getIdForEntry(collectionPath: LogicalPath | string, slug: string): Promise<string | null> {
+  async getIdForEntry(collectionPath: LogicalPath, slug: EntrySlug): Promise<ContentId | null> {
     const idIndex = await this.idIndex()
     const { relativePath } = await this.buildPaths(this.assertCollection(collectionPath), slug)
-    return idIndex.findByPath(relativePath)
+    const id = idIndex.findByPath(relativePath)
+    return id ? (id as ContentId) : null
   }
 
   /**
    * Delete an entry and remove it from the index.
    */
-  async delete(collectionPath: LogicalPath | string, slug: string): Promise<void> {
+  async delete(collectionPath: LogicalPath, slug: EntrySlug): Promise<void> {
     const idIndex = await this.idIndex()
     const collection = this.assertCollection(collectionPath)
     const { absolutePath, relativePath } = await this.buildPaths(collection, slug)
@@ -549,9 +550,9 @@ export class ContentStore {
    * @throws ContentStoreError if entry doesn't exist, new slug conflicts, or validation fails
    */
   async renameEntry(
-    collectionPath: LogicalPath | string,
-    currentSlug: string,
-    newSlug: string
+    collectionPath: LogicalPath,
+    currentSlug: EntrySlug,
+    newSlug: EntrySlug
   ): Promise<{ newPath: LogicalPath }> {
     const idIndex = await this.idIndex()
     const collection = this.assertCollection(collectionPath)
@@ -645,7 +646,7 @@ export class ContentStore {
    * Returns empty array if the collection doesn't exist.
    */
   async listCollectionEntries(
-    collectionPath: LogicalPath | string
+    collectionPath: LogicalPath
   ): Promise<Array<{ relativePath: string; collection: string; slug: string }>> {
     const idIndex = await this.idIndex()
 
@@ -791,10 +792,11 @@ export class ContentStore {
 
       // location.collection is a physical path (e.g., "content/authors.q52DCVPuH4ga")
       // Use the shared utility to resolve it to a logical path
-      const logicalPath = resolveLogicalPath(location.collection, this.schemaIndex.values())
+      const logicalPathStr = resolveLogicalPath(location.collection, this.schemaIndex.values())
+      const logicalPath = toLogicalPath(logicalPathStr)
 
       // Read the referenced entry WITHOUT resolving its references (prevent infinite loops)
-      const doc = await this.read(logicalPath, location.slug, { resolveReferences: false })
+      const doc = await this.read(logicalPath, location.slug as EntrySlug, { resolveReferences: false })
 
       return {
         id,

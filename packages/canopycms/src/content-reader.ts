@@ -1,6 +1,6 @@
 import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
-import { resolveBranchPaths } from './paths'
+import { resolveBranchPaths, toLogicalPath, toEntrySlug } from './paths'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
@@ -125,7 +125,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     // Get the path WITHOUT reading the file
     let relativePath: string
     try {
-      const resolved = await store.resolveDocumentPath(entryPath, slug ?? '')
+      const resolved = await store.resolveDocumentPath(toLogicalPath(entryPath), slug ?? '')
       relativePath = resolved.relativePath
     } catch (err) {
       const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
@@ -143,9 +143,14 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
 
     // ONLY if permissions pass, read the file
     try {
-      return await store.read(entryPath, slug ?? '', {
-        resolveReferences: input.resolveReferences ?? true,
-      })
+      const slugValue = slug ?? ''
+      return await store.read(
+        toLogicalPath(entryPath),
+        slugValue ? toEntrySlug(slugValue) : '',
+        {
+          resolveReferences: input.resolveReferences ?? true,
+        }
+      )
     } catch (err: unknown) {
       if (isNotFoundError(err)) return null
       throw err

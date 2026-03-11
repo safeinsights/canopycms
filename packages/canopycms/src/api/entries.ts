@@ -11,7 +11,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
 import { resolveCollectionPath } from '../content-id-index'
-import { validateAndNormalizePath, normalizeFilesystemPath, toLogicalPath, toPhysicalPath } from '../paths'
+import { validateAndNormalizePath, normalizeFilesystemPath, toLogicalPath, toPhysicalPath, toEntrySlug } from '../paths'
 import { isNotFoundError } from '../utils/error'
 import type { LogicalPath, PhysicalPath } from '../paths/types'
 import { branchNameSchema, logicalPathSchema } from './validators'
@@ -517,10 +517,10 @@ const deleteEntryHandler = async (
   try {
     // Get the entry's content ID before deleting (for order update)
     const contentStore = new ContentStore(context.branchRoot, flatSchema)
-    const contentId = await contentStore.getIdForEntry(collectionPath, slug)
+    const contentId = await contentStore.getIdForEntry(toLogicalPath(collectionPath), toEntrySlug(slug))
 
     // Delete the entry
-    await contentStore.delete(collectionPath, slug)
+    await contentStore.delete(toLogicalPath(collectionPath), toEntrySlug(slug))
 
     // Update the collection's order array to remove the deleted item
     if (contentId && collection.type === 'collection' && collection.order) {
