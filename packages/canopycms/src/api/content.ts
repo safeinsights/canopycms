@@ -6,6 +6,7 @@ import type { ContentFormat } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 import { branchNameSchema, logicalPathSchema, entrySlugSchema } from './validators'
+import { toLogicalPath, toEntrySlug } from '../paths'
 
 /** Response type for content read operations */
 export type ContentReadResponse = ApiResponse<{
@@ -140,7 +141,7 @@ const readContentHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
-  const doc = await store.read(schemaItem.logicalPath, slug)
+  const doc = await store.read(toLogicalPath(schemaItem.logicalPath), toEntrySlug(slug))
   return { ok: true, status: 200, data: doc }
 }
 
@@ -196,8 +197,8 @@ const writeContentHandler = async (
     const result =
       body.format === 'json'
         ? await store.write(
-            schemaItem.logicalPath,
-            slug,
+            toLogicalPath(schemaItem.logicalPath),
+            toEntrySlug(slug),
             {
               format: 'json',
               data: body.data ?? {},
@@ -205,8 +206,8 @@ const writeContentHandler = async (
             params.entryType,
           )
         : await store.write(
-            schemaItem.logicalPath,
-            slug,
+            toLogicalPath(schemaItem.logicalPath),
+            toEntrySlug(slug),
             {
               format: body.format,
               data: body.data,
@@ -335,7 +336,11 @@ const renameEntryHandler = async (
 
   // Rename the entry
   try {
-    const result = await store.renameEntry(schemaItem.logicalPath, currentSlug, body.newSlug)
+    const result = await store.renameEntry(
+      toLogicalPath(schemaItem.logicalPath),
+      toEntrySlug(currentSlug),
+      body.newSlug,
+    )
     return { ok: true, status: 200, data: { newPath: result.newPath } }
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Rename failed'

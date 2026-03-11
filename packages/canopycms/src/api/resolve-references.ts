@@ -4,6 +4,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
+import { toLogicalPath, toEntrySlug } from '../paths'
 
 export interface ResolveReferencesBody {
   ids: string[]
@@ -64,7 +65,9 @@ const resolveReferencesHandler = async (
       const result = await resolver.resolve(id)
       if (result && result.exists && result.collection && result.slug) {
         // Fetch full document data
-        const doc = await store.read(result.collection, result.slug)
+        // result.collection is already a LogicalPath from resolveLogicalPath()
+        // result.slug needs to be cast to EntrySlug
+        const doc = await store.read(toLogicalPath(result.collection), toEntrySlug(result.slug))
         if (doc && doc.data) {
           resolved[id] = {
             id,

@@ -1,7 +1,7 @@
 import type { ContentStore } from '../content-store'
 import type { ContentIdIndex, IdLocation } from '../content-id-index'
 import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig } from '../config'
-import type { LogicalPath } from '../paths'
+import { toLogicalPath, toEntrySlug, type LogicalPath } from '../paths'
 
 export interface ReferenceInfo {
   entryPath: string
@@ -85,7 +85,7 @@ export class DeletionChecker {
 
     for (const entry of entries) {
       try {
-        const doc = await this.store.read(entry.collection, entry.slug)
+        const doc = await this.store.read(toLogicalPath(entry.collection), toEntrySlug(entry.slug))
         const refs = this.findIdInData(doc.data, targetId, fields)
 
         if (refs.length > 0) {
