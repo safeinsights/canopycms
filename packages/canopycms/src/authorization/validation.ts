@@ -5,7 +5,7 @@
  * to prevent path traversal attacks.
  */
 
-import { hasTraversalSequence } from '../paths'
+import { hasTraversalSequence } from '../paths/normalize'
 import type { PermissionPath } from './types'
 
 /**

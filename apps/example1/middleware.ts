@@ -1,12 +1,30 @@
-import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
+import { type NextFetchEvent, type NextRequest, NextResponse } from 'next/server'
 
-const isProtectedRoute = createRouteMatcher(['/edit(.*)', '/api/canopycms(.*)'])
+const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
 
-export default clerkMiddleware(async (auth, req) => {
-  if (isProtectedRoute(req)) {
-    await auth.protect()
+async function getClerkMiddleware() {
+  const { clerkMiddleware, createRouteMatcher } = await import('@clerk/nextjs/server')
+  const isProtectedRoute = createRouteMatcher(['/edit(.*)', '/api/canopycms(.*)'])
+
+  return clerkMiddleware(async (auth, req) => {
+    if (isProtectedRoute(req)) {
+      await auth.protect()
+    }
+  })
+}
+
+let clerkHandler: Awaited<ReturnType<typeof getClerkMiddleware>> | null = null
+
+export default async function middleware(req: NextRequest, event: NextFetchEvent) {
+  if (authMode !== 'clerk') {
+    return NextResponse.next()
   }
-})
+
+  if (!clerkHandler) {
+    clerkHandler = await getClerkMiddleware()
+  }
+  return clerkHandler(req, event)
+}
 
 export const config = {
   matcher: [
