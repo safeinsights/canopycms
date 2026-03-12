@@ -9,8 +9,8 @@ export interface ResolvedReference {
   id: string
   exists: boolean
   displayValue: string
-  collection?: string
-  slug?: string
+  collection?: LogicalPath
+  slug?: EntrySlug
 }
 
 export interface ReferenceOption {

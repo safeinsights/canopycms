@@ -13,6 +13,7 @@ import { getFormatExtension } from '../utils/format'
 import { resolveCollectionPath } from '../content-id-index'
 import { validateAndNormalizePath, normalizeFilesystemPath } from '../paths'
 import { isNotFoundError } from '../utils/error'
+import { isValidId } from '../id'
 import type { LogicalPath, PhysicalPath, EntrySlug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema } from './validators'
 
@@ -163,7 +164,7 @@ const sortEntriesByOrder = (entries: CollectionItem[], order?: readonly string[]
  * Parse a filename: {type}.{slug}.{id}.{ext}
  * Returns { type, slug, id } or null if the filename doesn't match the pattern.
  */
-const parseTypedFilename = (filename: string, entryTypes: readonly EntryTypeConfig[]): { type?: string; slug: string; id?: string } | null => {
+const parseTypedFilename = (filename: string, entryTypes: readonly EntryTypeConfig[]): { type: string; slug: EntrySlug; id: ContentId } | null => {
   // Remove extension
   const lastDot = filename.lastIndexOf('.')
   if (lastDot === -1) return null
@@ -177,8 +178,9 @@ const parseTypedFilename = (filename: string, entryTypes: readonly EntryTypeConf
     const matchingType = entryTypes.find(e => e.name === potentialType)
     if (matchingType) {
       const id = parts[parts.length - 1]
+      if (!isValidId(id)) return null
       const slug = parts.slice(1, -1).join('.')
-      return { type: potentialType, slug, id }
+      return { type: potentialType, slug: slug as EntrySlug, id: id as ContentId }
     }
   }
 
@@ -239,17 +241,12 @@ const listCollectionEntries = async (
 
       // Parse the filename to extract type, slug, and id
       const parsed = parseTypedFilename(file.name, entryTypes)
-      if (!parsed) return null
-
-      const { type: entryTypeName, slug: slugStr, id: contentIdStr } = parsed
-      const slug = slugStr as EntrySlug // from validated filename
-      const contentId = contentIdStr as ContentId | undefined // validated by isValidId in parser
-
-      // contentId must be present (all entries have IDs in filenames)
-      if (!contentId) {
-        console.warn(`Entry missing contentId in filename: ${file.name}`)
+      if (!parsed) {
+        console.warn(`Skipping file with unrecognized filename format: ${file.name} (expected {type}.{slug}.{id}.{ext} with a known entry type and valid 12-char Base58 ID)`)
         return null
       }
+
+      const { type: entryTypeName, slug, id: contentId } = parsed
 
       // Determine the entry type and format
       let entryType: EntryTypeConfig | undefined
@@ -265,7 +262,7 @@ const listCollectionEntries = async (
       ])
 
       const item: CollectionItem = {
-        // collection.logicalPath is already LogicalPath; slug is from validated filename
+        // Safe: both collection.logicalPath (LogicalPath) and slug (EntrySlug) are branded
         logicalPath: `${collection.logicalPath}/${slug}` as LogicalPath,
         contentId, // 12-char content ID extracted from filename
         slug,

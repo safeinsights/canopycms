@@ -4,10 +4,10 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
-import type { LogicalPath, EntrySlug } from '../paths'
+import { branchNameSchema, contentIdSchema } from './validators'
 
 export interface ResolveReferencesBody {
-  ids: string[]
+  ids: string[] // ContentId strings at runtime
 }
 
 /** Response type for resolved references */
@@ -20,11 +20,11 @@ export type ResolveReferencesResponse = ApiResponse<{
 // ============================================================================
 
 const resolveReferencesParamsSchema = z.object({
-  branch: z.string().min(1),
+  branch: branchNameSchema,
 })
 
 const resolveReferencesBodySchema = z.object({
-  ids: z.array(z.string()).min(1),
+  ids: z.array(contentIdSchema).min(1),
 })
 
 const resolveReferencesHandler = async (
@@ -64,10 +64,7 @@ const resolveReferencesHandler = async (
     try {
       const result = await resolver.resolve(id)
       if (result && result.exists && result.collection && result.slug) {
-        // Fetch full document data
-        // result.collection is already a LogicalPath from resolveLogicalPath()
-        // result.slug is a string from IdLocation (validated on write); cast to EntrySlug
-        const doc = await store.read(result.collection as LogicalPath, result.slug as EntrySlug)
+        const doc = await store.read(result.collection, result.slug)
         if (doc && doc.data) {
           resolved[id] = {
             id,

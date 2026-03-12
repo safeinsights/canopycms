@@ -312,7 +312,7 @@ export class ContentStore {
    */
   resolvePath(pathSegments: string[]): {
     schemaItem: FlatSchemaItem
-    slug: string
+    slug: EntrySlug
   } {
     if (pathSegments.length === 0) {
       throw new ContentStoreError('Empty path')
@@ -321,7 +321,8 @@ export class ContentStore {
     const logicalPath = pathSegments.join('/')
 
     // Try as collection + slug
-    const slug = pathSegments[pathSegments.length - 1]
+    // Slug is last segment of a LogicalPath (validated at API boundary — no slashes, no traversal)
+    const slug = pathSegments[pathSegments.length - 1] as EntrySlug
     const collectionPath = pathSegments.slice(0, -1).join('/')
     const normalizedCollection = normalizeFilesystemPath(collectionPath)
     const collection = this.schemaIndex.get(normalizedCollection)
