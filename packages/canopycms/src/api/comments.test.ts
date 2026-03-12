@@ -8,7 +8,7 @@ vi.mock('../comment-store', () => ({
         comments: [{ id: 'c1', text: 'Test comment', userId: 'u1', threadId: 'thread1', timestamp: '2024-01-01' }],
         resolved: false,
         type: 'field',
-        entryPath: 'posts/hello',
+        entryPath: unsafeAsLogicalPath('posts/hello'),
         canopyPath: 'title',
         authorId: 'u1',
         createdAt: '2024-01-01',
@@ -20,7 +20,7 @@ vi.mock('../comment-store', () => ({
       comments: [],
       resolved: false,
       type: 'field',
-      entryPath: 'posts/hello',
+      entryPath: unsafeAsLogicalPath('posts/hello'),
       canopyPath: 'title',
       authorId: 'u1',
       createdAt: '2024-01-01',
@@ -32,7 +32,7 @@ vi.mock('../comment-store', () => ({
 import { COMMENT_ROUTES } from './comments'
 import { RESERVED_GROUPS } from '../authorization'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
-import { unsafeAsBranchName } from '../paths/test-utils'
+import { unsafeAsBranchName, unsafeAsLogicalPath } from '../paths/test-utils'
 
 // Extract handlers for testing
 const listComments = COMMENT_ROUTES.list.handler
@@ -75,7 +75,7 @@ describe('comments api - addComment', () => {
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('missing') },
-      { text: 'test', type: 'field', entryPath: 'posts/hello', canopyPath: 'title' }
+      { text: 'test', type: 'field', entryPath: unsafeAsLogicalPath('posts/hello'), canopyPath: 'title' }
     )
     expect(res.status).toBe(404)
   })
@@ -85,7 +85,7 @@ describe('comments api - addComment', () => {
       makeCtx(false),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('feature/x') },
-      { text: 'test', type: 'field', entryPath: 'posts/hello', canopyPath: 'title' }
+      { text: 'test', type: 'field', entryPath: unsafeAsLogicalPath('posts/hello'), canopyPath: 'title' }
     )
     expect(res.status).toBe(403)
   })
@@ -95,7 +95,7 @@ describe('comments api - addComment', () => {
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('feature/x') },
-      { text: 'test', type: 'field', entryPath: 'posts/hello' } as any
+      { text: 'test', type: 'field', entryPath: unsafeAsLogicalPath('posts/hello') } as any
     )
     expect(res.status).toBe(400)
     expect(res.error).toContain('canopyPath required')
@@ -128,7 +128,7 @@ describe('comments api - addComment', () => {
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('feature/x') },
-      { text: 'Great work!', type: 'field', entryPath: 'posts/hello', canopyPath: 'title' }
+      { text: 'Great work!', type: 'field', entryPath: unsafeAsLogicalPath('posts/hello'), canopyPath: 'title' }
     )
     expect(res.ok).toBe(true)
     expect(res.data?.threadId).toBe('thread1')
@@ -140,7 +140,7 @@ describe('comments api - addComment', () => {
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('feature/x') },
-      { text: 'Entry feedback', type: 'entry', entryPath: 'posts/hello' }
+      { text: 'Entry feedback', type: 'entry', entryPath: unsafeAsLogicalPath('posts/hello') }
     )
     expect(res.ok).toBe(true)
   })
@@ -164,7 +164,7 @@ describe('comments api - addComment', () => {
         text: 'Reply comment',
         threadId: 'existing-thread',
         type: 'field',
-        entryPath: 'posts/hello',
+        entryPath: unsafeAsLogicalPath('posts/hello'),
         canopyPath: 'title',
       }
     )

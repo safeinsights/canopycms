@@ -1,36 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
-  isValidSlug,
   validateContentPath,
   isValidCollectionPath,
   sanitizeForPath,
 } from '../validation'
-
-describe('isValidSlug', () => {
-  it('accepts valid slugs', () => {
-    expect(isValidSlug('my-post')).toBe(true)
-    expect(isValidSlug('post_123')).toBe(true)
-    expect(isValidSlug('hello-world')).toBe(true)
-    expect(isValidSlug('CamelCase')).toBe(true)
-    // Slugs can contain special chars except separators and traversal
-    expect(isValidSlug('my post')).toBe(true)
-    expect(isValidSlug('post@123')).toBe(true)
-  })
-
-  it('rejects slugs with path separators', () => {
-    expect(isValidSlug('posts/my-post')).toBe(false)
-    expect(isValidSlug('posts\\my-post')).toBe(false)
-  })
-
-  it('rejects traversal sequences', () => {
-    expect(isValidSlug('..')).toBe(false)
-    expect(isValidSlug('.')).toBe(false)
-  })
-
-  it('rejects empty strings', () => {
-    expect(isValidSlug('')).toBe(false)
-  })
-})
 
 describe('validateContentPath', () => {
   it('returns valid for safe paths', () => {

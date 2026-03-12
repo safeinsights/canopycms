@@ -10,7 +10,7 @@
  *
  * Usage:
  * ```ts
- * import { normalizeFilesystemPath, createLogicalPath, isValidSlug } from '../paths'
+ * import { normalizeFilesystemPath, createLogicalPath, parseSlug } from '../paths'
  * ```
  */
 
@@ -44,7 +44,6 @@ export { validateAndNormalizePath } from './normalize-server'
 
 // Validation utilities
 export {
-  isValidSlug,
   validateContentPath,
   isValidCollectionPath,
   sanitizeForPath,
