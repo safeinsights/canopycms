@@ -65,7 +65,6 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#module-structure) for detailed module docu
 - Avoid `any` - use `unknown` with type guards. Use `getErrorMessage()` and `isNodeError()` from `utils/error.ts` for error handling.
 - IMPORTANT: This is new code that has not been used by others yet, so no need to maintain interfaces for legacy uses, no need for migrations.
 - Primary target is Next.js websites, but will expand to others.
-- Learn from `reference/` but do not edit its contents.
 - Use extensionless local imports.
 - Keep the styling of the host app separate from that of the CanopyCMS editing interface. CanopyCMS uses Mantine, but host apps/examples can use whatever they want.
 - Keep docs current: update `BACKLOG.md`, `README.md`, and AGENTS when behavior or workflows change.
