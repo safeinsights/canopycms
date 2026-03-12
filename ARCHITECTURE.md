@@ -350,18 +350,22 @@ IDs are embedded directly in filenames and directory names using a simple patter
 
 ```
 content/
-  posts.a1b2c3d4e5f6/
-    hello.x7y8z9w1v2u3.json
-    world.m4n5p6q7r8s9.json
-  authors.k2l3m4n5p6q7/
-    alice.t8u9v1w2x3y4.json
-  home.z5a6b7c8d9e1.json
+  .collection.json
+  home.home.agfzDt2RLpSn.json
+  posts.916jXZabYCxu/
+    .collection.json
+    post.hello-world.vh2WdhwAFiSL.json
+    post.mermaid-demo.tuggGbrydvYr.json
+  authors.q52DCVPuH4ga/
+    .collection.json
+    author.alice.5NVkkrB1MJUv.json
+    author.bob.jm6FYVAtJie8.json
 ```
 
 **Filename Pattern:**
 
-- Files: `slug.id.ext` (e.g., `hello.x7y8z9w1v2u3.json`)
-- Directories: `slug.id` (e.g., `posts.a1b2c3d4e5f6`)
+- Entries: `type.slug.id.ext` (e.g., `post.hello-world.vh2WdhwAFiSL.json`)
+- Directories: `slug.id` (e.g., `posts.916jXZabYCxu`)
 - Metadata files: No ID (e.g., `.collection.json`, `.gitignore`)
 
 **Benefits:**
@@ -652,14 +656,9 @@ The `ContentStore` uses the flat schema index for O(1) path resolution:
 **Reading and writing**:
 
 - `read()` and `write()` accept a collection path and slug
-- For entry-type items with `maxItems: 1`, the filename is `{entryTypeName}.{id}.{ext}` (stored at root level)
-- For regular entries, the slug identifies the specific item within the collection
+- All entries use the unified filename pattern `{type}.{slug}.{id}.{ext}`
 - The entry type configuration determines format, fields, and file extension
-
-**Path building**:
-
-- Entry types: Collection path + entry type name + entry ID
-- Regular entries: Collection path + slug
+- `maxItems` is enforced as a schema constraint, not a filename difference
 
 The API works uniformly across all entry types regardless of cardinality constraints.
 

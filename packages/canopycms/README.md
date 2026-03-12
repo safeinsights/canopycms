@@ -64,41 +64,53 @@ export default defineCanopyConfig({
   defaultBranchAccess: 'allow',
   // Optional: contentRoot defaults to "content"
   // contentRoot: 'content',
-  schema: [
-    {
-      type: 'collection',
-      name: 'posts',
-      path: 'posts', // resolves to content/posts by default
-      format: 'mdx',
-      fields: [
-        { name: 'title', type: 'string', required: true },
-        { name: 'body', type: 'mdx', required: true },
-      ],
-      children: [
-        {
-          type: 'collection',
-          name: 'highlights',
-          path: 'featured',
-          format: 'mdx',
-          fields: [
-            { name: 'title', type: 'string' },
-            { name: 'body', type: 'mdx' },
-          ],
-        },
-      ],
-    },
-    {
-      type: 'singleton',
-      name: 'home',
-      path: 'home',
-      format: 'json',
-      fields: [{ name: 'hero', type: 'object', fields: [{ name: 'headline', type: 'string' }] }],
-    },
-  ],
+  schema: {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts', // resolves to content/posts by default
+        entries: [
+          {
+            name: 'post',
+            format: 'mdx',
+            default: true,
+            fields: [
+              { name: 'title', type: 'string', required: true },
+              { name: 'body', type: 'mdx', required: true },
+            ],
+          },
+        ],
+        collections: [
+          {
+            name: 'highlights',
+            path: 'featured',
+            entries: [
+              {
+                name: 'highlight',
+                format: 'mdx',
+                fields: [
+                  { name: 'title', type: 'string' },
+                  { name: 'body', type: 'mdx' },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    entries: [
+      {
+        name: 'home',
+        format: 'json',
+        maxItems: 1, // acts as a singleton - only one instance allowed
+        fields: [{ name: 'hero', type: 'object', fields: [{ name: 'headline', type: 'string' }] }],
+      },
+    ],
+  },
 })
 ```
 
-The `schema` array is ordered and can mix collections and singletons. Collections can contain other collections; child `path` values are resolved relative to their parent collection’s `path`. `contentRoot` (default `content`) is prefixed when resolving filesystem paths and ids, so a `path` of `posts` becomes `content/posts`. Use the collection’s resolved `path` (id) when calling APIs or building editor URLs.
+The `schema` object has two top-level keys: `collections` (nested collections with their own entry types) and `entries` (entry types at the root level). Collections can contain other collections via `collections` and define their allowed content via `entries`. Use `maxItems: 1` on an entry type to restrict it to a single instance (like a singleton). `contentRoot` (default `content`) is prefixed when resolving filesystem paths and ids, so a `path` of `posts` becomes `content/posts`. Use the collection’s resolved `path` (id) when calling APIs or building editor URLs.
 
 _TODO_ show how schemas can be defined across multiple files. Show all the configuration options for schemas.
 

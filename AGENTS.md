@@ -16,7 +16,7 @@ Purpose: CanopyCMS is a schema-driven, branch-aware CMS for a team of users to e
 ## End Goals / Requirements
 
 - Adopters of CanopyCMS have a single repo website that contains their code + content. Adopters install CanopyCMS in that repo so non-technical users can edit without touching Git.
-- Schema-defined content (collections/singletons/blocks/fields) with runtime enforcement to keep data clean; MD/MDX supported (with Mermaid/code fields), plus JSON.
+- Schema-defined content (collections/entry types/blocks/fields) with runtime enforcement to keep data clean; MD/MDX supported (with Mermaid/code fields), plus JSON.
 - Two deploy shapes:
   - (a) public build with zero editor code + separate editor-only build; the public build can be built with calls to the editor code if helpful, but after it is built it has no use of the editor code
   - (b) public build that has the editor components included; the a public user hitting the public site doesn't cause interactions with the editor API.

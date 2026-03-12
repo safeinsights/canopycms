@@ -939,4 +939,104 @@ describe('ContentStore', () => {
       expect(updated2File).toBe(createdFile) // Still the same filename
     })
   })
+
+  describe('entry-type path delegation', () => {
+    // When buildPaths receives an entry-type schema item (e.g., from
+    // store.read('content/home', '')), it delegates to the parent collection.
+    // The API layer doesn't trigger this path (resolvePath returns collections
+    // directly), but direct ContentStore usage can.
+
+    it('writes and reads via entry-type logical path', async () => {
+      const root = await tmpDir()
+      const schema = {
+        entries: [
+          {
+            name: 'home',
+            format: 'json' as const,
+            fields: [{ name: 'hero', type: 'string' as const }],
+            maxItems: 1,
+          },
+          {
+            name: 'settings',
+            format: 'json' as const,
+            fields: [{ name: 'siteName', type: 'string' as const }],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Write using the entry-type path (content/home) with empty slug
+      await store.write(unsafeAsLogicalPath('content/home'), unsafeAsEntrySlug(''), {
+        format: 'json',
+        data: { hero: 'Welcome' },
+      })
+
+      // Read it back via the same entry-type path
+      const doc = await store.read(unsafeAsLogicalPath('content/home'), unsafeAsEntrySlug(''))
+      expect(doc.format).toBe('json')
+      expect(doc.data.hero).toBe('Welcome')
+
+      // Verify 4-part filename: home.home.{id}.json
+      expect(doc.relativePath).toMatch(/^content\/home\.home\.[a-zA-Z0-9]{12}\.json$/)
+    })
+
+    it('uses provided slug instead of entry type name', async () => {
+      const root = await tmpDir()
+      const schema = {
+        entries: [
+          {
+            name: 'page',
+            format: 'json' as const,
+            fields: [{ name: 'title', type: 'string' as const }],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Write with an explicit slug different from entry type name
+      await store.write(unsafeAsLogicalPath('content/page'), unsafeAsEntrySlug('about'), {
+        format: 'json',
+        data: { title: 'About Us' },
+      })
+
+      const doc = await store.read(unsafeAsLogicalPath('content/page'), unsafeAsEntrySlug('about'))
+      expect(doc.data.title).toBe('About Us')
+
+      // Verify filename: page.about.{id}.json (type from entry type, slug from arg)
+      expect(doc.relativePath).toMatch(/^content\/page\.about\.[a-zA-Z0-9]{12}\.json$/)
+    })
+
+    it('uses correct format and fields from entry-type schema', async () => {
+      const root = await tmpDir()
+      const schema = {
+        entries: [
+          {
+            name: 'post',
+            format: 'md' as const,
+            fields: [{ name: 'title', type: 'string' as const }],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      await store.write(unsafeAsLogicalPath('content/post'), unsafeAsEntrySlug('hello'), {
+        format: 'md',
+        data: { title: 'Hello' },
+        body: 'World',
+      })
+
+      const doc = await store.read(unsafeAsLogicalPath('content/post'), unsafeAsEntrySlug('hello'))
+      if (doc.format === 'json') throw new Error('Expected md')
+      expect(doc.format).toBe('md')
+      expect(doc.data.title).toBe('Hello')
+      expect(doc.body).toContain('World')
+      expect(doc.relativePath).toMatch(/^content\/post\.hello\.[a-zA-Z0-9]{12}\.md$/)
+    })
+  })
 })

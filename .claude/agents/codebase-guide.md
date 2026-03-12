@@ -196,8 +196,8 @@ if (result.allowed) {
 
 ### Content Model
 
-- **Collections**: Arrays of entries (posts, authors)
-- **Singletons**: Single entries (home page, settings)
+- **Collections**: Containers for entries (posts, authors)
+- **Entry Types**: Define content structure within collections; `maxItems: 1` for single-instance entries
 - **Fields**: text, select, reference, object, code, block, markdown
 - **Format**: MD/MDX/JSON with frontmatter (gray-matter)
 
@@ -210,7 +210,7 @@ if (result.allowed) {
 | types.ts               | TypeScript type definitions for all config |
 | schemas/config.ts      | Zod schema for CanopyConfig                |
 | schemas/field.ts       | Zod schemas for field types                |
-| schemas/collection.ts  | Zod schemas for collections/singletons     |
+| schemas/collection.ts  | Zod schemas for collections/entry types    |
 | schemas/permissions.ts | Zod schemas for permissions                |
 | schemas/media.ts       | Zod schema for media config                |
 | flatten.ts             | Schema flattening for O(1) lookups         |

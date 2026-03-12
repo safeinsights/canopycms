@@ -35,9 +35,8 @@ export interface IdLocation {
  * ContentIdIndex manages the bidirectional mapping between content IDs and file paths.
  *
  * IDs are embedded in filenames using the patterns:
- * - Collection entries: `{type}.{slug}.{12-char-id}.{ext}` (e.g., `post.dune.a1b2c3d4e5f6.json`)
+ * - Entries: `{type}.{slug}.{12-char-id}.{ext}` (e.g., `post.dune.a1b2c3d4e5f6.json`)
  * - Collection directories: `{slug}.{12-char-id}/` (e.g., `posts.a1b2c3d4e5f6/`)
- * - Root-level entries: `{name}.{12-char-id}.{ext}` (e.g., `home.a1b2c3d4e5f6.json`)
  *
  * This class builds an in-memory index by scanning filenames recursively, providing O(1) lookups
  * in both directions (ID→path and path→ID).

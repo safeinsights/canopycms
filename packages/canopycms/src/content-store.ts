@@ -122,9 +122,7 @@ export class ContentStore {
 
   /**
    * Build absolute and relative paths with security validation.
-   * For collection entries, includes the ID in the filename.
-   * For entry-type items (root-level entries with maxItems: 1), the file is stored
-   * in the parent directory with filename pattern: {name}.{id}.{ext}
+   * All entries use the unified filename pattern: {type}.{slug}.{id}.{ext}
    *
    * SECURITY BOUNDARY: This method prevents path traversal attacks by:
    * 1. Validating that resolved paths stay within the content root
@@ -144,77 +142,28 @@ export class ContentStore {
   ): Promise<{ absolutePath: string; relativePath: PhysicalPath; id?: string }> {
     const rootWithSep = this.root.endsWith(path.sep) ? this.root : `${this.root}${path.sep}`
 
-    // Entry-type items (root-level entries with maxItems: 1):
-    // File pattern: {name}.{id}.{ext} in the parent directory
+    // Entry-type items: delegate to their parent collection.
+    // Uses the same {type}.{slug}.{id}.{ext} pattern as all entries.
+    // NOTE: The API layer always resolves paths via resolvePath(), which returns
+    // the parent collection directly, so this branch may only fire on direct
+    // ContentStore usage (e.g., store.read('content/home', '')).
     if (schemaItem.type === 'entry-type') {
-      const name = schemaItem.name
-      const format = schemaItem.format
-      const ext = getFormatExtension(format)
-
-      // Entry types are stored in their parent directory (e.g., content/)
-      // parentPath is the content root (e.g., 'content')
-      const parentDir = schemaItem.parentPath
-        ? path.resolve(this.root, schemaItem.parentPath)
-        : this.root
-
-      // Security: Prevent path traversal at parent level
-      if (!parentDir.startsWith(rootWithSep)) {
-        throw new ContentStoreError('Path traversal detected')
+      const parentPath = schemaItem.parentPath || ''
+      const parentCollection = this.schemaIndex.get(parentPath)
+      if (!parentCollection || parentCollection.type !== 'collection') {
+        throw new ContentStoreError(
+          `Parent collection not found for entry type: ${schemaItem.name}`,
+        )
       }
-
-      // Check if file already exists (editing case)
-      let id = options.existingId
-      let existingFilename: string | undefined
-
-      if (!id) {
-        // Try to find existing file with this name
-        const entries = await fs.readdir(parentDir, { withFileTypes: true }).catch(() => [])
-        const existingFile = entries.find((entry) => {
-          if (entry.isDirectory()) return false
-          // Match files like: home.agfzDt2RLpSn.json
-          const parts = entry.name.split('.')
-          return parts.length >= 3 && parts[0] === name && entry.name.endsWith(ext)
-        })
-
-        if (existingFile) {
-          const parts = existingFile.name.split('.')
-          if (parts.length >= 3) {
-            // Extract ID from: name.id.ext -> parts[1]
-            id = parts[parts.length - 2]
-          }
-          existingFilename = existingFile.name
-        }
-      }
-
-      // Build filename: {name}.{id}.{ext}
-      let filename: string
-      if (existingFilename && !id) {
-        // Legacy file without embedded ID - use original filename
-        filename = existingFilename
-      } else {
-        // Generate new ID if needed
-        if (!id) {
-          id = generateId()
-        }
-        filename = `${name}.${id}${ext}`
-      }
-
-      const resolved = path.resolve(parentDir, filename)
-      const parentDirWithSep = parentDir.endsWith(path.sep) ? parentDir : `${parentDir}${path.sep}`
-
-      // Security: Prevent path traversal at file level
-      if (!resolved.startsWith(parentDirWithSep)) {
-        throw new ContentStoreError('Path traversal detected')
-      }
-
-      return {
-        absolutePath: resolved,
-        relativePath: path.relative(this.root, resolved) as PhysicalPath,
-        id,
-      }
+      // Use provided slug, falling back to entry type name
+      const effectiveSlug = slug || schemaItem.name
+      return this.buildPaths(parentCollection, effectiveSlug, {
+        ...options,
+        entryTypeName: schemaItem.name,
+      })
     }
 
-    // Collection entries: append slug.id.ext to collection path
+    // Collection entries: {type}.{slug}.{id}.{ext}
     if (schemaItem.type === 'collection') {
       const safeSlug = slug.replace(/^\/+/, '')
       if (!safeSlug) {
