@@ -29,7 +29,7 @@ export interface EntryNavItem {
   path: LogicalPath
   label: string
   status?: string
-  collectionId?: LogicalPath
+  collectionPath?: LogicalPath
   contentId?: string // 12-char embedded ID for ordering
 }
 
@@ -56,11 +56,11 @@ export interface EntryNavigatorProps {
   expandedStateRef?: React.MutableRefObject<Record<string, boolean>>
   onExpandedStateChange?: (state: Record<string, boolean>) => void
   /** Called when user requests to delete an entry */
-  onDeleteEntry?: (path: string) => void
+  onDeleteEntry?: (path: LogicalPath) => void
   /** Called when user requests to rename an entry */
-  onRenameEntry?: (path: string) => void
+  onRenameEntry?: (path: LogicalPath) => void
   /** Called when user reorders an entry within a collection */
-  onReorderEntry?: (collectionPath: string, contentId: string, direction: 'up' | 'down') => void
+  onReorderEntry?: (collectionPath: LogicalPath, contentId: string, direction: 'up' | 'down') => void
   /** If provided, this collection path's node is hidden but its children are rendered at the top level */
   hiddenRootPath?: string
 }
@@ -343,9 +343,9 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const onEdit = node.nodeProps?.onEdit as (() => void) | undefined
     const onAddSubCollection = node.nodeProps?.onAddSubCollection as (() => void) | undefined
     const onDelete = node.nodeProps?.onDelete as (() => void) | undefined
-    const entryPath = node.nodeProps?.entryPath as string | undefined
+    const entryPath = node.nodeProps?.entryPath as LogicalPath | undefined
     const contentId = node.nodeProps?.contentId as string | undefined
-    const parentCollectionPath = node.nodeProps?.parentCollectionPath as string | undefined
+    const parentCollectionPath = node.nodeProps?.parentCollectionPath as LogicalPath | undefined
     const childIndex = node.nodeProps?.childIndex as number | undefined
     const totalChildrenCount = node.nodeProps?.totalChildrenCount as number | undefined
     const isCollection = node.nodeProps?.isCollection as boolean | undefined

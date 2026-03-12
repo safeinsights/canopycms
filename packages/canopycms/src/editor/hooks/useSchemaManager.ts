@@ -7,6 +7,7 @@ import type {
   CreateEntryTypeInput,
   UpdateEntryTypeInput,
 } from '../../api'
+import type { LogicalPath, ContentId } from '../../paths/types'
 
 export interface UseSchemaManagerOptions {
   branchName: string
@@ -15,20 +16,20 @@ export interface UseSchemaManagerOptions {
 
 export interface UseSchemaManagerReturn {
   // Collection operations
-  createCollection: (input: CreateCollectionInput) => Promise<{ collectionPath: string; contentId: string } | null>
-  updateCollection: (collectionPath: string, updates: UpdateCollectionInput) => Promise<boolean>
-  deleteCollection: (collectionPath: string) => Promise<boolean>
+  createCollection: (input: CreateCollectionInput) => Promise<{ collectionPath: LogicalPath; contentId: ContentId } | null>
+  updateCollection: (collectionPath: LogicalPath, updates: UpdateCollectionInput) => Promise<boolean>
+  deleteCollection: (collectionPath: LogicalPath) => Promise<boolean>
 
   // Entry type operations
-  addEntryType: (collectionPath: string, entryType: CreateEntryTypeInput) => Promise<boolean>
-  updateEntryType: (collectionPath: string, entryTypeName: string, updates: UpdateEntryTypeInput) => Promise<boolean>
-  removeEntryType: (collectionPath: string, entryTypeName: string) => Promise<boolean>
+  addEntryType: (collectionPath: LogicalPath, entryType: CreateEntryTypeInput) => Promise<boolean>
+  updateEntryType: (collectionPath: LogicalPath, entryTypeName: string, updates: UpdateEntryTypeInput) => Promise<boolean>
+  removeEntryType: (collectionPath: LogicalPath, entryTypeName: string) => Promise<boolean>
 
   // Order operations
-  updateOrder: (collectionPath: string, order: string[]) => Promise<boolean>
+  updateOrder: (collectionPath: LogicalPath, order: string[]) => Promise<boolean>
 
   // Delete entry
-  deleteEntry: (entryPath: string) => Promise<boolean>
+  deleteEntry: (entryPath: LogicalPath) => Promise<boolean>
 
   // State
   isLoading: boolean
@@ -100,7 +101,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const updateCollection = useCallback(
-    async (collectionPath: string, updates: UpdateCollectionInput) => {
+    async (collectionPath: LogicalPath, updates: UpdateCollectionInput) => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.updateCollection(
@@ -127,7 +128,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const deleteCollection = useCallback(
-    async (collectionPath: string) => {
+    async (collectionPath: LogicalPath) => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.deleteCollection({
@@ -154,7 +155,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const addEntryType = useCallback(
-    async (collectionPath: string, entryType: CreateEntryTypeInput) => {
+    async (collectionPath: LogicalPath, entryType: CreateEntryTypeInput) => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.addEntryType(
@@ -181,7 +182,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const updateEntryType = useCallback(
-    async (collectionPath: string, entryTypeName: string, updates: UpdateEntryTypeInput) => {
+    async (collectionPath: LogicalPath, entryTypeName: string, updates: UpdateEntryTypeInput) => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.updateEntryType(
@@ -208,7 +209,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const removeEntryType = useCallback(
-    async (collectionPath: string, entryTypeName: string) => {
+    async (collectionPath: LogicalPath, entryTypeName: string) => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.removeEntryType({
@@ -236,7 +237,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const updateOrder = useCallback(
-    async (collectionPath: string, order: string[]) => {
+    async (collectionPath: LogicalPath, order: string[]) => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.updateOrder(
@@ -260,7 +261,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const deleteEntry = useCallback(
-    async (entryPath: string) => {
+    async (entryPath: LogicalPath) => {
       setIsLoading(true)
       try {
         const result = await apiClient.entries.delete({

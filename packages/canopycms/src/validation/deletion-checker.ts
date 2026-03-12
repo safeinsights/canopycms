@@ -7,8 +7,8 @@ import { type LogicalPath, type EntrySlug } from '../paths'
 export interface ReferenceInfo {
   entryPath: string
   entryTitle?: string
-  collection: string
-  slug: string
+  collection: LogicalPath
+  slug: EntrySlug
   fields: string[] // Field paths where the reference was found
 }
 
@@ -36,7 +36,7 @@ export class DeletionChecker {
   constructor(
     private store: ContentStore,
     private idIndex: ContentIdIndex,
-    private collections: Map<string, { fields: FieldConfig[] }>
+    private collections: Map<LogicalPath, { fields: FieldConfig[] }>
   ) {}
 
   /**
@@ -79,7 +79,7 @@ export class DeletionChecker {
    * Scan a single collection for references to the target ID.
    */
   private async scanCollection(
-    collectionPath: LogicalPath | string,
+    collectionPath: LogicalPath,
     fields: FieldConfig[],
     targetId: string
   ): Promise<ReferenceInfo[]> {
@@ -202,7 +202,7 @@ export class DeletionChecker {
    * Helper to list all entries in a collection from the ID index.
    */
   private listEntriesInCollection(
-    collectionPath: LogicalPath | string
+    collectionPath: LogicalPath
   ): Array<{ relativePath: string; collection: LogicalPath; slug: EntrySlug }> {
     const entries: Array<{ relativePath: string; collection: LogicalPath; slug: EntrySlug }> = []
 

@@ -5,7 +5,7 @@ import { useSchemaManager } from './useSchemaManager'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, createApiClientWrapper } from './__test__/test-utils'
 import { mockSuccess, mockError } from '../../api/__test__/mock-client'
-import { unsafeAsLogicalPath } from '../../paths/test-utils'
+import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -36,7 +36,7 @@ describe('useSchemaManager', () => {
   describe('createCollection', () => {
     it('creates collection successfully', async () => {
       mockClient.schema.createCollection.mockResolvedValueOnce(
-        mockSuccess({ collectionPath: unsafeAsLogicalPath('posts'), contentId: 'abc123def456' })
+        mockSuccess({ collectionPath: unsafeAsLogicalPath('posts'), contentId: unsafeAsContentId('abc123def456') })
       )
 
       const onSchemaChange = vi.fn()
@@ -102,7 +102,7 @@ describe('useSchemaManager', () => {
 
       let updateResult = false
       await act(async () => {
-        updateResult = await result.current.updateCollection('posts', { label: 'Blog Posts' })
+        updateResult = await result.current.updateCollection(unsafeAsLogicalPath('posts'), { label: 'Blog Posts' })
       })
 
       expect(updateResult).toBe(true)
@@ -125,7 +125,7 @@ describe('useSchemaManager', () => {
 
       let updateResult = true
       await act(async () => {
-        updateResult = await result.current.updateCollection('nonexistent', { label: 'Test' })
+        updateResult = await result.current.updateCollection(unsafeAsLogicalPath('nonexistent'), { label: 'Test' })
       })
 
       expect(updateResult).toBe(false)
@@ -146,7 +146,7 @@ describe('useSchemaManager', () => {
 
       let deleteResult = false
       await act(async () => {
-        deleteResult = await result.current.deleteCollection('posts')
+        deleteResult = await result.current.deleteCollection(unsafeAsLogicalPath('posts'))
       })
 
       expect(deleteResult).toBe(true)
@@ -169,7 +169,7 @@ describe('useSchemaManager', () => {
 
       let deleteResult = true
       await act(async () => {
-        deleteResult = await result.current.deleteCollection('posts')
+        deleteResult = await result.current.deleteCollection(unsafeAsLogicalPath('posts'))
       })
 
       expect(deleteResult).toBe(false)
@@ -190,7 +190,7 @@ describe('useSchemaManager', () => {
 
       let addResult = false
       await act(async () => {
-        addResult = await result.current.addEntryType('posts', {
+        addResult = await result.current.addEntryType(unsafeAsLogicalPath('posts'), {
           name: 'featured',
           format: 'mdx',
           fields: 'postSchema',
@@ -219,7 +219,7 @@ describe('useSchemaManager', () => {
 
       let updateResult = false
       await act(async () => {
-        updateResult = await result.current.updateEntryType('posts', 'post', {
+        updateResult = await result.current.updateEntryType(unsafeAsLogicalPath('posts'), 'post', {
           label: 'Blog Post',
           maxItems: 100,
         })
@@ -246,7 +246,7 @@ describe('useSchemaManager', () => {
 
       let removeResult = false
       await act(async () => {
-        removeResult = await result.current.removeEntryType('posts', 'featured')
+        removeResult = await result.current.removeEntryType(unsafeAsLogicalPath('posts'), 'featured')
       })
 
       expect(removeResult).toBe(true)
@@ -269,7 +269,7 @@ describe('useSchemaManager', () => {
 
       let removeResult = true
       await act(async () => {
-        removeResult = await result.current.removeEntryType('posts', 'post')
+        removeResult = await result.current.removeEntryType(unsafeAsLogicalPath('posts'), 'post')
       })
 
       expect(removeResult).toBe(false)
@@ -290,7 +290,7 @@ describe('useSchemaManager', () => {
 
       let updateResult = false
       await act(async () => {
-        updateResult = await result.current.updateOrder('posts', ['id3', 'id1', 'id2'])
+        updateResult = await result.current.updateOrder(unsafeAsLogicalPath('posts'), ['id3', 'id1', 'id2'])
       })
 
       expect(updateResult).toBe(true)
@@ -316,7 +316,7 @@ describe('useSchemaManager', () => {
 
       let deleteResult = false
       await act(async () => {
-        deleteResult = await result.current.deleteEntry('posts/hello-world')
+        deleteResult = await result.current.deleteEntry(unsafeAsLogicalPath('posts/hello-world'))
       })
 
       expect(deleteResult).toBe(true)
@@ -339,7 +339,7 @@ describe('useSchemaManager', () => {
 
       let deleteResult = true
       await act(async () => {
-        deleteResult = await result.current.deleteEntry('posts/protected')
+        deleteResult = await result.current.deleteEntry(unsafeAsLogicalPath('posts/protected'))
       })
 
       expect(deleteResult).toBe(false)
@@ -375,7 +375,7 @@ describe('useSchemaManager', () => {
 
       // Complete the operation
       await act(async () => {
-        resolvePromise!(mockSuccess({ collectionPath: unsafeAsLogicalPath('posts'), contentId: 'abc123' }))
+        resolvePromise!(mockSuccess({ collectionPath: unsafeAsLogicalPath('posts'), contentId: unsafeAsContentId('abc123') }))
         await createPromise
       })
 

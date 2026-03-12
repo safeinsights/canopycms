@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
-import { unsafeAsLogicalPath } from '../paths/test-utils'
+import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 
 // Mock @mantine/modals
 vi.mock('@mantine/modals', () => ({
@@ -70,12 +70,12 @@ describe('Editor integration', () => {
   it('loads an entry and persists changes via the content API', async () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/posts/hello'),
-      contentId: 'def456ABC123', // 12-char content ID (must match API response)
+      contentId: unsafeAsContentId('def456ABC123'), // 12-char content ID (must match API response)
       label: 'Hello',
       status: 'entry',
       schema: [{ name: 'title', type: 'string' }],
       apiPath: '/api/canopycms/main/content/content/posts/hello',
-      collectionId: 'content/posts',
+      collectionPath: unsafeAsLogicalPath('content/posts'),
       collectionName: 'posts',
       slug: 'hello',
       format: 'json',
@@ -128,7 +128,7 @@ describe('Editor integration', () => {
                 {
                   logicalPath: entry.path,
                   contentId: 'def456ABC123',
-                  collectionId: entry.collectionId,
+                  collectionPath: entry.collectionPath,
                   collectionName: entry.collectionName,
                   slug: entry.slug,
                   format: entry.format,

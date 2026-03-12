@@ -2,9 +2,10 @@ import type { Meta, StoryObj } from '@storybook/react'
 import { useState } from 'react'
 
 import type { FieldConfig } from '../config'
+import type { LogicalPath } from '../paths'
 import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
-import { unsafeAsLogicalPath } from '../paths/test-utils'
+import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 
 const meta: Meta<typeof Editor> = {
   title: 'Editor/Editor',
@@ -39,11 +40,11 @@ const baseEntries: EditorEntry[] = [
     schema: homeFields,
     apiPath: '/api/canopycms/main/content/home',
     previewSrc: '/',
-    collectionId: 'home',
+    collectionPath: unsafeAsLogicalPath('home'),
     collectionName: 'home',
     format: 'json',
     type: 'entry',
-    contentId: 'test123456789',
+    contentId: unsafeAsContentId('test123456789'),
   },
   {
     path: unsafeAsLogicalPath('posts/hello-world'),
@@ -52,11 +53,11 @@ const baseEntries: EditorEntry[] = [
     schema: postFields,
     apiPath: '/api/canopycms/main/content/posts/hello-world',
     previewSrc: '/posts/hello-world',
-    collectionId: 'posts',
+    collectionPath: unsafeAsLogicalPath('posts'),
     collectionName: 'posts',
     format: 'json',
     type: 'entry',
-    contentId: 'abc987XYZ654',
+    contentId: unsafeAsContentId('abc987XYZ654'),
   },
 ]
 
@@ -68,22 +69,22 @@ export const WithCollections: Story = {
       { path: unsafeAsLogicalPath('posts'), name: 'posts', label: 'Posts', format: 'json' as const, type: 'collection' as const },
     ]
 
-    const handleCreateEntry = (collectionId: string) => {
-      const slug = window.prompt(`New ${collectionId} slug?`, 'new-post')
+    const handleCreateEntry = (collectionPath: LogicalPath) => {
+      const slug = window.prompt(`New ${collectionPath} slug?`, 'new-post')
       if (!slug) return
       const newEntry: EditorEntry = {
-        path: unsafeAsLogicalPath(`${collectionId}/${slug}`),
+        path: unsafeAsLogicalPath(`${collectionPath}/${slug}`),
         label: slug,
         status: 'draft',
-        schema: collectionId === 'home' ? homeFields : postFields,
-        apiPath: `/api/canopycms/main/content/${collectionId}/${slug}`,
-        previewSrc: collectionId === 'posts' ? `/posts/${slug}` : '/',
-        collectionId,
-        collectionName: collectionId,
+        schema: collectionPath === 'home' ? homeFields : postFields,
+        apiPath: `/api/canopycms/main/content/${collectionPath}/${slug}`,
+        previewSrc: collectionPath === 'posts' ? `/posts/${slug}` : '/',
+        collectionPath,
+        collectionName: collectionPath,
         slug,
         format: 'json',
-        type: collectionId === 'home' ? 'entry' : 'entry',
-        contentId: `new${Date.now()}`,
+        type: collectionPath === 'home' ? 'entry' : 'entry',
+        contentId: unsafeAsContentId(`new${Date.now()}`),
       }
       setEntries((prev) => [...prev, newEntry])
     }

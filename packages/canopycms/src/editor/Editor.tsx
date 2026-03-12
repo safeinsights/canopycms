@@ -30,18 +30,18 @@ import { RenameEntryModal } from './components/RenameEntryModal'
 import { EntryCreateModal } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
-import type { LogicalPath } from '../paths/types'
+import type { LogicalPath, ContentId } from '../paths/types'
 import { useApiClient } from './context'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
-  contentId: string // 12-char content ID (required - used for draft keying)
+  contentId: ContentId // 12-char content ID (required - used for draft keying)
   label: string
   status?: string
   schema: readonly FieldConfig[]
   apiPath: string
   previewSrc?: string
-  collectionId?: string
+  collectionPath?: LogicalPath
   collectionName?: string
   slug?: string
   format?: ContentFormat
@@ -63,7 +63,7 @@ export interface EditorEntryType {
 
 export interface EditorCollection {
   path: LogicalPath // Logical path
-  contentId?: string // 12-char content ID (optional, from directory name)
+  contentId?: ContentId // 12-char content ID (optional, from directory name)
   name: string
   label?: string
   format: ContentFormat // Default entry type's format (for backwards compatibility)
@@ -86,7 +86,7 @@ export interface EditorProps {
   initialSelectedId?: string
   initialValues?: Record<string, FormValue>
   renderPreview?: (entry: EditorEntry, value: FormValue | undefined) => React.ReactNode
-  onCreateEntry?: (collectionId: string) => Promise<void> | void
+  onCreateEntry?: (collectionPath: LogicalPath) => Promise<void> | void
   themeOptions?: CanopyThemeOptions
   previewBaseByCollection?: Record<string, string>
   currentUser?: string
@@ -148,9 +148,9 @@ export const Editor: React.FC<EditorProps> = ({
 
   // Delete confirmation modal state
   const [deleteCollectionModalOpen, setDeleteCollectionModalOpen] = useState(false)
-  const [deletingCollectionPath, setDeletingCollectionPath] = useState<string | null>(null)
+  const [deletingCollectionPath, setDeletingCollectionPath] = useState<LogicalPath | null>(null)
   const [deleteEntryModalOpen, setDeleteEntryModalOpen] = useState(false)
-  const [deletingEntryPath, setDeletingEntryPath] = useState<string | null>(null)
+  const [deletingEntryPath, setDeletingEntryPath] = useState<LogicalPath | null>(null)
   const [deleteInProgress, setDeleteInProgress] = useState(false)
 
   // Preview data with resolved references for live preview
@@ -474,7 +474,7 @@ export const Editor: React.FC<EditorProps> = ({
     }
   }
 
-  const handleDeleteCollection = (collectionPath: string) => {
+  const handleDeleteCollection = (collectionPath: LogicalPath) => {
     setDeletingCollectionPath(collectionPath)
     setDeleteCollectionModalOpen(true)
   }
@@ -491,7 +491,7 @@ export const Editor: React.FC<EditorProps> = ({
     }
   }
 
-  const handleDeleteEntry = (entryPath: string) => {
+  const handleDeleteEntry = (entryPath: LogicalPath) => {
     setDeletingEntryPath(entryPath)
     setDeleteEntryModalOpen(true)
   }
@@ -540,7 +540,7 @@ export const Editor: React.FC<EditorProps> = ({
     }
   }
 
-  const handleReorderEntry = async (collectionPath: string, contentId: string, direction: 'up' | 'down') => {
+  const handleReorderEntry = async (collectionPath: LogicalPath, contentId: string, direction: 'up' | 'down') => {
     // Find the collection to get its current order array
     const findCollection = (cols: EditorCollection[] | undefined, path: string): EditorCollection | undefined => {
       if (!cols) return undefined
@@ -561,11 +561,11 @@ export const Editor: React.FC<EditorProps> = ({
       currentOrder = [...collection.order]
     } else {
       // Fallback: build order from entries and children
-      const collectionEntries = entriesState.filter((e) => e.collectionId === collectionPath)
-      const entryIds = collectionEntries.map((e) => e.contentId).filter((id): id is string => !!id)
+      const collectionEntries = entriesState.filter((e) => e.collectionPath === collectionPath)
+      const entryIds = collectionEntries.map((e) => e.contentId).filter((id): id is ContentId => !!id)
       const subCollectionIds = (collection.children ?? [])
         .map((child) => child.contentId)
-        .filter((id): id is string => !!id)
+        .filter((id): id is ContentId => !!id)
       currentOrder = [...entryIds, ...subCollectionIds]
     }
 
@@ -598,10 +598,10 @@ export const Editor: React.FC<EditorProps> = ({
 
     const grouped = new Map<string, EntryNavCollection['entries']>()
     entriesState.forEach((entry) => {
-      if (!entry.collectionId) return
-      const list = grouped.get(entry.collectionId) ?? []
+      if (!entry.collectionPath) return
+      const list = grouped.get(entry.collectionPath) ?? []
       list.push({ path: entry.path, label: entry.label, status: entry.status, contentId: entry.contentId })
-      grouped.set(entry.collectionId, list)
+      grouped.set(entry.collectionPath, list)
     })
 
     const build = (node: EditorCollection): EntryNavCollection => {

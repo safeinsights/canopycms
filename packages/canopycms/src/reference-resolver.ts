@@ -3,7 +3,7 @@ import path from 'node:path'
 import type { ContentStore } from './content-store'
 import type { ContentIdIndex } from './content-id-index'
 import { extractSlugFromFilename } from './content-id-index'
-import type { LogicalPath, EntrySlug } from './paths'
+import type { LogicalPath, PhysicalPath, EntrySlug } from './paths'
 
 export interface ResolvedReference {
   id: string
@@ -86,7 +86,7 @@ export class ReferenceResolver {
    * @param search - Optional search string to filter options
    */
   async loadReferenceOptions(
-    collections: string[],
+    collections: LogicalPath[],
     displayField = 'title',
     search?: string
   ): Promise<ReferenceOption[]> {
@@ -94,8 +94,6 @@ export class ReferenceResolver {
 
     for (const collectionPath of collections) {
       // Get all entries in this collection
-      // Note: This requires a listCollectionEntries method on ContentStore
-      // which we'll need to implement or work around
       const entries = await this.listEntriesInCollection(collectionPath)
 
       for (const entry of entries) {
@@ -110,7 +108,7 @@ export class ReferenceResolver {
           const filename = path.basename(entry.relativePath)
           const normalizedSlug = extractSlugFromFilename(filename)
 
-          const doc = await this.store.read(entry.collection as LogicalPath, normalizedSlug as EntrySlug)
+          const doc = await this.store.read(entry.collection, normalizedSlug as EntrySlug)
           const label = String(doc.data[displayField] || doc.data.title || normalizedSlug)
 
           // Apply search filter if provided
@@ -138,10 +136,9 @@ export class ReferenceResolver {
    * Helper to list all entries in a collection.
    */
   private async listEntriesInCollection(
-    collectionPath: string
-  ): Promise<Array<{ relativePath: string; collection: string; slug: string }>> {
-    // collectionPath comes from schema field.collections config (schema-defined logical paths)
-    return this.store.listCollectionEntries(collectionPath as LogicalPath)
+    collectionPath: LogicalPath
+  ): Promise<Array<{ relativePath: PhysicalPath; collection: LogicalPath; slug: EntrySlug }>> {
+    return this.store.listCollectionEntries(collectionPath)
   }
 
   /**

@@ -5,7 +5,7 @@ import type { EditorEntry } from '../Editor'
 import type { CommentThread } from '../../comment-store'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, setupMockConsole, createApiClientWrapper } from './__test__/test-utils'
-import { unsafeAsLogicalPath } from '../../paths/test-utils'
+import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -30,7 +30,7 @@ describe('useCommentSystem', () => {
   const mockEntry: EditorEntry = {
     path: unsafeAsLogicalPath('entry1'),
     label: 'Test Entry',
-    collectionId: 'posts',
+    collectionPath: unsafeAsLogicalPath('posts'),
     collectionName: 'posts',
     slug: 'test',
     type: 'entry',
@@ -38,7 +38,7 @@ describe('useCommentSystem', () => {
     format: 'mdx',
     schema: [],
     previewSrc: 'preview-entry1',
-    contentId: 'test123456789',
+    contentId: unsafeAsContentId('test123456789'),
   }
 
   const mockComments: CommentThread[] = [

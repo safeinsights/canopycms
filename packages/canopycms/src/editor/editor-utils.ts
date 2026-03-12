@@ -4,7 +4,8 @@ import type { FormValue } from './FormRenderer'
 import type { EditorEntry, EditorCollection, EditorEntryType } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
 // Import directly from normalize to avoid pulling in server-only branch.ts
-import { normalizeCollectionId } from '../paths/normalize'
+import { normalizeCollectionPath } from '../paths/normalize'
+export { normalizeCollectionPath }
 import type { LogicalPath } from '../paths/types'
 
 export interface PreviewContext {
@@ -19,28 +20,9 @@ export const encodeSlug = (value?: string): string =>
     .map((segment) => encodeURIComponent(segment))
     .join('/')
 
-/**
- * Normalizes a collection ID by stripping the content root prefix.
- *
- * Collection IDs typically include the content root (e.g., "content/posts"),
- * but for URLs and display purposes we often need just the path ("posts").
- *
- * @param collectionId - The full collection ID (e.g., "content/docs/api")
- * @returns The normalized path without the content prefix (e.g., "docs/api")
- *
- * @example
- * ```ts
- * normalizeCollectionPath('content/posts')  // => 'posts'
- * normalizeCollectionPath('content/docs/api')  // => 'docs/api'
- * normalizeCollectionPath('posts')  // => 'posts' (no-op if already normalized)
- * ```
- */
-export const normalizeCollectionPath = (collectionId: string): string => {
-  return normalizeCollectionId(collectionId)
-}
 
 export const buildPreviewSrc = (
-  entry: { collectionId?: string; collectionName?: string; slug?: string; itemType?: string; previewSrc?: string },
+  entry: { collectionPath?: string; collectionName?: string; slug?: string; itemType?: string; previewSrc?: string },
   { branchName, previewBaseByCollection, contentRoot }: PreviewContext & { contentRoot?: string }
 ): string => {
   if (entry.previewSrc) return entry.previewSrc
@@ -50,8 +32,8 @@ export const buildPreviewSrc = (
     return `${url}${separator}branch=${encodeURIComponent(branchName)}`
   }
 
-  // Root-level entries have collectionId === contentRoot (e.g., 'content')
-  const isRootEntry = contentRoot && entry.collectionId === contentRoot
+  // Root-level entries have collectionPath === contentRoot (e.g., 'content')
+  const isRootEntry = contentRoot && entry.collectionPath === contentRoot
 
   if (isRootEntry) {
     // Check for custom preview URL in previewBaseByCollection
@@ -64,11 +46,11 @@ export const buildPreviewSrc = (
   }
 
   const base =
-    (entry.collectionId && previewBaseByCollection?.[entry.collectionId]) ??
+    (entry.collectionPath && previewBaseByCollection?.[entry.collectionPath]) ??
     (entry.collectionName && previewBaseByCollection?.[entry.collectionName])
   if (!base) {
     // Build URL from collection path + slug
-    const collectionPath = entry.collectionId ? normalizeCollectionPath(entry.collectionId) : ''
+    const collectionPath = entry.collectionPath ? normalizeCollectionPath(entry.collectionPath) : ''
     const encoded = encodeSlug(entry.slug)
     const segments = [collectionPath, encoded].filter(Boolean)
     const url = segments.length > 0 ? `/${segments.join('/')}` : '/'
@@ -95,7 +77,7 @@ export const normalizeContentPayload = (raw: unknown): FormValue => {
   return (data as FormValue) ?? {}
 }
 
-export const buildWritePayload = (entry: { collectionId?: string; slug?: string; format?: ContentFormat }, value: FormValue) => {
+export const buildWritePayload = (entry: { collectionPath?: string; slug?: string; format?: ContentFormat }, value: FormValue) => {
   if (!entry.format) return value
   if (entry.format === 'json') {
     return {
@@ -236,7 +218,7 @@ export function convertSchemaTreeToEditorCollections(
 interface BuildEntriesFromListParams {
   response: ListEntriesResponse
   branchName: string
-  resolvePreviewSrc: (entry: Pick<CollectionItem, 'collectionId' | 'collectionName' | 'slug' | 'entryType'>) => string
+  resolvePreviewSrc: (entry: Pick<CollectionItem, 'collectionPath' | 'collectionName' | 'slug' | 'entryType'>) => string
   contentRoot: string
   flatSchema: FlatSchemaItem[]
 }
@@ -251,11 +233,11 @@ export const buildEntriesFromListResponse = ({
   return response.entries.map((entry) => {
     // Resolve schema from flatSchema using parentPath + name
     let schema: readonly import('../config').FieldConfig[] = []
-    if (entry.collectionId && entry.entryType) {
+    if (entry.collectionPath && entry.entryType) {
       const entryTypeItem = flatSchema.find(
         (item) =>
           item.type === 'entry-type' &&
-          item.parentPath === entry.collectionId &&
+          item.parentPath === entry.collectionPath &&
           item.name === entry.entryType
       )
       if (entryTypeItem && entryTypeItem.type === 'entry-type') {
@@ -263,20 +245,20 @@ export const buildEntriesFromListResponse = ({
       }
     }
 
-    const isRootEntry = entry.collectionId === contentRoot
+    const isRootEntry = entry.collectionPath === contentRoot
     const apiPath = isRootEntry
       ? `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.slug)}`
-      : `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionId)}/${encodeURIComponent(entry.slug)}`
+      : `/api/canopycms/${branchName}/content/${encodeURIComponent(entry.collectionPath)}/${encodeURIComponent(entry.slug)}`
 
     return {
       path: entry.logicalPath,
       contentId: entry.contentId,
-      label: entry.title || entry.slug || entry.collectionName || entry.collectionId,
+      label: entry.title || entry.slug || entry.collectionName || entry.collectionPath,
       status: entry.exists === false ? 'missing' : entry.entryType ?? 'entry',
       schema,
       apiPath,
       previewSrc: resolvePreviewSrc(entry),
-      collectionId: entry.collectionId,
+      collectionPath: entry.collectionPath,
       collectionName: entry.collectionName,
       slug: entry.slug,
       format: entry.format,
@@ -319,7 +301,7 @@ export const buildCollectionLabels = (collections?: EditorCollection[]): Map<str
  * @example
  * ```ts
  * // Entry in nested collection
- * const entry = { collectionId: 'content/docs/guides', slug: 'config' }
+ * const entry = { collectionPath: 'content/docs/guides', slug: 'config' }
  * const labels = new Map([
  *   ['content', 'Content'],
  *   ['content/docs', 'Documentation'],
@@ -337,10 +319,10 @@ export const buildBreadcrumbSegments = (
   const segments = ['All Files']
 
   // Show collection hierarchy for entries that belong to a collection
-  if (currentEntry.collectionId) {
-    // Split the collectionId into path parts and build cumulative paths
+  if (currentEntry.collectionPath) {
+    // Split the collectionPath into path parts and build cumulative paths
     // e.g., "content/documentation/guides" -> ["content/documentation", "content/documentation/guides"]
-    const parts = currentEntry.collectionId.split('/').filter(Boolean)
+    const parts = currentEntry.collectionPath.split('/').filter(Boolean)
     for (let i = 1; i < parts.length; i++) {
       const pathUpToHere = parts.slice(0, i + 1).join('/')
       const label = collectionLabels.get(pathUpToHere)

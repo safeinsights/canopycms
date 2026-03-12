@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   normalizeFilesystemPath,
-  normalizeCollectionId,
+  normalizeCollectionPath,
   hasTraversalSequence,
   createLogicalPath,
   createPhysicalPath,
@@ -35,26 +35,26 @@ describe('normalizeFilesystemPath', () => {
   })
 })
 
-describe('normalizeCollectionId', () => {
+describe('normalizeCollectionPath', () => {
   it('removes content/ prefix', () => {
-    expect(normalizeCollectionId('content/posts')).toBe('posts')
+    expect(normalizeCollectionPath('content/posts')).toBe('posts')
   })
 
   it('removes content/ prefix from nested paths', () => {
-    expect(normalizeCollectionId('content/docs/api')).toBe('docs/api')
+    expect(normalizeCollectionPath('content/docs/api')).toBe('docs/api')
   })
 
   it('leaves paths without content/ prefix unchanged', () => {
-    expect(normalizeCollectionId('posts')).toBe('posts')
-    expect(normalizeCollectionId('docs/api')).toBe('docs/api')
+    expect(normalizeCollectionPath('posts')).toBe('posts')
+    expect(normalizeCollectionPath('docs/api')).toBe('docs/api')
   })
 
   it('normalizes slashes before stripping prefix', () => {
-    expect(normalizeCollectionId('content\\blog\\posts')).toBe('blog/posts')
+    expect(normalizeCollectionPath('content\\blog\\posts')).toBe('blog/posts')
   })
 
   it('handles custom content root', () => {
-    expect(normalizeCollectionId('src/posts', 'src')).toBe('posts')
+    expect(normalizeCollectionPath('src/posts', 'src')).toBe('posts')
   })
 })
 
