@@ -31,6 +31,8 @@ export type {
   ObjectFieldConfig,
   CustomFieldConfig,
   // Schema types
+  EntrySchema,
+  BranchSchema,
   EntryTypeConfig,
   CollectionConfig,
   RootCollectionConfig,

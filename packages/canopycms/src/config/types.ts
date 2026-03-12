@@ -113,8 +113,16 @@ export type MediaConfig =
   | { adapter: string; publicBaseUrl?: string }
 
 /**
+ * Field definitions for one entry type — the array of FieldConfig that
+ * describes which fields an entry of this type contains.
+ *
+ * Contrast with BranchSchema, which is the full collection tree for a branch.
+ */
+export type EntrySchema = readonly FieldConfig[]
+
+/**
  * Entry type config: defines a type of content within a collection.
- * Each type has its own schema (fields) and can have cardinality constraints.
+ * Each type has its own entry schema (fields) and can have cardinality constraints.
  *
  * Examples:
  * - { name: 'post', format: 'mdx', fields: postSchema } - unlimited posts
@@ -123,7 +131,9 @@ export type MediaConfig =
 export type EntryTypeConfig = {
   readonly name: string
   readonly format: ContentFormat
-  readonly fields: readonly FieldConfig[]
+  readonly fields: EntrySchema
+  /** Entry schema registry key (e.g., "postSchema"). Set during schema resolution. */
+  readonly fieldsRef?: string
   readonly label?: string
   readonly default?: boolean // Is this the default type for "Add" button?
   readonly maxItems?: number // Limit instances (e.g., 1 = only one entry allowed)
@@ -157,6 +167,14 @@ export type RootCollectionConfig = {
   /** Ordering of root items by embedded ID. Items not in order appear at end alphabetically. */
   readonly order?: readonly string[]
 }
+
+/**
+ * The full collection structure tree for one branch — the resolved schema
+ * describing all collections, entry types, and their fields.
+ *
+ * Contrast with EntrySchema, which is the field definitions for a single entry type.
+ */
+export type BranchSchema = RootCollectionConfig
 
 // Editor configuration
 export interface CanopyEditorConfig {
@@ -258,7 +276,9 @@ export type FlatSchemaItem =
       /** Path of the parent collection */
       parentPath: LogicalPath
       format: ContentFormat
-      fields: readonly FieldConfig[]
+      fields: EntrySchema
+      /** Entry schema registry key (e.g., "postSchema"). Set during schema resolution. */
+      fieldsRef?: string
       default?: boolean
       maxItems?: number
     }
