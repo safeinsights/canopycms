@@ -9,14 +9,20 @@ export const metadata: Metadata = {
   description: 'Schema-driven form + preview using mock data',
 }
 
+const authMode = process.env.NEXT_PUBLIC_CANOPY_AUTH_MODE || 'dev'
+
 const RootLayout = ({ children }: { children: React.ReactNode }) => {
-  return (
-    <ClerkProvider>
-      <html lang="en">
-        <body>{children}</body>
-      </html>
-    </ClerkProvider>
+  const content = (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
   )
+
+  if (authMode === 'clerk') {
+    return <ClerkProvider>{content}</ClerkProvider>
+  }
+
+  return content
 }
 
 export default RootLayout
