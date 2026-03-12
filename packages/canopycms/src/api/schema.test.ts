@@ -3,12 +3,12 @@ import type { ApiContext, ApiRequest } from './types'
 import type { FlatSchemaItem, RootCollectionConfig, FieldConfig } from '../config'
 import type { LogicalPath } from '../paths/types'
 
-// Mock the SchemaStore
+// Mock the SchemaOps
 vi.mock('../schema/schema-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../schema/schema-store')>()
   return {
     ...actual,
-    SchemaStore: vi.fn().mockImplementation(() => ({
+    SchemaOps: vi.fn().mockImplementation(() => ({
       createCollection: vi.fn(),
       updateCollection: vi.fn(),
       deleteCollection: vi.fn(),
@@ -35,7 +35,7 @@ import {
   removeEntryType,
   updateOrder,
 } from './schema'
-import { SchemaStore } from '../schema/schema-store'
+import { SchemaOps } from '../schema/schema-store'
 import { unsafeAsBranchName, unsafeAsCollectionSlug, unsafeAsLogicalPath } from '../paths/test-utils'
 
 describe('Schema API', () => {
@@ -88,7 +88,7 @@ describe('Schema API', () => {
       }),
       services: {
         config: { schema: mockSchema },
-        schemaRegistry: mockSchemaRegistry,
+        entrySchemaRegistry: mockSchemaRegistry,
         checkContentAccess: vi.fn().mockResolvedValue({ allowed: true }),
       },
     } as unknown as ApiContext
@@ -152,7 +152,7 @@ describe('Schema API', () => {
           .mockResolvedValueOnce(3) // post has 3 entries
           .mockResolvedValueOnce(0), // page has 0 entries
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await getCollection.handler(mockCtx, mockReq, {
         branch: unsafeAsBranchName('main'),
@@ -248,7 +248,7 @@ describe('Schema API', () => {
           contentId: 'abc123def456',
         }),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await createCollection.handler(
         mockCtx,
@@ -290,7 +290,7 @@ describe('Schema API', () => {
       const mockStore = {
         updateCollection: vi.fn().mockResolvedValue(undefined),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await updateCollection.handler(
         mockCtx,
@@ -343,7 +343,7 @@ describe('Schema API', () => {
       const mockStore = {
         updateCollection: vi.fn().mockResolvedValue(undefined),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await updateCollection.handler(
         mockCtx,
@@ -364,7 +364,7 @@ describe('Schema API', () => {
       const mockStore = {
         deleteCollection: vi.fn().mockResolvedValue(undefined),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await deleteCollection.handler(mockCtx, mockReq, {
         branch: unsafeAsBranchName('main'),
@@ -380,7 +380,7 @@ describe('Schema API', () => {
       const mockStore = {
         deleteCollection: vi.fn().mockRejectedValue(new Error('Collection must be empty')),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await deleteCollection.handler(mockCtx, mockReq, {
         branch: unsafeAsBranchName('main'),
@@ -416,7 +416,7 @@ describe('Schema API', () => {
       const mockStore = {
         addEntryType: vi.fn().mockResolvedValue(undefined),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await addEntryType.handler(
         mockCtx,
@@ -434,7 +434,7 @@ describe('Schema API', () => {
       const mockStore = {
         addEntryType: vi.fn().mockRejectedValue(new Error('Entry type "post" already exists')),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await addEntryType.handler(
         mockCtx,
@@ -475,7 +475,7 @@ describe('Schema API', () => {
         updateEntryType: vi.fn().mockResolvedValue(undefined),
         countEntriesUsingType: vi.fn().mockResolvedValue(0),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await updateEntryType.handler(
         mockCtx,
@@ -498,7 +498,7 @@ describe('Schema API', () => {
         updateEntryType: vi.fn().mockResolvedValue(undefined),
         countEntriesUsingType: vi.fn().mockResolvedValue(5),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await updateEntryType.handler(
         mockCtx,
@@ -519,7 +519,7 @@ describe('Schema API', () => {
         updateEntryType: vi.fn().mockResolvedValue(undefined),
         countEntriesUsingType: vi.fn().mockResolvedValue(3),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await updateEntryType.handler(
         mockCtx,
@@ -541,7 +541,7 @@ describe('Schema API', () => {
         updateEntryType: vi.fn().mockResolvedValue(undefined),
         countEntriesUsingType: vi.fn().mockResolvedValue(1),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await updateEntryType.handler(
         mockCtx,
@@ -563,7 +563,7 @@ describe('Schema API', () => {
         updateEntryType: vi.fn().mockResolvedValue(undefined),
         countEntriesUsingType: vi.fn().mockResolvedValue(0),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await updateEntryType.handler(
         mockCtx,
@@ -583,7 +583,7 @@ describe('Schema API', () => {
         updateEntryType: vi.fn().mockResolvedValue(undefined),
         countEntriesUsingType: vi.fn().mockResolvedValue(5),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await updateEntryType.handler(
         mockCtx,
@@ -605,7 +605,7 @@ describe('Schema API', () => {
         updateEntryType: vi.fn().mockResolvedValue(undefined),
         countEntriesUsingType: vi.fn().mockResolvedValue(1),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await updateEntryType.handler(
         mockCtx,
@@ -645,7 +645,7 @@ describe('Schema API', () => {
       const mockStore = {
         removeEntryType: vi.fn().mockResolvedValue(undefined),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await removeEntryType.handler(mockCtx, mockReq, {
         branch: unsafeAsBranchName('main'),
@@ -661,7 +661,7 @@ describe('Schema API', () => {
       const mockStore = {
         removeEntryType: vi.fn().mockRejectedValue(new Error('Cannot remove last entry type')),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await removeEntryType.handler(mockCtx, mockReq, {
         branch: unsafeAsBranchName('main'),
@@ -698,7 +698,7 @@ describe('Schema API', () => {
       const mockStore = {
         updateOrder: vi.fn().mockResolvedValue(undefined),
       }
-      vi.mocked(SchemaStore).mockImplementation(() => mockStore as any)
+      vi.mocked(SchemaOps).mockImplementation(() => mockStore as any)
 
       const result = await updateOrder.handler(
         mockCtx,

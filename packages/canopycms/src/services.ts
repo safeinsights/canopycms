@@ -15,7 +15,7 @@ import { SettingsWorkspaceManager } from './settings-workspace'
 import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
 import { operatingStrategy } from './operating-mode'
-import { SchemaCacheRegistry } from './schema-cache-registry'
+import { BranchSchemaCache } from './schema-cache-registry'
 
 /**
  * Parse bootstrap admin IDs from environment variable.
@@ -34,10 +34,10 @@ export const getBootstrapAdminIds = (): Set<string> => {
 
 export interface CanopyServices {
   config: CanopyConfig
-  /** Schema registry for access by admin UI */
-  schemaRegistry: Record<string, readonly FieldConfig[]>
-  /** Per-branch schema cache registry */
-  schemaCacheRegistry: import('./schema-cache-registry').SchemaCacheRegistry
+  /** Entry schema registry mapping entry schema names to field definitions */
+  entrySchemaRegistry: Record<string, readonly FieldConfig[]>
+  /** Per-branch schema cache */
+  branchSchemaCache: import('./schema-cache-registry').BranchSchemaCache
   checkBranchAccess: (context: BranchContext, user: CanopyUser) => ReturnType<ReturnType<typeof createCheckBranchAccess>>
   checkPathAccess: ReturnType<typeof createCheckPathAccess>
   checkContentAccess: ReturnType<typeof createCheckContentAccess>
@@ -71,16 +71,16 @@ export interface CanopyServices {
  */
 export interface CreateCanopyServicesOptions {
   /**
-   * Schema registry for resolving .collection.json references.
-   * Maps schema names to field definitions.
+   * Entry schema registry for resolving .collection.json references.
+   * Maps entry schema names to field definitions.
    */
-  schemaRegistry?: Record<string, readonly FieldConfig[]>
+  entrySchemaRegistry?: Record<string, readonly FieldConfig[]>
   /**
-   * Test-only: Custom schema cache registry.
-   * When provided, bypasses the default SchemaCacheRegistry creation.
+   * Test-only: Custom branch schema cache.
+   * When provided, bypasses the default BranchSchemaCache creation.
    * @internal
    */
-  schemaCacheRegistry?: SchemaCacheRegistry
+  branchSchemaCache?: BranchSchemaCache
 }
 
 /**
@@ -88,7 +88,7 @@ export interface CreateCanopyServicesOptions {
  * Intended to be called once at startup and injected where needed
  * (e.g., request handlers, loaders).
  *
- * Schema is now loaded per-branch via SchemaCacheRegistry, not at startup.
+ * Schema is now loaded per-branch via BranchSchemaCache, not at startup.
  *
  * @param config - Validated Canopy configuration
  * @param options - Optional settings including schema registry
@@ -102,7 +102,7 @@ export const createCanopyServices = async (
 
 /**
  * Create services for testing.
- * Schema is loaded per-branch via SchemaCacheRegistry.
+ * Schema is loaded per-branch via BranchSchemaCache.
  *
  * @param config - Validated Canopy configuration
  * @param options - Optional settings including schema registry
@@ -129,8 +129,8 @@ async function _createCanopyServicesInternal(
   // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
 
-  // Create per-branch schema cache registry (or use provided one for testing)
-  const schemaCacheRegistry = options.schemaCacheRegistry ?? new SchemaCacheRegistry(config.mode)
+  // Create per-branch schema cache (or use provided one for testing)
+  const branchSchemaCache = options.branchSchemaCache ?? new BranchSchemaCache(config.mode)
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
   // Path permissions are loaded dynamically from settings branch or .canopy-dev/permissions.json at request time.
@@ -314,8 +314,8 @@ async function _createCanopyServicesInternal(
 
   return {
     config,
-    schemaRegistry: options.schemaRegistry ?? {},
-    schemaCacheRegistry,
+    entrySchemaRegistry: options.entrySchemaRegistry ?? {},
+    branchSchemaCache,
     checkBranchAccess,
     checkPathAccess,
     checkContentAccess,

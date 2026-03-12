@@ -110,13 +110,13 @@ const updateEntryTypeInputSchema = z.object({
 })
 
 // ============================================================================
-// SchemaStore Class
+// SchemaOps Class
 // ============================================================================
 
-export class SchemaStore {
+export class SchemaOps {
   constructor(
     private readonly contentRoot: string,
-    private readonly schemaRegistry: Record<string, readonly FieldConfig[]>,
+    private readonly entrySchemaRegistry: Record<string, readonly FieldConfig[]>,
     private readonly services?: CanopyServices
   ) {}
 
@@ -132,7 +132,7 @@ export class SchemaStore {
     if (this.services) {
       // Get branchRoot from contentRoot (parent directory)
       const branchRoot = path.dirname(this.contentRoot)
-      await this.services.schemaCacheRegistry.invalidate(branchRoot)
+      await this.services.branchSchemaCache.invalidate(branchRoot)
     }
   }
 
@@ -144,7 +144,7 @@ export class SchemaStore {
    * Validate that a schema reference exists in the registry
    */
   validateSchemaReference(schemaKey: string): boolean {
-    return schemaKey in this.schemaRegistry
+    return schemaKey in this.entrySchemaRegistry
   }
 
   /**
@@ -153,7 +153,7 @@ export class SchemaStore {
   private validateEntryTypeSchemas(entryTypes: CreateEntryTypeInput[]): { valid: boolean; error?: string } {
     for (const entryType of entryTypes) {
       if (!this.validateSchemaReference(entryType.fields)) {
-        const available = Object.keys(this.schemaRegistry).join(', ')
+        const available = Object.keys(this.entrySchemaRegistry).join(', ')
         return {
           valid: false,
           error: `Schema reference "${entryType.fields}" not found. Available: ${available}`,
@@ -515,7 +515,7 @@ export class SchemaStore {
 
     // Validate schema reference
     if (!this.validateSchemaReference(entryType.fields)) {
-      const available = Object.keys(this.schemaRegistry).join(', ')
+      const available = Object.keys(this.entrySchemaRegistry).join(', ')
       throw new Error(`Schema reference "${entryType.fields}" not found. Available: ${available}`)
     }
 
@@ -570,7 +570,7 @@ export class SchemaStore {
 
     // Validate schema reference if provided
     if (updates.fields && !this.validateSchemaReference(updates.fields)) {
-      const available = Object.keys(this.schemaRegistry).join(', ')
+      const available = Object.keys(this.entrySchemaRegistry).join(', ')
       throw new Error(`Schema reference "${updates.fields}" not found. Available: ${available}`)
     }
 

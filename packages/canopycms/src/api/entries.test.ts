@@ -480,7 +480,7 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schemaRegistry,
+        entrySchemaRegistry: schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -621,7 +621,7 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schemaRegistry,
+        entrySchemaRegistry: schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -736,7 +736,7 @@ describe('sortEntriesByOrder', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schemaRegistry,
+        entrySchemaRegistry: schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -825,7 +825,7 @@ describe('sortEntriesByOrder', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schemaRegistry,
+        entrySchemaRegistry: schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -933,7 +933,7 @@ describe('dynamic collection discovery', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schemaRegistry,
+        entrySchemaRegistry: schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -1009,7 +1009,7 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schemaRegistry,
+        entrySchemaRegistry: schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -1090,7 +1090,7 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schemaRegistry,
+        entrySchemaRegistry: schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -1156,7 +1156,7 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schemaRegistry,
+        entrySchemaRegistry: schemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -1205,7 +1205,7 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        schemaRegistry: {},
+        entrySchemaRegistry: {},
         checkBranchAccess,
         checkContentAccess,
       },

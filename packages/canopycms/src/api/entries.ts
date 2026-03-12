@@ -542,8 +542,8 @@ const deleteEntryHandler = async (
 
     // Update the collection's order array to remove the deleted item
     if (contentId && collection.type === 'collection' && collection.order) {
-      const { SchemaStore } = await import('../schema/schema-store')
-      const schemaStore = new SchemaStore(context.branchRoot, ctx.services.schemaRegistry)
+      const { SchemaOps } = await import('../schema/schema-store')
+      const schemaStore = new SchemaOps(context.branchRoot, ctx.services.entrySchemaRegistry)
       const newOrder = collection.order.filter((id) => id !== contentId)
       if (newOrder.length !== collection.order.length) {
         await schemaStore.updateOrder(collectionPath as LogicalPath, newOrder as string[])

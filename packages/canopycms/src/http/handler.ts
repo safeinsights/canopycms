@@ -46,9 +46,9 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
         // Optionally load per-branch schema
         if (opts?.loadSchema) {
           const contentRootName = services.config.contentRoot || 'content'
-          const cached = await services.schemaCacheRegistry.getSchema(
+          const cached = await services.branchSchemaCache.getSchema(
             existing.branchRoot,
-            services.schemaRegistry,
+            services.entrySchemaRegistry,
             contentRootName
           )
           existing.schema = cached.schema
@@ -73,9 +73,9 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
         // Optionally load per-branch schema for auto-created branches
         if (opts?.loadSchema && context) {
           const contentRootName = services.config.contentRoot || 'content'
-          const cached = await services.schemaCacheRegistry.getSchema(
+          const cached = await services.branchSchemaCache.getSchema(
             context.branchRoot,
-            services.schemaRegistry,
+            services.entrySchemaRegistry,
             contentRootName
           )
           context.schema = cached.schema

@@ -2,15 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { SchemaStore } from './schema-store'
+import { SchemaOps } from './schema-store'
 import type { FieldConfig } from '../config'
 import { unsafeAsLogicalPath } from '../paths/test-utils'
 
-describe('SchemaStore', () => {
+describe('SchemaOps', () => {
   let tempDir: string
   let contentRoot: string
   let schemaRegistry: Record<string, readonly FieldConfig[]>
-  let store: SchemaStore
+  let store: SchemaOps
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-schema-store-test-'))
@@ -32,7 +32,7 @@ describe('SchemaStore', () => {
       ],
     }
 
-    store = new SchemaStore(contentRoot, schemaRegistry)
+    store = new SchemaOps(contentRoot, schemaRegistry)
   })
 
   afterEach(async () => {

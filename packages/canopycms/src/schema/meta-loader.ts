@@ -219,15 +219,15 @@ export async function loadCollectionMetaFiles(
  */
 function resolveEntryTypes(
   entryTypes: EntryTypeMeta[],
-  schemaRegistry: Record<string, readonly FieldConfig[]>,
+  entrySchemaRegistry: Record<string, readonly FieldConfig[]>,
   contextName: string
 ): EntryTypeConfig[] {
   return entryTypes.map((entryType) => {
-    const schema = schemaRegistry[entryType.fields]
+    const schema = entrySchemaRegistry[entryType.fields]
     if (!schema) {
       throw new Error(
         `Schema reference "${entryType.fields}" in entry type "${entryType.name}" (${contextName}) not found in registry. ` +
-        `Available schemas: ${Object.keys(schemaRegistry).join(', ')}`
+        `Available schemas: ${Object.keys(entrySchemaRegistry).join(', ')}`
       )
     }
 
@@ -236,6 +236,7 @@ function resolveEntryTypes(
       label: entryType.label,
       format: entryType.format as ContentFormat,
       fields: schema,
+      fieldsRef: entryType.fields,
       default: entryType.default,
       maxItems: entryType.maxItems,
     }
@@ -247,7 +248,7 @@ function resolveEntryTypes(
  */
 function resolveCollectionMeta(
   meta: CollectionMeta & { path: string },
-  schemaRegistry: Record<string, readonly FieldConfig[]>,
+  entrySchemaRegistry: Record<string, readonly FieldConfig[]>,
   allCollections: Array<CollectionMeta & { path: string }>
 ): CollectionConfig {
   // Build result object dynamically to avoid readonly conflicts
@@ -261,7 +262,7 @@ function resolveCollectionMeta(
   if (meta.entries && meta.entries.length > 0) {
     result.entries = resolveEntryTypes(
       meta.entries,
-      schemaRegistry,
+      entrySchemaRegistry,
       `collection "${meta.name}"`
     )
   }
@@ -280,7 +281,7 @@ function resolveCollectionMeta(
 
   if (nestedCollections.length > 0) {
     result.collections = nestedCollections.map((nestedMeta) =>
-      resolveCollectionMeta(nestedMeta, schemaRegistry, allCollections)
+      resolveCollectionMeta(nestedMeta, entrySchemaRegistry, allCollections)
     )
   }
 
@@ -299,7 +300,7 @@ function resolveCollectionMeta(
  * 3. Nested collections: Automatically grouped under their parent collections
  *
  * @param metaFiles - Loaded meta files from loadCollectionMetaFiles()
- * @param schemaRegistry - Map of schema names to FieldConfig arrays
+ * @param entrySchemaRegistry - Map of schema names to FieldConfig arrays
  * @returns Fully resolved root collection config ready for use by CanopyCMS
  * @throws Error if any schema reference doesn't exist in registry (with helpful suggestions)
  */
@@ -308,7 +309,7 @@ export function resolveCollectionReferences(
     root: RootCollectionMeta | null
     collections: Array<CollectionMeta & { path: string }>
   },
-  schemaRegistry: Record<string, readonly FieldConfig[]>
+  entrySchemaRegistry: Record<string, readonly FieldConfig[]>
 ): RootCollectionConfig {
   // Build result object dynamically to avoid readonly conflicts
   const result: any = {}
@@ -322,7 +323,7 @@ export function resolveCollectionReferences(
   if (metaFiles.root?.entries && metaFiles.root.entries.length > 0) {
     result.entries = resolveEntryTypes(
       metaFiles.root.entries,
-      schemaRegistry,
+      entrySchemaRegistry,
       'root collection'
     )
   }
@@ -337,7 +338,7 @@ export function resolveCollectionReferences(
 
   if (topLevelCollections.length > 0) {
     result.collections = topLevelCollections.map((meta) =>
-      resolveCollectionMeta(meta, schemaRegistry, metaFiles.collections)
+      resolveCollectionMeta(meta, entrySchemaRegistry, metaFiles.collections)
     )
   }
 

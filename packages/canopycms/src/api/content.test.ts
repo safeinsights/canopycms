@@ -28,8 +28,8 @@ vi.mock('../content-store', () => {
 const allowedCtx = (): ApiContext => ({
   services: {
     config: { schema: [] } as any,
-    schemaRegistry: {},
-    schemaCacheRegistry: {
+    entrySchemaRegistry: {},
+    branchSchemaCache: {
       getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
       invalidate: vi.fn().mockResolvedValue(undefined),
       clearAll: vi.fn().mockResolvedValue(undefined),
@@ -57,8 +57,8 @@ describe('content api', () => {
     const ctx: ApiContext = {
       services: {
         config: { schema: [] } as any,
-                schemaRegistry: {},
-        schemaCacheRegistry: {
+                entrySchemaRegistry: {},
+        branchSchemaCache: {
           getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
           invalidate: vi.fn().mockResolvedValue(undefined),
           clearAll: vi.fn().mockResolvedValue(undefined),
@@ -121,8 +121,8 @@ describe('content api', () => {
       const ctx: ApiContext = {
         services: {
           config: { schema: [] } as any,
-                      schemaRegistry: {},
-          schemaCacheRegistry: {
+                      entrySchemaRegistry: {},
+          branchSchemaCache: {
             getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
             invalidate: vi.fn().mockResolvedValue(undefined),
             clearAll: vi.fn().mockResolvedValue(undefined),
@@ -158,8 +158,8 @@ describe('content api', () => {
       const ctx: ApiContext = {
         services: {
           config: { schema: [] } as any,
-                      schemaRegistry: {},
-          schemaCacheRegistry: {
+                      entrySchemaRegistry: {},
+          branchSchemaCache: {
             getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
             invalidate: vi.fn().mockResolvedValue(undefined),
             clearAll: vi.fn().mockResolvedValue(undefined),

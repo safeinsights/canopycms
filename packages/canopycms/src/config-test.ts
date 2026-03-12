@@ -27,8 +27,8 @@ export const defineCanopyTestConfig = (config: TestConfigInput, overrides?: Part
 
 /**
  * Test-only helper that creates CanopyServices with inline schema.
- * Creates a mock schemaCacheRegistry that returns the test schema without requiring .collection.json files.
- * Do not use in production code; use createCanopyServices with schemaRegistry.
+ * Creates a mock branchSchemaCache that returns the test schema without requiring .collection.json files.
+ * Do not use in production code; use createCanopyServices with entrySchemaRegistry.
  */
 export const createTestServices = async (
   config: TestConfigInput,
@@ -37,8 +37,8 @@ export const createTestServices = async (
   const canopyConfig = defineCanopyTestConfig(config)
   const flatSchema = flattenSchema(config.schema, canopyConfig.contentRoot)
 
-  // Create a mock schemaCacheRegistry that returns the test schema
-  const mockSchemaCacheRegistry = {
+  // Create a mock branchSchemaCache that returns the test schema
+  const mockBranchSchemaCache = {
     getSchema: async () => ({
       schema: config.schema,
       flatSchema,
@@ -49,6 +49,6 @@ export const createTestServices = async (
 
   return createTestCanopyServices(canopyConfig, {
     ...options,
-    schemaCacheRegistry: mockSchemaCacheRegistry as any,
+    branchSchemaCache: mockBranchSchemaCache as any,
   })
 }

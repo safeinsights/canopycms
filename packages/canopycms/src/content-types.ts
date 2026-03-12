@@ -63,11 +63,16 @@ export type InferContentShape<Fields extends readonly InferableField[]> = {
 }
 
 /**
- * Helper to define schema field arrays with literal inference without sprinkling `as const`.
+ * Helper to define entry schema field arrays with literal inference without sprinkling `as const`.
  */
-export const defineSchema = <const T extends readonly InferableField[]>(fields: T): T => fields
+export const defineEntrySchema = <const T extends readonly InferableField[]>(fields: T): T => fields
 
 /**
- * Convenience alias to derive the content shape from a `defineSchema` result.
+ * Convenience alias to derive the content shape from a `defineEntrySchema` result.
  */
-export type TypeFromSchema<T extends readonly InferableField[]> = InferContentShape<T>
+export type TypeFromEntrySchema<T extends readonly InferableField[]> = InferContentShape<T>
+
+/** @deprecated Use defineEntrySchema instead */
+export const defineSchema = defineEntrySchema
+/** @deprecated Use TypeFromEntrySchema instead */
+export type TypeFromSchema<T extends readonly InferableField[]> = TypeFromEntrySchema<T>

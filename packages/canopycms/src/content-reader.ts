@@ -70,11 +70,11 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const { branchRoot } = resolveBranchPaths(context, operatingMode, basePathOverride)
 
     // Load per-branch schema dynamically
-    const schemaCacheRegistry = services.schemaCacheRegistry
+    const branchSchemaCache = services.branchSchemaCache
     const contentRootName = services.config.contentRoot || 'content'
-    const { flatSchema: branchFlatSchema } = await schemaCacheRegistry.getSchema(
+    const { flatSchema: branchFlatSchema } = await branchSchemaCache.getSchema(
       branchRoot,
-      services.schemaRegistry,
+      services.entrySchemaRegistry,
       contentRootName
     )
 

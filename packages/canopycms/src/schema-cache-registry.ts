@@ -10,7 +10,7 @@ import { flattenSchema } from './config/flatten'
 /**
  * Schema cache structure stored in {branchRoot}/.canopy-meta/schema-cache.json
  */
-export interface BranchSchemaCache {
+export interface BranchSchemaCacheEntry {
   version: number
   schema: RootCollectionConfig
   flatSchema: FlatSchemaItem[]
@@ -26,11 +26,11 @@ export interface BranchSchemaCache {
  * - Invalidation: Writers create .stale marker, causing cache regeneration on next access
  *
  * Multi-User Support:
- * - User A modifies schema via SchemaStore → writes .stale marker
+ * - User A modifies schema via SchemaOps → writes .stale marker
  * - User B loads schema later → sees .stale marker → regenerates cache
  * - Atomic file operations prevent corruption during concurrent access
  */
-export class SchemaCacheRegistry {
+export class BranchSchemaCache {
   private devModeCache?: { schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }
 
   constructor(private readonly mode: OperatingMode) {}
@@ -39,20 +39,20 @@ export class SchemaCacheRegistry {
    * Get schema for a branch (loads from cache or resolves fresh).
    *
    * @param branchRoot - Root directory of the branch (e.g., .canopy-prod-sim/content-branches/main)
-   * @param schemaRegistry - Map of schema names to field definitions
+   * @param entrySchemaRegistry - Map of schema names to field definitions
    * @param contentRootName - Name of content directory (e.g., "content") from config
    * @returns Resolved schema tree and flattened schema
    */
   async getSchema(
     branchRoot: string,
-    schemaRegistry: Record<string, readonly FieldConfig[]>,
+    entrySchemaRegistry: Record<string, readonly FieldConfig[]>,
     contentRootName: string = 'content'
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
     // Dev mode: use in-memory singleton
     if (this.mode === 'dev') {
       if (!this.devModeCache) {
         const contentRoot = path.join(branchRoot, contentRootName)
-        const result = await resolveSchema(contentRoot, schemaRegistry)
+        const result = await resolveSchema(contentRoot, entrySchemaRegistry)
 
         // Validate schema has content
         if (!isValidSchema(result.schema)) {
@@ -73,7 +73,7 @@ export class SchemaCacheRegistry {
     }
 
     // Prod/prod-sim: use file-based cache with stale marker invalidation
-    return this.loadFromCacheOrResolve(branchRoot, schemaRegistry, contentRootName)
+    return this.loadFromCacheOrResolve(branchRoot, entrySchemaRegistry, contentRootName)
   }
 
   /**
@@ -81,7 +81,7 @@ export class SchemaCacheRegistry {
    */
   private async loadFromCacheOrResolve(
     branchRoot: string,
-    schemaRegistry: Record<string, readonly FieldConfig[]>,
+    entrySchemaRegistry: Record<string, readonly FieldConfig[]>,
     contentRootName: string
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
     const contentRoot = path.join(branchRoot, contentRootName)
@@ -90,7 +90,7 @@ export class SchemaCacheRegistry {
     const stalePath = path.join(cacheDir, 'schema-cache.stale')
 
     // Check if cache exists and is not marked stale
-    let cacheData: BranchSchemaCache | null = null
+    let cacheData: BranchSchemaCacheEntry | null = null
     try {
       const staleExists = await fs
         .access(stalePath)
@@ -98,7 +98,7 @@ export class SchemaCacheRegistry {
         .catch(() => false)
       if (!staleExists) {
         const cacheContent = await fs.readFile(cachePath, 'utf-8')
-        cacheData = JSON.parse(cacheContent) as BranchSchemaCache
+        cacheData = JSON.parse(cacheContent) as BranchSchemaCacheEntry
       }
     } catch {
       // Cache doesn't exist or can't be read
@@ -110,7 +110,7 @@ export class SchemaCacheRegistry {
     }
 
     // Cache miss or stale - regenerate
-    const result = await resolveSchema(contentRoot, schemaRegistry)
+    const result = await resolveSchema(contentRoot, entrySchemaRegistry)
 
     // Validate schema has content
     if (!isValidSchema(result.schema)) {
@@ -125,7 +125,7 @@ export class SchemaCacheRegistry {
 
     // Save to cache
     await fs.mkdir(cacheDir, { recursive: true })
-    const newCache: BranchSchemaCache = {
+    const newCache: BranchSchemaCacheEntry = {
       version: 1,
       schema: result.schema,
       flatSchema,
