@@ -1,5 +1,7 @@
 import { flattenSchema } from 'canopycms'
 import { ContentStore, resolveSchema } from 'canopycms/server'
+import { createLogicalPath, createPhysicalPath } from 'canopycms/paths'
+import type { EntrySlug } from 'canopycms/paths'
 import path from 'path'
 import config from '../canopycms.config'
 
@@ -15,16 +17,16 @@ async function generateIds() {
   // Add IDs for alice and bob
   await idIndex.add({
     type: 'entry',
-    relativePath: 'content/authors/alice.json',
-    collection: 'authors',
-    slug: 'alice',
+    relativePath: createPhysicalPath('content/authors/alice.json'),
+    collection: createLogicalPath('authors'),
+    slug: 'alice' as EntrySlug,
   })
 
   await idIndex.add({
     type: 'entry',
-    relativePath: 'content/authors/bob.json',
-    collection: 'authors',
-    slug: 'bob',
+    relativePath: createPhysicalPath('content/authors/bob.json'),
+    collection: createLogicalPath('authors'),
+    slug: 'bob' as EntrySlug,
   })
 
   // Get the generated IDs

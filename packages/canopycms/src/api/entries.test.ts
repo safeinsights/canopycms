@@ -382,12 +382,12 @@ describe('listEntries', () => {
     const root = await tmpDir()
     await fs.mkdir(path.join(root, 'content/posts'), { recursive: true })
     await fs.writeFile(
-      path.join(root, 'content/posts/entry.public.abc123XYZ789.json'),
+      path.join(root, 'content/posts/entry.public.abcDEFghj123.json'),
       JSON.stringify({ title: 'Public Post' }),
       'utf8',
     )
     await fs.writeFile(
-      path.join(root, 'content/posts/entry.readonly.def456UVW012.json'),
+      path.join(root, 'content/posts/entry.readonly.defGHJkmn456.json'),
       JSON.stringify({ title: 'Read-Only Post' }),
       'utf8',
     )
@@ -413,10 +413,10 @@ describe('listEntries', () => {
       schema,
     })
 
-    // Mock loadPathPermissions: 'entry.readonly.def456UVW012.json' is read-only for user 'u1'
+    // Mock loadPathPermissions: 'entry.readonly.defGHJkmn456.json' is read-only for user 'u1'
     const pathRules: PathPermission[] = [
       {
-        path: unsafeAsPermissionPath('content/posts/entry.readonly.def456UVW012.json'),
+        path: unsafeAsPermissionPath('content/posts/entry.readonly.defGHJkmn456.json'),
         read: { allowedUsers: ['u1'] },
         edit: { allowedUsers: ['admin'] }, // u1 cannot edit
       },

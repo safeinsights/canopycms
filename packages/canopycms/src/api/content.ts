@@ -117,7 +117,7 @@ const readContentHandler = async (
 
   // Use trivial path resolution
   let schemaItem: any
-  let slug: string
+  let slug: EntrySlug
   let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
@@ -141,7 +141,7 @@ const readContentHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
-  const doc = await store.read(schemaItem.logicalPath as LogicalPath, slug as EntrySlug)
+  const doc = await store.read(schemaItem.logicalPath, slug)
   return { ok: true, status: 200, data: doc }
 }
 
@@ -169,7 +169,7 @@ const writeContentHandler = async (
 
   // Use trivial path resolution
   let schemaItem: any
-  let slug: string
+  let slug: EntrySlug
   let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
@@ -197,8 +197,8 @@ const writeContentHandler = async (
     const result =
       body.format === 'json'
         ? await store.write(
-            schemaItem.logicalPath as LogicalPath,
-            slug as EntrySlug,
+            schemaItem.logicalPath,
+            slug,
             {
               format: 'json',
               data: body.data ?? {},
@@ -206,8 +206,8 @@ const writeContentHandler = async (
             params.entryType,
           )
         : await store.write(
-            schemaItem.logicalPath as LogicalPath,
-            slug as EntrySlug,
+            schemaItem.logicalPath,
+            slug,
             {
               format: body.format,
               data: body.data,
@@ -309,7 +309,7 @@ const renameEntryHandler = async (
 
   // Resolve to collection and slug
   let schemaItem: any
-  let currentSlug: string
+  let currentSlug: EntrySlug
   let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
@@ -336,11 +336,7 @@ const renameEntryHandler = async (
 
   // Rename the entry
   try {
-    const result = await store.renameEntry(
-      schemaItem.logicalPath as LogicalPath,
-      currentSlug as EntrySlug,
-      body.newSlug,
-    )
+    const result = await store.renameEntry(schemaItem.logicalPath, currentSlug, body.newSlug)
     return { ok: true, status: 200, data: { newPath: result.newPath } }
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Rename failed'

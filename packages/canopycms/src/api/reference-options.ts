@@ -4,7 +4,9 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
+import { parseLogicalPath } from '../paths'
 import type { LogicalPath } from '../paths/types'
+import { branchNameSchema } from './validators'
 
 /** Response type for reference options */
 export type ReferenceOptionsResponse = ApiResponse<{
@@ -20,7 +22,7 @@ export type ReferenceOptionsResponse = ApiResponse<{
 // ============================================================================
 
 const getReferenceOptionsParamsSchema = z.object({
-  branch: z.string().min(1),
+  branch: branchNameSchema,
 })
 
 const getReferenceOptionsHandler = async (
@@ -48,11 +50,19 @@ const getReferenceOptionsHandler = async (
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()
 
-  // Parse collections — these are schema-defined logical paths from query params
-  const collections = collectionsParam
+  // Parse and validate collections from query params
+  const rawCollections = collectionsParam
     .split(',')
     .map((c) => c.trim())
-    .filter(Boolean) as LogicalPath[]
+    .filter(Boolean)
+  const collections: LogicalPath[] = []
+  for (const raw of rawCollections) {
+    const result = parseLogicalPath(raw)
+    if (!result.ok) {
+      return { ok: false, status: 400, error: `Invalid collection path "${raw}": ${result.error}` }
+    }
+    collections.push(result.path)
+  }
 
   // Load reference options
   const resolver = new ReferenceResolver(store, idIndex)

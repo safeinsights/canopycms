@@ -6,6 +6,7 @@ import {
   contentIdSchema,
   entrySlugSchema,
   collectionSlugSchema,
+  permissionPathSchema,
 } from './validators'
 
 describe('API validators', () => {
@@ -184,6 +185,51 @@ describe('API validators', () => {
       expect(() => collectionSlugSchema.parse('')).toThrow()
       expect(() => collectionSlugSchema.parse('posts/items')).toThrow('separator')
       expect(() => collectionSlugSchema.parse('Posts')).toThrow('lowercase')
+    })
+  })
+
+  describe('permissionPathSchema', () => {
+    it('validates and brands valid permission paths', () => {
+      const result = permissionPathSchema.parse('content/posts')
+      expect(result).toBe('content/posts')
+    })
+
+    it('accepts nested paths', () => {
+      const result = permissionPathSchema.parse('content/docs/guides')
+      expect(result).toBe('content/docs/guides')
+    })
+
+    it('accepts simple single-segment paths', () => {
+      const result = permissionPathSchema.parse('content')
+      expect(result).toBe('content')
+    })
+
+    it('rejects empty paths', () => {
+      expect(() => permissionPathSchema.parse('')).toThrow()
+    })
+
+    it('rejects paths with traversal sequences', () => {
+      expect(() => permissionPathSchema.parse('../etc/passwd')).toThrow('traversal')
+    })
+
+    it('rejects paths with embedded traversal', () => {
+      expect(() => permissionPathSchema.parse('content/../admin')).toThrow('traversal')
+    })
+
+    it('rejects backslash traversal bypass', () => {
+      expect(() => permissionPathSchema.parse('content\\..\\etc')).toThrow('traversal')
+    })
+
+    it('rejects paths starting with slash', () => {
+      expect(() => permissionPathSchema.parse('/content/posts')).toThrow('slash')
+    })
+
+    it('rejects paths ending with slash', () => {
+      expect(() => permissionPathSchema.parse('content/posts/')).toThrow('slash')
+    })
+
+    it('rejects paths with consecutive slashes', () => {
+      expect(() => permissionPathSchema.parse('content//posts')).toThrow('consecutive slashes')
     })
   })
 
