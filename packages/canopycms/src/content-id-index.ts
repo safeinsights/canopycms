@@ -156,8 +156,8 @@ export class ContentIdIndex {
   /**
    * Reverse lookup: path → ID (O(1))
    */
-  findByPath(relativePath: string): string | null {
-    return this.pathToId.get(relativePath) || null
+  findByPath(relativePath: PhysicalPath): ContentId | null {
+    return (this.pathToId.get(relativePath) as ContentId | undefined) || null
   }
 
   /**
@@ -234,7 +234,7 @@ export class ContentIdIndex {
    * Remove an entry or collection from the index by ID.
    * Note: This only updates the in-memory index. The file must be deleted separately.
    */
-  remove(id: string): void {
+  remove(id: ContentId): void {
     const location = this.idToLocation.get(id)
     if (!location) return
 
@@ -258,7 +258,7 @@ export class ContentIdIndex {
    * Update the path for an existing ID (e.g., after file rename/move).
    * This is used to keep the index in sync when files are renamed.
    */
-  updatePath(id: string, newRelativePath: string): void {
+  updatePath(id: ContentId, newRelativePath: PhysicalPath): void {
     const location = this.idToLocation.get(id)
     if (!location) {
       throw new Error(`Cannot update path for unknown ID: ${id}`)
@@ -268,7 +268,7 @@ export class ContentIdIndex {
     this.pathToId.delete(location.relativePath)
 
     // Update location
-    location.relativePath = newRelativePath as PhysicalPath // updated physical path with embedded IDs
+    location.relativePath = newRelativePath
 
     // Update slug and collection for entries
     if (location.type === 'entry') {

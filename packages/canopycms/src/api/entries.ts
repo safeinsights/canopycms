@@ -11,7 +11,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
 import { resolveCollectionPath } from '../content-id-index'
-import { validateAndNormalizePath, normalizeFilesystemPath } from '../paths'
+import { validateAndNormalizePath, normalizeFilesystemPath, parseSlug } from '../paths'
 import { isNotFoundError } from '../utils/error'
 import { isValidId } from '../id'
 import type { LogicalPath, PhysicalPath, EntrySlug, ContentId } from '../paths/types'
@@ -500,9 +500,14 @@ const deleteEntryHandler = async (
   }
 
   const contentStore = new ContentStore(context.branchRoot, flatSchema)
-  // collectionPath is a slice of a validated LogicalPath; slug is from the same validated path
+  // collectionPath is a slice of a validated LogicalPath — safe to cast
   const collectionLogicalPath = collectionPath as LogicalPath
-  const entrySlug = slug as EntrySlug
+  // Validate slug extracted from the path
+  const slugResult = parseSlug(slug, 'entry')
+  if (!slugResult.ok) {
+    return { ok: false, status: 400, error: `Invalid entry slug: ${slugResult.error}` }
+  }
+  const entrySlug = slugResult.slug as EntrySlug
 
   // Resolve the real physical path before checking permissions
   let physicalPath: PhysicalPath

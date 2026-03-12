@@ -30,7 +30,7 @@ import {
   type UpdateEntryTypeInput,
 } from '../schema/schema-store'
 import type { RootCollectionConfig, CollectionConfig, FlatSchemaItem, ContentFormat } from '../config'
-import { parseLogicalPath, type LogicalPath, type ContentId } from '../paths'
+import { type LogicalPath, type ContentId } from '../paths'
 
 // ============================================================================
 // Response Types
@@ -171,17 +171,12 @@ function checkAdminAuth(req: ApiRequest): { error: string; status: number } | nu
 }
 
 /**
- * Validate and parse a collection path from URL params.
- * Returns a typed LogicalPath or an error response.
+ * Decode a collection path from URL params.
+ * The path is already validated and branded as LogicalPath by the Zod schema;
+ * this only applies URI decoding for catch-all route segments.
  */
-function validateCollectionPath(
-  rawPath: string
-): { ok: true; path: LogicalPath } | { ok: false; status: number; error: string } {
-  const result = parseLogicalPath(decodeURIComponent(rawPath))
-  if (!result.ok) {
-    return { ok: false, status: 400, error: result.error }
-  }
-  return { ok: true, path: result.path }
+function decodeCollectionPath(collectionPath: LogicalPath): LogicalPath {
+  return decodeURIComponent(collectionPath) as LogicalPath
 }
 
 // ============================================================================
@@ -226,16 +221,12 @@ const getCollectionHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  // Validate collection path
-  const pathResult = validateCollectionPath(params.collectionPath)
-  if (!pathResult.ok) {
-    return { ok: false, status: pathResult.status, error: pathResult.error }
-  }
+  const collectionPath = decodeCollectionPath(params.collectionPath)
 
   // Find collection in per-branch flat schema
   const flatSchema = context.flatSchema!
   const item = flatSchema.find(
-    (i) => i.type === 'collection' && i.logicalPath === pathResult.path
+    (i) => i.type === 'collection' && i.logicalPath === collectionPath
   )
 
   if (!item || item.type !== 'collection') {
@@ -266,11 +257,11 @@ const getCollectionHandler = async (
     }
 
     // Read raw collection meta to get string schema references
-    const rawMeta = await storeResult.store.readCollectionMeta(pathResult.path)
+    const rawMeta = await storeResult.store.readCollectionMeta(collectionPath)
     if (rawMeta?.entries) {
       entryTypesWithUsage = await Promise.all(
         rawMeta.entries.map(async (et) => {
-          const usageCount = await storeResult.store.countEntriesUsingType(pathResult.path, et.name)
+          const usageCount = await storeResult.store.countEntriesUsingType(collectionPath, et.name)
           return {
             name: et.name,
             label: et.label,
@@ -349,14 +340,10 @@ const updateCollectionHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  // Validate collection path (now expects contentRoot-prefixed paths like "content" or "content/posts")
-  const pathResult = validateCollectionPath(params.collectionPath)
-  if (!pathResult.ok) {
-    return { ok: false, status: pathResult.status, error: pathResult.error }
-  }
+  const collectionPath = decodeCollectionPath(params.collectionPath)
 
   try {
-    await storeResult.store.updateCollection(pathResult.path, body as UpdateCollectionInput)
+    await storeResult.store.updateCollection(collectionPath, body as UpdateCollectionInput)
     return {
       ok: true,
       status: 200,
@@ -391,14 +378,10 @@ const deleteCollectionHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  // Validate collection path
-  const pathResult = validateCollectionPath(params.collectionPath)
-  if (!pathResult.ok) {
-    return { ok: false, status: pathResult.status, error: pathResult.error }
-  }
+  const collectionPath = decodeCollectionPath(params.collectionPath)
 
   try {
-    await storeResult.store.deleteCollection(pathResult.path)
+    await storeResult.store.deleteCollection(collectionPath)
     return {
       ok: true,
       status: 200,
@@ -434,14 +417,10 @@ const addEntryTypeHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  // Validate collection path
-  const pathResult = validateCollectionPath(params.collectionPath)
-  if (!pathResult.ok) {
-    return { ok: false, status: pathResult.status, error: pathResult.error }
-  }
+  const collectionPath = decodeCollectionPath(params.collectionPath)
 
   try {
-    await storeResult.store.addEntryType(pathResult.path, body as CreateEntryTypeInput)
+    await storeResult.store.addEntryType(collectionPath, body as CreateEntryTypeInput)
     return {
       ok: true,
       status: 201,
@@ -477,17 +456,13 @@ const updateEntryTypeHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  // Validate collection path
-  const pathResult = validateCollectionPath(params.collectionPath)
-  if (!pathResult.ok) {
-    return { ok: false, status: pathResult.status, error: pathResult.error }
-  }
+  const collectionPath = decodeCollectionPath(params.collectionPath)
 
   // Check if format or fields are being changed (breaking changes)
   const isBreakingChange = body.format !== undefined || body.fields !== undefined
   if (isBreakingChange) {
     // Count existing entries using this type
-    const usageCount = await storeResult.store.countEntriesUsingType(pathResult.path, params.entryTypeName)
+    const usageCount = await storeResult.store.countEntriesUsingType(collectionPath, params.entryTypeName)
     if (usageCount > 0) {
       const entryWord = usageCount === 1 ? 'entry' : 'entries'
       return {
@@ -500,7 +475,7 @@ const updateEntryTypeHandler = async (
 
   try {
     await storeResult.store.updateEntryType(
-      pathResult.path,
+      collectionPath,
       params.entryTypeName,
       body as UpdateEntryTypeInput
     )
@@ -538,14 +513,10 @@ const removeEntryTypeHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  // Validate collection path
-  const pathResult = validateCollectionPath(params.collectionPath)
-  if (!pathResult.ok) {
-    return { ok: false, status: pathResult.status, error: pathResult.error }
-  }
+  const collectionPath = decodeCollectionPath(params.collectionPath)
 
   try {
-    await storeResult.store.removeEntryType(pathResult.path, params.entryTypeName)
+    await storeResult.store.removeEntryType(collectionPath, params.entryTypeName)
     return {
       ok: true,
       status: 200,
@@ -581,14 +552,10 @@ const updateOrderHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  // Validate collection path
-  const pathResult = validateCollectionPath(params.collectionPath)
-  if (!pathResult.ok) {
-    return { ok: false, status: pathResult.status, error: pathResult.error }
-  }
+  const collectionPath = decodeCollectionPath(params.collectionPath)
 
   try {
-    await storeResult.store.updateOrder(pathResult.path, body.order)
+    await storeResult.store.updateOrder(collectionPath, body.order)
     return {
       ok: true,
       status: 200,

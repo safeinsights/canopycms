@@ -4,15 +4,13 @@ import path from 'node:path'
 import os from 'node:os'
 import { SchemaStore } from './schema-store'
 import type { FieldConfig } from '../config'
-import type { LogicalPath } from '../paths/types'
+import { unsafeAsLogicalPath } from '../paths/test-utils'
 
 describe('SchemaStore', () => {
   let tempDir: string
   let contentRoot: string
   let schemaRegistry: Record<string, readonly FieldConfig[]>
   let store: SchemaStore
-
-  const unsafeAsLogicalPath = (p: string): LogicalPath => p as LogicalPath
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-schema-store-test-'))

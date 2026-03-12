@@ -1,7 +1,7 @@
 import type { ContentStore } from '../content-store'
 import type { ContentIdIndex, IdLocation } from '../content-id-index'
 import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig } from '../config'
-import { type LogicalPath, type EntrySlug } from '../paths'
+import { type LogicalPath, type EntrySlug, type PhysicalPath } from '../paths'
 
 
 export interface ReferenceInfo {
@@ -203,8 +203,8 @@ export class DeletionChecker {
    */
   private listEntriesInCollection(
     collectionPath: LogicalPath
-  ): Array<{ relativePath: string; collection: LogicalPath; slug: EntrySlug }> {
-    const entries: Array<{ relativePath: string; collection: LogicalPath; slug: EntrySlug }> = []
+  ): Array<{ relativePath: PhysicalPath; collection: LogicalPath; slug: EntrySlug }> {
+    const entries: Array<{ relativePath: PhysicalPath; collection: LogicalPath; slug: EntrySlug }> = []
 
     // Get all locations from the index
     const allLocations = this.idIndex.getAllLocations()

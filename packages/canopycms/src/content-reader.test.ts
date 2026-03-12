@@ -11,6 +11,7 @@ import { defineCanopyTestConfig } from './config-test'
 import { ANONYMOUS_USER } from './user'
 import type { BranchContext } from './types'
 import { ContentStoreError } from './content-store'
+import { unsafeAsLogicalPath, unsafeAsEntrySlug } from './paths/test-utils'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-content-reader-'))
 
@@ -72,11 +73,11 @@ describe('createContentReader', () => {
       getBranchContext: async (branch) => (branch === 'main' ? branchContext : null),
     })
 
-    const home = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/pages', slug: 'home', branch: 'main', user: ANONYMOUS_USER })
+    const home = await reader.read<{ hero: { title: string } }>({ entryPath: unsafeAsLogicalPath('content/pages'), slug: unsafeAsEntrySlug('home'), branch: 'main', user: ANONYMOUS_USER })
     expect(home.path).toBe('/pages/home?branch=main')
     expect(home.data.hero.title).toBe('Hi')
 
-    await expect(reader.read({ entryPath: 'content/posts', slug: 'missing', user: ANONYMOUS_USER })).rejects.toBeInstanceOf(
+    await expect(reader.read({ entryPath: unsafeAsLogicalPath('content/posts'), slug: unsafeAsEntrySlug('missing'), user: ANONYMOUS_USER })).rejects.toBeInstanceOf(
       ContentStoreError
     )
   })
@@ -120,11 +121,11 @@ describe('createContentReader', () => {
       getBranchContext: async () => branchContext,
     })
 
-    const { data } = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/pages', slug: 'home', user: ANONYMOUS_USER })
+    const { data } = await reader.read<{ hero: { title: string } }>({ entryPath: unsafeAsLogicalPath('content/pages'), slug: unsafeAsEntrySlug('home'), user: ANONYMOUS_USER })
     expect(data.hero.title).toBe('Hello')
 
     await expect(
-      reader.read({ entryPath: 'content/posts', slug: 'missing', user: ANONYMOUS_USER })
+      reader.read({ entryPath: unsafeAsLogicalPath('content/posts'), slug: unsafeAsEntrySlug('missing'), user: ANONYMOUS_USER })
     ).rejects.toBeInstanceOf(ContentStoreError)
   })
 
@@ -151,7 +152,7 @@ describe('createContentReader', () => {
       getBranchContext: async () => branchContext,
     })
 
-    await expect(reader.read({ entryPath: 'content/pages', slug: 'home', user: { type: 'authenticated', userId: 'anon', groups: [] } })).rejects.toBeInstanceOf(
+    await expect(reader.read({ entryPath: unsafeAsLogicalPath('content/pages'), slug: unsafeAsEntrySlug('home'), user: { type: 'authenticated', userId: 'anon', groups: [] } })).rejects.toBeInstanceOf(
       ContentStoreError
     )
   })
@@ -193,16 +194,16 @@ describe('createContentReader', () => {
     })
 
     const post = await reader.read<{ title: string }>({
-      entryPath: 'content/posts',
-      slug: 'first',
+      entryPath: unsafeAsLogicalPath('content/posts'),
+      slug: unsafeAsEntrySlug('first'),
       user: ANONYMOUS_USER,
     })
     expect(post.data.title).toBe('Hello world')
     expect(post.path).toBe('/posts/first?branch=main')
 
     const page = await reader.read<{ title: string }>({
-      entryPath: 'content/pages',
-      slug: 'home',
+      entryPath: unsafeAsLogicalPath('content/pages'),
+      slug: unsafeAsEntrySlug('home'),
       branch: 'feature/foo',
       user: ANONYMOUS_USER,
     })
@@ -252,7 +253,7 @@ describe('createContentReader', () => {
 
     try {
       const reader = createContentReader({ services: await createTestServices({ ...config, schema }), basePathOverride: root })
-      const doc = await reader.read<{ hero: { title: string } }>({ entryPath: 'content/pages', slug: 'home', user: ANONYMOUS_USER })
+      const doc = await reader.read<{ hero: { title: string } }>({ entryPath: unsafeAsLogicalPath('content/pages'), slug: unsafeAsEntrySlug('home'), user: ANONYMOUS_USER })
       expect(doc.path).toBe('/pages/home?branch=main')
       expect(doc.data.hero.title).toBe('Welcome')
 
@@ -299,7 +300,7 @@ describe('createContentReader', () => {
 
     // Attempt unauthorized read
     await expect(
-      reader.read({ entryPath: 'content/pages', slug: 'home', user: { type: 'authenticated', userId: 'unauthorized', groups: [] } })
+      reader.read({ entryPath: unsafeAsLogicalPath('content/pages'), slug: unsafeAsEntrySlug('home'), user: { type: 'authenticated', userId: 'unauthorized', groups: [] } })
     ).rejects.toThrow(/Forbidden/)
 
     // CRITICAL: Content file should NOT have been accessed (permissions.json is OK)

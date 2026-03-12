@@ -96,20 +96,6 @@ export function createPhysicalPath(...segments: string[]): PhysicalPath {
 }
 
 /**
- * Convert a LogicalPath to a string (for passing to APIs that expect plain strings).
- */
-export function logicalPathToString(path: LogicalPath): string {
-  return path as string
-}
-
-/**
- * Convert a PhysicalPath to a string (for passing to APIs that expect plain strings).
- */
-export function physicalPathToString(path: PhysicalPath): string {
-  return path as string
-}
-
-/**
  * Join path segments with forward slashes.
  * Does not validate - use createLogicalPath/createPhysicalPath for validation.
  */
