@@ -51,18 +51,6 @@ export type CollectionSlug = string & { readonly __brand: 'CollectionSlug' }
 export type EntrySlug = string & { readonly __brand: 'EntrySlug' }
 
 /**
- * Context for path resolution operations.
- */
-export interface PathContext {
-  /** Root directory for content (e.g., "content") */
-  contentRoot: string
-  /** Base directory for branch workspace */
-  workspaceRoot: string
-  /** Current branch name */
-  branch?: string
-}
-
-/**
  * Path validation result.
  */
 export interface PathValidationResult {

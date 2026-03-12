@@ -5,7 +5,12 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename } from './content-id-index'
-import { unsafeAsLogicalPath, unsafeAsEntrySlug, unsafeAsPhysicalPath } from './paths/test-utils'
+import {
+  unsafeAsLogicalPath,
+  unsafeAsEntrySlug,
+  unsafeAsPhysicalPath,
+  unsafeAsContentId,
+} from './paths/test-utils'
 
 describe('ContentIdIndex', () => {
   let tempDir: string
@@ -152,7 +157,7 @@ describe('ContentIdIndex', () => {
   describe('findByPath', () => {
     it('returns null for non-existent path', async () => {
       await index.buildFromFilenames('content')
-      expect(index.findByPath('content/nonexistent.json')).toBeNull()
+      expect(index.findByPath(unsafeAsPhysicalPath('content/nonexistent.json'))).toBeNull()
     })
 
     it('returns ID for existing path', async () => {
@@ -162,7 +167,7 @@ describe('ContentIdIndex', () => {
       await index.buildFromFilenames('content')
 
       // Test
-      const id = index.findByPath(`content/test.${testId}.json`)
+      const id = index.findByPath(unsafeAsPhysicalPath(`content/test.${testId}.json`))
       expect(id).toBe(testId)
     })
   })
@@ -180,7 +185,7 @@ describe('ContentIdIndex', () => {
 
       // Verify index updated
       expect(index.findById(testId)).not.toBeNull()
-      expect(index.findByPath(`content/new.${testId}.json`)).toBe(testId)
+      expect(index.findByPath(unsafeAsPhysicalPath(`content/new.${testId}.json`))).toBe(testId)
     })
 
     it('throws on collision', () => {
@@ -240,15 +245,15 @@ describe('ContentIdIndex', () => {
       })
 
       // Remove
-      index.remove(testId)
+      index.remove(unsafeAsContentId(testId))
 
       // Verify index updated
       expect(index.findById(testId)).toBeNull()
-      expect(index.findByPath(`content/test.${testId}.json`)).toBeNull()
+      expect(index.findByPath(unsafeAsPhysicalPath(`content/test.${testId}.json`))).toBeNull()
     })
 
     it('handles non-existent ID gracefully', () => {
-      expect(() => index.remove('nonexistent')).not.toThrow()
+      expect(() => index.remove(unsafeAsContentId('nonexistent'))).not.toThrow()
     })
   })
 
@@ -263,20 +268,26 @@ describe('ContentIdIndex', () => {
       })
 
       // Update path
-      index.updatePath(testId, `content/new.${testId}.json`)
+      index.updatePath(
+        unsafeAsContentId(testId),
+        unsafeAsPhysicalPath(`content/new.${testId}.json`),
+      )
 
       // Verify
       const location = index.findById(testId)
       expect(location?.relativePath).toBe(`content/new.${testId}.json`)
       expect(location?.slug).toBe('new')
-      expect(index.findByPath(`content/old.${testId}.json`)).toBeNull()
-      expect(index.findByPath(`content/new.${testId}.json`)).toBe(testId)
+      expect(index.findByPath(unsafeAsPhysicalPath(`content/old.${testId}.json`))).toBeNull()
+      expect(index.findByPath(unsafeAsPhysicalPath(`content/new.${testId}.json`))).toBe(testId)
     })
 
     it('throws for non-existent ID', () => {
-      expect(() => index.updatePath('nonexistent', 'content/new.json')).toThrow(
-        'Cannot update path for unknown ID',
-      )
+      expect(() =>
+        index.updatePath(
+          unsafeAsContentId('nonexistent'),
+          unsafeAsPhysicalPath('content/new.json'),
+        ),
+      ).toThrow('Cannot update path for unknown ID')
     })
   })
 
@@ -364,7 +375,7 @@ describe('ContentIdIndex', () => {
         slug: unsafeAsEntrySlug('second'),
       })
 
-      index.remove(entry1Id)
+      index.remove(unsafeAsContentId(entry1Id))
 
       const entries = index.getEntriesInCollection(unsafeAsLogicalPath('content/posts'))
       expect(entries).toHaveLength(1)
@@ -381,7 +392,7 @@ describe('ContentIdIndex', () => {
         slug: unsafeAsEntrySlug('only'),
       })
 
-      index.remove(entryId)
+      index.remove(unsafeAsContentId(entryId))
 
       // Should return empty array, not throw
       const entries = index.getEntriesInCollection(unsafeAsLogicalPath('content/posts'))
@@ -399,7 +410,10 @@ describe('ContentIdIndex', () => {
       })
 
       // Move to different collection
-      index.updatePath(entryId, `content/pages/page.article.${entryId}.json`)
+      index.updatePath(
+        unsafeAsContentId(entryId),
+        unsafeAsPhysicalPath(`content/pages/page.article.${entryId}.json`),
+      )
 
       // Should be removed from old collection
       const postsEntries = index.getEntriesInCollection(unsafeAsLogicalPath('content/posts'))

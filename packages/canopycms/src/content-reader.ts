@@ -20,8 +20,8 @@ export interface ContentReaderOptions {
 
 export interface ReadContentInput {
   /** Resolved schema path (e.g., content/posts or content/home). */
-  entryPath: string
-  slug?: string
+  entryPath: LogicalPath
+  slug?: EntrySlug
   branch?: string
   /** User making the request. Required - use ANONYMOUS_USER for public access. */
   user: CanopyUser
@@ -132,13 +132,10 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const { entryPath, slug, branchName, user } = resolveTarget(input)
     const { context, branchRoot, store } = await resolveStore(branchName)
 
-    // entryPath is a schema-validated logical path supplied by the caller
-    const logicalEntryPath = entryPath as LogicalPath
-
     // Get the path WITHOUT reading the file
     let relativePath: PhysicalPath
     try {
-      const resolved = await store.resolveDocumentPath(logicalEntryPath, slug ?? '')
+      const resolved = await store.resolveDocumentPath(entryPath, slug ?? '')
       relativePath = resolved.relativePath
     } catch (err) {
       const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
@@ -162,8 +159,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
 
     // ONLY if permissions pass, read the file
     try {
-      const slugValue = slug ?? ''
-      return await store.read(logicalEntryPath, slugValue ? (slugValue as EntrySlug) : '', {
+      return await store.read(entryPath, slug ?? '', {
         resolveReferences: input.resolveReferences ?? true,
       })
     } catch (err: unknown) {
@@ -183,11 +179,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       throw new ContentStoreError(message ?? defaultMessage)
     }
     const data = (doc as any).data as T
-    const path = buildEntryPath({
-      collectionPath: entryPath as LogicalPath,
-      slug,
-      branch: branchName,
-    })
+    const path = buildEntryPath({ collectionPath: entryPath, slug, branch: branchName })
     return { data, path }
   }
 

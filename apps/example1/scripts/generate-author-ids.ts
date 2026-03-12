@@ -30,8 +30,8 @@ async function generateIds() {
   })
 
   // Get the generated IDs
-  const aliceId = idIndex.findByPath('content/authors/alice.json')
-  const bobId = idIndex.findByPath('content/authors/bob.json')
+  const aliceId = idIndex.findByPath(createPhysicalPath('content/authors/alice.json'))
+  const bobId = idIndex.findByPath(createPhysicalPath('content/authors/bob.json'))
 
   console.log('IDs generated successfully:')
   console.log(`Alice ID: ${aliceId}`)

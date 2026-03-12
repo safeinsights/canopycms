@@ -3,6 +3,7 @@ import type { CanopyServices } from './services'
 import type { ContentReader, ReadContentInput } from './content-reader'
 import { isBuildMode, BUILD_USER } from './build-mode'
 import { createContentReader } from './content-reader'
+import { createLogicalPath, parseSlug, type EntrySlug } from './paths'
 
 export interface CanopyContextOptions {
   services: CanopyServices
@@ -70,15 +71,26 @@ export function createCanopyContext(options: CanopyContextOptions) {
     // Create base content reader
     const baseReader = createContentReader({ services })
 
-    // Wrap reader to inject user automatically
+    // Wrap reader to inject user automatically, validating strings → branded types at this boundary
     const read: CanopyContext['read'] = async <T = unknown>(input: {
       entryPath: string
       slug?: string
       branch?: string
       resolveReferences?: boolean
     }) => {
+      const entryPath = createLogicalPath(input.entryPath)
+      let slug: EntrySlug | undefined
+      if (input.slug) {
+        const slugResult = parseSlug(input.slug, 'entry')
+        if (!slugResult.ok) {
+          throw new Error(`Invalid slug: ${slugResult.error}`)
+        }
+        slug = slugResult.slug as EntrySlug
+      }
       const readInput: ReadContentInput = {
-        ...input,
+        entryPath,
+        slug,
+        branch: input.branch,
         user,
         resolveReferences: input.resolveReferences ?? true,
       }

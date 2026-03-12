@@ -36,7 +36,7 @@ export type {
 } from './types'
 
 // Validation
-export { parsePermissionPath, permissionPathToString } from './validation'
+export { parsePermissionPath } from './validation'
 
 // Main content access (recommended for most cases)
 export { checkContentAccess, createCheckContentAccess } from './content'

@@ -60,10 +60,3 @@ export function parsePermissionPath(
 
   return { ok: true, path: normalized as PermissionPath }
 }
-
-/**
- * Convert a branded PermissionPath back to string for storage/serialization.
- */
-export function permissionPathToString(path: PermissionPath): string {
-  return path as string
-}

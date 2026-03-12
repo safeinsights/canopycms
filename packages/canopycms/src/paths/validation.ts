@@ -203,13 +203,16 @@ export function parsePhysicalPath(
     return { ok: false, error: 'Path is required' }
   }
 
+  // Normalize backslashes to forward slashes (consistent with parseLogicalPath)
+  const normalized = path.replace(/\\/g, '/')
+
   // Security check
-  if (hasTraversalSequence(path)) {
+  if (hasTraversalSequence(normalized)) {
     return { ok: false, error: 'Path contains traversal sequence' }
   }
 
   // Check it looks like a physical path
-  if (!looksLikePhysicalPath(path)) {
+  if (!looksLikePhysicalPath(normalized)) {
     return {
       ok: false,
       error:
@@ -217,7 +220,7 @@ export function parsePhysicalPath(
     }
   }
 
-  return { ok: true, path: path as PhysicalPath }
+  return { ok: true, path: normalized as PhysicalPath }
 }
 
 /**
@@ -384,26 +387,4 @@ export function parseSlug(
 
   // Cast to appropriate branded type
   return { ok: true, slug: slug as CollectionSlug | EntrySlug }
-}
-
-/**
- * Convert a branded ContentId back to string for storage/serialization.
- * This is a type-safe way to extract the underlying string value.
- */
-export function contentIdToString(id: ContentId): string {
-  return id as string
-}
-
-/**
- * Convert a branded BranchName back to string for storage/serialization.
- */
-export function branchNameToString(name: BranchName): string {
-  return name as string
-}
-
-/**
- * Convert a branded slug back to string for storage/serialization.
- */
-export function slugToString(slug: CollectionSlug | EntrySlug): string {
-  return slug as string
 }

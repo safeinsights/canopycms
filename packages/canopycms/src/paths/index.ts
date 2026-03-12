@@ -23,7 +23,6 @@ export type {
   ContentId,
   CollectionSlug,
   EntrySlug,
-  PathContext,
   PathValidationResult,
 } from './types'
 
@@ -34,8 +33,6 @@ export {
   hasTraversalSequence,
   createLogicalPath,
   createPhysicalPath,
-  logicalPathToString,
-  physicalPathToString,
   joinPath,
 } from './normalize'
 
@@ -58,10 +55,6 @@ export {
   parseContentId,
   parseBranchName,
   parseSlug,
-  // Branded type conversion to string
-  contentIdToString,
-  branchNameToString,
-  slugToString,
 } from './validation'
 
 // Path resolution utilities

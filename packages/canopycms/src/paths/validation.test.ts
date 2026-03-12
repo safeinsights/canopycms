@@ -175,6 +175,22 @@ describe('path validation utilities', () => {
         expect(result.error).toContain('logical path')
       }
     })
+
+    it('rejects backslash traversal', () => {
+      const result = parsePhysicalPath('content\\..\\.sensitive.abc123def456.json')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('traversal')
+      }
+    })
+
+    it('normalizes backslashes to forward slashes', () => {
+      const result = parsePhysicalPath('content\\posts\\post.hello.abc123def456.json')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.path).toBe('content/posts/post.hello.abc123def456.json')
+      }
+    })
   })
 
   describe('parseContentId', () => {

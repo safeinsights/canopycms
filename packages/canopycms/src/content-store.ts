@@ -456,7 +456,7 @@ export class ContentStore {
         if (existing) {
           // Update if path changed, otherwise do nothing
           if (existing.relativePath !== relativePath) {
-            idIndex.updatePath(id, relativePath)
+            idIndex.updatePath(existing.id, relativePath)
           }
         } else {
           // Add new entry to index
@@ -488,7 +488,7 @@ export class ContentStore {
       if (existing) {
         // Update if path changed, otherwise do nothing
         if (existing.relativePath !== relativePath) {
-          idIndex.updatePath(id, relativePath)
+          idIndex.updatePath(existing.id, relativePath)
         }
       } else {
         // Add new entry to index
@@ -530,9 +530,7 @@ export class ContentStore {
   async getIdForEntry(collectionPath: LogicalPath, slug: EntrySlug): Promise<ContentId | null> {
     const idIndex = await this.idIndex()
     const { relativePath } = await this.buildPaths(this.assertCollection(collectionPath), slug)
-    const id = idIndex.findByPath(relativePath)
-    // IDs in the index were validated on write (12-char Base58); safe to cast
-    return id ? (id as ContentId) : null
+    return idIndex.findByPath(relativePath)
   }
 
   /**
@@ -586,11 +584,10 @@ export class ContentStore {
     }
 
     // Get current file path
-    const {
-      absolutePath: currentPath,
-      relativePath: currentRelPath,
-      id,
-    } = await this.buildPaths(collection, currentSlug)
+    const { absolutePath: currentPath, relativePath: currentRelPath } = await this.buildPaths(
+      collection,
+      currentSlug,
+    )
 
     // Verify current file exists
     try {
@@ -647,9 +644,10 @@ export class ContentStore {
     await fs.rename(currentPath, newPath)
 
     // Update the ID index
-    const newRelativePath = path.relative(this.root, newPath)
-    if (id) {
-      idIndex.updatePath(id, newRelativePath)
+    const newRelativePath = path.relative(this.root, newPath) as PhysicalPath
+    const entryId = idIndex.findByPath(currentRelPath)
+    if (entryId) {
+      idIndex.updatePath(entryId, newRelativePath)
     }
 
     // Return new logical path
