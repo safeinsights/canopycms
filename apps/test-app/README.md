@@ -17,7 +17,7 @@ This is a minimal Next.js 14 app with:
 
 - CanopyCMS editor at `/edit`
 - Clerk authentication (test mode)
-- Simple schema (posts collection + home singleton)
+- Simple schema (posts collection + home entry with maxItems: 1)
 - All CanopyCMS features available for testing
 
 ## Running the App
@@ -53,7 +53,7 @@ npm run test:e2e:debug
 The test app has a simple schema for testing:
 
 - **Posts Collection**: Title, author, date, tags, body (MDX)
-- **Home Singleton**: Title, tagline, featured posts array
+- **Home Entry** (maxItems: 1): Title, tagline, featured posts array
 
 ## Authentication
 

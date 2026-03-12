@@ -404,12 +404,12 @@ Here's how your content directory might look with meta files:
 ```
 content/
 ├── pages/
-│   ├── .collection.json      # Pages collection with singleton-like entry
-│   └── home.json             # Homepage (maxItems: 1)
+│   ├── .collection.json      # Pages collection (homepage entry type with maxItems: 1)
+│   └── page.home.a1b2c3d4e5f6.json  # Homepage entry (type.slug.id.ext)
 ├── posts/
 │   ├── .collection.json      # Posts collection definition
-│   ├── my-first-post.json
-│   └── another-post.json
+│   ├── post.my-first-post.x9y8z7w6v5u4.json
+│   └── post.another-post.q3r4s5t6u7v8.json
 ├── authors/
 │   ├── .collection.json      # Authors collection definition
 │   ├── alice.json
@@ -524,7 +524,7 @@ See the [Schema References System](#schema-references-system) section for detail
 
 The schema uses a unified collection-based structure. Collections contain **entry types**, which define the types of content allowed within that collection. Each entry type has its own schema (fields), format, and optional cardinality constraints.
 
-**Entry types** replace the old singleton/collection distinction:
+**Entry types** define what kind of content can exist in a collection:
 - For repeatable content (blog posts, products), create an entry type without restrictions
 - For unique content (homepage, settings), create an entry type with `maxItems: 1`
 - You can mix multiple entry types in a single collection

@@ -500,9 +500,8 @@ describe('extractSlugFromFilename', () => {
     expect(extractSlugFromFilename('item.foo.bar.baz.p1s2t3a4b5c6.json')).toBe('foo.bar.baz')
   })
 
-  it('extracts slug for root-level entries (3 parts)', () => {
-    // Root-level entries (exactly 3 parts): name.{id}.ext → extracts name
-    // Since name serves as both type and slug for root entries
+  it('extracts slug from 3-part filenames (name.id.ext)', () => {
+    // 3-part files: name.{id}.ext → the name portion before the ID
     expect(extractSlugFromFilename('home.a1b2c3d4e5f6.json')).toBe('home')
   })
 })

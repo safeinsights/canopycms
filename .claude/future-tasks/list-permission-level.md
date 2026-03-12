@@ -45,7 +45,7 @@ export interface CollectionItem {
   collectionId: string
   collectionName: string
   format: ContentFormat
-  itemType: 'entry' | 'singleton'
+  entryType: string              // Entry type name (e.g., 'post', 'home')
   path: string
   title?: string
   updatedAt?: string
@@ -72,7 +72,7 @@ entries.push({
   canEdit: editAccess.allowed
 })
 
-// Similar changes needed at lines 306 (singletons) and 343 (collections)
+// Similar changes needed at lines 306 (entry types) and 343 (collections)
 ```
 
 **Result:**
@@ -96,7 +96,7 @@ export interface EditorEntry {
   collectionName?: string
   slug?: string
   format?: ContentFormat
-  type?: 'entry' | 'singleton'
+  entryType?: string
   canRead?: boolean   // NEW
   canEdit?: boolean   // EXISTING
 }

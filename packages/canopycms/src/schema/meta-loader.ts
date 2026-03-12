@@ -93,7 +93,7 @@ export type RootCollectionMeta = {
 /**
  * Strip embedded ID from a directory or file name.
  * e.g., "docs.bChqT78gcaLd" -> "docs"
- * e.g., "home.agfzDt2RLpSn.json" -> "home"
+ * e.g., "home.home.agfzDt2RLpSn.json" -> "home"
  */
 function stripEmbeddedIdFromName(name: string): string {
   // Use extractSlugFromFilename which handles the ID extraction logic

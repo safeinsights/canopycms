@@ -18,7 +18,7 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 ### ✅ Completed Features
 
 **Core Architecture**:
-- Schema DSL with Zod validation (collections, singletons, nested objects, blocks)
+- Schema DSL with Zod validation (collections, entry types, nested objects, blocks)
 - Git-backed content store with branch-aware workspaces
 - Branch modes: `dev`, `prod-sim`, `prod`
 - Content formats: JSON, Markdown, MDX with frontmatter
@@ -90,11 +90,11 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
    - EntryNavigator UI with full nested hierarchy display using Mantine Tree component
    - Content store path resolution for nested structures
 
-3. ⚠️ **Singleton Route Clarification** (80% complete):
-   - Schema distinguishes `type: 'entry'` (singleton) vs `type: 'collection'`
-   - API handles both entry type patterns
-   - Content store properly handles entry types (no slug required)
-   - ⚠️ **CLEANUP NEEDED**: Remove/clarify "standalone" terminology (appears in API, likely legacy)
+3. ✅ **Entry Type Unification** (complete):
+   - Schema uses `type: 'collection'` and `type: 'entry-type'` (FlatSchemaItem discriminated union)
+   - All entries use unified `{type}.{slug}.{id}.{ext}` filename pattern
+   - Entry-type items delegate to parent collection in ContentStore
+   - `maxItems: 1` provides singleton-like behavior as a schema constraint
 
 4. **Entry sorting/reordering within collections**
      - Manual drag-and-drop reordering UI
@@ -192,12 +192,11 @@ CanopyCMS is a schema-driven, branch-aware CMS for GitHub-backed content. The sy
 
 2. **Documentation**:
    - Reference field API documentation
-   - Singleton vs collection route patterns
+   - Entry type vs collection route patterns
    - Nested collection examples and best practices
 
 3. **Cleanup Tasks**:
    - Remove or clarify "standalone" terminology (likely legacy naming)
-   - Ensure consistent use of "entry" type for singletons throughout codebase
 
 
 ### 5. Code Cleanup & Framework Abstraction
@@ -394,7 +393,7 @@ All plans are stored in `.claude/plans/` within the workspace to keep them versi
 **Phase 2 Progress (Schema & Assets)** - 60% COMPLETE:
 - ✅ Relational data improvements (90% done - Priority 1)
 - ✅ Nested collection support (85% done - Priority 1)
-- ⚠️ Singleton route clarification (80% done - needs cleanup - Priority 1)
+- ✅ Entry type unification (complete - Priority 1)
 - ⏳ Schema utilities for SSG (ToC/navigation - DEFERRED to Priority 5+)
 - ⏳ **NEW: Entry sorting within collections (DEFERRED to Priority 5+)**
 - ✅ Asset store foundation (40% done - Priority 2)

@@ -520,7 +520,7 @@ describe('listEntries', () => {
     expect(bobEntry?.collectionPath).toBe('content/authors') // Logical path, no ID
   })
 
-  it.skip('lists root-level entry types with maxItems: 1', async () => {
+  it('lists root-level entry types with maxItems: 1', async () => {
     const root = await tmpDir()
 
     // Create content directory
@@ -551,16 +551,16 @@ describe('listEntries', () => {
       'utf8'
     )
 
-    // Create root-level entry files (pattern: {name}.{id}.{ext})
+    // Create root-level entry files (pattern: {type}.{slug}.{id}.{ext})
     const homeId = 'agfzDt2RLpSn'
     const settingsId = 'Xp7qR2sL9mKn'
     await fs.writeFile(
-      path.join(root, `content/home.${homeId}.json`),
+      path.join(root, `content/home.home.${homeId}.json`),
       JSON.stringify({ title: 'Welcome Home', hero: 'Hello World' }),
       'utf8'
     )
     await fs.writeFile(
-      path.join(root, `content/settings.${settingsId}.json`),
+      path.join(root, `content/settings.settings.${settingsId}.json`),
       JSON.stringify({ siteName: 'My Site', theme: 'dark' }),
       'utf8'
     )
@@ -581,7 +581,7 @@ describe('listEntries', () => {
       'utf8'
     )
     await fs.writeFile(
-      path.join(root, `content/posts.${postsId}/first.abc123.json`),
+      path.join(root, `content/posts.${postsId}/post.first.abc123def456.json`),
       JSON.stringify({ title: 'First Post' }),
       'utf8'
     )

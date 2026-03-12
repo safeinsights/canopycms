@@ -24,7 +24,7 @@ README.md should help developers who want to **use** CanopyCMS in their projects
 
 ### 3. Configuration
 - `defineCanopyConfig` options explained
-- Schema definition (collections, singletons, fields)
+- Schema definition (collections, entry types, fields)
 - Field types and their options
 - `contentRoot` and path resolution
 - Auth plugin configuration
