@@ -19,7 +19,7 @@ import { isAdmin } from '../authorization/helpers'
 import { getErrorMessage } from '../utils/error'
 import { branchNameSchema, logicalPathSchema } from './validators'
 import {
-  SchemaStore,
+  SchemaOps,
   createCollectionInputSchema,
   updateCollectionInputSchema,
   entryTypeInputSchema,
@@ -149,19 +149,19 @@ const updateOrderBodySchema = z.object({
 // ============================================================================
 
 /**
- * Get a SchemaStore instance for a branch
+ * Get a SchemaOps instance for a branch
  */
-async function getSchemaStore(
+async function getSchemaOps(
   ctx: ApiContext,
   branchName: string,
-): Promise<{ store: SchemaStore; branchRoot: string } | { error: string; status: number }> {
+): Promise<{ store: SchemaOps; branchRoot: string } | { error: string; status: number }> {
   const context = await ctx.getBranchContext(branchName)
   if (!context) {
     return { error: 'Branch not found', status: 404 }
   }
 
   const contentRoot = path.join(context.branchRoot, 'content')
-  const store = new SchemaStore(contentRoot, ctx.services.schemaRegistry, ctx.services)
+  const store = new SchemaOps(contentRoot, ctx.services.entrySchemaRegistry, ctx.services)
   return { store, branchRoot: context.branchRoot }
 }
 
@@ -207,7 +207,7 @@ const getSchemaHandler = async (
     data: {
       schema: context.schema!,
       flatSchema: context.flatSchema!,
-      availableSchemas: Object.keys(ctx.services.schemaRegistry),
+      availableSchemas: Object.keys(ctx.services.entrySchemaRegistry),
     },
   }
 }
@@ -254,7 +254,7 @@ const getCollectionHandler = async (
   // Read from raw collection meta to get schema registry keys (strings), not resolved FieldConfig[]
   let entryTypesWithUsage: EntryTypeWithUsage[] | undefined
   if (item.entries && item.entries.length > 0) {
-    const storeResult = await getSchemaStore(ctx, params.branch)
+    const storeResult = await getSchemaOps(ctx, params.branch)
     if ('error' in storeResult) {
       return { ok: false, status: storeResult.status, error: storeResult.error }
     }
@@ -301,7 +301,7 @@ const createCollectionHandler = async (
     return { ok: false, status: authError.status, error: authError.error }
   }
 
-  const storeResult = await getSchemaStore(ctx, params.branch)
+  const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
@@ -338,7 +338,7 @@ const updateCollectionHandler = async (
     return { ok: false, status: authError.status, error: authError.error }
   }
 
-  const storeResult = await getSchemaStore(ctx, params.branch)
+  const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
@@ -376,7 +376,7 @@ const deleteCollectionHandler = async (
     return { ok: false, status: authError.status, error: authError.error }
   }
 
-  const storeResult = await getSchemaStore(ctx, params.branch)
+  const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
@@ -415,7 +415,7 @@ const addEntryTypeHandler = async (
     return { ok: false, status: authError.status, error: authError.error }
   }
 
-  const storeResult = await getSchemaStore(ctx, params.branch)
+  const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
@@ -454,7 +454,7 @@ const updateEntryTypeHandler = async (
     return { ok: false, status: authError.status, error: authError.error }
   }
 
-  const storeResult = await getSchemaStore(ctx, params.branch)
+  const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
@@ -514,7 +514,7 @@ const removeEntryTypeHandler = async (
     return { ok: false, status: authError.status, error: authError.error }
   }
 
-  const storeResult = await getSchemaStore(ctx, params.branch)
+  const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
@@ -553,7 +553,7 @@ const updateOrderHandler = async (
     return { ok: false, status: authError.status, error: authError.error }
   }
 
-  const storeResult = await getSchemaStore(ctx, params.branch)
+  const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
@@ -596,7 +596,7 @@ const invalidateSchemaCacheHandler = async (
   }
 
   try {
-    await ctx.services.schemaCacheRegistry.invalidate(context.branchRoot)
+    await ctx.services.branchSchemaCache.invalidate(context.branchRoot)
     return {
       ok: true,
       status: 200,

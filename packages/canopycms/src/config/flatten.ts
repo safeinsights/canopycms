@@ -105,6 +105,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
           parentPath: createLogicalPath(normalizedFull),
           format: entryType.format,
           fields: entryType.fields,
+          fieldsRef: entryType.fieldsRef,
           default: entryType.default,
           maxItems: entryType.maxItems,
         })
@@ -148,6 +149,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
         parentPath: base ? createLogicalPath(base) : createLogicalPath(''), // Now references the root collection (e.g., 'content')
         format: entryType.format,
         fields: entryType.fields,
+        fieldsRef: entryType.fieldsRef,
         default: entryType.default,
         maxItems: entryType.maxItems,
       })

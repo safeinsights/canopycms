@@ -2,10 +2,10 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { SchemaCacheRegistry } from './schema-cache-registry'
+import { BranchSchemaCache } from './schema-cache-registry'
 import type { RootCollectionConfig, FieldConfig } from './config'
 
-describe('SchemaCacheRegistry', () => {
+describe('BranchSchemaCache', () => {
   let tempDir: string
   let branchRoot: string
 
@@ -44,7 +44,7 @@ describe('SchemaCacheRegistry', () => {
 
   describe('prod-sim mode', () => {
     it('should load schema from .collection.json files on first access (cache miss)', async () => {
-      const registry = new SchemaCacheRegistry('prod-sim')
+      const registry = new BranchSchemaCache('prod-sim')
       const schemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -59,7 +59,7 @@ describe('SchemaCacheRegistry', () => {
     })
 
     it('should use cache on second access (cache hit)', async () => {
-      const registry = new SchemaCacheRegistry('prod-sim')
+      const registry = new BranchSchemaCache('prod-sim')
       const schemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -83,7 +83,7 @@ describe('SchemaCacheRegistry', () => {
     })
 
     it('should write cache file to .canopy-meta/schema-cache.json', async () => {
-      const registry = new SchemaCacheRegistry('prod-sim')
+      const registry = new BranchSchemaCache('prod-sim')
       const schemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -108,7 +108,7 @@ describe('SchemaCacheRegistry', () => {
     })
 
     it('should invalidate cache when invalidate() is called', async () => {
-      const registry = new SchemaCacheRegistry('prod-sim')
+      const registry = new BranchSchemaCache('prod-sim')
       const schemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -129,7 +129,7 @@ describe('SchemaCacheRegistry', () => {
     })
 
     it('should regenerate cache when .stale marker exists', async () => {
-      const registry = new SchemaCacheRegistry('prod-sim')
+      const registry = new BranchSchemaCache('prod-sim')
       const schemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -162,7 +162,7 @@ describe('SchemaCacheRegistry', () => {
     })
 
     it('should handle missing cache file gracefully', async () => {
-      const registry = new SchemaCacheRegistry('prod-sim')
+      const registry = new BranchSchemaCache('prod-sim')
       const schemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -177,7 +177,7 @@ describe('SchemaCacheRegistry', () => {
 
   describe('dev mode', () => {
     it('should use in-memory cache (no file I/O)', async () => {
-      const registry = new SchemaCacheRegistry('dev')
+      const registry = new BranchSchemaCache('dev')
       const schemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -196,7 +196,7 @@ describe('SchemaCacheRegistry', () => {
     })
 
     it('should use singleton in-memory cache', async () => {
-      const registry = new SchemaCacheRegistry('dev')
+      const registry = new BranchSchemaCache('dev')
       const schemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -212,7 +212,7 @@ describe('SchemaCacheRegistry', () => {
     })
 
     it('should clear in-memory cache when invalidate() is called', async () => {
-      const registry = new SchemaCacheRegistry('dev')
+      const registry = new BranchSchemaCache('dev')
       const schemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -234,7 +234,7 @@ describe('SchemaCacheRegistry', () => {
     })
 
     it('should not create .stale marker in dev mode', async () => {
-      const registry = new SchemaCacheRegistry('dev')
+      const registry = new BranchSchemaCache('dev')
       const schemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -256,7 +256,7 @@ describe('SchemaCacheRegistry', () => {
 
   describe('clearAll', () => {
     it('should clear in-memory cache in dev mode', async () => {
-      const registry = new SchemaCacheRegistry('dev')
+      const registry = new BranchSchemaCache('dev')
       const schemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }

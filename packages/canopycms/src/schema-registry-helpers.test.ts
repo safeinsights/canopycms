@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdir, writeFile, rm } from 'fs/promises'
 import { join } from 'pathe'
-import { createSchemaRegistry, validateSchemaRegistry } from './schema-registry-helpers'
+import { createEntrySchemaRegistry, validateEntrySchemaRegistry } from './schema-registry-helpers'
 
-describe('createSchemaRegistry', () => {
+describe('createEntrySchemaRegistry', () => {
   it('accepts valid schema registry', () => {
-    const registry = createSchemaRegistry({
+    const registry = createEntrySchemaRegistry({
       postSchema: [{ type: 'text', name: 'title', label: 'Title', required: true }],
       authorSchema: [{ type: 'text', name: 'name', label: 'Name', required: true }],
     })
@@ -15,37 +15,39 @@ describe('createSchemaRegistry', () => {
   })
 
   it('throws error for non-object registry', () => {
-    expect(() => createSchemaRegistry(null as any)).toThrow('Schema registry must be an object')
-    expect(() => createSchemaRegistry(undefined as any)).toThrow(
-      'Schema registry must be an object',
+    expect(() => createEntrySchemaRegistry(null as any)).toThrow(
+      'Entry schema registry must be an object',
     )
-    expect(() => createSchemaRegistry('invalid' as any)).toThrow(
-      'Schema registry must be an object',
+    expect(() => createEntrySchemaRegistry(undefined as any)).toThrow(
+      'Entry schema registry must be an object',
+    )
+    expect(() => createEntrySchemaRegistry('invalid' as any)).toThrow(
+      'Entry schema registry must be an object',
     )
   })
 
   it('throws error for empty registry', () => {
-    expect(() => createSchemaRegistry({})).toThrow('Schema registry cannot be empty')
+    expect(() => createEntrySchemaRegistry({})).toThrow('Entry schema registry cannot be empty')
   })
 
   it('throws error for non-array schema', () => {
     expect(() =>
-      createSchemaRegistry({
+      createEntrySchemaRegistry({
         postSchema: 'not an array' as any,
       }),
-    ).toThrow('Schema registry entry "postSchema" must be an array of FieldConfig')
+    ).toThrow('Entry schema registry entry "postSchema" must be an array of FieldConfig')
   })
 
   it('throws error for empty schema array', () => {
     expect(() =>
-      createSchemaRegistry({
+      createEntrySchemaRegistry({
         postSchema: [],
       }),
-    ).toThrow('Schema registry entry "postSchema" cannot be empty')
+    ).toThrow('Entry schema registry entry "postSchema" cannot be empty')
   })
 })
 
-describe('validateSchemaRegistry', () => {
+describe('validateEntrySchemaRegistry', () => {
   const testDir = join(process.cwd(), '.test-content-validate')
 
   beforeEach(async () => {
@@ -78,7 +80,7 @@ describe('validateSchemaRegistry', () => {
       }),
     )
 
-    await expect(validateSchemaRegistry(registry, testDir)).resolves.toBeUndefined()
+    await expect(validateEntrySchemaRegistry(registry, testDir)).resolves.toBeUndefined()
   })
 
   it('throws error for missing schema reference in collection', async () => {
@@ -103,10 +105,12 @@ describe('validateSchemaRegistry', () => {
       }),
     )
 
-    await expect(validateSchemaRegistry(registry, testDir)).rejects.toThrow(
-      /Entry type "post" in collection "posts".*references schema "authorSchema".*does not exist/,
+    await expect(validateEntrySchemaRegistry(registry, testDir)).rejects.toThrow(
+      /Entry type "post" in collection "posts".*references entry schema "authorSchema".*does not exist/,
     )
-    await expect(validateSchemaRegistry(registry, testDir)).rejects.toThrow(/Available: postSchema/)
+    await expect(validateEntrySchemaRegistry(registry, testDir)).rejects.toThrow(
+      /Available: postSchema/,
+    )
   })
 
   it('throws error for missing schema reference in root entry type', async () => {
@@ -129,8 +133,8 @@ describe('validateSchemaRegistry', () => {
       }),
     )
 
-    await expect(validateSchemaRegistry(registry, testDir)).rejects.toThrow(
-      /Root entry type "home".*references schema "homeSchema".*does not exist/,
+    await expect(validateEntrySchemaRegistry(registry, testDir)).rejects.toThrow(
+      /Root entry type "home".*references entry schema "homeSchema".*does not exist/,
     )
   })
 
@@ -156,8 +160,8 @@ describe('validateSchemaRegistry', () => {
       }),
     )
 
-    await expect(validateSchemaRegistry(registry, testDir)).rejects.toThrow(
-      /Entry type "doc" in collection "docs".*references schema "configSchema".*does not exist/,
+    await expect(validateEntrySchemaRegistry(registry, testDir)).rejects.toThrow(
+      /Entry type "doc" in collection "docs".*references entry schema "configSchema".*does not exist/,
     )
   })
 
@@ -198,7 +202,7 @@ describe('validateSchemaRegistry', () => {
       }),
     )
 
-    await expect(validateSchemaRegistry(registry, testDir)).resolves.toBeUndefined()
+    await expect(validateEntrySchemaRegistry(registry, testDir)).resolves.toBeUndefined()
   })
 
   it('throws error for non-existent content directory', async () => {
@@ -206,7 +210,7 @@ describe('validateSchemaRegistry', () => {
       postSchema: [{ type: 'text' as const, name: 'title', label: 'Title', required: true }],
     }
 
-    await expect(validateSchemaRegistry(registry, '/nonexistent')).rejects.toThrow(
+    await expect(validateEntrySchemaRegistry(registry, '/nonexistent')).rejects.toThrow(
       /Content directory not found/,
     )
   })
@@ -216,6 +220,6 @@ describe('validateSchemaRegistry', () => {
       postSchema: [{ type: 'text' as const, name: 'title', label: 'Title', required: true }],
     }
 
-    await expect(validateSchemaRegistry(registry, testDir)).resolves.toBeUndefined()
+    await expect(validateEntrySchemaRegistry(registry, testDir)).resolves.toBeUndefined()
   })
 })

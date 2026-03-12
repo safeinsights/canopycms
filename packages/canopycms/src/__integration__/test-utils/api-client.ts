@@ -16,8 +16,8 @@ export interface ApiClientOptions {
   authPlugin: AuthPlugin
   /** Pre-resolved schema for tests (bypasses .collection.json loading) */
   schema?: RootCollectionConfig
-  /** Schema registry for resolving .collection.json references */
-  schemaRegistry?: CreateCanopyServicesOptions['schemaRegistry']
+  /** Entry schema registry for resolving .collection.json references */
+  entrySchemaRegistry?: CreateCanopyServicesOptions['entrySchemaRegistry']
 }
 
 /**
@@ -35,7 +35,7 @@ export async function createApiClient(options: ApiClientOptions) {
       schema: options.schema ?? { collections: [] },
     },
     {
-      schemaRegistry: options.schemaRegistry,
+      entrySchemaRegistry: options.entrySchemaRegistry,
     },
   )
   const handler = createCanopyRequestHandler({
@@ -53,9 +53,9 @@ export async function createApiClient(options: ApiClientOptions) {
       // Load per-branch schema if requested
       if (opts?.loadSchema) {
         const contentRootName = services.config.contentRoot || 'content'
-        const cached = await services.schemaCacheRegistry.getSchema(
+        const cached = await services.branchSchemaCache.getSchema(
           context.branchRoot,
-          services.schemaRegistry,
+          services.entrySchemaRegistry,
           contentRootName,
         )
         context.schema = cached.schema

@@ -1,7 +1,7 @@
-import { TypeFromSchema, defineSchema } from 'canopycms'
-import { createSchemaRegistry } from 'canopycms/server'
+import { TypeFromEntrySchema, defineEntrySchema } from 'canopycms'
+import { createEntrySchemaRegistry } from 'canopycms/server'
 
-export const homeSchema = defineSchema([
+export const homeSchema = defineEntrySchema([
   {
     name: 'hero',
     type: 'object',
@@ -32,16 +32,16 @@ export const homeSchema = defineSchema([
   },
 ])
 
-export type HomeContent = TypeFromSchema<typeof homeSchema>
+export type HomeContent = TypeFromEntrySchema<typeof homeSchema>
 
-export const authorSchema = defineSchema([
+export const authorSchema = defineEntrySchema([
   { name: 'name', type: 'string', label: 'Name' },
   { name: 'bio', type: 'string', label: 'Bio' },
 ])
 
-export type AuthorContent = TypeFromSchema<typeof authorSchema>
+export type AuthorContent = TypeFromEntrySchema<typeof authorSchema>
 
-export const postSchema = defineSchema([
+export const postSchema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title' },
   {
     name: 'author',
@@ -83,21 +83,21 @@ export const postSchema = defineSchema([
   },
 ])
 
-export type PostContent = TypeFromSchema<typeof postSchema> & {
+export type PostContent = TypeFromEntrySchema<typeof postSchema> & {
   slug: string
   author: AuthorContent | null
 }
 
-export const docSchema = defineSchema([
+export const docSchema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title' },
   { name: 'description', type: 'string', label: 'Description' },
   { name: 'body', type: 'markdown', label: 'Body' },
 ])
 
-export type DocContent = TypeFromSchema<typeof docSchema> & { slug: string }
+export type DocContent = TypeFromEntrySchema<typeof docSchema> & { slug: string }
 
-// Schema registry for CanopyCMS - references schemas by name in .collection.json files
-export const schemaRegistry = createSchemaRegistry({
+// Entry schema registry for CanopyCMS - references entry schemas by name in .collection.json files
+export const entrySchemaRegistry = createEntrySchemaRegistry({
   postSchema,
   authorSchema,
   docSchema,

@@ -12,8 +12,8 @@ const deleteAsset = ASSET_ROUTES.delete.handler
 const makeCtx = (): ApiContext => ({
   services: {
     config: { schema: [] } as any,
-    schemaRegistry: {},
-    schemaCacheRegistry: {
+    entrySchemaRegistry: {},
+    branchSchemaCache: {
       getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
       invalidate: vi.fn().mockResolvedValue(undefined),
       clearAll: vi.fn().mockResolvedValue(undefined),

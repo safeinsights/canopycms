@@ -5,10 +5,13 @@
 import type { FieldConfig, RootCollectionConfig } from '../config'
 
 /**
- * Schema registry maps schema names to field definitions.
- * Used by .collection.json files to reference reusable field schemas.
+ * Entry schema registry maps entry schema names to field definitions.
+ * Used by .collection.json files to reference reusable entry schemas.
  */
-export type SchemaRegistry = Record<string, readonly FieldConfig[]>
+export type EntrySchemaRegistry = Record<string, readonly FieldConfig[]>
+
+/** @deprecated Use EntrySchemaRegistry instead */
+export type SchemaRegistry = EntrySchemaRegistry
 
 /**
  * Information about a schema source for debugging.

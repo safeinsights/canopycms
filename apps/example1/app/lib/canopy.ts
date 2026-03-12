@@ -3,7 +3,7 @@ import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import type { AuthPlugin } from 'canopycms/auth'
 import config from '../../canopycms.config'
-import { schemaRegistry } from '../schemas'
+import { entrySchemaRegistry } from '../schemas'
 
 /**
  * Select auth plugin based on CANOPY_AUTH_MODE environment variable.
@@ -31,7 +31,7 @@ function getAuthPlugin(): AuthPlugin {
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
   authPlugin: getAuthPlugin(),
-  schemaRegistry,
+  entrySchemaRegistry,
 })
 
 // Export for server component pages

@@ -14,7 +14,12 @@
  */
 
 // Types
-export type { SchemaRegistry, SchemaSourceInfo, SchemaResolutionResult } from './types'
+export type {
+  EntrySchemaRegistry,
+  SchemaRegistry,
+  SchemaSourceInfo,
+  SchemaResolutionResult,
+} from './types'
 
 // Meta loader (low-level API)
 export {

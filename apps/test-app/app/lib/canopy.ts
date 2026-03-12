@@ -1,7 +1,7 @@
 import { createNextCanopyContext } from 'canopycms-next'
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import config from '../../canopycms.config'
-import { schemaRegistry } from '../schemas'
+import { entrySchemaRegistry } from '../schemas'
 
 /**
  * Dev auth plugin for local development and E2E testing.
@@ -12,7 +12,7 @@ import { schemaRegistry } from '../schemas'
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
   authPlugin: createDevAuthPlugin(),
-  schemaRegistry,
+  entrySchemaRegistry,
 })
 
 // Export for server component pages

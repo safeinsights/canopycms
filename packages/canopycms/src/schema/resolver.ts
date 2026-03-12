@@ -9,7 +9,7 @@
  */
 
 import type { RootCollectionConfig } from '../config'
-import type { SchemaRegistry, SchemaResolutionResult, SchemaSourceInfo } from './types'
+import type { EntrySchemaRegistry, SchemaResolutionResult, SchemaSourceInfo } from './types'
 import { loadCollectionMetaFiles, resolveCollectionReferences } from './meta-loader'
 
 /**
@@ -20,13 +20,13 @@ import { loadCollectionMetaFiles, resolveCollectionReferences } from './meta-loa
  * and resolves schema references using the provided registry.
  *
  * @param contentRoot - Path to the content directory
- * @param schemaRegistry - Map of schema names to field definitions
+ * @param entrySchemaRegistry - Map of entry schema names to field definitions
  * @returns Resolved schema configuration
  * @throws Error if schema references cannot be resolved
  */
 export async function resolveSchema(
   contentRoot: string,
-  schemaRegistry: SchemaRegistry,
+  entrySchemaRegistry: EntrySchemaRegistry,
 ): Promise<SchemaResolutionResult> {
   // Load all .collection.json meta files
   const metaFiles = await loadCollectionMetaFiles(contentRoot)
@@ -51,7 +51,7 @@ export async function resolveSchema(
   }
 
   // Resolve schema references to actual field definitions
-  const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+  const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
   return { schema, sources }
 }

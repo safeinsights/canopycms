@@ -136,8 +136,8 @@ export function createMockGitManager() {
  */
 export interface MockServicesOptions {
   config?: Partial<CanopyConfig>
-  schemaRegistry?: any
-  schemaCacheRegistry?: any
+  entrySchemaRegistry?: any
+  branchSchemaCache?: any
   checkBranchAccess?: any
   checkPathAccess?: any
   checkContentAccess?: any
@@ -171,9 +171,9 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
 
   return {
     config: defaultConfig as any,
-    schemaRegistry: options.schemaRegistry ?? {},
-    schemaCacheRegistry:
-      options.schemaCacheRegistry ??
+    entrySchemaRegistry: options.entrySchemaRegistry ?? {},
+    branchSchemaCache:
+      options.branchSchemaCache ??
       ({
         getSchema: vi.fn().mockResolvedValue({
           schema: {},
