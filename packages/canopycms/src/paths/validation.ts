@@ -20,9 +20,9 @@ import type {
 const BASE58_PATTERN = '[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]'
 
 /**
- * Pattern matching a 12-character content ID
+ * Pattern matching exactly a 12-character content ID
  */
-const CONTENT_ID_PATTERN = new RegExp(`${BASE58_PATTERN}{12}`)
+const CONTENT_ID_PATTERN = new RegExp(`^${BASE58_PATTERN}{12}$`)
 
 /**
  * Pattern matching a physical path segment with embedded ID.
@@ -31,36 +31,6 @@ const CONTENT_ID_PATTERN = new RegExp(`${BASE58_PATTERN}{12}`)
  * - `posts.abc123def456` (collection directory)
  */
 const PHYSICAL_SEGMENT_PATTERN = new RegExp(`\\.${BASE58_PATTERN}{12}(?:\\.[a-z]+)?$`)
-
-/**
- * Validate a slug for use in content paths.
- * Slugs must not contain path separators or traversal sequences.
- *
- * @param slug - The slug to validate
- * @returns true if valid, false otherwise
- */
-export function isValidSlug(slug: string): boolean {
-  if (!slug || slug.length === 0) {
-    return false
-  }
-
-  // Max length (filesystem path safety)
-  if (slug.length > 64) {
-    return false
-  }
-
-  // No path separators
-  if (slug.includes('/') || slug.includes('\\')) {
-    return false
-  }
-
-  // No traversal
-  if (slug === '.' || slug === '..') {
-    return false
-  }
-
-  return true
-}
 
 /**
  * Validate a content path for security.
@@ -196,13 +166,16 @@ export function parseLogicalPath(
     return { ok: false, error: 'Path is required' }
   }
 
+  // Normalize backslashes to forward slashes (consistent with parsePermissionPath)
+  const normalized = path.replace(/\\/g, '/')
+
   // Security check
-  if (hasTraversalSequence(path)) {
+  if (hasTraversalSequence(normalized)) {
     return { ok: false, error: 'Path contains traversal sequence' }
   }
 
   // Check it's not a physical path
-  if (looksLikePhysicalPath(path)) {
+  if (looksLikePhysicalPath(normalized)) {
     return {
       ok: false,
       error:
@@ -210,7 +183,7 @@ export function parseLogicalPath(
     }
   }
 
-  return { ok: true, path: path as LogicalPath }
+  return { ok: true, path: normalized as LogicalPath }
 }
 
 /**
@@ -254,7 +227,7 @@ export function parsePhysicalPath(
  * @returns true if valid Base58 12-char ID
  */
 export function isValidContentId(id: string): boolean {
-  return CONTENT_ID_PATTERN.test(id) && id.length === 12
+  return CONTENT_ID_PATTERN.test(id)
 }
 
 /**
@@ -311,6 +284,11 @@ export function parseBranchName(
 ): { ok: true; name: BranchName } | { ok: false; error: string } {
   if (!name || typeof name !== 'string') {
     return { ok: false, error: 'Branch name is required' }
+  }
+
+  // Length limit (branch names become directory names)
+  if (name.length > 250) {
+    return { ok: false, error: 'Branch name too long (max 250 characters)' }
   }
 
   // Git branch name rules
@@ -375,7 +353,7 @@ export function parseSlug(
     }
   }
 
-  // Check length first (before isValidSlug which also checks it)
+  // Check length (filesystem path safety)
   if (slug.length > 64) {
     return { ok: false, error: 'Slug too long (max 64 characters)' }
   }

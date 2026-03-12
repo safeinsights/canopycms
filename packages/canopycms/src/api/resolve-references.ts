@@ -31,23 +31,14 @@ const resolveReferencesHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof resolveReferencesParamsSchema>,
+  body: z.infer<typeof resolveReferencesBodySchema>,
 ): Promise<ResolveReferencesResponse> => {
   const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  // Parse and validate request body
-  const bodyValidation = resolveReferencesBodySchema.safeParse(req.body)
-  if (!bodyValidation.success) {
-    return {
-      ok: false,
-      status: 400,
-      error: `Invalid request body: ${bodyValidation.error.message}`,
-    }
-  }
-
-  const { ids } = bodyValidation.data
+  const { ids } = body
 
   const flatSchema = context.flatSchema!
   const store = new ContentStore(context.branchRoot, flatSchema)

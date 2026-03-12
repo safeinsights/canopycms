@@ -125,6 +125,22 @@ describe('path validation utilities', () => {
         expect(result.error).toContain('physical path')
       }
     })
+
+    it('normalizes backslashes to forward slashes', () => {
+      const result = parseLogicalPath('content\\posts\\hello')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.path).toBe('content/posts/hello')
+      }
+    })
+
+    it('rejects backslash-encoded traversal sequences', () => {
+      const result = parseLogicalPath('content\\..\\admin')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('traversal')
+      }
+    })
   })
 
   describe('parsePhysicalPath', () => {
@@ -290,6 +306,46 @@ describe('path validation utilities', () => {
         expect(result.error).toContain('slash')
       }
     })
+
+    it('rejects branch names ending with .lock', () => {
+      const result = parseBranchName('feature.lock')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('.lock')
+      }
+    })
+
+    it('rejects branch names with git-forbidden characters', () => {
+      const forbidden = ['feat~1', 'feat^2', 'feat:bar', 'feat?x', 'feat*x', 'feat[0]', 'feat\\bar']
+      forbidden.forEach((name) => {
+        const result = parseBranchName(name)
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(result.error).toContain('invalid characters')
+        }
+      })
+    })
+
+    it('rejects branch names with control characters', () => {
+      const result = parseBranchName('feat\x01bar')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('invalid characters')
+      }
+    })
+
+    it('rejects branch names exceeding max length', () => {
+      const result = parseBranchName('a'.repeat(251))
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('too long')
+      }
+    })
+
+    it('accepts branch names at max length', () => {
+      const result = parseBranchName('a'.repeat(250))
+      expect(result.ok).toBe(true)
+    })
   })
 
   describe('parseSlug', () => {
@@ -351,6 +407,12 @@ describe('path validation utilities', () => {
           const result = parseSlug(slug, 'entry')
           expect(result.ok).toBe(false)
         })
+      })
+
+      it('accepts slugs at exactly 64 characters', () => {
+        const slug64 = 'a'.repeat(64)
+        const result = parseSlug(slug64, 'entry')
+        expect(result.ok).toBe(true)
       })
 
       it('rejects slugs longer than 64 characters', () => {

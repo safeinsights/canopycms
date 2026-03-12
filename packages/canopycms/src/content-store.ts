@@ -335,7 +335,7 @@ export class ContentStore {
     const logicalPath = pathSegments.join('/')
 
     // Try as collection + slug
-    // Slug is last segment of a LogicalPath (validated at API boundary — no slashes, no traversal)
+    // Last segment of an API-validated LogicalPath; safe to cast (no slashes, no traversal)
     const slug = pathSegments[pathSegments.length - 1] as EntrySlug
     const collectionPath = pathSegments.slice(0, -1).join('/')
     const normalizedCollection = normalizeFilesystemPath(collectionPath)

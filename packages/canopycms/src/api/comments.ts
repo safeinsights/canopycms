@@ -6,7 +6,7 @@ import { CommentStore } from '../comment-store'
 import { isReviewer } from '../authorization'
 import { defineEndpoint } from './route-builder'
 import { guardBranchAccess, guardBranchExists, isBranchAccessError } from './middleware'
-import { branchNameSchema } from './validators'
+import { branchNameSchema, logicalPathSchema } from './validators'
 
 export interface AddCommentBody {
   text: string
@@ -46,8 +46,8 @@ const addCommentBodySchema = z.object({
   text: z.string().min(1),
   threadId: z.string().optional(),
   type: z.enum(['field', 'entry', 'branch']),
-  entryPath: z.string().optional(),
-  canopyPath: z.string().optional(),
+  entryPath: logicalPathSchema.optional(),
+  canopyPath: z.string().optional(), // Canopy field path, not a file path
 })
 
 const listCommentsHandler = async (

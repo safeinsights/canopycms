@@ -1,5 +1,6 @@
 import { generate } from 'short-uuid'
 import type { ContentId } from './paths/types'
+import { isValidContentId } from './paths/validation'
 
 /**
  * Generate a new 12-character content ID.
@@ -18,7 +19,4 @@ export function generateId(): ContentId {
  * Validate that a string is a valid content ID format.
  * Standard format: 12 characters using Base58 alphabet (no ambiguous characters: 0, O, I, l).
  */
-export function isValidId(id: string): boolean {
-  // Only accept 12-char IDs (legacy 22-char support removed)
-  return /^[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{12}$/.test(id)
-}
+export const isValidId = isValidContentId
