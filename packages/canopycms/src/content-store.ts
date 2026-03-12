@@ -663,7 +663,7 @@ export class ContentStore {
    */
   async listCollectionEntries(
     collectionPath: LogicalPath,
-  ): Promise<Array<{ relativePath: string; collection: string; slug: string }>> {
+  ): Promise<Array<{ relativePath: PhysicalPath; collection: LogicalPath; slug: EntrySlug }>> {
     const idIndex = await this.idIndex()
 
     // Try to find the collection in the schema index
@@ -698,7 +698,8 @@ export class ContentStore {
     const baseEntries = idIndex.getEntriesInCollection(collection.logicalPath)
 
     // Filter and map to required format
-    const entries: Array<{ relativePath: string; collection: string; slug: string }> = []
+    const entries: Array<{ relativePath: PhysicalPath; collection: LogicalPath; slug: EntrySlug }> =
+      []
 
     for (const location of baseEntries) {
       if (location.type === 'entry' && location.slug) {

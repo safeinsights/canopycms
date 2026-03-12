@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename } from './content-id-index'
-import { unsafeAsLogicalPath, unsafeAsEntrySlug } from './paths/test-utils'
+import { unsafeAsLogicalPath, unsafeAsEntrySlug, unsafeAsPhysicalPath } from './paths/test-utils'
 
 describe('ContentIdIndex', () => {
   let tempDir: string
@@ -173,7 +173,7 @@ describe('ContentIdIndex', () => {
       const testId = 'n1e2w3f4i5j6'
       index.add({
         type: 'entry',
-        relativePath: `content/new.${testId}.json`,
+        relativePath: unsafeAsPhysicalPath(`content/new.${testId}.json`),
         collection: unsafeAsLogicalPath('content'),
         slug: unsafeAsEntrySlug('new'),
       })
@@ -188,7 +188,7 @@ describe('ContentIdIndex', () => {
 
       index.add({
         type: 'entry',
-        relativePath: `content/file1.${testId}.json`,
+        relativePath: unsafeAsPhysicalPath(`content/file1.${testId}.json`),
         collection: unsafeAsLogicalPath('content'),
         slug: unsafeAsEntrySlug('file1'),
       })
@@ -197,7 +197,7 @@ describe('ContentIdIndex', () => {
       expect(() =>
         index.add({
           type: 'entry',
-          relativePath: `content/file2.${testId}.json`,
+          relativePath: unsafeAsPhysicalPath(`content/file2.${testId}.json`),
           collection: unsafeAsLogicalPath('content'),
           slug: unsafeAsEntrySlug('file2'),
         }),
@@ -208,7 +208,7 @@ describe('ContentIdIndex', () => {
       expect(() =>
         index.add({
           type: 'entry',
-          relativePath: 'content/no-id.json',
+          relativePath: unsafeAsPhysicalPath('content/no-id.json'),
           collection: unsafeAsLogicalPath('content'),
           slug: unsafeAsEntrySlug('no-id'),
         }),
@@ -220,7 +220,7 @@ describe('ContentIdIndex', () => {
 
       index.add({
         type: 'collection',
-        relativePath: `content/posts.${collectionId}`,
+        relativePath: unsafeAsPhysicalPath(`content/posts.${collectionId}`),
       })
 
       const location = index.findById(collectionId)
@@ -234,7 +234,7 @@ describe('ContentIdIndex', () => {
       const testId = 'r1e2m3v4e5x6'
       index.add({
         type: 'entry',
-        relativePath: `content/test.${testId}.json`,
+        relativePath: unsafeAsPhysicalPath(`content/test.${testId}.json`),
         collection: unsafeAsLogicalPath('content'),
         slug: unsafeAsEntrySlug('test'),
       })
@@ -257,7 +257,7 @@ describe('ContentIdIndex', () => {
       const testId = 'u1p2d3t4e5x6'
       index.add({
         type: 'entry',
-        relativePath: `content/old.${testId}.json`,
+        relativePath: unsafeAsPhysicalPath(`content/old.${testId}.json`),
         collection: unsafeAsLogicalPath('content'),
         slug: unsafeAsEntrySlug('old'),
       })
@@ -337,7 +337,7 @@ describe('ContentIdIndex', () => {
 
       index.add({
         type: 'entry',
-        relativePath: `content/posts/post.new.${entryId}.json`,
+        relativePath: unsafeAsPhysicalPath(`content/posts/post.new.${entryId}.json`),
         collection: unsafeAsLogicalPath('content/posts'),
         slug: unsafeAsEntrySlug('new'),
       })
@@ -353,13 +353,13 @@ describe('ContentIdIndex', () => {
 
       index.add({
         type: 'entry',
-        relativePath: `content/posts/post.first.${entry1Id}.json`,
+        relativePath: unsafeAsPhysicalPath(`content/posts/post.first.${entry1Id}.json`),
         collection: unsafeAsLogicalPath('content/posts'),
         slug: unsafeAsEntrySlug('first'),
       })
       index.add({
         type: 'entry',
-        relativePath: `content/posts/post.second.${entry2Id}.json`,
+        relativePath: unsafeAsPhysicalPath(`content/posts/post.second.${entry2Id}.json`),
         collection: unsafeAsLogicalPath('content/posts'),
         slug: unsafeAsEntrySlug('second'),
       })
@@ -376,7 +376,7 @@ describe('ContentIdIndex', () => {
 
       index.add({
         type: 'entry',
-        relativePath: `content/posts/post.only.${entryId}.json`,
+        relativePath: unsafeAsPhysicalPath(`content/posts/post.only.${entryId}.json`),
         collection: unsafeAsLogicalPath('content/posts'),
         slug: unsafeAsEntrySlug('only'),
       })
@@ -393,7 +393,7 @@ describe('ContentIdIndex', () => {
 
       index.add({
         type: 'entry',
-        relativePath: `content/posts/post.article.${entryId}.json`,
+        relativePath: unsafeAsPhysicalPath(`content/posts/post.article.${entryId}.json`),
         collection: unsafeAsLogicalPath('content/posts'),
         slug: unsafeAsEntrySlug('article'),
       })

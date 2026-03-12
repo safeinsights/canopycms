@@ -13,7 +13,7 @@ import { getFormatExtension } from '../utils/format'
 import { resolveCollectionPath } from '../content-id-index'
 import { validateAndNormalizePath, normalizeFilesystemPath } from '../paths'
 import { isNotFoundError } from '../utils/error'
-import type { LogicalPath, PhysicalPath, EntrySlug } from '../paths/types'
+import type { LogicalPath, PhysicalPath, EntrySlug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema } from './validators'
 
 type CollectionKind = 'collection' | 'entry'
@@ -32,7 +32,7 @@ export interface EntryTypeSummary {
 
 export interface EntryCollectionSummary {
   logicalPath: LogicalPath
-  contentId: string // 12-char content ID
+  contentId: ContentId // 12-char content ID
   name: string
   label?: string
   format: ContentFormat // Default entry type's format (for backwards compatibility)
@@ -46,9 +46,9 @@ export interface EntryCollectionSummary {
 
 export interface CollectionItem {
   logicalPath: LogicalPath
-  contentId: string // 12-char content ID
-  slug: string
-  collectionId: string
+  contentId: ContentId // 12-char content ID
+  slug: EntrySlug
+  collectionPath: LogicalPath
   collectionName: string
   format: ContentFormat
   entryType: string // The entry type name (from typed entries)
@@ -251,7 +251,9 @@ const listCollectionEntries = async (
       const parsed = parseTypedFilename(file.name, entryTypes)
       if (!parsed) return null
 
-      const { type: entryTypeName, slug, id: contentId } = parsed
+      const { type: entryTypeName, slug: slugStr, id: contentIdStr } = parsed
+      const slug = slugStr as EntrySlug // from validated filename
+      const contentId = contentIdStr as ContentId | undefined // validated by isValidId in parser
 
       // contentId must be present (all entries have IDs in filenames)
       if (!contentId) {
@@ -277,7 +279,7 @@ const listCollectionEntries = async (
         logicalPath: `${collection.logicalPath}/${slug}` as LogicalPath,
         contentId, // 12-char content ID extracted from filename
         slug,
-        collectionId: collection.logicalPath,
+        collectionPath: collection.logicalPath,
         collectionName: collection.name,
         format,
         entryType: entryTypeName || 'default',
@@ -318,9 +320,6 @@ const listCollectionEntriesRecursive = async (
   return results.flat()
 }
 
-/** Normalize a collection ID for consistent comparison */
-const normalizeCollectionId = (value: string): string => normalizeFilesystemPath(value)
-
 export const listEntriesHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
@@ -339,11 +338,11 @@ export const listEntriesHandler = async (
   const flatSchema = context.flatSchema!
   const flatCollections = flatSchema
 
-  const targetId = params.collection ? normalizeCollectionId(params.collection) : undefined
+  const targetPath = params.collection ? normalizeFilesystemPath(params.collection) : undefined
   let targetCollections = flatCollections
 
-  if (targetId) {
-    const match = flatCollections.find((c) => c.logicalPath === targetId)
+  if (targetPath) {
+    const match = flatCollections.find((c) => c.logicalPath === targetPath)
     if (!match) {
       return { ok: false, status: 404, error: 'Collection not found' }
     }
@@ -358,10 +357,10 @@ export const listEntriesHandler = async (
 
   const entries: CollectionItem[] = []
 
-  if (recursive && targetId) {
+  if (recursive && targetPath) {
     // Recursive mode: list entries from target collection and all its children
     try {
-      const items = await listCollectionEntriesRecursive(root, targetId, flatCollections)
+      const items = await listCollectionEntriesRecursive(root, targetPath, flatCollections)
       // For recursive mode, we can't easily apply per-collection ordering
       // Sort alphabetically for now (ordering is collection-specific)
       items.sort((a, b) => a.slug.localeCompare(b.slug))

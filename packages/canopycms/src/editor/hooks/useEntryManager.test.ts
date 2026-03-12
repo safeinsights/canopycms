@@ -9,7 +9,12 @@ import {
   setupMockHistory,
   createApiClientWrapper,
 } from './__test__/test-utils'
-import { unsafeAsLogicalPath, unsafeAsPhysicalPath } from '../../paths/test-utils'
+import {
+  unsafeAsLogicalPath,
+  unsafeAsPhysicalPath,
+  unsafeAsContentId,
+  unsafeAsEntrySlug,
+} from '../../paths/test-utils'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -34,21 +39,21 @@ describe('useEntryManager', () => {
   const mockEntry: EditorEntry = {
     path: unsafeAsLogicalPath('entry1'),
     label: 'Test Entry',
-    collectionId: 'posts',
+    collectionPath: unsafeAsLogicalPath('posts'),
     collectionName: 'posts',
     slug: 'test',
     type: 'entry',
     apiPath: '/api/canopycms/main/content/posts/test',
     format: 'mdx',
     schema: [],
-    contentId: 'test123456789',
+    contentId: unsafeAsContentId('test123456789'),
   }
 
   const mockCollectionItem = {
     logicalPath: unsafeAsLogicalPath('entry1'),
-    contentId: 'abc123XYZ789',
-    slug: 'test',
-    collectionId: 'posts',
+    contentId: unsafeAsContentId('abc123XYZ789'),
+    slug: unsafeAsEntrySlug('test'),
+    collectionPath: unsafeAsLogicalPath('posts'),
     collectionName: 'posts',
     format: 'mdx' as const,
     entryType: 'post',
@@ -102,10 +107,12 @@ describe('useEntryManager', () => {
     expect(result.current.selectedPath).toBe('entry1')
   })
 
-  it('builds collectionById map correctly', () => {
+  it('builds collectionByPath map correctly', () => {
     const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
-    expect(result.current.collectionById.get('content/posts')).toEqual(mockCollections[0])
+    expect(result.current.collectionByPath.get(unsafeAsLogicalPath('content/posts'))).toEqual(
+      mockCollections[0],
+    )
   })
 
   it('loads entry successfully', async () => {
@@ -176,7 +183,7 @@ describe('useEntryManager', () => {
       {
         ...mockCollectionItem,
         id: 'entry2',
-        slug: 'test2',
+        slug: unsafeAsEntrySlug('test2'),
         logicalPath: unsafeAsLogicalPath('/content/posts/test2'),
       },
     ]
@@ -213,7 +220,7 @@ describe('useEntryManager', () => {
     const newEntry = {
       ...mockCollectionItem,
       logicalPath: unsafeAsLogicalPath('new-entry'),
-      slug: 'new',
+      slug: unsafeAsEntrySlug('new'),
       physicalPath: unsafeAsPhysicalPath('/content/posts/new'),
     }
     // First call is from useEffect on mount, second is from manual call
@@ -247,7 +254,7 @@ describe('useEntryManager', () => {
     const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     await act(async () => {
-      await result.current.handleCreateEntry('content/posts')
+      await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
     })
 
     expect(result.current.createModalOpen).toBe(true)
@@ -278,7 +285,7 @@ describe('useEntryManager', () => {
           {
             ...mockCollectionItem,
             logicalPath: unsafeAsLogicalPath('new-post'),
-            slug: 'new-post',
+            slug: unsafeAsEntrySlug('new-post'),
             physicalPath: unsafeAsPhysicalPath('/content/posts/new-post'),
           },
         ],
@@ -290,7 +297,7 @@ describe('useEntryManager', () => {
 
     // Open modal
     await act(async () => {
-      await result.current.handleCreateEntry('content/posts')
+      await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
     })
 
     expect(result.current.createModalOpen).toBe(true)
@@ -313,7 +320,7 @@ describe('useEntryManager', () => {
     const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
 
     await act(async () => {
-      await result.current.handleCreateEntry('content/posts')
+      await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
     })
 
     expect(result.current.createModalOpen).toBe(true)
@@ -344,7 +351,7 @@ describe('useEntryManager', () => {
     )
 
     await act(async () => {
-      await result.current.handleCreateEntry('content/config')
+      await result.current.handleCreateEntry(unsafeAsLogicalPath('content/config'))
     })
 
     // Should not call content.write for entry

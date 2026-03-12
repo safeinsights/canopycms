@@ -94,23 +94,23 @@ export function validateContentPath(
 }
 
 /**
- * Validate a collection ID.
+ * Validate a collection path.
  *
- * @param collectionId - The collection ID to validate
+ * @param collectionPath - The collection path to validate
  * @returns true if valid, false otherwise
  */
-export function isValidCollectionId(collectionId: string): boolean {
-  if (!collectionId || collectionId.length === 0) {
+export function isValidCollectionPath(collectionPath: string): boolean {
+  if (!collectionPath || collectionPath.length === 0) {
     return false
   }
 
   // Normalize and check for traversal
-  const normalized = normalizeFilesystemPath(collectionId)
+  const normalized = normalizeFilesystemPath(collectionPath)
   if (hasTraversalSequence(normalized)) {
     return false
   }
 
-  // Collection IDs should only contain alphanumeric, hyphens, underscores, and forward slashes
+  // Collection paths should only contain alphanumeric, hyphens, underscores, and forward slashes
   const validPattern = /^[a-zA-Z0-9_/-]+$/
   return validPattern.test(normalized)
 }

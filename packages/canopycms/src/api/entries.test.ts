@@ -233,7 +233,7 @@ describe('listEntries', () => {
       },
     })
 
-    // Test 1: Without collectionId - lists entries from all collections (flat list)
+    // Test 1: Without collection filter - lists entries from all collections (flat list)
     const allEntriesRes = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -247,7 +247,7 @@ describe('listEntries', () => {
     expect(allEntriesRes.data?.entries.some((e) => e.slug === 'auth')).toBe(true)
     expect(allEntriesRes.data?.entries.some((e) => e.slug === 'users')).toBe(true)
 
-    // Test 2: With collectionId, non-recursive - only gets entries from 'content/docs' collection (no children)
+    // Test 2: With collection filter, non-recursive - only gets entries from 'content/docs' collection (no children)
     const docsNonRecursiveRes = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -260,7 +260,7 @@ describe('listEntries', () => {
     expect(docsNonRecursiveRes.data?.entries.some((e) => e.slug === 'intro')).toBe(false) // From child collection
     expect(docsNonRecursiveRes.data?.entries.some((e) => e.slug === 'auth')).toBe(false) // From grandchild collection
 
-    // Test 3: With collectionId and recursive flag - gets entries from 'content/docs' and all children
+    // Test 3: With collection filter and recursive flag - gets entries from 'content/docs' and all children
     const docsRecursiveRes = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -296,9 +296,9 @@ describe('listEntries', () => {
     expect(apiRecursiveRes.data?.entries.some((e) => e.slug === 'auth')).toBe(true)
     expect(apiRecursiveRes.data?.entries.some((e) => e.slug === 'users')).toBe(true)
 
-    // Verify collectionIds match the nested structure
+    // Verify collectionPath values match the nested structure
     const authEntry = docsRecursiveRes.data?.entries.find((e) => e.slug === 'auth')
-    expect(authEntry?.collectionId).toBe('content/docs/api/v2')
+    expect(authEntry?.collectionPath).toBe('content/docs/api/v2')
   })
 
   it('returns entries with schemas using new schema format', async () => {
@@ -373,7 +373,7 @@ describe('listEntries', () => {
     // Verify entry is returned
     const homeEntry = res.data?.entries.find((e) => e.slug === 'home')
     expect(homeEntry).toBeDefined()
-    expect(homeEntry?.collectionId).toBe('content/pages')
+    expect(homeEntry?.collectionPath).toBe('content/pages')
 
     // Collections are now fetched from schema API, not entries API
   })
@@ -569,12 +569,12 @@ describe('listEntries', () => {
     expect(aliceEntry).toBeDefined()
     expect(aliceEntry?.slug).toBe('alice')
     expect(aliceEntry?.title).toBe('Alice')
-    expect(aliceEntry?.collectionId).toBe('content/authors') // Logical path, no ID
+    expect(aliceEntry?.collectionPath).toBe('content/authors') // Logical path, no ID
 
     expect(bobEntry).toBeDefined()
     expect(bobEntry?.slug).toBe('bob')
     expect(bobEntry?.title).toBe('Bob')
-    expect(bobEntry?.collectionId).toBe('content/authors') // Logical path, no ID
+    expect(bobEntry?.collectionPath).toBe('content/authors') // Logical path, no ID
   })
 
   it.skip('lists root-level entry types with maxItems: 1', async () => {
@@ -702,27 +702,27 @@ describe('listEntries', () => {
 
     // Check root-level entry types
     const homeEntry = res.data?.entries.find(
-      (e) => e.slug === 'home' && e.collectionId === 'content',
+      (e) => e.slug === 'home' && e.collectionPath === 'content',
     )
     expect(homeEntry).toBeDefined()
     expect(homeEntry?.slug).toBe('home') // Name acts as slug
     expect(homeEntry?.title).toBe('Welcome Home')
-    expect(homeEntry?.collectionId).toBe('content') // Parent path, not full path
+    expect(homeEntry?.collectionPath).toBe('content') // Parent path, not full path
     expect(homeEntry?.entryType).toBe('home')
 
     const settingsEntry = res.data?.entries.find(
-      (e) => e.slug === 'settings' && e.collectionId === 'content',
+      (e) => e.slug === 'settings' && e.collectionPath === 'content',
     )
     expect(settingsEntry).toBeDefined()
     expect(settingsEntry?.slug).toBe('settings') // Name acts as slug
     expect(settingsEntry?.title).toBe('Settings') // Falls back to label since siteName isn't title
-    expect(settingsEntry?.collectionId).toBe('content') // Parent path, not full path
+    expect(settingsEntry?.collectionPath).toBe('content') // Parent path, not full path
     expect(settingsEntry?.entryType).toBe('settings')
 
     // Check collection entry still works
     const postEntry = res.data?.entries.find((e) => e.slug === 'first')
     expect(postEntry).toBeDefined()
-    expect(postEntry?.collectionId).toBe('content/posts')
+    expect(postEntry?.collectionPath).toBe('content/posts')
   })
 })
 

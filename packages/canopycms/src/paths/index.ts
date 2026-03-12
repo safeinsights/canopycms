@@ -30,7 +30,7 @@ export type {
 // Normalization utilities (client-safe)
 export {
   normalizeFilesystemPath,
-  normalizeCollectionId,
+  normalizeCollectionPath,
   hasTraversalSequence,
   createLogicalPath,
   createPhysicalPath,
@@ -46,7 +46,7 @@ export { validateAndNormalizePath } from './normalize-server'
 export {
   isValidSlug,
   validateContentPath,
-  isValidCollectionId,
+  isValidCollectionPath,
   sanitizeForPath,
   // Path type detection and parsing
   hasEmbeddedContentId,

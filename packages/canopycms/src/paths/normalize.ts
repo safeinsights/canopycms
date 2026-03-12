@@ -30,16 +30,16 @@ export function normalizeFilesystemPath(path: string): string {
 }
 
 /**
- * Normalize a collection ID by removing any content root prefix
+ * Normalize a collection path by removing any content root prefix
  * and normalizing separators.
  *
  * @example
- * normalizeCollectionId('content/posts') // 'posts'
- * normalizeCollectionId('content\\blog\\posts') // 'blog/posts'
- * normalizeCollectionId('posts') // 'posts'
+ * normalizeCollectionPath('content/posts') // 'posts'
+ * normalizeCollectionPath('content\\blog\\posts') // 'blog/posts'
+ * normalizeCollectionPath('posts') // 'posts'
  */
-export function normalizeCollectionId(collectionId: string, contentRoot = 'content'): string {
-  const normalized = normalizeFilesystemPath(collectionId)
+export function normalizeCollectionPath(collectionPath: string, contentRoot = 'content'): string {
+  const normalized = normalizeFilesystemPath(collectionPath)
   const prefix = `${contentRoot}/`
   if (normalized.startsWith(prefix)) {
     return normalized.slice(prefix.length)

@@ -35,7 +35,7 @@ import type {
   FlatSchemaItem,
   ContentFormat,
 } from '../config'
-import { parseLogicalPath, type LogicalPath } from '../paths'
+import { parseLogicalPath, type LogicalPath, type ContentId } from '../paths'
 
 // ============================================================================
 // Response Types
@@ -69,7 +69,7 @@ export interface CreateCollectionResponse {
   /** The logical path to the created collection (e.g., "posts" or "blog/posts") */
   collectionPath: LogicalPath
   /** The unique 12-character content ID for the collection */
-  contentId: string
+  contentId: ContentId
 }
 
 export interface UpdateCollectionResponse {

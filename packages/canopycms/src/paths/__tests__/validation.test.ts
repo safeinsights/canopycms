@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   isValidSlug,
   validateContentPath,
-  isValidCollectionId,
+  isValidCollectionPath,
   sanitizeForPath,
 } from '../validation'
 
@@ -45,20 +45,20 @@ describe('validateContentPath', () => {
   })
 })
 
-describe('isValidCollectionId', () => {
-  it('accepts valid collection IDs', () => {
-    expect(isValidCollectionId('posts')).toBe(true)
-    expect(isValidCollectionId('docs/api')).toBe(true)
-    expect(isValidCollectionId('blog-posts')).toBe(true)
+describe('isValidCollectionPath', () => {
+  it('accepts valid collection paths', () => {
+    expect(isValidCollectionPath('posts')).toBe(true)
+    expect(isValidCollectionPath('docs/api')).toBe(true)
+    expect(isValidCollectionPath('blog-posts')).toBe(true)
   })
 
-  it('rejects collection IDs with traversal', () => {
-    expect(isValidCollectionId('../evil')).toBe(false)
-    expect(isValidCollectionId('posts/../evil')).toBe(false)
+  it('rejects collection paths with traversal', () => {
+    expect(isValidCollectionPath('../evil')).toBe(false)
+    expect(isValidCollectionPath('posts/../evil')).toBe(false)
   })
 
-  it('rejects empty collection IDs', () => {
-    expect(isValidCollectionId('')).toBe(false)
+  it('rejects empty collection paths', () => {
+    expect(isValidCollectionPath('')).toBe(false)
   })
 })
 

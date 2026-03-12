@@ -1,4 +1,5 @@
 import { generate } from 'short-uuid'
+import type { ContentId } from './paths/types'
 
 /**
  * Generate a new 12-character content ID.
@@ -8,9 +9,9 @@ import { generate } from 'short-uuid'
  * - ~58^12 = 2.6 × 10^21 possible IDs
  * - With 10,000 entries: collision chance ~0.000000002%
  */
-export function generateId(): string {
+export function generateId(): ContentId {
   const full = generate() // 22 chars
-  return full.substring(0, 12) // Truncate to 12 chars
+  return full.substring(0, 12) as ContentId // Truncate to 12 chars
 }
 
 /**

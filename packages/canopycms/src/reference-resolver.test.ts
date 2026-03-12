@@ -9,6 +9,7 @@ import { flattenSchema } from './config'
 import { ContentIdIndex } from './content-id-index'
 import { ContentStore } from './content-store'
 import { ReferenceResolver } from './reference-resolver'
+import { unsafeAsLogicalPath } from './paths/test-utils'
 
 describe('ReferenceResolver', () => {
   let tempDir: string
@@ -72,7 +73,7 @@ describe('ReferenceResolver', () => {
     it('loads options when collection path does not include content/ prefix', async () => {
       // REGRESSION TEST: ID index stores "content/authors" but schema specifies "authors"
       // This ensures the collection path normalization works correctly
-      const options = await resolver.loadReferenceOptions(['authors'], 'name')
+      const options = await resolver.loadReferenceOptions([unsafeAsLogicalPath('authors')], 'name')
 
       expect(options).toHaveLength(2)
       const labels = options.map((o) => o.label).sort()
@@ -82,7 +83,10 @@ describe('ReferenceResolver', () => {
 
     it('loads options when collection path includes content/ prefix', async () => {
       // REGRESSION TEST: Should also work if "content/authors" is explicitly specified
-      const options = await resolver.loadReferenceOptions(['content/authors'], 'name')
+      const options = await resolver.loadReferenceOptions(
+        [unsafeAsLogicalPath('content/authors')],
+        'name',
+      )
 
       expect(options).toHaveLength(2)
       const labels = options.map((o) => o.label).sort()
@@ -90,7 +94,10 @@ describe('ReferenceResolver', () => {
     })
 
     it('returns empty array for non-existent collection', async () => {
-      const options = await resolver.loadReferenceOptions(['nonexistent'], 'name')
+      const options = await resolver.loadReferenceOptions(
+        [unsafeAsLogicalPath('nonexistent')],
+        'name',
+      )
 
       expect(options).toHaveLength(0)
     })

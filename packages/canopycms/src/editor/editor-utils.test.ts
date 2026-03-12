@@ -16,7 +16,12 @@ import {
 } from './editor-utils'
 import type { EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
-import { unsafeAsLogicalPath, unsafeAsPhysicalPath } from '../paths/test-utils'
+import {
+  unsafeAsLogicalPath,
+  unsafeAsPhysicalPath,
+  unsafeAsContentId,
+  unsafeAsEntrySlug,
+} from '../paths/test-utils'
 
 describe('buildPreviewSrc', () => {
   it('returns the provided preview without modification', () => {
@@ -29,7 +34,7 @@ describe('buildPreviewSrc', () => {
 
   it('applies preview base and branch for entries', () => {
     const result = buildPreviewSrc(
-      { collectionId: 'home', collectionName: 'home', itemType: 'entry' },
+      { collectionPath: 'home', collectionName: 'home', itemType: 'entry' },
       { branchName: 'feature/nested', previewBaseByCollection: { home: '/preview/' } },
     )
     expect(result).toBe('/preview?branch=feature%2Fnested')
@@ -45,7 +50,7 @@ describe('buildPreviewSrc', () => {
 
   it('includes collection path when building preview URL without base', () => {
     const result = buildPreviewSrc(
-      { collectionId: 'content/docs', slug: 'overview', itemType: 'entry' },
+      { collectionPath: 'content/docs', slug: 'overview', itemType: 'entry' },
       { branchName: 'main', previewBaseByCollection: undefined },
     )
     expect(result).toBe('/docs/overview?branch=main')
@@ -53,7 +58,7 @@ describe('buildPreviewSrc', () => {
 
   it('handles nested collection paths correctly', () => {
     const result = buildPreviewSrc(
-      { collectionId: 'content/docs/api', slug: 'intro', itemType: 'entry' },
+      { collectionPath: 'content/docs/api', slug: 'intro', itemType: 'entry' },
       { branchName: 'main', previewBaseByCollection: undefined },
     )
     expect(result).toBe('/docs/api/intro?branch=main')
@@ -61,7 +66,7 @@ describe('buildPreviewSrc', () => {
 
   it('handles root-level collections', () => {
     const result = buildPreviewSrc(
-      { collectionId: 'content/posts', slug: 'my-post', itemType: 'entry' },
+      { collectionPath: 'content/posts', slug: 'my-post', itemType: 'entry' },
       { branchName: 'main', previewBaseByCollection: undefined },
     )
     expect(result).toBe('/posts/my-post?branch=main')
@@ -110,7 +115,10 @@ describe('buildWritePayload', () => {
 
   it('formats json payloads', () => {
     expect(
-      buildWritePayload({ collectionId: 'posts', slug: 'hello', format: 'json' }, { title: 'Hi' }),
+      buildWritePayload(
+        { collectionPath: 'posts', slug: 'hello', format: 'json' },
+        { title: 'Hi' },
+      ),
     ).toEqual({
       format: 'json',
       data: { title: 'Hi' },
@@ -120,7 +128,7 @@ describe('buildWritePayload', () => {
   it('formats markdown-like payloads and splits body from data', () => {
     expect(
       buildWritePayload(
-        { collectionId: 'posts', slug: 'hello', format: 'mdx' },
+        { collectionPath: 'posts', slug: 'hello', format: 'mdx' },
         { title: 'Hi', body: 'Copy' },
       ),
     ).toEqual({
@@ -131,7 +139,7 @@ describe('buildWritePayload', () => {
 
     expect(
       buildWritePayload(
-        { collectionId: 'posts', slug: 'hello', format: 'md' },
+        { collectionPath: 'posts', slug: 'hello', format: 'md' },
         { title: 'Hi', body: 42 },
       ),
     ).toEqual({
@@ -169,9 +177,9 @@ describe('buildEntriesFromListResponse', () => {
     entries: [
       {
         logicalPath: unsafeAsLogicalPath('posts/hello'),
-        contentId: 'ghi789RST345',
-        slug: 'hello world',
-        collectionId: 'posts',
+        contentId: unsafeAsContentId('ghi789RST345'),
+        slug: unsafeAsEntrySlug('hello world'),
+        collectionPath: unsafeAsLogicalPath('posts'),
         collectionName: 'Posts',
         format: 'mdx',
         entryType: 'post',
@@ -181,9 +189,9 @@ describe('buildEntriesFromListResponse', () => {
       },
       {
         logicalPath: unsafeAsLogicalPath('pages/home'),
-        contentId: 'jkl012MNO678',
-        slug: 'home',
-        collectionId: 'pages',
+        contentId: unsafeAsContentId('jkl012MNO678'),
+        slug: unsafeAsEntrySlug('home'),
+        collectionPath: unsafeAsLogicalPath('pages'),
         collectionName: 'Pages',
         format: 'json',
         entryType: 'page',
@@ -197,7 +205,7 @@ describe('buildEntriesFromListResponse', () => {
   it('maps entries with schema, status, preview, and api paths', () => {
     const resolvePreviewSrc = vi.fn(
       (entry: {
-        collectionId?: string
+        collectionPath?: string
         collectionName?: string
         slug?: string
         entryType?: string
@@ -213,14 +221,14 @@ describe('buildEntriesFromListResponse', () => {
 
     expect(result).toHaveLength(2)
 
-    const post = result.find((item) => item.collectionId === 'posts')
+    const post = result.find((item) => item.collectionPath === 'posts')
     expect(post?.label).toBe('Hello Title')
     expect(post?.schema).toEqual(postsSchema)
     expect(post?.status).toBe('post')
     expect(post?.apiPath).toBe('/api/canopycms/feature-branch/content/posts/hello%20world')
     expect(post?.previewSrc).toBe('preview-hello world')
 
-    const page = result.find((item) => item.collectionId === 'pages')
+    const page = result.find((item) => item.collectionPath === 'pages')
     expect(page?.schema).toEqual(pagesSchema)
     expect(page?.status).toBe('missing')
     expect(page?.apiPath).toBe('/api/canopycms/feature-branch/content/pages/home')
@@ -238,10 +246,10 @@ describe('buildEntriesFromListResponse', () => {
       flatSchema,
     })
 
-    const page = result.find((item) => item.collectionId === 'pages')
+    const page = result.find((item) => item.collectionPath === 'pages')
     expect(page?.schema).toEqual(pagesSchema)
 
-    const post = result.find((item) => item.collectionId === 'posts')
+    const post = result.find((item) => item.collectionPath === 'posts')
     expect(post?.schema).toEqual(postsSchema)
   })
 
@@ -251,9 +259,9 @@ describe('buildEntriesFromListResponse', () => {
         entries: [
           {
             logicalPath: unsafeAsLogicalPath('posts/unknown'),
-            contentId: 'abc123def456',
-            slug: 'unknown',
-            collectionId: 'posts',
+            contentId: unsafeAsContentId('abc123def456'),
+            slug: unsafeAsEntrySlug('unknown'),
+            collectionPath: unsafeAsLogicalPath('posts'),
             collectionName: 'Posts',
             format: 'mdx',
             entryType: 'unknown-type',
@@ -280,7 +288,7 @@ describe('buildEntriesFromListResponse', () => {
             logicalPath: unsafeAsLogicalPath('posts/no-type'),
             contentId: 'abc123def456',
             slug: 'no-type',
-            collectionId: 'posts',
+            collectionPath: 'posts',
             collectionName: 'Posts',
             format: 'mdx',
             physicalPath: unsafeAsPhysicalPath('content/posts/no-type'),
@@ -366,13 +374,13 @@ describe('buildBreadcrumbSegments', () => {
     expect(buildBreadcrumbSegments(undefined, labels)).toEqual(['All Files'])
   })
 
-  it('returns only "All Files" for entry without collectionId', () => {
+  it('returns only "All Files" for entry without collectionPath', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('test'),
       label: 'Test',
       schema: [],
       apiPath: '/api/test',
-      contentId: 'test123456789',
+      contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map<string, string>()
     expect(buildBreadcrumbSegments(entry, labels)).toEqual(['All Files'])
@@ -384,9 +392,9 @@ describe('buildBreadcrumbSegments', () => {
       label: 'Hello',
       schema: [],
       apiPath: '/api/test',
-      collectionId: 'posts',
+      collectionPath: unsafeAsLogicalPath('posts'),
       slug: 'hello',
-      contentId: 'test123456789',
+      contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map([['posts', 'Posts']])
     // Single-level collection: parts = ['posts'], loop starts at i=1 which is >= length, so no segments added
@@ -399,9 +407,9 @@ describe('buildBreadcrumbSegments', () => {
       label: 'Configuration Guide',
       schema: [],
       apiPath: '/api/test',
-      collectionId: 'content/docs/guides',
+      collectionPath: unsafeAsLogicalPath('content/docs/guides'),
       slug: 'config',
-      contentId: 'test123456789',
+      contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map([
       ['content', 'Content'],
@@ -421,9 +429,9 @@ describe('buildBreadcrumbSegments', () => {
       label: 'Endpoint',
       schema: [],
       apiPath: '/api/test',
-      collectionId: 'content/docs/api/v2',
+      collectionPath: unsafeAsLogicalPath('content/docs/api/v2'),
       slug: 'endpoint',
-      contentId: 'test123456789',
+      contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map([
       ['content', 'Content'],
@@ -443,9 +451,9 @@ describe('buildBreadcrumbSegments', () => {
       label: 'Configuration Guide',
       schema: [],
       apiPath: '/api/test',
-      collectionId: 'content/docs/guides',
+      collectionPath: unsafeAsLogicalPath('content/docs/guides'),
       slug: 'config',
-      contentId: 'test123456789',
+      contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map([
       ['content', 'Content'],
@@ -465,9 +473,9 @@ describe('buildBreadcrumbSegments', () => {
       label: 'New Year Post',
       schema: [],
       apiPath: '/api/test',
-      collectionId: 'posts',
+      collectionPath: unsafeAsLogicalPath('posts'),
       slug: '2024/01/new-year',
-      contentId: 'test123456789',
+      contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map([['posts', 'Posts']])
 
@@ -483,9 +491,9 @@ describe('buildBreadcrumbSegments', () => {
       label: 'New Year Post',
       schema: [],
       apiPath: '/api/test',
-      collectionId: 'content/posts',
+      collectionPath: unsafeAsLogicalPath('content/posts'),
       slug: '2024/01/new-year',
-      contentId: 'test123456789',
+      contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map([
       ['content', 'Content'],
@@ -504,9 +512,9 @@ describe('buildBreadcrumbSegments', () => {
       label: 'Site Settings',
       schema: [],
       apiPath: '/api/test',
-      collectionId: 'content/settings',
+      collectionPath: unsafeAsLogicalPath('content/settings'),
       type: 'entry',
-      contentId: 'test123456789',
+      contentId: unsafeAsContentId('test123456789'),
     }
     const labels = new Map([
       ['content', 'Content'],

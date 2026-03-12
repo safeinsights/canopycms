@@ -17,7 +17,7 @@ import type { ContentFormat, FieldConfig } from '../config'
 import { resolveCollectionPath } from '../content-id-index'
 import { generateId, isValidId } from '../id'
 import { createLogicalPath, validateAndNormalizePath } from '../paths'
-import type { LogicalPath } from '../paths/types'
+import type { LogicalPath, ContentId } from '../paths/types'
 import type { CanopyServices } from '../services'
 
 // Re-export types from client-safe module
@@ -290,7 +290,7 @@ export class SchemaStore {
    */
   async createCollection(
     input: CreateCollectionInput,
-  ): Promise<{ collectionPath: LogicalPath; contentId: string }> {
+  ): Promise<{ collectionPath: LogicalPath; contentId: ContentId }> {
     // Validate input
     const parseResult = createCollectionInputSchema.safeParse(input)
     if (!parseResult.success) {

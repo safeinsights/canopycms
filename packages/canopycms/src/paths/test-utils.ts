@@ -9,7 +9,14 @@
  * import { unsafeAsLogicalPath, unsafeAsEntrySlug } from '../paths/test-utils'
  */
 
-import type { BranchName, CollectionSlug, LogicalPath, PhysicalPath, EntrySlug } from './types'
+import type {
+  BranchName,
+  CollectionSlug,
+  ContentId,
+  LogicalPath,
+  PhysicalPath,
+  EntrySlug,
+} from './types'
 
 /** Test-only: cast a string to LogicalPath without validation. */
 export const unsafeAsLogicalPath = (path: string): LogicalPath => path as LogicalPath
@@ -25,3 +32,6 @@ export const unsafeAsBranchName = (name: string): BranchName => name as BranchNa
 
 /** Test-only: cast a string to CollectionSlug without validation. */
 export const unsafeAsCollectionSlug = (slug: string): CollectionSlug => slug as CollectionSlug
+
+/** Test-only: cast a string to ContentId without validation. */
+export const unsafeAsContentId = (id: string): ContentId => id as ContentId

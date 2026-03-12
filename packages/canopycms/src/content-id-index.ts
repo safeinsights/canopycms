@@ -4,7 +4,7 @@ import path from 'node:path'
 
 import { generateId, isValidId } from './id'
 import { isNotFoundError } from './utils/error'
-import { type LogicalPath, type EntrySlug } from './paths'
+import { type LogicalPath, type PhysicalPath, type EntrySlug, type ContentId } from './paths'
 
 /** Logical path representing entries stored at the branch root (no parent collection). Rare in practice. */
 const EMPTY_LOGICAL_PATH = '' as LogicalPath
@@ -24,9 +24,9 @@ function toLogicalCollectionPath(physicalPath: string): LogicalPath {
 }
 
 export interface IdLocation {
-  id: string
+  id: ContentId
   type: 'entry' | 'collection'
-  relativePath: string // e.g. 'content/posts/dune.a1b2c3d4e5f6.json'
+  relativePath: PhysicalPath // e.g. 'content/posts/dune.a1b2c3d4e5f6.json'
   collection?: LogicalPath // e.g. 'content/posts' (for entries only) — always logical, never physical
   slug?: EntrySlug // e.g. 'dune' (for entries only)
 }
@@ -110,9 +110,9 @@ export class ContentIdIndex {
           }
 
           const location: IdLocation = {
-            id,
+            id, // already ContentId from extractIdFromFilename
             type: entry.isDirectory() ? 'collection' : 'entry',
-            relativePath: fullRelativePath,
+            relativePath: fullRelativePath as PhysicalPath, // filesystem path with embedded IDs
           }
 
           // Extract slug and collection for entries
@@ -219,7 +219,7 @@ export class ContentIdIndex {
 
     const fullLocation: IdLocation = {
       ...location,
-      id,
+      id, // already ContentId from extractIdFromFilename
     }
     this.idToLocation.set(id, fullLocation)
     this.pathToId.set(location.relativePath, id)
@@ -271,7 +271,7 @@ export class ContentIdIndex {
     this.pathToId.delete(location.relativePath)
 
     // Update location
-    location.relativePath = newRelativePath
+    location.relativePath = newRelativePath as PhysicalPath // updated physical path with embedded IDs
 
     // Update slug and collection for entries
     if (location.type === 'entry') {
@@ -322,7 +322,7 @@ export class ContentIdIndex {
  * - Hidden files with IDs: ".hidden.a1b2c3d4e5f6.json" → returns null (metadata)
  * - No ID present: "file.json" → returns null
  */
-export function extractIdFromFilename(filename: string): string | null {
+export function extractIdFromFilename(filename: string): ContentId | null {
   // Skip metadata files (no IDs) - anything starting with dot is metadata
   // This includes .collection.json, .gitignore, and even .hidden.id.json
   if (filename.startsWith('.')) {
@@ -335,13 +335,13 @@ export function extractIdFromFilename(filename: string): string | null {
   // The ID is always the second-to-last part before the extension
   if (parts.length >= 3) {
     const candidate = parts[parts.length - 2]
-    if (isValidId(candidate)) return candidate
+    if (isValidId(candidate)) return candidate as ContentId
   }
 
   // Directories: slug.id → exactly 2 parts (slug and ID, no extension)
   if (parts.length === 2) {
     const candidate = parts[parts.length - 1]
-    if (isValidId(candidate)) return candidate
+    if (isValidId(candidate)) return candidate as ContentId
   }
 
   return null

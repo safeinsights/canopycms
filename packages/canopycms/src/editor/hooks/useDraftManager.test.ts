@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDraftManager } from './useDraftManager'
 import type { EditorEntry } from '../Editor'
-import { unsafeAsLogicalPath } from '../../paths/test-utils'
+import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 
 // Mock notifications
 vi.mock('@mantine/notifications', () => ({
@@ -14,9 +14,9 @@ vi.mock('@mantine/notifications', () => ({
 describe('useDraftManager', () => {
   const mockEntry: EditorEntry = {
     path: unsafeAsLogicalPath('entry1'),
-    contentId: 'abc123def456', // 12-char content ID
+    contentId: unsafeAsContentId('abc123def456'), // 12-char content ID
     label: 'Test Entry',
-    collectionId: 'posts',
+    collectionPath: unsafeAsLogicalPath('posts'),
     collectionName: 'posts',
     slug: 'test',
     type: 'entry',
@@ -128,13 +128,13 @@ describe('useDraftManager', () => {
       {
         ...mockEntry,
         path: unsafeAsLogicalPath('entry2'),
-        contentId: 'xyz789uvw123',
+        contentId: unsafeAsContentId('xyz789uvw123'),
         label: 'Entry 2',
       },
       {
         ...mockEntry,
         path: unsafeAsLogicalPath('entry3'),
-        contentId: 'mno456pqr789',
+        contentId: unsafeAsContentId('mno456pqr789'),
         label: 'Entry 3',
       },
     ]

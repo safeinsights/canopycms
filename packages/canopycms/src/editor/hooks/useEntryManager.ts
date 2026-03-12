@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { ListEntriesResponse } from '../../api/entries'
 import type { EditorEntry, EditorCollection } from '../Editor'
+import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
 import {
   buildEntriesFromListResponse,
@@ -31,11 +32,11 @@ export interface UseEntryManagerReturn {
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
   refreshEntries: (branch?: string) => Promise<void>
-  handleCreateEntry: (collectionId: string, entryTypeName?: string) => Promise<void>
+  handleCreateEntry: (collectionPath: LogicalPath, entryTypeName?: string) => Promise<void>
   renameEntry: (path: string, newSlug: string) => Promise<void>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
   saveEntry: (entry: EditorEntry, value: FormValue) => Promise<FormValue>
-  collectionById: Map<string, EditorCollection>
+  collectionByPath: Map<LogicalPath, EditorCollection>
   // Entry create modal state
   createModalOpen: boolean
   createModalCollection: EditorCollection | null
@@ -100,8 +101,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     initialUrlEntry.current = params.get('entry')
   }
 
-  const collectionById = useMemo(() => {
-    const map = new Map<string, EditorCollection>()
+  const collectionByPath = useMemo(() => {
+    const map = new Map<LogicalPath, EditorCollection>()
     const walk = (collections: EditorCollection[]) => {
       for (const c of collections) {
         map.set(c.path, c)
@@ -120,11 +121,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   )
 
   const loadEntry = async (entry: EditorEntry) => {
-    if (!entry.collectionId) {
-      throw new Error('Entry missing collectionId')
+    if (!entry.collectionPath) {
+      throw new Error('Entry missing collectionPath')
     }
-    // Build path from collectionId and slug (if it's a collection entry)
-    const path = entry.slug ? `${entry.collectionId}/${entry.slug}` : entry.collectionId
+    // Build path from collectionPath and slug (if it's a collection entry)
+    const path = entry.slug ? `${entry.collectionPath}/${entry.slug}` : entry.collectionPath
     const result = await apiClient.content.read({
       branch: options.branchName,
       path,
@@ -134,12 +135,12 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   }
 
   const saveEntry = async (entry: EditorEntry, value: FormValue) => {
-    if (!entry.collectionId) {
-      throw new Error('Entry missing collectionId')
+    if (!entry.collectionPath) {
+      throw new Error('Entry missing collectionPath')
     }
     const payload = buildWritePayload(entry, value)
-    // Build path from collectionId and slug (if it's a collection entry)
-    const path = entry.slug ? `${entry.collectionId}/${entry.slug}` : entry.collectionId
+    // Build path from collectionPath and slug (if it's a collection entry)
+    const path = entry.slug ? `${entry.collectionPath}/${entry.slug}` : entry.collectionPath
     const result = await apiClient.content.write(
       {
         branch: options.branchName,
@@ -196,15 +197,15 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   /**
    * Open the create entry modal for the specified collection
    */
-  const handleCreateEntry = async (collectionId: string, entryTypeName?: string) => {
-    const col = collectionById.get(collectionId)
+  const handleCreateEntry = async (collectionPath: LogicalPath, entryTypeName?: string) => {
+    const col = collectionByPath.get(collectionPath)
     if (!col || col.type === 'entry') {
-      console.log('Collection not found or is root entry type:', { collectionId })
+      console.log('Collection not found or is root entry type:', { collectionPath })
       return
     }
 
     console.log('Opening create modal for collection:', {
-      collectionId,
+      collectionPath,
       name: col.name,
       entryTypes: col.entryTypes,
       entryTypesCount: col.entryTypes?.length,
@@ -375,7 +376,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     renameEntry,
     loadEntry,
     saveEntry,
-    collectionById,
+    collectionByPath: collectionByPath,
     createModalOpen,
     createModalCollection,
     createModalError,

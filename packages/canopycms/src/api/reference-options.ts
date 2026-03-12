@@ -4,6 +4,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
+import type { LogicalPath } from '../paths/types'
 
 /** Response type for reference options */
 export type ReferenceOptionsResponse = ApiResponse<{
@@ -47,11 +48,11 @@ const getReferenceOptionsHandler = async (
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()
 
-  // Parse collections
+  // Parse collections — these are schema-defined logical paths from query params
   const collections = collectionsParam
     .split(',')
     .map((c) => c.trim())
-    .filter(Boolean)
+    .filter(Boolean) as LogicalPath[]
 
   // Load reference options
   const resolver = new ReferenceResolver(store, idIndex)

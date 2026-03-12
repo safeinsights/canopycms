@@ -3,7 +3,7 @@ import React, { useEffect } from 'react'
 
 import { defineCanopyConfig } from '../config'
 import { CanopyEditor } from './CanopyEditor'
-import { unsafeAsLogicalPath } from '../paths/test-utils'
+import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 
 const meta: Meta<typeof CanopyEditor> = {
   title: 'Editor/CanopyEditor',
@@ -51,12 +51,12 @@ const entries = [
     status: 'page',
     schema: schema.collections[0].entries[0].fields,
     apiPath: '/api/canopycms/main/content/posts/hello',
-    collectionId: 'content/posts',
+    collectionPath: unsafeAsLogicalPath('content/posts'),
     collectionName: 'posts',
     slug: 'hello',
     format: 'json' as const,
     type: 'entry' as const,
-    contentId: 'test123456789',
+    contentId: unsafeAsContentId('test123456789'),
   },
 ]
 
