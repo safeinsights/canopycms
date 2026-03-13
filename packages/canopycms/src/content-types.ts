@@ -76,8 +76,3 @@ export const defineEntrySchema = <const T extends readonly InferableField[]>(fie
  * Convenience alias to derive the content shape from a `defineEntrySchema` result.
  */
 export type TypeFromEntrySchema<T extends readonly InferableField[]> = InferContentShape<T>
-
-/** @deprecated Use defineEntrySchema instead */
-export const defineSchema = defineEntrySchema
-/** @deprecated Use TypeFromEntrySchema instead */
-export type TypeFromSchema<T extends readonly InferableField[]> = TypeFromEntrySchema<T>

@@ -125,8 +125,3 @@ export async function validateEntrySchemaRegistry(
     throw err
   }
 }
-
-/** @deprecated Use createEntrySchemaRegistry instead */
-export const createSchemaRegistry = createEntrySchemaRegistry
-/** @deprecated Use validateEntrySchemaRegistry instead */
-export const validateSchemaRegistry = validateEntrySchemaRegistry

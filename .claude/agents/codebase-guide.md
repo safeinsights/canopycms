@@ -233,11 +233,11 @@ defineCanopyConfig({
 
 **Location**: packages/canopycms/src/schema/
 
-| File           | Purpose                                      |
-| -------------- | -------------------------------------------- |
-| meta-loader.ts | Load .collection.json files from filesystem  |
-| resolver.ts    | High-level schema resolution API             |
-| types.ts       | SchemaRegistry, SchemaResolutionResult types |
+| File           | Purpose                                           |
+| -------------- | ------------------------------------------------- |
+| meta-loader.ts | Load .collection.json files from filesystem       |
+| resolver.ts    | High-level schema resolution API                  |
+| types.ts       | EntrySchemaRegistry, SchemaResolutionResult types |
 
 **Pattern**: Schema structure comes from .collection.json files (single source of truth), field schemas come from a registry for reusability.
 
