@@ -56,7 +56,7 @@ export class ContentStoreError extends Error {}
  * Get the default entry type from a collection's entries array.
  * Returns the entry marked as default, or the first one, or undefined if no entries.
  */
-export function getDefaultEntryType(
+function getDefaultEntryType(
   entries: readonly EntryTypeConfig[] | undefined,
 ): EntryTypeConfig | undefined {
   if (!entries || entries.length === 0) return undefined
