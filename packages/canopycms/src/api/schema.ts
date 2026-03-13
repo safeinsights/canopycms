@@ -99,38 +99,61 @@ export type WireFlatSchemaItem =
 // Wire conversion functions
 // ============================================================================
 
-function toWireEntryType(et: EntryTypeConfig): WireEntryType {
+type Registry = Record<string, EntrySchema>
+
+/**
+ * Resolve the fieldsRef for an entry type. Uses the explicit fieldsRef if set,
+ * otherwise does a reverse lookup in the registry by matching the fields array.
+ */
+function resolveFieldsRef(et: EntryTypeConfig, registry: Registry): string {
+  if (et.fieldsRef) return et.fieldsRef
+  // Reverse lookup: find which registry key maps to this entry type's fields
+  for (const [key, value] of Object.entries(registry)) {
+    if (value === et.fields) return key
+  }
+  throw new Error(
+    `Cannot resolve fieldsRef for entry type "${et.name}". ` +
+      `No matching entry found in the entry schema registry. ` +
+      `This may indicate a stale schema cache — try invalidating it.`,
+  )
+}
+
+function toWireEntryType(et: EntryTypeConfig, registry: Registry): WireEntryType {
   return {
     name: et.name,
     format: et.format,
-    fieldsRef: et.fieldsRef ?? et.name,
+    fieldsRef: resolveFieldsRef(et, registry),
     ...(et.label !== undefined && { label: et.label }),
     ...(et.default !== undefined && { default: et.default }),
     ...(et.maxItems !== undefined && { maxItems: et.maxItems }),
   }
 }
 
-function toWireCollection(col: CollectionConfig): WireCollectionConfig {
+function toWireCollection(col: CollectionConfig, registry: Registry): WireCollectionConfig {
   return {
     name: col.name,
     path: col.path,
     ...(col.label !== undefined && { label: col.label }),
-    ...(col.entries && { entries: col.entries.map(toWireEntryType) }),
-    ...(col.collections && { collections: col.collections.map(toWireCollection) }),
+    ...(col.entries && { entries: col.entries.map((et) => toWireEntryType(et, registry)) }),
+    ...(col.collections && {
+      collections: col.collections.map((c) => toWireCollection(c, registry)),
+    }),
     ...(col.order && { order: col.order }),
   }
 }
 
-function toWireBranchSchema(root: RootCollectionConfig): WireBranchSchema {
+function toWireBranchSchema(root: RootCollectionConfig, registry: Registry): WireBranchSchema {
   return {
     ...(root.label !== undefined && { label: root.label }),
-    ...(root.entries && { entries: root.entries.map(toWireEntryType) }),
-    ...(root.collections && { collections: root.collections.map(toWireCollection) }),
+    ...(root.entries && { entries: root.entries.map((et) => toWireEntryType(et, registry)) }),
+    ...(root.collections && {
+      collections: root.collections.map((c) => toWireCollection(c, registry)),
+    }),
     ...(root.order && { order: root.order }),
   }
 }
 
-function toWireFlatSchema(items: FlatSchemaItem[]): WireFlatSchemaItem[] {
+function toWireFlatSchema(items: FlatSchemaItem[], registry: Registry): WireFlatSchemaItem[] {
   return items.map((item): WireFlatSchemaItem => {
     if (item.type === 'collection') {
       return {
@@ -139,8 +162,10 @@ function toWireFlatSchema(items: FlatSchemaItem[]): WireFlatSchemaItem[] {
         name: item.name,
         ...(item.label !== undefined && { label: item.label }),
         ...(item.parentPath !== undefined && { parentPath: item.parentPath }),
-        ...(item.entries && { entries: item.entries.map(toWireEntryType) }),
-        ...(item.collections && { collections: item.collections.map(toWireCollection) }),
+        ...(item.entries && { entries: item.entries.map((et) => toWireEntryType(et, registry)) }),
+        ...(item.collections && {
+          collections: item.collections.map((c) => toWireCollection(c, registry)),
+        }),
         ...(item.order && { order: item.order }),
       }
     }
@@ -151,7 +176,7 @@ function toWireFlatSchema(items: FlatSchemaItem[]): WireFlatSchemaItem[] {
       ...(item.label !== undefined && { label: item.label }),
       parentPath: item.parentPath,
       format: item.format,
-      fieldsRef: item.fieldsRef ?? item.name,
+      fieldsRef: resolveFieldsRef(item, registry),
       ...(item.default !== undefined && { default: item.default }),
       ...(item.maxItems !== undefined && { maxItems: item.maxItems }),
     }
@@ -326,8 +351,8 @@ const getSchemaHandler = async (
     ok: true,
     status: 200,
     data: {
-      schema: toWireBranchSchema(context.schema!),
-      flatSchema: toWireFlatSchema(context.flatSchema!),
+      schema: toWireBranchSchema(context.schema!, ctx.services.entrySchemaRegistry),
+      flatSchema: toWireFlatSchema(context.flatSchema!, ctx.services.entrySchemaRegistry),
       entrySchemas: ctx.services.entrySchemaRegistry,
     },
   }

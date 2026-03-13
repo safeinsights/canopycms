@@ -7,6 +7,9 @@ import type { OperatingMode } from './operating-mode'
 import { resolveSchema, isValidSchema } from './schema/resolver'
 import { flattenSchema } from './config/flatten'
 
+/** Bump when BranchSchemaCacheEntry shape changes to auto-invalidate stale caches */
+const SCHEMA_CACHE_VERSION = 2
+
 /**
  * Schema cache structure stored in {branchRoot}/.canopy-meta/schema-cache.json
  */
@@ -105,7 +108,7 @@ export class BranchSchemaCache {
       cacheData = null
     }
 
-    if (cacheData) {
+    if (cacheData && cacheData.version === SCHEMA_CACHE_VERSION) {
       return { schema: cacheData.schema, flatSchema: cacheData.flatSchema }
     }
 
@@ -126,7 +129,7 @@ export class BranchSchemaCache {
     // Save to cache
     await fs.mkdir(cacheDir, { recursive: true })
     const newCache: BranchSchemaCacheEntry = {
-      version: 1,
+      version: SCHEMA_CACHE_VERSION,
       schema: result.schema,
       flatSchema,
       cachedAt: new Date().toISOString(),
