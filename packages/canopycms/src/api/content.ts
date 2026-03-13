@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import { ContentStore, ContentStoreError, getDefaultEntryType } from '../content-store'
+import { ContentStore, ContentStoreError } from '../content-store'
 import type { EntrySchema, EntryTypeConfig, FlatSchemaItem } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
@@ -266,10 +266,15 @@ const validateReferencesHandler = async (
     let entryTypeConfig: EntryTypeConfig | undefined
     if (params.entryType) {
       entryTypeConfig = schemaItem.entries?.find(e => e.name === params.entryType)
+      if (!entryTypeConfig) {
+        return { ok: false, status: 400, error: `Entry type '${params.entryType}' not found` }
+      }
+    } else if (schemaItem.entries && schemaItem.entries.length === 1) {
+      entryTypeConfig = schemaItem.entries[0]
     } else {
-      entryTypeConfig = getDefaultEntryType(schemaItem.entries)
+      return { ok: false, status: 400, error: 'entryType param required for collections with multiple entry types' }
     }
-    fields = entryTypeConfig?.schema || []
+    fields = entryTypeConfig.schema || []
   }
 
   // Validate references
