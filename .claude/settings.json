@@ -1,6 +1,8 @@
 {
   "permissions": {
-    "additionalDirectories": [],
-    "allow": []
+    "allow": [
+      "WebFetch(domain:mdxeditor.dev)"
+    ],
+    "additionalDirectories": []
   }
 }

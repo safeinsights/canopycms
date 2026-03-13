@@ -16,6 +16,7 @@ import { generateColors } from '@mantine/colors-generator'
 
 import '@mantine/core/styles.css'
 import '@mantine/notifications/styles.css'
+import '@mdxeditor/editor/style.css'
 
 export type CanopyColorInput = MantineColorsTuple | string
 

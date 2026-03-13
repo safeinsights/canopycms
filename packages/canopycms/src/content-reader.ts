@@ -166,7 +166,10 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       const defaultMessage = `Content not found for ${entryPath}${slug ? `/${slug}` : ''} on branch ${branchName}`
       throw new ContentStoreError(message ?? defaultMessage)
     }
-    const data = (doc as any).data as T
+    // For md/mdx format, merge the body into the data so callers get a complete object
+    const rawData = (doc as any).data as Record<string, unknown>
+    const body = (doc as any).body as string | undefined
+    const data = (body != null ? { ...rawData, body } : rawData) as T
     const path = buildEntryPath({ collectionPath: entryPath, slug, branch: branchName })
     return { data, path }
   }

@@ -1,6 +1,8 @@
 'use client'
 
 import React from 'react'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 
 import { useCanopyPreview } from 'canopycms/client'
 
@@ -29,10 +31,10 @@ export const DocView: React.FC<{ data: DocContent }> = ({ data }) => {
         </div>
 
         <div
-          className="prose prose-slate max-w-none text-base leading-relaxed whitespace-pre-wrap"
+          className="prose prose-slate max-w-none"
           {...fieldProps('body')}
         >
-          {liveData.body}
+          <Markdown remarkPlugins={[remarkGfm]}>{liveData.body}</Markdown>
         </div>
       </div>
     </article>

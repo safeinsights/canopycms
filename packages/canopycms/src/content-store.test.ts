@@ -791,4 +791,69 @@ describe('ContentStore', () => {
       expect(doc.relativePath).toMatch(/^content\/post\.hello\.[a-zA-Z0-9]{12}\.md$/)
     })
   })
+
+  describe('complex frontmatter roundtrip', () => {
+    it('preserves nested objects and arrays in markdown frontmatter via gray-matter', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [{ name: 'post', format: 'md' as const, schema: [
+              { name: 'title', type: 'string' as const },
+              { name: 'tags', type: 'string' as const, list: true },
+              { name: 'published', type: 'boolean' as const },
+            ] }],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      const complexData = {
+        title: 'Complex Post',
+        author: '5NVkkrB1MJUv',
+        tags: ['typed', 'fast'],
+        published: false,
+        blocks: [
+          {
+            template: 'hero',
+            value: {
+              headline: 'Hero block',
+              body: 'Hero copy',
+            },
+          },
+          {
+            template: 'cta',
+            value: {
+              title: 'Try CanopyCMS',
+              ctaText: 'Click me',
+            },
+          },
+        ],
+      }
+
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('complex'), {
+        format: 'md',
+        data: complexData,
+        body: '# Hello World\n\nSome **bold** text with `code`.',
+      })
+
+      const doc = await store.read(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('complex'))
+      if (doc.format === 'json') throw new Error('expected markdown')
+
+      // Verify all frontmatter data survived the roundtrip
+      expect(doc.data.title).toBe('Complex Post')
+      expect(doc.data.author).toBe('5NVkkrB1MJUv')
+      expect(doc.data.tags).toEqual(['typed', 'fast'])
+      expect(doc.data.published).toBe(false)
+      expect(doc.data.blocks).toEqual(complexData.blocks)
+
+      // Verify body survived
+      expect(doc.body).toContain('# Hello World')
+      expect(doc.body).toContain('Some **bold** text')
+    })
+  })
 })

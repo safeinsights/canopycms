@@ -268,6 +268,56 @@ describe('createContentReader', () => {
     }
   })
 
+  it('merges body into data for md format entries', async () => {
+    const root = await tmpDir()
+    const postsDir = path.join(root, 'content/posts')
+    await fs.mkdir(postsDir, { recursive: true })
+    // Write a markdown file with frontmatter + body (gray-matter format)
+    await fs.writeFile(
+      path.join(postsDir, 'post.hello.abc123def456.md'),
+      '---\ntitle: Hello World\ntags:\n  - typed\n---\nSome **markdown** content.\n',
+      'utf8'
+    )
+
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{
+            name: 'post',
+            format: 'md' as const,
+            schema: [
+              { name: 'title', type: 'string' as const },
+              { name: 'tags', type: 'string' as const, list: true },
+            ],
+          }],
+        },
+      ],
+    }
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      defaultPathAccess: 'allow',
+      schema,
+    })
+    const branchContext = buildBranchContext(root)
+    const reader = createContentReader({
+      services: await createTestServices({ ...config, schema }),
+      allowCreateBranch: false,
+      getBranchContext: async () => branchContext,
+    })
+
+    const result = await reader.read<{ title: string; tags: string[]; body: string }>({
+      entryPath: unsafeAsLogicalPath('content/posts'),
+      slug: unsafeAsEntrySlug('hello'),
+      user: ANONYMOUS_USER,
+    })
+
+    expect(result.data.title).toBe('Hello World')
+    expect(result.data.tags).toEqual(['typed'])
+    expect(result.data.body).toContain('Some **markdown** content.')
+  })
+
   it('checks permissions BEFORE reading file (security)', async () => {
     const root = await tmpDir()
     const pagesDir = path.join(root, 'content/pages')
