@@ -26,7 +26,7 @@ describe('BranchWorkspaceManager', () => {
               name: 'posts',
               path: 'posts',
               entries: [
-                { name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                { name: 'post', format: 'md', schema: [{ name: 'title', type: 'string' }] },
               ],
             },
           ],
@@ -73,7 +73,7 @@ describe('BranchWorkspaceManager', () => {
               name: 'posts',
               path: 'posts',
               entries: [
-                { name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                { name: 'post', format: 'md', schema: [{ name: 'title', type: 'string' }] },
               ],
             },
           ],
@@ -133,7 +133,7 @@ describe('BranchWorkspaceManager', () => {
               name: 'posts',
               path: 'posts',
               entries: [
-                { name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] },
+                { name: 'post', format: 'md', schema: [{ name: 'title', type: 'string' }] },
               ],
             },
           ],

@@ -36,7 +36,7 @@ describe('createCanopyServices', () => {
             {
               name: 'page',
               format: 'md' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },
@@ -87,7 +87,7 @@ describe('createCanopyServices', () => {
             {
               name: 'page',
               format: 'md' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },
@@ -390,7 +390,7 @@ describe('commitToSettingsBranch', () => {
             {
               name: 'page',
               format: 'md' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },
@@ -444,7 +444,7 @@ describe('commitToSettingsBranch', () => {
             {
               name: 'page',
               format: 'md' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },
@@ -513,7 +513,7 @@ describe('commitToSettingsBranch', () => {
             {
               name: 'page',
               format: 'md' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },

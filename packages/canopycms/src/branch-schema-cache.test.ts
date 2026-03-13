@@ -28,7 +28,7 @@ describe('BranchSchemaCache', () => {
           {
             name: 'page',
             format: 'md',
-            fields: 'pageSchema',
+            schema: 'pageSchema',
           },
         ],
         order: [],

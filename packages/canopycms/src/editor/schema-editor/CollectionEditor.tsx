@@ -61,7 +61,7 @@ export interface ExistingEntryType {
   name: string
   label?: string
   format: ContentFormat
-  fields: string
+  schema: string
   default?: boolean
   maxItems?: number
   /** Number of entries using this type (for locking validation) */
@@ -422,7 +422,7 @@ export function CollectionEditor({
                           )}
                         </Group>
                         <Text size="xs" c="dimmed">
-                          {entryType.format.toUpperCase()} · {entryType.fields}
+                          {entryType.format.toUpperCase()} · {entryType.schema}
                           {entryType.label && ` · "${entryType.label}"`}
                         </Text>
                       </div>

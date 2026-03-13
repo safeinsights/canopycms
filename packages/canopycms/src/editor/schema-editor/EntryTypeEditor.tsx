@@ -39,7 +39,7 @@ export interface EntryTypeFormData {
   name: string
   label: string
   format: ContentFormat
-  fields: string
+  schema: string
   default: boolean
   maxItems: number | undefined
 }
@@ -52,7 +52,7 @@ export interface EntryTypeEditorProps {
     name: string
     label?: string
     format: ContentFormat
-    fields: string
+    schema: string
     default?: boolean
     maxItems?: number
     usageCount?: number
@@ -104,7 +104,7 @@ export function EntryTypeEditor({
     name: '',
     label: '',
     format: 'json',
-    fields: '',
+    schema: '',
     default: false,
     maxItems: undefined,
   })
@@ -120,7 +120,7 @@ export function EntryTypeEditor({
           name: editingEntryType.name,
           label: editingEntryType.label || '',
           format: editingEntryType.format,
-          fields: editingEntryType.fields,
+          schema: editingEntryType.schema,
           default: editingEntryType.default || false,
           maxItems: editingEntryType.maxItems,
         })
@@ -129,7 +129,7 @@ export function EntryTypeEditor({
           name: '',
           label: '',
           format: 'json',
-          fields: availableSchemas[0] || '',
+          schema: availableSchemas[0] || '',
           default: false,
           maxItems: undefined,
         })
@@ -168,7 +168,7 @@ export function EntryTypeEditor({
       setValidationError('Entry type with this name already exists in this collection')
       return false
     }
-    if (!formData.fields) {
+    if (!formData.schema) {
       setValidationError('Schema is required')
       return false
     }
@@ -188,8 +188,8 @@ export function EntryTypeEditor({
       if (formData.format !== editingEntryType?.format) {
         updates.format = formData.format
       }
-      if (formData.fields !== editingEntryType?.fields) {
-        updates.fields = formData.fields
+      if (formData.schema !== editingEntryType?.schema) {
+        updates.schema = formData.schema
       }
       if (formData.default !== (editingEntryType?.default || false)) {
         updates.default = formData.default
@@ -203,7 +203,7 @@ export function EntryTypeEditor({
       const createData: CreateEntryTypeInput = {
         name: formData.name.trim(),
         format: formData.format,
-        fields: formData.fields,
+        schema: formData.schema,
       }
       if (formData.label.trim()) {
         createData.label = formData.label.trim()
@@ -310,8 +310,8 @@ export function EntryTypeEditor({
                 : 'Field definitions for this entry type'
             }
             data={schemaOptions}
-            value={formData.fields}
-            onChange={(value) => value && updateField('fields', value)}
+            value={formData.schema}
+            onChange={(value) => value && updateField('schema', value)}
             searchable
             required
             placeholder="Select a schema"

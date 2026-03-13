@@ -18,7 +18,7 @@ describe('config validation', () => {
             {
               name: 'entry',
               format: 'mdx' as const,
-              fields: [
+              schema: [
                 { name: 'title', type: 'string' as const, required: true },
                 { name: 'body', type: 'mdx' as const, required: true },
                 { name: 'tags', type: 'string' as const, list: true },
@@ -94,7 +94,7 @@ describe('config validation', () => {
             {
               name: 'entry',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
           collections: [
@@ -105,7 +105,7 @@ describe('config validation', () => {
                 {
                   name: 'entry',
                   format: 'md' as const,
-                  fields: [{ name: 'title', type: 'string' as const }],
+                  schema: [{ name: 'title', type: 'string' as const }],
                 },
               ],
             },
@@ -140,7 +140,7 @@ describe('config validation', () => {
             {
               name: 'entry',
               format: 'md' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
           collections: [
@@ -151,7 +151,7 @@ describe('config validation', () => {
                 {
                   name: 'entry',
                   format: 'md' as const,
-                  fields: [{ name: 'title', type: 'string' as const }],
+                  schema: [{ name: 'title', type: 'string' as const }],
                 },
               ],
               collections: [
@@ -162,7 +162,7 @@ describe('config validation', () => {
                     {
                       name: 'entry',
                       format: 'md' as const,
-                      fields: [{ name: 'content', type: 'markdown' as const }],
+                      schema: [{ name: 'content', type: 'markdown' as const }],
                     },
                   ],
                 },
@@ -205,7 +205,7 @@ describe('config validation', () => {
             {
               name: 'entry',
               format: 'mdx' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
           collections: [
@@ -216,7 +216,7 @@ describe('config validation', () => {
                 {
                   name: 'entry',
                   format: 'mdx' as const,
-                  fields: [{ name: 'title', type: 'string' as const }],
+                  schema: [{ name: 'title', type: 'string' as const }],
                 },
               ],
               collections: [
@@ -227,7 +227,7 @@ describe('config validation', () => {
                     {
                       name: 'entry',
                       format: 'mdx' as const,
-                      fields: [{ name: 'title', type: 'string' as const }],
+                      schema: [{ name: 'title', type: 'string' as const }],
                     },
                   ],
                 },
@@ -277,7 +277,7 @@ describe('config validation', () => {
             {
               name: 'entry',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
           collections: [
@@ -288,7 +288,7 @@ describe('config validation', () => {
                 {
                   name: 'entry',
                   format: 'json' as const,
-                  fields: [{ name: 'title', type: 'string' as const }],
+                  schema: [{ name: 'title', type: 'string' as const }],
                 },
               ],
               collections: [
@@ -299,7 +299,7 @@ describe('config validation', () => {
                     {
                       name: 'entry',
                       format: 'json' as const,
-                      fields: [{ name: 'title', type: 'string' as const }],
+                      schema: [{ name: 'title', type: 'string' as const }],
                     },
                   ],
                 },
@@ -350,7 +350,7 @@ describe('config validation', () => {
             {
               name: 'entry',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
           collections: [
@@ -361,7 +361,7 @@ describe('config validation', () => {
                 {
                   name: 'entry',
                   format: 'json' as const,
-                  fields: [{ name: 'title', type: 'string' as const }],
+                  schema: [{ name: 'title', type: 'string' as const }],
                 },
               ],
               collections: [
@@ -372,7 +372,7 @@ describe('config validation', () => {
                     {
                       name: 'entry',
                       format: 'json' as const,
-                      fields: [{ name: 'title', type: 'string' as const }],
+                      schema: [{ name: 'title', type: 'string' as const }],
                     },
                   ],
                 },
@@ -387,7 +387,7 @@ describe('config validation', () => {
             {
               name: 'entry',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },

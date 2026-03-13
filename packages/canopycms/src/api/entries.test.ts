@@ -46,7 +46,7 @@ describe('listEntries', () => {
             {
               name: 'entry',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },
@@ -168,7 +168,7 @@ describe('listEntries', () => {
             {
               name: 'entry',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
           collections: [
@@ -179,7 +179,7 @@ describe('listEntries', () => {
                 {
                   name: 'entry',
                   format: 'json' as const,
-                  fields: [{ name: 'title', type: 'string' as const }],
+                  schema: [{ name: 'title', type: 'string' as const }],
                 },
               ],
               collections: [
@@ -190,7 +190,7 @@ describe('listEntries', () => {
                     {
                       name: 'entry',
                       format: 'json' as const,
-                      fields: [{ name: 'title', type: 'string' as const }],
+                      schema: [{ name: 'title', type: 'string' as const }],
                     },
                   ],
                 },
@@ -318,7 +318,7 @@ describe('listEntries', () => {
             {
               name: 'page',
               format: 'json' as const,
-              fields: [
+              schema: [
                 { name: 'title', type: 'string' as const },
                 { name: 'tagline', type: 'string' as const },
               ],
@@ -398,7 +398,7 @@ describe('listEntries', () => {
             {
               name: 'entry',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },
@@ -482,7 +482,7 @@ describe('listEntries', () => {
           {
             name: 'author',
             format: 'json',
-            fields: 'authorSchema',
+            schema: 'authorSchema',
           },
         ],
         order: [],
@@ -587,14 +587,14 @@ describe('listEntries', () => {
             name: 'home',
             label: 'Home',
             format: 'json',
-            fields: 'homeSchema',
+            schema: 'homeSchema',
             maxItems: 1,
           },
           {
             name: 'settings',
             label: 'Settings',
             format: 'json',
-            fields: 'settingsSchema',
+            schema: 'settingsSchema',
             maxItems: 1,
           },
         ],
@@ -625,7 +625,7 @@ describe('listEntries', () => {
       JSON.stringify({
         name: 'posts',
         label: 'Posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         order: [],
       }),
       'utf8',
@@ -738,7 +738,7 @@ describe('sortEntriesByOrder', () => {
       JSON.stringify({
         name: 'posts',
         label: 'Posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         order: ['ccc333def456', 'aaa111abc123', 'bbb222xyz789'], // Custom order
       }),
       'utf8',
@@ -829,7 +829,7 @@ describe('sortEntriesByOrder', () => {
       path.join(root, `content/posts.${postsId}/.collection.json`),
       JSON.stringify({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         order: ['bbb222xyz789'], // Only beta is in the order
       }),
       'utf8',
@@ -914,7 +914,7 @@ describe('dynamic collection discovery', () => {
       JSON.stringify({
         name: 'docs',
         label: 'Documentation',
-        entries: [{ name: 'doc', format: 'json', fields: 'docSchema' }],
+        entries: [{ name: 'doc', format: 'json', schema: 'docSchema' }],
         order: [],
       }),
       'utf8',
@@ -937,7 +937,7 @@ describe('dynamic collection discovery', () => {
       JSON.stringify({
         name: 'inner',
         label: 'Inner Docs',
-        entries: [{ name: 'doc', format: 'json', fields: 'docSchema' }],
+        entries: [{ name: 'doc', format: 'json', schema: 'docSchema' }],
         order: [],
       }),
       'utf8',
@@ -959,7 +959,7 @@ describe('dynamic collection discovery', () => {
           label: 'Documentation',
           path: 'docs',
           entries: [
-            { name: 'doc', format: 'json' as const, fields: entrySchemaRegistry.docSchema },
+            { name: 'doc', format: 'json' as const, schema: entrySchemaRegistry.docSchema },
           ],
         },
       ],
@@ -1023,7 +1023,7 @@ describe('deleteEntry', () => {
       path.join(root, `content/posts.${postsId}/.collection.json`),
       JSON.stringify({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         order: [],
       }),
       'utf8',
@@ -1102,7 +1102,7 @@ describe('deleteEntry', () => {
       path.join(root, `content/posts.${postsId}/.collection.json`),
       JSON.stringify({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         order: [],
       }),
       'utf8',
@@ -1184,7 +1184,7 @@ describe('deleteEntry', () => {
       path.join(root, `content/posts.${postsId}/.collection.json`),
       JSON.stringify({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         order: [],
       }),
       'utf8',

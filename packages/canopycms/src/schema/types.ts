@@ -2,13 +2,13 @@
  * Types for schema loading and resolution.
  */
 
-import type { FieldConfig, RootCollectionConfig } from '../config'
+import type { EntrySchema, RootCollectionConfig } from '../config'
 
 /**
  * Entry schema registry maps entry schema names to field definitions.
  * Used by .collection.json files to reference reusable entry schemas.
  */
-export type EntrySchemaRegistry = Record<string, readonly FieldConfig[]>
+export type EntrySchemaRegistry = Record<string, EntrySchema>
 
 /**
  * Information about a schema source for debugging.

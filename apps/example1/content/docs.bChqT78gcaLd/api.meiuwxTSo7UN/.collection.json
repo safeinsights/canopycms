@@ -5,7 +5,7 @@
     {
       "name": "doc",
       "format": "json",
-      "fields": "docSchema"
+      "schema": "docSchema"
     }
   ],
   "order": ["k396pBDVP8tC", "cz5H1nu9FEer", "muwmyafM6mEJ"]

@@ -128,7 +128,7 @@ export const buildEntriesFromListResponse = ({
           item.name === entry.entryType,
       )
       if (entryTypeItem && entryTypeItem.type === 'entry-type') {
-        schema = entryTypeItem.fields
+        schema = entryTypeItem.schema
       }
     }
 
@@ -142,7 +142,7 @@ export const buildEntriesFromListResponse = ({
       contentId: entry.contentId,
       label: entry.title || entry.slug || entry.collectionName || entry.collectionPath,
       status: entry.exists === false ? 'missing' : (entry.entryType ?? 'entry'),
-      fields: schema,
+      schema: schema,
       apiPath,
       previewSrc: resolvePreviewSrc(entry),
       collectionPath: entry.collectionPath,

@@ -28,7 +28,7 @@ describe('schema-meta-loader', () => {
               name: 'home',
               label: 'Home',
               format: 'json',
-              fields: 'homeSchema',
+              schema: 'homeSchema',
             },
           ],
           order: [],
@@ -43,7 +43,7 @@ describe('schema-meta-loader', () => {
             name: 'home',
             label: 'Home',
             format: 'json',
-            fields: 'homeSchema',
+            schema: 'homeSchema',
           },
         ],
         order: [],
@@ -70,7 +70,7 @@ describe('schema-meta-loader', () => {
             {
               name: 'post',
               format: 'mdx',
-              fields: 'postSchema',
+              schema: 'postSchema',
             },
           ],
           order: [],
@@ -88,7 +88,7 @@ describe('schema-meta-loader', () => {
             {
               name: 'author',
               format: 'json',
-              fields: 'authorSchema',
+              schema: 'authorSchema',
             },
           ],
           order: [],
@@ -106,7 +106,7 @@ describe('schema-meta-loader', () => {
           {
             name: 'post',
             format: 'mdx',
-            fields: 'postSchema',
+            schema: 'postSchema',
           },
         ],
         order: [],
@@ -119,7 +119,7 @@ describe('schema-meta-loader', () => {
           {
             name: 'author',
             format: 'json',
-            fields: 'authorSchema',
+            schema: 'authorSchema',
           },
         ],
         order: [],
@@ -142,7 +142,7 @@ describe('schema-meta-loader', () => {
             {
               name: 'post',
               format: 'mdx',
-              fields: 'postSchema',
+              schema: 'postSchema',
             },
           ],
           order: [],
@@ -216,7 +216,7 @@ describe('schema-meta-loader', () => {
               {
                 name: 'page',
                 format: 'json' as const,
-                fields: 'homeSchema',
+                schema: 'homeSchema',
               },
             ],
             order: [],
@@ -228,7 +228,7 @@ describe('schema-meta-loader', () => {
       const result = resolveCollectionReferences(metaFiles, mockSchemaRegistry)
 
       expect(result.collections).toHaveLength(1)
-      expect(result.collections![0].entries?.[0]?.fields).toEqual(mockSchemaRegistry.homeSchema)
+      expect(result.collections![0].entries?.[0]?.schema).toEqual(mockSchemaRegistry.homeSchema)
     })
 
     it('should resolve schema references in collections', () => {
@@ -242,7 +242,7 @@ describe('schema-meta-loader', () => {
               {
                 name: 'post',
                 format: 'mdx' as const,
-                fields: 'postSchema',
+                schema: 'postSchema',
               },
             ],
             order: [],
@@ -255,7 +255,7 @@ describe('schema-meta-loader', () => {
               {
                 name: 'author',
                 format: 'json' as const,
-                fields: 'authorSchema',
+                schema: 'authorSchema',
               },
             ],
             order: [],
@@ -267,8 +267,8 @@ describe('schema-meta-loader', () => {
       const result = resolveCollectionReferences(metaFiles, mockSchemaRegistry)
 
       expect(result.collections).toHaveLength(2)
-      expect(result.collections![0].entries?.[0]?.fields).toEqual(mockSchemaRegistry.postSchema)
-      expect(result.collections![1].entries?.[0]?.fields).toEqual(mockSchemaRegistry.authorSchema)
+      expect(result.collections![0].entries?.[0]?.schema).toEqual(mockSchemaRegistry.postSchema)
+      expect(result.collections![1].entries?.[0]?.schema).toEqual(mockSchemaRegistry.authorSchema)
     })
 
     it('should throw error if schema reference not found', () => {
@@ -283,7 +283,7 @@ describe('schema-meta-loader', () => {
               {
                 name: 'page',
                 format: 'json' as const,
-                fields: 'nonexistentSchema',
+                schema: 'nonexistentSchema',
               },
             ],
             order: [],
@@ -308,7 +308,7 @@ describe('schema-meta-loader', () => {
               {
                 name: 'page',
                 format: 'json' as const,
-                fields: 'homeSchema',
+                schema: 'homeSchema',
               },
             ],
             order: [],
@@ -320,7 +320,7 @@ describe('schema-meta-loader', () => {
               {
                 name: 'post',
                 format: 'mdx' as const,
-                fields: 'postSchema',
+                schema: 'postSchema',
               },
             ],
             order: [],
@@ -332,8 +332,8 @@ describe('schema-meta-loader', () => {
       const result = resolveCollectionReferences(metaFiles, mockSchemaRegistry)
 
       expect(result.collections).toHaveLength(2)
-      expect(result.collections![0].entries?.[0]?.fields).toEqual(mockSchemaRegistry.homeSchema)
-      expect(result.collections![1].entries?.[0]?.fields).toEqual(mockSchemaRegistry.postSchema)
+      expect(result.collections![0].entries?.[0]?.schema).toEqual(mockSchemaRegistry.homeSchema)
+      expect(result.collections![1].entries?.[0]?.schema).toEqual(mockSchemaRegistry.postSchema)
     })
 
     it('should preserve other collection properties', () => {
@@ -347,7 +347,7 @@ describe('schema-meta-loader', () => {
               {
                 name: 'post',
                 format: 'mdx' as const,
-                fields: 'postSchema',
+                schema: 'postSchema',
               },
             ],
             order: [],
@@ -363,7 +363,7 @@ describe('schema-meta-loader', () => {
         label: 'Posts',
         path: 'custom-path',
       })
-      expect(result.collections![0].entries?.[0]?.fields).toEqual(mockSchemaRegistry.postSchema)
+      expect(result.collections![0].entries?.[0]?.schema).toEqual(mockSchemaRegistry.postSchema)
     })
 
     it('should return empty object when no meta files', () => {

@@ -28,7 +28,7 @@ const baseConfig = {
           {
             name: 'entry',
             format: 'json',
-            fields: [{ name: 'title', type: 'string' }],
+            schema: [{ name: 'title', type: 'string' }],
           },
         ],
       },

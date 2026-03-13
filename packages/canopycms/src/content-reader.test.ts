@@ -53,7 +53,7 @@ describe('createContentReader', () => {
             {
               name: 'post',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },
@@ -64,7 +64,7 @@ describe('createContentReader', () => {
             {
               name: 'page',
               format: 'json' as const,
-              fields: [
+              schema: [
                 {
                   name: 'hero',
                   type: 'object' as const,
@@ -125,7 +125,7 @@ describe('createContentReader', () => {
             {
               name: 'post',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },
@@ -136,7 +136,7 @@ describe('createContentReader', () => {
             {
               name: 'page',
               format: 'json' as const,
-              fields: [
+              schema: [
                 {
                   name: 'hero',
                   type: 'object' as const,
@@ -189,7 +189,7 @@ describe('createContentReader', () => {
             {
               name: 'page',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },
@@ -243,7 +243,7 @@ describe('createContentReader', () => {
             {
               name: 'post',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },
@@ -254,7 +254,7 @@ describe('createContentReader', () => {
             {
               name: 'page',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },
@@ -315,7 +315,7 @@ describe('createContentReader', () => {
             {
               name: 'page',
               format: 'json' as const,
-              fields: [
+              schema: [
                 {
                   name: 'hero',
                   type: 'object' as const,
@@ -380,7 +380,7 @@ describe('createContentReader', () => {
             {
               name: 'page',
               format: 'json' as const,
-              fields: [{ name: 'title', type: 'string' as const }],
+              schema: [{ name: 'title', type: 'string' as const }],
             },
           ],
         },

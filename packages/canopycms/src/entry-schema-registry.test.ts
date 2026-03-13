@@ -73,7 +73,7 @@ describe('validateEntrySchemaRegistry', () => {
           {
             name: 'post',
             format: 'mdx',
-            fields: 'postSchema',
+            schema: 'postSchema',
           },
         ],
         order: [],
@@ -98,7 +98,7 @@ describe('validateEntrySchemaRegistry', () => {
           {
             name: 'post',
             format: 'mdx',
-            fields: 'authorSchema',
+            schema: 'authorSchema',
           },
         ],
         order: [],
@@ -126,7 +126,7 @@ describe('validateEntrySchemaRegistry', () => {
           {
             name: 'home',
             format: 'json',
-            fields: 'homeSchema',
+            schema: 'homeSchema',
           },
         ],
         order: [],
@@ -153,7 +153,7 @@ describe('validateEntrySchemaRegistry', () => {
           {
             name: 'doc',
             format: 'json',
-            fields: 'configSchema',
+            schema: 'configSchema',
           },
         ],
         order: [],
@@ -181,7 +181,7 @@ describe('validateEntrySchemaRegistry', () => {
           {
             name: 'doc',
             format: 'mdx',
-            fields: 'docSchema',
+            schema: 'docSchema',
           },
         ],
         order: [],
@@ -195,7 +195,7 @@ describe('validateEntrySchemaRegistry', () => {
           {
             name: 'doc',
             format: 'mdx',
-            fields: 'docSchema',
+            schema: 'docSchema',
           },
         ],
         order: [],

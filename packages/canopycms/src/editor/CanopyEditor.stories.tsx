@@ -23,7 +23,7 @@ const schema = {
         {
           name: 'entry',
           format: 'json' as const,
-          fields: [{ name: 'title', type: 'string' as const }],
+          schema: [{ name: 'title', type: 'string' as const }],
         },
       ],
     },
@@ -49,7 +49,7 @@ const entries = [
     path: unsafeAsLogicalPath('content/posts/hello'),
     label: 'Hello Post',
     status: 'page',
-    fields: schema.collections[0].entries[0].fields,
+    schema: schema.collections[0].entries[0].schema,
     apiPath: '/api/canopycms/main/content/posts/hello',
     collectionPath: unsafeAsLogicalPath('content/posts'),
     collectionName: 'posts',

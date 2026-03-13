@@ -13,7 +13,7 @@ export const BLOG_SCHEMA: RootCollectionConfig = {
         {
           name: 'post',
           format: 'mdx',
-          fields: [
+          schema: [
             { name: 'title', type: 'string', required: true },
             { name: 'author', type: 'string' },
             { name: 'date', type: 'datetime' },
@@ -39,7 +39,7 @@ export const ECOMMERCE_SCHEMA: RootCollectionConfig = {
         {
           name: 'product',
           format: 'json',
-          fields: [
+          schema: [
             { name: 'name', type: 'string', required: true },
             { name: 'price', type: 'number', required: true },
             { name: 'description', type: 'markdown' },
@@ -56,7 +56,7 @@ export const ECOMMERCE_SCHEMA: RootCollectionConfig = {
         {
           name: 'category',
           format: 'json',
-          fields: [
+          schema: [
             { name: 'name', type: 'string', required: true },
             { name: 'description', type: 'string' },
           ],

@@ -1,11 +1,11 @@
-import type { FieldConfig } from './config'
+import type { EntrySchema } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
 
 /**
  * Creates a type-safe entry schema registry with runtime validation.
  *
  * Maps entry schema names to their field definitions. These names are
- * referenced by `.collection.json` files via the `"fields"` property.
+ * referenced by `.collection.json` files via the `"schema"` property.
  *
  * @example
  * ```typescript
@@ -22,9 +22,7 @@ import type { EntrySchemaRegistry } from './schema/types'
  * })
  * ```
  */
-export function createEntrySchemaRegistry<T extends Record<string, readonly FieldConfig[]>>(
-  registry: T,
-): T {
+export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>(registry: T): T {
   // Validate that registry is not empty
   if (!registry || typeof registry !== 'object') {
     throw new Error('Entry schema registry must be an object')
@@ -93,9 +91,9 @@ export async function validateEntrySchemaRegistry(
     // Validate root entry type references
     if (metaFiles.root?.entries) {
       for (const entryType of metaFiles.root.entries) {
-        if (!entrySchemaRegistry[entryType.fields]) {
+        if (!entrySchemaRegistry[entryType.schema]) {
           errors.push(
-            `Root entry type "${entryType.name}" references entry schema "${entryType.fields}" which does not exist in registry. ` +
+            `Root entry type "${entryType.name}" references entry schema "${entryType.schema}" which does not exist in registry. ` +
               `Available: ${availableSchemas.join(', ')}`,
           )
         }
@@ -106,9 +104,9 @@ export async function validateEntrySchemaRegistry(
     for (const collection of metaFiles.collections) {
       if (collection.entries) {
         for (const entryType of collection.entries) {
-          if (!entrySchemaRegistry[entryType.fields]) {
+          if (!entrySchemaRegistry[entryType.schema]) {
             errors.push(
-              `Entry type "${entryType.name}" in collection "${collection.name}" (${collection.path}) references entry schema "${entryType.fields}" which does not exist in registry. ` +
+              `Entry type "${entryType.name}" in collection "${collection.name}" (${collection.path}) references entry schema "${entryType.schema}" which does not exist in registry. ` +
                 `Available: ${availableSchemas.join(', ')}`,
             )
           }

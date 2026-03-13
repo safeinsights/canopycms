@@ -39,20 +39,20 @@ import type {
 import { type LogicalPath, type ContentId } from '../paths'
 
 // ============================================================================
-// Wire Types — API response shapes with fieldsRef instead of resolved fields
+// Wire Types — API response shapes with schemaRef instead of resolved schema
 // ============================================================================
 
-/** Entry type in wire format: fieldsRef instead of resolved fields */
+/** Entry type in wire format: schemaRef instead of resolved schema */
 export interface WireEntryType {
   readonly name: string
   readonly format: ContentFormat
-  readonly fieldsRef: string
+  readonly schemaRef: string
   readonly label?: string
   readonly default?: boolean
   readonly maxItems?: number
 }
 
-/** Collection in wire format (entry types carry fieldsRef, not fields) */
+/** Collection in wire format (entry types carry schemaRef, not resolved schema) */
 export interface WireCollectionConfig {
   readonly name: string
   readonly path: string
@@ -81,7 +81,7 @@ export type WireFlatSchemaItem =
       label?: string
       parentPath: LogicalPath
       format: ContentFormat
-      fieldsRef: string
+      schemaRef: string
       default?: boolean
       maxItems?: number
     }
@@ -93,17 +93,17 @@ export type WireFlatSchemaItem =
 type Registry = Record<string, EntrySchema>
 
 /**
- * Resolve the fieldsRef for an entry type. Uses the explicit fieldsRef if set,
- * otherwise does a reverse lookup in the registry by matching the fields array.
+ * Resolve the schemaRef for an entry type. Uses the explicit schemaRef if set,
+ * otherwise does a reverse lookup in the registry by matching the schema array.
  */
-function resolveFieldsRef(et: EntryTypeConfig, registry: Registry): string {
-  if (et.fieldsRef) return et.fieldsRef
-  // Reverse lookup: find which registry key maps to this entry type's fields
+function resolveSchemaRef(et: EntryTypeConfig, registry: Registry): string {
+  if (et.schemaRef) return et.schemaRef
+  // Reverse lookup: find which registry key maps to this entry type's schema
   for (const [key, value] of Object.entries(registry)) {
-    if (value === et.fields) return key
+    if (value === et.schema) return key
   }
   throw new Error(
-    `Cannot resolve fieldsRef for entry type "${et.name}". ` +
+    `Cannot resolve schemaRef for entry type "${et.name}". ` +
       `No matching entry found in the entry schema registry. ` +
       `This may indicate a stale schema cache — try invalidating it.`,
   )
@@ -113,7 +113,7 @@ function toWireEntryType(et: EntryTypeConfig, registry: Registry): WireEntryType
   return {
     name: et.name,
     format: et.format,
-    fieldsRef: resolveFieldsRef(et, registry),
+    schemaRef: resolveSchemaRef(et, registry),
     ...(et.label !== undefined && { label: et.label }),
     ...(et.default !== undefined && { default: et.default }),
     ...(et.maxItems !== undefined && { maxItems: et.maxItems }),
@@ -156,7 +156,7 @@ function toWireFlatSchema(items: FlatSchemaItem[], registry: Registry): WireFlat
       ...(item.label !== undefined && { label: item.label }),
       parentPath: item.parentPath,
       format: item.format,
-      fieldsRef: resolveFieldsRef(item, registry),
+      schemaRef: resolveSchemaRef(item, registry),
       ...(item.default !== undefined && { default: item.default }),
       ...(item.maxItems !== undefined && { maxItems: item.maxItems }),
     }
@@ -177,7 +177,7 @@ export interface EntryTypeWithUsage {
   name: string
   label?: string
   format: ContentFormat
-  fieldsRef: string
+  schemaRef: string
   default?: boolean
   maxItems?: number
   /** Number of entries using this entry type (for locking validation) */
@@ -378,7 +378,7 @@ const getCollectionHandler = async (
   }
 
   // Compute usage counts for each entry type
-  // Read from raw collection meta to get entry schema registry keys (strings), not resolved FieldConfig[]
+  // Read from raw collection meta to get entry schema registry keys (strings), not resolved EntrySchema
   let entryTypesWithUsage: EntryTypeWithUsage[] | undefined
   if (item.entries && item.entries.length > 0) {
     const storeResult = await getSchemaOps(ctx, params.branch)
@@ -396,7 +396,7 @@ const getCollectionHandler = async (
             name: et.name,
             label: et.label,
             format: et.format,
-            fieldsRef: et.fields, // String reference to entry schema registry
+            schemaRef: et.schema, // String reference to entry schema registry
             default: et.default,
             maxItems: et.maxItems,
             usageCount,
@@ -588,8 +588,8 @@ const updateEntryTypeHandler = async (
 
   const collectionPath = decodeCollectionPath(params.collectionPath)
 
-  // Check if format or fields are being changed (breaking changes)
-  const isBreakingChange = body.format !== undefined || body.fields !== undefined
+  // Check if format or schema are being changed (breaking changes)
+  const isBreakingChange = body.format !== undefined || body.schema !== undefined
   if (isBreakingChange) {
     // Count existing entries using this type
     const usageCount = await storeResult.store.countEntriesUsingType(

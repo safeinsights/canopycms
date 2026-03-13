@@ -54,7 +54,7 @@ export interface EditorEntry {
   contentId: ContentId // 12-char content ID (required - used for draft keying)
   label: string
   status?: string
-  fields: EntrySchema
+  schema: EntrySchema
   apiPath: string
   previewSrc?: string
   collectionPath?: LogicalPath
@@ -347,7 +347,7 @@ export const Editor: React.FC<EditorProps> = ({
     () => buildCollectionLabels(activeCollections),
     [activeCollections],
   )
-  const schema = currentEntry?.fields ?? []
+  const schema = currentEntry?.schema ?? []
   const previewKey = currentEntry?.previewSrc ?? currentEntry?.path
 
   // Effect to load entry data when selection changes
@@ -411,7 +411,7 @@ export const Editor: React.FC<EditorProps> = ({
                   name: et.name,
                   label: et.label,
                   format: et.format,
-                  fields: et.fieldsRef,
+                  schema: et.schemaRef,
                   default: et.default,
                   maxItems: et.maxItems,
                   usageCount: et.usageCount,
@@ -422,7 +422,7 @@ export const Editor: React.FC<EditorProps> = ({
                   name: et.name,
                   label: et.label,
                   format: et.format,
-                  fields: '', // Fallback if entryTypesWithUsage not available
+                  schema: '', // Fallback if entryTypesWithUsage not available
                   default: et.default,
                   maxItems: et.maxItems,
                 }),
@@ -446,7 +446,7 @@ export const Editor: React.FC<EditorProps> = ({
                 name: et.name,
                 label: et.label,
                 format: et.format,
-                fields: '',
+                schema: '',
                 default: et.default,
                 maxItems: et.maxItems,
               }),
@@ -465,7 +465,7 @@ export const Editor: React.FC<EditorProps> = ({
               name: et.name,
               label: et.label,
               format: et.format,
-              fields: '',
+              schema: '',
               default: et.default,
               maxItems: et.maxItems,
             }),

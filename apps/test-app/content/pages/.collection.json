@@ -6,7 +6,7 @@
       "name": "home",
       "label": "Home",
       "format": "json",
-      "fields": "homeSchema",
+      "schema": "homeSchema",
       "maxItems": 1
     }
   ]

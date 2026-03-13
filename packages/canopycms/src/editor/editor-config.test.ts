@@ -15,7 +15,7 @@ const baseConfig = {
           {
             name: 'entry',
             format: 'json' as const,
-            fields: [],
+            schema: [],
           },
         ],
       },
@@ -26,7 +26,7 @@ const baseConfig = {
           {
             name: 'entry',
             format: 'md' as const,
-            fields: [],
+            schema: [],
           },
         ],
         collections: [
@@ -37,7 +37,7 @@ const baseConfig = {
               {
                 name: 'entry',
                 format: 'md' as const,
-                fields: [],
+                schema: [],
               },
             ],
           },
@@ -107,7 +107,7 @@ describe('editor-config helpers', () => {
               {
                 name: 'entry',
                 format: 'mdx' as const,
-                fields: [],
+                schema: [],
               },
             ],
             collections: [
@@ -118,7 +118,7 @@ describe('editor-config helpers', () => {
                   {
                     name: 'doc',
                     format: 'md' as const,
-                    fields: [],
+                    schema: [],
                   },
                 ],
               },
@@ -158,14 +158,14 @@ describe('editor-config helpers', () => {
             name: 'home',
             label: 'Home',
             format: 'json' as const,
-            fields: [],
+            schema: [],
             maxItems: 1,
           },
           {
             name: 'settings',
             label: 'Settings',
             format: 'json' as const,
-            fields: [],
+            schema: [],
             maxItems: 1,
           },
         ],
@@ -177,7 +177,7 @@ describe('editor-config helpers', () => {
               {
                 name: 'post',
                 format: 'mdx' as const,
-                fields: [],
+                schema: [],
               },
             ],
           },
@@ -222,7 +222,7 @@ describe('editor-config helpers', () => {
             name: 'page',
             label: 'Page',
             format: 'json' as const,
-            fields: [],
+            schema: [],
             // No maxItems - should not be navigable
           },
         ],
@@ -234,7 +234,7 @@ describe('editor-config helpers', () => {
               {
                 name: 'post',
                 format: 'mdx' as const,
-                fields: [],
+                schema: [],
               },
             ],
           },
@@ -264,12 +264,12 @@ describe('editor-config helpers', () => {
               {
                 name: 'post',
                 format: 'mdx' as const,
-                fields: [],
+                schema: [],
               },
               {
                 name: 'doc',
                 format: 'md' as const,
-                fields: [],
+                schema: [],
               },
             ],
           },
@@ -305,11 +305,11 @@ describe('editor-config helpers', () => {
               {
                 name: 'post',
                 format: 'mdx' as const,
-                fields: [],
+                schema: [],
                 default: true,
                 label: 'Blog Post',
               },
-              { name: 'draft', format: 'mdx' as const, fields: [], label: 'Draft', maxItems: 10 },
+              { name: 'draft', format: 'mdx' as const, schema: [], label: 'Draft', maxItems: 10 },
             ],
           },
         ],
@@ -344,7 +344,7 @@ describe('editor-config helpers', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: [{ name: 'post', format: 'json' as const, fields: [] }],
+            entries: [{ name: 'post', format: 'json' as const, schema: [] }],
             order: ['abc123', 'def456'],
           },
         ],
