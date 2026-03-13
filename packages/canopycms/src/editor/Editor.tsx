@@ -359,7 +359,10 @@ export const Editor: React.FC<EditorProps> = ({
       try {
         const loaded = await loadEntry(currentEntry)
         setLoadedValues((prev) => ({ ...prev, [contentId]: loaded }))
-        setDrafts((prev) => ({ ...prev, [contentId]: loaded }))
+        setDrafts((prev) => {
+          if (prev[contentId] !== undefined) return prev // preserve localStorage draft
+          return { ...prev, [contentId]: loaded }
+        })
       } catch (err) {
         console.error(err)
         notifications.show({ message: 'Failed to load entry', color: 'red' })
