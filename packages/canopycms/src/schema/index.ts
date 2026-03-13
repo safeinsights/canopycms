@@ -3,13 +3,13 @@
  *
  * This module provides schema loading and resolution for CanopyCMS.
  * Schema structure is defined in .collection.json files (single source of truth)
- * while field schemas are defined in a schema registry for reusability.
+ * while field schemas are defined in an entry schema registry for reusability.
  *
  * @example
  * ```ts
  * import { resolveSchema } from 'canopycms/schema'
  *
- * const { schema, sources } = await resolveSchema(contentRoot, schemaRegistry)
+ * const { schema, sources } = await resolveSchema(contentRoot, entrySchemaRegistry)
  * ```
  */
 

@@ -36,7 +36,7 @@ describe('useCommentSystem', () => {
     type: 'entry',
     apiPath: '/api/canopycms/main/content/posts/test',
     format: 'mdx',
-    schema: [],
+    fields: [],
     previewSrc: 'preview-entry1',
     contentId: unsafeAsContentId('test123456789'),
   }

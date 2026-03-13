@@ -192,15 +192,15 @@ describe('schema-meta-loader', () => {
   describe('resolveCollectionReferences', () => {
     const mockSchemaRegistry = {
       homeSchema: [
-        { name: 'title', label: 'Title', type: 'text' as const, required: true },
+        { name: 'title', label: 'Title', type: 'string' as const, required: true },
         { name: 'description', label: 'Description', type: 'textarea' as const },
       ],
       postSchema: [
-        { name: 'title', label: 'Title', type: 'text' as const, required: true },
+        { name: 'title', label: 'Title', type: 'string' as const, required: true },
         { name: 'content', label: 'Content', type: 'markdown' as const },
       ],
       authorSchema: [
-        { name: 'name', label: 'Name', type: 'text' as const, required: true },
+        { name: 'name', label: 'Name', type: 'string' as const, required: true },
         { name: 'bio', label: 'Bio', type: 'textarea' as const },
       ],
     } satisfies Record<string, readonly FieldConfig[]>

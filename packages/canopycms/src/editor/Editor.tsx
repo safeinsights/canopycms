@@ -9,7 +9,7 @@ import { notifications } from '@mantine/notifications'
 // TreeController type from Mantine's useTree hook
 type TreeController = ReturnType<typeof useTree>
 
-import type { ContentFormat, FieldConfig } from '../config'
+import type { ContentFormat, EntrySchema } from '../config'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import type { FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
@@ -38,7 +38,7 @@ export interface EditorEntry {
   contentId: ContentId // 12-char content ID (required - used for draft keying)
   label: string
   status?: string
-  schema: readonly FieldConfig[]
+  fields: EntrySchema
   apiPath: string
   previewSrc?: string
   collectionPath?: LogicalPath
@@ -323,7 +323,7 @@ export const Editor: React.FC<EditorProps> = ({
     return all
   }, [activeCollections])
   const collectionLabels = useMemo(() => buildCollectionLabels(activeCollections), [activeCollections])
-  const schema = currentEntry?.schema ?? []
+  const schema = currentEntry?.fields ?? []
   const previewKey = currentEntry?.previewSrc ?? currentEntry?.path
 
   // Effect to load entry data when selection changes
@@ -383,7 +383,7 @@ export const Editor: React.FC<EditorProps> = ({
                 name: et.name,
                 label: et.label,
                 format: et.format,
-                fields: et.fields,
+                fields: et.fieldsRef,
                 default: et.default,
                 maxItems: et.maxItems,
                 usageCount: et.usageCount,

@@ -5,7 +5,7 @@ import { z } from 'zod'
 
 import matter from 'gray-matter'
 
-import type { FieldConfig, ContentFormat, FlatSchemaItem, EntryTypeConfig } from '../config'
+import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from '../config'
 import { ContentStore, ContentStoreError } from '../content-store'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
@@ -18,8 +18,6 @@ import type { LogicalPath, PhysicalPath, EntrySlug, ContentId } from '../paths/t
 import { branchNameSchema, logicalPathSchema } from './validators'
 
 
-type CollectionKind = 'collection' | 'entry'
-
 /**
  * Summary of an entry type for client display.
  * Simplified from EntryTypeConfig - doesn't include full field definitions.
@@ -30,20 +28,6 @@ export interface EntryTypeSummary {
   format: ContentFormat
   default?: boolean
   maxItems?: number
-}
-
-export interface EntryCollectionSummary {
-  logicalPath: LogicalPath
-  contentId: ContentId // 12-char content ID
-  name: string
-  label?: string
-  format: ContentFormat // Default entry type's format (for backwards compatibility)
-  type: CollectionKind
-  schema: readonly FieldConfig[] // Default entry type's schema (for backwards compatibility)
-  entryTypes?: EntryTypeSummary[] // All entry types in this collection
-  order?: readonly string[] // Embedded IDs for ordering items
-  parentId?: string
-  children?: EntryCollectionSummary[]
 }
 
 export interface CollectionItem {

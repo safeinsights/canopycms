@@ -35,7 +35,7 @@ describe('useEntryManager', () => {
     type: 'entry',
     apiPath: '/api/canopycms/main/content/posts/test',
     format: 'mdx',
-    schema: [],
+    fields: [],
     contentId: unsafeAsContentId('test123456789'),
   }
 

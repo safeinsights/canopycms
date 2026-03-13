@@ -1046,7 +1046,7 @@ Reference fields are schema fields that can reference other entries by their con
 ```
 
 References can:
-- **Link to specific collections**: Constrain references to certain content types (e.g., only allow linking to "posts")
+- **Link to specific collections**: Constrain references to certain entry types (e.g., only allow linking to "posts")
 - **Support both single and multiple references**: A field can reference one entry or an array of entries
 - **Be validated**: The system checks that referenced IDs exist and belong to allowed collections
 
@@ -1543,7 +1543,7 @@ The entry types model treats all content as typed entries within collections, wi
 - Entry types define what can be created in a collection
 - They don't appear as navigable nodes in the tree
 - Collections are navigable; entry types are schema configuration
-- Clearer separation between structure (collections) and content types (entry types)
+- Clearer separation between structure (collections) and entry types
 
 **Type safety:**
 - `FlatSchemaItem` is a discriminated union with `type: 'collection' | 'entry-type'`
@@ -1724,7 +1724,7 @@ Entry types are schema metadata, not navigable tree nodes. The `buildEditorColle
 
 **Clear mental model:**
 - Collections = navigable containers (folders)
-- Entry types = content type definitions (schemas)
+- Entry types = schema definitions for entries
 - Navigation tree shows structure, not schema
 
 **Prevents confusion:**
@@ -1745,7 +1745,7 @@ Entry types are schema metadata, not navigable tree nodes. The `buildEditorColle
 **Cardinality is a constraint:**
 - `maxItems: 1` is a validation rule, not a structural distinction
 - Entry types with `maxItems: 1` aren't fundamentally different from unlimited types
-- Both are content types; the only difference is how many instances are allowed
+- Both are entry types; the only difference is how many instances are allowed
 
 This design emerged from removing the old singleton concept, which conflated schema constraints with navigable structure.
 

@@ -22,7 +22,7 @@ describe('useDraftManager', () => {
     type: 'entry',
     apiPath: '/api/canopycms/main/content/posts/test',
     format: 'mdx',
-    schema: [],
+    fields: [],
   }
 
   const mockLoadEntry = vi.fn()

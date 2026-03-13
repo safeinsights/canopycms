@@ -58,7 +58,7 @@ type FieldValue<F extends InferableField> = F extends { type: 'object'; fields: 
  *
  * Works with any structurally compatible array; importing FieldConfig is not required.
  */
-export type InferContentShape<Fields extends readonly InferableField[]> = {
+type InferContentShape<Fields extends readonly InferableField[]> = {
   [F in Fields[number] as F['name']]: FieldValue<F>
 }
 

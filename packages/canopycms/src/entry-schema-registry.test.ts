@@ -1,16 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdir, writeFile, rm } from 'fs/promises'
 import { join } from 'pathe'
-import { createEntrySchemaRegistry, validateEntrySchemaRegistry } from './schema-registry-helpers'
+import { createEntrySchemaRegistry, validateEntrySchemaRegistry } from './entry-schema-registry'
 
 describe('createEntrySchemaRegistry', () => {
   it('accepts valid schema registry', () => {
     const registry = createEntrySchemaRegistry({
       postSchema: [
-        { type: 'text', name: 'title', label: 'Title', required: true },
+        { type: 'string', name: 'title', label: 'Title', required: true },
       ],
       authorSchema: [
-        { type: 'text', name: 'name', label: 'Name', required: true },
+        { type: 'string', name: 'name', label: 'Name', required: true },
       ],
     })
 
@@ -55,7 +55,7 @@ describe('validateEntrySchemaRegistry', () => {
   it('validates registry with matching schema references', async () => {
     const registry = {
       postSchema: [
-        { type: 'text' as const, name: 'title', label: 'Title', required: true },
+        { type: 'string' as const, name: 'title', label: 'Title', required: true },
       ],
     }
 
@@ -82,7 +82,7 @@ describe('validateEntrySchemaRegistry', () => {
   it('throws error for missing schema reference in collection', async () => {
     const registry = {
       postSchema: [
-        { type: 'text' as const, name: 'title', label: 'Title', required: true },
+        { type: 'string' as const, name: 'title', label: 'Title', required: true },
       ],
     }
 
@@ -112,7 +112,7 @@ describe('validateEntrySchemaRegistry', () => {
   it('throws error for missing schema reference in root entry type', async () => {
     const registry = {
       postSchema: [
-        { type: 'text' as const, name: 'title', label: 'Title', required: true },
+        { type: 'string' as const, name: 'title', label: 'Title', required: true },
       ],
     }
 
@@ -139,7 +139,7 @@ describe('validateEntrySchemaRegistry', () => {
   it('throws error for missing schema reference in collection entry type', async () => {
     const registry = {
       postSchema: [
-        { type: 'text' as const, name: 'title', label: 'Title', required: true },
+        { type: 'string' as const, name: 'title', label: 'Title', required: true },
       ],
     }
 
@@ -168,10 +168,10 @@ describe('validateEntrySchemaRegistry', () => {
   it('validates nested collections correctly', async () => {
     const registry = {
       postSchema: [
-        { type: 'text' as const, name: 'title', label: 'Title', required: true },
+        { type: 'string' as const, name: 'title', label: 'Title', required: true },
       ],
       docSchema: [
-        { type: 'text' as const, name: 'title', label: 'Title', required: true },
+        { type: 'string' as const, name: 'title', label: 'Title', required: true },
       ],
     }
 
@@ -212,7 +212,7 @@ describe('validateEntrySchemaRegistry', () => {
   it('throws error for non-existent content directory', async () => {
     const registry = {
       postSchema: [
-        { type: 'text' as const, name: 'title', label: 'Title', required: true },
+        { type: 'string' as const, name: 'title', label: 'Title', required: true },
       ],
     }
 
@@ -224,7 +224,7 @@ describe('validateEntrySchemaRegistry', () => {
   it('validates with no .collection.json files (empty content dir)', async () => {
     const registry = {
       postSchema: [
-        { type: 'text' as const, name: 'title', label: 'Title', required: true },
+        { type: 'string' as const, name: 'title', label: 'Title', required: true },
       ],
     }
 

@@ -1,5 +1,5 @@
-import type { CollectionItem, ListEntriesResponse, EntryCollectionSummary } from '../api/entries'
-import type { ContentFormat, FlatSchemaItem } from '../config'
+import type { CollectionItem, ListEntriesResponse } from '../api/entries'
+import type { ContentFormat, EntrySchema, FlatSchemaItem } from '../config'
 import type { FormValue } from './FormRenderer'
 import type { EditorEntry, EditorCollection, EditorEntryType } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
@@ -91,47 +91,6 @@ export const buildWritePayload = (entry: { collectionPath?: string; slug?: strin
     data: rest,
     body: typeof body === 'string' ? body : '',
   }
-}
-
-/**
- * Converts API collection summaries to Editor collection tree structure.
- * The API returns a flat list with parentId references; this builds a tree.
- *
- * @deprecated Use convertSchemaTreeToEditorCollections instead. This will be removed
- * once the Editor is fully migrated to use the schema API for collections.
- */
-export function convertApiCollectionsToEditorCollections(
-  apiCollections: EntryCollectionSummary[]
-): EditorCollection[] {
-  // Build a lookup map for quick access
-  const byPath = new Map<string, EntryCollectionSummary>()
-  apiCollections.forEach(col => byPath.set(col.logicalPath, col))
-
-  // Find root collections (no parent or parent not in list)
-  const roots = apiCollections.filter(col =>
-    !col.parentId || !byPath.has(col.parentId)
-  )
-
-  // Recursively build tree
-  const buildTree = (col: EntryCollectionSummary): EditorCollection => {
-    const children = apiCollections
-      .filter(c => c.parentId === col.logicalPath)
-      .map(c => buildTree(c))
-
-    return {
-      path: col.logicalPath, // Logical path
-      contentId: col.contentId, // 12-char content ID
-      name: col.name,
-      label: col.label,
-      format: col.format,
-      type: col.type,
-      entryTypes: col.entryTypes, // Pass through entry types
-      order: col.order, // Pass through ordering
-      children: children.length > 0 ? children : undefined,
-    }
-  }
-
-  return roots.map(buildTree)
 }
 
 /**
@@ -266,7 +225,7 @@ export const buildEntriesFromListResponse = ({
 }: BuildEntriesFromListParams): EditorEntry[] => {
   return response.entries.map((entry) => {
     // Resolve schema from flatSchema using parentPath + name
-    let schema: readonly import('../config').FieldConfig[] = []
+    let schema: EntrySchema = []
     if (entry.collectionPath && entry.entryType) {
       const entryTypeItem = flatSchema.find(
         (item) =>
@@ -289,7 +248,7 @@ export const buildEntriesFromListResponse = ({
       contentId: entry.contentId,
       label: entry.title || entry.slug || entry.collectionName || entry.collectionPath,
       status: entry.exists === false ? 'missing' : entry.entryType ?? 'entry',
-      schema,
+      fields: schema,
       apiPath,
       previewSrc: resolvePreviewSrc(entry),
       collectionPath: entry.collectionPath,

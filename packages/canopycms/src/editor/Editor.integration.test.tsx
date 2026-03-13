@@ -73,7 +73,7 @@ describe('Editor integration', () => {
       contentId: unsafeAsContentId('def456ABC123'), // 12-char content ID (must match API response)
       label: 'Hello',
       status: 'entry',
-      schema: [{ name: 'title', type: 'string' }],
+      fields: [{ name: 'title', type: 'string' }],
       apiPath: '/api/canopycms/main/content/content/posts/hello',
       collectionPath: unsafeAsLogicalPath('content/posts'),
       collectionName: 'posts',
@@ -120,7 +120,7 @@ describe('Editor integration', () => {
                   name: 'posts',
                   type: 'collection',
                   format: 'json',
-                  schema: entry.schema,
+                  schema: entry.fields,
                   order: [],
                 },
               ],

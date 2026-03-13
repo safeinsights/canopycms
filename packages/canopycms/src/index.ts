@@ -1,5 +1,5 @@
 export * from './config'
-export * from './content-types'
+export * from './entry-schema'
 export * from './types'
 export * from './user'
 export * from './auth'

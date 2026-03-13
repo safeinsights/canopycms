@@ -13,7 +13,8 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import { z } from 'zod'
 
-import type { ContentFormat, FieldConfig } from '../config'
+import type { ContentFormat } from '../config'
+import type { EntrySchemaRegistry } from './types'
 import { resolveCollectionPath } from '../content-id-index'
 import { generateId, isValidId } from '../id'
 import { createLogicalPath, validateAndNormalizePath } from '../paths'
@@ -116,7 +117,7 @@ const updateEntryTypeInputSchema = z.object({
 export class SchemaOps {
   constructor(
     private readonly contentRoot: string,
-    private readonly entrySchemaRegistry: Record<string, readonly FieldConfig[]>,
+    private readonly entrySchemaRegistry: EntrySchemaRegistry,
     private readonly services?: CanopyServices
   ) {}
 

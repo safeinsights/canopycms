@@ -70,7 +70,7 @@ describe('Schema API', () => {
     ],
   }
 
-  const mockSchemaRegistry: Record<string, readonly FieldConfig[]> = {
+  const mockEntrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
     postSchema: [{ name: 'title', type: 'string' }],
   }
 
@@ -89,7 +89,7 @@ describe('Schema API', () => {
       }),
       services: {
         config: { schema: mockSchema },
-        entrySchemaRegistry: mockSchemaRegistry,
+        entrySchemaRegistry: mockEntrySchemaRegistry,
         checkContentAccess: vi.fn().mockResolvedValue({ allowed: true }),
       },
     } as unknown as ApiContext
@@ -199,13 +199,13 @@ describe('Schema API', () => {
         expect.objectContaining({
           name: 'post',
           format: 'json',
-          fields: 'postSchema',
+          fieldsRef: 'postSchema',
           usageCount: 3,
         }),
         expect.objectContaining({
           name: 'page',
           format: 'mdx',
-          fields: 'pageSchema',
+          fieldsRef: 'pageSchema',
           usageCount: 0,
         }),
       ])

@@ -4,6 +4,7 @@ import { Button, Group, Paper, Stack, Text } from '@mantine/core'
 
 import type {
   BlockFieldConfig,
+  EntrySchema,
   FieldConfig,
   ObjectFieldConfig,
   ReferenceFieldConfig,
@@ -45,7 +46,7 @@ const normalizeOptions = (
 const fieldKey = (path: Array<string | number>): string => formatCanopyPath(path)
 
 export interface FormRendererProps {
-  fields: readonly FieldConfig[]
+  fields: EntrySchema
   value: FormValue
   onChange: (next: FormValue) => void
   customRenderers?: CustomFieldRenderers
