@@ -1,13 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdir, writeFile, rm } from 'fs/promises'
 import { join } from 'pathe'
-import { createEntrySchemaRegistry, validateEntrySchemaRegistry } from './schema-registry-helpers'
+import { createEntrySchemaRegistry, validateEntrySchemaRegistry } from './entry-schema-registry'
 
 describe('createEntrySchemaRegistry', () => {
   it('accepts valid schema registry', () => {
     const registry = createEntrySchemaRegistry({
-      postSchema: [{ type: 'text', name: 'title', label: 'Title', required: true }],
-      authorSchema: [{ type: 'text', name: 'name', label: 'Name', required: true }],
+      postSchema: [{ type: 'string', name: 'title', label: 'Title', required: true }],
+      authorSchema: [{ type: 'string', name: 'name', label: 'Name', required: true }],
     })
 
     expect(registry).toBeDefined()
@@ -60,7 +60,7 @@ describe('validateEntrySchemaRegistry', () => {
 
   it('validates registry with matching schema references', async () => {
     const registry = {
-      postSchema: [{ type: 'text' as const, name: 'title', label: 'Title', required: true }],
+      postSchema: [{ type: 'string' as const, name: 'title', label: 'Title', required: true }],
     }
 
     // Create a collection that references postSchema
@@ -85,7 +85,7 @@ describe('validateEntrySchemaRegistry', () => {
 
   it('throws error for missing schema reference in collection', async () => {
     const registry = {
-      postSchema: [{ type: 'text' as const, name: 'title', label: 'Title', required: true }],
+      postSchema: [{ type: 'string' as const, name: 'title', label: 'Title', required: true }],
     }
 
     // Create a collection that references non-existent schema
@@ -115,7 +115,7 @@ describe('validateEntrySchemaRegistry', () => {
 
   it('throws error for missing schema reference in root entry type', async () => {
     const registry = {
-      postSchema: [{ type: 'text' as const, name: 'title', label: 'Title', required: true }],
+      postSchema: [{ type: 'string' as const, name: 'title', label: 'Title', required: true }],
     }
 
     // Create root collection with entry type referencing non-existent schema
@@ -140,7 +140,7 @@ describe('validateEntrySchemaRegistry', () => {
 
   it('throws error for missing schema reference in collection entry type', async () => {
     const registry = {
-      postSchema: [{ type: 'text' as const, name: 'title', label: 'Title', required: true }],
+      postSchema: [{ type: 'string' as const, name: 'title', label: 'Title', required: true }],
     }
 
     // Create collection with entry type referencing non-existent schema
@@ -167,8 +167,8 @@ describe('validateEntrySchemaRegistry', () => {
 
   it('validates nested collections correctly', async () => {
     const registry = {
-      postSchema: [{ type: 'text' as const, name: 'title', label: 'Title', required: true }],
-      docSchema: [{ type: 'text' as const, name: 'title', label: 'Title', required: true }],
+      postSchema: [{ type: 'string' as const, name: 'title', label: 'Title', required: true }],
+      docSchema: [{ type: 'string' as const, name: 'title', label: 'Title', required: true }],
     }
 
     // Create nested collections
@@ -207,7 +207,7 @@ describe('validateEntrySchemaRegistry', () => {
 
   it('throws error for non-existent content directory', async () => {
     const registry = {
-      postSchema: [{ type: 'text' as const, name: 'title', label: 'Title', required: true }],
+      postSchema: [{ type: 'string' as const, name: 'title', label: 'Title', required: true }],
     }
 
     await expect(validateEntrySchemaRegistry(registry, '/nonexistent')).rejects.toThrow(
@@ -217,7 +217,7 @@ describe('validateEntrySchemaRegistry', () => {
 
   it('validates with no .collection.json files (empty content dir)', async () => {
     const registry = {
-      postSchema: [{ type: 'text' as const, name: 'title', label: 'Title', required: true }],
+      postSchema: [{ type: 'string' as const, name: 'title', label: 'Title', required: true }],
     }
 
     await expect(validateEntrySchemaRegistry(registry, testDir)).resolves.toBeUndefined()

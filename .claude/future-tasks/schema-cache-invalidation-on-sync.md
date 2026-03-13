@@ -35,12 +35,12 @@ The schema cache uses a stale marker pattern:
 - Cache file: `{branchRoot}/.canopy-meta/schema-cache.json`
 - Stale marker: `{branchRoot}/.canopy-meta/schema-cache.stale`
 
-When the stale marker exists, `SchemaCacheRegistry.getSchema()` regenerates the cache on next access.
+When the stale marker exists, `BranchSchemaCache.getSchema()` regenerates the cache on next access.
 
 ## Related Files
 
 - Schema cache implementation: `packages/canopycms/src/schema-cache-registry.ts`
-- Cache invalidation method: `SchemaCacheRegistry.invalidate(branchRoot)`
+- Cache invalidation method: `BranchSchemaCache.invalidate(branchRoot)`
 - Schema store (already invalidates on mutations): `packages/canopycms/src/schema/schema-store.ts`
 
 ## When to Implement

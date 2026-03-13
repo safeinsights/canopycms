@@ -2,7 +2,8 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import type { RootCollectionConfig } from './config'
-import type { FlatSchemaItem, FieldConfig } from './config/types'
+import type { FlatSchemaItem } from './config/types'
+import type { EntrySchemaRegistry } from './schema/types'
 import type { OperatingMode } from './operating-mode'
 import { resolveSchema, isValidSchema } from './schema/resolver'
 import { flattenSchema } from './config/flatten'
@@ -48,7 +49,7 @@ export class BranchSchemaCache {
    */
   async getSchema(
     branchRoot: string,
-    entrySchemaRegistry: Record<string, readonly FieldConfig[]>,
+    entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string = 'content',
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
     // Dev mode: use in-memory singleton
@@ -61,7 +62,7 @@ export class BranchSchemaCache {
         if (!isValidSchema(result.schema)) {
           throw new Error(
             `No schema found in ${contentRoot}. Create .collection.json files ` +
-              'with references to field schemas defined in your schema registry.',
+              'with references to field schemas defined in your entry schema registry.',
           )
         }
 
@@ -84,7 +85,7 @@ export class BranchSchemaCache {
    */
   private async loadFromCacheOrResolve(
     branchRoot: string,
-    entrySchemaRegistry: Record<string, readonly FieldConfig[]>,
+    entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string,
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
     const contentRoot = path.join(branchRoot, contentRootName)
@@ -119,7 +120,7 @@ export class BranchSchemaCache {
     if (!isValidSchema(result.schema)) {
       throw new Error(
         `No schema found in ${contentRoot}. Create .collection.json files ` +
-          'with references to field schemas defined in your schema registry.',
+          'with references to field schemas defined in your entry schema registry.',
       )
     }
 

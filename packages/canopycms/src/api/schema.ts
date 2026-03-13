@@ -198,7 +198,7 @@ export interface EntryTypeWithUsage {
   name: string
   label?: string
   format: ContentFormat
-  fields: string
+  fieldsRef: string
   default?: boolean
   maxItems?: number
   /** Number of entries using this entry type (for locking validation) */
@@ -206,7 +206,7 @@ export interface EntryTypeWithUsage {
 }
 
 export interface CollectionResponse {
-  collection: CollectionConfig | null
+  collection: WireCollectionConfig | null
   /** Entry types with usage counts (only present when collection exists) */
   entryTypesWithUsage?: EntryTypeWithUsage[]
 }
@@ -386,18 +386,21 @@ const getCollectionHandler = async (
     }
   }
 
-  // Build CollectionConfig from FlatSchemaItem
-  const collection: CollectionConfig = {
+  // Build wire-format collection from FlatSchemaItem
+  const registry = ctx.services.entrySchemaRegistry
+  const collection: WireCollectionConfig = {
     name: item.name,
     path: item.logicalPath,
-    label: item.label,
-    entries: item.entries,
-    collections: item.collections,
-    order: item.order,
+    ...(item.label !== undefined && { label: item.label }),
+    ...(item.entries && { entries: item.entries.map((et) => toWireEntryType(et, registry)) }),
+    ...(item.collections && {
+      collections: item.collections.map((c) => toWireCollection(c, registry)),
+    }),
+    ...(item.order && { order: item.order }),
   }
 
   // Compute usage counts for each entry type
-  // Read from raw collection meta to get schema registry keys (strings), not resolved FieldConfig[]
+  // Read from raw collection meta to get entry schema registry keys (strings), not resolved FieldConfig[]
   let entryTypesWithUsage: EntryTypeWithUsage[] | undefined
   if (item.entries && item.entries.length > 0) {
     const storeResult = await getSchemaOps(ctx, params.branch)
@@ -415,7 +418,7 @@ const getCollectionHandler = async (
             name: et.name,
             label: et.label,
             format: et.format,
-            fields: et.fields, // String reference to schema registry
+            fieldsRef: et.fields, // String reference to entry schema registry
             default: et.default,
             maxItems: et.maxItems,
             usageCount,

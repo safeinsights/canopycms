@@ -1,4 +1,4 @@
-import type { FieldConfig, ReferenceFieldConfig } from '../config'
+import type { EntrySchema, FieldConfig, ReferenceFieldConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import { createApiClient } from '../api/client'
 
@@ -14,7 +14,7 @@ import { createApiClient } from '../api/client'
 export function findChangedFields(
   prevValue: FormValue,
   currentValue: FormValue,
-  schema: readonly FieldConfig[],
+  schema: EntrySchema,
 ): FieldConfig[] {
   const changed: FieldConfig[] = []
 
@@ -39,7 +39,7 @@ export function findChangedFields(
 export async function resolveChangedReferences(
   prevValue: FormValue,
   currentValue: FormValue,
-  schema: readonly FieldConfig[],
+  schema: EntrySchema,
   branch: string,
   cache: Map<string, any>,
 ): Promise<Partial<FormValue>> {

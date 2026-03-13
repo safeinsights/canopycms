@@ -15,7 +15,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 ## Table of Contents
 
 - [Quick Start](#quick-start)
-- [Schema References System](#schema-references-system)
+- [Schema Registry and References](#schema-references-system)
 - [Configuration Reference](#configuration-reference)
 - [Content Identification and References](#content-identification--references)
 - [Integration Guide](#integration-guide)
@@ -212,7 +212,7 @@ export const config = {
 }
 ```
 
-## Schema References System
+## Schema Registry and References
 
 CanopyCMS supports two approaches for defining your content schema:
 
@@ -526,7 +526,7 @@ Available schemas: authorSchema, homeSchema, docSchema
 - Meta file-based: Create `.collection.json` files in your content directory (requires passing `entrySchemaRegistry` to `createNextCanopyContext`)
 - Hybrid: Use both approaches together - schemas will be merged
 
-See the [Schema References System](#schema-references-system) section for details on using `.collection.json` meta files.
+See the [Schema Registry and References](#schema-references-system) section for details on using `.collection.json` meta files.
 
 ### Operating Modes
 

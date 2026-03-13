@@ -1582,7 +1582,7 @@ it('loads collections from .collection.json files', async () => {
   const services = await createCanopyServices(workspace.config, {
     postSchema: [
       { name: 'title', type: 'string' },
-      { name: 'body', type: 'text' },
+      { name: 'body', type: 'string' },
     ],
   })
 

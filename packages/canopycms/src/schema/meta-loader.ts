@@ -5,21 +5,21 @@ import chokidar from 'chokidar'
 
 import type {
   ContentFormat,
-  FieldConfig,
   CollectionConfig,
   RootCollectionConfig,
   EntryTypeConfig,
 } from '../config'
+import type { EntrySchemaRegistry } from './types'
 import { extractSlugFromFilename } from '../content-id-index'
 
 /**
  * Schema reference for entry types in a collection.
- * Each entry type has a name, format, and fields reference to the schema registry.
+ * Each entry type has a name, format, and fields reference to the entry schema registry.
  */
 const entryTypeSchemaRefSchema = z.object({
   name: z.string().min(1),
   format: z.enum(['md', 'mdx', 'json']),
-  fields: z.string().min(1), // Schema registry key (validated at resolution time)
+  fields: z.string().min(1), // Entry schema registry key (validated at resolution time)
   label: z.string().optional(),
   default: z.boolean().optional(),
   maxItems: z.number().int().positive().optional(),
@@ -32,8 +32,8 @@ const entryTypeSchemaRefSchema = z.object({
  * - entries: Array of entry types with their own schemas
  * - collections: Nested collections (discovered via their own .collection.json files)
  *
- * Note: We can't validate `fields` against registry keys at parse time because:
- * 1. Schema registry is passed at runtime (not available during Zod schema definition)
+ * Note: We can't validate `fields` against entry schema registry keys at parse time because:
+ * 1. Entry schema registry is passed at runtime (not available during Zod schema definition)
  * 2. Would create circular dependency (loader → services → config → loader)
  *
  * Validation of schema references happens in resolution functions with clear error messages.
@@ -62,7 +62,7 @@ const rootCollectionMetaSchema = z.object({
 export type EntryTypeMeta = {
   name: string
   format: 'md' | 'mdx' | 'json'
-  fields: string // Schema registry key
+  fields: string // Entry schema registry key
   label?: string
   default?: boolean
   maxItems?: number
@@ -224,7 +224,7 @@ export async function loadCollectionMetaFiles(contentRoot: string): Promise<{
  */
 function resolveEntryTypes(
   entryTypes: EntryTypeMeta[],
-  entrySchemaRegistry: Record<string, readonly FieldConfig[]>,
+  entrySchemaRegistry: EntrySchemaRegistry,
   contextName: string,
 ): EntryTypeConfig[] {
   return entryTypes.map((entryType) => {
@@ -253,7 +253,7 @@ function resolveEntryTypes(
  */
 function resolveCollectionMeta(
   meta: CollectionMeta & { path: string },
-  entrySchemaRegistry: Record<string, readonly FieldConfig[]>,
+  entrySchemaRegistry: EntrySchemaRegistry,
   allCollections: Array<CollectionMeta & { path: string }>,
 ): CollectionConfig {
   // Build result object dynamically to avoid readonly conflicts
@@ -299,10 +299,10 @@ function resolveCollectionMeta(
  * Resolve schema references for root collection and all collections.
  *
  * This function takes the loaded meta files (which contain string references like "postSchema")
- * and resolves them to actual FieldConfig[] arrays from the schema registry.
+ * and resolves them to actual FieldConfig[] arrays from the entry schema registry.
  *
  * Resolution Process:
- * 1. Root entry types: Resolve "fields" string to schema registry lookup
+ * 1. Root entry types: Resolve "fields" string to entry schema registry lookup
  * 2. Top-level collections: Resolve recursively, building nested tree structure
  * 3. Nested collections: Automatically grouped under their parent collections
  *
@@ -316,7 +316,7 @@ export function resolveCollectionReferences(
     root: RootCollectionMeta | null
     collections: Array<CollectionMeta & { path: string }>
   },
-  entrySchemaRegistry: Record<string, readonly FieldConfig[]>,
+  entrySchemaRegistry: EntrySchemaRegistry,
 ): RootCollectionConfig {
   // Build result object dynamically to avoid readonly conflicts
   const result: any = {}

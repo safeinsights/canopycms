@@ -12,4 +12,4 @@ export {
   resolveSchema,
 } from './schema'
 export type { CollectionMeta, RootCollectionMeta } from './schema'
-export { createEntrySchemaRegistry, validateEntrySchemaRegistry } from './schema-registry-helpers'
+export { createEntrySchemaRegistry, validateEntrySchemaRegistry } from './entry-schema-registry'

@@ -9,7 +9,7 @@ import { unsafeAsLogicalPath } from '../paths/test-utils'
 describe('SchemaOps', () => {
   let tempDir: string
   let contentRoot: string
-  let schemaRegistry: Record<string, readonly FieldConfig[]>
+  let entrySchemaRegistry: Record<string, readonly FieldConfig[]>
   let store: SchemaOps
 
   beforeEach(async () => {
@@ -17,7 +17,7 @@ describe('SchemaOps', () => {
     contentRoot = path.join(tempDir, 'content')
     await fs.mkdir(contentRoot, { recursive: true })
 
-    schemaRegistry = {
+    entrySchemaRegistry = {
       postSchema: [
         { name: 'title', type: 'string', required: true },
         { name: 'body', type: 'markdown' },
@@ -32,7 +32,7 @@ describe('SchemaOps', () => {
       ],
     }
 
-    store = new SchemaOps(contentRoot, schemaRegistry)
+    store = new SchemaOps(contentRoot, entrySchemaRegistry)
   })
 
   afterEach(async () => {

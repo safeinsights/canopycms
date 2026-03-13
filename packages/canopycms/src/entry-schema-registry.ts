@@ -1,4 +1,5 @@
 import type { FieldConfig } from './config'
+import type { EntrySchemaRegistry } from './schema/types'
 
 /**
  * Creates a type-safe entry schema registry with runtime validation.
@@ -12,11 +13,11 @@ import type { FieldConfig } from './config'
  *
  * export const entrySchemaRegistry = createEntrySchemaRegistry({
  *   postSchema: [
- *     { type: 'text', name: 'title', label: 'Title', required: true },
+ *     { type: 'string', name: 'title', label: 'Title', required: true },
  *     { type: 'markdown', name: 'body', label: 'Body' },
  *   ],
  *   authorSchema: [
- *     { type: 'text', name: 'name', label: 'Name', required: true },
+ *     { type: 'string', name: 'name', label: 'Name', required: true },
  *   ],
  * })
  * ```
@@ -66,7 +67,7 @@ export function createEntrySchemaRegistry<T extends Record<string, readonly Fiel
  * ```
  */
 export async function validateEntrySchemaRegistry(
-  entrySchemaRegistry: Record<string, readonly FieldConfig[]>,
+  entrySchemaRegistry: EntrySchemaRegistry,
   contentPath: string,
 ): Promise<void> {
   const { loadCollectionMetaFiles } = await import('./schema')

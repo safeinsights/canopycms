@@ -29,7 +29,7 @@ export interface CreateEntryTypeInput {
   name: string
   label?: string
   format: ContentFormat
-  fields: string // Schema registry key
+  fields: string // Entry schema registry key
   default?: boolean
   maxItems?: number
 }
@@ -50,7 +50,7 @@ export interface UpdateCollectionInput {
 export interface UpdateEntryTypeInput {
   label?: string
   format?: ContentFormat
-  fields?: string // Schema registry key
+  fields?: string // Entry schema registry key
   default?: boolean
   maxItems?: number
 }

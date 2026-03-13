@@ -509,7 +509,7 @@ describe('listEntries', () => {
     )
 
     // Load schema from .collection.json files (like services do)
-    const schemaRegistry = {
+    const entrySchemaRegistry = {
       authorSchema: [
         { name: 'name', type: 'string' },
         { name: 'bio', type: 'string' },
@@ -517,7 +517,7 @@ describe('listEntries', () => {
     }
 
     const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
-    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+    const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
     // Create config with the loaded schema
     const config = defineCanopyTestConfig({
@@ -537,7 +537,7 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        entrySchemaRegistry: schemaRegistry,
+        entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -642,7 +642,7 @@ describe('listEntries', () => {
     )
 
     // Load schema from .collection.json files
-    const schemaRegistry = {
+    const entrySchemaRegistry = {
       homeSchema: [
         { name: 'title', type: 'string' },
         { name: 'hero', type: 'string' },
@@ -655,7 +655,7 @@ describe('listEntries', () => {
     }
 
     const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
-    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+    const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
@@ -674,7 +674,7 @@ describe('listEntries', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        entrySchemaRegistry: schemaRegistry,
+        entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -767,12 +767,12 @@ describe('sortEntriesByOrder', () => {
       'utf8',
     )
 
-    const schemaRegistry = {
+    const entrySchemaRegistry = {
       postSchema: [{ name: 'title', type: 'string' }],
     }
 
     const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
-    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+    const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
@@ -791,7 +791,7 @@ describe('sortEntriesByOrder', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        entrySchemaRegistry: schemaRegistry,
+        entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -859,9 +859,9 @@ describe('sortEntriesByOrder', () => {
       'utf8',
     )
 
-    const schemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const entrySchemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
     const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
-    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+    const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
@@ -880,7 +880,7 @@ describe('sortEntriesByOrder', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        entrySchemaRegistry: schemaRegistry,
+        entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -951,7 +951,7 @@ describe('dynamic collection discovery', () => {
       'utf8',
     )
 
-    const schemaRegistry = {
+    const entrySchemaRegistry = {
       docSchema: [
         { name: 'title', type: 'string' },
         { name: 'body', type: 'markdown' },
@@ -966,7 +966,9 @@ describe('dynamic collection discovery', () => {
           name: 'docs',
           label: 'Documentation',
           path: 'docs',
-          entries: [{ name: 'doc', format: 'json' as const, fields: schemaRegistry.docSchema }],
+          entries: [
+            { name: 'doc', format: 'json' as const, fields: entrySchemaRegistry.docSchema },
+          ],
         },
       ],
     }
@@ -988,7 +990,7 @@ describe('dynamic collection discovery', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        entrySchemaRegistry: schemaRegistry,
+        entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -1043,9 +1045,9 @@ describe('deleteEntry', () => {
       'utf8',
     )
 
-    const schemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const entrySchemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
     const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
-    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+    const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
@@ -1064,7 +1066,7 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        entrySchemaRegistry: schemaRegistry,
+        entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -1122,9 +1124,9 @@ describe('deleteEntry', () => {
       'utf8',
     )
 
-    const schemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const entrySchemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
     const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
-    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+    const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
@@ -1151,7 +1153,7 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        entrySchemaRegistry: schemaRegistry,
+        entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },
@@ -1199,9 +1201,9 @@ describe('deleteEntry', () => {
       'utf8',
     )
 
-    const schemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const entrySchemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
     const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
-    const schema = resolveCollectionReferences(metaFiles, schemaRegistry)
+    const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
@@ -1220,7 +1222,7 @@ describe('deleteEntry', () => {
     const ctx = createMockApiContext({
       services: {
         config,
-        entrySchemaRegistry: schemaRegistry,
+        entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
       },

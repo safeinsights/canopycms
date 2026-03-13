@@ -4,7 +4,7 @@
  * Loads and resolves schema from .collection.json files in the content directory.
  * This is the single source of truth for collection structure.
  *
- * Field schemas are defined in the schema registry and referenced by name
+ * Field schemas are defined in the entry schema registry and referenced by name
  * in .collection.json files for reusability and type safety.
  */
 

@@ -32,14 +32,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { FieldConfig } from '../../config'
+import type { EntrySchema } from '../../config'
 import { resolveChangedReferences } from '../client-reference-resolver'
 
 export type FormValue = Record<string, unknown>
 
 export interface UseReferenceResolutionOptions {
   value: FormValue
-  fields: readonly FieldConfig[]
+  fields: EntrySchema
   branch: string
   onResolvedValueChange?: (resolved: FormValue) => void
   onLoadingStateChange?: (loadingState: FormValue) => void

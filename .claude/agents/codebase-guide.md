@@ -186,13 +186,13 @@ if (result.allowed) {
 
 ### Key Files
 
-| File                  | Purpose                                |
-| --------------------- | -------------------------------------- |
-| content-store.ts      | Content persistence (write operations) |
-| content-reader.ts     | Content reading                        |
-| content-types.ts      | Content type definitions               |
-| content-id-index.ts   | Content ID indexing for lookups        |
-| reference-resolver.ts | Reference field resolution             |
+| File                  | Purpose                                                           |
+| --------------------- | ----------------------------------------------------------------- |
+| content-store.ts      | Content persistence (write operations)                            |
+| content-reader.ts     | Content reading                                                   |
+| entry-schema.ts       | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema) |
+| content-id-index.ts   | Content ID indexing for lookups                                   |
+| reference-resolver.ts | Reference field resolution                                        |
 
 ### Content Model
 
@@ -239,12 +239,12 @@ defineCanopyConfig({
 | resolver.ts    | High-level schema resolution API                  |
 | types.ts       | EntrySchemaRegistry, SchemaResolutionResult types |
 
-**Pattern**: Schema structure comes from .collection.json files (single source of truth), field schemas come from a registry for reusability.
+**Pattern**: Schema structure comes from .collection.json files (single source of truth), field schemas come from an entry schema registry for reusability.
 
 ```typescript
 import { resolveSchema } from 'canopycms/schema'
 
-const { schema, sources } = await resolveSchema(contentRoot, schemaRegistry)
+const { schema, sources } = await resolveSchema(contentRoot, entrySchemaRegistry)
 ```
 
 ## Editor UI

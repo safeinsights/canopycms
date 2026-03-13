@@ -223,13 +223,13 @@ describe('buildEntriesFromListResponse', () => {
 
     const post = result.find((item) => item.collectionPath === 'posts')
     expect(post?.label).toBe('Hello Title')
-    expect(post?.schema).toEqual(postsSchema)
+    expect(post?.fields).toEqual(postsSchema)
     expect(post?.status).toBe('post')
     expect(post?.apiPath).toBe('/api/canopycms/feature-branch/content/posts/hello%20world')
     expect(post?.previewSrc).toBe('preview-hello world')
 
     const page = result.find((item) => item.collectionPath === 'pages')
-    expect(page?.schema).toEqual(pagesSchema)
+    expect(page?.fields).toEqual(pagesSchema)
     expect(page?.status).toBe('missing')
     expect(page?.apiPath).toBe('/api/canopycms/feature-branch/content/pages/home')
     expect(page?.slug).toBe('home')
@@ -247,10 +247,10 @@ describe('buildEntriesFromListResponse', () => {
     })
 
     const page = result.find((item) => item.collectionPath === 'pages')
-    expect(page?.schema).toEqual(pagesSchema)
+    expect(page?.fields).toEqual(pagesSchema)
 
     const post = result.find((item) => item.collectionPath === 'posts')
-    expect(post?.schema).toEqual(postsSchema)
+    expect(post?.fields).toEqual(postsSchema)
   })
 
   it('returns empty schema when entry type not in flatSchema', () => {
@@ -277,7 +277,7 @@ describe('buildEntriesFromListResponse', () => {
       flatSchema,
     })
 
-    expect(result[0].schema).toEqual([])
+    expect(result[0].fields).toEqual([])
   })
 
   it('returns empty schema when entry missing entryType', () => {
@@ -303,7 +303,7 @@ describe('buildEntriesFromListResponse', () => {
       flatSchema,
     })
 
-    expect(result[0].schema).toEqual([])
+    expect(result[0].fields).toEqual([])
   })
 })
 
@@ -378,7 +378,7 @@ describe('buildBreadcrumbSegments', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('test'),
       label: 'Test',
-      schema: [],
+      fields: [],
       apiPath: '/api/test',
       contentId: unsafeAsContentId('test123456789'),
     }
@@ -390,7 +390,7 @@ describe('buildBreadcrumbSegments', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('posts/hello'),
       label: 'Hello',
-      schema: [],
+      fields: [],
       apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('posts'),
       slug: 'hello',
@@ -405,7 +405,7 @@ describe('buildBreadcrumbSegments', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/docs/guides/config'),
       label: 'Configuration Guide',
-      schema: [],
+      fields: [],
       apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('content/docs/guides'),
       slug: 'config',
@@ -427,7 +427,7 @@ describe('buildBreadcrumbSegments', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/docs/api/v2/endpoint'),
       label: 'Endpoint',
-      schema: [],
+      fields: [],
       apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('content/docs/api/v2'),
       slug: 'endpoint',
@@ -449,7 +449,7 @@ describe('buildBreadcrumbSegments', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/docs/guides/config'),
       label: 'Configuration Guide',
-      schema: [],
+      fields: [],
       apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('content/docs/guides'),
       slug: 'config',
@@ -471,7 +471,7 @@ describe('buildBreadcrumbSegments', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('posts/2024/01/new-year'),
       label: 'New Year Post',
-      schema: [],
+      fields: [],
       apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('posts'),
       slug: '2024/01/new-year',
@@ -489,7 +489,7 @@ describe('buildBreadcrumbSegments', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/posts/2024/01/new-year'),
       label: 'New Year Post',
-      schema: [],
+      fields: [],
       apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('content/posts'),
       slug: '2024/01/new-year',
@@ -510,7 +510,7 @@ describe('buildBreadcrumbSegments', () => {
     const entry: EditorEntry = {
       path: unsafeAsLogicalPath('content/settings'),
       label: 'Site Settings',
-      schema: [],
+      fields: [],
       apiPath: '/api/test',
       collectionPath: unsafeAsLogicalPath('content/settings'),
       type: 'entry',

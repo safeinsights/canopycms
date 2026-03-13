@@ -18,7 +18,6 @@ export type {
   EntriesResponse,
   ListEntriesResponse,
   CollectionItem,
-  EntryCollectionSummary,
   ListEntriesParams,
   DeleteEntryResponse,
 } from './entries'

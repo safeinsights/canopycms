@@ -1,4 +1,5 @@
-import type { CanopyConfig, FieldConfig } from './config'
+import type { CanopyConfig } from './config'
+import type { EntrySchemaRegistry } from './schema/types'
 import { getConfigDefaults } from './config'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
@@ -15,7 +16,7 @@ import { SettingsWorkspaceManager } from './settings-workspace'
 import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
 import { operatingStrategy } from './operating-mode'
-import { BranchSchemaCache } from './schema-cache-registry'
+import { BranchSchemaCache } from './branch-schema-cache'
 
 /**
  * Parse bootstrap admin IDs from environment variable.
@@ -35,9 +36,9 @@ export const getBootstrapAdminIds = (): Set<string> => {
 export interface CanopyServices {
   config: CanopyConfig
   /** Entry schema registry mapping entry schema names to field definitions */
-  entrySchemaRegistry: Record<string, readonly FieldConfig[]>
+  entrySchemaRegistry: EntrySchemaRegistry
   /** Per-branch schema cache */
-  branchSchemaCache: import('./schema-cache-registry').BranchSchemaCache
+  branchSchemaCache: import('./branch-schema-cache').BranchSchemaCache
   checkBranchAccess: (
     context: BranchContext,
     user: CanopyUser,
@@ -84,7 +85,7 @@ export interface CreateCanopyServicesOptions {
    * Entry schema registry for resolving .collection.json references.
    * Maps entry schema names to field definitions.
    */
-  entrySchemaRegistry?: Record<string, readonly FieldConfig[]>
+  entrySchemaRegistry?: EntrySchemaRegistry
   /**
    * Test-only: Custom branch schema cache.
    * When provided, bypasses the default BranchSchemaCache creation.
@@ -101,7 +102,7 @@ export interface CreateCanopyServicesOptions {
  * Schema is now loaded per-branch via BranchSchemaCache, not at startup.
  *
  * @param config - Validated Canopy configuration
- * @param options - Optional settings including schema registry
+ * @param options - Optional settings including entry schema registry
  */
 export const createCanopyServices = async (
   config: CanopyConfig,
@@ -115,7 +116,7 @@ export const createCanopyServices = async (
  * Schema is loaded per-branch via BranchSchemaCache.
  *
  * @param config - Validated Canopy configuration
- * @param options - Optional settings including schema registry
+ * @param options - Optional settings including entry schema registry
  */
 export const createTestCanopyServices = async (
   config: CanopyConfig,
