@@ -474,14 +474,14 @@ export const entrySchemaRegistry = createEntrySchemaRegistry({
     {
       "name": "post",
       "format": "json",
-      "fields": "postSchema",
+      "schema": "postSchema",
       "default": true
     }
   ]
 }
 ```
 
-The `fields` property contains a string reference (like `"postSchema"`) that is resolved against the registry during initialization. Collections can define multiple entry types, each with different schemas.
+The `schema` property contains a string reference (like `"postSchema"`) that is resolved against the registry during initialization. Collections can define multiple entry types, each with different schemas.
 
 **Benefits:**
 

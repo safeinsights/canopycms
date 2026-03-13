@@ -3,7 +3,14 @@ import path from 'node:path'
 
 import matter from 'gray-matter'
 
-import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from './config'
+import type {
+  BlockFieldConfig,
+  ContentFormat,
+  EntrySchema,
+  FlatSchemaItem,
+  EntryTypeConfig,
+  ObjectFieldConfig,
+} from './config'
 import {
   ContentIdIndex,
   extractIdFromFilename,
@@ -49,7 +56,7 @@ export class ContentStoreError extends Error {}
  * Get the default entry type from a collection's entries array.
  * Returns the entry marked as default, or the first one, or undefined if no entries.
  */
-function getDefaultEntryType(
+export function getDefaultEntryType(
   entries: readonly EntryTypeConfig[] | undefined,
 ): EntryTypeConfig | undefined {
   if (!entries || entries.length === 0) return undefined
@@ -316,7 +323,7 @@ export class ContentStore {
 
     let doc: ContentDocument
     let format: ContentFormat
-    let fields: readonly any[]
+    let fields: EntrySchema
 
     if (schemaItem.type === 'entry-type') {
       // Entry type from unified model
@@ -674,7 +681,7 @@ export class ContentStore {
    */
   private async resolveReferencesInData(
     data: Record<string, unknown>,
-    fields: readonly any[],
+    fields: EntrySchema,
   ): Promise<Record<string, unknown>> {
     const resolved = { ...data }
     const idIndex = await this.idIndex()
@@ -697,33 +704,40 @@ export class ContentStore {
         }
       }
       // Recursively handle nested objects
-      else if (field.type === 'object' && field.fields && value) {
-        if (field.list && Array.isArray(value)) {
+      else if (field.type === 'object' && value) {
+        const objectField = field as ObjectFieldConfig
+        if (!objectField.fields) continue
+        if (objectField.list && Array.isArray(value)) {
           resolved[field.name] = await Promise.all(
             value.map((item) =>
               typeof item === 'object' && item !== null
-                ? this.resolveReferencesInData(item as Record<string, unknown>, field.fields!)
+                ? this.resolveReferencesInData(item as Record<string, unknown>, objectField.fields)
                 : item,
             ),
           )
         } else if (typeof value === 'object') {
           resolved[field.name] = await this.resolveReferencesInData(
             value as Record<string, unknown>,
-            field.fields,
+            objectField.fields,
           )
         }
       }
       // Recursively handle blocks
-      else if (field.type === 'block' && field.templates && Array.isArray(value)) {
+      else if (field.type === 'block' && Array.isArray(value)) {
+        const blockField = field as BlockFieldConfig
         resolved[field.name] = await Promise.all(
-          value.map(async (block: any) => {
-            if (!block || typeof block.value !== 'object') return block
-            const template = field.templates!.find((t: any) => t.name === block.template)
+          (value as unknown[]).map(async (block) => {
+            const b = block as Record<string, unknown>
+            if (!b || typeof b.value !== 'object') return block
+            const template = blockField.templates.find((t) => t.name === b.template)
             if (!template) return block
 
             return {
-              ...block,
-              value: await this.resolveReferencesInData(block.value, template.fields),
+              ...b,
+              value: await this.resolveReferencesInData(
+                b.value as Record<string, unknown>,
+                template.fields,
+              ),
             }
           }),
         )
