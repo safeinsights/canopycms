@@ -72,6 +72,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#module-structure) for detailed module docu
 - Keep as much code in the package as possible so adopters do less work; avoid new package entrypoints without intent.
 - Expose client-only React via `canopycms/client` with `use client`; keep server-only deps out of browser bundles.
 - Propose next work at the end of each iteration.
+- When you finish some work, always provide a commit message, but never git add or git commit on your own
 
 ## Quality Checks
 See [DEVELOPING.md](DEVELOPING.md#quality-checks) for testing and typecheck requirements. Claude subagents are available:

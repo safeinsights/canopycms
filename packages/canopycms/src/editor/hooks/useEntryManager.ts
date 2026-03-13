@@ -168,6 +168,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     ) as import('../../config').FlatSchemaItem[]
 
     // Build editor collections from hydrated flatSchema
+    // Dynamic import: lazy-load heavier editor config; only needed after API data arrives
     const { buildEditorCollections } = await import('../editor-config')
     const collections = buildEditorCollections(hydratedFlatSchema)
     setCollectionsState(collections)

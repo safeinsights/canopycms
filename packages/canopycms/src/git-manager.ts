@@ -275,6 +275,8 @@ export class GitManager {
    * @returns Remote URL or undefined if no remote is needed
    */
   static async resolveRemoteUrl(options: ResolveRemoteUrlOptions): Promise<string | undefined> {
+    // Dynamic import: operating-mode contains Node-only code; deferring the
+    // import keeps git-manager loadable in non-Node evaluation contexts
     const { operatingStrategy } = await import('./operating-mode')
     const strategy = operatingStrategy(options.mode)
     const config = strategy.getRemoteUrlConfig()
