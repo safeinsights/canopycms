@@ -8,11 +8,8 @@
 import { vi, type Mock } from 'vitest'
 import type { CanopyApiClient } from '../client'
 import type { ApiResponse } from '../types'
-import {
-  unsafeAsLogicalPath,
-  unsafeAsPhysicalPath,
-  unsafeAsContentId,
-} from '../../paths/test-utils'
+import { createLogicalPath } from '../../paths'
+import type { ContentId } from '../../paths'
 import type {
   BranchDeleteResponse,
   BranchListResponse,
@@ -262,9 +259,7 @@ export function createMockApiClient(): MockApiClient {
     },
 
     schema: {
-      get: vi
-        .fn()
-        .mockResolvedValue(mockSuccess({ schema: {}, flatSchema: [], availableSchemas: [] })),
+      get: vi.fn().mockResolvedValue(mockSuccess({ schema: {}, flatSchema: [], entrySchemas: {} })),
       getCollection: vi.fn().mockResolvedValue(mockSuccess({ collection: null })),
       createCollection: vi
         .fn()
@@ -510,7 +505,7 @@ export function mockUserInfoResponse(): UserInfoResponse {
  * Create a GetSchemaApiResponse for testing
  */
 export function mockGetSchemaApiResponse(): GetSchemaApiResponse {
-  return mockSuccess({ schema: {}, flatSchema: [], availableSchemas: [] })
+  return mockSuccess({ schema: {}, flatSchema: [], entrySchemas: {} })
 }
 
 /**
@@ -524,7 +519,7 @@ export function mockGetCollectionApiResponse(): GetCollectionApiResponse {
  * Create a CreateCollectionApiResponse for testing
  */
 export function mockCreateCollectionApiResponse(): CreateCollectionApiResponse {
-  return mockSuccess({ collectionPath: unsafeAsLogicalPath(''), contentId: unsafeAsContentId('') })
+  return mockSuccess({ collectionPath: createLogicalPath(''), contentId: '' as ContentId })
 }
 
 /**

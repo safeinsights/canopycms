@@ -422,11 +422,16 @@ ${methods}
       // Apply casts to mock data if specified
       if (casts && Object.keys(casts).length > 0) {
         needsPathUtilities = true
-        // Replace string values with cast function calls
+        // Replace string values with cast function calls or type assertions
         for (const [field, castFn] of Object.entries(casts)) {
-          // Simple field replacement: "field":"value" -> "field":castFn("value")
           const regex = new RegExp(`"${field}"\\s*:\\s*"([^"]*)"`, 'g')
-          mockData = mockData.replace(regex, `"${field}":${castFn}("$1")`)
+          if (castFn.startsWith('as ')) {
+            // Type assertion: "field":"value" -> "field":"value" as Type
+            mockData = mockData.replace(regex, `"${field}":"$1" ${castFn}`)
+          } else {
+            // Function call: "field":"value" -> "field":castFn("value")
+            mockData = mockData.replace(regex, `"${field}":${castFn}("$1")`)
+          }
         }
       }
 
@@ -441,7 +446,7 @@ export function ${funcName}(): ${responseType} {
 
   // Path utilities import (only if needed)
   const pathUtilitiesImport = needsPathUtilities
-    ? `import { toLogicalPath, toPhysicalPath } from '../../paths'\n`
+    ? `import { createLogicalPath, createPhysicalPath } from '../../paths'\nimport type { ContentId } from '../../paths'\n`
     : ''
 
   // Generate imports grouped by module

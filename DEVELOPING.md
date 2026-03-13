@@ -1440,13 +1440,13 @@ In Next.js apps, create services once at module initialization:
 // app/lib/canopy.ts
 import { createNextCanopyContext } from 'canopycms-next'
 import config from '../../canopycms.config'
-import { schemaRegistry } from '../schemas'
+import { entrySchemaRegistry } from '../schemas'
 
 // Create context at module initialization (async)
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
   authPlugin: getAuthPlugin(),
-  schemaRegistry,
+  entrySchemaRegistry,
 })
 
 // Export for server components
@@ -1473,7 +1473,7 @@ import { createNextCanopyContext } from 'canopycms-next'
 const { getCanopy, handler, services } = await createNextCanopyContext({
   config,
   authPlugin,
-  schemaRegistry,
+  entrySchemaRegistry,
 })
 ```
 
@@ -1485,13 +1485,13 @@ When testing APIs or services, use the `createMockServices()` helper from test u
 import { createMockServices, createMockApiContext } from '../test-utils/api-test-helpers'
 
 it('tests some API handler', async () => {
-  // Create mock services with schemaRegistry (required!)
+  // Create mock services with entrySchemaRegistry (required!)
   const services = createMockServices({
     config: { mode: 'prod-sim' },
-    schemaRegistry: {}, // Always include this
+    entrySchemaRegistry: {}, // Always include this
   })
 
-  // Or use higher-level helper that includes schemaRegistry by default
+  // Or use higher-level helper that includes entrySchemaRegistry by default
   const context = createMockApiContext({ services })
 
   // Test your handler
@@ -1500,7 +1500,7 @@ it('tests some API handler', async () => {
 })
 ```
 
-**Critical: Mock services MUST include `schemaRegistry` property.** This property is part of the `CanopyServices` interface and is required for schema resolution. Even if your test doesn't use schemas, include an empty object `{}` to match the interface.
+**Critical: Mock services MUST include `entrySchemaRegistry` property.** This property is part of the `CanopyServices` interface and is required for schema resolution. Even if your test doesn't use schemas, include an empty object `{}` to match the interface.
 
 **Why?** When `createCanopyServices()` became async, it started loading `.collection.json` files and building a schema registry. The registry resolves field references like `"fields": "postSchema"` to actual field configurations. Tests that bypass async service creation must manually provide this property.
 
@@ -1526,10 +1526,10 @@ it('integrates with real services', async () => {
 
 **When to use each approach:**
 
-| Approach                       | Use Case                          | Pros                                  | Cons                                   |
-| ------------------------------ | --------------------------------- | ------------------------------------- | -------------------------------------- |
-| `createMockServices()`         | Unit tests, simple scenarios      | Fast, no filesystem access            | Must manually set `schemaRegistry: {}` |
-| `await createCanopyServices()` | Integration tests, schema testing | Tests real behavior, loads meta files | Slower, requires test workspace        |
+| Approach                       | Use Case                          | Pros                                  | Cons                                        |
+| ------------------------------ | --------------------------------- | ------------------------------------- | ------------------------------------------- |
+| `createMockServices()`         | Unit tests, simple scenarios      | Fast, no filesystem access            | Must manually set `entrySchemaRegistry: {}` |
+| `await createCanopyServices()` | Integration tests, schema testing | Tests real behavior, loads meta files | Slower, requires test workspace             |
 
 ### Testing with Schema Meta Files
 
@@ -1598,13 +1598,13 @@ it('loads collections from .collection.json files', async () => {
 })
 ```
 
-**Schema Registry Parameter:**
+**Entry Schema Registry Parameter:**
 
 ```typescript
-// createCanopyServices accepts optional schemaRegistry
+// createCanopyServices accepts optional entrySchemaRegistry
 const services = await createCanopyServices(
   config,
-  schemaRegistry, // Maps keys like 'postSchema' to FieldConfig[]
+  entrySchemaRegistry, // Maps keys like 'postSchema' to FieldConfig[]
 )
 ```
 
@@ -1634,7 +1634,7 @@ describe('Schema meta file integration', () => {
     // ...
 
     // Act: Create services (loads meta files)
-    const services = await createCanopyServices(workspace.config, schemaRegistry)
+    const services = await createCanopyServices(workspace.config, entrySchemaRegistry)
 
     // Assert: Check merged schema
     expect(services.flatSchema.length).toBeGreaterThan(0)
@@ -2076,10 +2076,10 @@ Add tests alongside new logic. Integration tests cover end-to-end behavior.
 
 **Function signatures that changed to async:**
 
-| Function                                        | Location                                         | Reason                               |
-| ----------------------------------------------- | ------------------------------------------------ | ------------------------------------ |
-| `createCanopyServices(config, schemaRegistry?)` | `packages/canopycms/src/services.ts`             | Loads `.collection.json` meta files  |
-| `createNextCanopyContext(options)`              | `packages/canopycms-next/src/context-wrapper.ts` | Calls async `createCanopyServices()` |
+| Function                                             | Location                                         | Reason                               |
+| ---------------------------------------------------- | ------------------------------------------------ | ------------------------------------ |
+| `createCanopyServices(config, entrySchemaRegistry?)` | `packages/canopycms/src/services.ts`             | Loads `.collection.json` meta files  |
+| `createNextCanopyContext(options)`                   | `packages/canopycms-next/src/context-wrapper.ts` | Calls async `createCanopyServices()` |
 
 **What to update in your code:**
 
@@ -2094,15 +2094,15 @@ const services = await createCanopyServices(config)
 const { getCanopy } = createNextCanopyContext({ config, authPlugin })
 
 // AFTER: Async Next.js context
-const { getCanopy } = await createNextCanopyContext({ config, authPlugin, schemaRegistry })
+const { getCanopy } = await createNextCanopyContext({ config, authPlugin, entrySchemaRegistry })
 ```
 
 **New required properties in mock services:**
 
 ```typescript
-// Always include schemaRegistry when creating mock services
+// Always include entrySchemaRegistry when creating mock services
 const services = createMockServices({
-  schemaRegistry: {}, // Required even if empty
+  entrySchemaRegistry: {}, // Required even if empty
 })
 ```
 
@@ -2126,7 +2126,7 @@ beforeEach(async () => {
 
 | Error                                              | Cause                       | Fix                                         |
 | -------------------------------------------------- | --------------------------- | ------------------------------------------- |
-| `Property 'schemaRegistry' is missing`             | Using old mock structure    | Add `schemaRegistry: {}` to mock            |
+| `Property 'entrySchemaRegistry' is missing`        | Using old mock structure    | Add `entrySchemaRegistry: {}` to mock       |
 | `Cannot read property 'then' of undefined`         | Forgot to await             | Add `await` before `createCanopyServices()` |
 | `Type 'Promise<CanopyServices>' is not assignable` | Not awaiting async function | Add `await` or use `async` function         |
 

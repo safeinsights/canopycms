@@ -1,11 +1,5 @@
 import type { CollectionItem, ListEntriesResponse, EntryCollectionSummary } from '../api/entries'
-import type {
-  ContentFormat,
-  CollectionConfig,
-  RootCollectionConfig,
-  EntryTypeConfig,
-  FlatSchemaItem,
-} from '../config'
+import type { ContentFormat, FlatSchemaItem } from '../config'
 import type { FormValue } from './FormRenderer'
 import type { EditorEntry, EditorCollection, EditorEntryType } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
@@ -147,14 +141,48 @@ export function convertApiCollectionsToEditorCollections(
 }
 
 /**
+ * Minimal entry type shape needed for converting schema trees to editor collections.
+ * Both EntryTypeConfig (with fields) and WireEntryType (with fieldsRef) satisfy this,
+ * since we only need display metadata — not field definitions — for the navigator tree.
+ */
+interface SchemaTreeEntryType {
+  readonly name: string
+  readonly format: ContentFormat
+  readonly label?: string
+  readonly default?: boolean
+  readonly maxItems?: number
+}
+
+/** Minimal collection shape for schema tree conversion. */
+interface SchemaTreeCollection {
+  readonly name: string
+  readonly path: string
+  readonly label?: string
+  readonly entries?: readonly SchemaTreeEntryType[]
+  readonly collections?: readonly SchemaTreeCollection[]
+  readonly order?: readonly string[]
+}
+
+/** Minimal root schema shape accepted by convertSchemaTreeToEditorCollections. */
+interface SchemaTreeRoot {
+  readonly label?: string
+  readonly entries?: readonly SchemaTreeEntryType[]
+  readonly collections?: readonly SchemaTreeCollection[]
+  readonly order?: readonly string[]
+}
+
+/**
  * Converts schema tree (from schema API) to Editor collection tree structure.
  * This is the new approach where collections come from the schema API instead of entries API.
+ *
+ * Accepts both RootCollectionConfig (resolved schema with fields) and WireBranchSchema
+ * (wire format with fieldsRef) since it only uses display metadata from entry types.
  *
  * Returns an array with a single root collection that contains all child collections.
  * The EntryNavigator expects collections[0] to be the root with path === contentRoot.
  */
 export function convertSchemaTreeToEditorCollections(
-  schemaTree: RootCollectionConfig | undefined,
+  schemaTree: SchemaTreeRoot | undefined,
   contentRoot: string,
 ): EditorCollection[] {
   // Handle undefined or null schema tree - return empty array to fall back to flatSchema
@@ -167,9 +195,9 @@ export function convertSchemaTreeToEditorCollections(
     return []
   }
 
-  // Helper to convert EntryTypeConfig to EditorEntryType
+  // Helper to convert entry type metadata to EditorEntryType
   const convertEntryTypes = (
-    entries: readonly EntryTypeConfig[] | undefined,
+    entries: readonly SchemaTreeEntryType[] | undefined,
   ): EditorEntryType[] | undefined => {
     if (!entries || entries.length === 0) return undefined
     return entries.map((et) => ({
@@ -182,15 +210,15 @@ export function convertSchemaTreeToEditorCollections(
   }
 
   // Helper to get default format from entry types
-  const getDefaultFormat = (entries: readonly EntryTypeConfig[] | undefined): ContentFormat => {
+  const getDefaultFormat = (entries: readonly SchemaTreeEntryType[] | undefined): ContentFormat => {
     if (!entries || entries.length === 0) return 'json'
     const defaultEntry = entries.find((e) => e.default) ?? entries[0]
     return defaultEntry?.format || 'json'
   }
 
-  // Recursively convert CollectionConfig to EditorCollection
+  // Recursively convert collection to EditorCollection
   const convertCollection = (
-    col: CollectionConfig,
+    col: SchemaTreeCollection,
     parentPath: string,
     isTopLevel: boolean,
   ): EditorCollection => {

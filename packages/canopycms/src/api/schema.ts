@@ -32,20 +32,141 @@ import {
 import type {
   RootCollectionConfig,
   CollectionConfig,
+  EntryTypeConfig,
   FlatSchemaItem,
   ContentFormat,
+  EntrySchema,
 } from '../config'
 import { type LogicalPath, type ContentId } from '../paths'
+
+// ============================================================================
+// Wire Types — API response shapes with fieldsRef instead of resolved fields
+// ============================================================================
+
+/** Entry type in wire format: fieldsRef instead of resolved fields */
+export interface WireEntryType {
+  readonly name: string
+  readonly format: ContentFormat
+  readonly fieldsRef: string
+  readonly label?: string
+  readonly default?: boolean
+  readonly maxItems?: number
+}
+
+/** Collection in wire format (entry types carry fieldsRef, not fields) */
+export interface WireCollectionConfig {
+  readonly name: string
+  readonly path: string
+  readonly label?: string
+  readonly entries?: readonly WireEntryType[]
+  readonly collections?: readonly WireCollectionConfig[]
+  readonly order?: readonly string[]
+}
+
+/** Branch schema in wire format (full tree with fieldsRef on entry types) */
+export interface WireBranchSchema {
+  readonly label?: string
+  readonly entries?: readonly WireEntryType[]
+  readonly collections?: readonly WireCollectionConfig[]
+  readonly order?: readonly string[]
+}
+
+/** Flat schema item in wire format */
+export type WireFlatSchemaItem =
+  | {
+      type: 'collection'
+      logicalPath: LogicalPath
+      name: string
+      label?: string
+      parentPath?: LogicalPath
+      entries?: readonly WireEntryType[]
+      collections?: readonly WireCollectionConfig[]
+      order?: readonly string[]
+    }
+  | {
+      type: 'entry-type'
+      logicalPath: LogicalPath
+      name: string
+      label?: string
+      parentPath: LogicalPath
+      format: ContentFormat
+      fieldsRef: string
+      default?: boolean
+      maxItems?: number
+    }
+
+// ============================================================================
+// Wire conversion functions
+// ============================================================================
+
+function toWireEntryType(et: EntryTypeConfig): WireEntryType {
+  return {
+    name: et.name,
+    format: et.format,
+    fieldsRef: et.fieldsRef ?? et.name,
+    ...(et.label !== undefined && { label: et.label }),
+    ...(et.default !== undefined && { default: et.default }),
+    ...(et.maxItems !== undefined && { maxItems: et.maxItems }),
+  }
+}
+
+function toWireCollection(col: CollectionConfig): WireCollectionConfig {
+  return {
+    name: col.name,
+    path: col.path,
+    ...(col.label !== undefined && { label: col.label }),
+    ...(col.entries && { entries: col.entries.map(toWireEntryType) }),
+    ...(col.collections && { collections: col.collections.map(toWireCollection) }),
+    ...(col.order && { order: col.order }),
+  }
+}
+
+function toWireBranchSchema(root: RootCollectionConfig): WireBranchSchema {
+  return {
+    ...(root.label !== undefined && { label: root.label }),
+    ...(root.entries && { entries: root.entries.map(toWireEntryType) }),
+    ...(root.collections && { collections: root.collections.map(toWireCollection) }),
+    ...(root.order && { order: root.order }),
+  }
+}
+
+function toWireFlatSchema(items: FlatSchemaItem[]): WireFlatSchemaItem[] {
+  return items.map((item): WireFlatSchemaItem => {
+    if (item.type === 'collection') {
+      return {
+        type: 'collection',
+        logicalPath: item.logicalPath,
+        name: item.name,
+        ...(item.label !== undefined && { label: item.label }),
+        ...(item.parentPath !== undefined && { parentPath: item.parentPath }),
+        ...(item.entries && { entries: item.entries.map(toWireEntryType) }),
+        ...(item.collections && { collections: item.collections.map(toWireCollection) }),
+        ...(item.order && { order: item.order }),
+      }
+    }
+    return {
+      type: 'entry-type',
+      logicalPath: item.logicalPath,
+      name: item.name,
+      ...(item.label !== undefined && { label: item.label }),
+      parentPath: item.parentPath,
+      format: item.format,
+      fieldsRef: item.fieldsRef ?? item.name,
+      ...(item.default !== undefined && { default: item.default }),
+      ...(item.maxItems !== undefined && { maxItems: item.maxItems }),
+    }
+  })
+}
 
 // ============================================================================
 // Response Types
 // ============================================================================
 
 export interface SchemaResponse {
-  schema: RootCollectionConfig
-  flatSchema: FlatSchemaItem[]
-  /** Available schema registry keys that can be used for entry type `fields` */
-  availableSchemas: string[]
+  schema: WireBranchSchema
+  flatSchema: WireFlatSchemaItem[]
+  /** Entry schema definitions keyed by registry name */
+  entrySchemas: Record<string, EntrySchema>
 }
 
 export interface EntryTypeWithUsage {
@@ -205,9 +326,9 @@ const getSchemaHandler = async (
     ok: true,
     status: 200,
     data: {
-      schema: context.schema!,
-      flatSchema: context.flatSchema!,
-      availableSchemas: Object.keys(ctx.services.entrySchemaRegistry),
+      schema: toWireBranchSchema(context.schema!),
+      flatSchema: toWireFlatSchema(context.flatSchema!),
+      entrySchemas: ctx.services.entrySchemaRegistry,
     },
   }
 }
@@ -629,7 +750,7 @@ export const getSchema = defineEndpoint({
   params: branchParamsSchema,
   responseType: 'GetSchemaApiResponse',
   response: {} as GetSchemaApiResponse,
-  defaultMockData: { schema: {}, flatSchema: [], availableSchemas: [] },
+  defaultMockData: { schema: {}, flatSchema: [], entrySchemas: {} },
   handler: getSchemaHandler,
 })
 
@@ -663,7 +784,7 @@ export const createCollection = defineEndpoint({
   responseType: 'CreateCollectionApiResponse',
   response: {} as CreateCollectionApiResponse,
   defaultMockData: { collectionPath: '', contentId: '' },
-  mockDataCasts: { collectionPath: 'toLogicalPath' },
+  mockDataCasts: { collectionPath: 'createLogicalPath', contentId: 'as ContentId' },
   handler: createCollectionHandler,
 })
 

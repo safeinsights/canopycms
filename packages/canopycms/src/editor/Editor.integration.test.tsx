@@ -102,10 +102,10 @@ describe('Editor integration', () => {
                   name: 'post',
                   parentPath: 'content/posts',
                   format: 'json',
-                  fields: [{ name: 'title', type: 'string' }],
+                  fieldsRef: 'postSchema',
                 },
               ],
-              availableSchemas: [],
+              entrySchemas: { postSchema: [{ name: 'title', type: 'string' }] },
             },
           }),
         )
