@@ -104,6 +104,44 @@ const MDXEditorLazy = React.lazy(async () => {
   return { default: WrappedEditor }
 })
 
+/** Style the editor wrapper with a white background and border so it's visually distinct from the form background. */
+const editorWrapperStyle: React.CSSProperties = {
+  background: '#fff',
+  border: '1px solid var(--mantine-color-gray-4, #ced4da)',
+  borderRadius: 'var(--mantine-radius-sm, 4px)',
+  overflow: 'hidden',
+}
+
+/**
+ * Mantine's global CSS reset strips styles from semantic HTML elements.
+ * Restore them inside the MDXEditor content area so formatting is visible.
+ */
+const EditorContentStyles: React.FC = () => (
+  <style>{`
+    .canopy-mdx-content { min-height: 120px; padding: 8px 12px; }
+    .canopy-mdx-content ul { list-style-type: disc; padding-left: 1.5em; margin: 0.5em 0; }
+    .canopy-mdx-content ol { list-style-type: decimal; padding-left: 1.5em; margin: 0.5em 0; }
+    .canopy-mdx-content ul ul { list-style-type: circle; }
+    .canopy-mdx-content ul ul ul { list-style-type: square; }
+    .canopy-mdx-content li { display: list-item; }
+    .canopy-mdx-content h1 { font-size: 2em; font-weight: 700; margin: 0.67em 0; }
+    .canopy-mdx-content h2 { font-size: 1.5em; font-weight: 600; margin: 0.83em 0; }
+    .canopy-mdx-content h3 { font-size: 1.17em; font-weight: 600; margin: 1em 0; }
+    .canopy-mdx-content h4 { font-size: 1em; font-weight: 600; margin: 1.33em 0; }
+    .canopy-mdx-content h5 { font-size: 0.83em; font-weight: 600; margin: 1.67em 0; }
+    .canopy-mdx-content h6 { font-size: 0.67em; font-weight: 600; margin: 2.33em 0; }
+    .canopy-mdx-content blockquote {
+      border-left: 3px solid var(--mantine-color-gray-4, #ced4da);
+      padding-left: 1em;
+      margin: 0.5em 0;
+      color: var(--mantine-color-gray-7, #495057);
+    }
+    .canopy-mdx-content hr { border: none; border-top: 1px solid var(--mantine-color-gray-4, #ced4da); margin: 1em 0; }
+    .canopy-mdx-content p { margin: 0.75em 0; }
+    .canopy-mdx-content a { color: var(--mantine-color-blue-6, #228be6); text-decoration: underline; }
+  `}</style>
+)
+
 const FallbackTextarea: React.FC<Pick<MarkdownFieldProps, 'value' | 'onChange'>> = ({
   value,
   onChange,
@@ -153,9 +191,12 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
           {label}
         </Text>
       )}
-      <Suspense fallback={<FallbackTextarea value={value} onChange={onChange} />}>
-        <MDXEditorLazy markdown={value} onChange={handleChange} editorRef={editorRef} />
-      </Suspense>
+      <EditorContentStyles />
+      <div style={editorWrapperStyle}>
+        <Suspense fallback={<FallbackTextarea value={value} onChange={onChange} />}>
+          <MDXEditorLazy markdown={value} onChange={handleChange} editorRef={editorRef} />
+        </Suspense>
+      </div>
     </div>
   )
 }
