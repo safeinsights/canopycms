@@ -10,6 +10,7 @@ export const __CANOPY_PREVIEW_CLIENT__ = true
 export const CANOPY_PREVIEW_MESSAGE = 'canopycms:draft:update'
 export const CANOPY_PREVIEW_FOCUS = 'canopycms:preview:focus'
 export const CANOPY_PREVIEW_HIGHLIGHT = 'canopycms:preview:highlight'
+export const CANOPY_PREVIEW_READY = 'canopycms:preview:ready'
 
 export interface DraftUpdateMessage {
   type: typeof CANOPY_PREVIEW_MESSAGE
@@ -75,6 +76,12 @@ export const usePreviewData = <T,>(path: string, initialData: T): { data: T; isL
       }
     }
     window.addEventListener('message', handler)
+    // Notify parent that this preview page is ready to receive draft updates.
+    // This is needed because onLoad in the parent fires before React effects run,
+    // so the first postMessage from the parent arrives before this listener is set up.
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: CANOPY_PREVIEW_READY, path }, '*')
+    }
     return () => window.removeEventListener('message', handler)
   }, [path])
 
@@ -162,6 +169,24 @@ export const PreviewFrame = ({
   highlightEnabled?: boolean
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  // Show progress bar while waiting for the preview's ready handshake.
+  const [syncPending, setSyncPending] = useState(data !== undefined)
+
+  // Reset when navigating to a different entry (src change = new iframe page load).
+  useEffect(() => {
+    setSyncPending(data !== undefined)
+  }, [src])
+
+  // Inject the progress bar keyframe animation once per page.
+  useEffect(() => {
+    const styleId = 'canopycms-preview-sync-style'
+    if (!document.getElementById(styleId)) {
+      const el = document.createElement('style')
+      el.id = styleId
+      el.textContent = `@keyframes canopy-preview-sync { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }`
+      document.head.appendChild(el)
+    }
+  }, [])
 
   const post = () => {
     if (data === undefined) return
@@ -173,6 +198,12 @@ export const PreviewFrame = ({
     iframeRef.current.contentWindow.postMessage(msg, '*')
   }
 
+  // Keep refs pointing at the latest closures so the ready handler below never goes stale.
+  const postRef = useRef(post)
+  const postHighlightRef = useRef(postHighlight)
+  postRef.current = post
+  postHighlightRef.current = postHighlight
+
   useEffect(() => {
     post()
   }, [data, isLoading])
@@ -181,22 +212,50 @@ export const PreviewFrame = ({
     postHighlight()
   }, [highlightEnabled])
 
+  // When the preview page's React effects have run and its message listener is ready,
+  // it sends CANOPY_PREVIEW_READY. We respond with the current data so the preview
+  // receives the draft even if it wasn't ready when onLoad fired.
+  useEffect(() => {
+    const handleReady = (event: MessageEvent) => {
+      if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return
+      if ((event.data as { type?: string })?.type === CANOPY_PREVIEW_READY) {
+        postRef.current()
+        postHighlightRef.current()
+        setSyncPending(false)
+      }
+    }
+    window.addEventListener('message', handleReady)
+    return () => window.removeEventListener('message', handleReady)
+  }, [])
+
   return (
-    <iframe
-      ref={iframeRef}
-      src={src}
+    <div
       className={className}
-      style={{
-        display: 'block',
-        width: '100%',
-        height: '100%',
-        border: 'none',
-        ...style,
-      }}
-      onLoad={() => {
-        post()
-        postHighlight()
-      }}
-    />
+      style={{ position: 'relative', overflow: 'hidden', ...style }}
+    >
+      {syncPending && (
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, zIndex: 1, overflow: 'hidden' }}>
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            height: '100%',
+            width: '40%',
+            background: 'var(--mantine-color-blue-filled, #228be6)',
+            borderRadius: '0 2px 2px 0',
+            animation: 'canopy-preview-sync 1.5s ease-in-out infinite',
+          }} />
+        </div>
+      )}
+      <iframe
+        ref={iframeRef}
+        src={src}
+        style={{ display: 'block', position: 'absolute', inset: 0, width: '100%', height: '100%', border: 'none' }}
+        onLoad={() => {
+          post()
+          postHighlight()
+        }}
+      />
+    </div>
   )
 }
