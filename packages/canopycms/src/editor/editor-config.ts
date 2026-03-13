@@ -1,5 +1,5 @@
 import type { CanopyConfig, FlatSchemaItem } from '../config'
-import type { EditorCollection } from './Editor'
+import type { EditorCollection, EditorEntryType } from './Editor'
 
 const normalizeContentRoot = (value?: string): string => {
   const trimmed = (value ?? 'content').replace(/^\/+|\/+$/g, '')
@@ -45,12 +45,21 @@ export const buildEditorCollections = (flatSchema: FlatSchemaItem[]): EditorColl
       if (item.type === 'collection') {
         // Collections are always navigable
         const defaultEntry = item.entries?.find((e) => e.default) || item.entries?.[0]
+        const entryTypes: EditorEntryType[] | undefined = item.entries?.map((et) => ({
+          name: et.name,
+          label: et.label,
+          format: et.format,
+          default: et.default,
+          maxItems: et.maxItems,
+        }))
         results.push({
           path: item.logicalPath,
           name: item.name,
           label: item.label,
           format: defaultEntry?.format || 'json',
           type: 'collection' as const,
+          entryTypes: entryTypes && entryTypes.length > 0 ? entryTypes : undefined,
+          order: item.order,
           children: buildTree(item.logicalPath), // Recursively build children
         })
       }

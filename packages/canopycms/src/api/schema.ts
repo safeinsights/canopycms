@@ -30,7 +30,6 @@ import {
   type UpdateEntryTypeInput,
 } from '../schema/schema-store'
 import type {
-  RootCollectionConfig,
   CollectionConfig,
   EntryTypeConfig,
   FlatSchemaItem,
@@ -57,14 +56,6 @@ export interface WireEntryType {
 export interface WireCollectionConfig {
   readonly name: string
   readonly path: string
-  readonly label?: string
-  readonly entries?: readonly WireEntryType[]
-  readonly collections?: readonly WireCollectionConfig[]
-  readonly order?: readonly string[]
-}
-
-/** Branch schema in wire format (full tree with fieldsRef on entry types) */
-export interface WireBranchSchema {
   readonly label?: string
   readonly entries?: readonly WireEntryType[]
   readonly collections?: readonly WireCollectionConfig[]
@@ -142,17 +133,6 @@ function toWireCollection(col: CollectionConfig, registry: Registry): WireCollec
   }
 }
 
-function toWireBranchSchema(root: RootCollectionConfig, registry: Registry): WireBranchSchema {
-  return {
-    ...(root.label !== undefined && { label: root.label }),
-    ...(root.entries && { entries: root.entries.map((et) => toWireEntryType(et, registry)) }),
-    ...(root.collections && {
-      collections: root.collections.map((c) => toWireCollection(c, registry)),
-    }),
-    ...(root.order && { order: root.order }),
-  }
-}
-
 function toWireFlatSchema(items: FlatSchemaItem[], registry: Registry): WireFlatSchemaItem[] {
   return items.map((item): WireFlatSchemaItem => {
     if (item.type === 'collection') {
@@ -188,7 +168,6 @@ function toWireFlatSchema(items: FlatSchemaItem[], registry: Registry): WireFlat
 // ============================================================================
 
 export interface SchemaResponse {
-  schema: WireBranchSchema
   flatSchema: WireFlatSchemaItem[]
   /** Entry schema definitions keyed by registry name */
   entrySchemas: Record<string, EntrySchema>
@@ -351,7 +330,6 @@ const getSchemaHandler = async (
     ok: true,
     status: 200,
     data: {
-      schema: toWireBranchSchema(context.schema!, ctx.services.entrySchemaRegistry),
       flatSchema: toWireFlatSchema(context.flatSchema!, ctx.services.entrySchemaRegistry),
       entrySchemas: ctx.services.entrySchemaRegistry,
     },
@@ -778,7 +756,7 @@ export const getSchema = defineEndpoint({
   params: branchParamsSchema,
   responseType: 'GetSchemaApiResponse',
   response: {} as GetSchemaApiResponse,
-  defaultMockData: { schema: {}, flatSchema: [], entrySchemas: {} },
+  defaultMockData: { flatSchema: [], entrySchemas: {} },
   handler: getSchemaHandler,
 })
 

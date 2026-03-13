@@ -13,7 +13,7 @@ export interface ApiContext {
    *
    * @param branchName - Name of the branch to load
    * @param options - Optional configuration
-   * @param options.loadSchema - If true, loads per-branch schema into context.schema and context.flatSchema
+   * @param options.loadSchema - If true, loads per-branch schema into context.flatSchema
    */
   getBranchContext: (
     branchName: string,
