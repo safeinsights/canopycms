@@ -14,7 +14,7 @@ export interface FieldWrapperProps {
   entryPath: string
   /** All comment threads for this field */
   threads: CommentThread[]
-  /** Whether to auto-expand comments (from preview click) */
+  /** Whether this field is focused from a preview click (scrolls into view and highlights) */
   autoFocus?: boolean
   /** Current user ID */
   currentUserId: string
@@ -49,13 +49,12 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   const wrapperRef = useRef<HTMLDivElement>(null)
   const [showCarousel, setShowCarousel] = useState(false)
 
-  // Show carousel if threads exist or if auto-focused
-  const shouldShowCarousel = threads.length > 0 || showCarousel || autoFocus
+  // Show carousel if threads exist or user explicitly requested it
+  const shouldShowCarousel = threads.length > 0 || showCarousel
 
   // Scroll to field when focused from preview
   useEffect(() => {
     if (autoFocus) {
-      setShowCarousel(true)
       wrapperRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
   }, [autoFocus])
