@@ -305,12 +305,12 @@ export class ContentStore {
     if (schemaItem.type === 'entry-type') {
       // Entry type from unified model
       format = schemaItem.format
-      fields = schemaItem.fields
+      fields = schemaItem.schema
     } else {
       // Collection entry
       const defaultEntry = getDefaultEntryType(schemaItem.entries)
       format = defaultEntry?.format || 'json'
-      fields = defaultEntry?.fields || []
+      fields = defaultEntry?.schema || []
     }
 
     if (format === 'json') {

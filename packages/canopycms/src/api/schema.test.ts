@@ -45,7 +45,7 @@ describe('Schema API', () => {
       logicalPath: 'posts' as LogicalPath,
       name: 'posts',
       label: 'Posts',
-      entries: [{ name: 'post', format: 'json', fields: [], fieldsRef: 'postSchema' }],
+      entries: [{ name: 'post', format: 'json', schema: [], schemaRef: 'postSchema' }],
       order: ['id1', 'id2'],
     },
     {
@@ -54,8 +54,8 @@ describe('Schema API', () => {
       name: 'post',
       parentPath: 'posts' as LogicalPath,
       format: 'json',
-      fields: [],
-      fieldsRef: 'postSchema',
+      schema: [],
+      schemaRef: 'postSchema',
     },
   ]
 
@@ -97,14 +97,14 @@ describe('Schema API', () => {
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
 
-      // FlatSchema should be wire format (fieldsRef, no fields on entry-type items)
+      // FlatSchema should be wire format (schemaRef, no resolved schema on entry-type items)
       expect(result.data?.flatSchema).toEqual([
         {
           type: 'collection',
           logicalPath: 'posts',
           name: 'posts',
           label: 'Posts',
-          entries: [{ name: 'post', format: 'json', fieldsRef: 'postSchema' }],
+          entries: [{ name: 'post', format: 'json', schemaRef: 'postSchema' }],
           order: ['id1', 'id2'],
         },
         {
@@ -113,7 +113,7 @@ describe('Schema API', () => {
           name: 'post',
           parentPath: 'posts',
           format: 'json',
-          fieldsRef: 'postSchema',
+          schemaRef: 'postSchema',
         },
       ])
 
@@ -155,8 +155,8 @@ describe('Schema API', () => {
           name: 'posts',
           label: 'Posts',
           entries: [
-            { name: 'post', format: 'json', fields: 'postSchema', default: true },
-            { name: 'page', format: 'mdx', fields: 'pageSchema' },
+            { name: 'post', format: 'json', schema: 'postSchema', default: true },
+            { name: 'page', format: 'mdx', schema: 'pageSchema' },
           ],
         }),
         countEntriesUsingType: vi.fn()
@@ -177,13 +177,13 @@ describe('Schema API', () => {
         expect.objectContaining({
           name: 'post',
           format: 'json',
-          fieldsRef: 'postSchema',
+          schemaRef: 'postSchema',
           usageCount: 3,
         }),
         expect.objectContaining({
           name: 'page',
           format: 'mdx',
-          fieldsRef: 'pageSchema',
+          schemaRef: 'pageSchema',
           usageCount: 0,
         }),
       ])
@@ -267,7 +267,7 @@ describe('Schema API', () => {
         { branch: unsafeAsBranchName('main') },
         {
           name: 'newcol',
-          entries: [{ name: 'item', format: 'json', fields: 'postSchema' }],
+          entries: [{ name: 'item', format: 'json', schema: 'postSchema' }],
         }
       )
 
@@ -286,7 +286,7 @@ describe('Schema API', () => {
         { branch: unsafeAsBranchName('main') },
         {
           name: 'newcol',
-          entries: [{ name: 'item', format: 'json', fields: 'postSchema' }],
+          entries: [{ name: 'item', format: 'json', schema: 'postSchema' }],
         }
       )
 
@@ -433,7 +433,7 @@ describe('Schema API', () => {
         mockCtx,
         mockReq,
         { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts') },
-        { name: 'featured', format: 'mdx', fields: 'postSchema' }
+        { name: 'featured', format: 'mdx', schema: 'postSchema' }
       )
 
       expect(result.ok).toBe(true)
@@ -451,7 +451,7 @@ describe('Schema API', () => {
         mockCtx,
         mockReq,
         { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts') },
-        { name: 'post', format: 'json', fields: 'postSchema' }
+        { name: 'post', format: 'json', schema: 'postSchema' }
       )
 
       expect(result.ok).toBe(false)
@@ -462,7 +462,7 @@ describe('Schema API', () => {
     it('should reject paths with traversal sequences', () => {
       const result = addEntryType.validate({
         params: { branch: 'main', collectionPath: '../admin' },
-        body: { name: 'entry', format: 'json', fields: 'postSchema' },
+        body: { name: 'entry', format: 'json', schema: 'postSchema' },
       })
 
       expect(result.ok).toBe(false)
@@ -472,7 +472,7 @@ describe('Schema API', () => {
     it('should reject physical paths', () => {
       const result = addEntryType.validate({
         params: { branch: 'main', collectionPath: 'posts.tuggGbrydvYr' },
-        body: { name: 'entry', format: 'json', fields: 'postSchema' },
+        body: { name: 'entry', format: 'json', schema: 'postSchema' },
       })
 
       expect(result.ok).toBe(false)
@@ -558,7 +558,7 @@ describe('Schema API', () => {
         mockCtx,
         mockReq,
         { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts'), entryTypeName: 'post' },
-        { fields: 'newSchema' }
+        { schema: 'newSchema' }
       )
 
       expect(result.ok).toBe(false)
@@ -580,7 +580,7 @@ describe('Schema API', () => {
         mockCtx,
         mockReq,
         { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts'), entryTypeName: 'post' },
-        { format: 'mdx', fields: 'newSchema' }
+        { format: 'mdx', schema: 'newSchema' }
       )
 
       expect(result.ok).toBe(true)
@@ -600,7 +600,7 @@ describe('Schema API', () => {
         mockCtx,
         mockReq,
         { branch: unsafeAsBranchName('main'), collectionPath: unsafeAsLogicalPath('posts'), entryTypeName: 'post' },
-        { format: 'mdx', fields: 'newSchema' }
+        { format: 'mdx', schema: 'newSchema' }
       )
 
       expect(result.ok).toBe(false)

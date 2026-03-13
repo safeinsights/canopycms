@@ -150,7 +150,7 @@ describe('PR Workflow Integration', () => {
               {
                 name: 'post',
                 format: 'json',
-                fields: [
+                schema: [
                   { name: 'title', type: 'string' },
                   { name: 'content', type: 'markdown' },
                 ],
@@ -444,7 +444,7 @@ describe('PR Workflow Integration', () => {
           {
             name: 'home',
             path: 'home',
-            entries: [{ name: 'entry', format: 'json', fields: [{ name: 'title', type: 'string' }] }],
+            entries: [{ name: 'entry', format: 'json', schema: [{ name: 'title', type: 'string' }] }],
           },
         ],
       },

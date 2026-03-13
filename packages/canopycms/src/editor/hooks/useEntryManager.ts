@@ -159,11 +159,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       throw new Error(`Schema fetch failed: ${schemaResult.status}`)
     }
 
-    // Hydrate wire flatSchema: resolve fieldsRef → fields from entrySchemas dict
+    // Hydrate wire flatSchema: resolve schemaRef → schema from entrySchemas dict
     const { entrySchemas } = schemaResult.data
     const hydratedFlatSchema = schemaResult.data.flatSchema.map((item) =>
       item.type === 'entry-type'
-        ? { ...item, fields: entrySchemas[item.fieldsRef] ?? [] }
+        ? { ...item, schema: entrySchemas[item.schemaRef] ?? [] }
         : item
     ) as import('../../config').FlatSchemaItem[]
 

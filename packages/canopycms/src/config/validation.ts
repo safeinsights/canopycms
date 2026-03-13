@@ -34,8 +34,8 @@ export const ensureSelectFieldsHaveOptions = (config: unknown): void => {
     if (!root) return
     // Check entries fields (now an array of entry types)
     if (Array.isArray(root.entries)) {
-      for (const entryType of root.entries as Array<{ fields?: unknown[] }>) {
-        checkFields(entryType?.fields)
+      for (const entryType of root.entries as Array<{ schema?: unknown[] }>) {
+        checkFields(entryType?.schema)
       }
     }
     // Recursively check nested collections

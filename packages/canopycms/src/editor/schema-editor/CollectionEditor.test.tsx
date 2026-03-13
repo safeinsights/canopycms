@@ -143,8 +143,8 @@ describe('CollectionEditor', () => {
       label: 'Blog Posts',
       logicalPath: unsafeAsLogicalPath('posts'),
       entries: [
-        { name: 'post', label: 'Post', format: 'mdx', fields: 'postSchema', default: true },
-        { name: 'featured', label: 'Featured', format: 'json', fields: 'postSchema' },
+        { name: 'post', label: 'Post', format: 'mdx', schema: 'postSchema', default: true },
+        { name: 'featured', label: 'Featured', format: 'json', schema: 'postSchema' },
       ],
     }
 
@@ -196,7 +196,7 @@ describe('CollectionEditor', () => {
       const singleEntryCollection: ExistingCollection = {
         name: 'settings',
         logicalPath: unsafeAsLogicalPath('settings'),
-        entries: [{ name: 'config', format: 'json', fields: 'postSchema', maxItems: 1 }],
+        entries: [{ name: 'config', format: 'json', schema: 'postSchema', maxItems: 1 }],
       }
 
       renderCollectionEditor({ editingCollection: singleEntryCollection })

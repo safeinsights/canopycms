@@ -131,9 +131,9 @@ export type EntrySchema = readonly FieldConfig[]
 export type EntryTypeConfig = {
   readonly name: string
   readonly format: ContentFormat
-  readonly fields: EntrySchema
+  readonly schema: EntrySchema
   /** Entry schema registry key (e.g., "postSchema"). Set during schema resolution. */
-  readonly fieldsRef?: string
+  readonly schemaRef?: string
   readonly label?: string
   readonly default?: boolean // Is this the default type for "Add" button?
   readonly maxItems?: number // Limit instances (e.g., 1 = only one entry allowed)
@@ -276,9 +276,9 @@ export type FlatSchemaItem =
       /** Path of the parent collection */
       parentPath: LogicalPath
       format: ContentFormat
-      fields: EntrySchema
+      schema: EntrySchema
       /** Entry schema registry key (e.g., "postSchema"). Set during schema resolution. */
-      fieldsRef?: string
+      schemaRef?: string
       default?: boolean
       maxItems?: number
     }

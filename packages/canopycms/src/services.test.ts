@@ -29,7 +29,7 @@ describe('createCanopyServices', () => {
   it('creates helpers with defaults and reuses config', async () => {
     const schema = {
       collections: [
-        { name: 'pages', path: 'pages', entries: [{ name: 'page', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }] },
+        { name: 'pages', path: 'pages', entries: [{ name: 'page', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }] },
       ],
     }
     const cfg = defineCanopyTestConfig({
@@ -70,7 +70,7 @@ describe('createCanopyServices', () => {
   it('creates git manager using defaults', async () => {
     const schema = {
       collections: [
-        { name: 'pages', path: 'pages', entries: [{ name: 'page', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }] },
+        { name: 'pages', path: 'pages', entries: [{ name: 'page', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }] },
       ],
     }
     const cfg = defineCanopyTestConfig({
@@ -359,7 +359,7 @@ describe('commitToSettingsBranch', () => {
 
     const schema = {
       collections: [
-        { name: 'pages', path: 'pages', entries: [{ name: 'page', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }] },
+        { name: 'pages', path: 'pages', entries: [{ name: 'page', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }] },
       ],
     }
     const cfg = defineCanopyTestConfig({
@@ -403,7 +403,7 @@ describe('commitToSettingsBranch', () => {
 
     const schema = {
       collections: [
-        { name: 'pages', path: 'pages', entries: [{ name: 'page', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }] },
+        { name: 'pages', path: 'pages', entries: [{ name: 'page', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }] },
       ],
     }
     const cfg = defineCanopyTestConfig({
@@ -450,7 +450,7 @@ describe('commitToSettingsBranch', () => {
 
     const schema = {
       collections: [
-        { name: 'pages', path: 'pages', entries: [{ name: 'page', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }] },
+        { name: 'pages', path: 'pages', entries: [{ name: 'page', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }] },
       ],
     }
     const cfg = defineCanopyTestConfig({

@@ -50,7 +50,7 @@ describe('useSchemaManager', () => {
         createResult = await result.current.createCollection({
           name: 'posts',
           label: 'Posts',
-          entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+          entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         })
       })
 
@@ -60,7 +60,7 @@ describe('useSchemaManager', () => {
         {
           name: 'posts',
           label: 'Posts',
-          entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+          entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         }
       )
       expect(onSchemaChange).toHaveBeenCalled()
@@ -80,7 +80,7 @@ describe('useSchemaManager', () => {
       await act(async () => {
         createResult = await result.current.createCollection({
           name: 'posts',
-          entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+          entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         })
       })
 
@@ -193,14 +193,14 @@ describe('useSchemaManager', () => {
         addResult = await result.current.addEntryType(unsafeAsLogicalPath('posts'), {
           name: 'featured',
           format: 'mdx',
-          fields: 'postSchema',
+          schema: 'postSchema',
         })
       })
 
       expect(addResult).toBe(true)
       expect(mockClient.schema.addEntryType).toHaveBeenCalledWith(
         { branch: 'main', collectionPath: 'posts' },
-        { name: 'featured', format: 'mdx', fields: 'postSchema' }
+        { name: 'featured', format: 'mdx', schema: 'postSchema' }
       )
       expect(onSchemaChange).toHaveBeenCalled()
     })
@@ -366,7 +366,7 @@ describe('useSchemaManager', () => {
       act(() => {
         createPromise = result.current.createCollection({
           name: 'posts',
-          entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+          entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         })
       })
 

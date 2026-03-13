@@ -55,7 +55,7 @@ export interface UseSchemaManagerReturn {
  * await createCollection({
  *   name: 'posts',
  *   label: 'Blog Posts',
- *   entries: [{ name: 'post', format: 'mdx', fields: 'postSchema' }]
+ *   entries: [{ name: 'post', format: 'mdx', schema: 'postSchema' }]
  * })
  * ```
  */

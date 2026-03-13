@@ -45,7 +45,7 @@ describe('ReferenceResolver', () => {
             {
               name: 'author',
               format: 'json' as const,
-              fields: [
+              schema: [
                 { name: 'name', type: 'string' as const, label: 'Name' },
               ],
             },

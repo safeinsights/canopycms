@@ -8,13 +8,13 @@ import type { EntrySchemaRegistry } from './types'
 import { extractSlugFromFilename } from '../content-id-index'
 
 /**
- * Schema reference for entry types in a collection.
- * Each entry type has a name, format, and fields reference to the entry schema registry.
+ * Zod schema for entry type metadata in .collection.json files.
+ * Each entry type has a name, format, and schema reference to the entry schema registry.
  */
-const entryTypeSchemaRefSchema = z.object({
+const entryTypeMetaSchema = z.object({
   name: z.string().min(1),
   format: z.enum(['md', 'mdx', 'json']),
-  fields: z.string().min(1),  // Entry schema registry key (validated at resolution time)
+  schema: z.string().min(1),  // Entry schema registry key (validated at resolution time)
   label: z.string().optional(),
   default: z.boolean().optional(),
   maxItems: z.number().int().positive().optional(),
@@ -27,7 +27,7 @@ const entryTypeSchemaRefSchema = z.object({
  * - entries: Array of entry types with their own schemas
  * - collections: Nested collections (discovered via their own .collection.json files)
  *
- * Note: We can't validate `fields` against entry schema registry keys at parse time because:
+ * Note: We can't validate `schema` against entry schema registry keys at parse time because:
  * 1. Entry schema registry is passed at runtime (not available during Zod schema definition)
  * 2. Would create circular dependency (loader → services → config → loader)
  *
@@ -36,7 +36,7 @@ const entryTypeSchemaRefSchema = z.object({
 const collectionMetaSchema = z.object({
   name: z.string().min(1),
   label: z.string().optional(),
-  entries: z.array(entryTypeSchemaRefSchema).optional(),
+  entries: z.array(entryTypeMetaSchema).optional(),
   order: z.array(z.string()), // Embedded IDs for ordering items (required)
 }).refine(
   (data) => data.entries && data.entries.length > 0,
@@ -49,14 +49,14 @@ const collectionMetaSchema = z.object({
  */
 const rootCollectionMetaSchema = z.object({
   label: z.string().optional(),
-  entries: z.array(entryTypeSchemaRefSchema).optional(),
+  entries: z.array(entryTypeMetaSchema).optional(),
   order: z.array(z.string()).optional(), // Embedded IDs for ordering items
 })
 
 export type EntryTypeMeta = {
   name: string
   format: 'md' | 'mdx' | 'json'
-  fields: string  // Entry schema registry key
+  schema: string  // Entry schema registry key
   label?: string
   default?: boolean
   maxItems?: number
@@ -224,10 +224,10 @@ function resolveEntryTypes(
   contextName: string
 ): EntryTypeConfig[] {
   return entryTypes.map((entryType) => {
-    const schema = entrySchemaRegistry[entryType.fields]
-    if (!schema) {
+    const resolvedSchema = entrySchemaRegistry[entryType.schema]
+    if (!resolvedSchema) {
       throw new Error(
-        `Schema reference "${entryType.fields}" in entry type "${entryType.name}" (${contextName}) not found in registry. ` +
+        `Schema reference "${entryType.schema}" in entry type "${entryType.name}" (${contextName}) not found in registry. ` +
         `Available schemas: ${Object.keys(entrySchemaRegistry).join(', ')}`
       )
     }
@@ -236,8 +236,8 @@ function resolveEntryTypes(
       name: entryType.name,
       label: entryType.label,
       format: entryType.format as ContentFormat,
-      fields: schema,
-      fieldsRef: entryType.fields,
+      schema: resolvedSchema,
+      schemaRef: entryType.schema,
       default: entryType.default,
       maxItems: entryType.maxItems,
     }
@@ -293,15 +293,15 @@ function resolveCollectionMeta(
  * Resolve schema references for root collection and all collections.
  *
  * This function takes the loaded meta files (which contain string references like "postSchema")
- * and resolves them to actual FieldConfig[] arrays from the entry schema registry.
+ * and resolves them to actual EntrySchema arrays from the entry schema registry.
  *
  * Resolution Process:
- * 1. Root entry types: Resolve "fields" string to entry schema registry lookup
+ * 1. Root entry types: Resolve "schema" string to entry schema registry lookup
  * 2. Top-level collections: Resolve recursively, building nested tree structure
  * 3. Nested collections: Automatically grouped under their parent collections
  *
  * @param metaFiles - Loaded meta files from loadCollectionMetaFiles()
- * @param entrySchemaRegistry - Map of schema names to FieldConfig arrays
+ * @param entrySchemaRegistry - Map of schema names to EntrySchema arrays
  * @returns Fully resolved root collection config ready for use by CanopyCMS
  * @throws Error if any schema reference doesn't exist in registry (with helpful suggestions)
  */

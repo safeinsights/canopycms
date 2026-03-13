@@ -1,5 +1,9 @@
 {
   "permissions": {
-    "additionalDirectories": []
+    "additionalDirectories": [],
+    "allow": [
+      "Bash(for f in branch-schema-cache.test.ts schema/schema-store.test.ts entry-schema-registry.test.ts schema-meta-loader.test.ts api/schema.test.ts api/entries.test.ts editor/hooks/useSchemaManager.test.ts editor/schema-editor/CollectionEditor.test.tsx editor/schema-editor/EntryTypeEditor.test.tsx)",
+      "Bash(do sed -i '' \"s/fields: ''/schema: ''/g\" \"$f\")"
+    ]
   }
 }

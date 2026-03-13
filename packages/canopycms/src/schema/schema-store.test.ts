@@ -57,7 +57,7 @@ describe('SchemaOps', () => {
         name: 'posts',
         label: 'Blog Posts',
         entries: [
-          { name: 'post', format: 'mdx', fields: 'postSchema', default: true },
+          { name: 'post', format: 'mdx', schema: 'postSchema', default: true },
         ],
       })
 
@@ -77,21 +77,21 @@ describe('SchemaOps', () => {
       expect(meta.entries).toHaveLength(1)
       expect(meta.entries[0].name).toBe('post')
       expect(meta.entries[0].format).toBe('mdx')
-      expect(meta.entries[0].fields).toBe('postSchema')
+      expect(meta.entries[0].schema).toBe('postSchema')
     })
 
     it('should create nested collection under parent', async () => {
       // First create parent
       const parentResult = await store.createCollection({
         name: 'docs',
-        entries: [{ name: 'doc', format: 'mdx', fields: 'pageSchema' }],
+        entries: [{ name: 'doc', format: 'mdx', schema: 'pageSchema' }],
       })
 
       // Then create child
       const childResult = await store.createCollection({
         name: 'api',
         parentPath: unsafeAsLogicalPath('docs'),
-        entries: [{ name: 'api-doc', format: 'mdx', fields: 'pageSchema' }],
+        entries: [{ name: 'api-doc', format: 'mdx', schema: 'pageSchema' }],
       })
 
       expect(childResult.collectionPath).toBe('docs/api')
@@ -107,7 +107,7 @@ describe('SchemaOps', () => {
       await expect(
         store.createCollection({
           name: 'posts',
-          entries: [{ name: 'post', format: 'json', fields: 'invalidSchema' }],
+          entries: [{ name: 'post', format: 'json', schema: 'invalidSchema' }],
         })
       ).rejects.toThrow('Schema reference "invalidSchema" not found')
     })
@@ -125,7 +125,7 @@ describe('SchemaOps', () => {
       await expect(
         store.createCollection({
           name: '',
-          entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+          entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         })
       ).rejects.toThrow()
     })
@@ -137,7 +137,7 @@ describe('SchemaOps', () => {
       await store.createCollection({
         name: 'posts',
         label: 'Posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
@@ -157,7 +157,7 @@ describe('SchemaOps', () => {
       await store.createCollection({
         name: 'posts',
         label: 'Posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       await store.updateCollection(unsafeAsLogicalPath('posts'), {
@@ -173,7 +173,7 @@ describe('SchemaOps', () => {
     it('should update collection order', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       const order = ['abc123def456', 'ghi789jkl012']
@@ -192,7 +192,7 @@ describe('SchemaOps', () => {
     it('should rename collection directory when slug changes', async () => {
       const result = await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       // Rename slug from "posts" to "blog"
@@ -217,7 +217,7 @@ describe('SchemaOps', () => {
     it('should update both name and slug together', async () => {
       const result = await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       // Update both name (metadata) and slug (directory)
@@ -239,11 +239,11 @@ describe('SchemaOps', () => {
       // Create two collections
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
       await store.createCollection({
         name: 'articles',
-        entries: [{ name: 'article', format: 'json', fields: 'pageSchema' }],
+        entries: [{ name: 'article', format: 'json', schema: 'pageSchema' }],
       })
 
       // Try to rename posts to use articles' slug
@@ -255,7 +255,7 @@ describe('SchemaOps', () => {
     it('should validate slug format', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       // Invalid slug (uppercase)
@@ -272,7 +272,7 @@ describe('SchemaOps', () => {
     it('should not rename if slug is same as current', async () => {
       const result = await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       // Update with same slug - should not error or rename
@@ -288,7 +288,7 @@ describe('SchemaOps', () => {
     it('should delete empty collection', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       await store.deleteCollection(unsafeAsLogicalPath('posts'))
@@ -301,7 +301,7 @@ describe('SchemaOps', () => {
     it('should throw when trying to delete non-empty collection', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       // Add a content file
@@ -328,7 +328,7 @@ describe('SchemaOps', () => {
     it('should return true for empty collection', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       const isEmpty = await store.isCollectionEmpty(unsafeAsLogicalPath('posts'))
@@ -338,7 +338,7 @@ describe('SchemaOps', () => {
     it('should return false for non-empty collection', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       // Add a content file
@@ -357,7 +357,7 @@ describe('SchemaOps', () => {
       // Create parent collection
       await store.createCollection({
         name: 'docs',
-        entries: [{ name: 'doc', format: 'md', fields: 'postSchema' }],
+        entries: [{ name: 'doc', format: 'md', schema: 'postSchema' }],
       })
 
       // Create child collection inside it
@@ -365,7 +365,7 @@ describe('SchemaOps', () => {
       await store.createCollection({
         name: 'guides',
         parentPath: docsPath,
-        entries: [{ name: 'guide', format: 'md', fields: 'postSchema' }],
+        entries: [{ name: 'guide', format: 'md', schema: 'postSchema' }],
       })
 
       // Parent has no files but has a child collection — not empty
@@ -376,7 +376,7 @@ describe('SchemaOps', () => {
     it('should return true for collection with non-collection directories', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       // Add a plain directory (no .collection.json)
@@ -398,14 +398,14 @@ describe('SchemaOps', () => {
     it('should add entry type to existing collection', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       await store.addEntryType(unsafeAsLogicalPath('posts'), {
         name: 'featured-post',
         label: 'Featured Post',
         format: 'mdx',
-        fields: 'postSchema',
+        schema: 'postSchema',
         default: false,
       })
 
@@ -418,14 +418,14 @@ describe('SchemaOps', () => {
     it('should reject duplicate entry type name', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       await expect(
         store.addEntryType(unsafeAsLogicalPath('posts'), {
           name: 'post', // duplicate
           format: 'mdx',
-          fields: 'postSchema',
+          schema: 'postSchema',
         })
       ).rejects.toThrow('already exists')
     })
@@ -433,14 +433,14 @@ describe('SchemaOps', () => {
     it('should reject invalid schema reference', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       await expect(
         store.addEntryType(unsafeAsLogicalPath('posts'), {
           name: 'page',
           format: 'json',
-          fields: 'invalidSchema',
+          schema: 'invalidSchema',
         })
       ).rejects.toThrow('Schema reference "invalidSchema" not found')
     })
@@ -451,7 +451,7 @@ describe('SchemaOps', () => {
       await store.createCollection({
         name: 'posts',
         entries: [
-          { name: 'post', format: 'json', fields: 'postSchema', label: 'Post' },
+          { name: 'post', format: 'json', schema: 'postSchema', label: 'Post' },
         ],
       })
 
@@ -470,26 +470,26 @@ describe('SchemaOps', () => {
     it('should allow updating schema reference', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       await store.updateEntryType(unsafeAsLogicalPath('posts'), 'post', {
-        fields: 'pageSchema',
+        schema: 'pageSchema',
       })
 
       const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
-      expect(meta!.entries![0].fields).toBe('pageSchema')
+      expect(meta!.entries![0].schema).toBe('pageSchema')
     })
 
     it('should reject invalid schema reference', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       await expect(
         store.updateEntryType(unsafeAsLogicalPath('posts'), 'post', {
-          fields: 'invalidSchema',
+          schema: 'invalidSchema',
         })
       ).rejects.toThrow('Schema reference "invalidSchema" not found')
     })
@@ -497,7 +497,7 @@ describe('SchemaOps', () => {
     it('should throw for non-existent entry type', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       await expect(
@@ -513,8 +513,8 @@ describe('SchemaOps', () => {
       await store.createCollection({
         name: 'posts',
         entries: [
-          { name: 'post', format: 'json', fields: 'postSchema' },
-          { name: 'featured', format: 'mdx', fields: 'postSchema' },
+          { name: 'post', format: 'json', schema: 'postSchema' },
+          { name: 'featured', format: 'mdx', schema: 'postSchema' },
         ],
       })
 
@@ -528,7 +528,7 @@ describe('SchemaOps', () => {
     it('should throw when trying to remove last entry type', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       await expect(
@@ -540,8 +540,8 @@ describe('SchemaOps', () => {
       await store.createCollection({
         name: 'posts',
         entries: [
-          { name: 'post', format: 'json', fields: 'postSchema' },
-          { name: 'page', format: 'json', fields: 'pageSchema' },
+          { name: 'post', format: 'json', schema: 'postSchema' },
+          { name: 'page', format: 'json', schema: 'pageSchema' },
         ],
       })
 
@@ -554,8 +554,8 @@ describe('SchemaOps', () => {
       await store.createCollection({
         name: 'posts',
         entries: [
-          { name: 'post', format: 'json', fields: 'postSchema' },
-          { name: 'featured', format: 'json', fields: 'postSchema' },
+          { name: 'post', format: 'json', schema: 'postSchema' },
+          { name: 'featured', format: 'json', schema: 'postSchema' },
         ],
       })
 
@@ -576,8 +576,8 @@ describe('SchemaOps', () => {
       await store.createCollection({
         name: 'posts',
         entries: [
-          { name: 'post', format: 'json', fields: 'postSchema' },
-          { name: 'featured', format: 'json', fields: 'postSchema' },
+          { name: 'post', format: 'json', schema: 'postSchema' },
+          { name: 'featured', format: 'json', schema: 'postSchema' },
         ],
       })
 
@@ -603,8 +603,8 @@ describe('SchemaOps', () => {
       const result = await store.createCollection({
         name: 'posts',
         entries: [
-          { name: 'post', format: 'json', fields: 'postSchema' },
-          { name: 'page', format: 'json', fields: 'pageSchema' },
+          { name: 'post', format: 'json', schema: 'postSchema' },
+          { name: 'page', format: 'json', schema: 'pageSchema' },
         ],
       })
 
@@ -634,8 +634,8 @@ describe('SchemaOps', () => {
       const result = await store.createCollection({
         name: 'posts',
         entries: [
-          { name: 'post', format: 'json', fields: 'postSchema' },
-          { name: 'draft', format: 'json', fields: 'postSchema' },
+          { name: 'post', format: 'json', schema: 'postSchema' },
+          { name: 'draft', format: 'json', schema: 'postSchema' },
         ],
       })
 
@@ -658,7 +658,7 @@ describe('SchemaOps', () => {
     it('should ignore files without valid IDs', async () => {
       const result = await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       const collectionPath = path.join(contentRoot, `posts.${result.contentId}`)
@@ -688,7 +688,7 @@ describe('SchemaOps', () => {
     it('should ignore hidden files and directories', async () => {
       const result = await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       const collectionPath = path.join(contentRoot, `posts.${result.contentId}`)
@@ -719,8 +719,8 @@ describe('SchemaOps', () => {
       const result = await store.createCollection({
         name: 'posts',
         entries: [
-          { name: 'post', format: 'json', fields: 'postSchema' },
-          { name: 'page', format: 'json', fields: 'pageSchema' },
+          { name: 'post', format: 'json', schema: 'postSchema' },
+          { name: 'page', format: 'json', schema: 'pageSchema' },
         ],
       })
 
@@ -749,7 +749,7 @@ describe('SchemaOps', () => {
     it('should update order array for collection', async () => {
       await store.createCollection({
         name: 'posts',
-        entries: [{ name: 'post', format: 'json', fields: 'postSchema' }],
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
       })
 
       const order = ['id1', 'id2', 'id3']
@@ -764,7 +764,7 @@ describe('SchemaOps', () => {
       await fs.writeFile(
         path.join(contentRoot, '.collection.json'),
         JSON.stringify({
-          entries: [{ name: 'home', format: 'json', fields: 'pageSchema' }],
+          entries: [{ name: 'home', format: 'json', schema: 'pageSchema' }],
           order: [],
         })
       )
@@ -790,7 +790,7 @@ describe('SchemaOps', () => {
       await fs.writeFile(
         path.join(contentRoot, '.collection.json'),
         JSON.stringify({
-          entries: [{ name: 'home', format: 'json', fields: 'pageSchema' }],
+          entries: [{ name: 'home', format: 'json', schema: 'pageSchema' }],
           order: ['abc123'],
         })
       )

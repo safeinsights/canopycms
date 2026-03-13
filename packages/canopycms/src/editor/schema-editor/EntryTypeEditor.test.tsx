@@ -138,7 +138,7 @@ describe('EntryTypeEditor', () => {
       name: 'post',
       label: 'Blog Post',
       format: 'mdx' as const,
-      fields: 'postSchema',
+      schema: 'postSchema',
       default: true,
       maxItems: 10,
     }

@@ -20,13 +20,13 @@ export const relativePathSchema = z
  * Each type has its own schema (fields) and can have cardinality constraints.
  *
  * Examples:
- * - { name: 'post', format: 'mdx', fields: postSchema } - unlimited posts
- * - { name: 'settings', format: 'json', fields: settingsSchema, maxItems: 1 } - restricted to one instance
+ * - { name: 'post', format: 'mdx', schema: postSchema } - unlimited posts
+ * - { name: 'settings', format: 'json', schema: settingsSchema, maxItems: 1 } - restricted to one instance
  */
 export const entryTypeSchema = z.object({
   name: z.string().min(1),
   format: z.enum(['md', 'mdx', 'json']),
-  fields: z.array(z.lazy(() => fieldSchema)).min(1),
+  schema: z.array(z.lazy(() => fieldSchema)).min(1),
   label: z.string().optional(),
   default: z.boolean().optional(),
   maxItems: z.number().int().positive().optional(),

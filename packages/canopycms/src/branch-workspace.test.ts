@@ -22,7 +22,7 @@ describe('BranchWorkspaceManager', () => {
       defineCanopyTestConfig({
         schema: {
           collections: [
-            { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }] },
+            { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [{ name: 'title', type: 'string' }] }] },
           ],
                   },
       })
@@ -63,7 +63,7 @@ describe('BranchWorkspaceManager', () => {
         defaultRemoteUrl: remotePath,
         schema: {
           collections: [
-            { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }] },
+            { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [{ name: 'title', type: 'string' }] }] },
           ],
                   },
       })
@@ -117,7 +117,7 @@ describe('BranchWorkspaceManager', () => {
         defaultRemoteUrl: remotePath,
         schema: {
           collections: [
-            { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', fields: [{ name: 'title', type: 'string' }] }] },
+            { name: 'posts', path: 'posts', entries: [{ name: 'post', format: 'md', schema: [{ name: 'title', type: 'string' }] }] },
           ],
                   },
       })

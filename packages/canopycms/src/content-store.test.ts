@@ -19,7 +19,7 @@ describe('ContentStore', () => {
         {
           name: 'posts',
           path: 'posts',
-          entries: [{ name: 'post', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+          entries: [{ name: 'post', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
         },
       ],
     } as const
@@ -47,7 +47,7 @@ describe('ContentStore', () => {
         {
           name: 'pages',
           path: 'pages',
-          entries: [{ name: 'page', format: 'mdx' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+          entries: [{ name: 'page', format: 'mdx' as const, schema: [{ name: 'title', type: 'string' as const }] }],
         },
       ],
     } as const
@@ -75,7 +75,7 @@ describe('ContentStore', () => {
         {
           name: 'settings',
           path: 'config',
-          entries: [{ name: 'setting', format: 'json' as const, fields: [{ name: 'siteName', type: 'string' as const }] }],
+          entries: [{ name: 'setting', format: 'json' as const, schema: [{ name: 'siteName', type: 'string' as const }] }],
         },
       ],
     } as const
@@ -100,7 +100,7 @@ describe('ContentStore', () => {
         {
           name: 'posts',
           path: 'posts',
-          entries: [{ name: 'post', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+          entries: [{ name: 'post', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
         },
       ],
     } as const
@@ -120,7 +120,7 @@ describe('ContentStore', () => {
         {
           name: 'settings',
           path: 'settings',
-          entries: [{ name: 'setting', format: 'json' as const, fields: [{ name: 'siteName', type: 'string' as const }] }],
+          entries: [{ name: 'setting', format: 'json' as const, schema: [{ name: 'siteName', type: 'string' as const }] }],
         },
       ],
     } as const
@@ -147,7 +147,7 @@ describe('ContentStore', () => {
         {
           name: 'posts',
           path: 'posts',
-          entries: [{ name: 'post', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+          entries: [{ name: 'post', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
         },
       ],
     } as const
@@ -171,7 +171,7 @@ describe('ContentStore', () => {
         {
           name: 'posts',
           path: 'posts',
-          entries: [{ name: 'post', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+          entries: [{ name: 'post', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
         },
       ],
     } as const
@@ -195,7 +195,7 @@ describe('ContentStore', () => {
         {
           name: 'posts',
           path: 'posts',
-          entries: [{ name: 'post', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+          entries: [{ name: 'post', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
         },
       ],
     } as const
@@ -217,7 +217,7 @@ describe('ContentStore', () => {
         {
           name: 'settings',
           path: 'settings',
-          entries: [{ name: 'setting', format: 'json' as const, fields: [{ name: 'siteName', type: 'string' as const }] }],
+          entries: [{ name: 'setting', format: 'json' as const, schema: [{ name: 'siteName', type: 'string' as const }] }],
         },
       ],
     } as const
@@ -239,12 +239,12 @@ describe('ContentStore', () => {
         {
           name: 'docs',
           path: 'docs',
-          entries: [{ name: 'entry', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+          entries: [{ name: 'entry', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
           collections: [
             {
               name: 'guides',
               path: 'guides',
-              entries: [{ name: 'entry', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+              entries: [{ name: 'entry', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
             },
           ],
         },
@@ -269,17 +269,17 @@ describe('ContentStore', () => {
         {
           name: 'docs',
           path: 'docs',
-          entries: [{ name: 'entry', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+          entries: [{ name: 'entry', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
           collections: [
             {
               name: 'api',
               path: 'api',
-              entries: [{ name: 'entry', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+              entries: [{ name: 'entry', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
               collections: [
                 {
                   name: 'v2',
                   path: 'v2',
-                  entries: [{ name: 'entry', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+                  entries: [{ name: 'entry', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
                 },
               ],
             },
@@ -306,22 +306,22 @@ describe('ContentStore', () => {
         {
           name: 'docs',
           path: 'docs',
-          entries: [{ name: 'entry', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+          entries: [{ name: 'entry', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
           collections: [
             {
               name: 'api',
               path: 'api',
-              entries: [{ name: 'entry', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+              entries: [{ name: 'entry', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
               collections: [
                 {
                   name: 'v2',
                   path: 'v2',
-                  entries: [{ name: 'entry', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+                  entries: [{ name: 'entry', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
                   collections: [
                     {
                       name: 'endpoints',
                       path: 'endpoints',
-                      entries: [{ name: 'entry', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+                      entries: [{ name: 'entry', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
                     },
                   ],
                 },
@@ -350,17 +350,17 @@ describe('ContentStore', () => {
         {
           name: 'docs',
           path: 'docs',
-          entries: [{ name: 'entry', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+          entries: [{ name: 'entry', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
           collections: [
             {
               name: 'api',
               path: 'api',
-              entries: [{ name: 'entry', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+              entries: [{ name: 'entry', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
               collections: [
                 {
                   name: 'v2',
                   path: 'v2',
-                  entries: [{ name: 'entry', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+                  entries: [{ name: 'entry', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
                 },
               ],
             },
@@ -396,7 +396,7 @@ describe('ContentStore', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: [{ name: 'post', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] }],
+            entries: [{ name: 'post', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] }],
           },
         ],
       } as const
@@ -434,7 +434,7 @@ describe('ContentStore', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: [{ name: 'post', format: 'json' as const, fields: [] }],
+            entries: [{ name: 'post', format: 'json' as const, schema: [] }],
           },
         ],
       } as const
@@ -454,7 +454,7 @@ describe('ContentStore', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: [{ name: 'post', format: 'json' as const, fields: [] }],
+            entries: [{ name: 'post', format: 'json' as const, schema: [] }],
           },
         ],
       } as const
@@ -485,7 +485,7 @@ describe('ContentStore', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: [{ name: 'post', format: 'json' as const, fields: [] }],
+            entries: [{ name: 'post', format: 'json' as const, schema: [] }],
           },
         ],
       } as const
@@ -517,7 +517,7 @@ describe('ContentStore', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: [{ name: 'post', format: 'json' as const, fields: [] }],
+            entries: [{ name: 'post', format: 'json' as const, schema: [] }],
           },
         ],
       } as const
@@ -552,7 +552,7 @@ describe('ContentStore', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: [{ name: 'post', format: 'json' as const, fields: [] }],
+            entries: [{ name: 'post', format: 'json' as const, schema: [] }],
           },
         ],
       } as const
@@ -590,9 +590,9 @@ describe('ContentStore', () => {
             name: 'content',
             path: 'content',
             entries: [
-              { name: 'post', format: 'mdx' as const, fields: [], default: true },
-              { name: 'article', format: 'md' as const, fields: [] },
-              { name: 'note', format: 'json' as const, fields: [] },
+              { name: 'post', format: 'mdx' as const, schema: [], default: true },
+              { name: 'article', format: 'md' as const, schema: [] },
+              { name: 'note', format: 'json' as const, schema: [] },
             ],
           },
         ],
@@ -626,7 +626,7 @@ describe('ContentStore', () => {
           {
             name: 'posts',
             path: 'posts',
-            entries: [{ name: 'post', format: 'mdx' as const, fields: [] }],
+            entries: [{ name: 'post', format: 'mdx' as const, schema: [] }],
           },
         ],
       } as const
@@ -647,8 +647,8 @@ describe('ContentStore', () => {
             name: 'docs',
             path: 'docs',
             entries: [
-              { name: 'guide', format: 'md' as const, fields: [] },
-              { name: 'tutorial', format: 'mdx' as const, fields: [], default: true },
+              { name: 'guide', format: 'md' as const, schema: [] },
+              { name: 'tutorial', format: 'mdx' as const, schema: [], default: true },
             ],
           },
         ],
@@ -673,8 +673,8 @@ describe('ContentStore', () => {
             name: 'content',
             path: 'content',
             entries: [
-              { name: 'post', format: 'mdx' as const, fields: [] },
-              { name: 'article', format: 'md' as const, fields: [] },
+              { name: 'post', format: 'mdx' as const, schema: [] },
+              { name: 'article', format: 'md' as const, schema: [] },
             ],
           },
         ],
@@ -719,8 +719,8 @@ describe('ContentStore', () => {
       const root = await tmpDir()
       const schema = {
         entries: [
-          { name: 'home', format: 'json' as const, fields: [{ name: 'hero', type: 'string' as const }], maxItems: 1 },
-          { name: 'settings', format: 'json' as const, fields: [{ name: 'siteName', type: 'string' as const }] },
+          { name: 'home', format: 'json' as const, schema: [{ name: 'hero', type: 'string' as const }], maxItems: 1 },
+          { name: 'settings', format: 'json' as const, schema: [{ name: 'siteName', type: 'string' as const }] },
         ],
       } as const
 
@@ -746,7 +746,7 @@ describe('ContentStore', () => {
       const root = await tmpDir()
       const schema = {
         entries: [
-          { name: 'page', format: 'json' as const, fields: [{ name: 'title', type: 'string' as const }] },
+          { name: 'page', format: 'json' as const, schema: [{ name: 'title', type: 'string' as const }] },
         ],
       } as const
 
@@ -770,7 +770,7 @@ describe('ContentStore', () => {
       const root = await tmpDir()
       const schema = {
         entries: [
-          { name: 'post', format: 'md' as const, fields: [{ name: 'title', type: 'string' as const }] },
+          { name: 'post', format: 'md' as const, schema: [{ name: 'title', type: 'string' as const }] },
         ],
       } as const
 

@@ -47,7 +47,7 @@ interface CollectionMetaFile {
     name: string
     label?: string
     format: ContentFormat
-    fields: string
+    schema: string
     default?: boolean
     maxItems?: number
   }>
@@ -63,7 +63,7 @@ interface RootCollectionMetaFile {
     name: string
     label?: string
     format: ContentFormat
-    fields: string
+    schema: string
     default?: boolean
     maxItems?: number
   }>
@@ -83,7 +83,7 @@ const entryTypeInputSchema = z.object({
   name: z.string().min(1).max(MAX_NAME_LENGTH),
   label: z.string().max(MAX_LABEL_LENGTH).optional(),
   format: z.enum(['md', 'mdx', 'json']),
-  fields: z.string().min(1),
+  schema: z.string().min(1),
   default: z.boolean().optional(),
   maxItems: z.number().int().positive().optional(),
 })
@@ -105,7 +105,7 @@ const updateCollectionInputSchema = z.object({
 const updateEntryTypeInputSchema = z.object({
   label: z.string().max(MAX_LABEL_LENGTH).optional(),
   format: z.enum(['md', 'mdx', 'json']).optional(),
-  fields: z.string().min(1).optional(),
+  schema: z.string().min(1).optional(),
   default: z.boolean().optional(),
   maxItems: z.number().int().positive().optional(),
 })
@@ -153,11 +153,11 @@ export class SchemaOps {
    */
   private validateEntryTypeSchemas(entryTypes: CreateEntryTypeInput[]): { valid: boolean; error?: string } {
     for (const entryType of entryTypes) {
-      if (!this.validateSchemaReference(entryType.fields)) {
+      if (!this.validateSchemaReference(entryType.schema)) {
         const available = Object.keys(this.entrySchemaRegistry).join(', ')
         return {
           valid: false,
-          error: `Schema reference "${entryType.fields}" not found. Available: ${available}`,
+          error: `Schema reference "${entryType.schema}" not found. Available: ${available}`,
         }
       }
     }
@@ -323,7 +323,7 @@ export class SchemaOps {
         name: et.name,
         label: et.label,
         format: et.format,
-        fields: et.fields,
+        schema: et.schema,
         default: et.default,
         maxItems: et.maxItems,
       })),
@@ -515,9 +515,9 @@ export class SchemaOps {
     }
 
     // Validate schema reference
-    if (!this.validateSchemaReference(entryType.fields)) {
+    if (!this.validateSchemaReference(entryType.schema)) {
       const available = Object.keys(this.entrySchemaRegistry).join(', ')
-      throw new Error(`Schema reference "${entryType.fields}" not found. Available: ${available}`)
+      throw new Error(`Schema reference "${entryType.schema}" not found. Available: ${available}`)
     }
 
     // Resolve path
@@ -543,7 +543,7 @@ export class SchemaOps {
       name: entryType.name,
       label: entryType.label,
       format: entryType.format,
-      fields: entryType.fields,
+      schema: entryType.schema,
       default: entryType.default,
       maxItems: entryType.maxItems,
     })
@@ -570,9 +570,9 @@ export class SchemaOps {
     }
 
     // Validate schema reference if provided
-    if (updates.fields && !this.validateSchemaReference(updates.fields)) {
+    if (updates.schema && !this.validateSchemaReference(updates.schema)) {
       const available = Object.keys(this.entrySchemaRegistry).join(', ')
-      throw new Error(`Schema reference "${updates.fields}" not found. Available: ${available}`)
+      throw new Error(`Schema reference "${updates.schema}" not found. Available: ${available}`)
     }
 
     // Resolve path
@@ -600,8 +600,8 @@ export class SchemaOps {
     if (updates.format !== undefined) {
       entryType.format = updates.format
     }
-    if (updates.fields !== undefined) {
-      entryType.fields = updates.fields
+    if (updates.schema !== undefined) {
+      entryType.schema = updates.schema
     }
     if (updates.default !== undefined) {
       entryType.default = updates.default
