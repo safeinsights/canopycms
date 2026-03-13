@@ -101,7 +101,7 @@ describe('BranchSchemaCache', () => {
       // Verify cache structure
       const cacheContent = await fs.readFile(cachePath, 'utf-8')
       const cache = JSON.parse(cacheContent)
-      expect(cache.version).toBe(1)
+      expect(cache.version).toBe(2)
       expect(cache.schema).toBeDefined()
       expect(cache.flatSchema).toBeDefined()
       expect(cache.cachedAt).toBeDefined()

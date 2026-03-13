@@ -45,7 +45,7 @@ describe('Schema API', () => {
       logicalPath: 'posts' as LogicalPath,
       name: 'posts',
       label: 'Posts',
-      entries: [{ name: 'post', format: 'json', fields: [] }],
+      entries: [{ name: 'post', format: 'json', fields: [], fieldsRef: 'postSchema' }],
       order: ['id1', 'id2'],
     },
     {
@@ -55,6 +55,7 @@ describe('Schema API', () => {
       parentPath: 'posts' as LogicalPath,
       format: 'json',
       fields: [],
+      fieldsRef: 'postSchema',
     },
   ]
 
@@ -64,7 +65,7 @@ describe('Schema API', () => {
         name: 'posts',
         path: 'posts',
         label: 'Posts',
-        entries: [{ name: 'post', format: 'json', fields: [] }],
+        entries: [{ name: 'post', format: 'json', fields: [], fieldsRef: 'postSchema' }],
       },
     ],
   }
@@ -114,7 +115,7 @@ describe('Schema API', () => {
           name: 'posts',
           path: 'posts',
           label: 'Posts',
-          entries: [{ name: 'post', format: 'json', fieldsRef: 'post' }],
+          entries: [{ name: 'post', format: 'json', fieldsRef: 'postSchema' }],
         }],
       })
 
@@ -125,7 +126,7 @@ describe('Schema API', () => {
           logicalPath: 'posts',
           name: 'posts',
           label: 'Posts',
-          entries: [{ name: 'post', format: 'json', fieldsRef: 'post' }],
+          entries: [{ name: 'post', format: 'json', fieldsRef: 'postSchema' }],
           order: ['id1', 'id2'],
         },
         {
@@ -134,7 +135,7 @@ describe('Schema API', () => {
           name: 'post',
           parentPath: 'posts',
           format: 'json',
-          fieldsRef: 'post',
+          fieldsRef: 'postSchema',
         },
       ])
 

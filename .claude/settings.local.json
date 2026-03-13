@@ -77,7 +77,11 @@
       "Bash(git restore:*)",
       "Bash(git stash:*)",
       "Bash(gh run list:*)",
-      "Bash(git config:*)"
+      "Bash(git config:*)",
+      "Bash(git *event:read*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
     ]
   }
 }
