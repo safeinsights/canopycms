@@ -10,14 +10,17 @@ export default defineConfig({
   // Run tests sequentially for now (shared workspace)
   fullyParallel: false,
 
+  // Generous timeout: workspace init (git clone) + editor load can take 30s+
+  timeout: 90000,
+
   // Fail the build on CI if you accidentally left test.only in the source code
   forbidOnly: !!process.env.CI,
 
   // Retry on CI only
   retries: process.env.CI ? 2 : 0,
 
-  // Opt out of parallel tests on CI
-  workers: process.env.CI ? 1 : undefined,
+  // All tests share the same workspace and server - must run sequentially
+  workers: 1,
 
   // Reporter to use
   reporter: 'html',

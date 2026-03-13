@@ -207,13 +207,13 @@ test.describe('Branch Lifecycle & Workflow', () => {
     const submitResponse = await submitBranchViaAPI(BASE_URL, branchName, 'editor')
     expect(submitResponse.ok).toBe(true)
 
-    // Try to approve as viewer (not in Reviewers or Admins group)
-    await switchUser(page, 'viewer')
+    // Try to request changes as editor (not in Reviewers or Admins group, but can see their own branch)
+    await switchUser(page, 'editor')
     await editorPage.goto()
     await editorPage.waitForReady()
     await branchPage.openBranchManager()
 
-    // Wait for branch to appear
+    // Wait for branch to appear (editor can see their own branch)
     await branchPage.waitForBranchInList(branchName)
 
     // Verify request changes button is disabled for non-reviewer

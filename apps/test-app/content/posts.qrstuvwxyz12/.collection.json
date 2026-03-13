@@ -4,8 +4,10 @@
   "entries": [
     {
       "name": "post",
+      "label": "Post",
       "format": "json",
       "schema": "postSchema"
     }
-  ]
+  ],
+  "order": []
 }

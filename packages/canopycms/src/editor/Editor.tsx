@@ -198,6 +198,7 @@ export const Editor: React.FC<EditorProps> = ({
     handleSubmit,
     handleWithdraw,
     handleRequestChanges,
+    handleDelete,
     handleReloadBranchData,
     loadBranches,
   } = useBranchManager({
@@ -1023,6 +1024,9 @@ export const Editor: React.FC<EditorProps> = ({
             }}
             onRequestChanges={(name) => {
               handleRequestChanges(name).catch((err) => console.error(err))
+            }}
+            onDelete={(name) => {
+              handleDelete(name).catch((err) => console.error(err))
             }}
             onClose={() => setBranchManagerOpen(false)}
             comments={comments}
