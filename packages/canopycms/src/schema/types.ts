@@ -10,8 +10,6 @@ import type { FieldConfig, RootCollectionConfig } from '../config'
  */
 export type EntrySchemaRegistry = Record<string, readonly FieldConfig[]>
 
-/** @deprecated Use EntrySchemaRegistry instead */
-export type SchemaRegistry = EntrySchemaRegistry
 
 /**
  * Information about a schema source for debugging.
