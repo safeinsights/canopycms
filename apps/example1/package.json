@@ -16,13 +16,16 @@
   "dependencies": {
     "@clerk/backend": "^2.0.0",
     "@clerk/nextjs": "^6.36.6",
+    "@tailwindcss/typography": "^0.5.19",
     "canopycms": "file:../../packages/canopycms",
     "canopycms-auth-clerk": "file:../../packages/canopycms-auth-clerk",
     "canopycms-auth-dev": "file:../../packages/canopycms-auth-dev",
     "canopycms-next": "file:../../packages/canopycms-next",
     "next": "14.2.25",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
