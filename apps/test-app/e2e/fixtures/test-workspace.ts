@@ -9,9 +9,9 @@ import { testLogger as log } from '../../../../packages/canopycms/src/utils/debu
 const TEST_APP_ROOT = path.resolve(process.cwd(), 'apps/test-app')
 
 /**
- * Path to the .canopycms/branches directory where prod-sim mode stores branches.
+ * Path to the .canopy-prod-sim/content-branches directory where prod-sim mode stores branches.
  */
-const BRANCHES_DIR = path.join(TEST_APP_ROOT, '.canopycms/branches')
+const BRANCHES_DIR = path.join(TEST_APP_ROOT, '.canopy-prod-sim/content-branches')
 
 /**
  * Get the path to the main branch content directory.
@@ -66,20 +66,13 @@ export async function resetWorkspace(): Promise<void> {
   }
 
   // Also remove the remote.git if it exists (forces fresh initialization)
-  const remotePath = path.join(TEST_APP_ROOT, '.canopycms/remote.git')
+  const remotePath = path.join(TEST_APP_ROOT, '.canopy-prod-sim/remote.git')
   try {
     log.debug('workspace', 'Deleting remote.git', { path: remotePath })
     await fs.rm(remotePath, { recursive: true, force: true })
   } catch {
     // Directory may not exist, that's fine
   }
-
-  // NEW: Clear registry cache files
-  log.debug('workspace', 'Clearing registry cache')
-  const registryPath = path.join(TEST_APP_ROOT, '.canopycms/branches.json')
-  const stalePath = path.join(TEST_APP_ROOT, '.canopycms/branches.stale.json')
-  await fs.rm(registryPath, { force: true }).catch(() => {})
-  await fs.rm(stalePath, { force: true }).catch(() => {})
 
   log.timeEnd('workspace', 'resetWorkspace')
 }
@@ -185,7 +178,7 @@ export async function verifyWorkspaceReady(): Promise<void> {
   }
 
   // Check 3: Remote.git exists and is valid
-  const remotePath = path.join(TEST_APP_ROOT, '.canopycms/remote.git')
+  const remotePath = path.join(TEST_APP_ROOT, '.canopy-prod-sim/remote.git')
   try {
     await fs.access(path.join(remotePath, 'config'))
     await fs.access(path.join(remotePath, 'HEAD'))
@@ -214,8 +207,8 @@ export async function waitForBranchWorkspace(
       await fs.access(branchPath)
       // Check .git directory exists
       await fs.access(path.join(branchPath, '.git'))
-      // Check branch metadata exists
-      await fs.access(path.join(branchPath, '.canopycms', 'branch.json'))
+      // Check branch metadata exists (prod-sim stores metadata in .canopy-meta/)
+      await fs.access(path.join(branchPath, '.canopy-meta', 'branch.json'))
 
       log.debug('workspace', 'Branch workspace ready', {
         branchName,

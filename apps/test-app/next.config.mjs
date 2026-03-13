@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ['canopycms', 'canopycms-next', 'canopycms-auth-clerk'],
+  transpilePackages: ['canopycms', 'canopycms-next'],
 }
 
 export default nextConfig

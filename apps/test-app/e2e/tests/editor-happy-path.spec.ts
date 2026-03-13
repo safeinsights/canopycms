@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
+import { switchUser } from '../fixtures/test-users'
 import { readContentFile, resetWorkspace, ensureMainBranch } from '../fixtures/test-workspace'
 
 const BASE_URL = 'http://localhost:5174'
@@ -21,6 +22,9 @@ test.describe('Editor Happy Path', () => {
     await resetWorkspace()
     await ensureMainBranch(BASE_URL)
     editorPage = new EditorPage(page)
+
+    // Set admin user so path permission checks pass (admin bypasses defaultPathAccess: 'deny')
+    await switchUser(page, 'admin')
   })
 
   test('editor loads with form and preview panes', async () => {
@@ -70,7 +74,7 @@ test.describe('Editor Happy Path', () => {
     await editorPage.saveAndVerify()
 
     // Step 6: Verify disk write - read the content file directly
-    const content = await readContentFile<{ title: string }>('home.json')
+    const content = await readContentFile<{ title: string }>('home.home.bo7QdSwn9Tod.json')
     expect(content.title).toBe(testValue)
   })
 

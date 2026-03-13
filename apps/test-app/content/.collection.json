@@ -1,6 +1,4 @@
 {
-  "name": "pages",
-  "label": "Pages",
   "entries": [
     {
       "name": "home",
@@ -9,5 +7,6 @@
       "schema": "homeSchema",
       "maxItems": 1
     }
-  ]
+  ],
+  "order": ["bo7QdSwn9Tod", "qrstuvwxyz12"]
 }

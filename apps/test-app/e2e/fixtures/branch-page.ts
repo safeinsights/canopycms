@@ -163,6 +163,11 @@ export class BranchPage {
 
     await submitButton.click()
 
+    // Confirm the Mantine confirmation modal (exact: true avoids matching "Submit Branch..." in EditorHeader)
+    const confirmButton = this.page.getByRole('button', { name: 'Submit Branch', exact: true })
+    await confirmButton.waitFor({ state: 'visible', timeout: 5000 })
+    await confirmButton.click()
+
     // Wait for status update
     await this.page.waitForTimeout(2000)
   }
@@ -176,22 +181,17 @@ export class BranchPage {
     const withdrawButton = this.branchManager.locator(`[data-testid="withdraw-branch-button-${branchName}"]`)
     await withdrawButton.click()
 
-    // Wait for status update
-    await this.page.waitForTimeout(1000)
-  }
-
-  /**
-   * Approve a submitted branch (reviewer action).
-   *
-   * @param branchName - The name of the branch to approve
-   */
-  async approveBranch(branchName: string): Promise<void> {
-    const approveButton = this.branchManager.locator(`[data-testid="approve-branch-button-${branchName}"]`)
-    await approveButton.click()
+    // Confirm the Mantine confirmation modal (exact: true avoids matching "Withdraw Branch..." in EditorHeader)
+    const confirmButton = this.page.getByRole('button', { name: 'Withdraw Branch', exact: true })
+    await confirmButton.waitFor({ state: 'visible', timeout: 5000 })
+    await confirmButton.click()
 
     // Wait for status update
     await this.page.waitForTimeout(1000)
   }
+
+  // NOTE: No approve-branch-button exists in the UI. Branch approval happens
+  // outside the editor (via GitHub PR). Only request-changes is available for reviewers.
 
   /**
    * Request changes on a submitted branch (reviewer action).
@@ -200,7 +200,7 @@ export class BranchPage {
    * @param comment - Optional comment explaining the requested changes
    */
   async requestChanges(branchName: string, comment?: string): Promise<void> {
-    const requestChangesButton = this.branchManager.locator(`[data-testid="request-changes-button-${branchName}"]`)
+    const requestChangesButton = this.branchManager.locator(`[data-testid="request-changes-branch-button-${branchName}"]`)
     await requestChangesButton.click()
 
     // If there's a comment field in a modal, fill it
@@ -245,7 +245,7 @@ export class BranchPage {
    */
   async isActionButtonVisible(
     branchName: string,
-    action: 'submit' | 'withdraw' | 'approve' | 'request-changes' | 'delete' | 'switch-to'
+    action: 'submit' | 'withdraw' | 'request-changes' | 'delete' | 'switch-to'
   ): Promise<boolean> {
     const button = this.branchManager.locator(`[data-testid="${action}-branch-button-${branchName}"]`)
     try {
@@ -265,7 +265,7 @@ export class BranchPage {
    */
   async isActionButtonDisabled(
     branchName: string,
-    action: 'submit' | 'withdraw' | 'approve' | 'request-changes' | 'delete' | 'switch-to'
+    action: 'submit' | 'withdraw' | 'request-changes' | 'delete' | 'switch-to'
   ): Promise<boolean> {
     const button = this.branchManager.locator(`[data-testid="${action}-branch-button-${branchName}"]`)
     return await button.isDisabled()

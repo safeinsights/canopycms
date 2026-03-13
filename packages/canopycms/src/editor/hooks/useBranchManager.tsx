@@ -92,6 +92,7 @@ export interface UseBranchManagerReturn {
   handleSubmit: (branchName: string) => Promise<void>
   handleWithdraw: (branchName: string) => Promise<void>
   handleRequestChanges: (branchName: string) => Promise<void>
+  handleDelete: (branchName: string) => Promise<void>
   handleReloadBranchData: () => Promise<void>
   loadBranches: () => Promise<void>
 }
@@ -251,6 +252,23 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     }
   }
 
+  const handleDelete = async (branchNameToDelete: string) => {
+    options.setBusy(true)
+    try {
+      const result = await apiClient.branches.delete({ branch: branchNameToDelete })
+      if (!result.ok) {
+        throw new Error(result.error || 'Failed to delete branch')
+      }
+      notifications.show({ message: 'Branch deleted', color: 'green' })
+      await loadBranches()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to delete branch'
+      notifications.show({ message, color: 'red' })
+    } finally {
+      options.setBusy(false)
+    }
+  }
+
   const handleReloadBranchData = async () => {
     await loadBranches()
   }
@@ -282,6 +300,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     handleSubmit,
     handleWithdraw,
     handleRequestChanges,
+    handleDelete,
     handleReloadBranchData,
     loadBranches,
   }

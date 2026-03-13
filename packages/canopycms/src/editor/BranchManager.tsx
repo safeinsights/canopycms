@@ -357,7 +357,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                           color="neutral"
                           onClick={() => onRequestChanges?.(b.name)}
                           disabled={!perms.canRequestChanges}
-                          data-testid={`request-changes-button-${b.name}`}
+                          data-testid={`request-changes-branch-button-${b.name}`}
                         >
                           Request changes
                         </Button>
