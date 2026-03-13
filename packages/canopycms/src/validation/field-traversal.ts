@@ -73,7 +73,7 @@ function getBlockTemplateFields(
  * ```
  */
 export function traverseFields<T>(
-  fields: FieldConfig[],
+  fields: readonly FieldConfig[],
   data: Record<string, unknown>,
   visitor: FieldVisitor<T>,
   pathPrefix = ''
@@ -137,7 +137,7 @@ export function traverseFields<T>(
  * @returns Array of { field, value, path } for matching fields
  */
 export function findFieldsByType(
-  fields: FieldConfig[],
+  fields: readonly FieldConfig[],
   data: Record<string, unknown>,
   fieldType: string
 ): TraversalContext[] {

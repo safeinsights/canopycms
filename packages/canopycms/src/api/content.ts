@@ -1,8 +1,8 @@
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import { ContentStore, ContentStoreError } from '../content-store'
-import type { ContentFormat } from '../config'
+import { ContentStore, ContentStoreError, getDefaultEntryType } from '../content-store'
+import type { EntrySchema, EntryTypeConfig, FlatSchemaItem } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 import { branchNameSchema, logicalPathSchema, entrySlugSchema } from './validators'
@@ -79,6 +79,7 @@ const writeContentBodySchema = z.object({
 const validateReferencesParamsSchema = z.object({
   branch: branchNameSchema,
   path: logicalPathSchema,
+  entryType: z.string().optional(),
 })
 
 const validateReferencesBodySchema = z.object({
@@ -117,7 +118,7 @@ const readContentHandler = async (
     : [contentRoot, ...pathSegments]
 
   // Use trivial path resolution
-  let schemaItem: any
+  let schemaItem: FlatSchemaItem
   let slug: EntrySlug
   let relativePath: PhysicalPath
   try {
@@ -165,7 +166,7 @@ const writeContentHandler = async (
     : [contentRoot, ...pathSegments]
 
   // Use trivial path resolution
-  let schemaItem: any
+  let schemaItem: FlatSchemaItem
   let slug: EntrySlug
   let relativePath: PhysicalPath
   try {
@@ -236,7 +237,7 @@ const validateReferencesHandler = async (
     ? pathSegments
     : [contentRoot, ...pathSegments]
 
-  let schemaItem: any
+  let schemaItem: FlatSchemaItem
   let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
@@ -257,8 +258,22 @@ const validateReferencesHandler = async (
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()
 
+  // Resolve fields from entry type schema
+  let fields: EntrySchema = []
+  if (schemaItem.type === 'entry-type') {
+    fields = schemaItem.schema
+  } else {
+    let entryTypeConfig: EntryTypeConfig | undefined
+    if (params.entryType) {
+      entryTypeConfig = schemaItem.entries?.find(e => e.name === params.entryType)
+    } else {
+      entryTypeConfig = getDefaultEntryType(schemaItem.entries)
+    }
+    fields = entryTypeConfig?.schema || []
+  }
+
   // Validate references
-  const validator = new ReferenceValidator(idIndex, schemaItem.fields || [])
+  const validator = new ReferenceValidator(idIndex, fields)
   const result = await validator.validate(body.data)
 
   return {
@@ -295,7 +310,7 @@ const renameEntryHandler = async (
     : [contentRoot, ...pathSegments]
 
   // Resolve to collection and slug
-  let schemaItem: any
+  let schemaItem: FlatSchemaItem
   let currentSlug: EntrySlug
   let relativePath: PhysicalPath
   try {

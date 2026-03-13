@@ -39,7 +39,7 @@ interface ReferenceInstance {
 export class ReferenceValidator {
   constructor(
     private idIndex: ContentIdIndex,
-    private schema: FieldConfig[]
+    private schema: readonly FieldConfig[]
   ) {}
 
   /**

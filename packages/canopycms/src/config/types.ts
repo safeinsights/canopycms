@@ -125,8 +125,8 @@ export type EntrySchema = readonly FieldConfig[]
  * Each type has its own entry schema (fields) and can have cardinality constraints.
  *
  * Examples:
- * - { name: 'post', format: 'mdx', fields: postSchema } - unlimited posts
- * - { name: 'settings', format: 'json', fields: settingsSchema, maxItems: 1 } - restricted to one instance
+ * - { name: 'post', format: 'mdx', schema: postSchema } - unlimited posts
+ * - { name: 'settings', format: 'json', schema: settingsSchema, maxItems: 1 } - restricted to one instance
  */
 export type EntryTypeConfig = {
   readonly name: string

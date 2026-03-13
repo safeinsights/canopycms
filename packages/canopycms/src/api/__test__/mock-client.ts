@@ -8,7 +8,7 @@
 import { vi, type Mock } from 'vitest'
 import type { CanopyApiClient } from '../client'
 import type { ApiResponse } from '../types'
-import { createLogicalPath } from '../../paths'
+import { createLogicalPath, createPhysicalPath } from '../../paths'
 import type { ContentId } from '../../paths'
 import type { BranchDeleteResponse, BranchListResponse, BranchResponse, CreateBranchBody, UpdateBranchAccessBody } from '../branch'
 import type { BranchMergeResponse } from '../branch-status'

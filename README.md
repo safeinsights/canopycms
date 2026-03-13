@@ -68,7 +68,7 @@ export default defineCanopyConfig({
           {
             name: 'post',
             format: 'json',
-            fields: postSchema,
+            schema: postSchema,
           },
         ],
       },
@@ -82,7 +82,7 @@ export default defineCanopyConfig({
             name: 'home',
             label: 'Homepage',
             format: 'json',
-            fields: homeSchema,
+            schema: homeSchema,
             maxItems: 1,        // Only one homepage allowed
           },
         ],
@@ -276,7 +276,7 @@ Create `.collection.json` files in your content directories to define collection
     {
       "name": "post",
       "format": "json",
-      "fields": "postSchema"
+      "schema": "postSchema"
     }
   ]
 }
@@ -293,7 +293,7 @@ Create `.collection.json` files in your content directories to define collection
       "name": "home",
       "label": "Homepage",
       "format": "json",
-      "fields": "homeSchema",
+      "schema": "homeSchema",
       "maxItems": 1
     }
   ]
@@ -310,7 +310,7 @@ Create `.collection.json` files in your content directories to define collection
     {
       "name": "doc",
       "format": "mdx",
-      "fields": "docSchema"
+      "schema": "docSchema"
     }
   ]
 }
@@ -326,7 +326,7 @@ Then create nested collections in subfolders (e.g., `content/docs/guides/.collec
     {
       "name": "guide",
       "format": "mdx",
-      "fields": "guideSchema"
+      "schema": "guideSchema"
     }
   ]
 }
@@ -375,7 +375,7 @@ export const getHandler = async () => {
       "name": "entryTypeName",    // Required: entry type identifier
       "label": "Display Name",    // Optional: human-readable label
       "format": "json" | "md" | "mdx",  // Optional: defaults to json
-      "fields": "schemaRegistryKey",    // Required: key from schema registry
+      "schema": "schemaRegistryKey",    // Required: key from schema registry
       "maxItems": 1               // Optional: limit instances (1 = singleton-like)
     }
   ]
@@ -390,7 +390,7 @@ export const getHandler = async () => {
     {
       "name": "home",
       "format": "json",
-      "fields": "homeSchema",
+      "schema": "homeSchema",
       "maxItems": 1               // Singleton-like: only one homepage
     }
   ]
@@ -461,7 +461,7 @@ export default defineCanopyConfig({
           {
             name: 'page',
             format: 'mdx',
-            fields: pageSchema,  // Inline schema definition
+            schema: pageSchema,  // Inline schema definition
           },
         ],
       },
@@ -543,7 +543,7 @@ const config = defineCanopyConfig({
           {
             name: 'post',
             format: 'json',   // or 'md', 'mdx'
-            fields: [...],
+            schema: [...],
           },
         ],
       },
@@ -557,7 +557,7 @@ const config = defineCanopyConfig({
             name: 'home',
             label: 'Homepage',
             format: 'json',
-            fields: [...],
+            schema: [...],
             maxItems: 1,      // Only one homepage allowed
           },
         ],
@@ -572,13 +572,13 @@ const config = defineCanopyConfig({
             name: 'guide',
             label: 'Guide',
             format: 'mdx',
-            fields: [...],
+            schema: [...],
           },
           {
             name: 'tutorial',
             label: 'Tutorial',
             format: 'mdx',
-            fields: [...],
+            schema: [...],
           },
         ],
         // Nested collections
@@ -591,7 +591,7 @@ const config = defineCanopyConfig({
               {
                 name: 'endpoint',
                 format: 'mdx',
-                fields: [...],
+                schema: [...],
               },
             ],
           },
@@ -604,7 +604,7 @@ const config = defineCanopyConfig({
         name: 'settings',
         label: 'Site Settings',
         format: 'json',
-        fields: [...],
+        schema: [...],
         maxItems: 1,          // Singleton-like at root level
       },
     ],
