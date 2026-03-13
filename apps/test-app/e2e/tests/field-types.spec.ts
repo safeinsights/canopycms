@@ -13,19 +13,13 @@ test.describe('Multi-Field Content Editing', () => {
   let editorPage: EditorPage
 
   test.beforeEach(async ({ page }) => {
-    // Mark window as E2E test environment for environment-aware notifications
     await page.addInitScript(() => {
       ;(window as any).__E2E_TEST__ = true
     })
-
-    // Reset workspace and ensure main branch exists
-    await resetWorkspace()
-    await ensureMainBranch(BASE_URL)
-
+    await test.step('reset workspace', () => resetWorkspace())
+    await test.step('ensure main branch', () => ensureMainBranch(BASE_URL))
     editorPage = new EditorPage(page)
-
-    // Set default user to admin
-    await switchUser(page, 'admin')
+    await test.step('switch user', () => switchUser(page, 'admin'))
   })
 
   test('text field: basic input and persistence', async ({ page }) => {
@@ -219,7 +213,6 @@ test.describe('Multi-Field Content Editing', () => {
 
     for (const value of values) {
       await editorPage.fillTextField('title', value)
-      await editorPage.page.waitForTimeout(200)
     }
 
     // Save final state
@@ -230,7 +223,7 @@ test.describe('Multi-Field Content Editing', () => {
     expect(content.title).toBe('Final Value')
   })
 
-  test('field edit and preview update', async ({ page }) => {
+  test('field edit and preview update', async () => {
     await editorPage.goto()
     await editorPage.waitForReady()
 
@@ -240,10 +233,7 @@ test.describe('Multi-Field Content Editing', () => {
     const uniqueTitle = `Preview-Test-${Date.now()}`
     await editorPage.fillTextField('title', uniqueTitle)
 
-    // Wait a moment for preview to potentially update
-    await page.waitForTimeout(1000)
-
-    // Verify preview pane is still visible (actual preview content verification depends on implementation)
+    // Verify preview pane is still visible (already established by waitForReady())
     await expect(editorPage.previewPane).toBeVisible()
   })
 })

@@ -4,7 +4,7 @@
   "private": true,
   "description": "Dedicated test app for Playwright E2E tests",
   "scripts": {
-    "dev": "next dev --port 5174",
+    "dev": "next dev --turbopack --port 5174",
     "build": "next build",
     "start": "next start --port 5174",
     "typecheck": "tsc --noEmit",

@@ -21,20 +21,14 @@ test.describe('Branch Lifecycle & Workflow', () => {
   let branchPage: BranchPage
 
   test.beforeEach(async ({ page }) => {
-    // Mark window as E2E test environment for environment-aware notifications
     await page.addInitScript(() => {
       ;(window as any).__E2E_TEST__ = true
     })
-
-    // Reset workspace and ensure main branch exists
-    await resetWorkspace()
-    await ensureMainBranch(BASE_URL)
-
+    await test.step('reset workspace', () => resetWorkspace())
+    await test.step('ensure main branch', () => ensureMainBranch(BASE_URL))
     editorPage = new EditorPage(page)
     branchPage = new BranchPage(page)
-
-    // Set default user to admin
-    await switchUser(page, 'admin')
+    await test.step('switch user', () => switchUser(page, 'admin'))
   })
 
   test('complete happy path: create → edit → submit → approve → archive', async ({ page }) => {
@@ -115,7 +109,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
 
     // The create should fail (exact behavior depends on implementation)
     // For now, just verify the branch still exists and only one copy
-    await page.waitForTimeout(1000)
+    await page.waitForTimeout(100)
   })
 
   test('submit and withdraw flow', async ({ page }) => {
@@ -270,6 +264,9 @@ test.describe('Branch Lifecycle & Workflow', () => {
 
     // Submit the branch
     await branchPage.submitBranch(branchName)
+
+    // Wait for status to reflect submitted before checking button states
+    await branchPage.verifyBranchStatus(branchName, 'submitted')
 
     // Cannot delete submitted branch
     const canDeleteSubmitted = await branchPage.isActionButtonDisabled(branchName, 'delete')
