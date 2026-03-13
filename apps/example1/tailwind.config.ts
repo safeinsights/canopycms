@@ -16,6 +16,15 @@ const config: Config = {
           700: '#4338ca',
         },
       },
+      typography: {
+        DEFAULT: {
+          css: {
+            // Remove decorative backticks around inline code
+            'code::before': { content: 'none' },
+            'code::after': { content: 'none' },
+          },
+        },
+      },
     },
   },
   plugins: [typography],
