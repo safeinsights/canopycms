@@ -78,7 +78,6 @@ describe('listEntries', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema,
         flatSchema: flattenSchema(schema, config.contentRoot),
       },
     })
@@ -189,7 +188,6 @@ describe('listEntries', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema,
         flatSchema: flattenSchema(schema, config.contentRoot),
       },
     })
@@ -310,7 +308,6 @@ describe('listEntries', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema,
         flatSchema: flattenSchema(schema, config.contentRoot),
       },
     })
@@ -387,7 +384,6 @@ describe('listEntries', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema,
         flatSchema: flattenSchema(schema, config.contentRoot),
       },
     })
@@ -491,7 +487,6 @@ describe('listEntries', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema,
         flatSchema: flattenSchema(schema, config.contentRoot),
       },
     })
@@ -632,7 +627,6 @@ describe('listEntries', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema,
         flatSchema: flattenSchema(schema, config.contentRoot),
       },
     })
@@ -747,7 +741,6 @@ describe('sortEntriesByOrder', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema,
         flatSchema: flattenSchema(schema, config.contentRoot),
       },
     })
@@ -836,7 +829,6 @@ describe('sortEntriesByOrder', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema,
         flatSchema: flattenSchema(schema, config.contentRoot),
       },
     })
@@ -944,7 +936,6 @@ describe('dynamic collection discovery', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema: originalSchema,
         // flatSchema only knows about 'docs', NOT 'docs/inner'
         flatSchema: flattenSchema(originalSchema, config.contentRoot),
       },
@@ -1020,7 +1011,6 @@ describe('deleteEntry', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema,
         flatSchema: flattenSchema(schema, config.contentRoot),
       },
     })
@@ -1101,7 +1091,6 @@ describe('deleteEntry', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema,
         flatSchema: flattenSchema(schema, config.contentRoot),
       },
     })
@@ -1167,7 +1156,6 @@ describe('deleteEntry', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema,
         flatSchema: flattenSchema(schema, config.contentRoot),
       },
     })
@@ -1216,7 +1204,6 @@ describe('deleteEntry', () => {
           branchRoot: root,
           createdBy: 'u1',
         }),
-        schema: { collections: [] },
         flatSchema: [],
       },
     })

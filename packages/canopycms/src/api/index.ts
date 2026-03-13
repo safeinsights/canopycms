@@ -49,7 +49,6 @@ export type {
   SchemaResponse,
   WireEntryType,
   WireCollectionConfig,
-  WireBranchSchema,
   WireFlatSchemaItem,
   CollectionResponse,
   CreateCollectionResponse,

@@ -104,7 +104,7 @@ export function createMockApiClient(): MockApiClient {
   },
 
   schema: {
-    get: vi.fn().mockResolvedValue(mockSuccess({"schema":{},"flatSchema":[],"entrySchemas":{}})),
+    get: vi.fn().mockResolvedValue(mockSuccess({"flatSchema":[],"entrySchemas":{}})),
     getCollection: vi.fn().mockResolvedValue(mockSuccess({"collection":null})),
     createCollection: vi.fn().mockResolvedValue(mockSuccess({"collectionPath":"","contentId":""})),
     updateCollection: vi.fn().mockResolvedValue(mockSuccess({"success":true})),
@@ -337,7 +337,7 @@ export function mockUserInfoResponse(): UserInfoResponse {
  * Create a GetSchemaApiResponse for testing
  */
 export function mockGetSchemaApiResponse(): GetSchemaApiResponse {
-  return mockSuccess({"schema":{},"flatSchema":[],"entrySchemas":{}})
+  return mockSuccess({"flatSchema":[],"entrySchemas":{}})
 }
 
 /**

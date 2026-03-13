@@ -159,19 +159,6 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       throw new Error(`Schema fetch failed: ${schemaResult.status}`)
     }
 
-    // Convert schema tree to editor collections
-    const { convertSchemaTreeToEditorCollections } = await import('../editor-utils')
-    const collections = convertSchemaTreeToEditorCollections(
-      schemaResult.data.schema,
-      options.contentRoot || 'content'
-    )
-    setCollectionsState(collections)
-
-    // Fetch entries from entries API
-    const result = await apiClient.entries.list({ branch })
-    if (!result.ok) throw new Error(`Refresh failed: ${result.status}`)
-    const data = result.data as ListEntriesResponse
-
     // Hydrate wire flatSchema: resolve fieldsRef → fields from entrySchemas dict
     const { entrySchemas } = schemaResult.data
     const hydratedFlatSchema = schemaResult.data.flatSchema.map((item) =>
@@ -179,6 +166,16 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         ? { ...item, fields: entrySchemas[item.fieldsRef] ?? [] }
         : item
     ) as import('../../config').FlatSchemaItem[]
+
+    // Build editor collections from hydrated flatSchema
+    const { buildEditorCollections } = await import('../editor-config')
+    const collections = buildEditorCollections(hydratedFlatSchema)
+    setCollectionsState(collections)
+
+    // Fetch entries from entries API
+    const result = await apiClient.entries.list({ branch })
+    if (!result.ok) throw new Error(`Refresh failed: ${result.status}`)
+    const data = result.data as ListEntriesResponse
 
     // Build entries with resolved schemas from flatSchema
     const refreshed = buildEntriesFromListResponse({

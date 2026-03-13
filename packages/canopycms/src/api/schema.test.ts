@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ApiContext, ApiRequest } from './types'
-import type { FlatSchemaItem, RootCollectionConfig, FieldConfig } from '../config'
+import type { FlatSchemaItem, FieldConfig } from '../config'
 import type { LogicalPath } from '../paths/types'
 
 // Mock the SchemaOps
@@ -59,17 +59,6 @@ describe('Schema API', () => {
     },
   ]
 
-  const mockSchema: RootCollectionConfig = {
-    collections: [
-      {
-        name: 'posts',
-        path: 'posts',
-        label: 'Posts',
-        entries: [{ name: 'post', format: 'json', fields: [], fieldsRef: 'postSchema' }],
-      },
-    ],
-  }
-
   const mockEntrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
     postSchema: [{ name: 'title', type: 'string' }],
   }
@@ -84,11 +73,10 @@ describe('Schema API', () => {
       getBranchContext: vi.fn().mockResolvedValue({
         branchRoot: '/test/branch',
         branchName: 'main',
-        schema: mockSchema,
         flatSchema: mockFlatSchema,
       }),
       services: {
-        config: { schema: mockSchema },
+        config: {},
         entrySchemaRegistry: mockEntrySchemaRegistry,
         checkContentAccess: vi.fn().mockResolvedValue({ allowed: true }),
       },
@@ -103,21 +91,11 @@ describe('Schema API', () => {
   })
 
   describe('getSchema', () => {
-    it('should return wire schema, wire flatSchema, and entrySchemas dict', async () => {
+    it('should return wire flatSchema and entrySchemas dict', async () => {
       const result = await getSchema.handler(mockCtx, mockReq, { branch: unsafeAsBranchName('main') })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-
-      // Schema tree should be wire format (fieldsRef, no fields)
-      expect(result.data?.schema).toEqual({
-        collections: [{
-          name: 'posts',
-          path: 'posts',
-          label: 'Posts',
-          entries: [{ name: 'post', format: 'json', fieldsRef: 'postSchema' }],
-        }],
-      })
 
       // FlatSchema should be wire format (fieldsRef, no fields on entry-type items)
       expect(result.data?.flatSchema).toEqual([

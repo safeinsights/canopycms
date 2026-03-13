@@ -51,7 +51,6 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
             services.entrySchemaRegistry,
             contentRootName
           )
-          existing.schema = cached.schema
           existing.flatSchema = cached.flatSchema
         }
         return existing
@@ -78,7 +77,6 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
             services.entrySchemaRegistry,
             contentRootName
           )
-          context.schema = cached.schema
           context.flatSchema = cached.flatSchema
         }
 

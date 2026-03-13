@@ -34,9 +34,6 @@ export interface BranchPaths {
 export interface BranchContext extends BranchPaths {
   branch: BranchMetadata
 
-  /** Per-branch schema (lazy-loaded via getBranchContext with loadSchema: true) */
-  schema?: import('./config').RootCollectionConfig
-
   /** Per-branch flattened schema (lazy-loaded via getBranchContext with loadSchema: true) */
   flatSchema?: import('./config').FlatSchemaItem[]
 }

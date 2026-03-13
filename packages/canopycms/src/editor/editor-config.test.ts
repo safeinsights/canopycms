@@ -281,4 +281,82 @@ describe('editor-config helpers', () => {
     // Entry types within a collection are not children in the navigation
     expect(posts.children).toHaveLength(0)
   })
+
+  it('populates entryTypes from flatSchema collection entries', () => {
+    const config = {
+      contentRoot: 'content',
+      schema: {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [
+              { name: 'post', format: 'mdx' as const, fields: [], default: true, label: 'Blog Post' },
+              { name: 'draft', format: 'mdx' as const, fields: [], label: 'Draft', maxItems: 10 },
+            ],
+          },
+        ],
+      },
+    }
+
+    const collections = buildEditorCollections(flattenSchema(config.schema, config.contentRoot))
+
+    const posts = collections[0].children![0]
+    expect(posts.entryTypes).toHaveLength(2)
+    expect(posts.entryTypes![0]).toEqual({
+      name: 'post',
+      format: 'mdx',
+      default: true,
+      label: 'Blog Post',
+      maxItems: undefined,
+    })
+    expect(posts.entryTypes![1]).toEqual({
+      name: 'draft',
+      format: 'mdx',
+      label: 'Draft',
+      default: undefined,
+      maxItems: 10,
+    })
+  })
+
+  it('populates order from flatSchema collection', () => {
+    const config = {
+      contentRoot: 'content',
+      schema: {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [{ name: 'post', format: 'json' as const, fields: [] }],
+            order: ['abc123', 'def456'],
+          },
+        ],
+      },
+    }
+
+    const collections = buildEditorCollections(flattenSchema(config.schema, config.contentRoot))
+
+    const posts = collections[0].children![0]
+    expect(posts.order).toEqual(['abc123', 'def456'])
+  })
+
+  it('omits entryTypes when collection has no entries', () => {
+    const config = {
+      contentRoot: 'content',
+      schema: {
+        collections: [
+          {
+            name: 'empty',
+            path: 'empty',
+            entries: [],
+          },
+        ],
+      },
+    }
+
+    const collections = buildEditorCollections(flattenSchema(config.schema, config.contentRoot))
+
+    const empty = collections[0].children![0]
+    expect(empty.entryTypes).toBeUndefined()
+  })
 })
