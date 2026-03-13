@@ -13,18 +13,13 @@ test.describe('Editor Happy Path', () => {
   let editorPage: EditorPage
 
   test.beforeEach(async ({ page }) => {
-    // Mark window as E2E test environment for environment-aware notifications
     await page.addInitScript(() => {
       (window as any).__E2E_TEST__ = true
     })
-
-    // Reset workspace and ensure main branch exists before each test for isolation
-    await resetWorkspace()
-    await ensureMainBranch(BASE_URL)
+    await test.step('reset workspace', () => resetWorkspace())
+    await test.step('ensure main branch', () => ensureMainBranch(BASE_URL))
     editorPage = new EditorPage(page)
-
-    // Set admin user so path permission checks pass (admin bypasses defaultPathAccess: 'deny')
-    await switchUser(page, 'admin')
+    await test.step('switch user', () => switchUser(page, 'admin'))
   })
 
   test('editor loads with form and preview panes', async () => {

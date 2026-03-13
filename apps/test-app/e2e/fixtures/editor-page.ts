@@ -47,8 +47,10 @@ export class EditorPage {
    * Waits for both panes to be visible.
    */
   async waitForReady(): Promise<void> {
-    await this.formPane.waitFor({ state: 'visible', timeout: 30000 })
-    await this.previewPane.waitFor({ state: 'visible', timeout: 30000 })
+    await Promise.all([
+      this.formPane.waitFor({ state: 'visible', timeout: 30000 }),
+      this.previewPane.waitFor({ state: 'visible', timeout: 30000 }),
+    ])
   }
 
   /**
@@ -73,14 +75,8 @@ export class EditorPage {
     // Click on the entry item
     await entry.click()
 
-    // Small delay for state update
-    await this.page.waitForTimeout(500)
-
-    // Wait for the file dropdown to show the selected entry name
+    // Wait for the file dropdown to show the selected entry name (condition-based, no blind wait)
     await expect(this.fileDropdownButton).toContainText(label, { timeout: 10000 })
-
-    // Wait for network requests to settle
-    await this.page.waitForLoadState('networkidle')
   }
 
   /**

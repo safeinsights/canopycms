@@ -77,9 +77,6 @@ export class BranchPage {
 
     // Submit the form
     await this.createBranchSubmitButton.click()
-
-    // Wait for the branch to appear in the list
-    await this.page.waitForTimeout(500)
   }
 
   /**
@@ -139,9 +136,8 @@ export class BranchPage {
     const switchButton = this.branchManager.locator(`[data-testid="switch-to-branch-button-${branchName}"]`)
     await switchButton.click()
 
-    // Wait for branch switcher to update
-    await this.page.waitForTimeout(1000)
-    await this.page.waitForLoadState('networkidle')
+    // Wait for the branch dropdown to reflect the new branch (condition-based)
+    await expect(this.branchDropdownButton).toContainText(branchName, { timeout: 10000 })
   }
 
   /**
@@ -167,9 +163,6 @@ export class BranchPage {
     const confirmButton = this.page.getByRole('button', { name: 'Submit Branch', exact: true })
     await confirmButton.waitFor({ state: 'visible', timeout: 5000 })
     await confirmButton.click()
-
-    // Wait for status update
-    await this.page.waitForTimeout(2000)
   }
 
   /**
@@ -185,9 +178,6 @@ export class BranchPage {
     const confirmButton = this.page.getByRole('button', { name: 'Withdraw Branch', exact: true })
     await confirmButton.waitFor({ state: 'visible', timeout: 5000 })
     await confirmButton.click()
-
-    // Wait for status update
-    await this.page.waitForTimeout(1000)
   }
 
   // NOTE: No approve-branch-button exists in the UI. Branch approval happens
@@ -213,8 +203,6 @@ export class BranchPage {
       }
     }
 
-    // Wait for status update
-    await this.page.waitForTimeout(1000)
   }
 
   /**
@@ -232,8 +220,10 @@ export class BranchPage {
       await confirmButton.click()
     }
 
-    // Wait for deletion to complete
-    await this.page.waitForTimeout(1000)
+    // Wait for the branch to disappear from the list
+    await this.branchManager
+      .locator(`[data-testid="branch-list-item-${branchName}"]`)
+      .waitFor({ state: 'hidden', timeout: 10000 })
   }
 
   /**

@@ -51,29 +51,15 @@ export async function workspaceExists(): Promise<boolean> {
 }
 
 /**
- * Reset the workspace by removing the .canopycms/branches directory.
- * The app will recreate it on next request.
+ * Reset the workspace by removing the branch working trees.
+ * remote.git is preserved between tests — recreating it is expensive (git init + push + clone).
+ * Only the branch checkouts need to be wiped for test isolation.
  */
 export async function resetWorkspace(): Promise<void> {
   log.time('resetWorkspace')
   log.info('workspace', 'Starting workspace reset')
-
-  try {
-    log.debug('workspace', 'Deleting branches directory', { path: BRANCHES_DIR })
-    await fs.rm(BRANCHES_DIR, { recursive: true, force: true })
-  } catch {
-    // Directory may not exist, that's fine
-  }
-
-  // Also remove the remote.git if it exists (forces fresh initialization)
-  const remotePath = path.join(TEST_APP_ROOT, '.canopy-prod-sim/remote.git')
-  try {
-    log.debug('workspace', 'Deleting remote.git', { path: remotePath })
-    await fs.rm(remotePath, { recursive: true, force: true })
-  } catch {
-    // Directory may not exist, that's fine
-  }
-
+  log.debug('workspace', 'Deleting branches directory', { path: BRANCHES_DIR })
+  await fs.rm(BRANCHES_DIR, { recursive: true, force: true }).catch(() => {})
   log.timeEnd('workspace', 'resetWorkspace')
 }
 
@@ -147,7 +133,7 @@ export async function waitForWorkspace(timeoutMs = 30000): Promise<void> {
       })
       return
     }
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
 
   log.error('workspace', 'Workspace initialization timeout', {
@@ -161,30 +147,24 @@ export async function waitForWorkspace(timeoutMs = 30000): Promise<void> {
  * Verify workspace is in a valid, ready state before tests proceed.
  */
 export async function verifyWorkspaceReady(): Promise<void> {
-  // Check 1: Main branch directory exists
   const mainPath = getMainBranchPath()
-  try {
-    await fs.access(mainPath)
-  } catch {
-    throw new Error(`Main branch directory does not exist: ${mainPath}`)
-  }
-
-  // Check 2: Git repo initialized in main branch
   const gitPath = path.join(mainPath, '.git')
-  try {
-    await fs.access(gitPath)
-  } catch {
-    throw new Error(`Git repository not initialized in main branch: ${gitPath}`)
-  }
-
-  // Check 3: Remote.git exists and is valid
   const remotePath = path.join(TEST_APP_ROOT, '.canopy-prod-sim/remote.git')
-  try {
-    await fs.access(path.join(remotePath, 'config'))
-    await fs.access(path.join(remotePath, 'HEAD'))
-  } catch {
-    throw new Error(`Remote.git not properly initialized: ${remotePath}`)
-  }
+
+  await Promise.all([
+    fs.access(mainPath).catch(() => {
+      throw new Error(`Main branch directory does not exist: ${mainPath}`)
+    }),
+    fs.access(gitPath).catch(() => {
+      throw new Error(`Git repository not initialized in main branch: ${gitPath}`)
+    }),
+    fs.access(path.join(remotePath, 'config')).catch(() => {
+      throw new Error(`Remote.git not properly initialized: ${remotePath}`)
+    }),
+    fs.access(path.join(remotePath, 'HEAD')).catch(() => {
+      throw new Error(`Remote.git HEAD missing: ${remotePath}`)
+    }),
+  ])
 }
 
 /**
@@ -217,7 +197,7 @@ export async function waitForBranchWorkspace(
       })
       return
     } catch {
-      await new Promise((resolve) => setTimeout(resolve, 500))
+      await new Promise((resolve) => setTimeout(resolve, 100))
     }
   }
 

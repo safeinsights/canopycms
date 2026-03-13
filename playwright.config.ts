@@ -22,8 +22,8 @@ export default defineConfig({
   // All tests share the same workspace and server - must run sequentially
   workers: 1,
 
-  // Reporter to use
-  reporter: 'html',
+  // Reporters: html for detailed UI, json for machine-readable timing, list for per-test durations in terminal
+  reporter: [['html'], ['json', { outputFile: 'test-results/results.json' }], ['list']],
 
   // Shared settings for all the projects below
   use: {
