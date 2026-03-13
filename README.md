@@ -37,17 +37,17 @@ npm install canopycms canopycms-next canopycms-auth-clerk
 Create `canopycms.config.ts` in your project root:
 
 ```typescript
-import { defineCanopyConfig, defineSchema } from 'canopycms'
+import { defineCanopyConfig, defineEntrySchema } from 'canopycms'
 
 // Define your content schemas
-const postSchema = defineSchema([
+const postSchema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title', required: true },
   { name: 'author', type: 'string', label: 'Author' },
   { name: 'published', type: 'boolean', label: 'Published' },
   { name: 'body', type: 'markdown', label: 'Body' },
 ])
 
-const homeSchema = defineSchema([
+const homeSchema = defineEntrySchema([
   { name: 'headline', type: 'string', label: 'Headline', required: true },
   { name: 'tagline', type: 'string', label: 'Tagline' },
   { name: 'content', type: 'markdown', label: 'Content' },
@@ -231,31 +231,31 @@ The schema references system has three key components:
 Create a schemas file (e.g., `app/schemas.ts`) to define your field schemas and registry:
 
 ```typescript
-import { defineSchema } from 'canopycms'
-import { createSchemaRegistry } from 'canopycms/server'
+import { defineEntrySchema } from 'canopycms'
+import { createEntrySchemaRegistry } from 'canopycms/server'
 
 // Define your field schemas
-export const postSchema = defineSchema([
+export const postSchema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title', required: true },
   { name: 'author', type: 'reference', label: 'Author', collections: ['authors'], displayField: 'name' },
   { name: 'published', type: 'boolean', label: 'Published' },
   { name: 'body', type: 'markdown', label: 'Body' },
 ])
 
-export const authorSchema = defineSchema([
+export const authorSchema = defineEntrySchema([
   { name: 'name', type: 'string', label: 'Name', required: true },
   { name: 'bio', type: 'string', label: 'Bio' },
   { name: 'avatar', type: 'image', label: 'Avatar' },
 ])
 
-export const homeSchema = defineSchema([
+export const homeSchema = defineEntrySchema([
   { name: 'headline', type: 'string', label: 'Headline', required: true },
   { name: 'tagline', type: 'string', label: 'Tagline' },
   { name: 'content', type: 'markdown', label: 'Content' },
 ])
 
 // Create the registry - validates schemas at creation time
-export const schemaRegistry = createSchemaRegistry({
+export const entrySchemaRegistry = createEntrySchemaRegistry({
   postSchema,
   authorSchema,
   homeSchema,
@@ -340,15 +340,15 @@ Pass your schema registry to `createNextCanopyContext` in `app/lib/canopy.ts`:
 import { createNextCanopyContext } from 'canopycms-next'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import config from '../../canopycms.config'
-import { schemaRegistry } from '../schemas'
+import { entrySchemaRegistry } from '../schemas'
 
-// Pass schemaRegistry to enable .collection.json file support
+// Pass entrySchemaRegistry to enable .collection.json file support
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
   authPlugin: createClerkAuthPlugin({
     useOrganizationsAsGroups: true,
   }),
-  schemaRegistry,  // Enable meta file schemas
+  entrySchemaRegistry,  // Enable meta file schemas
 })
 
 export const getCanopy = async () => {
@@ -509,7 +509,7 @@ Available schemas: authorSchema, homeSchema, docSchema
 
 **Note**: You must define your schema using at least one of these approaches:
 - Config-based: Set the `schema` option in `defineCanopyConfig`
-- Meta file-based: Create `.collection.json` files in your content directory (requires passing `schemaRegistry` to `createNextCanopyContext`)
+- Meta file-based: Create `.collection.json` files in your content directory (requires passing `entrySchemaRegistry` to `createNextCanopyContext`)
 - Hybrid: Use both approaches together - schemas will be merged
 
 See the [Schema References System](#schema-references-system) section for details on using `.collection.json` meta files.
@@ -654,7 +654,7 @@ const config = defineCanopyConfig({
 **Example with reference field:**
 
 ```typescript
-const schema = defineSchema([
+const schema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title', required: true },
   { name: 'body', type: 'markdown', label: 'Content' },
   {
@@ -678,7 +678,7 @@ const schema = defineSchema([
 **Example with all field types:**
 
 ```typescript
-const schema = defineSchema([
+const schema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title', required: true },
   { name: 'views', type: 'number', label: 'View Count' },
   { name: 'published', type: 'boolean', label: 'Published' },
@@ -750,7 +750,7 @@ Every entry in your content automatically receives a unique, stable identifier. 
 Reference fields let you create typed relationships between content entries. Unlike brittle string links or file paths, references use UUIDs to create robust, move-safe links:
 
 ```typescript
-const schema = defineSchema([
+const schema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title' },
   {
     name: 'category',
@@ -806,18 +806,18 @@ const author = await canopy.read({
 
 ### Type Inference
 
-Use `TypeFromSchema` to get TypeScript types from your schema:
+Use `TypeFromEntrySchema` to get TypeScript types from your schema:
 
 ```typescript
-import { defineSchema, TypeFromSchema } from 'canopycms'
+import { defineEntrySchema, TypeFromEntrySchema } from 'canopycms'
 
-const postSchema = defineSchema([
+const postSchema = defineEntrySchema([
   { name: 'title', type: 'string', required: true },
   { name: 'tags', type: 'string', list: true },
 ])
 
 // Inferred type: { title: string; tags: string[] }
-type Post = TypeFromSchema<typeof postSchema>
+type Post = TypeFromEntrySchema<typeof postSchema>
 ```
 
 ## Integration Guide

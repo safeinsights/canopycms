@@ -172,13 +172,21 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (!result.ok) throw new Error(`Refresh failed: ${result.status}`)
     const data = result.data as ListEntriesResponse
 
+    // Hydrate wire flatSchema: resolve fieldsRef → fields from entrySchemas dict
+    const { entrySchemas } = schemaResult.data
+    const hydratedFlatSchema = schemaResult.data.flatSchema.map((item) =>
+      item.type === 'entry-type'
+        ? { ...item, fields: entrySchemas[item.fieldsRef] ?? [] }
+        : item
+    ) as import('../../config').FlatSchemaItem[]
+
     // Build entries with resolved schemas from flatSchema
     const refreshed = buildEntriesFromListResponse({
       response: data,
       branchName: branch,
       resolvePreviewSrc: (entry) => options.resolvePreviewSrc(entry) ?? '',
       contentRoot: options.contentRoot || 'content',
-      flatSchema: schemaResult.data.flatSchema,
+      flatSchema: hydratedFlatSchema,
     })
 
     setEntriesState(refreshed)

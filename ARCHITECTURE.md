@@ -158,7 +158,7 @@ Services are created once at application startup using `createCanopyServices()`:
 const services = await createCanopyServices({
   config,
   authPlugin,
-  schemaRegistry,
+  entrySchemaRegistry,
 })
 ```
 
@@ -206,7 +206,7 @@ export function MyComponent() {
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
   authPlugin: getAuthPlugin(),
-  schemaRegistry,
+  entrySchemaRegistry,
 })
 
 export const getHandler = async () => {
@@ -411,13 +411,13 @@ The schema registry is a centralized location for field definitions that can be 
 
 **Schema Definitions** (`app/schemas.ts`):
 ```typescript
-import { createSchemaRegistry } from 'canopycms/server'
+import { createEntrySchemaRegistry } from 'canopycms/server'
 
 export const postSchema = [/* field definitions */]
 export const authorSchema = [/* field definitions */]
 export const docSchema = [/* field definitions */]
 
-export const schemaRegistry = createSchemaRegistry({
+export const entrySchemaRegistry = createEntrySchemaRegistry({
   postSchema,
   authorSchema,
   docSchema,
@@ -518,7 +518,7 @@ The schema resolution system requires async initialization because it reads file
 
 **Service creation** is async:
 ```typescript
-const services = await createCanopyServices(config, schemaRegistry)
+const services = await createCanopyServices(config, entrySchemaRegistry)
 ```
 
 **Context creation** in framework adapters:
@@ -527,7 +527,7 @@ const services = await createCanopyServices(config, schemaRegistry)
 const canopyContextPromise = createNextCanopyContext({
   config,
   authPlugin,
-  schemaRegistry,
+  entrySchemaRegistry,
 })
 
 // Export getters that await the promise
@@ -1650,7 +1650,7 @@ Services are created once at module load time, with the promise cached:
 const canopyContextPromise = createNextCanopyContext({
   config,
   authPlugin,
-  schemaRegistry,
+  entrySchemaRegistry,
 })
 
 // Export getters that await the promise

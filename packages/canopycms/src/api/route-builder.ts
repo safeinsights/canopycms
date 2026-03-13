@@ -16,9 +16,9 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
  * Maps field paths to cast function names.
  *
  * @example
- * { 'collectionPath': 'toLogicalPath', 'items.*.path': 'toPhysicalPath' }
+ * { 'collectionPath': 'createLogicalPath', 'items.*.path': 'createPhysicalPath' }
  */
-export type MockDataCasts = Record<string, 'toLogicalPath' | 'toPhysicalPath'>
+export type MockDataCasts = Record<string, 'createLogicalPath' | 'createPhysicalPath' | 'as ContentId'>
 
 /**
  * Metadata for code generation

@@ -102,14 +102,46 @@ describe('Schema API', () => {
   })
 
   describe('getSchema', () => {
-    it('should return full schema, flatSchema, and availableSchemas', async () => {
+    it('should return wire schema, wire flatSchema, and entrySchemas dict', async () => {
       const result = await getSchema.handler(mockCtx, mockReq, { branch: unsafeAsBranchName('main') })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-      expect(result.data?.schema).toEqual(mockSchema)
-      expect(result.data?.flatSchema).toEqual(mockFlatSchema)
-      expect(result.data?.availableSchemas).toEqual(['postSchema'])
+
+      // Schema tree should be wire format (fieldsRef, no fields)
+      expect(result.data?.schema).toEqual({
+        collections: [{
+          name: 'posts',
+          path: 'posts',
+          label: 'Posts',
+          entries: [{ name: 'post', format: 'json', fieldsRef: 'post' }],
+        }],
+      })
+
+      // FlatSchema should be wire format (fieldsRef, no fields on entry-type items)
+      expect(result.data?.flatSchema).toEqual([
+        {
+          type: 'collection',
+          logicalPath: 'posts',
+          name: 'posts',
+          label: 'Posts',
+          entries: [{ name: 'post', format: 'json', fieldsRef: 'post' }],
+          order: ['id1', 'id2'],
+        },
+        {
+          type: 'entry-type',
+          logicalPath: 'posts/post',
+          name: 'post',
+          parentPath: 'posts',
+          format: 'json',
+          fieldsRef: 'post',
+        },
+      ])
+
+      // entrySchemas should be the full registry
+      expect(result.data?.entrySchemas).toEqual({
+        postSchema: [{ name: 'title', type: 'string' }],
+      })
     })
 
     it('should return 404 for non-existent branch', async () => {

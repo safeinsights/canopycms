@@ -48,6 +48,10 @@ export type { ReferenceOptionsResponse } from './reference-options'
 export type { ResolveReferencesResponse } from './resolve-references'
 export type {
   SchemaResponse,
+  WireEntryType,
+  WireCollectionConfig,
+  WireBranchSchema,
+  WireFlatSchemaItem,
   CollectionResponse,
   CreateCollectionResponse,
   UpdateCollectionResponse,

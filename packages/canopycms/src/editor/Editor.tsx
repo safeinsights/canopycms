@@ -357,7 +357,7 @@ export const Editor: React.FC<EditorProps> = ({
       try {
         const result = await apiClient.schema.get({ branch: branchNameState })
         if (result.ok && result.data) {
-          setAvailableSchemas(result.data.availableSchemas ?? [])
+          setAvailableSchemas(Object.keys(result.data.entrySchemas ?? {}))
         }
       } catch (err) {
         console.error('Failed to load available schemas:', err)
