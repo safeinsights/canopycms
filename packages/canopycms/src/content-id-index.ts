@@ -362,6 +362,7 @@ export async function resolveCollectionPath(
   root: string,
   logicalPath: LogicalPath,
 ): Promise<string | null> {
+  // Dynamic import: keep Node built-ins out of browser/edge bundles
   const fs = await import('node:fs/promises')
   const path = await import('node:path')
 

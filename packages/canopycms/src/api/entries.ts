@@ -16,6 +16,7 @@ import { isNotFoundError } from '../utils/error'
 import { isValidId } from '../id'
 import type { LogicalPath, PhysicalPath, EntrySlug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema } from './validators'
+import { SchemaOps } from '../schema/schema-store'
 
 /**
  * Summary of an entry type for client display.
@@ -572,7 +573,6 @@ const deleteEntryHandler = async (
 
     // Update the collection's order array to remove the deleted item
     if (contentId && collection.type === 'collection' && collection.order) {
-      const { SchemaOps } = await import('../schema/schema-store')
       const schemaStore = new SchemaOps(context.branchRoot, ctx.services.entrySchemaRegistry)
       const newOrder = collection.order.filter((id) => id !== contentId)
       if (newOrder.length !== collection.order.length) {

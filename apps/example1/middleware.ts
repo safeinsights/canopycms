@@ -3,6 +3,8 @@ import { type NextFetchEvent, type NextRequest, NextResponse } from 'next/server
 const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
 
 async function getClerkMiddleware() {
+  // Dynamic import: only load Clerk when auth mode is 'clerk', avoiding
+  // bundle errors and unnecessary deps when Clerk is not configured
   const { clerkMiddleware, createRouteMatcher } = await import('@clerk/nextjs/server')
   const isProtectedRoute = createRouteMatcher(['/edit(.*)', '/api/canopycms(.*)'])
 
