@@ -193,25 +193,15 @@ export class BranchPage {
 
   /**
    * Request changes on a submitted branch (reviewer action).
+   * Note: request-changes has no confirmation modal — the action fires immediately.
    *
    * @param branchName - The name of the branch
-   * @param comment - Optional comment explaining the requested changes
    */
-  async requestChanges(branchName: string, comment?: string): Promise<void> {
+  async requestChanges(branchName: string): Promise<void> {
     const requestChangesButton = this.branchManager.locator(
       `[data-testid="request-changes-branch-button-${branchName}"]`,
     )
     await requestChangesButton.click()
-
-    // If there's a comment field in a modal, fill it
-    if (comment) {
-      // This may need adjustment based on actual UI implementation
-      const commentInput = this.page.locator('[data-testid="request-changes-comment"]')
-      if (await commentInput.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await commentInput.fill(comment)
-        await this.page.locator('[data-testid="confirm-request-changes"]').click()
-      }
-    }
   }
 
   /**
@@ -280,15 +270,7 @@ export class BranchPage {
    * Close the branch manager.
    */
   async closeBranchManager(): Promise<void> {
-    // Click outside or use close button if available
-    const closeButton = this.branchManager.locator('[data-testid="close-branch-manager"]')
-    if (await closeButton.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await closeButton.click()
-    } else {
-      // Press Escape key to close modal
-      await this.page.keyboard.press('Escape')
-    }
-
+    await this.page.keyboard.press('Escape')
     await this.branchManager.waitFor({ state: 'hidden', timeout: 5000 })
   }
 
