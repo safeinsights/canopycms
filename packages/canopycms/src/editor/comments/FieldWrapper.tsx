@@ -94,6 +94,7 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
             color="gray"
             onClick={() => setShowCarousel(true)}
             style={{ fontSize: '0.75rem', height: '1.5rem' }}
+            data-testid={`field-new-comment-${canopyPath}`}
           >
             New comment
           </Button>

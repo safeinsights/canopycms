@@ -98,6 +98,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
       withBorder
       p="md"
       bg="white"
+      data-testid="inline-comment-thread"
       style={{
         width: '100%',
         overflowY: 'auto',
@@ -187,6 +188,7 @@ export const InlineCommentThread: React.FC<InlineCommentThreadProps> = ({
                   color="green"
                   onClick={handleResolve}
                   loading={isSubmitting}
+                  data-testid="resolve-thread-button"
                 >
                   Resolve
                 </Button>
