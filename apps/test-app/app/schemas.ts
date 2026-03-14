@@ -12,6 +12,7 @@ export const postSchema = defineEntrySchema([
 export const homeSchema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title' },
   { name: 'tagline', type: 'string', label: 'Tagline' },
+  { name: 'published', type: 'boolean', label: 'Published' },
   { name: 'featuredPosts', type: 'string', list: true, label: 'Featured Posts' },
 ] as const)
 
