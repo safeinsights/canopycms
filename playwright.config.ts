@@ -37,6 +37,11 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
 
+  // CI runners are slower — give expect() assertions more time
+  expect: {
+    timeout: process.env.CI ? 15000 : 5000,
+  },
+
   // Configure projects for major browsers
   projects: [
     {

@@ -1,4 +1,5 @@
 import { type Page, type Locator, expect } from '@playwright/test'
+import { STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 
 /**
  * Page object for the CanopyCMS Editor.
@@ -48,8 +49,8 @@ export class EditorPage {
    */
   async waitForReady(): Promise<void> {
     await Promise.all([
-      this.formPane.waitFor({ state: 'visible', timeout: 30000 }),
-      this.previewPane.waitFor({ state: 'visible', timeout: 30000 }),
+      this.formPane.waitFor({ state: 'visible', timeout: LONG_TIMEOUT }),
+      this.previewPane.waitFor({ state: 'visible', timeout: LONG_TIMEOUT }),
     ])
   }
 
@@ -59,7 +60,7 @@ export class EditorPage {
   async openEntryNavigator(): Promise<void> {
     await this.fileDropdownButton.click()
     await this.allFilesMenuItem.click()
-    await this.entryNavigator.waitFor({ state: 'visible', timeout: 10000 })
+    await this.entryNavigator.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
   }
 
   /**
@@ -70,13 +71,13 @@ export class EditorPage {
     // Use the data-testid for reliable selection
     const testId = `entry-nav-item-${label.toLowerCase().replace(/\s+/g, '-')}`
     const entry = this.entryNavigator.locator(`[data-testid="${testId}"]`)
-    await entry.waitFor({ state: 'visible', timeout: 10000 })
+    await entry.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
 
     // Click on the entry item
     await entry.click()
 
     // Wait for the file dropdown to show the selected entry name (condition-based, no blind wait)
-    await expect(this.fileDropdownButton).toContainText(label, { timeout: 10000 })
+    await expect(this.fileDropdownButton).toContainText(label, { timeout: STANDARD_TIMEOUT })
   }
 
   /**
@@ -113,7 +114,7 @@ export class EditorPage {
    */
   async waitForSaveNotification(): Promise<void> {
     await expect(this.page.locator('.mantine-Notification-root', { hasText: 'Saved' })).toBeVisible(
-      { timeout: 10000 },
+      { timeout: STANDARD_TIMEOUT },
     )
   }
 
@@ -134,7 +135,7 @@ export class EditorPage {
    */
   async waitForPreviewUpdate(expectedContent: string): Promise<void> {
     await expect(this.previewPane.locator(`text="${expectedContent}"`)).toBeVisible({
-      timeout: 10000,
+      timeout: STANDARD_TIMEOUT,
     })
   }
 

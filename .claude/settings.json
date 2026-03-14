@@ -5,8 +5,9 @@
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:api.github.com)",
       "Bash(python3 -m json.tool)",
-      "mcp__playwright__browser_navigate"
+      "mcp__playwright__browser_navigate",
+      "Bash(git --version)"
     ],
-    "additionalDirectories": []
+    "additionalDirectories": ["/tmp"]
   }
 }
