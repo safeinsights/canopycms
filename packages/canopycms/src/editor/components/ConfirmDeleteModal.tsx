@@ -27,14 +27,19 @@ export function ConfirmDeleteModal({
 }: ConfirmDeleteModalProps) {
   return (
     <Modal opened={isOpen} onClose={onClose} title={title} centered size="md">
-      <Stack gap="md">
+      <Stack gap="md" data-testid="confirm-delete-modal">
         <Text size="sm">{message}</Text>
 
         <Group justify="flex-end" gap="sm">
           <Button variant="default" onClick={onClose} disabled={loading}>
             Cancel
           </Button>
-          <Button color="red" onClick={onConfirm} loading={loading}>
+          <Button
+            color="red"
+            onClick={onConfirm}
+            loading={loading}
+            data-testid="confirm-delete-submit"
+          >
             {confirmLabel}
           </Button>
         </Group>
