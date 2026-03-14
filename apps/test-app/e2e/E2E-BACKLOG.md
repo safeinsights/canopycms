@@ -107,12 +107,12 @@ Use existing fixtures:
 
 ## Comments System
 
-### 11. ⬜ Add a branch-level comment
-**Spec file:** `comments.spec.ts`
-**Scenario:** Create a branch. Open the branch manager or comments panel. Add a branch-level comment. Verify it appears in the comments list. Reload and verify persistence.
-**Context:** Comments are stored in the branch clone. Look at `packages/canopycms/src/editor/CommentsPanel.tsx` and `BranchComments.tsx`. The comments panel may be opened via a button in the editor header or branch manager.
-**data-testids needed:** Find or add testids for comment panel open button, comment textarea, comment submit button, comment list items.
-**Files to read first:** `packages/canopycms/src/editor/CommentsPanel.tsx`, `packages/canopycms/src/editor/BranchComments.tsx`
+### 11. ✅ Add a branch-level comment
+**Status:** Done — `comments.spec.ts` › "add a branch-level comment and verify persistence"
+**Spec file:** `comments.spec.ts` (new file)
+**Scenario:** Open the comments panel. Add a branch-level comment. Verify it appears in the thread list. Reload and verify persistence.
+**data-testids added:** `data-testid="comments-button"` on the Comments button in `EditorHeader.tsx`; `data-testid="comment-textarea"` on the Textarea, `data-testid="comment-submit"` on the Add Comment button, `data-testid="comment-thread"` on each thread Paper (all in `CommentsPanel.tsx`).
+**Notes:** Comments work on the `main` branch in `prod-sim` mode (no feature branch needed). The Comments button only renders when `supportsComments()` is true AND a branch is selected. After submit the textarea clears. Close panel with Escape before reload.
 
 ### 12. ⬜ Add and resolve a field-level comment thread
 **Spec file:** `comments.spec.ts`

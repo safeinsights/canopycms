@@ -383,6 +383,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   size="xs"
                   onClick={onCommentsPanelOpen}
                   style={{ position: 'relative' }}
+                  data-testid="comments-button"
                 >
                   Comments
                   {comments.filter((t) => !t.resolved).length > 0 && (
