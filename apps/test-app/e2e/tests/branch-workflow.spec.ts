@@ -1,13 +1,12 @@
 import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { BranchPage } from '../fixtures/branch-page'
-import { switchUser, TEST_USERS } from '../fixtures/test-users'
+import { switchUser } from '../fixtures/test-users'
 import {
   resetWorkspace,
   ensureMainBranch,
   createBranchViaAPI,
   submitBranchViaAPI,
-  listBranchesViaAPI,
 } from '../fixtures/test-workspace'
 
 const BASE_URL = 'http://localhost:5174'
@@ -99,17 +98,15 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await branchPage.createBranch(branchName, title, description)
 
     // Verify branch was created
-    await expect(await branchPage.verifyBranchInList(branchName)).toBe(true)
+    expect(await branchPage.verifyBranchInList(branchName)).toBe(true)
 
-    // Test duplicate branch name error
-    // Click create again
+    // Test duplicate branch name — submit same name again
     await branchPage.createBranchButton.click()
     await branchPage.branchNameInput.fill(branchName)
     await branchPage.createBranchSubmitButton.click()
 
-    // The create should fail (exact behavior depends on implementation)
-    // For now, just verify the branch still exists and only one copy
-    await page.waitForTimeout(100)
+    // Branch manager should remain visible (duplicate was rejected or ignored)
+    await expect(branchPage.branchManager).toBeVisible()
   })
 
   test('submit and withdraw flow', async ({ page }) => {
@@ -192,7 +189,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
     expect(canSubmit).toBe(true)
   })
 
-  test('permission boundaries: non-reviewers cannot approve', async ({ page }) => {
+  test('permission boundaries: non-reviewers cannot request changes', async ({ page }) => {
     const branchName = `test-permissions-${Date.now()}`
 
     // Set editor user and create/submit branch
@@ -215,7 +212,7 @@ test.describe('Branch Lifecycle & Workflow', () => {
     expect(isDisabled).toBe(true)
   })
 
-  test('permission boundaries: only creator can withdraw', async ({ page }) => {
+  test('permission boundaries: admin can withdraw another user\'s branch', async ({ page }) => {
     const branchName = `test-withdraw-perms-${Date.now()}`
 
     // Create and submit branch as editor
@@ -229,14 +226,13 @@ test.describe('Branch Lifecycle & Workflow', () => {
     await editorPage.waitForReady()
     await branchPage.openBranchManager()
 
-    // Admin should see the branch but withdraw should be disabled (only creator can withdraw)
-    await expect(await branchPage.verifyBranchInList(branchName)).toBe(true)
+    // Admin should see the branch
+    expect(await branchPage.verifyBranchInList(branchName)).toBe(true)
 
-    // Check if withdraw button is disabled for non-creator
-    // Note: Admin might have override permissions depending on implementation
+    // Admin has override permissions (canPerformWorkflowActions = true for admins),
+    // so the withdraw button should be visible and enabled.
     const withdrawVisible = await branchPage.isActionButtonVisible(branchName, 'withdraw')
-    // This test validates the UI reflects permission rules
-    // Actual behavior may vary based on implementation
+    expect(withdrawVisible).toBe(true)
   })
 
   test('branch deletion permissions', async ({ page }) => {

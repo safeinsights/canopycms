@@ -262,36 +262,13 @@ export async function deleteBranchViaAPI(
   branchName: string,
   userId: string
 ): Promise<Response> {
-  const response = await fetch(`${baseUrl}/api/canopycms/branches/${branchName}`, {
+  const response = await fetch(`${baseUrl}/api/canopycms/${branchName}`, {
     method: 'DELETE',
     headers: {
       'X-Test-User': userId,
     },
   })
   return response
-}
-
-/**
- * Get branch status and metadata via API.
- * @param baseUrl - Base URL of the test app
- * @param branchName - Name of the branch
- * @param userId - User ID to make the request as
- */
-export async function getBranchViaAPI(
-  baseUrl: string,
-  branchName: string,
-  userId: string
-): Promise<any> {
-  const response = await fetch(`${baseUrl}/api/canopycms/${branchName}`, {
-    method: 'GET',
-    headers: {
-      'X-Test-User': userId,
-    },
-  })
-  if (!response.ok) {
-    throw new Error(`Failed to get branch: ${response.status} ${await response.text()}`)
-  }
-  return await response.json()
 }
 
 /**
