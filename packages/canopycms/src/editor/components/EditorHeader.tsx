@@ -283,7 +283,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                   <Menu.Item onClick={onFileReload} disabled={!branchName || !currentEntry}>
                     Reload File
                   </Menu.Item>
-                  <Menu.Item onClick={onFileDiscardDraft} disabled={!currentEntry}>
+                  <Menu.Item data-testid="discard-file-draft-menu-item" onClick={onFileDiscardDraft} disabled={!currentEntry}>
                     Discard File Draft
                   </Menu.Item>
                   <Menu.Divider />
