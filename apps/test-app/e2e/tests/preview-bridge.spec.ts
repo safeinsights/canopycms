@@ -54,4 +54,34 @@ test.describe('Preview Bridge', () => {
       }, { timeout: 2000 })
     })
   })
+
+  test('preview reflects live edits without saving', async ({ page }) => {
+    const previewFrame = page.frameLocator('[data-testid="preview-pane"] iframe')
+    const previewTitle = previewFrame.locator('[data-canopy-path="title"]')
+
+    await test.step('open editor and select Home Page', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.openEntryNavigator()
+      await editorPage.selectEntry('Home Page')
+    })
+
+    await test.step('verify preview shows original content before editing', async () => {
+      await expect(previewTitle).toContainText('Home Page', { timeout: 15000 })
+    })
+
+    const liveTitle = `Live-Edit-${Date.now()}`
+
+    await test.step('edit title field without saving', async () => {
+      await editorPage.fillTextField('title', liveTitle)
+    })
+
+    await test.step('verify preview updates with new content without saving', async () => {
+      await expect(previewTitle).toContainText(liveTitle, { timeout: 10000 })
+    })
+
+    await test.step('verify save button is enabled (changes not yet saved)', async () => {
+      await expect(editorPage.saveButton).toBeEnabled()
+    })
+  })
 })
