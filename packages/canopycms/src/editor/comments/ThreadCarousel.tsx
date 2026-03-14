@@ -362,6 +362,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                 minRows={2}
                 disabled={isSubmitting}
                 autoFocus
+                data-testid="new-thread-textarea"
               />
               <Group gap="xs">
                 <Button
@@ -369,6 +370,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                   onClick={handleCreateNewThread}
                   loading={isSubmitting}
                   disabled={!newThreadText.trim()}
+                  data-testid="create-thread-button"
                 >
                   Create Thread
                 </Button>

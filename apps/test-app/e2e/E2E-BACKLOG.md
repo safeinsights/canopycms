@@ -125,11 +125,13 @@ Use existing fixtures:
 **data-testids added:** `data-testid="comments-button"` on the Comments button in `EditorHeader.tsx`; `data-testid="comment-textarea"` on the Textarea, `data-testid="comment-submit"` on the Add Comment button, `data-testid="comment-thread"` on each thread Paper (all in `CommentsPanel.tsx`).
 **Notes:** Comments work on the `main` branch in `prod-sim` mode (no feature branch needed). The Comments button only renders when `supportsComments()` is true AND a branch is selected. After submit the textarea clears. Close panel with Escape before reload.
 
-### 12. ⬜ Add and resolve a field-level comment thread
+### 12. ✅ Add and resolve a field-level comment thread
 
+**Status:** Done — `comments.spec.ts` › "add and resolve a field-level comment thread"
 **Spec file:** `comments.spec.ts`
 **Scenario:** Select an entry and field. Trigger a field-level comment (look for a comment icon near the field or in the preview). Add a comment. Verify an inline comment thread appears (`InlineCommentThread.tsx`). Resolve/close the thread. Verify it is marked resolved.
-**Files to read first:** `packages/canopycms/src/editor/InlineCommentThread.tsx`, `packages/canopycms/src/editor/EntryComments.tsx`, `packages/canopycms/src/editor/ThreadCarousel.tsx`
+**data-testids added:** `data-testid="field-new-comment-{canopyPath}"` on "New comment" button in `FieldWrapper.tsx`; `data-testid="new-thread-textarea"` and `data-testid="create-thread-button"` in `ThreadCarousel.tsx`; `data-testid="inline-comment-thread"` on Paper root and `data-testid="resolve-thread-button"` on Resolve button in `InlineCommentThread.tsx`.
+**Notes:** Navigate to "Home Page" entry first, then Escape to close navigator drawer before interacting with the form. The "New comment" button is always in the DOM (no hover required). After resolving, the "Resolved" badge appears and the Resolve button disappears.
 
 ---
 

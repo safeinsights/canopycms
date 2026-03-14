@@ -21,6 +21,55 @@ test.describe('Comments', () => {
     await test.step('switch user', () => switchUser(page, 'admin'))
   })
 
+  test('add and resolve a field-level comment thread', async ({ page }) => {
+    await test.step('open editor and navigate to Home Page entry', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.openEntryNavigator()
+      await editorPage.selectEntry('Home Page')
+      // Close navigator so form pane is interactive
+      await page.keyboard.press('Escape')
+      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: 5000 })
+    })
+
+    const commentText = `Field comment ${Date.now()}`
+
+    await test.step('click "New comment" on the title field', async () => {
+      const newCommentButton = page.locator('[data-testid="field-new-comment-title"]')
+      await newCommentButton.waitFor({ state: 'visible', timeout: 10000 })
+      await newCommentButton.click()
+    })
+
+    await test.step('fill and submit new thread', async () => {
+      const textarea = page.locator('[data-testid="new-thread-textarea"]')
+      await textarea.waitFor({ state: 'visible', timeout: 5000 })
+      await textarea.fill(commentText)
+
+      const createButton = page.locator('[data-testid="create-thread-button"]')
+      await createButton.click()
+    })
+
+    await test.step('verify inline thread appears as unresolved', async () => {
+      const thread = page.locator('[data-testid="inline-comment-thread"]')
+      await thread.waitFor({ state: 'visible', timeout: 5000 })
+      await expect(thread).toContainText(commentText)
+      await expect(thread).toContainText('Unresolved')
+    })
+
+    await test.step('resolve the thread', async () => {
+      const resolveButton = page.locator('[data-testid="resolve-thread-button"]')
+      await resolveButton.waitFor({ state: 'visible', timeout: 5000 })
+      await resolveButton.click()
+    })
+
+    await test.step('verify thread is marked resolved', async () => {
+      const thread = page.locator('[data-testid="inline-comment-thread"]')
+      await expect(thread).toContainText('Resolved', { timeout: 5000 })
+      // Resolve button should be gone
+      await expect(page.locator('[data-testid="resolve-thread-button"]')).not.toBeVisible()
+    })
+  })
+
   test('add a branch-level comment and verify persistence', async ({ page }) => {
     await test.step('open editor', async () => {
       await editorPage.goto()
