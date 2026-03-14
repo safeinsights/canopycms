@@ -141,12 +141,14 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
               onChange={(e) => setNewCommentText(e.target.value)}
               minRows={3}
               disabled={isSubmitting}
+              data-testid="comment-textarea"
             />
             <Button
               onClick={handleAddComment}
               size="sm"
               loading={isSubmitting}
               disabled={!newCommentText.trim()}
+              data-testid="comment-submit"
             >
               {replyTo ? 'Reply' : 'Add Comment'}
             </Button>
@@ -180,6 +182,7 @@ export const CommentsPanel: React.FC<CommentsPanelProps> = ({
                   withBorder
                   p="md"
                   bg={thread.resolved ? 'gray.0' : undefined}
+                  data-testid="comment-thread"
                 >
                   <Stack gap="xs">
                     <Group justify="space-between" align="flex-start">
