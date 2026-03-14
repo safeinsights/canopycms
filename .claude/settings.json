@@ -4,7 +4,8 @@
       "WebFetch(domain:mdxeditor.dev)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:api.github.com)",
-      "Bash(python3 -m json.tool)"
+      "Bash(python3 -m json.tool)",
+      "mcp__playwright__browser_navigate"
     ],
     "additionalDirectories": []
   }

@@ -453,6 +453,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                         event.stopPropagation()
                         onAdd()
                       }}
+                      data-testid="add-entry-menu-item"
                     >
                       Add Entry
                     </Menu.Item>

@@ -123,7 +123,7 @@ export function EntryCreateModal({
       closeOnClickOutside={!isCreating}
       closeOnEscape={!isCreating}
     >
-      <Stack gap="md">
+      <Stack gap="md" data-testid="create-entry-modal">
         {error && (
           <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
             {error}
@@ -167,6 +167,7 @@ export function EntryCreateModal({
           required
           disabled={isCreating}
           data-autofocus
+          data-testid="entry-slug-input"
         />
 
         <Text size="xs" c="dimmed">
@@ -177,7 +178,7 @@ export function EntryCreateModal({
           <Button variant="subtle" onClick={onClose} disabled={isCreating}>
             Cancel
           </Button>
-          <Button onClick={handleCreate} loading={isCreating} disabled={!canCreate}>
+          <Button onClick={handleCreate} loading={isCreating} disabled={!canCreate} data-testid="create-entry-submit">
             Create
           </Button>
         </Group>
