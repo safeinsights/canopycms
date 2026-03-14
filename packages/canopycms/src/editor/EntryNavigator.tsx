@@ -556,6 +556,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                         event.stopPropagation()
                         onDeleteEntry(entryPath)
                       }}
+                      data-testid="delete-entry-menu-item"
                     >
                       Delete Entry
                     </Menu.Item>

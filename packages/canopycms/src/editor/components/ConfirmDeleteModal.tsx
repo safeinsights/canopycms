@@ -33,7 +33,7 @@ export function ConfirmDeleteModal({
       centered
       size="md"
     >
-      <Stack gap="md">
+      <Stack gap="md" data-testid="confirm-delete-modal">
         <Text size="sm">{message}</Text>
 
         <Group justify="flex-end" gap="sm">
@@ -48,6 +48,7 @@ export function ConfirmDeleteModal({
             color="red"
             onClick={onConfirm}
             loading={loading}
+            data-testid="confirm-delete-submit"
           >
             {confirmLabel}
           </Button>

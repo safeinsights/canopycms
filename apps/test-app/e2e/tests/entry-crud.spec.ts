@@ -146,4 +146,71 @@ test.describe('Entry CRUD Operations', () => {
       await expect(navItem).toBeVisible({ timeout: 10000 })
     })
   })
+
+  test('delete an entry', async ({ page }) => {
+    await test.step('open editor', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+    })
+
+    await test.step('open entry navigator', async () => {
+      await editorPage.openEntryNavigator()
+      await expect(editorPage.entryNavigator).toBeVisible()
+    })
+
+    await test.step('create a post entry (setup)', async () => {
+      const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
+      await collectionMenuButton.waitFor({ state: 'visible', timeout: 10000 })
+      await collectionMenuButton.click()
+
+      const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
+      await addEntryItem.waitFor({ state: 'visible', timeout: 5000 })
+      await addEntryItem.click()
+
+      const createModal = page.locator('[data-testid="create-entry-modal"]')
+      await expect(createModal).toBeVisible()
+      await page.locator('[data-testid="entry-slug-input"]').fill('post-to-delete')
+      await page.locator('[data-testid="create-entry-submit"]').click()
+      await expect(createModal).not.toBeVisible({ timeout: 10000 })
+
+      await expect(page.locator('[data-testid="entry-nav-item-post"]')).toBeVisible({ timeout: 10000 })
+    })
+
+    await test.step('open entry context menu and click Delete Entry', async () => {
+      const entryMenu = page.locator('[data-testid="entry-menu-post"]')
+      await entryMenu.waitFor({ state: 'visible', timeout: 5000 })
+      await entryMenu.click()
+
+      const deleteItem = page.locator('[data-testid="delete-entry-menu-item"]')
+      await deleteItem.waitFor({ state: 'visible', timeout: 5000 })
+      await deleteItem.click()
+    })
+
+    await test.step('confirm deletion', async () => {
+      const modal = page.locator('[data-testid="confirm-delete-modal"]')
+      await expect(modal).toBeVisible()
+
+      await page.locator('[data-testid="confirm-delete-submit"]').click()
+      await expect(modal).not.toBeVisible({ timeout: 10000 })
+    })
+
+    await test.step('verify entry is removed from navigator', async () => {
+      const navItem = page.locator('[data-testid="entry-nav-item-post"]')
+      await expect(navItem).not.toBeVisible({ timeout: 10000 })
+    })
+
+    await test.step('reload and verify entry is gone', async () => {
+      await page.reload()
+      await editorPage.waitForReady()
+      await editorPage.openEntryNavigator()
+
+      // Expand Posts collection
+      const postsCollection = page.locator('[data-testid="entry-nav-item-posts"]')
+      await postsCollection.waitFor({ state: 'visible', timeout: 10000 })
+      await postsCollection.click()
+
+      const navItem = page.locator('[data-testid="entry-nav-item-post"]')
+      await expect(navItem).not.toBeVisible({ timeout: 5000 })
+    })
+  })
 })

@@ -51,11 +51,12 @@ Use existing fixtures:
 **data-testids added:** `data-testid="rename-entry-modal"` on inner `<Stack>`, `data-testid="rename-slug-input"` on TextInput, `data-testid="rename-entry-submit"` on Rename button (all in `RenameEntryModal.tsx`); `data-testid="rename-entry-menu-item"` on "Rename Entry" Menu.Item in `EntryNavigator.tsx`.
 **Notes:** Test creates an entry first (workspace is reset in beforeEach). The entry context menu trigger testid is `entry-menu-{label}` — for a new post with no title, label is "Post" so testid is `entry-menu-post`. Rename only changes the slug/filename; the display label stays "Post" since the title field is empty.
 
-### 3. ⬜ Delete an entry
+### 3. ✅ Delete an entry
+**Status:** Done — `entry-crud.spec.ts` › "delete an entry"
 **Spec file:** `entry-crud.spec.ts`
 **Scenario:** Create a fresh entry (via API or UI), then trigger delete. Verify the confirm-delete modal opens (`ConfirmDeleteModal.tsx`). Confirm deletion. Verify the entry is removed from the navigator. Reload and verify it is gone.
-**data-testids needed:** Check `ConfirmDeleteModal.tsx` for existing testids or add `data-testid="delete-entry-button"`, `data-testid="confirm-delete-submit"`.
-**Files to read first:** `packages/canopycms/src/editor/ConfirmDeleteModal.tsx`
+**data-testids added:** `data-testid="confirm-delete-modal"` on inner `<Stack>`, `data-testid="confirm-delete-submit"` on the red Delete button (both in `ConfirmDeleteModal.tsx`); `data-testid="delete-entry-menu-item"` on "Delete Entry" Menu.Item in `EntryNavigator.tsx`.
+**Notes:** Test creates an entry first via UI. After deletion, `not.toBeVisible()` passes whether the element is hidden or absent from DOM. After reload + expand Posts, the entry should be gone entirely.
 
 ---
 
