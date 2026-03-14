@@ -47,12 +47,13 @@ Use existing fixtures:
 **data-testids added:** `data-testid="entry-slug-input"` on slug TextInput, `data-testid="create-entry-submit"` on Create button (both in `EntryCreateModal.tsx`); `data-testid="add-entry-menu-item"` on "Add Entry" Menu.Item in `EntryNavigator.tsx`.
 **Notes:** Modal testid must go on inner `<Stack>`, not `<Modal>` (Mantine keeps the root div in DOM when closed). Navigator label for a new entry is the entry type label ("Post"), not the slug.
 
-### 2. ⬜ Rename an entry
+### 2. ✅ Rename an entry
 
+**Status:** Done — `entry-crud.spec.ts` › "rename an entry"
 **Spec file:** `entry-crud.spec.ts`
 **Scenario:** With an entry selected, open its context menu or find a rename action. Verify the rename modal opens (`RenameEntryModal.tsx`). Enter a new slug. Submit. Verify the navigator updates and the URL/slug reflects the new name. Reload and verify the renamed entry loads.
-**data-testids needed:** Check `RenameEntryModal.tsx` for existing testids or add `data-testid="rename-entry-button"`, `data-testid="rename-slug-input"`, `data-testid="rename-entry-submit"`.
-**Files to read first:** `packages/canopycms/src/editor/RenameEntryModal.tsx`
+**data-testids added:** `data-testid="rename-entry-modal"` on inner `<Stack>`, `data-testid="rename-slug-input"` on TextInput, `data-testid="rename-entry-submit"` on Rename button (all in `RenameEntryModal.tsx`); `data-testid="rename-entry-menu-item"` on "Rename Entry" Menu.Item in `EntryNavigator.tsx`.
+**Notes:** Test creates an entry first (workspace is reset in beforeEach). The entry context menu trigger testid is `entry-menu-{label}` — for a new post with no title, label is "Post" so testid is `entry-menu-post`. Rename only changes the slug/filename; the display label stays "Post" since the title field is empty.
 
 ### 3. ⬜ Delete an entry
 
