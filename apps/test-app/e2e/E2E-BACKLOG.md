@@ -90,11 +90,12 @@ Use existing fixtures:
 
 ## Preview Bridge
 
-### 9. ⬜ Preview focus — click preview element to jump to editor field
-**Spec file:** `preview-bridge.spec.ts`
+### 9. ✅ Preview focus — click preview element to jump to editor field
+**Status:** Done — `preview-bridge.spec.ts` › "click preview element scrolls and highlights editor field"
+**Spec file:** `preview-bridge.spec.ts` (new file)
 **Scenario:** Open the editor with the home entry. In the preview pane (iframe), click an element that has a `data-canopy-path` attribute. Verify that the corresponding field in the form pane scrolls into view and/or receives focus.
-**Context:** The preview bridge is implemented in `packages/canopycms/src/editor/preview-bridge.tsx`. Look for how `data-canopy-path` attributes are used and how the bridge communicates click events. The test app's public page (the preview target) may or may not have these attributes — check `apps/test-app/app/page.tsx`.
-**Files to read first:** `packages/canopycms/src/editor/preview-bridge.tsx`, `apps/test-app/app/page.tsx`, existing preview tests in `field-types.spec.ts`
+**Changes to test app:** Added `apps/test-app/app/HomeView.tsx` (client component using `useCanopyPreview` and `fieldProps` to attach `data-canopy-path` attributes); updated `apps/test-app/app/page.tsx` to render `HomeView` instead of static HTML.
+**Notes:** `[data-canopy-field="title"]` resolves to 2 elements (FieldWrapper div + input) — the focus handler uses `querySelector` which finds the FieldWrapper div first. Use `page.waitForFunction()` to poll the DOM for the transient box-shadow (1200ms window) instead of `toHaveCSS` (which has strict-mode issues with duplicate selectors). Preview sync: home entry previews at `/?branch=main`; after preview bridge sends data, the title element shows "Home Page" and is clickable. The `entryPath` in the focus message matches `currentEntry.previewSrc` (both `/?branch=main`).
 
 ### 10. ⬜ Preview reflects live edits without save
 **Spec file:** `preview-bridge.spec.ts`
