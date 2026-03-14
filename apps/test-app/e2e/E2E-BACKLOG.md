@@ -1,5 +1,29 @@
 # E2E Test Backlog
 
+## Session Instructions (for Claude)
+
+Pick the first ⬜ item below and implement it end-to-end. Follow these steps:
+
+1. **Read** the files listed under "Files to read first" for that item, plus any components it references.
+2. **Add `data-testid` attributes** to the relevant editor components in `packages/canopycms/src/editor/` as needed.
+3. **Write the test** in the spec file listed. Mirror the pattern from `apps/test-app/e2e/tests/editor-happy-path.spec.ts`:
+   - `beforeEach`: `resetWorkspace()`, `ensureMainBranch()`, `switchUser(page, 'admin')`
+   - Use `test.step()` to name each phase clearly
+   - Use `data-testid` selectors; fall back to ARIA roles (`page.getByRole(...)`) for Mantine modals/dialogs (Mantine keeps modal root divs in the DOM when closed — put `data-testid` on an element **inside** the modal content, not on `<Modal>` itself)
+4. **Run the test** using MCP Playwright tools (`mcp__playwright__*`) to observe the live browser, then also run via terminal: `npx playwright test <spec-name> --project chromium` from the repo root. The test server auto-starts if not already running.
+5. **Iterate** until the test passes (green). Read the error context file at `test-results/.../error-context.md` and take screenshots via MCP to debug failures.
+6. **Update this file**: mark the item ✅, add a `**Status:**` line, and add `**Notes:**` with any gotchas discovered.
+7. **Provide a commit message** (but do NOT run `git add` or `git commit`).
+
+### Key gotchas learned so far
+
+- Mantine `<Modal>` renders a root wrapper div that is always in the DOM (hidden when closed). Put `data-testid` on a child element inside the modal body, not on `<Modal>` itself.
+- Navigator item labels (`entry-nav-item-{label}`) use the entry's **display label** (often the entry type label for new entries with no title), not the slug.
+- After a page reload, collection tree nodes are collapsed — click the collection node to expand before checking for child entries.
+- Use `page.getByRole('dialog', { name: '...' })` as an alternative to `data-testid` for detecting modal open/close.
+
+---
+
 Each item below is a self-contained test scenario for a Claude session to implement.
 Existing tests live in `apps/test-app/e2e/tests/`. Fixtures are in `apps/test-app/e2e/fixtures/`.
 The test app runs on `http://localhost:5174` (started by `npm run dev -w canopycms-test-app`).
@@ -15,21 +39,22 @@ Use existing fixtures:
 
 ## Entry CRUD Operations
 
-### 1. Create a new entry
+### 1. ✅ Create a new entry
 
+**Status:** Done — `entry-crud.spec.ts` › "create a new entry"
 **Spec file:** `entry-crud.spec.ts`
 **Scenario:** From the editor with the home collection open, click the "+" or "New Entry" button in the entry navigator. Verify the create-entry modal opens (`EntryCreateModal.tsx`). Fill in the slug/title fields. Submit. Verify the new entry appears in the navigator and the form is populated. Reload and verify persistence.
-**data-testids needed:** Check `EntryCreateModal.tsx` for existing testids or add `data-testid="create-entry-button"`, `data-testid="entry-slug-input"`, `data-testid="create-entry-submit"`.
-**Files to read first:** `packages/canopycms/src/editor/EntryCreateModal.tsx`, `packages/canopycms/src/editor/EntryNavigator.tsx`, `apps/test-app/e2e/fixtures/editor-page.ts`
+**data-testids added:** `data-testid="entry-slug-input"` on slug TextInput, `data-testid="create-entry-submit"` on Create button (both in `EntryCreateModal.tsx`); `data-testid="add-entry-menu-item"` on "Add Entry" Menu.Item in `EntryNavigator.tsx`.
+**Notes:** Modal testid must go on inner `<Stack>`, not `<Modal>` (Mantine keeps the root div in DOM when closed). Navigator label for a new entry is the entry type label ("Post"), not the slug.
 
-### 2. Rename an entry
+### 2. ⬜ Rename an entry
 
 **Spec file:** `entry-crud.spec.ts`
 **Scenario:** With an entry selected, open its context menu or find a rename action. Verify the rename modal opens (`RenameEntryModal.tsx`). Enter a new slug. Submit. Verify the navigator updates and the URL/slug reflects the new name. Reload and verify the renamed entry loads.
 **data-testids needed:** Check `RenameEntryModal.tsx` for existing testids or add `data-testid="rename-entry-button"`, `data-testid="rename-slug-input"`, `data-testid="rename-entry-submit"`.
 **Files to read first:** `packages/canopycms/src/editor/RenameEntryModal.tsx`
 
-### 3. Delete an entry
+### 3. ⬜ Delete an entry
 
 **Spec file:** `entry-crud.spec.ts`
 **Scenario:** Create a fresh entry (via API or UI), then trigger delete. Verify the confirm-delete modal opens (`ConfirmDeleteModal.tsx`). Confirm deletion. Verify the entry is removed from the navigator. Reload and verify it is gone.
@@ -40,28 +65,28 @@ Use existing fixtures:
 
 ## Field Types (Unskip / New)
 
-### 4. MDX / textarea field editing
+### 4. ⬜ MDX / textarea field editing
 
 **Spec file:** `field-types.spec.ts` (unskip or replace existing skipped tests)
 **Scenario:** The existing tests are skipped with TODO "Rewrite to create post via API". Create a post entry via the Canopy API (POST to the test server) instead of via UI, then open it in the editor. Edit the `body` textarea field. Save. Reload and verify persistence.
 **Context:** The posts collection has an MDX `body` field. The API route is `/api/canopy/[...canopy]`. Look at `apps/test-app/e2e/tests/field-types.spec.ts` for the skipped tests and the TODO comment. Look at `packages/canopycms/src/api/` for the write-entry endpoint.
 **Files to read first:** `apps/test-app/e2e/tests/field-types.spec.ts`, `packages/canopycms/src/api/routes/`
 
-### 5. Toggle (boolean) field
+### 5. ⬜ Toggle (boolean) field
 
 **Spec file:** `field-types.spec.ts`
 **Scenario:** Add a boolean/toggle field to the test app's home schema. Open the entry. Toggle it on and off. Save. Reload and verify the persisted value.
 **data-testids needed:** Add `data-testid="field-toggle-{fieldName}"` or use `data-canopy-field` on the toggle input in `packages/canopycms/src/editor/fields/ToggleField.tsx`.
 **Files to read first:** `packages/canopycms/src/editor/fields/ToggleField.tsx`, `apps/test-app/canopycms.config.ts` (or schema file)
 
-### 6. Select (enum) field
+### 6. ⬜ Select (enum) field
 
 **Spec file:** `field-types.spec.ts`
 **Scenario:** Add a select field to the test app schema. Open the entry. Change the selected value. Save. Reload and verify persistence.
 **data-testids needed:** Add `data-canopy-field` on the select in `packages/canopycms/src/editor/fields/SelectField.tsx`.
 **Files to read first:** `packages/canopycms/src/editor/fields/SelectField.tsx`
 
-### 7. List field — add and remove items
+### 7. ⬜ List field — add and remove items
 
 **Spec file:** `field-types.spec.ts`
 **Scenario:** The home schema has a `featuredPosts` list field. Open the home entry. Add a new list item. Verify it appears. Remove it. Save. Reload and verify the list state.
@@ -72,7 +97,7 @@ Use existing fixtures:
 
 ## Discard Draft
 
-### 8. Discard file draft
+### 8. ⬜ Discard file draft
 
 **Spec file:** `editor-happy-path.spec.ts` (add test) or new `discard-draft.spec.ts`
 **Scenario:** Make edits to an entry. Verify the save button is enabled and a "discard" or "revert" action is available. Click discard. Verify the field values revert to their last-saved state without a page reload.
@@ -83,14 +108,14 @@ Use existing fixtures:
 
 ## Preview Bridge
 
-### 9. Preview focus — click preview element to jump to editor field
+### 9. ⬜ Preview focus — click preview element to jump to editor field
 
 **Spec file:** `preview-bridge.spec.ts`
 **Scenario:** Open the editor with the home entry. In the preview pane (iframe), click an element that has a `data-canopy-path` attribute. Verify that the corresponding field in the form pane scrolls into view and/or receives focus.
 **Context:** The preview bridge is implemented in `packages/canopycms/src/editor/preview-bridge.tsx`. Look for how `data-canopy-path` attributes are used and how the bridge communicates click events. The test app's public page (the preview target) may or may not have these attributes — check `apps/test-app/app/page.tsx`.
 **Files to read first:** `packages/canopycms/src/editor/preview-bridge.tsx`, `apps/test-app/app/page.tsx`, existing preview tests in `field-types.spec.ts`
 
-### 10. Preview reflects live edits without save
+### 10. ⬜ Preview reflects live edits without save
 
 **Spec file:** `preview-bridge.spec.ts`
 **Scenario:** Type into a field. Before saving, verify the preview pane updates with the new content (draft mode). Verify the preview shows the old content before editing begins.
@@ -101,7 +126,7 @@ Use existing fixtures:
 
 ## Comments System
 
-### 11. Add a branch-level comment
+### 11. ⬜ Add a branch-level comment
 
 **Spec file:** `comments.spec.ts`
 **Scenario:** Create a branch. Open the branch manager or comments panel. Add a branch-level comment. Verify it appears in the comments list. Reload and verify persistence.
@@ -109,7 +134,7 @@ Use existing fixtures:
 **data-testids needed:** Find or add testids for comment panel open button, comment textarea, comment submit button, comment list items.
 **Files to read first:** `packages/canopycms/src/editor/CommentsPanel.tsx`, `packages/canopycms/src/editor/BranchComments.tsx`
 
-### 12. Add and resolve a field-level comment thread
+### 12. ⬜ Add and resolve a field-level comment thread
 
 **Spec file:** `comments.spec.ts`
 **Scenario:** Select an entry and field. Trigger a field-level comment (look for a comment icon near the field or in the preview). Add a comment. Verify an inline comment thread appears (`InlineCommentThread.tsx`). Resolve/close the thread. Verify it is marked resolved.
@@ -119,14 +144,14 @@ Use existing fixtures:
 
 ## Branch Workflow Extensions
 
-### 13. Approve a submitted branch (if UI exists)
+### 13. ⬜ Approve a submitted branch (if UI exists)
 
 **Spec file:** `branch-workflow.spec.ts` (add test)
 **Scenario:** Check if there is an in-editor "Approve" action (separate from the GitHub PR flow). Look at `BranchManager.tsx` for approve button / reviewer approval UI. If it exists, test: create branch → submit → switch to reviewer user → approve → verify branch status changes.
 **Context:** Current branch tests check that non-reviewers cannot see request-changes, but approval may go through GitHub only. Verify by reading `packages/canopycms/src/editor/BranchManager.tsx`.
 **Files to read first:** `packages/canopycms/src/editor/BranchManager.tsx`, `apps/test-app/e2e/tests/branch-workflow.spec.ts`
 
-### 14. Branch switching preserves editor state
+### 14. ⬜ Branch switching preserves editor state
 
 **Spec file:** `branch-workflow.spec.ts` (add test)
 **Scenario:** Open branch A, edit an entry but do NOT save. Switch to branch B. Verify branch B loads correctly. Switch back to branch A. Verify the unsaved draft is preserved (or document expected behavior if it's discarded).
@@ -136,13 +161,13 @@ Use existing fixtures:
 
 ## Entry Navigator
 
-### 15. Entry navigator — keyboard navigation
+### 15. ⬜ Entry navigator — keyboard navigation
 
 **Spec file:** `entry-navigator.spec.ts`
 **Scenario:** Open the entry navigator. Use arrow keys to navigate between entries. Press Enter to select. Verify the form pane updates to the selected entry.
 **Files to read first:** `packages/canopycms/src/editor/EntryNavigator.tsx`
 
-### 16. Entry navigator — search/filter
+### 16. ⬜ Entry navigator — search/filter
 
 **Spec file:** `entry-navigator.spec.ts`
 **Scenario:** If the entry navigator has a search/filter input, type a query. Verify the entry list filters. Clear the query and verify all entries return.
@@ -153,14 +178,14 @@ Use existing fixtures:
 
 ## Error & Edge Cases
 
-### 17. Save failure shows error notification
+### 17. ⬜ Save failure shows error notification
 
 **Spec file:** `error-handling.spec.ts`
 **Scenario:** Intercept the save API call and force it to return a 500 error (use Playwright's `page.route()`). Make an edit and click save. Verify an error notification appears (Mantine notification with error styling).
 **Context:** Notifications use Mantine's notification system. The selector `.mantine-Notification-root` already exists in fixtures.
 **Files to read first:** `apps/test-app/e2e/fixtures/editor-page.ts`, `packages/canopycms/src/editor/Editor.tsx` (save error handling)
 
-### 18. Editor loads with no entries in collection
+### 18. ⬜ Editor loads with no entries in collection
 
 **Spec file:** `error-handling.spec.ts`
 **Scenario:** Navigate to the editor with a collection that has no entries. Verify the UI handles this gracefully (empty state message, no crash). Optionally verify the "create entry" action is still available.
