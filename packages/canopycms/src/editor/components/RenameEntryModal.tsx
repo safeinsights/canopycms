@@ -95,7 +95,7 @@ export function RenameEntryModal({
       closeOnClickOutside={!isSaving}
       closeOnEscape={!isSaving}
     >
-      <Stack gap="md">
+      <Stack gap="md" data-testid="rename-entry-modal">
         {error && (
           <Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
             {error}
@@ -116,6 +116,7 @@ export function RenameEntryModal({
           required
           disabled={isSaving}
           data-autofocus
+          data-testid="rename-slug-input"
         />
 
         <Text size="xs" c="dimmed">
@@ -132,7 +133,7 @@ export function RenameEntryModal({
           <Button variant="subtle" onClick={onClose} disabled={isSaving}>
             Cancel
           </Button>
-          <Button onClick={handleSave} loading={isSaving} disabled={!canSave}>
+          <Button onClick={handleSave} loading={isSaving} disabled={!canSave} data-testid="rename-entry-submit">
             Rename
           </Button>
         </Group>

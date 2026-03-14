@@ -543,6 +543,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
                         event.stopPropagation()
                         onRenameEntry(entryPath)
                       }}
+                      data-testid="rename-entry-menu-item"
                     >
                       Rename Entry
                     </Menu.Item>

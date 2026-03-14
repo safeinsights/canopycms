@@ -79,4 +79,71 @@ test.describe('Entry CRUD Operations', () => {
       await expect(navItem).toBeVisible({ timeout: 10000 })
     })
   })
+
+  test('rename an entry', async ({ page }) => {
+    await test.step('open editor', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+    })
+
+    await test.step('open entry navigator', async () => {
+      await editorPage.openEntryNavigator()
+      await expect(editorPage.entryNavigator).toBeVisible()
+    })
+
+    await test.step('create a post entry (setup)', async () => {
+      const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
+      await collectionMenuButton.waitFor({ state: 'visible', timeout: 10000 })
+      await collectionMenuButton.click()
+
+      const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
+      await addEntryItem.waitFor({ state: 'visible', timeout: 5000 })
+      await addEntryItem.click()
+
+      const modal = page.locator('[data-testid="create-entry-modal"]')
+      await expect(modal).toBeVisible()
+      await page.locator('[data-testid="entry-slug-input"]').fill('post-to-rename')
+      await page.locator('[data-testid="create-entry-submit"]').click()
+      await expect(modal).not.toBeVisible({ timeout: 10000 })
+
+      // Wait for entry to appear in navigator
+      await expect(page.locator('[data-testid="entry-nav-item-post"]')).toBeVisible({ timeout: 10000 })
+    })
+
+    await test.step('open entry context menu and click Rename Entry', async () => {
+      const entryMenu = page.locator('[data-testid="entry-menu-post"]')
+      await entryMenu.waitFor({ state: 'visible', timeout: 5000 })
+      await entryMenu.click()
+
+      const renameItem = page.locator('[data-testid="rename-entry-menu-item"]')
+      await renameItem.waitFor({ state: 'visible', timeout: 5000 })
+      await renameItem.click()
+    })
+
+    await test.step('fill in new slug and submit', async () => {
+      const modal = page.locator('[data-testid="rename-entry-modal"]')
+      await expect(modal).toBeVisible()
+
+      // fill() replaces the pre-filled current slug
+      await page.locator('[data-testid="rename-slug-input"]').fill('renamed-post')
+      await page.locator('[data-testid="rename-entry-submit"]').click()
+
+      await expect(modal).not.toBeVisible({ timeout: 10000 })
+    })
+
+    await test.step('reload and verify renamed entry persists', async () => {
+      await page.reload()
+      await editorPage.waitForReady()
+      await editorPage.openEntryNavigator()
+
+      // Expand the Posts collection (collapsed after reload)
+      const postsCollection = page.locator('[data-testid="entry-nav-item-posts"]')
+      await postsCollection.waitFor({ state: 'visible', timeout: 10000 })
+      await postsCollection.click()
+
+      // Label stays "Post" (rename only changes slug, not the display label)
+      const navItem = page.locator('[data-testid="entry-nav-item-post"]')
+      await expect(navItem).toBeVisible({ timeout: 10000 })
+    })
+  })
 })

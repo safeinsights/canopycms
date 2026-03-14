@@ -83,5 +83,9 @@
       "Bash(git diff:*)",
       "Bash(git log:*)"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "playwright"
+  ],
+  "enableAllProjectMcpServers": true
 }
