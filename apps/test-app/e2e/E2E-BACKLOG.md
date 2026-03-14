@@ -106,12 +106,12 @@ Use existing fixtures:
 **Changes to test app:** Added `apps/test-app/app/HomeView.tsx` (client component using `useCanopyPreview` and `fieldProps` to attach `data-canopy-path` attributes); updated `apps/test-app/app/page.tsx` to render `HomeView` instead of static HTML.
 **Notes:** `[data-canopy-field="title"]` resolves to 2 elements (FieldWrapper div + input) — the focus handler uses `querySelector` which finds the FieldWrapper div first. Use `page.waitForFunction()` to poll the DOM for the transient box-shadow (1200ms window) instead of `toHaveCSS` (which has strict-mode issues with duplicate selectors). Preview sync: home entry previews at `/?branch=main`; after preview bridge sends data, the title element shows "Home Page" and is clickable. The `entryPath` in the focus message matches `currentEntry.previewSrc` (both `/?branch=main`).
 
-### 10. ⬜ Preview reflects live edits without save
+### 10. ✅ Preview reflects live edits without save
 
+**Status:** Done — `preview-bridge.spec.ts` › "preview reflects live edits without saving"
 **Spec file:** `preview-bridge.spec.ts`
 **Scenario:** Type into a field. Before saving, verify the preview pane updates with the new content (draft mode). Verify the preview shows the old content before editing begins.
-**Context:** Partially covered by `field-types.spec.ts` (waitForPreviewUpdate). Expand to verify the actual content rendered in the iframe changes.
-**Files to read first:** `apps/test-app/e2e/tests/field-types.spec.ts`, `packages/canopycms/src/editor/preview-bridge.tsx`
+**Notes:** Straightforward once HomeView has `data-canopy-path` attributes (from item #9). Wait for `previewTitle` to `toContainText(liveTitle)` with a 10s timeout — the preview bridge sends the draft update via postMessage on each field change, so the iframe updates near-instantly after typing.
 
 ---
 
