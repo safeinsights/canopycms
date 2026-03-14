@@ -203,6 +203,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               value={Boolean(currentValue)}
               onChange={(v) => update(Boolean(v))}
               dataCanopyField={normalizeCanopyPath(path)}
+              testId={`field-toggle-${field.name}`}
             />,
           )
         case 'markdown':

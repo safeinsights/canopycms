@@ -67,33 +67,20 @@ Use existing fixtures:
 
 ## Field Types (Unskip / New)
 
-### 4. ⬜ MDX / textarea field editing
+### 4. ✅ MDX / textarea field editing
 
-**Spec file:** `field-types.spec.ts` (unskip or replace existing skipped tests)
-**Scenario:** The existing tests are skipped with TODO "Rewrite to create post via API". Create a post entry via the Canopy API (POST to the test server) instead of via UI, then open it in the editor. Edit the `body` textarea field. Save. Reload and verify persistence.
-**Context:** The posts collection has an MDX `body` field. The API route is `/api/canopy/[...canopy]`. Look at `apps/test-app/e2e/tests/field-types.spec.ts` for the skipped tests and the TODO comment. Look at `packages/canopycms/src/api/` for the write-entry endpoint.
-**Files to read first:** `apps/test-app/e2e/tests/field-types.spec.ts`, `packages/canopycms/src/api/routes/`
+**Status:** Done — `field-types.spec.ts` › "textarea/MDX field: multi-line content" (unskipped)
+**Spec file:** `field-types.spec.ts`
+**Scenario:** Create a post entry via the UI, edit the `body` rich text field, save, reload and verify persistence.
+**Notes:** No API creation needed — UI creation (same pattern as entry-crud tests) works fine. The body field is a BlockNote-style rich text editor with ARIA role `textbox` and name `"editable markdown"` — interact via `page.getByRole('textbox', { name: 'editable markdown' })`. Key gotcha: after creating the entry, the navigator drawer is still open and its overlay blocks clicks on the form pane — press `Escape` to close the drawer before interacting with form fields.
 
-### 5. ⬜ Toggle (boolean) field
+### 5. ✅ Toggle (boolean) field
 
+**Status:** Done — `field-types.spec.ts` › "toggle (boolean) field: on/off and persistence"
 **Spec file:** `field-types.spec.ts`
 **Scenario:** Add a boolean/toggle field to the test app's home schema. Open the entry. Toggle it on and off. Save. Reload and verify the persisted value.
-**data-testids needed:** Add `data-testid="field-toggle-{fieldName}"` or use `data-canopy-field` on the toggle input in `packages/canopycms/src/editor/fields/ToggleField.tsx`.
-**Files to read first:** `packages/canopycms/src/editor/fields/ToggleField.tsx`, `apps/test-app/canopycms.config.ts` (or schema file)
-
-### 6. ⬜ Select (enum) field
-
-**Spec file:** `field-types.spec.ts`
-**Scenario:** Add a select field to the test app schema. Open the entry. Change the selected value. Save. Reload and verify persistence.
-**data-testids needed:** Add `data-canopy-field` on the select in `packages/canopycms/src/editor/fields/SelectField.tsx`.
-**Files to read first:** `packages/canopycms/src/editor/fields/SelectField.tsx`
-
-### 7. ⬜ List field — add and remove items
-
-**Spec file:** `field-types.spec.ts`
-**Scenario:** The home schema has a `featuredPosts` list field. Open the home entry. Add a new list item. Verify it appears. Remove it. Save. Reload and verify the list state.
-**data-testids needed:** Add `data-testid="list-add-item-{fieldName}"`, `data-testid="list-remove-item-{fieldName}-{index}"` to the list field component. Find the component at `packages/canopycms/src/editor/fields/` (look for list/array field).
-**Files to read first:** `packages/canopycms/src/editor/fields/`, `packages/canopycms/src/editor/FormRenderer.tsx`
+**data-testids added:** `data-testid="field-toggle-{fieldName}"` via `wrapperProps` in `ToggleField.tsx` (put on the visible root wrapper div, not on the hidden `<input>`); `testId` prop passed from `FormRenderer.tsx` using `field.name`.
+**Notes:** Mantine `Switch` puts extra props on the hidden `<input>` element (e.g., `data-testid`). Use `wrapperProps={{ 'data-testid': testId }}` to put the testid on the visible root wrapper div instead. Then `toggle.locator('input[type="checkbox"]')` gives the hidden input for `toBeChecked()` assertions. Clicking the wrapper div toggles the switch.
 
 ---
 
@@ -193,6 +180,24 @@ Use existing fixtures:
 **Scenario:** Navigate to the editor with a collection that has no entries. Verify the UI handles this gracefully (empty state message, no crash). Optionally verify the "create entry" action is still available.
 **Context:** May require creating a test collection with no entries or using the API to delete all entries from a test branch.
 **Files to read first:** `packages/canopycms/src/editor/EntryNavigator.tsx`, `packages/canopycms/src/editor/Editor.tsx`
+
+---
+
+## Field Types (Unskip / New)
+
+### 18. ⬜ Select (enum) field
+
+**Spec file:** `field-types.spec.ts`
+**Scenario:** Add a select field to the test app schema. Open the entry. Change the selected value. Save. Reload and verify persistence.
+**data-testids needed:** Add `data-canopy-field` on the select in `packages/canopycms/src/editor/fields/SelectField.tsx`.
+**Files to read first:** `packages/canopycms/src/editor/fields/SelectField.tsx`
+
+### 19. ⬜ List field — add and remove items
+
+**Spec file:** `field-types.spec.ts`
+**Scenario:** The home schema has a `featuredPosts` list field. Open the home entry. Add a new list item. Verify it appears. Remove it. Save. Reload and verify the list state.
+**data-testids needed:** Add `data-testid="list-add-item-{fieldName}"`, `data-testid="list-remove-item-{fieldName}-{index}"` to the list field component. Find the component at `packages/canopycms/src/editor/fields/` (look for list/array field).
+**Files to read first:** `packages/canopycms/src/editor/fields/`, `packages/canopycms/src/editor/FormRenderer.tsx`
 
 ---
 

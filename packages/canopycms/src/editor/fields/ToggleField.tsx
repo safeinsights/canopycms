@@ -8,6 +8,7 @@ export interface ToggleFieldProps {
   value: boolean
   onChange: (value: boolean) => void
   dataCanopyField?: string
+  testId?: string
 }
 
 export const ToggleField: React.FC<ToggleFieldProps> = ({
@@ -16,6 +17,7 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
   value,
   onChange,
   dataCanopyField,
+  testId,
 }) => {
   const inputId = id ?? useId()
   return (
@@ -26,6 +28,7 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
       onChange={(e) => onChange(e.currentTarget.checked)}
       size="md"
       data-canopy-field={dataCanopyField}
+      wrapperProps={testId ? { 'data-testid': testId } : undefined}
     />
   )
 }

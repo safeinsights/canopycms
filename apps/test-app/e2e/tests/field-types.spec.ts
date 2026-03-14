@@ -50,62 +50,100 @@ test.describe('Multi-Field Content Editing', () => {
     await editorPage.verifyFieldValue('title', testValue)
   })
 
-  test.skip('textarea/MDX field: multi-line content', async ({ page }) => {
-    // TODO: Rewrite to create post via API instead of manually writing files.
-    // Post files use the naming convention post.{slug}.{id}.json inside posts.qrstuvwxyz12/
-    const fs = await import('node:fs/promises')
-    const path = await import('node:path')
-    const testPostPath = path.join(
-      process.cwd(),
-      'apps/test-app/.canopy-prod-sim/content-branches/main/content/posts.qrstuvwxyz12/test-mdx-post.json',
-    )
+  test('textarea/MDX field: multi-line content', async ({ page }) => {
+    await test.step('open editor', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+    })
 
-    // Ensure posts directory exists
-    await fs.mkdir(path.dirname(testPostPath), { recursive: true })
+    await test.step('create a post entry via UI', async () => {
+      await editorPage.openEntryNavigator()
 
-    // Create initial post content
-    await fs.writeFile(
-      testPostPath,
-      JSON.stringify(
-        {
-          title: 'Test MDX Post',
-          author: 'Test Author',
-          date: '2026-01-10',
-          tags: [],
-          body: 'Initial content',
-        },
-        null,
-        2,
-      ),
-    )
+      const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
+      await collectionMenuButton.waitFor({ state: 'visible', timeout: 10000 })
+      await collectionMenuButton.click()
 
-    await editorPage.goto()
-    await editorPage.waitForReady()
+      const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
+      await addEntryItem.waitFor({ state: 'visible', timeout: 5000 })
+      await addEntryItem.click()
 
-    // Open the test post
-    await editorPage.openEntryNavigator()
+      const modal = page.locator('[data-testid="create-entry-modal"]')
+      await expect(modal).toBeVisible()
+      await page.locator('[data-testid="entry-slug-input"]').fill('mdx-body-test')
+      await page.locator('[data-testid="create-entry-submit"]').click()
+      await expect(modal).not.toBeVisible({ timeout: 10000 })
 
-    // Expand Posts collection and select the test post
-    const postsNode = page.locator('[data-testid="entry-nav-item-posts"]')
-    await postsNode.click()
+      // Close the navigator drawer so the form pane is interactive
+      await page.keyboard.press('Escape')
+      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: 5000 })
+    })
 
-    // Wait for posts to expand
-    await page.waitForTimeout(300)
+    await test.step('fill title and body fields', async () => {
+      // Title is a regular text input
+      await editorPage.fillTextField('title', 'Test Body Post')
 
-    // Select the test post
-    await editorPage.selectEntry('Test MDX Post')
+      // Body is a rich text (markdown) editor — interact via ARIA role
+      const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
+      await bodyEditor.waitFor({ state: 'visible', timeout: 10000 })
+      await bodyEditor.fill('Hello world body content')
+    })
 
-    // Edit body field (MDX field - textarea) with multi-line content
-    const multiLineContent = `Multi-line test\nSecond line\nThird line with **markdown**`
-    await editorPage.fillTextareaField('body', multiLineContent)
+    await test.step('save', async () => {
+      await editorPage.saveAndVerify()
+    })
 
-    await editorPage.saveAndVerify()
+    await test.step('reload and verify body persists', async () => {
+      await page.reload()
+      await editorPage.waitForReady()
 
-    // Verify persistence
-    const content = await readContentFile<{ title: string; body: string }>(
-      'posts/test-mdx-post.json',
-    )
-    expect(content.body).toBe(multiLineContent)
+      // The post should still be selected after reload
+      const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
+      await expect(bodyEditor).toBeVisible({ timeout: 10000 })
+      await expect(bodyEditor).toContainText('Hello world body content')
+    })
+  })
+
+  test('toggle (boolean) field: on/off and persistence', async ({ page }) => {
+    await test.step('open editor and select Home Page', async () => {
+      await editorPage.goto()
+      await editorPage.waitForReady()
+      await editorPage.openEntryNavigator()
+      await editorPage.selectEntry('Home Page')
+    })
+
+    const toggle = page.locator('[data-testid="field-toggle-published"]')
+    const toggleInput = toggle.locator('input[type="checkbox"]')
+
+    await test.step('verify initial state is unchecked', async () => {
+      await toggle.waitFor({ state: 'visible', timeout: 10000 })
+      await expect(toggleInput).not.toBeChecked()
+    })
+
+    await test.step('toggle on and save', async () => {
+      await toggle.click()
+      await expect(toggleInput).toBeChecked()
+      await editorPage.saveAndVerify()
+    })
+
+    await test.step('reload and verify published=true persists', async () => {
+      await page.reload()
+      await editorPage.waitForReady()
+      await expect(toggle).toBeVisible({ timeout: 10000 })
+      await expect(toggleInput).toBeChecked()
+    })
+
+    await test.step('toggle off and save', async () => {
+      await toggle.click()
+      await expect(toggleInput).not.toBeChecked()
+      await editorPage.saveAndVerify()
+    })
+
+    await test.step('reload and verify published=false persists', async () => {
+      await page.reload()
+      await editorPage.waitForReady()
+      await expect(toggle).toBeVisible({ timeout: 10000 })
+      await expect(toggleInput).not.toBeChecked()
+    })
   })
 
   test.skip('list field: add/remove items', async () => {
