@@ -1,4 +1,5 @@
 import { type Page, type Locator, expect } from '@playwright/test'
+import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 
 /**
  * Page object for interacting with the Branch Manager in CanopyCMS.
@@ -47,7 +48,7 @@ export class BranchPage {
   async openBranchManager(): Promise<void> {
     await this.branchDropdownButton.click()
     await this.manageBranchesMenuItem.click()
-    await this.branchManager.waitFor({ state: 'visible', timeout: 10000 })
+    await this.branchManager.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
   }
 
   /**
@@ -62,7 +63,7 @@ export class BranchPage {
     await this.createBranchButton.click()
 
     // Wait for form to appear
-    await this.branchNameInput.waitFor({ state: 'visible', timeout: 5000 })
+    await this.branchNameInput.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
 
     // Fill in branch details
     await this.branchNameInput.fill(name)
@@ -107,7 +108,7 @@ export class BranchPage {
    */
   async getBranchStatus(branchName: string): Promise<string> {
     const badge = this.getBranchStatusBadge(branchName)
-    await badge.waitFor({ state: 'visible', timeout: 5000 })
+    await badge.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
     return await badge.textContent() || ''
   }
 
@@ -120,7 +121,7 @@ export class BranchPage {
   async verifyBranchInList(branchName: string): Promise<boolean> {
     try {
       const branchItem = this.getBranchListItem(branchName)
-      await branchItem.waitFor({ state: 'visible', timeout: 5000 })
+      await branchItem.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
       return true
     } catch {
       return false
@@ -137,7 +138,7 @@ export class BranchPage {
     await switchButton.click()
 
     // Wait for the branch dropdown to reflect the new branch (condition-based)
-    await expect(this.branchDropdownButton).toContainText(branchName, { timeout: 10000 })
+    await expect(this.branchDropdownButton).toContainText(branchName, { timeout: STANDARD_TIMEOUT })
   }
 
   /**
@@ -149,7 +150,7 @@ export class BranchPage {
     const submitButton = this.branchManager.locator(`[data-testid="submit-branch-button-${branchName}"]`)
 
     // Wait for button to be enabled
-    await submitButton.waitFor({ state: 'visible', timeout: 5000 })
+    await submitButton.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
 
     // Check if button is disabled and throw a clear error
     const isDisabled = await submitButton.isDisabled()
@@ -161,7 +162,7 @@ export class BranchPage {
 
     // Confirm the Mantine confirmation modal (exact: true avoids matching "Submit Branch..." in EditorHeader)
     const confirmButton = this.page.getByRole('button', { name: 'Submit Branch', exact: true })
-    await confirmButton.waitFor({ state: 'visible', timeout: 5000 })
+    await confirmButton.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
     await confirmButton.click()
   }
 
@@ -176,7 +177,7 @@ export class BranchPage {
 
     // Confirm the Mantine confirmation modal (exact: true avoids matching "Withdraw Branch..." in EditorHeader)
     const confirmButton = this.page.getByRole('button', { name: 'Withdraw Branch', exact: true })
-    await confirmButton.waitFor({ state: 'visible', timeout: 5000 })
+    await confirmButton.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
     await confirmButton.click()
   }
 
@@ -212,7 +213,7 @@ export class BranchPage {
     // Wait for the branch to disappear from the list
     await this.branchManager
       .locator(`[data-testid="branch-list-item-${branchName}"]`)
-      .waitFor({ state: 'hidden', timeout: 10000 })
+      .waitFor({ state: 'hidden', timeout: STANDARD_TIMEOUT })
   }
 
   /**
@@ -255,7 +256,7 @@ export class BranchPage {
    */
   async closeBranchManager(): Promise<void> {
     await this.page.keyboard.press('Escape')
-    await this.branchManager.waitFor({ state: 'hidden', timeout: 5000 })
+    await this.branchManager.waitFor({ state: 'hidden', timeout: SHORT_TIMEOUT })
   }
 
   /**
@@ -266,7 +267,7 @@ export class BranchPage {
    */
   async verifyBranchStatus(branchName: string, expectedStatus: string): Promise<void> {
     const badge = this.getBranchStatusBadge(branchName)
-    await expect(badge).toContainText(expectedStatus, { timeout: 10000 })
+    await expect(badge).toContainText(expectedStatus, { timeout: STANDARD_TIMEOUT })
   }
 
   /**
@@ -275,7 +276,7 @@ export class BranchPage {
    * @param branchName - The name of the branch
    * @param timeout - Maximum time to wait in milliseconds
    */
-  async waitForBranchInList(branchName: string, timeout = 10000): Promise<void> {
+  async waitForBranchInList(branchName: string, timeout = LONG_TIMEOUT): Promise<void> {
     const branchItem = this.getBranchListItem(branchName)
     await branchItem.waitFor({ state: 'visible', timeout })
   }

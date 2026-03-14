@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test'
 import { EditorPage } from '../fixtures/editor-page'
 import { switchUser } from '../fixtures/test-users'
 import { resetWorkspace, ensureMainBranch, readContentFile } from '../fixtures/test-workspace'
+import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
 
 const BASE_URL = 'http://localhost:5174'
 
@@ -60,22 +61,22 @@ test.describe('Multi-Field Content Editing', () => {
       await editorPage.openEntryNavigator()
 
       const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
-      await collectionMenuButton.waitFor({ state: 'visible', timeout: 10000 })
+      await collectionMenuButton.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
       await collectionMenuButton.click()
 
       const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
-      await addEntryItem.waitFor({ state: 'visible', timeout: 5000 })
+      await addEntryItem.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
       await addEntryItem.click()
 
       const modal = page.locator('[data-testid="create-entry-modal"]')
       await expect(modal).toBeVisible()
       await page.locator('[data-testid="entry-slug-input"]').fill('mdx-body-test')
       await page.locator('[data-testid="create-entry-submit"]').click()
-      await expect(modal).not.toBeVisible({ timeout: 10000 })
+      await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
 
       // Close the navigator drawer so the form pane is interactive
       await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: 5000 })
+      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
     })
 
     await test.step('fill title and body fields', async () => {
@@ -84,7 +85,7 @@ test.describe('Multi-Field Content Editing', () => {
 
       // Body is a rich text (markdown) editor — interact via ARIA role
       const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
-      await bodyEditor.waitFor({ state: 'visible', timeout: 10000 })
+      await bodyEditor.waitFor({ state: 'visible', timeout: LONG_TIMEOUT })
       await bodyEditor.fill('Hello world body content')
     })
 
@@ -98,7 +99,7 @@ test.describe('Multi-Field Content Editing', () => {
 
       // The post should still be selected after reload
       const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
-      await expect(bodyEditor).toBeVisible({ timeout: 10000 })
+      await expect(bodyEditor).toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(bodyEditor).toContainText('Hello world body content')
     })
   })
@@ -115,7 +116,7 @@ test.describe('Multi-Field Content Editing', () => {
     const toggleInput = toggle.locator('input[type="checkbox"]')
 
     await test.step('verify initial state is unchecked', async () => {
-      await toggle.waitFor({ state: 'visible', timeout: 10000 })
+      await toggle.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
       await expect(toggleInput).not.toBeChecked()
     })
 
@@ -128,7 +129,7 @@ test.describe('Multi-Field Content Editing', () => {
     await test.step('reload and verify published=true persists', async () => {
       await page.reload()
       await editorPage.waitForReady()
-      await expect(toggle).toBeVisible({ timeout: 10000 })
+      await expect(toggle).toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(toggleInput).toBeChecked()
     })
 
@@ -141,7 +142,7 @@ test.describe('Multi-Field Content Editing', () => {
     await test.step('reload and verify published=false persists', async () => {
       await page.reload()
       await editorPage.waitForReady()
-      await expect(toggle).toBeVisible({ timeout: 10000 })
+      await expect(toggle).toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(toggleInput).not.toBeChecked()
     })
   })
