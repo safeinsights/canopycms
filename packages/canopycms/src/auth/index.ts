@@ -7,3 +7,6 @@ export {
   validateAuthContext,
 } from './context-helpers'
 export type { HeadersLike } from './context-helpers'
+export { CachingAuthPlugin } from './caching-auth-plugin'
+export type { AuthCacheProvider, TokenVerifier } from './caching-auth-plugin'
+export { FileBasedAuthCache } from './file-based-auth-cache'

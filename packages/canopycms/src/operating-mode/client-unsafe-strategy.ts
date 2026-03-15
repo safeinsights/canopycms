@@ -59,10 +59,13 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
   }
 
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
+    const envWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+    const workspace = path.resolve(envWorkspace ?? DEFAULT_PROD_WORKSPACE)
     return {
       shouldAutoInitLocal: false,
       defaultRemotePath: '',
       envVarName: 'CANOPYCMS_REMOTE_URL',
+      autoDetectRemotePath: path.join(workspace, 'remote.git'),
     }
   }
 

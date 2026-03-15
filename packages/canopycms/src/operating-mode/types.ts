@@ -34,6 +34,13 @@ export interface RemoteUrlConfig {
   defaultRemotePath: string
   /** Environment variable name for remote URL */
   envVarName: string
+  /**
+   * Absolute path to check for auto-detection of a pre-existing local remote.
+   * If this path exists on disk, it's used as the remote URL (file:// protocol).
+   * Used in prod mode where the EC2 worker creates remote.git on EFS.
+   * Unlike shouldAutoInitLocal, this does NOT create the remote — just detects it.
+   */
+  autoDetectRemotePath?: string
 }
 
 /**

@@ -1,2 +1,6 @@
 export { ClerkAuthPlugin, createClerkAuthPlugin } from './clerk-plugin'
 export type { ClerkAuthConfig } from './clerk-plugin'
+export { createClerkJwtVerifier } from './jwt-verifier'
+export type { ClerkJwtVerifierConfig } from './jwt-verifier'
+export { refreshClerkCache } from './cache-writer'
+export type { RefreshClerkCacheOptions, RefreshClerkCacheResult } from './cache-writer'

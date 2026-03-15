@@ -313,6 +313,23 @@ describe('Operating Mode Strategies', () => {
         const strategy = operatingStrategy(mode)
         expect(strategy.getGitExcludePattern()).toBe('.canopy-meta/')
       })
+
+      it('should have autoDetectRemotePath pointing to remote.git at workspace root', () => {
+        delete process.env.CANOPYCMS_WORKSPACE_ROOT
+        clearStrategyCache()
+        const strategy = operatingStrategy(mode)
+        const config = strategy.getRemoteUrlConfig()
+        expect(config.shouldAutoInitLocal).toBe(false)
+        expect(config.autoDetectRemotePath).toContain('/mnt/efs/workspace/remote.git')
+      })
+
+      it('should use custom workspace root in autoDetectRemotePath', () => {
+        process.env.CANOPYCMS_WORKSPACE_ROOT = '/custom/workspace'
+        clearStrategyCache()
+        const strategy = operatingStrategy(mode)
+        const config = strategy.getRemoteUrlConfig()
+        expect(config.autoDetectRemotePath).toContain('/custom/workspace/remote.git')
+      })
     })
 
     describe('Local Production Simulation Mode', () => {
