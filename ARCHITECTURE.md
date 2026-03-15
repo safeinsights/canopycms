@@ -730,6 +730,90 @@ Operating modes are implemented using the Strategy pattern, which encapsulates m
 
 **Key design principle**: Strategies return configuration values and flags, not business logic. Complex operations (like git commands) are handled by domain-specific managers (GitManager, BranchWorkspaceManager) that use strategy flags to make decisions.
 
+## Deployment Architecture
+
+CanopyCMS is designed to work in multiple deployment scenarios, from a single server to a split Lambda + worker architecture optimized for cost and security.
+
+### Single Server (Simplest)
+
+The simplest deployment runs CanopyCMS on a single server (EC2, Railway, etc.) with direct internet access:
+- Auth plugin calls the provider API directly (e.g., Clerk)
+- Git operations push/pull to GitHub directly
+- GitHub PR operations happen synchronously in the request cycle
+- No worker, no caching, no task queue needed
+
+This is the default behavior when `githubService` is available and the auth plugin has internet access.
+
+### Lambda + EFS + EC2 Worker (AWS, Cost-Optimized)
+
+For low-cost AWS deployments, CanopyCMS supports splitting into two components that share an EFS filesystem:
+
+**Lambda (no internet access):**
+- Runs the CMS app (editor + preview + API)
+- Authenticates via networkless JWT verification + file-based metadata cache
+- Git operations use a local bare repo (`remote.git`) on EFS via `file://` URL
+- PR operations are queued to a task directory on EFS
+- Holds no sensitive secrets (only public keys and config)
+
+**EC2 Worker (internet access):**
+- Tiny daemon (t4g.nano spot instance, ~$1.50/month)
+- Processes queued tasks: pushes branches to GitHub, creates/updates PRs
+- Syncs `remote.git` with GitHub (fetches upstream changes)
+- Rebases active branch workspaces onto updated main (backlog #10: sync + conflict surfacing)
+- Refreshes auth metadata cache (Clerk users/orgs, or dev test users)
+
+This architecture eliminates NAT Gateway ($32/month) and keeps all secrets on the worker (not Lambda).
+
+### Key Deployment Components
+
+#### `remote.git` — Local Bare Repo
+
+Both `prod` and `prod-sim` modes use a local bare git repository as the "remote" for all branch workspace operations. Branch workspaces clone from and push to this bare repo using `file://` URLs.
+
+- **prod-sim**: Auto-created at `.canopy-prod-sim/remote.git` from the local checkout
+- **prod**: Created by the EC2 worker at `{workspaceRoot}/remote.git`, synced with GitHub
+
+CanopyCMS auto-detects `remote.git` at the workspace root (via `autoDetectRemotePath` in the operating mode strategy). No explicit `CANOPYCMS_REMOTE_URL` env var needed if `remote.git` exists.
+
+#### Auth Caching (CachingAuthPlugin)
+
+`CachingAuthPlugin` wraps any auth plugin's JWT verification with file-based metadata lookups:
+
+1. **Token verification**: A `TokenVerifier` function verifies the JWT locally (no API calls)
+2. **Metadata lookup**: `FileBasedAuthCache` reads user/group data from JSON files on EFS
+
+Each auth plugin package provides its own token verifier and cache writer:
+- `canopycms-auth-clerk`: `createClerkJwtVerifier()` + `refreshClerkCache()`
+- `canopycms-auth-dev`: `createDevTokenVerifier()` + `refreshDevCache()`
+
+The cache is populated by the worker daemon (or `npx canopycms worker run-once` in prod-sim). Lambda reads it on every request. Cache invalidation is mtime-based — when the worker writes new cache files, Lambda picks them up on the next request.
+
+#### Task Queue (Async GitHub Operations)
+
+When `githubService` is unavailable (Lambda has no internet), PR operations are queued to the filesystem:
+
+```
+.tasks/
+  pending/      # Lambda writes task files here
+  processing/   # Worker moves tasks here while executing
+  completed/    # Successful tasks
+  failed/       # Failed tasks (with error details)
+```
+
+The shared helper `github-sync.ts` provides `syncSubmitPr()` and `syncConvertToDraft()` which transparently use `githubService` directly when available, or fall back to the task queue when not. API handlers (submit, withdraw, request-changes) use these helpers without needing to know about the deployment topology.
+
+Branch metadata includes a `syncStatus` field (`synced`, `pending-sync`, `sync-failed`) so the editor UI can show sync progress.
+
+#### Worker CLI
+
+For local development in `prod-sim` mode, the worker can be triggered manually:
+
+```bash
+npx canopycms worker run-once
+```
+
+This processes pending tasks, refreshes the auth cache, and exits. It simulates what the EC2 worker daemon does continuously in production.
+
 ## Context Architecture
 
 CanopyCMS provides a context system that manages authentication, permissions, and content access in a framework-agnostic way.
@@ -1295,8 +1379,17 @@ The tradeoff is slightly more complex import paths, but the improved maintainabi
 ### Why separate packages for auth and framework adapters?
 Keeps the core framework-agnostic. Adopters only install what they need. Testing is simpler because the core doesn't depend on Next.js or Clerk. New frameworks and auth providers can be supported without modifying core code.
 
-### Why do git operations in the request cycle (no worker)?
-Simplicity. Git operations (clone, commit, push) happen synchronously during API requests rather than being queued to a separate worker process. This avoids the complexity of job queues, worker coordination, and eventual consistency. For most content editing use cases, git operations complete fast enough. If this becomes a bottleneck, a worker architecture could be added later.
+### Why git operations in the request cycle, with optional worker?
+
+Local git operations (clone, commit, push to `remote.git`) happen synchronously during API requests — they're fast because they operate on local filesystems. This avoids the complexity of job queues for the common case.
+
+The worker daemon handles **internet-requiring** operations that can't happen in the request cycle when the web server has no internet access (Lambda with no NAT):
+- Pushing from `remote.git` to GitHub
+- Creating/updating PRs via the GitHub API
+- Fetching upstream changes from GitHub
+- Refreshing auth provider metadata cache
+
+On a single server with internet access, no worker is needed — `githubService` handles PR operations synchronously and the auth plugin calls the provider API directly. The worker architecture is additive, not required.
 
 ### Why layer git operations (GitManager vs service methods)?
 

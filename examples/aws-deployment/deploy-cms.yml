@@ -1,0 +1,90 @@
+# Example GitHub Actions workflow for deploying CanopyCMS to AWS.
+#
+# Adapt this for your repo's CI/CD patterns:
+# - OIDC role ARNs for your AWS accounts
+# - ECR repository name
+# - Lambda function name
+# - Trigger paths for your content structure
+
+name: Deploy CMS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'src/**'
+      - 'content/**'
+      - 'canopycms.config.ts'
+      - 'Dockerfile.cms'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: canopycms
+  LAMBDA_FUNCTION_NAME: CmsStack-CmsServiceCmsFunction
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # Required for OIDC
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push CMS Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build \
+            -f Dockerfile.cms \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            .
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      - name: Update Lambda function
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          aws lambda update-function-code \
+            --function-name $LAMBDA_FUNCTION_NAME \
+            --image-uri $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Wait for Lambda update
+        run: |
+          aws lambda wait function-updated \
+            --function-name $LAMBDA_FUNCTION_NAME
+
+      # Optionally restart the EC2 worker to pick up new worker code
+      # This terminates the current instance; ASG launches a replacement
+      # - name: Restart EC2 worker
+      #   run: |
+      #     INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups \
+      #       --auto-scaling-group-names CmsStack-WorkerAsg \
+      #       --query 'AutoScalingGroups[0].Instances[0].InstanceId' \
+      #       --output text)
+      #     aws ec2 terminate-instances --instance-ids $INSTANCE_ID
