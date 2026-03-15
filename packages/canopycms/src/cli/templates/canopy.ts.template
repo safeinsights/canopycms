@@ -2,7 +2,7 @@ import { createNextCanopyContext } from 'canopycms-next'
 import { createClerkAuthPlugin, createClerkJwtVerifier } from 'canopycms-auth-clerk'
 import { createDevAuthPlugin, createDevTokenVerifier } from 'canopycms-auth-dev'
 import type { AuthPlugin } from 'canopycms/auth'
-import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth'
+import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth/cache'
 import config from '../../canopycms.config'
 import { entrySchemaRegistry } from '../schemas'
 

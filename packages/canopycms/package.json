@@ -15,6 +15,7 @@
     "./client": "./src/client.ts",
     "./server": "./src/server.ts",
     "./auth": "./src/auth/index.ts",
+    "./auth/cache": "./src/auth/cache.ts",
     "./http": "./src/http/index.ts",
     "./task-queue": "./src/task-queue/index.ts",
     "./worker/task-queue": "./src/worker/task-queue.ts",

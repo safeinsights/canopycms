@@ -7,6 +7,6 @@ export {
   validateAuthContext,
 } from './context-helpers'
 export type { HeadersLike } from './context-helpers'
-export { CachingAuthPlugin } from './caching-auth-plugin'
+// Server-only implementations (CachingAuthPlugin, FileBasedAuthCache, writeAuthCacheSnapshot)
+// are exported via 'canopycms/auth/cache' to avoid pulling Node.js APIs into client bundles.
 export type { AuthCacheProvider, TokenVerifier } from './caching-auth-plugin'
-export { FileBasedAuthCache, writeAuthCacheSnapshot } from './file-based-auth-cache'

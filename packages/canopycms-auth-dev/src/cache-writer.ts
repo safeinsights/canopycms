@@ -1,4 +1,4 @@
-import { writeAuthCacheSnapshot } from 'canopycms/auth'
+import { writeAuthCacheSnapshot } from 'canopycms/auth/cache'
 import { DEFAULT_USERS, DEFAULT_GROUPS } from './dev-plugin'
 import type { DevUser, DevGroup } from './dev-plugin'
 

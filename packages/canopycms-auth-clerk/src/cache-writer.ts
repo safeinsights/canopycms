@@ -1,5 +1,5 @@
 import { createClerkClient } from '@clerk/backend'
-import { writeAuthCacheSnapshot } from 'canopycms/auth'
+import { writeAuthCacheSnapshot } from 'canopycms/auth/cache'
 
 /**
  * Response types that handle both camelCase and snake_case Clerk SDK variants.
