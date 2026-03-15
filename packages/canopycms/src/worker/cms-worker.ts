@@ -9,8 +9,9 @@ import {
   retryTask,
   recoverOrphanedTasks,
   cleanupOldTasks,
+  cmsTaskQueueLogger,
 } from './task-queue'
-import type { WorkerTask } from './task-queue'
+import type { Task } from './task-queue'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { isFileExistsError } from '../utils/error'
 
@@ -79,6 +80,7 @@ export class CmsWorker {
   private maxRetries: number
   private lockFilePath: string
   private githubRemoteConfigured = false
+  private log = cmsTaskQueueLogger
 
   constructor(private config: CmsWorkerConfig) {
     this.octokit = new Octokit({ auth: config.githubToken })
@@ -103,7 +105,7 @@ export class CmsWorker {
     await this.ensureRemoteGit()
 
     // Recover any orphaned tasks from a previous crash
-    const recovered = await recoverOrphanedTasks(this.taskDir)
+    const recovered = await recoverOrphanedTasks(this.taskDir, undefined, this.log)
     if (recovered > 0) {
       console.log(`Recovered ${recovered} orphaned task(s)`)
     }
@@ -261,11 +263,14 @@ export class CmsWorker {
     if (!this.running) return
 
     let processed = 0
-    let task: WorkerTask | null
-    while (processed < this.maxTasksPerCycle && (task = await dequeueTask(this.taskDir)) !== null) {
+    let task: Task | null
+    while (
+      processed < this.maxTasksPerCycle &&
+      (task = await dequeueTask(this.taskDir, this.log)) !== null
+    ) {
       try {
         const result = await this.executeTaskWithTimeout(task)
-        await completeTask(this.taskDir, task.id, result)
+        await completeTask(this.taskDir, task.id, result, this.log)
         await this.updateBranchMetadata(task, result)
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
@@ -274,10 +279,10 @@ export class CmsWorker {
         const retryCount = task.retryCount ?? 0
         const maxRetries = task.maxRetries ?? this.maxRetries
         if (retryCount < maxRetries) {
-          await retryTask(this.taskDir, task.id, message)
+          await retryTask(this.taskDir, task.id, message, this.log)
           console.log(`  Will retry (attempt ${retryCount + 1}/${maxRetries})`)
         } else {
-          await failTask(this.taskDir, task.id, message)
+          await failTask(this.taskDir, task.id, message, this.log)
           await this.updateBranchMetadataOnFailure(task, message)
           console.error(`  Permanently failed after ${maxRetries} retries`)
         }
@@ -290,7 +295,7 @@ export class CmsWorker {
    * Execute a task with a timeout. Uses AbortController to cancel
    * the underlying operation if the timeout fires.
    */
-  private async executeTaskWithTimeout(task: WorkerTask): Promise<Record<string, unknown>> {
+  private async executeTaskWithTimeout(task: Task): Promise<Record<string, unknown>> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.taskTimeoutMs)
     try {
@@ -300,10 +305,7 @@ export class CmsWorker {
     }
   }
 
-  private async executeTask(
-    task: WorkerTask,
-    signal: AbortSignal,
-  ): Promise<Record<string, unknown>> {
+  private async executeTask(task: Task, signal: AbortSignal): Promise<Record<string, unknown>> {
     const { action, payload } = task
     const branch = payload.branch as string
 
@@ -386,10 +388,7 @@ export class CmsWorker {
    * Update branch metadata after successful task completion.
    * Writes PR URL/number and sets syncStatus to 'synced'.
    */
-  private async updateBranchMetadata(
-    task: WorkerTask,
-    result: Record<string, unknown>,
-  ): Promise<void> {
+  private async updateBranchMetadata(task: Task, result: Record<string, unknown>): Promise<void> {
     const branch = task.payload.branch as string
     if (!branch) return
 
@@ -418,7 +417,7 @@ export class CmsWorker {
    * Update branch metadata after permanent task failure.
    * Sets syncStatus to 'sync-failed' with error details.
    */
-  private async updateBranchMetadataOnFailure(task: WorkerTask, _error: string): Promise<void> {
+  private async updateBranchMetadataOnFailure(task: Task, _error: string): Promise<void> {
     const branch = task.payload.branch as string
     if (!branch) return
 
@@ -464,7 +463,7 @@ export class CmsWorker {
     await this.rebaseActiveBranches()
 
     // Periodically clean up old completed/failed tasks
-    await cleanupOldTasks(this.taskDir)
+    await cleanupOldTasks(this.taskDir, undefined, this.log)
   }
 
   private async ensureGitHubRemote(git: ReturnType<typeof simpleGit>): Promise<void> {
