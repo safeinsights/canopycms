@@ -97,6 +97,7 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 - Git strategy: rebase from main by default with conflict detection; merge fallback if needed
 - UI to show conflicts
 - Helper to abort/resolve is out of scope initially, but detection/reporting is in
+- **Infrastructure done**: CmsWorker.syncGit() + rebaseActiveBranches() handles background sync and conflict detection. UI still needs branch conflict status display.
 
 ### 11. Observability & safety
 
@@ -117,8 +118,9 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 
 ### 14. Caching
 
-- Evaluate if needed based on performance
-- Valkey if required
+- **Auth caching done**: CachingAuthPlugin + FileBasedAuthCache for networkless Lambda operation
+- **User metadata caching done**: Auth cache populated by worker daemon (Clerk or dev auth)
+- Remaining: Evaluate if additional caching needed (content reads, computed data) based on performance
 
 ### 15. Mantine button test investigation
 
@@ -129,6 +131,18 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 - Files: `InlineCommentThread.test.tsx` (2 skipped), `ThreadCarousel.test.tsx` (2 skipped)
 
 ## Completed
+
+- **Deployment Infrastructure** ✅
+  - Lambda + EFS + EC2 Worker architecture (~$5-9/month, no NAT Gateway)
+  - `remote.git` auto-detection (aligns prod with prod-sim bare repo pattern)
+  - Auth caching: `CachingAuthPlugin` + `FileBasedAuthCache` for networkless operation
+  - Clerk + dev auth both support token verifiers and cache writers
+  - Async task queue for GitHub operations (file-based on EFS)
+  - `CmsWorker` daemon (auth-agnostic, cloud-agnostic, in canopycms core)
+  - CDK constructs: `CanopyCmsService` + `CanopyCmsDistribution`
+  - Bootstrapping: `npx canopycms init` + `npx canopycms init-deploy aws`
+  - Worker CLI: `npx canopycms worker run-once` for prod-sim
+  - See [docs/deploying-to-aws.md](docs/deploying-to-aws.md)
 
 - **Other Framework Support** ✅
   - Next.js code abstracted into `canopycms-next` package

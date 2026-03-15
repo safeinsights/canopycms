@@ -11,7 +11,7 @@ Purpose: CanopyCMS is a schema-driven, branch-aware CMS for a team of users to e
 ## First Supported Deployment
 
 - We will eventually be the first user of the CanopyCMS package for our own websites.
-- For this we want to support: production ('prod' operating mode) will be deployed to AWS. Web handling will be via normal Lambda functions (no Edge, no API Gateway). There could be a worker Lambda if isn't fast enough within web request cycle. The filesystem will be EFS.
+- Production ('prod' operating mode) deployed to AWS: Lambda (no internet, via Function URL) + EC2 worker (t4g.nano spot) + EFS. No NAT Gateway. See [docs/deploying-to-aws.md](docs/deploying-to-aws.md) and [ARCHITECTURE.md](ARCHITECTURE.md#deployment-architecture) for details.
 
 ## End Goals / Requirements
 
@@ -56,6 +56,8 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `middleware/` - API middleware patterns (branch access guards)
 - `validation/` - Validation utilities (field traversal, reference validation)
 - `utils/` - Shared utilities (error handling, debug)
+- `worker/` - CmsWorker daemon, task queue, deployment infrastructure
+- `cli/` - Bootstrapping scripts (`npx canopycms init`, `worker run-once`)
 
 Top-level files (intentionally flat for discoverability): services.ts, content-store.ts, git-manager.ts, branch-registry.ts, etc.
 

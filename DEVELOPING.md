@@ -2051,6 +2051,67 @@ it('caches context per request with React cache()', async () => {
 })
 ```
 
+## Deployment Infrastructure
+
+### CmsWorker (canopycms/worker/cms-worker)
+
+The `CmsWorker` class handles internet-requiring operations that Lambda cannot perform. It is cloud-agnostic and auth-agnostic:
+
+- **Task queue processing**: Polls `.tasks/pending/` on the workspace filesystem
+- **Git sync**: Fetches from GitHub into `remote.git`, rebases active branch workspaces
+- **Auth cache refresh**: Calls a pluggable `refreshAuthCache` callback
+
+The worker lives in the core `canopycms` package, not in `canopycms-cdk`, because it has no cloud dependencies.
+
+### Task Queue (canopycms/worker/task-queue)
+
+File-based task queue for async GitHub operations:
+
+```typescript
+import { enqueueTask, dequeueTask, completeTask } from 'canopycms/worker/task-queue'
+
+// Lambda side: enqueue
+const taskId = await enqueueTask(taskDir, {
+  action: 'push-and-create-pr',
+  payload: { branch: 'feature-x', title: 'New feature' },
+})
+
+// Worker side: dequeue and process
+const task = await dequeueTask(taskDir)
+// ... execute task ...
+await completeTask(taskDir, task.id, { prUrl: '...' })
+```
+
+### Auth Caching Pattern
+
+Each auth plugin provides a symmetric pair:
+
+- **Token verifier**: Extracts userId from request context (networkless)
+- **Cache writer**: Populates JSON files for `FileBasedAuthCache`
+
+| Package                | Token Verifier             | Cache Writer          |
+| ---------------------- | -------------------------- | --------------------- |
+| `canopycms-auth-clerk` | `createClerkJwtVerifier()` | `refreshClerkCache()` |
+| `canopycms-auth-dev`   | `createDevTokenVerifier()` | `refreshDevCache()`   |
+
+`CachingAuthPlugin` wraps a token verifier + `FileBasedAuthCache` into a full `AuthPlugin`.
+
+### GitHub Sync Helper (api/github-sync)
+
+`syncSubmitPr()` and `syncConvertToDraft()` transparently use `githubService` when available or fall back to the task queue. API handlers use these without knowing the deployment topology.
+
+### Worker CLI
+
+For local development in prod-sim mode:
+
+```bash
+npx canopycms worker run-once  # Refresh cache, process tasks, exit
+```
+
+### Testing
+
+Integration tests cover the full lifecycle: submit handler enqueues → worker dequeues → task completes. See `src/worker/integration.test.ts`.
+
 ## Quality Checks
 
 Before handoff, run typecheck and tests:
