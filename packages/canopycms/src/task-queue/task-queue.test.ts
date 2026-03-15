@@ -459,13 +459,13 @@ describe('Task Queue', () => {
 
   describe('getQueueStats', () => {
     it('returns counts for each status', async () => {
-      const id1 = await enqueueTask(tmpDir, { action: 'a', payload: {} })
-      const id2 = await enqueueTask(tmpDir, { action: 'b', payload: {} })
+      await enqueueTask(tmpDir, { action: 'a', payload: {} })
+      await enqueueTask(tmpDir, { action: 'b', payload: {} })
       await enqueueTask(tmpDir, { action: 'c', payload: {} }) // stays pending
-      await dequeueTask(tmpDir)
-      await completeTask(tmpDir, id1, {})
-      await dequeueTask(tmpDir)
-      await failTask(tmpDir, id2, 'err')
+      const task1 = await dequeueTask(tmpDir)
+      await completeTask(tmpDir, task1!.id, {})
+      const task2 = await dequeueTask(tmpDir)
+      await failTask(tmpDir, task2!.id, 'err')
 
       const stats = await getQueueStats(tmpDir)
       expect(stats.pending).toBe(1)

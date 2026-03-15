@@ -83,7 +83,7 @@ export class CachingAuthPlugin implements AuthPlugin {
             u.name.toLowerCase().includes(lowerQuery) ||
             u.email.toLowerCase().includes(lowerQuery),
         )
-        .slice(0, Math.max(1, limit))
+        .slice(0, limit)
     } catch {
       return []
     }
@@ -100,7 +100,7 @@ export class CachingAuthPlugin implements AuthPlugin {
   async listGroups(limit = 50): Promise<GroupMetadata[]> {
     try {
       const allGroups = await this.cache.getAllGroups()
-      return allGroups.slice(0, Math.max(1, limit))
+      return allGroups.slice(0, limit)
     } catch {
       return []
     }

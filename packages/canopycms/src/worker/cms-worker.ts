@@ -48,6 +48,25 @@ export interface CmsWorkerConfig {
 const DEFAULT_TASK_TIMEOUT = 60_000
 const DEFAULT_MAX_RETRIES = 3
 
+// Payload validation helpers — fail fast with clear errors instead of silent `as` casts
+
+function requireString(payload: Record<string, unknown>, key: string): string {
+  const val = payload[key]
+  if (typeof val !== 'string') throw new Error(`Task payload missing required string field: ${key}`)
+  return val
+}
+
+function requireNumber(payload: Record<string, unknown>, key: string): number {
+  const val = payload[key]
+  if (typeof val !== 'number') throw new Error(`Task payload missing required number field: ${key}`)
+  return val
+}
+
+function optionalString(payload: Record<string, unknown>, key: string, fallback: string): string {
+  const val = payload[key]
+  return typeof val === 'string' ? val : fallback
+}
+
 /**
  * CMS Worker daemon.
  * Handles operations that Lambda (with no internet) cannot perform:
@@ -67,11 +86,11 @@ export class CmsWorker {
   private baseBranch: string
   private activeTimeouts = new Set<NodeJS.Timeout>()
   private running = false
+  private currentOperation: Promise<void> | null = null
   private maxTasksPerCycle: number
   private taskTimeoutMs: number
   private maxRetries: number
   private lockFilePath: string
-  private githubRemoteConfigured = false
   private log = cmsTaskQueueLogger
 
   constructor(private config: CmsWorkerConfig) {
@@ -134,6 +153,13 @@ export class CmsWorker {
       clearTimeout(t)
     }
     this.activeTimeouts.clear()
+    // Wait for any in-flight operation to complete (up to taskTimeoutMs)
+    if (this.currentOperation) {
+      await Promise.race([
+        this.currentOperation,
+        new Promise<void>((r) => setTimeout(r, this.taskTimeoutMs)),
+      ])
+    }
     await this.releaseLock()
     console.log('CMS Worker stopped')
   }
@@ -216,11 +242,12 @@ export class CmsWorker {
       if (!this.running) return
       const timeout = setTimeout(async () => {
         this.activeTimeouts.delete(timeout)
-        try {
-          await fn()
-        } catch (err) {
+        const operation = fn().catch((err) => {
           console.error('Worker loop error:', err instanceof Error ? err.message : err)
-        }
+        })
+        this.currentOperation = operation
+        await operation
+        this.currentOperation = null
         run()
       }, interval)
       this.activeTimeouts.add(timeout)
@@ -238,9 +265,11 @@ export class CmsWorker {
       return // Already exists
     } catch {
       console.log('Initializing remote.git from GitHub...')
-      const remoteUrl = this.buildGitHubUrl()
       const git = simpleGit()
-      await git.clone(remoteUrl, this.remoteGitPath, ['--bare'])
+      await git.clone(this.buildGitHubUrl(), this.remoteGitPath, ['--bare'])
+      // Remove the origin remote so the token doesn't persist in config
+      const bareGit = simpleGit({ baseDir: this.remoteGitPath })
+      await bareGit.removeRemote('origin').catch(() => {})
       console.log('remote.git initialized')
     }
   }
@@ -296,43 +325,45 @@ export class CmsWorker {
 
   private async executeTask(task: Task, signal: AbortSignal): Promise<Record<string, unknown>> {
     const { action, payload } = task
-    const branch = payload.branch as string
 
     switch (action) {
       case 'push-branch': {
+        const branch = requireString(payload, 'branch')
         await this.pushBranchToGitHub(branch)
         return { pushed: true }
       }
       case 'push-and-create-pr': {
+        const branch = requireString(payload, 'branch')
         await this.pushBranchToGitHub(branch)
         const pr = await this.octokit.pulls.create({
           owner: this.config.githubOwner,
           repo: this.config.githubRepo,
           head: branch,
-          base: (payload.baseBranch as string) ?? this.baseBranch,
-          title: (payload.title as string) ?? `Submit ${branch}`,
-          body: (payload.body as string) ?? '',
+          base: optionalString(payload, 'baseBranch', this.baseBranch),
+          title: optionalString(payload, 'title', `Submit ${branch}`),
+          body: optionalString(payload, 'body', ''),
           request: { signal },
         })
         console.log(`Created PR #${pr.data.number} for ${branch}`)
         return { prUrl: pr.data.html_url, prNumber: pr.data.number }
       }
       case 'push-and-update-pr': {
+        const branch = requireString(payload, 'branch')
+        const prNumber = requireNumber(payload, 'pullRequestNumber')
         await this.pushBranchToGitHub(branch)
-        const prNumber = payload.pullRequestNumber as number
         await this.octokit.pulls.update({
           owner: this.config.githubOwner,
           repo: this.config.githubRepo,
           pull_number: prNumber,
-          title: payload.title as string,
-          body: payload.body as string,
+          title: optionalString(payload, 'title', `Submit ${branch}`),
+          body: optionalString(payload, 'body', ''),
           request: { signal },
         })
         console.log(`Updated PR #${prNumber} for ${branch}`)
         return { prNumber }
       }
       case 'convert-to-draft': {
-        const draftPrNumber = payload.pullRequestNumber as number
+        const draftPrNumber = requireNumber(payload, 'pullRequestNumber')
         // GitHub REST API doesn't support converting to draft directly.
         // Use the GraphQL API via Octokit.
         const { data: pr } = await this.octokit.pulls.get({
@@ -349,7 +380,7 @@ export class CmsWorker {
         return { prNumber: draftPrNumber, draft: true }
       }
       case 'close-pr': {
-        const closePrNumber = payload.pullRequestNumber as number
+        const closePrNumber = requireNumber(payload, 'pullRequestNumber')
         await this.octokit.pulls.update({
           owner: this.config.githubOwner,
           repo: this.config.githubRepo,
@@ -360,6 +391,7 @@ export class CmsWorker {
         return { closed: true }
       }
       case 'delete-remote-branch': {
+        const branch = requireString(payload, 'branch')
         await this.octokit.git.deleteRef({
           owner: this.config.githubOwner,
           repo: this.config.githubRepo,
@@ -381,7 +413,7 @@ export class CmsWorker {
     task: Task,
     result: Record<string, unknown>,
   ): Promise<void> {
-    const branch = task.payload.branch as string
+    const branch = typeof task.payload.branch === 'string' ? task.payload.branch : null
     if (!branch) return
 
     const branchPath = path.join(this.contentBranchesPath, branch)
@@ -410,7 +442,7 @@ export class CmsWorker {
     task: Task,
     _error: string,
   ): Promise<void> {
-    const branch = task.payload.branch as string
+    const branch = typeof task.payload.branch === 'string' ? task.payload.branch : null
     if (!branch) return
 
     const branchPath = path.join(this.contentBranchesPath, branch)
@@ -434,8 +466,8 @@ export class CmsWorker {
 
   private async pushBranchToGitHub(branch: string): Promise<void> {
     const git = simpleGit({ baseDir: this.remoteGitPath })
-    await this.ensureGitHubRemote(git)
-    await git.push('github', branch)
+    // Pass URL directly to avoid persisting the token in remote.git/config
+    await git.push(this.buildGitHubUrl(), branch)
     console.log(`Pushed ${branch} to GitHub`)
   }
 
@@ -444,24 +476,17 @@ export class CmsWorker {
 
     console.log('Syncing git...')
     const git = simpleGit({ baseDir: this.remoteGitPath })
-    await this.ensureGitHubRemote(git)
 
-    await git.fetch('github', ['--all', '--prune'])
+    // Fetch all branches from GitHub using direct URL (no named remote)
+    // We use raw git commands since simple-git's fetch() with a URL
+    // doesn't support --prune directly
+    await git.raw(['fetch', this.buildGitHubUrl(), '--prune', '+refs/heads/*:refs/heads/*'])
     console.log('Fetched from GitHub')
 
     await this.rebaseActiveBranches()
 
     // Periodically clean up old completed/failed tasks
     await cleanupOldTasks(this.taskDir, undefined, this.log)
-  }
-
-  private async ensureGitHubRemote(git: ReturnType<typeof simpleGit>): Promise<void> {
-    if (this.githubRemoteConfigured) return
-    const remotes = await git.getRemotes(true)
-    if (!remotes.find(r => r.name === 'github')) {
-      await git.addRemote('github', this.buildGitHubUrl())
-    }
-    this.githubRemoteConfigured = true
   }
 
   private async rebaseActiveBranches(): Promise<void> {

@@ -22,6 +22,8 @@ const DEFAULT_MAX_RETRIES = 3
 // Silent no-op logger
 const nullLogger: TaskQueueLogger = { debug: () => {} }
 
+// Intentionally local — the task-queue module has zero Canopy dependencies
+// to support eventual extraction as a standalone package.
 function isNotFoundError(err: unknown): boolean {
   return err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT'
 }

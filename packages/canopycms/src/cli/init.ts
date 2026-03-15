@@ -209,7 +209,7 @@ export async function workerRunOnce(options: { projectDir: string }): Promise<vo
     console.log(`Processing task: ${task.action} (${task.id})`)
     // In prod-sim without GitHub, just mark tasks as completed
     // A real worker would execute the GitHub operations
-    console.log(`  Skipped (no GitHub service in run-once mode)`)
+    console.warn(`  WARNING: Task skipped — GitHub operations require the full worker daemon`)
     await completeTask(taskDir, task.id, { skipped: true })
     taskCount++
   }
@@ -269,7 +269,7 @@ const isDirectRun = process.argv[1] === __filename
 
 if (isDirectRun) {
   main().catch((err) => {
-    console.error('Error:', err.message)
+    console.error('Error:', err instanceof Error ? err.message : String(err))
     process.exit(1)
   })
 }
