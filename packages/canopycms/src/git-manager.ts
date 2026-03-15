@@ -286,6 +286,20 @@ export class GitManager {
     if (options.defaultRemoteUrl) return options.defaultRemoteUrl
     if (process.env[config.envVarName]) return process.env[config.envVarName]
 
+    // Auto-detect: check if a pre-existing remote.git exists at the expected path
+    // (e.g., created by EC2 worker on EFS in prod mode)
+    if (config.autoDetectRemotePath) {
+      try {
+        const stat = await fs.stat(config.autoDetectRemotePath)
+        if (stat.isDirectory()) {
+          log.debug('git', 'Auto-detected local remote', { path: config.autoDetectRemotePath })
+          return config.autoDetectRemotePath
+        }
+      } catch {
+        // Path doesn't exist — fall through to next resolution step
+      }
+    }
+
     // Mode-specific behavior: auto-init local remote
     if (config.shouldAutoInitLocal) {
       const gitRoot = await this.findGitRoot()

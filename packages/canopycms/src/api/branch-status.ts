@@ -10,6 +10,8 @@ import type { BranchMetadata } from '../types'
 import { canPerformWorkflowAction } from '../authorization'
 import { clientOperatingStrategy } from '../operating-mode'
 import { guardBranchAccess, guardBranchExists, isBranchAccessError } from './middleware'
+import { enqueueTask } from '../worker/task-queue'
+import { getTaskQueueDir } from '../worker/task-queue-config'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -72,6 +74,7 @@ const submitBranchForMergeHandler = async (
   const githubService = ctx.services.githubService
   let prUrl = context.branch.pullRequestUrl
   let prNumber = context.branch.pullRequestNumber
+  let syncStatus: BranchMetadata['syncStatus'] = undefined
 
   const operatingMode = ctx.services.config.mode
   if (githubService && clientOperatingStrategy(operatingMode).supportsPullRequests()) {
@@ -104,16 +107,52 @@ const submitBranchForMergeHandler = async (
         prUrl = result.url
         prNumber = result.number
       }
+      syncStatus = 'synced'
     } catch (err) {
       // Log error but don't fail submission - code is already pushed
       const message = err instanceof Error ? err.message : 'Unknown error'
       console.error(`CanopyCMS: Failed to create/update PR for ${context.branch.name}:`, message)
     }
+  } else if (clientOperatingStrategy(operatingMode).supportsPullRequests()) {
+    // No GitHub service available (e.g., Lambda with no internet).
+    // Queue the PR operation for the EC2 worker to execute.
+    const taskDir = getTaskQueueDir(ctx.services.config)
+    if (taskDir) {
+      try {
+        const prTitle = context.branch.title || `Submit ${context.branch.name}`
+        const prBody = context.branch.description || ''
+        const action = context.branch.pullRequestNumber
+          ? 'push-and-update-pr' as const
+          : 'push-and-create-pr' as const
+
+        await enqueueTask(taskDir, {
+          action,
+          payload: {
+            branch: context.branch.name,
+            title: prTitle,
+            body: prBody,
+            baseBranch: ctx.services.config.defaultBaseBranch ?? 'main',
+            pullRequestNumber: context.branch.pullRequestNumber,
+          },
+        })
+        syncStatus = 'pending-sync'
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Unknown error'
+        console.error(`CanopyCMS: Failed to enqueue PR task for ${context.branch.name}:`, message)
+        syncStatus = 'sync-failed'
+      }
+    }
   }
 
   // Update metadata with status and PR info
   const updated = await meta.save({
-    branch: { name: context.branch.name, status: 'submitted', pullRequestUrl: prUrl, pullRequestNumber: prNumber },
+    branch: {
+      name: context.branch.name,
+      status: 'submitted',
+      pullRequestUrl: prUrl,
+      pullRequestNumber: prNumber,
+      ...(syncStatus !== undefined ? { syncStatus } : {}),
+    },
   })
 
   return { ok: true, status: 200, data: { branch: updated.branch } }

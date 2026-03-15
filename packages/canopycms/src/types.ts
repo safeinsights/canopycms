@@ -2,6 +2,7 @@ export type CanopyUserId = string
 export type CanopyGroupId = string
 
 export type BranchStatus = 'editing' | 'submitted' | 'approved' | 'locked' | 'archived'
+export type SyncStatus = 'synced' | 'pending-sync' | 'sync-failed'
 
 export interface BranchAccessControl {
   allowedUsers?: CanopyUserId[]
@@ -21,6 +22,8 @@ export interface BranchMetadata {
   updatedAt: string
   pullRequestUrl?: string
   pullRequestNumber?: number
+  /** Sync status for async GitHub operations (used when Lambda has no internet) */
+  syncStatus?: SyncStatus
 }
 
 export interface BranchPaths {

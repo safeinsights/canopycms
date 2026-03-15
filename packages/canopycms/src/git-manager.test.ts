@@ -329,6 +329,139 @@ describe('GitManager.resolveRemoteUrl', () => {
       cwdSpy.mockRestore()
     }
   })
+  it('auto-detects remote.git at workspace root in prod mode', async () => {
+    // Setup: create a bare repo at the expected workspace path
+    const workspaceRoot = path.join(tmpDir, 'workspace')
+    const remoteGitPath = path.join(workspaceRoot, 'remote.git')
+    await fs.mkdir(workspaceRoot, { recursive: true })
+    const bareGit = simpleGit()
+    await bareGit.clone(tmpDir, remoteGitPath, ['--bare']) // needs a source, use tmpDir as dummy
+      .catch(async () => {
+        // If tmpDir isn't a repo, just init a bare repo directly
+        await fs.mkdir(remoteGitPath, { recursive: true })
+        await simpleGit({ baseDir: remoteGitPath }).init(true)
+      })
+
+    // Point CANOPYCMS_WORKSPACE_ROOT to our test workspace
+    const origWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+    process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+
+    try {
+      // Clear strategy cache so it picks up new env var
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+
+      const result = await GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        baseBranch: 'main',
+      })
+
+      expect(result).toBe(remoteGitPath)
+    } finally {
+      if (origWorkspace !== undefined) {
+        process.env.CANOPYCMS_WORKSPACE_ROOT = origWorkspace
+      } else {
+        delete process.env.CANOPYCMS_WORKSPACE_ROOT
+      }
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+    }
+  })
+
+  it('returns undefined for prod mode when remote.git does not exist', async () => {
+    // Point CANOPYCMS_WORKSPACE_ROOT to a directory without remote.git
+    const workspaceRoot = path.join(tmpDir, 'empty-workspace')
+    await fs.mkdir(workspaceRoot, { recursive: true })
+
+    const origWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+    process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+
+    try {
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+
+      const result = await GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        baseBranch: 'main',
+      })
+
+      expect(result).toBeUndefined()
+    } finally {
+      if (origWorkspace !== undefined) {
+        process.env.CANOPYCMS_WORKSPACE_ROOT = origWorkspace
+      } else {
+        delete process.env.CANOPYCMS_WORKSPACE_ROOT
+      }
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+    }
+  })
+
+  it('explicit remoteUrl takes priority over auto-detected remote.git in prod mode', async () => {
+    // Setup: create remote.git at workspace root
+    const workspaceRoot = path.join(tmpDir, 'workspace')
+    const remoteGitPath = path.join(workspaceRoot, 'remote.git')
+    await fs.mkdir(remoteGitPath, { recursive: true })
+    await simpleGit({ baseDir: remoteGitPath }).init(true)
+
+    const origWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+    process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+
+    try {
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+
+      const result = await GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        remoteUrl: 'https://explicit.com/repo.git',
+        baseBranch: 'main',
+      })
+
+      // Explicit URL should win over auto-detected path
+      expect(result).toBe('https://explicit.com/repo.git')
+    } finally {
+      if (origWorkspace !== undefined) {
+        process.env.CANOPYCMS_WORKSPACE_ROOT = origWorkspace
+      } else {
+        delete process.env.CANOPYCMS_WORKSPACE_ROOT
+      }
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+    }
+  })
+
+  it('env var CANOPYCMS_REMOTE_URL takes priority over auto-detected remote.git', async () => {
+    // Setup: create remote.git at workspace root
+    const workspaceRoot = path.join(tmpDir, 'workspace')
+    const remoteGitPath = path.join(workspaceRoot, 'remote.git')
+    await fs.mkdir(remoteGitPath, { recursive: true })
+    await simpleGit({ baseDir: remoteGitPath }).init(true)
+
+    const origWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+    process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+    process.env.CANOPYCMS_REMOTE_URL = 'https://env.com/repo.git'
+
+    try {
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+
+      const result = await GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        baseBranch: 'main',
+      })
+
+      // Env var should win over auto-detected path
+      expect(result).toBe('https://env.com/repo.git')
+    } finally {
+      if (origWorkspace !== undefined) {
+        process.env.CANOPYCMS_WORKSPACE_ROOT = origWorkspace
+      } else {
+        delete process.env.CANOPYCMS_WORKSPACE_ROOT
+      }
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+    }
+  })
 }, 10000)
 
 describe('GitManager.ensureAuthor', () => {
