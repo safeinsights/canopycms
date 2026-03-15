@@ -2,9 +2,10 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { Octokit } from '@octokit/rest'
-import { dequeueTask, completeTask, failTask, recoverOrphanedTasks } from './task-queue'
+import { dequeueTask, completeTask, failTask, retryTask, recoverOrphanedTasks, cleanupOldTasks } from './task-queue'
 import type { WorkerTask } from './task-queue'
 import { getBranchMetadataFileManager } from '../branch-metadata'
+import { isFileExistsError } from '../utils/error'
 
 /**
  * Auth cache refresh function type.
@@ -40,9 +41,12 @@ export interface CmsWorkerConfig {
   maxTasksPerCycle?: number
   /** Per-task timeout in ms (default: 60000) */
   taskTimeoutMs?: number
+  /** Max retries for failed tasks (default: 3) */
+  maxRetries?: number
 }
 
 const DEFAULT_TASK_TIMEOUT = 60_000
+const DEFAULT_MAX_RETRIES = 3
 
 /**
  * CMS Worker daemon.
@@ -61,11 +65,13 @@ export class CmsWorker {
   private remoteGitPath: string
   private contentBranchesPath: string
   private baseBranch: string
-  private timeouts: NodeJS.Timeout[] = []
+  private activeTimeouts = new Set<NodeJS.Timeout>()
   private running = false
   private maxTasksPerCycle: number
   private taskTimeoutMs: number
+  private maxRetries: number
   private lockFilePath: string
+  private githubRemoteConfigured = false
 
   constructor(private config: CmsWorkerConfig) {
     this.octokit = new Octokit({ auth: config.githubToken })
@@ -75,6 +81,7 @@ export class CmsWorker {
     this.baseBranch = config.baseBranch ?? 'main'
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
+    this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
     this.lockFilePath = path.join(config.workspacePath, '.tasks', '.worker-lock')
   }
 
@@ -122,26 +129,38 @@ export class CmsWorker {
 
   async stop(): Promise<void> {
     this.running = false
-    for (const timeout of this.timeouts) {
-      clearTimeout(timeout)
+    for (const t of this.activeTimeouts) {
+      clearTimeout(t)
     }
-    this.timeouts = []
+    this.activeTimeouts.clear()
     await this.releaseLock()
     console.log('CMS Worker stopped')
   }
 
   /**
    * Acquire an EFS-based lock file to prevent concurrent workers.
+   * Uses O_CREAT|O_EXCL for atomic file creation.
    * Stale locks (older than 10 minutes with no running PID) are overwritten.
    */
   private async acquireLock(): Promise<void> {
     await fs.mkdir(path.dirname(this.lockFilePath), { recursive: true })
 
+    const lockContent = JSON.stringify({ pid: process.pid, timestamp: new Date().toISOString() })
+
+    // Try atomic create first
+    try {
+      const handle = await fs.open(this.lockFilePath, 'wx')
+      await handle.writeFile(lockContent, 'utf-8')
+      await handle.close()
+      return
+    } catch (err) {
+      if (!isFileExistsError(err)) throw err
+    }
+
+    // Lock file exists — check staleness
     try {
       const content = await fs.readFile(this.lockFilePath, 'utf-8')
       const { pid, timestamp } = JSON.parse(content) as { pid: number; timestamp: string }
-
-      // Check if the lock is stale (PID no longer running or lock older than 10 minutes)
       const lockAgeMs = Date.now() - new Date(timestamp).getTime()
       const pidAlive = this.isPidAlive(pid)
 
@@ -151,15 +170,22 @@ export class CmsWorker {
 
       console.log(`Overwriting stale lock (PID ${pid}, age ${Math.round(lockAgeMs / 1000)}s)`)
     } catch (err) {
-      // Lock file doesn't exist or is invalid — proceed
       if (err instanceof Error && err.message.startsWith('Another worker')) throw err
+      // Lock file is corrupt or unreadable — overwrite it
     }
 
-    await fs.writeFile(
-      this.lockFilePath,
-      JSON.stringify({ pid: process.pid, timestamp: new Date().toISOString() }),
-      'utf-8',
-    )
+    // Stale or corrupt lock — unlink and retry with atomic create
+    await fs.unlink(this.lockFilePath).catch(() => {})
+    try {
+      const handle = await fs.open(this.lockFilePath, 'wx')
+      await handle.writeFile(lockContent, 'utf-8')
+      await handle.close()
+    } catch (err) {
+      if (isFileExistsError(err)) {
+        throw new Error('Another worker acquired the lock during stale lock recovery. Exiting.')
+      }
+      throw err
+    }
   }
 
   private async releaseLock(): Promise<void> {
@@ -188,6 +214,7 @@ export class CmsWorker {
     const run = () => {
       if (!this.running) return
       const timeout = setTimeout(async () => {
+        this.activeTimeouts.delete(timeout)
         try {
           await fn()
         } catch (err) {
@@ -195,7 +222,7 @@ export class CmsWorker {
         }
         run()
       }, interval)
-      this.timeouts.push(timeout)
+      this.activeTimeouts.add(timeout)
     }
     run()
   }
@@ -221,6 +248,7 @@ export class CmsWorker {
    * Process queued tasks from Lambda.
    * Polls .tasks/pending/ directory and executes each task.
    * Processes up to maxTasksPerCycle tasks per invocation.
+   * Retries transient failures with exponential backoff.
    */
   async processTaskQueue(): Promise<void> {
     if (!this.running) return
@@ -231,29 +259,41 @@ export class CmsWorker {
       try {
         const result = await this.executeTaskWithTimeout(task)
         await completeTask(this.taskDir, task.id, result)
+        await this.updateBranchMetadata(task, result)
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
         console.error(`Task ${task.id} (${task.action}) failed:`, message)
-        await failTask(this.taskDir, task.id, message)
+
+        const retryCount = task.retryCount ?? 0
+        const maxRetries = task.maxRetries ?? this.maxRetries
+        if (retryCount < maxRetries) {
+          await retryTask(this.taskDir, task.id, message)
+          console.log(`  Will retry (attempt ${retryCount + 1}/${maxRetries})`)
+        } else {
+          await failTask(this.taskDir, task.id, message)
+          await this.updateBranchMetadataOnFailure(task, message)
+          console.error(`  Permanently failed after ${maxRetries} retries`)
+        }
       }
       processed++
     }
   }
 
   /**
-   * Execute a task with a timeout. If the task takes longer than
-   * taskTimeoutMs, it is aborted with a timeout error.
+   * Execute a task with a timeout. Uses AbortController to cancel
+   * the underlying operation if the timeout fires.
    */
   private async executeTaskWithTimeout(task: WorkerTask): Promise<Record<string, unknown>> {
-    return Promise.race([
-      this.executeTask(task),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Task timed out after ${this.taskTimeoutMs}ms`)), this.taskTimeoutMs),
-      ),
-    ])
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), this.taskTimeoutMs)
+    try {
+      return await this.executeTask(task, controller.signal)
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
-  private async executeTask(task: WorkerTask): Promise<Record<string, unknown>> {
+  private async executeTask(task: WorkerTask, signal: AbortSignal): Promise<Record<string, unknown>> {
     const { action, payload } = task
     const branch = payload.branch as string
 
@@ -271,6 +311,7 @@ export class CmsWorker {
           base: (payload.baseBranch as string) ?? this.baseBranch,
           title: (payload.title as string) ?? `Submit ${branch}`,
           body: (payload.body as string) ?? '',
+          request: { signal },
         })
         console.log(`Created PR #${pr.data.number} for ${branch}`)
         return { prUrl: pr.data.html_url, prNumber: pr.data.number }
@@ -284,6 +325,7 @@ export class CmsWorker {
           pull_number: prNumber,
           title: payload.title as string,
           body: payload.body as string,
+          request: { signal },
         })
         console.log(`Updated PR #${prNumber} for ${branch}`)
         return { prNumber }
@@ -296,10 +338,11 @@ export class CmsWorker {
           owner: this.config.githubOwner,
           repo: this.config.githubRepo,
           pull_number: draftPrNumber,
+          request: { signal },
         })
         await this.octokit.graphql(
           `mutation($id: ID!) { convertPullRequestToDraft(input: { pullRequestId: $id }) { pullRequest { isDraft } } }`,
-          { id: pr.node_id },
+          { id: pr.node_id, request: { signal } },
         )
         console.log(`Converted PR #${draftPrNumber} to draft`)
         return { prNumber: draftPrNumber, draft: true }
@@ -311,6 +354,7 @@ export class CmsWorker {
           repo: this.config.githubRepo,
           pull_number: closePrNumber,
           state: 'closed',
+          request: { signal },
         })
         return { closed: true }
       }
@@ -319,11 +363,67 @@ export class CmsWorker {
           owner: this.config.githubOwner,
           repo: this.config.githubRepo,
           ref: `heads/${branch}`,
+          request: { signal },
         })
         return { deleted: true }
       }
       default:
         throw new Error(`Unknown task action: ${action}`)
+    }
+  }
+
+  /**
+   * Update branch metadata after successful task completion.
+   * Writes PR URL/number and sets syncStatus to 'synced'.
+   */
+  private async updateBranchMetadata(
+    task: WorkerTask,
+    result: Record<string, unknown>,
+  ): Promise<void> {
+    const branch = task.payload.branch as string
+    if (!branch) return
+
+    const branchPath = path.join(this.contentBranchesPath, branch)
+    try {
+      await fs.stat(branchPath)
+    } catch {
+      return // Branch directory doesn't exist
+    }
+
+    try {
+      const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
+      const updates: Record<string, unknown> = { name: branch, syncStatus: 'synced' }
+      if (result.prUrl) updates.pullRequestUrl = result.prUrl
+      if (result.prNumber) updates.pullRequestNumber = result.prNumber
+      await meta.save({ branch: updates })
+    } catch (err) {
+      console.error(`Failed to update metadata for ${branch}:`, err instanceof Error ? err.message : err)
+    }
+  }
+
+  /**
+   * Update branch metadata after permanent task failure.
+   * Sets syncStatus to 'sync-failed' with error details.
+   */
+  private async updateBranchMetadataOnFailure(
+    task: WorkerTask,
+    _error: string,
+  ): Promise<void> {
+    const branch = task.payload.branch as string
+    if (!branch) return
+
+    const branchPath = path.join(this.contentBranchesPath, branch)
+    try {
+      await fs.stat(branchPath)
+    } catch {
+      return
+    }
+
+    try {
+      const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
+      await meta.save({ branch: { name: branch, syncStatus: 'sync-failed' } })
+    } catch (err) {
+      console.error(`Failed to update failure metadata for ${branch}:`, err instanceof Error ? err.message : err)
     }
   }
 
@@ -349,13 +449,18 @@ export class CmsWorker {
     console.log('Fetched from GitHub')
 
     await this.rebaseActiveBranches()
+
+    // Periodically clean up old completed/failed tasks
+    await cleanupOldTasks(this.taskDir)
   }
 
   private async ensureGitHubRemote(git: ReturnType<typeof simpleGit>): Promise<void> {
+    if (this.githubRemoteConfigured) return
     const remotes = await git.getRemotes(true)
     if (!remotes.find(r => r.name === 'github')) {
       await git.addRemote('github', this.buildGitHubUrl())
     }
+    this.githubRemoteConfigured = true
   }
 
   private async rebaseActiveBranches(): Promise<void> {

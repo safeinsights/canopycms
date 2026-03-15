@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { FileBasedAuthCache } from './file-based-auth-cache'
+import { FileBasedAuthCache, writeAuthCacheSnapshot } from './file-based-auth-cache'
 
 describe('FileBasedAuthCache', () => {
   let tmpDir: string
@@ -152,6 +152,69 @@ describe('FileBasedAuthCache', () => {
 
       const users = await cache.getAllUsers()
       expect(users).toEqual([])
+    })
+  })
+
+  describe('snapshot layout (symlink)', () => {
+    it('reads from snapshot directory via current symlink', async () => {
+      await writeAuthCacheSnapshot(tmpDir, {
+        'users.json': testUsers,
+        'orgs.json': testGroups,
+        'memberships.json': testMemberships,
+      })
+
+      const snapshotCache = new FileBasedAuthCache(tmpDir)
+      const users = await snapshotCache.getAllUsers()
+      expect(users).toHaveLength(2)
+      expect(users[0].name).toBe('Alice')
+
+      const groups = await snapshotCache.getAllGroups()
+      expect(groups).toHaveLength(2)
+
+      const memberships = await snapshotCache.getUserExternalGroups('user_1')
+      expect(memberships).toEqual(['org_1', 'org_2'])
+    })
+
+    it('picks up new snapshot after symlink swap', async () => {
+      await writeAuthCacheSnapshot(tmpDir, {
+        'users.json': testUsers,
+        'orgs.json': testGroups,
+        'memberships.json': testMemberships,
+      })
+
+      const snapshotCache = new FileBasedAuthCache(tmpDir)
+      const users1 = await snapshotCache.getAllUsers()
+      expect(users1).toHaveLength(2)
+
+      // Wait so mtime changes
+      await new Promise((r) => setTimeout(r, 50))
+
+      // Write new snapshot with different data
+      const updatedUsers = {
+        users: [{ id: 'user_3', name: 'Charlie', email: 'charlie@test.com' }],
+      }
+      await writeAuthCacheSnapshot(tmpDir, {
+        'users.json': updatedUsers,
+        'orgs.json': { groups: [] },
+        'memberships.json': { memberships: {} },
+      })
+
+      const users2 = await snapshotCache.getAllUsers()
+      expect(users2).toHaveLength(1)
+      expect(users2[0].name).toBe('Charlie')
+    })
+
+    it('cleans up old snapshots keeping only 2', async () => {
+      // Write 3 snapshots
+      await writeAuthCacheSnapshot(tmpDir, { 'users.json': { users: [] }, 'orgs.json': { groups: [] }, 'memberships.json': { memberships: {} } })
+      await new Promise((r) => setTimeout(r, 10))
+      await writeAuthCacheSnapshot(tmpDir, { 'users.json': { users: [] }, 'orgs.json': { groups: [] }, 'memberships.json': { memberships: {} } })
+      await new Promise((r) => setTimeout(r, 10))
+      await writeAuthCacheSnapshot(tmpDir, { 'users.json': { users: [] }, 'orgs.json': { groups: [] }, 'memberships.json': { memberships: {} } })
+
+      const entries = await fs.readdir(tmpDir)
+      const snapshots = entries.filter((e) => e.startsWith('snapshot-'))
+      expect(snapshots).toHaveLength(2)
     })
   })
 })

@@ -1,5 +1,4 @@
-import fs from 'node:fs/promises'
-import path from 'node:path'
+import { writeAuthCacheSnapshot } from 'canopycms/auth'
 import { DEFAULT_USERS, DEFAULT_GROUPS } from './dev-plugin'
 import type { DevUser, DevGroup } from './dev-plugin'
 
@@ -53,16 +52,12 @@ export async function refreshDevCache(
     ),
   }
 
-  await fs.mkdir(cachePath, { recursive: true })
-  await writeJsonAtomic(path.join(cachePath, 'users.json'), usersData)
-  await writeJsonAtomic(path.join(cachePath, 'orgs.json'), groupsData)
-  await writeJsonAtomic(path.join(cachePath, 'memberships.json'), membershipsData)
+  // Write cache files atomically via snapshot directory + symlink swap
+  await writeAuthCacheSnapshot(cachePath, {
+    'users.json': usersData,
+    'orgs.json': groupsData,
+    'memberships.json': membershipsData,
+  })
 
   return { userCount: users.length, groupCount: groups.length }
-}
-
-async function writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
-  const tmpPath = `${filePath}.tmp`
-  await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8')
-  await fs.rename(tmpPath, filePath)
 }

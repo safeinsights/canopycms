@@ -71,3 +71,13 @@ export function isNotFoundError(err: unknown): boolean {
 export function isPermissionError(err: unknown): boolean {
   return isNodeError(err) && err.code === 'EACCES'
 }
+
+/**
+ * Check if an error indicates a "file already exists" condition.
+ *
+ * @param err - The caught error (unknown type)
+ * @returns True if the error is EEXIST (file already exists)
+ */
+export function isFileExistsError(err: unknown): boolean {
+  return isNodeError(err) && err.code === 'EEXIST'
+}
