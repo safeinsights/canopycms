@@ -5,6 +5,7 @@ import { getBranchMetadataFileManager } from '../branch-metadata'
 import { isReviewer } from '../authorization'
 import { defineEndpoint } from './route-builder'
 import { guardBranchExists, isBranchAccessError } from './middleware'
+import { syncConvertToDraft } from './github-sync'
 
 export interface RequestChangesBody {
   comment?: string
@@ -46,17 +47,8 @@ const requestChangesHandler = async (
     }
   }
 
-  // Convert PR to draft if GitHub service is available
-  const githubService = ctx.services.githubService
-  if (githubService && context.branch.pullRequestNumber) {
-    try {
-      await githubService.convertToDraft(context.branch.pullRequestNumber)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error'
-      console.error(`CanopyCMS: Failed to convert PR to draft for ${context.branch.name}:`, message)
-      // Continue anyway - local state is more important
-    }
-  }
+  // Convert PR to draft (sync via githubService, or async via task queue)
+  await syncConvertToDraft(ctx, context)
 
   // Update branch status to 'editing'
   const meta = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)
