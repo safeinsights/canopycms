@@ -1,6 +1,9 @@
 import type { AuthPlugin } from './plugin'
 import type { UserSearchResult, GroupMetadata, AuthenticationResult } from './types'
 import type { CanopyUserId, CanopyGroupId } from '../types'
+import { createDebugLogger } from '../utils/debug'
+
+const log = createDebugLogger({ prefix: 'CachingAuthPlugin' })
 
 /**
  * Generic cache provider interface for auth metadata.
@@ -42,31 +45,48 @@ export class CachingAuthPlugin implements AuthPlugin {
       return { success: false, error: 'No valid authentication token' }
     }
 
-    const user = await this.cache.getUser(identity.userId)
-    const externalGroups = await this.cache.getUserExternalGroups(identity.userId)
+    try {
+      const user = await this.cache.getUser(identity.userId)
+      const externalGroups = await this.cache.getUserExternalGroups(identity.userId)
 
-    return {
-      success: true,
-      user: {
-        userId: identity.userId,
-        name: user?.name ?? identity.userId,
-        email: user?.email,
-        avatarUrl: user?.avatarUrl,
-        externalGroups,
-      },
+      return {
+        success: true,
+        user: {
+          userId: identity.userId,
+          name: user?.name ?? identity.userId,
+          email: user?.email,
+          avatarUrl: user?.avatarUrl,
+          externalGroups,
+        },
+      }
+    } catch (err) {
+      // Cache error — still return authenticated with minimal info
+      log.debug('auth', 'Cache lookup failed, returning minimal user', { userId: identity.userId })
+      return {
+        success: true,
+        user: {
+          userId: identity.userId,
+          name: identity.userId,
+          externalGroups: [],
+        },
+      }
     }
   }
 
   async searchUsers(query: string, limit = 10): Promise<UserSearchResult[]> {
-    const allUsers = await this.cache.getAllUsers()
-    const lowerQuery = query.toLowerCase()
-    return allUsers
-      .filter(
-        (u) =>
-          u.name.toLowerCase().includes(lowerQuery) ||
-          u.email.toLowerCase().includes(lowerQuery),
-      )
-      .slice(0, limit)
+    try {
+      const allUsers = await this.cache.getAllUsers()
+      const lowerQuery = query.toLowerCase()
+      return allUsers
+        .filter(
+          (u) =>
+            u.name.toLowerCase().includes(lowerQuery) ||
+            u.email.toLowerCase().includes(lowerQuery),
+        )
+        .slice(0, Math.max(1, limit))
+    } catch {
+      return []
+    }
   }
 
   async getUserMetadata(userId: CanopyUserId): Promise<UserSearchResult | null> {
@@ -78,7 +98,11 @@ export class CachingAuthPlugin implements AuthPlugin {
   }
 
   async listGroups(limit = 50): Promise<GroupMetadata[]> {
-    const allGroups = await this.cache.getAllGroups()
-    return allGroups.slice(0, limit)
+    try {
+      const allGroups = await this.cache.getAllGroups()
+      return allGroups.slice(0, Math.max(1, limit))
+    } catch {
+      return []
+    }
   }
 }

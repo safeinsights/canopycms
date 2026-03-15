@@ -3,6 +3,7 @@ export type CanopyGroupId = string
 
 export type BranchStatus = 'editing' | 'submitted' | 'approved' | 'locked' | 'archived'
 export type SyncStatus = 'synced' | 'pending-sync' | 'sync-failed'
+export type ConflictStatus = 'clean' | 'conflicts-detected'
 
 export interface BranchAccessControl {
   allowedUsers?: CanopyUserId[]
@@ -24,6 +25,8 @@ export interface BranchMetadata {
   pullRequestNumber?: number
   /** Sync status for async GitHub operations (used when Lambda has no internet) */
   syncStatus?: SyncStatus
+  /** Whether this branch has unresolved merge conflicts with the base branch */
+  conflictStatus?: ConflictStatus
 }
 
 export interface BranchPaths {

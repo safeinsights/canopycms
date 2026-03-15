@@ -72,28 +72,36 @@ export class FileBasedAuthCache implements AuthCacheProvider {
 
   private async ensureLoaded(): Promise<LoadedCache> {
     const usersPath = path.join(this.cachePath, 'users.json')
+    const orgsPath = path.join(this.cachePath, 'orgs.json')
+    const membershipsPath = path.join(this.cachePath, 'memberships.json')
 
-    // Check mtime of users.json as a proxy for cache freshness
-    let currentMtime = 0
-    try {
-      const stat = await fs.stat(usersPath)
-      currentMtime = stat.mtimeMs
-    } catch {
-      // File doesn't exist — return empty cache
+    // Check max mtime across all three files for cache freshness
+    let maxMtime = 0
+    for (const filePath of [usersPath, orgsPath, membershipsPath]) {
+      try {
+        const stat = await fs.stat(filePath)
+        maxMtime = Math.max(maxMtime, stat.mtimeMs)
+      } catch {
+        // File doesn't exist — continue checking others
+      }
+    }
+
+    if (maxMtime === 0) {
+      // No cache files exist — return empty cache
       if (!this.cache) {
         this.cache = this.emptyCache()
       }
       return this.cache
     }
 
-    // If mtime hasn't changed and we have a cache, return it
-    if (this.cache && currentMtime === this.lastMtime) {
+    // If max mtime hasn't changed and we have a cache, return it
+    if (this.cache && maxMtime === this.lastMtime) {
       return this.cache
     }
 
     // Load fresh data
     this.cache = await this.loadFromDisk()
-    this.lastMtime = currentMtime
+    this.lastMtime = maxMtime
     return this.cache
   }
 

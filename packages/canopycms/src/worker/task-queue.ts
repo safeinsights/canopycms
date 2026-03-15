@@ -12,6 +12,7 @@ const log = createDebugLogger({ prefix: 'TaskQueue' })
 export type TaskAction =
   | 'push-and-create-pr'
   | 'push-and-update-pr'
+  | 'convert-to-draft'
   | 'close-pr'
   | 'delete-remote-branch'
   | 'push-branch'
@@ -154,6 +155,53 @@ export async function failTask(
   await fs.unlink(processingPath)
 
   log.debug('task', 'Failed task', { id: taskId, error })
+}
+
+/**
+ * Recover orphaned tasks stuck in processing/.
+ * Moves tasks older than maxAgeMs back to pending/ for retry.
+ * Should be called on worker startup to handle crash recovery.
+ */
+export async function recoverOrphanedTasks(
+  taskDir: string,
+  maxAgeMs = 5 * 60_000,
+): Promise<number> {
+  const processingDir = path.join(taskDir, 'processing')
+  const pendingDir = path.join(taskDir, 'pending')
+
+  let files: string[]
+  try {
+    files = await fs.readdir(processingDir)
+  } catch {
+    return 0
+  }
+
+  const now = Date.now()
+  let recovered = 0
+
+  for (const fileName of files.filter((f) => f.endsWith('.json'))) {
+    const filePath = path.join(processingDir, fileName)
+    try {
+      const stat = await fs.stat(filePath)
+      if (now - stat.mtimeMs > maxAgeMs) {
+        const content = await fs.readFile(filePath, 'utf-8')
+        const task = JSON.parse(content) as WorkerTask
+        task.status = 'pending'
+
+        await fs.mkdir(pendingDir, { recursive: true })
+        await fs.writeFile(path.join(pendingDir, fileName), JSON.stringify(task, null, 2), 'utf-8')
+        await fs.unlink(filePath)
+
+        log.debug('task', 'Recovered orphaned task', { id: task.id, action: task.action })
+        recovered++
+      }
+    } catch (err) {
+      if (isNotFoundError(err)) continue
+      log.debug('task', 'Failed to recover task', { fileName })
+    }
+  }
+
+  return recovered
 }
 
 /**

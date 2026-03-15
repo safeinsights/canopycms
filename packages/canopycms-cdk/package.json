@@ -12,22 +12,17 @@
   },
   "files": [
     "dist",
-    "worker"
+    "worker/dist",
+    "worker/canopy-worker.service"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=worker/dist/index.js --external:@aws-sdk/*",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=18"
-  },
-  "dependencies": {
-    "canopycms": "*",
-    "canopycms-auth-clerk": "*",
-    "@octokit/rest": "^20.0.2",
-    "simple-git": "^3.22.0",
-    "@aws-sdk/client-secrets-manager": "^3.600.0"
   },
   "peerDependencies": {
     "aws-cdk-lib": "^2.150.0",
@@ -40,7 +35,13 @@
   "devDependencies": {
     "@types/node": "^22.9.0",
     "aws-cdk-lib": "^2.150.0",
+    "canopycms": "*",
+    "canopycms-auth-clerk": "*",
+    "@octokit/rest": "^20.0.2",
+    "simple-git": "^3.22.0",
+    "@aws-sdk/client-secrets-manager": "^3.600.0",
     "constructs": "^10.0.0",
+    "esbuild": "^0.24.0",
     "typescript": "^5.6.3",
     "vitest": "^1.6.0"
   }

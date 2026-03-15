@@ -153,7 +153,8 @@ export async function workerRunOnce(options: { projectDir: string }): Promise<vo
   let mode: 'prod' | 'prod-sim' = 'prod-sim'
   try {
     const configContent = await fs.readFile(configPath, 'utf-8')
-    if (configContent.includes("mode: 'prod'") || configContent.includes('mode: "prod"')) {
+    // Match the mode property in the config object, not in comments or strings
+    if (/^\s*mode:\s*['"]prod['"]\s*[,}]/m.test(configContent)) {
       mode = 'prod'
     }
   } catch {

@@ -111,11 +111,10 @@ export async function syncConvertToDraft(
   const mode = ctx.services.config.mode
   if (clientOperatingStrategy(mode).supportsPullRequests()) {
     await enqueueGitHubTask(ctx, context, {
-      action: 'push-and-update-pr',
+      action: 'convert-to-draft',
       payload: {
         branch: context.branch.name,
         pullRequestNumber: context.branch.pullRequestNumber,
-        convertToDraft: true,
       },
     })
   }
