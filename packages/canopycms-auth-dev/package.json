@@ -9,7 +9,8 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./src/client.ts"
+    "./client": "./src/client.ts",
+    "./cache-writer": "./src/cache-writer.ts"
   },
   "files": [
     "dist"

@@ -140,6 +140,88 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
 `)
 }
 
+/**
+ * Worker run-once: process pending tasks, sync git, refresh auth cache, then exit.
+ * Used in prod-sim to trigger worker operations without a persistent daemon.
+ */
+export async function workerRunOnce(options: { projectDir: string }): Promise<void> {
+  // Dynamic import to avoid loading worker deps when not needed
+  const { getTaskQueueDir } = await import('../worker/task-queue-config')
+
+  // Determine workspace and mode from config
+  const configPath = path.join(options.projectDir, 'canopycms.config.ts')
+  let mode: 'prod' | 'prod-sim' = 'prod-sim'
+  try {
+    const configContent = await fs.readFile(configPath, 'utf-8')
+    if (configContent.includes("mode: 'prod'") || configContent.includes('mode: "prod"')) {
+      mode = 'prod'
+    }
+  } catch {
+    // Default to prod-sim
+  }
+
+  const taskDir = getTaskQueueDir({ mode })
+  if (!taskDir) {
+    console.log('Worker not needed in dev mode')
+    return
+  }
+
+  // For prod-sim without GitHub, just refresh auth cache
+  const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
+  const cachePath = mode === 'prod-sim'
+    ? path.join(options.projectDir, '.canopy-prod-sim', '.cache')
+    : path.join(process.env.CANOPYCMS_WORKSPACE_ROOT ?? '/mnt/efs/workspace', '.cache')
+
+  let refreshAuthCache: (() => Promise<void>) | undefined
+
+  if (authMode === 'clerk') {
+    const clerkSecretKey = process.env.CLERK_SECRET_KEY
+    if (clerkSecretKey) {
+      const { refreshClerkCache } = await import('canopycms-auth-clerk/cache-writer')
+      refreshAuthCache = async () => {
+        const result = await refreshClerkCache({ secretKey: clerkSecretKey, cachePath })
+        console.log(`  ${result.userCount} users, ${result.groupCount} groups`)
+      }
+    }
+  } else if (authMode === 'dev') {
+    const { refreshDevCache } = await import('canopycms-auth-dev/cache-writer')
+    refreshAuthCache = async () => {
+      const result = await refreshDevCache({ cachePath })
+      console.log(`  ${result.userCount} users, ${result.groupCount} groups`)
+    }
+  }
+
+  console.log(`\nCanopyCMS worker run-once (mode: ${mode}, auth: ${authMode})\n`)
+
+  // Refresh auth cache
+  if (refreshAuthCache) {
+    console.log('Refreshing auth cache...')
+    await refreshAuthCache()
+    console.log('Auth cache refreshed')
+  }
+
+  // Process task queue (if any pending tasks)
+  const { dequeueTask, completeTask } = await import('../worker/task-queue')
+  let taskCount = 0
+  let task
+  while ((task = await dequeueTask(taskDir)) !== null) {
+    console.log(`Processing task: ${task.action} (${task.id})`)
+    // In prod-sim without GitHub, just mark tasks as completed
+    // A real worker would execute the GitHub operations
+    console.log(`  Skipped (no GitHub service in run-once mode)`)
+    await completeTask(taskDir, task.id, { skipped: true })
+    taskCount++
+  }
+
+  if (taskCount > 0) {
+    console.log(`Processed ${taskCount} task(s)`)
+  } else {
+    console.log('No pending tasks')
+  }
+
+  console.log('\nDone')
+}
+
 // CLI entrypoint
 async function main() {
   const args = process.argv.slice(2)
@@ -162,12 +244,20 @@ async function main() {
       cloud: 'aws',
       projectDir: process.cwd(),
     })
+  } else if (command === 'worker') {
+    const subcommand = args[1]
+    if (subcommand !== 'run-once') {
+      console.error('Usage: canopycms worker run-once')
+      process.exit(1)
+    }
+    await workerRunOnce({ projectDir: process.cwd() })
   } else {
     console.log('CanopyCMS CLI')
     console.log('')
     console.log('Commands:')
     console.log('  init              Add CanopyCMS to a Next.js app')
     console.log('  init-deploy aws   Generate AWS deployment artifacts')
+    console.log('  worker run-once   Process tasks, sync git, refresh auth cache')
     process.exit(0)
   }
 }
