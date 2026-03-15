@@ -16,15 +16,25 @@ import { CmsWorker } from 'canopycms/worker/cms-worker'
 import { refreshClerkCache } from 'canopycms-auth-clerk/cache-writer'
 import path from 'node:path'
 
-async function getSecret(secretArn: string): Promise<string> {
+async function getSecret(secretArn: string, retries = 3): Promise<string> {
   const { SecretsManagerClient, GetSecretValueCommand } =
     await import('@aws-sdk/client-secrets-manager')
   const client = new SecretsManagerClient({})
-  const response = await client.send(new GetSecretValueCommand({ SecretId: secretArn }))
-  if (!response.SecretString) {
-    throw new Error(`Secret ${secretArn} has no string value`)
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await client.send(new GetSecretValueCommand({ SecretId: secretArn }))
+      if (!response.SecretString) {
+        throw new Error(`Secret ${secretArn} has no string value`)
+      }
+      return response.SecretString
+    } catch (err) {
+      if (attempt === retries) throw err
+      const delay = 1000 * Math.pow(2, attempt) // 1s, 2s, 4s
+      console.log(`Secrets Manager unavailable for ${secretArn}, retrying in ${delay}ms...`)
+      await new Promise((r) => setTimeout(r, delay))
+    }
   }
-  return response.SecretString
+  throw new Error('unreachable')
 }
 
 async function main() {
@@ -80,7 +90,7 @@ async function main() {
     ),
   })
 
-  // Graceful shutdown
+  // Graceful shutdown — stop() waits for in-flight operations to drain
   const shutdown = async () => {
     console.log('Shutting down...')
     await worker.stop()
@@ -93,6 +103,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Fatal error:', err.message)
+  console.error('Fatal error:', err instanceof Error ? err.message : String(err))
   process.exit(1)
 })

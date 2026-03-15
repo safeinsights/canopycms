@@ -128,8 +128,11 @@ export async function refreshClerkCache(
         if (userMemberships.length > 0) {
           memberships[user.id] = userMemberships.map((m) => m.organization.id)
         }
-      } catch {
-        // Skip users whose memberships can't be fetched
+      } catch (err) {
+        console.warn(
+          `Failed to fetch memberships for user ${user.id}:`,
+          err instanceof Error ? err.message : err,
+        )
       }
     }
   }

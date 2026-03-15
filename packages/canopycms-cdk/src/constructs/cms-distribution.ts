@@ -73,7 +73,7 @@ export class CanopyCmsDistribution extends Construct {
     // ========================================================================
 
     // Extract the domain from the Function URL (https://xxx.lambda-url.region.on.aws)
-    const functionUrlDomain = Lazy_extractDomain(props.functionUrl)
+    const functionUrlDomain = extractFunctionUrlDomain(props.functionUrl)
 
     // Origin: Lambda Function URL
     const origin = new origins.HttpOrigin(functionUrlDomain, {
@@ -144,7 +144,7 @@ export class CanopyCmsDistribution extends Construct {
  * The URL is like https://xxx.lambda-url.region.on.aws/
  * We need just the domain part for CloudFront origin.
  */
-function Lazy_extractDomain(functionUrl: lambda.FunctionUrl): string {
+function extractFunctionUrlDomain(functionUrl: lambda.FunctionUrl): string {
   // Function URL is a Token at synth time, so we use Fn.select + Fn.split
   // to extract the domain from the URL: https://xxx.lambda-url.region.on.aws/
   return Fn.select(2, Fn.split('/', functionUrl.url))
