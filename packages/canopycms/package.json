@@ -7,12 +7,16 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "canopycms": "./src/cli/init.ts"
+  },
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
     "./server": "./src/server.ts",
     "./auth": "./src/auth/index.ts",
-    "./http": "./src/http/index.ts"
+    "./http": "./src/http/index.ts",
+    "./worker/task-queue": "./src/worker/task-queue.ts"
   },
   "files": [
     "dist"
