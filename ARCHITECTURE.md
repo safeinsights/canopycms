@@ -717,7 +717,9 @@ Simulates production behavior locally. Creates per-branch clones in `.canopy-pro
 ### prod
 Full production deployment. Branch workspaces live on persistent storage (e.g., EFS on AWS). Integrates with GitHub for PR creation and management. Designed for team collaboration with proper review workflows.
 
-Settings (groups and permissions) are stored on a separate `settingsBranch` (default: 'canopycms-settings') in prod mode, with changes creating PRs for review before merging to main. This ensures permission changes go through the same review process as content changes.
+Settings (groups and permissions) are stored on a separate orphan branch whose name is computed by the operating mode strategy as `canopycms-settings-{deploymentName}` (default: `canopycms-settings-prod`). Changes create PRs for review before merging to main, ensuring permission changes go through the same review process as content changes.
+
+Settings PR creation follows the same dual-path as content branches: when `githubService` is available the PR is created directly; when it is not (e.g., Lambda with no internet), a `push-and-create-or-update-pr` task is queued for the EC2 worker. Because the same settings branch is updated repeatedly, this task checks for an existing open PR before creating a new one.
 
 **Security**: In prod/prod-sim modes, the system will throw an error if the settings branch cannot be loaded, ensuring permissions are never accidentally read from a content branch. Settings files also include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
 
@@ -759,6 +761,7 @@ For low-cost AWS deployments, CanopyCMS supports splitting into two components t
 - Tiny daemon (t4g.nano spot instance, ~$1.50/month)
 - Processes queued tasks: pushes branches to GitHub, creates/updates PRs
 - Syncs `remote.git` with GitHub (fetches upstream changes)
+- Pushes `canopycms-settings-*` branches to GitHub on each sync cycle (belt-and-suspenders for the task queue)
 - Rebases active branch workspaces onto updated main (backlog #10: sync + conflict surfacing)
 - Refreshes auth metadata cache (Clerk users/orgs, or dev test users)
 
@@ -802,7 +805,16 @@ When `githubService` is unavailable (Lambda has no internet), PR operations are 
 
 The shared helper `github-sync.ts` provides `syncSubmitPr()` and `syncConvertToDraft()` which transparently use `githubService` directly when available, or fall back to the task queue when not. API handlers (submit, withdraw, request-changes) use these helpers without needing to know about the deployment topology.
 
-Branch metadata includes a `syncStatus` field (`synced`, `pending-sync`, `sync-failed`) so the editor UI can show sync progress.
+**Task actions:**
+- `push-branch` -- pushes a branch from `remote.git` to GitHub
+- `push-and-create-pr` -- pushes then creates a new PR (content branches, first submit)
+- `push-and-update-pr` -- pushes then updates an existing PR (content branches, re-submit)
+- `push-and-create-or-update-pr` -- pushes then checks for an existing open PR before creating (used for settings PRs, which are updated repeatedly rather than creating one PR per branch)
+- `convert-to-draft` -- converts a PR to draft status (withdraw)
+- `close-pr` -- closes a PR
+- `delete-remote-branch` -- removes a branch from GitHub
+
+Branch metadata includes a `syncStatus` field (`synced`, `pending-sync`, `sync-failed`) so the editor UI can show sync progress. The settings branch commit operation (`commitToSettingsBranch`) returns the same `syncStatus` values, allowing the permissions and groups UI to surface sync state to admins.
 
 #### Worker CLI
 
@@ -1033,19 +1045,25 @@ Content operations always work on the current branch. Settings operations need t
 
 **`getSettingsBranchContext()`**: Determines which branch to use for settings
 - Returns appropriate branch context based on operating mode
-- In `prod` mode: Uses `settingsBranch` config (default: 'canopycms-settings')
-- In local modes: Uses `defaultBaseBranch` (default: 'main')
+- In `prod`/`prod-sim` modes: Uses the branch name computed by the operating mode strategy (`canopycms-settings-{deploymentName}`, default: `canopycms-settings-prod`)
+- In dev mode: Uses `defaultBaseBranch` (default: 'main')
 - Returns both the context and mode for downstream operations
 - **Security**: Throws error if settings branch cannot be loaded in prod/prod-sim modes
 
 **`commitSettings()`**: Commits and pushes settings changes with mode-specific logic
 - **dev**: No-op (no git operations)
 - **prod-sim**: Regular `commitFiles()` call
-- **prod**: Uses `commitToSettingsBranch()` with optional PR creation
-
-**Configuration:**
-- `settingsBranch`: Branch name for settings in prod mode (default: 'canopycms-settings')
+- **prod**: Uses `commitToSettingsBranch()` with dual-path PR creation (direct via `githubService` or queued via task queue)
 - `autoCreateSettingsPR`: Whether to create PR automatically in prod (default: true)
+
+**Cross-process locking:**
+
+The `SettingsWorkspaceManager` uses two layers of locking to safely initialize the settings git workspace across concurrent processes (e.g., multiple Lambda instances sharing EFS):
+
+- **In-memory Promise lock**: Prevents redundant async calls within the same process (Lambda request lifecycle)
+- **File-based lock**: Uses atomic file creation (`O_CREAT|O_EXCL` / `wx` flag) for cross-process synchronization. The lock file is placed as a sibling of the settings root directory. Stale locks older than 30 seconds are automatically cleaned up, handling cases where a process crashed during initialization.
+
+This dual-layer approach is necessary because Lambda instances share an EFS filesystem but each instance has its own process memory. The file lock ensures only one instance initializes the workspace at a time, while the in-memory lock avoids redundant concurrent calls within a single instance.
 
 **Code reduction impact:**
 
@@ -1054,9 +1072,10 @@ Before settings-helpers, both `permissions.ts` and `groups.ts` contained ~20 lin
 Handler code before:
 ```
 const mode = ctx.services.config.mode ?? 'dev'
+const strategy = operatingStrategy(mode)
 let branchName: string
-if (mode === 'prod') {
-  branchName = ctx.services.config.settingsBranch ?? 'settings'
+if (strategy.usesSeparateSettingsBranch()) {
+  branchName = strategy.getSettingsBranchName(config)
 } else {
   branchName = ctx.services.config.defaultBaseBranch ?? 'main'
 }
@@ -1327,7 +1346,7 @@ Comments are review artifacts, not content. They're ephemeral discussion about c
 Unlike comments, groups and permissions are configuration that should be version-controlled. Changes to who can edit what should be reviewable via PR, and you should be able to roll back permission changes if needed.
 
 ### Why do settings use a separate branch in prod mode?
-In production, permission and group changes are stored on a dedicated settings branch (default: 'settings') rather than on content branches. This design provides several benefits:
+In production, permission and group changes are stored on a dedicated orphan settings branch (named `canopycms-settings-{deploymentName}`, default: `canopycms-settings-prod`) rather than on content branches. The branch name is deployment-specific so that multiple deployments sharing the same git repository can maintain independent settings. This design provides several benefits:
 
 **Isolation from content changes:**
 - Permission updates don't interfere with content editing workflows
@@ -1344,8 +1363,8 @@ In production, permission and group changes are stored on a dedicated settings b
 - Easy to see who changed permissions and when
 - Can diff settings branch against main to see current vs proposed state
 
-**Local modes use main branch:**
-- In `dev` and `prod-sim`, settings are stored on main for simplicity
+**Dev mode uses local files:**
+- In `dev`, settings are stored in `.canopy-dev/` (not in git) for simplicity
 - No separate branch management needed for local development
 - Settings changes are immediate (no PR workflow needed)
 

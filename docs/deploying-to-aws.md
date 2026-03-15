@@ -233,6 +233,17 @@ The Lambda does NOT need these secrets — only the EC2 worker reads them.
 4. Reviewer merges PR on GitHub
 5. Existing CI/CD pipeline rebuilds the static site and deploys to S3
 
+## Settings Publishing Flow (Permissions & Groups)
+
+Settings changes (permissions and groups) follow the same Lambda→worker pattern as content, using a dedicated settings branch named `canopycms-settings-{deploymentName}` (e.g., `canopycms-settings-prod`):
+
+1. Admin changes permissions/groups in the CMS UI
+2. Lambda commits changes to the settings branch workspace on EFS
+3. Lambda pushes the commit to `remote.git` (local bare repo on EFS)
+4. Lambda queues a `push-and-create-or-update-pr` task for the worker
+5. EC2 worker dequeues the task, pushes the settings branch from `remote.git` to GitHub, and creates/updates a PR
+6. Additionally, the worker's `syncGit()` pushes settings branches on every cycle as a safety net
+
 ## Security Model
 
 | Lambda | EC2 Worker |

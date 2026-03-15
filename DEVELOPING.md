@@ -1194,7 +1194,7 @@ git status  # .canopy-dev/ should not appear
 |------|---------------|----------------|----------|
 | **dev** | `.canopy-dev/*.json` (gitignored) | None | Local development, testing permissions |
 | **prod-sim** | Orphan branch `canopycms-settings-{deployment}` (gitignored workspaces) | Standard commits to settings branch | Testing branch workflows locally |
-| **prod** | Orphan branch `canopycms-settings-{deployment}` (committed) | Admin-only writes to settings branch | Production deployment |
+| **prod** | Orphan branch `canopycms-settings-{deployment}` (committed) | Commits to settings branch + PR to GitHub | Production deployment |
 
 **dev (Default for Development):**
 - No git operations
@@ -1210,9 +1210,10 @@ git status  # .canopy-dev/ should not appear
 
 **prod (Production):**
 - Settings tracked in git via orphan branch `canopycms-settings-{deploymentName}`
-- Changes written directly to settings branch (admin-only, no PR workflow)
+- Changes committed to settings branch, then pushed to GitHub with a PR (via `push-and-create-or-update-pr` task action)
 - Settings are treated as deployment-specific configuration data
 - Each deployment has its own settings branch
+- Cross-process locking (file-based `wx` flag + in-memory Promise) protects concurrent workspace init on EFS
 
 #### Production Settings Workflow
 
@@ -1220,13 +1221,20 @@ In production (`mode: 'prod'`), permission and group changes are stored on a sep
 
 1. **Settings Branch:** Changes are committed to an orphan branch named `canopycms-settings-{deploymentName}` (e.g., `canopycms-settings-prod`, `canopycms-settings-staging`)
 
-2. **Direct Writes:** Admin changes are written directly to the settings branch (no PR workflow - settings are treated like database records, not source code)
+2. **Commit + PR (dual-path):** `commitToSettingsBranch` in `services.ts` uses the same dual-path pattern as content branches (`api/github-sync.ts`):
+   - **Direct path:** When `githubService` is available (has internet), calls `githubService.createOrUpdatePR()` synchronously
+   - **Async path:** When no internet (prod Lambda), enqueues a `push-and-create-or-update-pr` task for the EC2 worker
+   - Settings PRs are idempotent: the action checks for an existing open PR before creating a new one
 
-3. **Immediate Effect:** Changes are active in the CMS immediately (read from the settings branch workspace)
+3. **Immediate Effect:** Changes are active in the CMS immediately (read from the settings branch workspace). The PR is for persistence to GitHub, not for gating changes.
 
 4. **Deployment-Specific:** Each deployment environment (prod, staging, dev) has its own independent settings branch
 
 5. **Optimistic Locking:** Settings files include a `contentVersion` field that prevents concurrent admin updates from overwriting each other. If a version conflict is detected, the API returns a 409 status code.
+
+6. **Cross-Process Locking:** `SettingsWorkspaceManager` uses two layers of locking for safe concurrent access on shared filesystems like EFS:
+   - **In-memory Promise lock:** Prevents redundant async calls within the same Node.js process (Lambda request lifecycle)
+   - **File-based lock (`wx` flag):** Uses `fs.open(path, 'wx')` (O_CREAT|O_EXCL) for atomic cross-process synchronization. Stale locks (>30s) are automatically cleaned up.
 
 **Configuration:**
 
@@ -1254,20 +1262,22 @@ if (expectedContentVersion !== undefined && currentFile?.contentVersion !== expe
 const settingsBranchName = `canopycms-settings-${config.deploymentName}`
 const settingsRoot = getBranchRoot(settingsBranchName)
 
-// 3. Checkout settings branch workspace
-await git.checkoutBranch(settingsBranchName)
+// 3. SettingsWorkspaceManager ensures git workspace (dual-layer locking)
+const manager = new SettingsWorkspaceManager(config)
+await manager.ensureGitWorkspace({ settingsRoot, branchName, mode, remoteUrl })
 
-// 4. Pulls latest (if remote exists)
-await git.pullBase()
-
-// 5. Commits changes with incremented version
+// 4. Commits changes with incremented version
 const newContentVersion = (currentFile?.contentVersion ?? 0) + 1
 await savePermissions(settingsRoot, permissions, userId, mode, newContentVersion)
-await git.add('permissions.json')  // Files at root of orphan branch
-await git.commit('Update permissions')
 
-// 6. Pushes to remote settings branch
-await git.push(settingsBranchName)
+// 5. commitToSettingsBranch handles commit + push + PR (dual-path)
+const result = await services.commitToSettingsBranch({
+  branchRoot: settingsRoot,
+  files: 'permissions.json',  // At root of orphan branch
+  message: 'Update permissions',
+  createPR: true,  // default — creates or updates PR via githubService or task queue
+})
+// result.syncStatus: 'synced' | 'pending-sync' | 'sync-failed'
 ```
 
 #### Verifying Local Changes Aren't Committed
@@ -2010,7 +2020,7 @@ it('caches context per request with React cache()', async () => {
 The `CmsWorker` class handles internet-requiring operations that Lambda cannot perform. It is cloud-agnostic and auth-agnostic:
 
 - **Task queue processing**: Polls `.tasks/pending/` on the workspace filesystem
-- **Git sync**: Fetches from GitHub into `remote.git`, rebases active branch workspaces
+- **Git sync**: Fetches from GitHub into `remote.git`, rebases active branch workspaces, and pushes `canopycms-settings-*` branches to GitHub (belt-and-suspenders for the task queue -- ensures settings reach GitHub even if a task queue entry is lost)
 - **Auth cache refresh**: Calls a pluggable `refreshAuthCache` callback
 
 The worker lives in the core `canopycms` package, not in `canopycms-cdk`, because it has no cloud dependencies.
@@ -2034,6 +2044,20 @@ const task = await dequeueTask(taskDir)
 await completeTask(taskDir, task.id, { prUrl: '...' })
 ```
 
+**Task actions (`TaskAction` union in `worker/task-queue.ts`):**
+
+| Action | Purpose | Used by |
+|--------|---------|---------|
+| `push-and-create-pr` | Push branch, create new PR | Content branch submit (new PR) |
+| `push-and-update-pr` | Push branch, update existing PR | Content branch submit (existing PR) |
+| `push-and-create-or-update-pr` | Push branch, find existing open PR or create new one | Settings branches (idempotent -- settings get updated repeatedly) |
+| `convert-to-draft` | Convert PR to draft state | Withdraw, request-changes |
+| `close-pr` | Close a PR | Branch cleanup |
+| `delete-remote-branch` | Delete branch from GitHub | Branch cleanup |
+| `push-branch` | Push branch without PR operations | Sync-only pushes |
+
+The `push-and-create-or-update-pr` action is specifically designed for settings branches, which are updated many times but should maintain a single open PR. It queries GitHub for an existing open PR on the branch before deciding whether to create or update.
+
 ### Auth Caching Pattern
 
 Each auth plugin provides a symmetric pair:
@@ -2050,6 +2074,8 @@ Each auth plugin provides a symmetric pair:
 ### GitHub Sync Helper (api/github-sync)
 
 `syncSubmitPr()` and `syncConvertToDraft()` transparently use `githubService` when available or fall back to the task queue. API handlers use these without knowing the deployment topology.
+
+`commitToSettingsBranch` in `services.ts` uses the same dual-path pattern for settings branches: direct `githubService.createOrUpdatePR()` when available, or enqueue `push-and-create-or-update-pr` when not. This means settings and content branches share a consistent approach to GitHub synchronization despite having different PR semantics (settings reuse a single PR; content branches create one per branch).
 
 ### Worker CLI
 
