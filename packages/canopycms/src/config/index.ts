@@ -64,7 +64,7 @@ export type {
 export { primitiveFieldTypes, fieldTypes } from './types'
 
 // Re-export schemas (for advanced use cases)
-export { CanopyConfigSchema, getConfigDefaults } from './schemas/config'
+export { CanopyConfigSchema, getConfigDefaults, DEFAULT_PROD_WORKSPACE } from './schemas/config'
 export { fieldSchema, blockSchema, selectOptionSchema, referenceOptionSchema } from './schemas/field'
 export { collectionSchema, rootCollectionSchema, entryTypeSchema, relativePathSchema } from './schemas/collection'
 export { permissionTargetSchema, pathPermissionSchema } from './schemas/permissions'

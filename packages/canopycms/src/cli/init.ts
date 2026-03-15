@@ -56,23 +56,23 @@ export async function init(options: InitOptions): Promise<void> {
   // Generate files
   await writeIfNotExists(
     path.join(projectDir, 'canopycms.config.ts'),
-    canopyCmsConfig({ mode }),
+    await canopyCmsConfig({ mode }),
   )
   await writeIfNotExists(
     path.join(projectDir, 'app/lib/canopy.ts'),
-    canopyContextClerk(),
+    await canopyContextClerk(),
   )
   await writeIfNotExists(
     path.join(projectDir, 'app/schemas.ts'),
-    schemasTemplate(),
+    await schemasTemplate(),
   )
   await writeIfNotExists(
     path.join(projectDir, 'app/api/canopycms/[...canopycms]/route.ts'),
-    apiRoute(),
+    await apiRoute(),
   )
   await writeIfNotExists(
     path.join(projectDir, 'app/edit/page.tsx'),
-    editPageClerk(),
+    await editPageClerk(),
   )
 
   // Update .gitignore
@@ -111,11 +111,11 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
 
   await writeIfNotExists(
     path.join(projectDir, 'Dockerfile.cms'),
-    dockerfileCms(),
+    await dockerfileCms(),
   )
   await writeIfNotExists(
     path.join(projectDir, '.github/workflows/deploy-cms.yml'),
-    githubWorkflowCms(),
+    await githubWorkflowCms(),
   )
 
   // Check if next.config already has CANOPY_BUILD support

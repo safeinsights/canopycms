@@ -16,7 +16,8 @@
     "./server": "./src/server.ts",
     "./auth": "./src/auth/index.ts",
     "./http": "./src/http/index.ts",
-    "./worker/task-queue": "./src/worker/task-queue.ts"
+    "./worker/task-queue": "./src/worker/task-queue.ts",
+    "./worker/cms-worker": "./src/worker/cms-worker.ts"
   },
   "files": [
     "dist"

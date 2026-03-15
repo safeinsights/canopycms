@@ -61,6 +61,9 @@ export const CanopyConfigSchema = z.object({
  * Helper to get schema default values.
  * This centralizes default value extraction from Zod schemas.
  */
+/** Default workspace path for prod mode (used when CANOPYCMS_WORKSPACE_ROOT is not set) */
+export const DEFAULT_PROD_WORKSPACE = '/mnt/efs/workspace'
+
 export const getConfigDefaults = () => ({
   baseBranch: defaultBaseBranchSchema.parse(undefined),
   remoteName: defaultRemoteNameSchema.parse(undefined),
@@ -70,4 +73,5 @@ export const getConfigDefaults = () => ({
   mode: operatingModeSchema.parse(undefined),
   githubTokenEnvVar: githubTokenEnvVarSchema.parse(undefined),
   deploymentName: deploymentNameSchema.parse(undefined),
+  prodWorkspace: DEFAULT_PROD_WORKSPACE,
 })

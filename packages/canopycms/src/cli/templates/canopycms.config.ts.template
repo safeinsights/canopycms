@@ -1,0 +1,11 @@
+import { defineCanopyConfig } from 'canopycms'
+
+export default defineCanopyConfig({
+  defaultBranchAccess: 'allow',
+  mode: '{{MODE}}',
+  gitBotAuthorName: 'CanopyCMS Bot',
+  gitBotAuthorEmail: 'canopycms-bot@example.com',
+  editor: {
+    title: 'CanopyCMS Editor',
+  },
+})
