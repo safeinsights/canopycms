@@ -1,0 +1,19 @@
+[Unit]
+Description=CanopyCMS Worker Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/canopy-worker
+ExecStart=/usr/bin/npx tsx index.ts
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Environment
+EnvironmentFile=/opt/canopy-worker/.env
+
+[Install]
+WantedBy=multi-user.target

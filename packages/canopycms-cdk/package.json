@@ -1,19 +1,18 @@
 {
-  "name": "canopycms-auth-clerk",
+  "name": "canopycms-cdk",
   "version": "0.0.0",
-  "description": "Clerk authentication provider for CanopyCMS",
+  "description": "AWS CDK constructs and EC2 worker for CanopyCMS deployment",
   "license": "MIT",
   "private": false,
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./client": "./src/client.ts",
-    "./cache-writer": "./src/cache-writer.ts"
+    ".": "./src/index.ts"
   },
   "files": [
-    "dist"
+    "dist",
+    "worker"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -23,9 +22,12 @@
   "engines": {
     "node": ">=18"
   },
-  "peerDependencies": {
+  "dependencies": {
     "canopycms": "*",
-    "@clerk/backend": "^2.0.0"
+    "canopycms-auth-clerk": "*",
+    "@octokit/rest": "^20.0.2",
+    "simple-git": "^3.22.0",
+    "@aws-sdk/client-secrets-manager": "^3.600.0"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
