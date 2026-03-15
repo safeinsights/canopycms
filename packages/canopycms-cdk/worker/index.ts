@@ -12,7 +12,7 @@
  * entrypoint that provides a different refreshAuthCache callback.
  */
 
-import { CmsWorker } from '../src/worker'
+import { CmsWorker } from 'canopycms/worker/cms-worker'
 import { refreshClerkCache } from 'canopycms-auth-clerk/cache-writer'
 import path from 'node:path'
 

@@ -48,8 +48,14 @@ export class CmsStack extends Stack {
         file: 'Dockerfile.cms',
       }),
 
+      // Worker configuration
+      githubOwner: 'your-org',
+      githubRepo: 'your-docs-site',
+
       // Secrets the EC2 worker needs to read
       secretsArns: [githubToken.secretArn, clerkSecretKey.secretArn],
+      githubTokenSecretArn: githubToken.secretArn,
+      clerkSecretKeySecretArn: clerkSecretKey.secretArn,
 
       // Lambda environment (no secrets here — only public config)
       environment: {

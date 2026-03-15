@@ -154,7 +154,11 @@ export class CmsStack extends Stack {
     // Core infrastructure
     const cmsService = new CanopyCmsService(this, 'CmsService', {
       cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.'),
+      githubOwner: 'your-org',
+      githubRepo: 'your-docs-site',
       secretsArns: [githubToken.secretArn, clerkSecretKey.secretArn],
+      githubTokenSecretArn: githubToken.secretArn,
+      clerkSecretKeySecretArn: clerkSecretKey.secretArn,
       environment: {
         CANOPY_AUTH_MODE: 'clerk',
         CLERK_JWT_KEY: process.env.CLERK_JWT_KEY ?? '',

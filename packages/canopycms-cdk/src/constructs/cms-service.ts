@@ -3,7 +3,6 @@ import { Construct } from 'constructs'
 import {
   Duration,
   RemovalPolicy,
-  Stack,
   aws_ec2 as ec2,
   aws_efs as efs,
   aws_iam as iam,
@@ -39,6 +38,21 @@ export interface CanopyCmsServiceProps {
 
   /** EFS removal policy (default: RETAIN) */
   efsRemovalPolicy?: RemovalPolicy
+
+  /** GitHub owner for worker git operations (e.g., 'safeinsights') */
+  githubOwner: string
+
+  /** GitHub repo name for worker git operations (e.g., 'docs-site') */
+  githubRepo: string
+
+  /** Secrets Manager ARN for the GitHub bot token */
+  githubTokenSecretArn?: string
+
+  /** Secrets Manager ARN for the Clerk secret key */
+  clerkSecretKeySecretArn?: string
+
+  /** Base branch name (default: 'main') */
+  baseBranch?: string
 }
 
 /**
@@ -171,11 +185,16 @@ export class CanopyCmsService extends Construct {
       allowAllOutbound: false,
     })
 
-    // Worker → EFS
+    // Worker ↔ EFS (ingress on EFS SG + egress on Worker SG)
     efsSg.addIngressRule(workerSg, ec2.Port.tcp(2049), 'Worker NFS access')
+    workerSg.addEgressRule(efsSg, ec2.Port.tcp(2049), 'NFS to EFS')
 
     // Worker → internet (HTTPS only)
     workerSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'HTTPS outbound')
+
+    // Worker → DNS (needed for EFS DNS-based mount targets)
+    workerSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(53), 'DNS TCP')
+    workerSg.addEgressRule(ec2.Peer.anyIpv4(), ec2.Port.udp(53), 'DNS UDP')
 
     // Worker IAM role
     const workerRole = new iam.Role(this, 'WorkerRole', {
@@ -198,11 +217,27 @@ export class CanopyCmsService extends Construct {
       iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonElasticFileSystemClientReadWriteAccess'),
     )
 
-    // Worker S3 Asset — upload worker code to CDK assets bucket
+    // Worker S3 Asset — upload bundled worker code to CDK assets bucket
+    // The worker is bundled with esbuild into a single JS file (npm run build:worker)
     const workerAsset = new s3assets.Asset(this, 'WorkerCode', {
-      path: path.join(__dirname, '../../worker'),
+      path: path.join(__dirname, '../../worker/dist'),
     })
     workerAsset.grantRead(workerRole)
+
+    // Build worker .env file content from CDK props
+    const envLines = [
+      `CANOPYCMS_WORKSPACE_ROOT=/mnt/efs/workspace`,
+      `CANOPYCMS_GITHUB_OWNER=${props.githubOwner}`,
+      `CANOPYCMS_GITHUB_REPO=${props.githubRepo}`,
+      `CANOPYCMS_BASE_BRANCH=${props.baseBranch ?? 'main'}`,
+    ]
+    if (props.githubTokenSecretArn) {
+      envLines.push(`CANOPYCMS_GITHUB_TOKEN_SECRET_ARN=${props.githubTokenSecretArn}`)
+    }
+    if (props.clerkSecretKeySecretArn) {
+      envLines.push(`CLERK_SECRET_KEY_SECRET_ARN=${props.clerkSecretKeySecretArn}`)
+    }
+    const envFileContent = envLines.join('\n')
 
     // UserData script
     const userData = ec2.UserData.forLinux()
@@ -225,10 +260,39 @@ export class CanopyCmsService extends Construct {
       'mkdir -p /opt/canopy-worker',
       'cd /opt/canopy-worker',
       'unzip -o /tmp/canopy-worker.zip',
-      'npm ci --production',
       '',
-      '# Install and start systemd service',
-      'cp canopy-worker.service /etc/systemd/system/',
+      '# Write environment file for systemd service',
+      `cat > /opt/canopy-worker/.env << 'ENVEOF'`,
+      envFileContent,
+      'ENVEOF',
+      '',
+      '# Create systemd service',
+      `cat > /etc/systemd/system/canopy-worker.service << 'SVCEOF'`,
+      '[Unit]',
+      'Description=CanopyCMS Worker Daemon',
+      'After=network.target',
+      '',
+      '[Service]',
+      'Type=simple',
+      'User=ec2-user',
+      'WorkingDirectory=/opt/canopy-worker',
+      'ExecStart=/usr/bin/node index.js',
+      'Restart=always',
+      'RestartSec=5',
+      'TimeoutStartSec=300',
+      'StandardOutput=journal',
+      'StandardError=journal',
+      'EnvironmentFile=/opt/canopy-worker/.env',
+      '',
+      '[Install]',
+      'WantedBy=multi-user.target',
+      'SVCEOF',
+      '',
+      '# Set ownership for ec2-user',
+      'chown -R ec2-user:ec2-user /opt/canopy-worker',
+      'chown -R ec2-user:ec2-user /mnt/efs',
+      '',
+      '# Start worker',
       'systemctl daemon-reload',
       'systemctl enable canopy-worker',
       'systemctl start canopy-worker',

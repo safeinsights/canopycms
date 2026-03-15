@@ -4,11 +4,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=root
+User=ec2-user
 WorkingDirectory=/opt/canopy-worker
-ExecStart=/usr/bin/npx tsx index.ts
+ExecStart=/usr/bin/node index.js
 Restart=always
 RestartSec=5
+TimeoutStartSec=300
 StandardOutput=journal
 StandardError=journal
 

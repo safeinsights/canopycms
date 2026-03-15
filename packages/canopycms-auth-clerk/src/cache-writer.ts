@@ -70,11 +70,21 @@ export async function refreshClerkCache(
 
   const clerkClient = createClerkClient({ secretKey })
 
-  // Fetch all users
-  const usersResponse = (await clerkClient.users.getUserList({
-    limit: 500,
-  })) as ClerkResponse<ClerkUserData>
-  const clerkUsers = unwrapClerkResponse(usersResponse)
+  // Fetch all users (paginate to handle large organizations)
+  const clerkUsers: ClerkUserData[] = []
+  const pageSize = 500
+  let offset = 0
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const usersResponse = (await clerkClient.users.getUserList({
+      limit: pageSize,
+      offset,
+    })) as ClerkResponse<ClerkUserData>
+    const page = unwrapClerkResponse(usersResponse)
+    clerkUsers.push(...page)
+    if (page.length < pageSize) break
+    offset += pageSize
+  }
 
   const users = clerkUsers.map((u) => ({
     id: u.id,
@@ -87,11 +97,21 @@ export async function refreshClerkCache(
   const memberships: Record<string, string[]> = {}
 
   if (useOrganizationsAsGroups) {
-    // Fetch all organizations
-    const orgsResponse = (await clerkClient.organizations.getOrganizationList({
-      limit: 100,
-    })) as ClerkResponse<ClerkOrganization>
-    const clerkOrgs = unwrapClerkResponse(orgsResponse)
+    // Fetch all organizations (paginate)
+    const clerkOrgs: ClerkOrganization[] = []
+    let orgOffset = 0
+    const orgPageSize = 100
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const orgsResponse = (await clerkClient.organizations.getOrganizationList({
+        limit: orgPageSize,
+        offset: orgOffset,
+      })) as ClerkResponse<ClerkOrganization>
+      const page = unwrapClerkResponse(orgsResponse)
+      clerkOrgs.push(...page)
+      if (page.length < orgPageSize) break
+      orgOffset += orgPageSize
+    }
 
     groups = clerkOrgs.map((o) => ({
       id: o.id,
