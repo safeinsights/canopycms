@@ -16,6 +16,7 @@ import type { Task, TaskQueueLogger } from '../task-queue'
 export type TaskAction =
   | 'push-and-create-pr'
   | 'push-and-update-pr'
+  | 'push-and-create-or-update-pr'
   | 'convert-to-draft'
   | 'close-pr'
   | 'delete-remote-branch'

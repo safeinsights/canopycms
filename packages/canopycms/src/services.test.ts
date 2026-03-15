@@ -336,11 +336,12 @@ describe('commitToSettingsBranch', () => {
     vi.clearAllMocks()
   })
 
-  it('should default to "canopycms-settings" branch when settingsBranch not configured', async () => {
-    const branchMock = vi.fn().mockResolvedValue({ all: ['canopycms-settings'], current: 'canopycms-settings' })
+  it('should default to strategy-computed branch name when settingsBranch not configured', async () => {
+    // In prod mode, the strategy computes 'canopycms-settings-{deploymentName}' (default: 'canopycms-settings-prod')
+    const branchMock = vi.fn().mockResolvedValue({ all: ['canopycms-settings-prod'], current: 'canopycms-settings-prod' })
     const fetchMock = vi.fn()
     const mockGitInstance = {
-      status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'canopycms-settings' }),
+      status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'canopycms-settings-prod' }),
       branch: branchMock,
       checkout: vi.fn(),
       checkoutBranch: vi.fn(),
@@ -365,7 +366,7 @@ describe('commitToSettingsBranch', () => {
     const cfg = defineCanopyTestConfig({
       schema,
       mode: 'prod',
-      // settingsBranch not specified - should default to 'canopycms-settings'
+      // settingsBranch not specified - strategy computes 'canopycms-settings-prod'
     })
 
     const services = await createTestServices({ ...cfg, schema })
@@ -376,8 +377,8 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    // Should attempt to pull from the settings branch
-    expect(fetchMock).toHaveBeenCalledWith('origin', 'canopycms-settings')
+    // Should attempt to pull from the strategy-computed settings branch
+    expect(fetchMock).toHaveBeenCalledWith('origin', 'canopycms-settings-prod')
   })
 
   it('should pull from the correct settings branch', async () => {
@@ -469,7 +470,7 @@ describe('commitToSettingsBranch', () => {
 
     // Should pull from the settings branch (not base branch)
     expect(fetchMock).toHaveBeenCalledWith('origin', 'custom-settings-branch')
-    // Should push to the settings branch
-    expect(pushMock).toHaveBeenCalledWith('origin', 'custom-settings-branch')
+    // Should push current branch (workspace is already on the settings branch)
+    expect(pushMock).toHaveBeenCalled()
   })
 })
