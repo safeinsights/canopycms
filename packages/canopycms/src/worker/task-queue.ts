@@ -26,7 +26,15 @@ export interface WorkerTask {
   completedAt?: string
   result?: Record<string, unknown>
   error?: string
+  /** Number of times this task has been retried (default: 0) */
+  retryCount?: number
+  /** Maximum retries before permanent failure (default: 3) */
+  maxRetries?: number
+  /** ISO timestamp — task should not be dequeued before this time */
+  retryAfter?: string
 }
+
+const DEFAULT_MAX_RETRIES = 3
 
 /**
  * Enqueue a task for the EC2 worker to process.
@@ -46,6 +54,8 @@ export async function enqueueTask(
     payload: task.payload,
     status: 'pending',
     createdAt: new Date().toISOString(),
+    retryCount: 0,
+    maxRetries: DEFAULT_MAX_RETRIES,
   }
 
   const filePath = path.join(pendingDir, `${id}.json`)
@@ -58,6 +68,9 @@ export async function enqueueTask(
  * Dequeue the next pending task (oldest first).
  * Moves the task file from pending/ to processing/.
  * Returns null if no pending tasks.
+ *
+ * Skips tasks with a retryAfter timestamp in the future.
+ * Skips corrupt JSON files (moves them to corrupt/).
  */
 export async function dequeueTask(taskDir: string): Promise<WorkerTask | null> {
   const pendingDir = path.join(taskDir, 'pending')
@@ -73,12 +86,23 @@ export async function dequeueTask(taskDir: string): Promise<WorkerTask | null> {
   const jsonFiles = files.filter((f) => f.endsWith('.json'))
   if (jsonFiles.length === 0) return null
 
+  const now = Date.now()
+
   // Read all pending tasks and sort by createdAt for FIFO ordering
   const tasks: { fileName: string; task: WorkerTask }[] = []
   for (const fileName of jsonFiles) {
     try {
       const content = await fs.readFile(path.join(pendingDir, fileName), 'utf-8')
-      tasks.push({ fileName, task: JSON.parse(content) as WorkerTask })
+      const task = parseTaskJson(content)
+      if (!task) {
+        await moveToCorrupt(taskDir, pendingDir, fileName, 'Invalid JSON')
+        continue
+      }
+      // Skip tasks whose retryAfter is in the future
+      if (task.retryAfter && new Date(task.retryAfter).getTime() > now) {
+        continue
+      }
+      tasks.push({ fileName, task })
     } catch (err) {
       if (isNotFoundError(err)) continue // Race condition — another worker got it
       throw err
@@ -86,8 +110,25 @@ export async function dequeueTask(taskDir: string): Promise<WorkerTask | null> {
   }
   if (tasks.length === 0) return null
 
-  tasks.sort((a, b) => a.task.createdAt.localeCompare(b.task.createdAt))
+  // Sort by createdAt for FIFO, with task ID as stable tiebreaker
+  // (prevents indeterminate order when tasks have identical timestamps)
+  tasks.sort(
+    (a, b) =>
+      a.task.createdAt.localeCompare(b.task.createdAt) || a.task.id.localeCompare(b.task.id),
+  )
   const { fileName, task } = tasks[0]
+
+  // Dedup check: if this task was already completed or failed (crash recovery scenario),
+  // just clean up the pending copy
+  if (await taskExistsIn(taskDir, task.id, ['completed', 'failed'])) {
+    try {
+      await fs.unlink(path.join(pendingDir, fileName))
+      log.debug('task', 'Skipped already-completed task', { id: task.id })
+    } catch {
+      // Already gone
+    }
+    return null
+  }
 
   const sourcePath = path.join(pendingDir, fileName)
   const destPath = path.join(processingDir, fileName)
@@ -119,15 +160,28 @@ export async function completeTask(
   const completedDir = path.join(taskDir, 'completed')
   const completedPath = path.join(completedDir, `${taskId}.json`)
 
-  const content = await fs.readFile(processingPath, 'utf-8')
-  const task = JSON.parse(content) as WorkerTask
+  let task: WorkerTask
+  try {
+    const content = await fs.readFile(processingPath, 'utf-8')
+    const parsed = parseTaskJson(content)
+    if (!parsed) {
+      log.debug('task', 'Corrupt task file in processing, removing', { id: taskId })
+      await fs.unlink(processingPath).catch(() => {})
+      return
+    }
+    task = parsed
+  } catch (err) {
+    if (isNotFoundError(err)) return // Already moved
+    throw err
+  }
+
   task.status = 'completed'
   task.completedAt = new Date().toISOString()
   task.result = result
 
   await fs.mkdir(completedDir, { recursive: true })
   await fs.writeFile(completedPath, JSON.stringify(task, null, 2), 'utf-8')
-  await fs.unlink(processingPath)
+  await fs.unlink(processingPath).catch(() => {})
 
   log.debug('task', 'Completed task', { id: taskId })
 }
@@ -140,23 +194,78 @@ export async function failTask(taskDir: string, taskId: string, error: string): 
   const failedDir = path.join(taskDir, 'failed')
   const failedPath = path.join(failedDir, `${taskId}.json`)
 
-  const content = await fs.readFile(processingPath, 'utf-8')
-  const task = JSON.parse(content) as WorkerTask
+  let task: WorkerTask
+  try {
+    const content = await fs.readFile(processingPath, 'utf-8')
+    const parsed = parseTaskJson(content)
+    if (!parsed) {
+      log.debug('task', 'Corrupt task file in processing, removing', { id: taskId })
+      await fs.unlink(processingPath).catch(() => {})
+      return
+    }
+    task = parsed
+  } catch (err) {
+    if (isNotFoundError(err)) return // Already moved
+    throw err
+  }
+
   task.status = 'failed'
   task.completedAt = new Date().toISOString()
   task.error = error
 
   await fs.mkdir(failedDir, { recursive: true })
   await fs.writeFile(failedPath, JSON.stringify(task, null, 2), 'utf-8')
-  await fs.unlink(processingPath)
+  await fs.unlink(processingPath).catch(() => {})
 
   log.debug('task', 'Failed task', { id: taskId, error })
+}
+
+/**
+ * Retry a task with exponential backoff. Moves from processing/ back to pending/.
+ * Increments retryCount and sets retryAfter timestamp.
+ */
+export async function retryTask(taskDir: string, taskId: string, error: string): Promise<void> {
+  const processingPath = path.join(taskDir, 'processing', `${taskId}.json`)
+  const pendingDir = path.join(taskDir, 'pending')
+  const pendingPath = path.join(pendingDir, `${taskId}.json`)
+
+  let task: WorkerTask
+  try {
+    const content = await fs.readFile(processingPath, 'utf-8')
+    const parsed = parseTaskJson(content)
+    if (!parsed) {
+      log.debug('task', 'Corrupt task file in processing, removing', { id: taskId })
+      await fs.unlink(processingPath).catch(() => {})
+      return
+    }
+    task = parsed
+  } catch (err) {
+    if (isNotFoundError(err)) return
+    throw err
+  }
+
+  const retryCount = (task.retryCount ?? 0) + 1
+  const backoffMs = Math.min(5000 * Math.pow(2, retryCount - 1), 60_000) // 5s, 10s, 20s, cap at 60s
+
+  task.status = 'pending'
+  task.retryCount = retryCount
+  task.retryAfter = new Date(Date.now() + backoffMs).toISOString()
+  task.error = error
+
+  await fs.mkdir(pendingDir, { recursive: true })
+  await fs.writeFile(pendingPath, JSON.stringify(task, null, 2), 'utf-8')
+  await fs.unlink(processingPath).catch(() => {})
+
+  log.debug('task', 'Retrying task', { id: taskId, retryCount, backoffMs })
 }
 
 /**
  * Recover orphaned tasks stuck in processing/.
  * Moves tasks older than maxAgeMs back to pending/ for retry.
  * Should be called on worker startup to handle crash recovery.
+ *
+ * Skips tasks that already exist in completed/ or failed/ (crash between
+ * writing the result and unlinking the processing copy).
  */
 export async function recoverOrphanedTasks(
   taskDir: string,
@@ -179,9 +288,21 @@ export async function recoverOrphanedTasks(
     const filePath = path.join(processingDir, fileName)
     try {
       const stat = await fs.stat(filePath)
-      if (now - stat.mtimeMs > maxAgeMs) {
+      if (now - stat.mtimeMs >= maxAgeMs) {
         const content = await fs.readFile(filePath, 'utf-8')
-        const task = JSON.parse(content) as WorkerTask
+        const task = parseTaskJson(content)
+        if (!task) {
+          await moveToCorrupt(taskDir, processingDir, fileName, 'Invalid JSON during recovery')
+          continue
+        }
+
+        // Dedup: if task already completed or failed, just clean up the orphan
+        if (await taskExistsIn(taskDir, task.id, ['completed', 'failed'])) {
+          await fs.unlink(filePath).catch(() => {})
+          log.debug('task', 'Cleaned up orphaned task (already finished)', { id: task.id })
+          continue
+        }
+
         task.status = 'pending'
 
         await fs.mkdir(pendingDir, { recursive: true })
@@ -209,10 +330,105 @@ export async function getTaskResult(taskDir: string, taskId: string): Promise<Wo
     const filePath = path.join(taskDir, subdir, `${taskId}.json`)
     try {
       const content = await fs.readFile(filePath, 'utf-8')
-      return JSON.parse(content) as WorkerTask
+      return parseTaskJson(content)
     } catch {
       continue
     }
   }
   return null
+}
+
+/**
+ * Clean up old task files from completed/ and failed/ directories.
+ * Deletes files older than maxAgeMs (default: 30 days).
+ */
+export async function cleanupOldTasks(
+  taskDir: string,
+  maxAgeMs = 30 * 24 * 60 * 60_000,
+): Promise<number> {
+  const now = Date.now()
+  let cleaned = 0
+
+  for (const subdir of ['completed', 'failed']) {
+    const dir = path.join(taskDir, subdir)
+    let files: string[]
+    try {
+      files = await fs.readdir(dir)
+    } catch {
+      continue
+    }
+
+    for (const fileName of files.filter((f) => f.endsWith('.json'))) {
+      try {
+        const filePath = path.join(dir, fileName)
+        const stat = await fs.stat(filePath)
+        if (now - stat.mtimeMs >= maxAgeMs) {
+          await fs.unlink(filePath)
+          cleaned++
+        }
+      } catch {
+        // File already gone or unreadable
+      }
+    }
+  }
+
+  if (cleaned > 0) {
+    log.debug('task', 'Cleaned up old tasks', { cleaned })
+  }
+  return cleaned
+}
+
+// ============================================================================
+// Internal helpers
+// ============================================================================
+
+/**
+ * Parse a JSON string into a WorkerTask, returning null if invalid.
+ */
+function parseTaskJson(content: string): WorkerTask | null {
+  try {
+    const parsed = JSON.parse(content) as WorkerTask
+    // Minimal validation: must have id and action
+    if (typeof parsed.id !== 'string' || typeof parsed.action !== 'string') {
+      return null
+    }
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Check if a task file exists in any of the specified subdirectories.
+ */
+async function taskExistsIn(taskDir: string, taskId: string, subdirs: string[]): Promise<boolean> {
+  for (const subdir of subdirs) {
+    try {
+      await fs.stat(path.join(taskDir, subdir, `${taskId}.json`))
+      return true
+    } catch {
+      // Not in this subdir
+    }
+  }
+  return false
+}
+
+/**
+ * Move a corrupt task file to the corrupt/ subdirectory for inspection.
+ */
+async function moveToCorrupt(
+  taskDir: string,
+  sourceDir: string,
+  fileName: string,
+  reason: string,
+): Promise<void> {
+  const corruptDir = path.join(taskDir, 'corrupt')
+  try {
+    await fs.mkdir(corruptDir, { recursive: true })
+    await fs.rename(path.join(sourceDir, fileName), path.join(corruptDir, fileName))
+    log.debug('task', 'Moved corrupt task file', { fileName, reason })
+  } catch {
+    // Best effort — if we can't move it, try to delete it
+    await fs.unlink(path.join(sourceDir, fileName)).catch(() => {})
+  }
 }

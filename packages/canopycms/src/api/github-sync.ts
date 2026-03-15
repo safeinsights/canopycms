@@ -68,6 +68,7 @@ export async function syncSubmitPr(
       return {
         prUrl: context.branch.pullRequestUrl,
         prNumber: context.branch.pullRequestNumber,
+        syncStatus: 'sync-failed',
       }
     }
   }

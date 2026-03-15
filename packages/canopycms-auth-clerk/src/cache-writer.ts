@@ -1,6 +1,5 @@
-import fs from 'node:fs/promises'
-import path from 'node:path'
 import { createClerkClient } from '@clerk/backend'
+import { writeAuthCacheSnapshot } from 'canopycms/auth'
 
 /**
  * Response types that handle both camelCase and snake_case Clerk SDK variants.
@@ -135,21 +134,16 @@ export async function refreshClerkCache(
     }
   }
 
-  // Write cache files atomically
-  await fs.mkdir(cachePath, { recursive: true })
-  await writeJsonAtomic(path.join(cachePath, 'users.json'), { users })
-  await writeJsonAtomic(path.join(cachePath, 'orgs.json'), { groups })
-  await writeJsonAtomic(path.join(cachePath, 'memberships.json'), { memberships })
+  // Write cache files atomically via snapshot directory + symlink swap
+  await writeAuthCacheSnapshot(cachePath, {
+    'users.json': { users },
+    'orgs.json': { groups },
+    'memberships.json': { memberships },
+  })
 
   return {
     userCount: users.length,
     groupCount: groups.length,
     membershipCount: Object.keys(memberships).length,
   }
-}
-
-async function writeJsonAtomic(filePath: string, data: unknown): Promise<void> {
-  const tmpPath = `${filePath}.tmp`
-  await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8')
-  await fs.rename(tmpPath, filePath)
 }

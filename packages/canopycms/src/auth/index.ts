@@ -9,4 +9,4 @@ export {
 export type { HeadersLike } from './context-helpers'
 export { CachingAuthPlugin } from './caching-auth-plugin'
 export type { AuthCacheProvider, TokenVerifier } from './caching-auth-plugin'
-export { FileBasedAuthCache } from './file-based-auth-cache'
+export { FileBasedAuthCache, writeAuthCacheSnapshot } from './file-based-auth-cache'

@@ -28,14 +28,40 @@ interface LoadedCache {
 }
 
 /**
+ * Resolve the active cache directory.
+ *
+ * Supports two layouts:
+ * 1. Snapshot layout (preferred): {cachePath}/current → {cachePath}/snapshot-{ts}/
+ *    The `current` symlink points to the active snapshot directory.
+ * 2. Flat layout (legacy/simple): files directly in {cachePath}/
+ *
+ * Returns the directory path where users.json, orgs.json, memberships.json live.
+ */
+async function resolveActiveCacheDir(cachePath: string): Promise<string> {
+  const currentLink = path.join(cachePath, 'current')
+  try {
+    const target = await fs.readlink(currentLink)
+    // Symlink target may be relative or absolute
+    return path.isAbsolute(target) ? target : path.resolve(cachePath, target)
+  } catch {
+    // No symlink — fall back to flat layout
+    return cachePath
+  }
+}
+
+/**
  * File-based auth cache provider.
  * Reads JSON files from a directory that is populated externally
  * (e.g., by an EC2 worker running refreshClerkCache).
  *
+ * Supports two directory layouts:
+ * - Snapshot layout: {cachePath}/current/ symlink → snapshot-{ts}/ directory
+ * - Flat layout: files directly in {cachePath}/
+ *
  * Expects:
- * - {cachePath}/users.json   — { users: UserSearchResult[] }
- * - {cachePath}/orgs.json    — { groups: GroupMetadata[] }
- * - {cachePath}/memberships.json — { memberships: { [userId]: groupId[] } }
+ * - users.json   — { users: UserSearchResult[] }
+ * - orgs.json    — { groups: GroupMetadata[] }
+ * - memberships.json — { memberships: { [userId]: groupId[] } }
  *
  * Caches in memory and re-reads when file mtime changes.
  */
@@ -71,9 +97,11 @@ export class FileBasedAuthCache implements AuthCacheProvider {
   }
 
   private async ensureLoaded(): Promise<LoadedCache> {
-    const usersPath = path.join(this.cachePath, 'users.json')
-    const orgsPath = path.join(this.cachePath, 'orgs.json')
-    const membershipsPath = path.join(this.cachePath, 'memberships.json')
+    const activeDir = await resolveActiveCacheDir(this.cachePath)
+
+    const usersPath = path.join(activeDir, 'users.json')
+    const orgsPath = path.join(activeDir, 'orgs.json')
+    const membershipsPath = path.join(activeDir, 'memberships.json')
 
     // Check max mtime across all three files for cache freshness
     let maxMtime = 0
@@ -100,15 +128,15 @@ export class FileBasedAuthCache implements AuthCacheProvider {
     }
 
     // Load fresh data
-    this.cache = await this.loadFromDisk()
+    this.cache = await this.loadFromDisk(activeDir)
     this.lastMtime = maxMtime
     return this.cache
   }
 
-  private async loadFromDisk(): Promise<LoadedCache> {
-    const usersPath = path.join(this.cachePath, 'users.json')
-    const orgsPath = path.join(this.cachePath, 'orgs.json')
-    const membershipsPath = path.join(this.cachePath, 'memberships.json')
+  private async loadFromDisk(dir: string): Promise<LoadedCache> {
+    const usersPath = path.join(dir, 'users.json')
+    const orgsPath = path.join(dir, 'orgs.json')
+    const membershipsPath = path.join(dir, 'memberships.json')
 
     const [usersData, orgsData, membershipsData] = await Promise.all([
       this.readJsonFile<CachedUsers>(usersPath, { users: [] }),
@@ -132,6 +160,7 @@ export class FileBasedAuthCache implements AuthCacheProvider {
     }
 
     log.debug('cache', 'Loaded auth cache', {
+      dir,
       users: users.size,
       groups: groups.size,
       memberships: memberships.size,
@@ -163,6 +192,69 @@ export class FileBasedAuthCache implements AuthCacheProvider {
       memberships: new Map(),
       allUsers: [],
       allGroups: [],
+    }
+  }
+}
+
+/**
+ * Write auth cache files atomically using a snapshot directory and symlink swap.
+ *
+ * 1. Writes files to a timestamped snapshot directory: {cachePath}/snapshot-{ts}/
+ * 2. Creates a temporary symlink, then atomically renames it to {cachePath}/current
+ * 3. Cleans up old snapshot directories (keeps the 2 most recent)
+ *
+ * This ensures readers (FileBasedAuthCache) always see a consistent set of files:
+ * either the old snapshot or the new one, never a mix.
+ */
+export async function writeAuthCacheSnapshot(
+  cachePath: string,
+  files: Record<string, unknown>,
+): Promise<string> {
+  await fs.mkdir(cachePath, { recursive: true })
+
+  const timestamp = Date.now()
+  const snapshotDir = path.join(cachePath, `snapshot-${timestamp}`)
+  await fs.mkdir(snapshotDir, { recursive: true })
+
+  // Write all files to the snapshot directory
+  for (const [fileName, data] of Object.entries(files)) {
+    const tmpPath = path.join(snapshotDir, `${fileName}.tmp`)
+    const finalPath = path.join(snapshotDir, fileName)
+    await fs.writeFile(tmpPath, JSON.stringify(data, null, 2), 'utf-8')
+    await fs.rename(tmpPath, finalPath)
+  }
+
+  // Atomic symlink swap: create temp symlink, rename over current
+  const currentLink = path.join(cachePath, 'current')
+  const tmpLink = path.join(cachePath, `current-${timestamp}`)
+  await fs.symlink(snapshotDir, tmpLink)
+  await fs.rename(tmpLink, currentLink)
+
+  // Clean up old snapshots (keep the 2 most recent)
+  await cleanupOldSnapshots(cachePath, 2)
+
+  return snapshotDir
+}
+
+async function cleanupOldSnapshots(cachePath: string, keepCount: number): Promise<void> {
+  let entries: string[]
+  try {
+    entries = await fs.readdir(cachePath)
+  } catch {
+    return
+  }
+
+  const snapshots = entries
+    .filter((e) => e.startsWith('snapshot-'))
+    .sort()
+    .reverse()
+
+  // Skip the most recent `keepCount` snapshots
+  for (const snapshot of snapshots.slice(keepCount)) {
+    try {
+      await fs.rm(path.join(cachePath, snapshot), { recursive: true, force: true })
+    } catch {
+      // Best effort cleanup
     }
   }
 }
