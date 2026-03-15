@@ -497,7 +497,9 @@ export class GitManager {
 
   async push(branch?: string): Promise<void> {
     const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
-    await this.git.push(this.remote, target)
+    // Use explicit refspec (local:remote) so push works for new branches
+    // that don't yet exist in the remote (e.g., orphan settings branches).
+    await this.git.push(this.remote, `${target}:${target}`, ['--set-upstream'])
   }
 
   async ensureAuthor(author: { name: string; email: string }): Promise<void> {

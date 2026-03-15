@@ -17,6 +17,8 @@ import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
 import { operatingStrategy } from './operating-mode'
 import { BranchSchemaCache } from './branch-schema-cache'
+import { enqueueTask } from './worker/task-queue'
+import { getTaskQueueDir } from './worker/task-queue-config'
 
 /**
  * Parse bootstrap admin IDs from environment variable.
@@ -72,6 +74,7 @@ export interface CanopyServices {
     pushed: boolean
     prUrl?: string
     error?: string
+    syncStatus?: 'pending-sync' | 'synced' | 'sync-failed'
   }>
   /** Get the root path for settings storage (ensures workspace exists) */
   getSettingsBranchRoot: () => Promise<string>
@@ -233,6 +236,7 @@ async function _createCanopyServicesInternal(
     pushed: boolean
     prUrl?: string
     error?: string
+    syncStatus?: 'pending-sync' | 'synced' | 'sync-failed'
   }> => {
     const mode = config.mode
 
@@ -241,7 +245,7 @@ async function _createCanopyServicesInternal(
       return { committed: false, pushed: false }
     }
 
-    const settingsBranch = config.settingsBranch ?? 'canopycms-settings'
+    const settingsBranch = operatingStrategy(config.mode).getSettingsBranchName(config)
     const git = createGitManagerFor(options.branchRoot)
 
     try {
@@ -263,11 +267,9 @@ async function _createCanopyServicesInternal(
       await git.add(options.files)
       await git.commit(options.message)
 
-      // Push to settings branch
-      let pushed = false
+      // Push to local remote (remote.git on EFS in prod, origin in other modes)
       try {
-        await git.push(settingsBranch)
-        pushed = true
+        await git.push()
       } catch (error) {
         return {
           committed: true,
@@ -276,22 +278,47 @@ async function _createCanopyServicesInternal(
         }
       }
 
-      // Create or update PR
-      let prUrl: string | undefined
-      if (options.createPR !== false && githubService) {
-        try {
-          prUrl = await githubService.createOrUpdatePR({
-            head: settingsBranch,
-            base: config.defaultBaseBranch ?? 'main',
-            title: 'Update permissions and groups',
-            body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
-          })
-        } catch (err) {
-          console.warn('Failed to create/update PR:', err)
+      // Create or update PR — dual-path like content branches (api/github-sync.ts)
+      if (options.createPR !== false) {
+        // Direct path: githubService available (has internet)
+        if (githubService) {
+          let prUrl: string | undefined
+          try {
+            prUrl = await githubService.createOrUpdatePR({
+              head: settingsBranch,
+              base: config.defaultBaseBranch ?? 'main',
+              title: 'Update permissions and groups',
+              body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
+            })
+          } catch (err) {
+            console.warn('Failed to create/update PR:', err)
+            return { committed: true, pushed: true, syncStatus: 'sync-failed' }
+          }
+          return { committed: true, pushed: true, prUrl, syncStatus: 'synced' }
+        }
+
+        // Async path: queue task for worker (prod Lambda has no internet)
+        const taskDir = getTaskQueueDir(config)
+        if (taskDir) {
+          try {
+            await enqueueTask(taskDir, {
+              action: 'push-and-create-or-update-pr',
+              payload: {
+                branch: settingsBranch,
+                baseBranch: config.defaultBaseBranch ?? 'main',
+                title: 'Update permissions and groups',
+                body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
+              },
+            })
+            return { committed: true, pushed: true, syncStatus: 'pending-sync' }
+          } catch (err) {
+            console.warn('Failed to enqueue settings PR task:', err)
+            return { committed: true, pushed: true, syncStatus: 'sync-failed' }
+          }
         }
       }
 
-      return { committed: true, pushed: true, prUrl }
+      return { committed: true, pushed: true }
     } catch (error) {
       return {
         committed: false,

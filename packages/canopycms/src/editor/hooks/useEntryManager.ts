@@ -204,16 +204,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const handleCreateEntry = async (collectionPath: LogicalPath, entryTypeName?: string) => {
     const col = collectionByPath.get(collectionPath)
     if (!col || col.type === 'entry') {
-      console.log('Collection not found or is root entry type:', { collectionPath })
       return
     }
-
-    console.log('Opening create modal for collection:', {
-      collectionPath,
-      name: col.name,
-      entryTypes: col.entryTypes,
-      entryTypesCount: col.entryTypes?.length,
-    })
 
     setCreateModalCollection(col)
     setCreateModalError(null)

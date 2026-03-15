@@ -373,6 +373,45 @@ export class CmsWorker {
         console.log(`Updated PR #${prNumber} for ${branch}`)
         return { prNumber }
       }
+      case 'push-and-create-or-update-pr': {
+        const branch = requireString(payload, 'branch')
+        await this.pushBranchToGitHub(branch)
+
+        // Check if an open PR already exists for this branch
+        const existingPRs = await this.octokit.pulls.list({
+          owner: this.config.githubOwner,
+          repo: this.config.githubRepo,
+          head: `${this.config.githubOwner}:${branch}`,
+          base: optionalString(payload, 'baseBranch', this.baseBranch),
+          state: 'open',
+          request: { signal },
+        })
+
+        if (existingPRs.data.length > 0) {
+          const existing = existingPRs.data[0]
+          await this.octokit.pulls.update({
+            owner: this.config.githubOwner,
+            repo: this.config.githubRepo,
+            pull_number: existing.number,
+            body: optionalString(payload, 'body', ''),
+            request: { signal },
+          })
+          console.log(`Updated existing PR #${existing.number} for ${branch}`)
+          return { prUrl: existing.html_url, prNumber: existing.number }
+        }
+
+        const newPr = await this.octokit.pulls.create({
+          owner: this.config.githubOwner,
+          repo: this.config.githubRepo,
+          head: branch,
+          base: optionalString(payload, 'baseBranch', this.baseBranch),
+          title: optionalString(payload, 'title', `Settings update`),
+          body: optionalString(payload, 'body', ''),
+          request: { signal },
+        })
+        console.log(`Created PR #${newPr.data.number} for ${branch}`)
+        return { prUrl: newPr.data.html_url, prNumber: newPr.data.number }
+      }
       case 'convert-to-draft': {
         const draftPrNumber = requireNumber(payload, 'pullRequestNumber')
         // GitHub REST API doesn't support converting to draft directly.
@@ -482,6 +521,31 @@ export class CmsWorker {
     console.log(`Pushed ${branch} to GitHub`)
   }
 
+  /**
+   * Push any canopycms-settings-* branches from remote.git to GitHub.
+   * Non-fatal: a no-op push for up-to-date branches just succeeds quietly.
+   */
+  private async pushSettingsBranches(git: ReturnType<typeof simpleGit>): Promise<void> {
+    try {
+      const branches = await git.branch()
+      const settingsBranches = branches.all.filter((b) => b.startsWith('canopycms-settings-'))
+      for (const branch of settingsBranches) {
+        try {
+          await git.push(this.buildGitHubUrl(), branch)
+          console.log(`Pushed settings branch ${branch} to GitHub`)
+        } catch (err) {
+          // Non-fatal: branch may already be up-to-date or not yet created
+          console.warn(`Settings push for ${branch}:`, err instanceof Error ? err.message : err)
+        }
+      }
+    } catch (err) {
+      console.warn(
+        'Failed to list branches for settings push:',
+        err instanceof Error ? err.message : err,
+      )
+    }
+  }
+
   async syncGit(): Promise<void> {
     if (!this.running) return
 
@@ -493,6 +557,10 @@ export class CmsWorker {
     // doesn't support --prune directly
     await git.raw(['fetch', this.buildGitHubUrl(), '--prune', '+refs/heads/*:refs/heads/*'])
     console.log('Fetched from GitHub')
+
+    // Push settings branches to GitHub (belt-and-suspenders for task queue).
+    // Ensures settings reach GitHub even if a task queue entry is lost.
+    await this.pushSettingsBranches(git)
 
     await this.rebaseActiveBranches()
 
