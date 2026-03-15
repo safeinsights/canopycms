@@ -1,27 +1,7 @@
 import { verifyToken as clerkVerifyToken } from '@clerk/backend'
 import { extractHeaders } from 'canopycms/auth'
 import type { TokenVerifier } from 'canopycms/auth'
-
-/**
- * Extract token from headers.
- * Looks for Bearer token in Authorization header or __session cookie.
- */
-function extractToken(headers: { get(name: string): string | null }): string | null {
-  const authHeader = headers.get('Authorization')
-  if (authHeader?.startsWith('Bearer ')) {
-    return authHeader.slice(7)
-  }
-
-  const cookie = headers.get('Cookie')
-  if (cookie) {
-    const match = cookie.match(/__session=([^;]+)/)
-    if (match) {
-      return match[1]
-    }
-  }
-
-  return null
-}
+import { extractToken } from './clerk-plugin'
 
 export interface ClerkJwtVerifierConfig {
   /**

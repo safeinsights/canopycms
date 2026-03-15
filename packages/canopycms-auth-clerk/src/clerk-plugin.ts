@@ -97,7 +97,7 @@ function getOrgMemberCount(org: ClerkOrganization): number | undefined {
  * Extract token from headers.
  * Looks for Bearer token in Authorization header or __session cookie.
  */
-const extractToken = (headers: HeadersLike): string | null => {
+export const extractToken = (headers: HeadersLike): string | null => {
   // Try Authorization header first
   const authHeader = headers.get('Authorization')
   if (authHeader?.startsWith('Bearer ')) {

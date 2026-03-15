@@ -1,7 +1,6 @@
 import path from 'node:path'
 import type { CanopyConfig } from '../config'
-
-const DEFAULT_PROD_WORKSPACE = '/mnt/efs/workspace'
+import { DEFAULT_PROD_WORKSPACE } from '../config'
 
 /**
  * Get the task queue directory for async worker operations.

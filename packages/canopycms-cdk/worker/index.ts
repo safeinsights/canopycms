@@ -1,15 +1,22 @@
 #!/usr/bin/env node
 
 /**
- * EC2 Worker entrypoint.
- * Reads configuration from environment variables and Secrets Manager,
- * then starts the CMS worker daemon.
+ * EC2 Worker entrypoint for AWS deployment.
+ *
+ * This is the AWS-specific entrypoint that:
+ * - Reads secrets from Secrets Manager
+ * - Wires up the Clerk-specific auth cache refresher
+ * - Starts the auth-agnostic CmsWorker from canopycms core
+ *
+ * Adopters using a different auth provider would create their own
+ * entrypoint that provides a different refreshAuthCache callback.
  */
 
 import { CmsWorker } from '../src/worker'
+import { refreshClerkCache } from 'canopycms-auth-clerk/cache-writer'
+import path from 'node:path'
 
 async function getSecret(secretArn: string): Promise<string> {
-  // Dynamic import to avoid requiring AWS SDK at module load time
   const { SecretsManagerClient, GetSecretValueCommand } =
     await import('@aws-sdk/client-secrets-manager')
   const client = new SecretsManagerClient({})
@@ -45,19 +52,32 @@ async function main() {
   if (!clerkSecretKey && process.env.CLERK_SECRET_KEY_SECRET_ARN) {
     clerkSecretKey = await getSecret(process.env.CLERK_SECRET_KEY_SECRET_ARN)
   }
-  if (!clerkSecretKey)
-    throw new Error('CLERK_SECRET_KEY or CLERK_SECRET_KEY_SECRET_ARN is required')
+
+  // Build auth cache refresher (Clerk-specific)
+  const cachePath = path.join(workspacePath, '.cache')
+  const refreshAuthCache = clerkSecretKey
+    ? async () => {
+        const result = await refreshClerkCache({
+          secretKey: clerkSecretKey,
+          cachePath,
+          useOrganizationsAsGroups: true,
+        })
+        console.log(`  ${result.userCount} users, ${result.groupCount} groups`)
+      }
+    : undefined
 
   const worker = new CmsWorker({
     workspacePath,
     githubOwner,
     githubRepo,
     githubToken,
-    clerkSecretKey,
+    refreshAuthCache,
     baseBranch: process.env.CANOPYCMS_BASE_BRANCH ?? 'main',
     taskPollInterval: parseInt(process.env.CANOPYCMS_TASK_POLL_INTERVAL ?? '5000'),
     gitSyncInterval: parseInt(process.env.CANOPYCMS_GIT_SYNC_INTERVAL ?? '300000'),
-    clerkRefreshInterval: parseInt(process.env.CANOPYCMS_CLERK_REFRESH_INTERVAL ?? '900000'),
+    authCacheRefreshInterval: parseInt(
+      process.env.CANOPYCMS_AUTH_CACHE_REFRESH_INTERVAL ?? '900000',
+    ),
   })
 
   // Graceful shutdown

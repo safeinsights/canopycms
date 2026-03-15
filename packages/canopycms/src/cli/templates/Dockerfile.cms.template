@@ -1,0 +1,19 @@
+FROM public.ecr.aws/docker/library/node:20-slim AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+ENV CANOPY_BUILD=cms
+RUN npm run build
+
+FROM public.ecr.aws/docker/library/node:20-slim AS runner
+# Git is required by CanopyCMS for branch operations
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+# Lambda Web Adapter converts Lambda events to HTTP
+COPY --from=public.ecr.aws/awsguru/aws-lambda-web-adapter:0.8.4 /lambda-adapter /opt/extensions/lambda-adapter
+WORKDIR /app
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/public ./public
+ENV PORT=8080 AWS_LWA_PORT=8080 HOSTNAME=0.0.0.0 NODE_ENV=production
+CMD ["node", "server.js"]

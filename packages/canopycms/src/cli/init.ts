@@ -54,14 +54,17 @@ export async function init(options: InitOptions): Promise<void> {
   console.log('\nCanopyCMS init\n')
 
   // Generate files
-  await writeIfNotExists(path.join(projectDir, 'canopycms.config.ts'), canopyCmsConfig({ mode }))
-  await writeIfNotExists(path.join(projectDir, 'app/lib/canopy.ts'), canopyContextClerk())
-  await writeIfNotExists(path.join(projectDir, 'app/schemas.ts'), schemasTemplate())
+  await writeIfNotExists(
+    path.join(projectDir, 'canopycms.config.ts'),
+    await canopyCmsConfig({ mode }),
+  )
+  await writeIfNotExists(path.join(projectDir, 'app/lib/canopy.ts'), await canopyContextClerk())
+  await writeIfNotExists(path.join(projectDir, 'app/schemas.ts'), await schemasTemplate())
   await writeIfNotExists(
     path.join(projectDir, 'app/api/canopycms/[...canopycms]/route.ts'),
-    apiRoute(),
+    await apiRoute(),
   )
-  await writeIfNotExists(path.join(projectDir, 'app/edit/page.tsx'), editPageClerk())
+  await writeIfNotExists(path.join(projectDir, 'app/edit/page.tsx'), await editPageClerk())
 
   // Update .gitignore
   const gitignorePath = path.join(projectDir, '.gitignore')
@@ -97,10 +100,10 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
 
   console.log('\nCanopyCMS init-deploy aws\n')
 
-  await writeIfNotExists(path.join(projectDir, 'Dockerfile.cms'), dockerfileCms())
+  await writeIfNotExists(path.join(projectDir, 'Dockerfile.cms'), await dockerfileCms())
   await writeIfNotExists(
     path.join(projectDir, '.github/workflows/deploy-cms.yml'),
-    githubWorkflowCms(),
+    await githubWorkflowCms(),
   )
 
   // Check if next.config already has CANOPY_BUILD support

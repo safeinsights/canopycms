@@ -1,0 +1,27 @@
+# CanopyCMS deployment workflow
+# Customize this for your CI/CD setup
+
+name: Deploy CMS
+on:
+  push:
+    paths:
+      - 'app/**'
+      - 'src/**'
+      - 'content/**'
+      - 'canopycms.config.ts'
+      - 'Dockerfile.cms'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # TODO: Configure your ECR login, Docker build, push, and Lambda update
+      # See https://canopycms.dev/deploy/aws for details
+      - name: Build CMS image
+        run: docker build -f Dockerfile.cms -t cms:latest .

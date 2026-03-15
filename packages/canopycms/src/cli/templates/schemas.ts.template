@@ -1,0 +1,16 @@
+import { defineEntrySchema } from 'canopycms'
+import { createEntrySchemaRegistry } from 'canopycms/server'
+
+// Define your entry schemas here.
+// Each schema describes the fields for a content type.
+// The schema name should match the "entrySchema" value in your .collection.json files.
+
+export const pageSchema = defineEntrySchema([
+  { name: 'title', type: 'string', label: 'Title' },
+  { name: 'description', type: 'string', label: 'Description' },
+  { name: 'body', type: 'markdown', label: 'Body' },
+])
+
+export const entrySchemaRegistry = createEntrySchemaRegistry({
+  pageSchema,
+})

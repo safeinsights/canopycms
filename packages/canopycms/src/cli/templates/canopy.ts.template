@@ -1,0 +1,54 @@
+import { createNextCanopyContext } from 'canopycms-next'
+import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
+import { createClerkJwtVerifier } from 'canopycms-auth-clerk'
+import { createDevAuthPlugin } from 'canopycms-auth-dev'
+import type { AuthPlugin } from 'canopycms/auth'
+import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth'
+import config from '../../canopycms.config'
+import { entrySchemaRegistry } from '../schemas'
+
+function getAuthPlugin(): AuthPlugin {
+  const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
+
+  if (authMode === 'dev') {
+    return createDevAuthPlugin()
+  }
+
+  if (authMode === 'clerk') {
+    // In cached mode (Lambda with no internet): use CachingAuthPlugin
+    // with networkless JWT verification + file-based metadata cache
+    const cachePath = process.env.CANOPY_AUTH_CACHE_PATH
+    const jwtKey = process.env.CLERK_JWT_KEY
+    if (cachePath && jwtKey) {
+      return new CachingAuthPlugin(
+        createClerkJwtVerifier({ jwtKey }),
+        new FileBasedAuthCache(cachePath),
+      )
+    }
+
+    // Direct mode: call Clerk API on every request
+    return createClerkAuthPlugin({
+      useOrganizationsAsGroups: true,
+    })
+  }
+
+  throw new Error(
+    `Invalid CANOPY_AUTH_MODE: "${authMode}". Must be "dev" or "clerk".`
+  )
+}
+
+const canopyContextPromise = createNextCanopyContext({
+  config: config.server,
+  authPlugin: getAuthPlugin(),
+  entrySchemaRegistry,
+})
+
+export const getCanopy = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopy()
+}
+
+export const getHandler = async () => {
+  const context = await canopyContextPromise
+  return context.handler
+}

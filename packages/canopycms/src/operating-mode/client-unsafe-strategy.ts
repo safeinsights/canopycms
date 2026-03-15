@@ -15,8 +15,7 @@ import {
 } from './client-safe-strategy'
 import type { OperatingMode, ClientUnsafeStrategy } from './types'
 import type { CanopyConfig } from '../config'
-
-const DEFAULT_PROD_WORKSPACE = '/mnt/efs/workspace'
+import { DEFAULT_PROD_WORKSPACE } from '../config'
 
 // ============================================================================
 // Production Mode - Full Strategy
