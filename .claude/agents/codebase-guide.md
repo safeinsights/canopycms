@@ -49,30 +49,30 @@ The codebase uses a modular structure with clear separation:
 
 **Top-level files** (intentionally not modularized):
 
-| File                     | Purpose                                                           |
-| ------------------------ | ----------------------------------------------------------------- |
-| services.ts              | CanopyServices factory with git operations                        |
-| context.ts               | Context creation and management                                   |
-| types.ts                 | Core types (BranchContext, BranchMetadata, SyncStatus)            |
-| branch-metadata.ts       | Branch metadata persistence                                       |
-| branch-registry.ts       | Branch tracking and listing                                       |
-| branch-workspace.ts      | Branch workspace management                                       |
-| branch-schema-cache.ts   | Per-branch schema caching                                         |
-| settings-workspace.ts    | Settings branch workspace                                         |
-| settings-branch-utils.ts | Settings branch utility helpers                                   |
-| content-store.ts         | Content persistence                                               |
-| content-reader.ts        | Content reading                                                   |
-| content-id-index.ts      | Content ID indexing                                               |
-| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema) |
-| entry-schema-registry.ts | Entry schema registry for reusable field definitions              |
-| git-manager.ts           | Git operations wrapper                                            |
-| github-service.ts        | GitHub API integration                                            |
-| comment-store.ts         | Comment persistence                                               |
-| reference-resolver.ts    | Reference resolution                                              |
-| asset-store.ts           | Asset storage                                                     |
-| build-mode.ts            | Build mode detection                                              |
-| user.ts                  | User utilities                                                    |
-| server.ts                | Server entrypoint exports                                         |
+| File                     | Purpose                                                                |
+| ------------------------ | ---------------------------------------------------------------------- |
+| services.ts              | CanopyServices factory with git operations                             |
+| context.ts               | Context creation and management                                        |
+| types.ts                 | Core types (BranchContext, BranchMetadata, SyncStatus, ConflictStatus) |
+| branch-metadata.ts       | Branch metadata persistence                                            |
+| branch-registry.ts       | Branch tracking and listing                                            |
+| branch-workspace.ts      | Branch workspace management                                            |
+| branch-schema-cache.ts   | Per-branch schema caching                                              |
+| settings-workspace.ts    | Settings branch workspace                                              |
+| settings-branch-utils.ts | Settings branch utility helpers                                        |
+| content-store.ts         | Content persistence                                                    |
+| content-reader.ts        | Content reading                                                        |
+| content-id-index.ts      | Content ID indexing                                                    |
+| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)      |
+| entry-schema-registry.ts | Entry schema registry for reusable field definitions                   |
+| git-manager.ts           | Git operations wrapper                                                 |
+| github-service.ts        | GitHub API integration                                                 |
+| comment-store.ts         | Comment persistence                                                    |
+| reference-resolver.ts    | Reference resolution                                                   |
+| asset-store.ts           | Asset storage                                                          |
+| build-mode.ts            | Build mode detection                                                   |
+| user.ts                  | User utilities                                                         |
+| server.ts                | Server entrypoint exports                                              |
 
 ## API Layer
 
@@ -250,8 +250,16 @@ The CMS Worker daemon handles operations that Lambda (with no internet) cannot p
 
 - Process queued tasks from Lambda (push branches, create/update PRs, convert to draft, close PRs, delete remote branches)
 - Sync bare repo (remote.git) with GitHub on a schedule
-- Rebase active branch workspaces when upstream changes
+- Rebase active branch workspaces when upstream changes (resolve-and-continue strategy with ContentId-based conflict tracking)
 - Refresh auth metadata cache (pluggable callback)
+
+**Rebase conflict handling** (`rebaseActiveBranches()`):
+
+1. Skips branches that are `submitted`/`approved` (in review) or have uncommitted changes (dirty tree)
+2. On conflict: applies `--theirs` (the branch's version in rebase context) to keep editor work, then continues
+3. Records conflicting entry files as `ContentId[]` in `BranchMetadata.conflictFiles`
+4. Non-entry files (no embedded ContentId) are excluded from `conflictFiles`
+5. Test file: `worker/cms-worker-rebase.test.ts` (8 integration tests using real git)
 
 **Task Actions** (TaskAction type):
 
@@ -473,6 +481,10 @@ const { schema, sources } = await resolveSchema(contentRoot, entrySchemaRegistry
 | useUserMetadata        | User metadata fetching                            |
 | useReferenceResolution | Resolve reference IDs to display values           |
 
+### Conflict Notice
+
+`FormRenderer` accepts a `conflictNotice?: boolean` prop that displays a non-blocking informational alert when the current entry has a content conflict with the base branch. `Editor.tsx` computes this by checking whether `currentEntry.contentId` appears in `currentBranch.conflictFiles`.
+
 ### Permission Manager
 
 **Location**: packages/canopycms/src/editor/permission-manager/
@@ -525,7 +537,7 @@ const { schema, sources } = await resolveSchema(contentRoot, entrySchemaRegistry
 ### Key Types
 
 - BranchContext - Branch state with paths (branchRoot, baseRoot) and metadata
-- BranchMetadata - Branch info (name, status, access, timestamps)
+- BranchMetadata - Branch info (name, status, access, timestamps, conflictStatus, conflictFiles)
 - BranchPaths - Path information (baseRoot, branchRoot)
 - SyncStatus - 'synced' | 'pending-sync' | 'sync-failed' (for async task queue)
 

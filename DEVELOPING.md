@@ -1349,7 +1349,7 @@ git reset HEAD .canopy-prod-sim/
 
 ### Test Coverage
 
-The codebase maintains high test coverage (949+ tests, 98%+ coverage):
+The codebase maintains high test coverage (1260+ tests, 98%+ coverage):
 
 | Test Type         | Location                           | Purpose                           |
 | ----------------- | ---------------------------------- | --------------------------------- |
@@ -1786,6 +1786,127 @@ expect(mockContext.services.commitFiles).toHaveBeenCalledWith({
 
 See `/packages/canopycms/src/api/permissions.test.ts` (lines 169-185) and `/packages/canopycms/src/api/groups.test.ts` (lines 195-210) for complete examples.
 
+### Testing with Real Git Operations
+
+Some subsystems -- particularly the worker's rebase logic -- need to test against actual git repositories rather than mocks. The `initTestRepo()` utility and a "local remote" pattern make this practical.
+
+**The `initTestRepo()` utility** (`src/test-utils/git-helpers.ts`):
+
+```typescript
+import { initTestRepo } from '../test-utils'
+
+// Creates a git repo with CanopyCMS marker config and test user identity
+const git = await initTestRepo(tmpDir)
+await git.add(['.'])
+await git.commit('Initial commit')
+```
+
+This sets `canopycms.managed=true`, `user.name`, and `user.email` so the repo works with `GitManager.ensureAuthor()`.
+
+**Local remote pattern** (from `cms-worker-rebase.test.ts`):
+
+When testing branch synchronization or rebase, create a local "remote" repo and clone it into a branch workspace structure:
+
+```typescript
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { simpleGit } from 'simple-git'
+import { initTestRepo } from '../test-utils'
+
+let tmpDir: string
+
+beforeEach(async () => {
+  tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-rebase-test-'))
+})
+
+afterEach(async () => {
+  await fs.rm(tmpDir, { recursive: true, force: true })
+})
+
+// Set up a local "remote" repo
+const remotePath = path.join(tmpDir, 'remote')
+await fs.mkdir(remotePath)
+const remoteGit = await initTestRepo(remotePath)
+await remoteGit.raw(['branch', '-M', 'main'])
+await fs.writeFile(path.join(remotePath, '.gitkeep'), '')
+await remoteGit.add(['.'])
+await remoteGit.commit('initial commit')
+
+// Clone it as a branch workspace
+const branchPath = path.join(tmpDir, 'content-branches', 'my-feature')
+await simpleGit().clone(remotePath, branchPath)
+const branchGit = simpleGit({ baseDir: branchPath })
+await branchGit.addConfig('user.name', 'Test Bot')
+await branchGit.addConfig('user.email', 'test@canopycms.test')
+
+// Prevent interactive editor during rebase --continue
+await branchGit.addConfig('core.editor', 'true')
+
+// Exclude .canopy-meta/ from git (matches production ensureGitExclude behavior)
+const excludeFile = path.join(branchPath, '.git', 'info', 'exclude')
+await fs.mkdir(path.dirname(excludeFile), { recursive: true })
+await fs.appendFile(excludeFile, '\n.canopy-meta/\n')
+```
+
+**Why real git instead of mocks:** Rebase behavior -- especially conflict resolution, upstream tracking, and dirty-tree detection -- is too nuanced to mock reliably. Real git repos in temp directories are fast and catch edge cases that mocks would miss.
+
+**Testing private methods via type casting:**
+
+When the method under test is private, cast through `unknown` to access it:
+
+```typescript
+// Invoke a private method for testing
+const runRebase = (worker: CmsWorker): Promise<void> =>
+  (worker as unknown as { rebaseActiveBranches(): Promise<void> }).rebaseActiveBranches()
+```
+
+This is preferable to making the method public just for testing. Use it sparingly -- only when the private method has complex logic that warrants direct testing.
+
+**Git rebase `--ours` vs `--theirs` reversal:**
+
+During `git rebase`, the meaning of `--ours` and `--theirs` is **reversed** from their usual meaning in `git merge`:
+
+| Context      | `--ours`                                 | `--theirs`                            |
+| ------------ | ---------------------------------------- | ------------------------------------- |
+| `git merge`  | Current branch (your work)               | The branch being merged in            |
+| `git rebase` | The upstream commits being replayed onto | The branch being replayed (your work) |
+
+In CanopyCMS's rebase conflict resolution, we use `git checkout --theirs <file>` to keep the **editor's version** of a conflicted file, because during rebase the editor's branch commits are "theirs." This is counterintuitive and was caught by a test -- a good example of why real git tests matter for this kind of logic.
+
+### Testing UI Conflict Indicators
+
+When a rebase detects conflicts, the editor UI shows a notice on affected entries. Test this with the `conflictNotice` prop on `FormRenderer`:
+
+```typescript
+import { render, screen } from '@testing-library/react'
+
+it('shows conflict notice when conflictNotice prop is true', () => {
+  render(
+    <CanopyCMSProvider>
+      <FormRenderer
+        fields={fields}
+        value={{ title: 'hello' }}
+        onChange={() => {}}
+        conflictNotice
+      />
+    </CanopyCMSProvider>
+  )
+  expect(screen.getByText(/Someone else has recently changed this page/)).toBeTruthy()
+})
+
+it('hides conflict notice when prop is absent', () => {
+  render(
+    <CanopyCMSProvider>
+      <FormRenderer fields={fields} value={{ title: 'hello' }} onChange={() => {}} />
+    </CanopyCMSProvider>
+  )
+  expect(screen.queryByText(/Someone else has recently changed this page/)).toBeNull()
+})
+```
+
+**Why this pattern:** Conflict detection happens server-side (worker rebase writes `conflictFiles` to branch metadata). The editor reads this metadata and passes `conflictNotice` as a boolean prop to the form. Testing both the server-side detection (real git tests) and the client-side display (component tests) ensures the full conflict flow works end-to-end.
+
 ### Expecting Console Messages
 
 When testing code that intentionally logs to `console.error`, `console.warn`, or `console.log`, use the `mockConsole()` utility to:
@@ -2137,6 +2258,8 @@ npx canopycms worker run-once  # Refresh cache, process tasks, exit
 ### Testing
 
 Integration tests cover the full lifecycle: submit handler enqueues → worker dequeues → task completes. See `src/worker/integration.test.ts`.
+
+Rebase logic is tested with real git operations in `src/worker/cms-worker-rebase.test.ts`. These tests create local "remote" repos in temp directories to exercise branch skipping (submitted/approved/dirty), clean rebase, and conflict detection with ContentId extraction. See [Testing with Real Git Operations](#testing-with-real-git-operations) for the pattern.
 
 ## Quality Checks
 
