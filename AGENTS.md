@@ -43,7 +43,7 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `authorization/` - Unified access control (branch + path permissions, groups)
 - `config/` - Configuration types, schemas, validation
 - `schema/` - Schema loading and resolution
-- `paths/` - Path utilities with branded types (LogicalPath, PhysicalPath, CollectionPath)
+- `paths/` - Path utilities with branded types (LogicalPath, PhysicalPath)
 - `editor/` - React editor components and hooks
 - `operating-mode/` - Operating mode strategies (prod, prod-sim, dev)
 - `api/` - API handlers (see [api/AGENTS.md](packages/canopycms/src/api/AGENTS.md) for API development guidelines)
@@ -62,27 +62,28 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#module-structure) for detailed module docu
 - [apps/example1/AGENTS.md](apps/example1/AGENTS.md) - Example app integration guidelines
 
 ## Working Agreements
-- Use TypeScript/React; keep code ASCII; prefer `rg` for search and `apply_patch` for edits. Avoid destructive git commands.
+- Use TypeScript/React; keep code ASCII. Avoid destructive git commands.
 - Prefer using popular, maintained libraries over bespoke code.
-- Avoid `any` - use `unknown` with type guards. Use `getErrorMessage()` and `isNodeError()` from `utils/error.ts` for error handling.
-- IMPORTANT: This is new code that has not been used by others yet, so no need to maintain interfaces for legacy uses, no need for migrations.
 - Primary target is Next.js websites, but will expand to others.
-- Use extensionless local imports.
 - Keep the styling of the host app separate from that of the CanopyCMS editing interface. CanopyCMS uses Mantine, but host apps/examples can use whatever they want.
 - Keep docs current: update `BACKLOG.md`, `README.md`, and AGENTS when behavior or workflows change.
 - Always honor branch modes (prod/prod-sim/dev) and path traversal guards. Branch metadata/registry live under `.canopycms/`.
-- Keep as much code in the package as possible so adopters do less work; avoid new package entrypoints without intent.
 - Expose client-only React via `canopycms/client` with `use client`; keep server-only deps out of browser bundles.
-- Propose next work at the end of each iteration.
-- When you finish some work, always provide a commit message, but never git add or git commit on your own
 
 ## Quality Checks
 See [DEVELOPING.md](DEVELOPING.md#quality-checks) for testing and typecheck requirements. Claude subagents are available:
-- `.claude/agents/test.md` - Run tests and fix failures (949+ tests, 98%+ coverage)
+- `.claude/agents/test.md` - Run tests and fix failures
 - `.claude/agents/typecheck.md` - Type checking
 - `.claude/agents/review.md` - Code review checklist
 - `.claude/agents/debug.md` - Debugging and issue investigation
 - `.claude/agents/codebase-guide.md` - Codebase navigation and understanding
 
+## Documentation Maintenance
+After making significant changes, use these agents proactively to keep docs in sync:
+- `.claude/agents/docs-architecture.md` - Update ARCHITECTURE.md after architectural changes, new packages, or design decisions
+- `.claude/agents/docs-developing.md` - Update DEVELOPING.md after new dev patterns, test utilities, or contributor workflows
+- `.claude/agents/docs-readme.md` - Update README.md after feature changes affecting adopters
+- `.claude/agents/update-codebase-guide.md` - Update codebase-guide.md after new modules, APIs, or major refactors
+
 ## Adopter Integration Constraints
-Keep adopter effort minimal: only expose config + Editor + one catch-all API route. See [README.md](README.md#adopter-integration) for practical integration steps.
+Keep adopter effort minimal: only expose config + Editor + one catch-all API route. See [README.md](README.md#adopter-touchpoints-summary) for practical integration steps.
