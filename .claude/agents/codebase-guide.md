@@ -53,7 +53,7 @@ The codebase uses a modular structure with clear separation:
 |------|---------|
 | services.ts | CanopyServices factory with git operations |
 | context.ts | Context creation and management |
-| types.ts | Core types (BranchContext, BranchMetadata, SyncStatus) |
+| types.ts | Core types (BranchContext, BranchMetadata, SyncStatus, ConflictStatus) |
 | branch-metadata.ts | Branch metadata persistence |
 | branch-registry.ts | Branch tracking and listing |
 | branch-workspace.ts | Branch workspace management |
@@ -236,8 +236,15 @@ The CMS Worker daemon handles operations that Lambda (with no internet) cannot p
 **CmsWorker responsibilities**:
 - Process queued tasks from Lambda (push branches, create/update PRs, convert to draft, close PRs, delete remote branches)
 - Sync bare repo (remote.git) with GitHub on a schedule
-- Rebase active branch workspaces when upstream changes
+- Rebase active branch workspaces when upstream changes (resolve-and-continue strategy with ContentId-based conflict tracking)
 - Refresh auth metadata cache (pluggable callback)
+
+**Rebase conflict handling** (`rebaseActiveBranches()`):
+1. Skips branches that are `submitted`/`approved` (in review) or have uncommitted changes (dirty tree)
+2. On conflict: applies `--theirs` (the branch's version in rebase context) to keep editor work, then continues
+3. Records conflicting entry files as `ContentId[]` in `BranchMetadata.conflictFiles`
+4. Non-entry files (no embedded ContentId) are excluded from `conflictFiles`
+5. Test file: `worker/cms-worker-rebase.test.ts` (8 integration tests using real git)
 
 **Task Actions** (TaskAction type):
 
@@ -448,6 +455,10 @@ const { schema, sources } = await resolveSchema(contentRoot, entrySchemaRegistry
 | useUserMetadata | User metadata fetching |
 | useReferenceResolution | Resolve reference IDs to display values |
 
+### Conflict Notice
+
+`FormRenderer` accepts a `conflictNotice?: boolean` prop that displays a non-blocking informational alert when the current entry has a content conflict with the base branch. `Editor.tsx` computes this by checking whether `currentEntry.contentId` appears in `currentBranch.conflictFiles`.
+
 ### Permission Manager
 
 **Location**: packages/canopycms/src/editor/permission-manager/
@@ -497,7 +508,7 @@ const { schema, sources } = await resolveSchema(contentRoot, entrySchemaRegistry
 
 ### Key Types
 - BranchContext - Branch state with paths (branchRoot, baseRoot) and metadata
-- BranchMetadata - Branch info (name, status, access, timestamps)
+- BranchMetadata - Branch info (name, status, access, timestamps, conflictStatus, conflictFiles)
 - BranchPaths - Path information (baseRoot, branchRoot)
 - SyncStatus - 'synced' | 'pending-sync' | 'sync-failed' (for async task queue)
 

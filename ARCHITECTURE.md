@@ -295,7 +295,7 @@ CanopyCMS is entirely file system based. There are no external databases, no Red
 
 **What gets stored:**
 - **Content**: MD/MDX/JSON files in the content directory (committed to git)
-- **Branch metadata**: `.canopy-meta/branch.json` per workspace (state, PR references, automatically excluded via git info/exclude)
+- **Branch metadata**: `.canopy-meta/branch.json` per workspace (state, PR references, sync status, conflict tracking, automatically excluded via git info/exclude)
 - **Branch registry**: `branches.json` at branches root (inventory of all branches, gitignored)
 - **Comments**: `.canopy-meta/comments.json` per branch (NOT committed to git, automatically excluded)
 - **Settings (prod/prod-sim)**: `groups.json` and `permissions.json` on orphan branch `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific)
@@ -697,9 +697,11 @@ When a user opens a branch, CanopyCMS either opens an existing workspace or crea
 2. **Isolation**: Each branch has its own working directory with independent files
 3. **Parallel editing**: Multiple users can work on different branches simultaneously without interference
 
-Branches have a lifecycle with three states:
+Branches have a lifecycle with several states:
 - **editing**: Active work in progress
 - **submitted**: Sent for review, awaiting merge
+- **approved**: Approved and ready to merge
+- **locked**: Temporarily locked from editing
 - **archived**: Merged and preserved for audit
 
 Users can work on main branch too—there's nothing preventing it. The branch model provides isolation for team collaboration but doesn't mandate it.
@@ -762,7 +764,7 @@ For low-cost AWS deployments, CanopyCMS supports splitting into two components t
 - Processes queued tasks: pushes branches to GitHub, creates/updates PRs
 - Syncs `remote.git` with GitHub (fetches upstream changes)
 - Pushes `canopycms-settings-*` branches to GitHub on each sync cycle (belt-and-suspenders for the task queue)
-- Rebases active branch workspaces onto updated main (backlog #10: sync + conflict surfacing)
+- Rebases active branch workspaces onto updated base branch (with conflict detection and resolution)
 - Refreshes auth metadata cache (Clerk users/orgs, or dev test users)
 
 This architecture eliminates NAT Gateway ($32/month) and keeps all secrets on the worker (not Lambda).
@@ -1130,6 +1132,56 @@ This pattern complements the general git service methods by addressing the uniqu
 4. Branch moves to "archived" status
 5. Site rebuild/deploy happens via other processes (e.g. CI/CD)
 
+## Branch Synchronization and Conflict Detection
+
+When the base branch (typically `main`) receives new commits from merged PRs, active editing branches can fall behind. The worker daemon periodically rebases these branches to incorporate upstream changes, and surfaces conflicts to editors through a non-blocking notification system.
+
+### Rebase Behavior
+
+The worker's synchronization cycle fetches the latest base branch from GitHub into the local bare repo, then iterates over all active branch workspaces and rebases them.
+
+**Branches that are skipped:**
+- **In review** (`submitted` or `approved` status): Rebasing would rewrite commit history under a PR that reviewers are actively looking at. These branches are left untouched until they return to `editing` status.
+- **Dirty working tree**: If the branch has uncommitted changes (an editor is actively saving), rebasing would fail or destroy their work. The worker skips the branch and tries again on the next cycle.
+
+**Clean rebases**: When no files conflict, the rebase applies cleanly. The branch gets the base branch's latest changes, and any previous conflict state is cleared.
+
+### Conflict Resolution Strategy
+
+When a rebase encounters conflicting files (the same file was changed on both the base branch and the editing branch), the worker uses a resolve-and-continue strategy rather than aborting:
+
+- **Non-conflicting files** receive the base branch's latest changes normally
+- **Conflicting files** keep the editor's version (the branch's content wins)
+
+This is implemented using `git checkout --theirs` during the rebase. Git reverses its `ours`/`theirs` semantics during rebase operations: `--theirs` refers to the branch being replayed (the editor's work), while `--ours` refers to the rebase target (the base branch). The worker uses `--theirs` to preserve the editor's content.
+
+After resolving all conflicts in a rebase step, the worker continues the rebase. If a resolution produces an empty commit (no effective changes), the worker skips that commit. A safety limit prevents infinite loops in pathological cases.
+
+### Conflict Tracking
+
+After a rebase with conflicts, the worker records which files conflicted in the branch's metadata. Conflicting files are tracked by their ContentId (the immutable 12-character Base58 identifier embedded in every content filename) rather than by file path. This is important because:
+
+- ContentIds are stable across slug renames and file moves
+- They provide a reliable identifier that survives future rebases
+- Only entry files (which have ContentIds in their filenames) are tracked; non-entry files like `.collection.json` have no editor form and are excluded
+
+The branch metadata stores:
+- **conflictStatus**: Either `clean` (no conflicts) or `conflicts-detected`
+- **conflictFiles**: Array of ContentIds for entries where the editor's version was kept
+
+This state is cleared automatically when a subsequent rebase completes without conflicts.
+
+### Editor Conflict Notification
+
+When an editor opens an entry that has a content conflict, the editor form displays a non-blocking informational notice at the top of the form. The notice tells the editor that someone else recently changed the same content and that a reviewer will reconcile the changes during the review process.
+
+**Design decisions behind this approach:**
+
+- **Conflicts are non-blocking**: Editors can continue editing and submitting normally. The conflict is informational, not a gate. This prevents editors from being stuck on merge conflicts they don't understand.
+- **Reviewer reconciliation**: The PR on GitHub will show the full diff, including the editor's version of conflicted files. Reviewers (who understand the content) can decide how to reconcile.
+- **No editor-facing git concepts**: The notice uses plain language about "recent changes" rather than exposing git terminology like "rebase conflict."
+- **Per-entry granularity**: The notice only appears on the specific entries that conflicted, not on the entire branch. This is possible because conflicts are tracked by ContentId.
+
 ## Reference System
 
 The reference system allows content to link to other content entries using stable content IDs. This enables relationship modeling, cross-references, and maintains data integrity.
@@ -1369,6 +1421,12 @@ In production, permission and group changes are stored on a dedicated orphan set
 - Settings changes are immediate (no PR workflow needed)
 
 The `settings-helpers` pattern abstracts this branching logic so API handlers don't need mode-specific conditionals.
+
+### Why are rebase conflicts non-blocking for editors?
+The alternative would be to block editing on conflicted entries until the conflict is resolved, but that would require editors to understand merge conflicts—a git concept that non-technical users shouldn't need to know. Instead, the system keeps the editor's version during rebase and surfaces a gentle notification. The PR diff on GitHub shows both versions, letting reviewers (who understand the content and context) reconcile during review. This keeps the editing experience simple while still surfacing that a conflict exists.
+
+### Why track conflicts by ContentId instead of file path?
+File paths can change when entries are renamed (slug changes). ContentIds are immutable identifiers embedded in every content filename that persist across renames and moves. Using ContentIds ensures that conflict tracking remains accurate even if the editor renames an entry after a conflict is detected.
 
 ### Why three permission layers?
 Defense in depth. Branch access controls who can see a branch. Path permissions control what content they can edit. Combining them provides flexible policies: you might let someone access a branch but restrict them to certain content paths within it.
