@@ -1,3 +1,5 @@
+import type { ContentId } from './paths/types'
+
 export type CanopyUserId = string
 export type CanopyGroupId = string
 
@@ -27,6 +29,8 @@ export interface BranchMetadata {
   syncStatus?: SyncStatus
   /** Whether this branch has unresolved merge conflicts with the base branch */
   conflictStatus?: ConflictStatus
+  /** ContentIds of entries where --ours was applied during rebase; cleared on clean rebase */
+  conflictFiles?: ContentId[]
 }
 
 export interface BranchPaths {

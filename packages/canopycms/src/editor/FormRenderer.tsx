@@ -1,6 +1,7 @@
 import React, { useCallback } from 'react'
 
-import { Button, Group, Paper, Stack, Text } from '@mantine/core'
+import { Alert, Button, Group, Paper, Stack, Text } from '@mantine/core'
+import { IconInfoCircle } from '@tabler/icons-react'
 
 import type {
   BlockFieldConfig,
@@ -72,6 +73,8 @@ export interface FormRendererProps {
   // Reference resolution for live preview
   onResolvedValueChange?: (resolved: FormValue) => void
   onLoadingStateChange?: (loadingState: FormValue) => void
+  /** True when this entry's content conflicts with a recent change on the base branch */
+  conflictNotice?: boolean
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -90,6 +93,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   onResolveThread,
   onResolvedValueChange,
   onLoadingStateChange,
+  conflictNotice = false,
 }) => {
   // Use the extracted reference resolution hook for live preview
   useReferenceResolution({
@@ -417,6 +421,18 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           onResolveThread={onResolveThread}
           highlightThreadId={highlightThreadId}
         />
+      )}
+
+      {conflictNotice && (
+        <Alert
+          icon={<IconInfoCircle size={16} />}
+          color="orange"
+          variant="light"
+          title="Page updated since your draft started"
+        >
+          Someone else has recently changed this page. You can keep editing — a reviewer will
+          reconcile your changes when you submit.
+        </Alert>
       )}
 
       {fields.map((field) => {

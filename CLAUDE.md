@@ -20,14 +20,14 @@
 - Don't mix Mantine (editor) styling into the host app or example app styling.
 - Don't add server-only deps (node:fs, etc.) to client/browser bundles.
 
-## Before Providing a Commit Message
+## When You Finish a Task
 
-Before writing the commit message at the end of a task, check whether docs need updating:
+Always do the following **before** proposing next work or providing a commit message:
 
-- **New/changed modules or APIs?** → Run the `update-codebase-guide` agent; update the Code Organization list in AGENTS.md.
-- **Architectural changes, new packages, or design decisions?** → Run the `docs-architecture` agent.
-- **New dev patterns, test utilities, or workflows?** → Run the `docs-developing` agent.
-- **Feature changes visible to adopters?** → Run the `docs-readme` agent.
+1. Run the `update-codebase-guide` agent and update the Code Organization list in AGENTS.md if you added, removed, renamed, or changed the API of any module.
+2. Run the `docs-architecture` agent if you made architectural changes, added packages, or made design decisions.
+3. Run the `docs-developing` agent if you introduced new dev patterns, test utilities, or workflows.
+4. Run the `docs-readme` agent if you made feature changes visible to adopters.
 
 ## Project Context
 
