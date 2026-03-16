@@ -152,4 +152,26 @@ describe('FormRenderer', () => {
     expect(state.blocks[0]?.value?.headline).toBe('Hello Blocks')
     expect(lastPath).toEqual(['blocks', 0, 'headline'])
   })
+
+  describe('conflictNotice prop', () => {
+    it('shows an informational notice when conflictNotice is true', () => {
+      const fields: FieldConfig[] = [{ name: 'title', type: 'string', label: 'Title' }]
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer fields={fields} value={{ title: 'hello' }} onChange={() => {}} conflictNotice />
+        </CanopyCMSProvider>
+      )
+      expect(screen.getByText(/Someone else has recently changed this page/)).toBeTruthy()
+    })
+
+    it('does not show a conflict notice by default', () => {
+      const fields: FieldConfig[] = [{ name: 'title', type: 'string', label: 'Title' }]
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer fields={fields} value={{ title: 'hello' }} onChange={() => {}} />
+        </CanopyCMSProvider>
+      )
+      expect(screen.queryByText(/Someone else has recently changed this page/)).toBeNull()
+    })
+  })
 })

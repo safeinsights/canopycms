@@ -805,6 +805,10 @@ export const Editor: React.FC<EditorProps> = ({
                       highlightThreadId={highlightThreadId}
                       onAddComment={handleAddComment}
                       onResolveThread={handleResolveThread}
+                      conflictNotice={
+                        !!(currentEntry?.contentId &&
+                          currentBranch?.conflictFiles?.includes(currentEntry.contentId))
+                      }
                     />
                   ) : (
                     <CenteredMessage>No fields to edit.</CenteredMessage>

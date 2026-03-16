@@ -4,7 +4,9 @@ import { simpleGit } from 'simple-git'
 import { Octokit } from '@octokit/rest'
 import { dequeueTask, completeTask, failTask, retryTask, recoverOrphanedTasks, cleanupOldTasks, cmsTaskQueueLogger } from './task-queue'
 import type { Task } from './task-queue'
-import { getBranchMetadataFileManager } from '../branch-metadata'
+import { getBranchMetadataFileManager, BranchMetadataFileManager } from '../branch-metadata'
+import { extractIdFromFilename } from '../content-id-index'
+import type { ContentId } from '../paths/types'
 import { isFileExistsError } from '../utils/error'
 
 /**
@@ -574,24 +576,103 @@ export class CmsWorker {
       }
 
       try {
+        // Load metadata before any git ops to check branch status
+        const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+        const branchStatus = metaFile?.branch.status
+
+        // Skip branches in review — don't rewrite their history
+        if (branchStatus === 'submitted' || branchStatus === 'approved') {
+          console.log(`  Skipping ${branchDir} (${branchStatus}, in review)`)
+          continue
+        }
+
         const branchGit = simpleGit({ baseDir: branchPath })
+
+        // Skip dirty branches — editor has unsaved changes that can't be rebased
+        const dirtyCheck = await branchGit.status()
+        if (dirtyCheck.files.length > 0) {
+          console.log(`  Skipping ${branchDir}: has uncommitted changes`)
+          continue
+        }
+
         await branchGit.fetch('origin', this.baseBranch)
 
+        const status = await branchGit.status()
         const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
 
-        const status = await branchGit.status()
-        if (status.behind > 0) {
-          console.log(`Rebasing ${branchDir} (${status.behind} commits behind)...`)
+        if (status.behind === 0) {
+          // Already in sync — clear any stale conflict state
+          await meta.save({ branch: { name: branchDir, conflictStatus: 'clean', conflictFiles: [] } })
+          continue
+        }
+
+        console.log(`Rebasing ${branchDir} (${status.behind} commits behind)...`)
+
+        // Resolve-and-continue loop: apply --ours for conflicting files, then continue
+        // Non-conflicting files get main's changes; conflicting files keep branch version.
+        const ourFiles: string[] = []
+        let nextAction: 'start' | 'continue' | 'skip' = 'start'
+        let completed = false
+        const MAX_ROUNDS = 50  // safety limit against infinite loops
+
+        for (let round = 0; round < MAX_ROUNDS && !completed; round++) {
           try {
-            await branchGit.rebase([`origin/${this.baseBranch}`])
-            console.log(`  Rebased ${branchDir} successfully`)
-            await meta.save({ branch: { name: branchDir, conflictStatus: 'clean' } })
-          } catch {
-            await branchGit.rebase(['--abort']).catch(() => {})
-            console.warn(`  Conflict detected in ${branchDir}`)
-            await meta.save({ branch: { name: branchDir, conflictStatus: 'conflicts-detected' } })
+            if (nextAction === 'start') {
+              await branchGit.rebase([`origin/${this.baseBranch}`])
+            } else if (nextAction === 'continue') {
+              await branchGit.rebase(['--continue'])
+            } else {
+              await branchGit.rebase(['--skip'])
+            }
+            completed = true
+          } catch (rebaseErr) {
+            nextAction = 'continue'
+            const st = await branchGit.status()
+
+            if (st.conflicted.length > 0) {
+              // During rebase, --theirs = the branch being replayed (editor's work).
+              // (git rebase reverses ours/theirs: "ours" is the rebase target, "theirs" is the branch.)
+              for (const file of st.conflicted) {
+                await branchGit.raw(['checkout', '--theirs', file])
+                await branchGit.add(file)
+                ourFiles.push(file)
+              }
+              // nextAction stays 'continue'
+            } else {
+              const msg = rebaseErr instanceof Error ? rebaseErr.message : ''
+              if (msg.toLowerCase().includes('nothing to commit') || msg.toLowerCase().includes('apply --skip')) {
+                // Empty commit after --ours resolution — skip it
+                nextAction = 'skip'
+              } else {
+                // Unexpected error — abort, leave branch behind
+                console.warn(`  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`)
+                await branchGit.rebase(['--abort']).catch(() => {})
+                break
+              }
+            }
           }
         }
+
+        if (!completed) continue
+
+        // Convert file paths to ContentIds — immutable, survives slug renames
+        const conflictIds = [...new Set(ourFiles)]
+          .map(f => extractIdFromFilename(path.basename(f)))
+          .filter((id): id is ContentId => id !== null)
+
+        const hadConflicts = conflictIds.length > 0
+        console.log(
+          hadConflicts
+            ? `  Rebased ${branchDir} (kept branch version for ${conflictIds.length} conflicting file(s))`
+            : `  Rebased ${branchDir} successfully`
+        )
+        await meta.save({
+          branch: {
+            name: branchDir,
+            conflictStatus: hadConflicts ? 'conflicts-detected' : 'clean',
+            conflictFiles: conflictIds,
+          },
+        })
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
         console.warn(`  Failed to sync ${branchDir}: ${message}`)
