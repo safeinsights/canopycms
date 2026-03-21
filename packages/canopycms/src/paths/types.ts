@@ -39,6 +39,12 @@ export type BranchName = string & { readonly __brand: 'BranchName' }
 export type ContentId = string & { readonly __brand: 'ContentId' }
 
 /**
+ * Sentinel ContentId for the root content directory (which has no embedded ID in its name).
+ * Uses underscores — can never collide with real 12-char Base58 IDs (which exclude `_`).
+ */
+export const ROOT_COLLECTION_ID = '__rootcoll__' as ContentId
+
+/**
  * A collection slug (validated segment of a collection path).
  * Example: "posts" or "api-docs"
  */

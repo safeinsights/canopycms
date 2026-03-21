@@ -242,9 +242,10 @@ The CMS Worker daemon handles operations that Lambda (with no internet) cannot p
 **Rebase conflict handling** (`rebaseActiveBranches()`):
 1. Skips branches that are `submitted`/`approved` (in review) or have uncommitted changes (dirty tree)
 2. On conflict: applies `--theirs` (the branch's version in rebase context) to keep editor work, then continues
-3. Records conflicting entry files as `ContentId[]` in `BranchMetadata.conflictFiles`
-4. Non-entry files (no embedded ContentId) are excluded from `conflictFiles`
-5. Test file: `worker/cms-worker-rebase.test.ts` (8 integration tests using real git)
+3. Records conflicting files as `ContentId[]` in `BranchMetadata.conflictFiles`
+4. For `.collection.json` files: extracts ContentId from the parent directory name; falls back to `ROOT_COLLECTION_ID` for the root content directory
+5. Non-entry files with no extractable ContentId are excluded from `conflictFiles`
+6. Test file: `worker/cms-worker-rebase.test.ts` (11 integration tests using real git)
 
 **Task Actions** (TaskAction type):
 
@@ -401,7 +402,7 @@ defineCanopyConfig({
 
 | File | Purpose |
 |------|---------|
-| meta-loader.ts | Load .collection.json files from filesystem |
+| meta-loader.ts | Load .collection.json files from filesystem; extracts ContentId from directory names |
 | resolver.ts | High-level schema resolution API |
 | schema-store.ts | SchemaOps class - CRUD for collections, entry types, ordering |
 | schema-store-types.ts | Types for schema store operations |
@@ -457,7 +458,12 @@ const { schema, sources } = await resolveSchema(contentRoot, entrySchemaRegistry
 
 ### Conflict Notice
 
-`FormRenderer` accepts a `conflictNotice?: boolean` prop that displays a non-blocking informational alert when the current entry has a content conflict with the base branch. `Editor.tsx` computes this by checking whether `currentEntry.contentId` appears in `currentBranch.conflictFiles`.
+Conflict indicators appear at two levels:
+
+- **Per-entry**: `FormRenderer` accepts a `conflictNotice?: boolean` prop that displays a non-blocking informational alert when the current entry has a content conflict with the base branch. `Editor.tsx` computes this by checking whether `currentEntry.contentId` appears in `currentBranch.conflictFiles`.
+- **Per-collection (navigator)**: `EntryNavCollection` has an optional `conflictNotice?: boolean` field. When true, `EntryNavigator.tsx` renders an orange "conflict" badge next to the collection name. `Editor.tsx` computes this by matching each collection's `contentId` against `currentBranch.conflictFiles`.
+
+`EditorCollection` now carries `contentId?: ContentId` (threaded from `FlatSchemaItem` via `buildEditorCollections` in `editor-config.ts`).
 
 ### Permission Manager
 
@@ -604,7 +610,7 @@ await ctx.services.submitBranch({ context })
 
 | File | Purpose |
 |------|---------|
-| types.ts | Branded types: LogicalPath, PhysicalPath, BranchName, SanitizedBranchName, ContentId, CollectionSlug, EntrySlug |
+| types.ts | Branded types: LogicalPath, PhysicalPath, BranchName, SanitizedBranchName, ContentId, CollectionSlug, EntrySlug; `ROOT_COLLECTION_ID` sentinel |
 | normalize.ts | Client-safe normalization; createLogicalPath, createPhysicalPath, unsafeAsLogicalPath, unsafeAsPhysicalPath |
 | normalize-server.ts | Server-only functions (requires Node.js path) |
 | validation.ts | Security validation; parseLogicalPath, parsePhysicalPath, parseBranchName, parseContentId, parseSlug, unsafeAsEntrySlug |
@@ -620,6 +626,7 @@ await ctx.services.submitBranch({ context })
 - `ContentId`: 12-character Base58-encoded content ID
 - `CollectionSlug`: Single collection path segment (e.g., "posts")
 - `EntrySlug`: Single entry slug (e.g., "my-first-post")
+- `ROOT_COLLECTION_ID`: Sentinel `ContentId` value (`'__rootcoll__'`) for the root content directory, which has no embedded ID in its name. Uses underscores to avoid collision with real Base58 IDs.
 
 Note: `CollectionPath` brand was eliminated; use `LogicalPath` with a `content/` prefix for all collection paths.
 

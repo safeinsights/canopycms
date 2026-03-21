@@ -11,6 +11,7 @@ import type {
   RootCollectionConfig,
 } from './types'
 import { createLogicalPath } from '../paths/normalize'
+import { ROOT_COLLECTION_ID } from '../paths/types'
 
 /**
  * Normalize a path value by splitting, filtering empty segments, and rejoining.
@@ -89,6 +90,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
       logicalPath: createLogicalPath(normalizedFull),
       name: collection.name,
       label: collection.label,
+      contentId: collection.contentId,
       parentPath: parentPath ? createLogicalPath(parentPath) : undefined,
       entries: collection.entries,
       collections: collection.collections,
@@ -131,6 +133,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
       logicalPath: createLogicalPath(base),
       name: base, // Use base path as the name (e.g., 'content')
       label: undefined, // Root collection has no label
+      contentId: ROOT_COLLECTION_ID, // Sentinel — root dir has no embedded ID
       parentPath: undefined, // No parent - this is the root
       entries: root.entries,
       collections: root.collections,

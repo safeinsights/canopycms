@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
+import { ROOT_COLLECTION_ID } from '../paths/types'
 import { initTestRepo } from '../test-utils'
 import { CmsWorker } from './cms-worker'
 
@@ -371,6 +372,101 @@ describe('CmsWorker rebaseActiveBranches', () => {
       // No entry ContentIds were involved, so conflict is invisible to the editor
       expect(meta?.conflictStatus).toBe('clean')
       expect(meta?.conflictFiles).toEqual([])
+    })
+
+    it('records parent collection ContentId when .collection.json conflicts in a subcollection', async () => {
+      // Subcollection directory has an embedded ID: posts.cNbR5xFm2Kpd
+      const COLLECTION_DIR = 'content/posts.cNbR5xFm2Kpd'
+      const COLLECTION_ID = 'cNbR5xFm2Kpd'
+      const META_FILE = `${COLLECTION_DIR}/.collection.json`
+
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { [META_FILE]: '{"name":"posts","order":[]}' },
+      })
+
+      await setup.commitToBranch(
+        { [META_FILE]: '{"name":"posts","order":["branch-order"]}' },
+        'branch: reorder collection'
+      )
+      await setup.pushToRemote(
+        { [META_FILE]: '{"name":"posts","order":["main-order"]}' },
+        'main: reorder collection'
+      )
+
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker)
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.conflictFiles).toContain(COLLECTION_ID)
+    })
+
+    it('records ROOT_COLLECTION_ID when root .collection.json conflicts', async () => {
+      // Root content/.collection.json — parent dir "content" has no embedded ID
+      const META_FILE = 'content/.collection.json'
+
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: { [META_FILE]: '{"entries":[]}' },
+      })
+
+      await setup.commitToBranch(
+        { [META_FILE]: '{"entries":[],"order":["branch"]}' },
+        'branch: update root schema'
+      )
+      await setup.pushToRemote(
+        { [META_FILE]: '{"entries":[],"order":["main"]}' },
+        'main: update root schema'
+      )
+
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker)
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.conflictFiles).toContain(ROOT_COLLECTION_ID)
+    })
+
+    it('records both entry and collection ContentIds for mixed conflicts', async () => {
+      const COLLECTION_DIR = 'content/posts.cNbR5xFm2Kpd'
+      const COLLECTION_ID = 'cNbR5xFm2Kpd'
+      const META_FILE = `${COLLECTION_DIR}/.collection.json`
+      const ENTRY_FILE = `${COLLECTION_DIR}/page.about.TESTENTRYabc.json`
+
+      const setup = await createBranchSetup(tmpDir, 'my-feature', {
+        initialFiles: {
+          [META_FILE]: '{"name":"posts","order":[]}',
+          [ENTRY_FILE]: '{"title":"base"}',
+        },
+      })
+
+      await setup.commitToBranch(
+        {
+          [META_FILE]: '{"name":"posts","order":["branch"]}',
+          [ENTRY_FILE]: '{"title":"branch version"}',
+        },
+        'branch: update both'
+      )
+      await setup.pushToRemote(
+        {
+          [META_FILE]: '{"name":"posts","order":["main"]}',
+          [ENTRY_FILE]: '{"title":"main version"}',
+        },
+        'main: update both'
+      )
+
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker)
+
+      const meta = await readMeta(setup.branchPath)
+      expect(meta?.conflictStatus).toBe('conflicts-detected')
+      expect(meta?.conflictFiles).toContain(COLLECTION_ID)
+      expect(meta?.conflictFiles).toContain('TESTENTRYabc')
     })
   })
 })

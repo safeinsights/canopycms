@@ -489,13 +489,15 @@ Schema resolution happens during service initialization through a multi-step pro
 **Step 1: Load meta files** (`loadCollectionMetaFiles`)
 - Recursively scans content directory for `.collection.json` files
 - Parses and validates each file using Zod schemas
-- Returns raw metadata with string references to schema registry
+- Extracts each collection's ContentId from its directory name (e.g., `posts.916jXZabYCxu` yields ContentId `916jXZabYCxu`)
+- Returns raw metadata with string references to schema registry, plus the extracted ContentId per collection
 
 **Step 2: Resolve references** (`resolveCollectionReferences`)
 - Takes loaded meta files and schema registry
 - Replaces string references (like `"postSchema"`) with actual field definitions
 - Validates that all referenced schemas exist in the registry
 - Builds nested collection hierarchy
+- Threads each collection's ContentId into the resolved `CollectionConfig`
 
 **Step 3: Merge with config**
 - Config-defined schemas are merged with file-based schemas
@@ -504,6 +506,8 @@ Schema resolution happens during service initialization through a multi-step pro
 
 **Step 4: Flatten schema**
 - Final merged schema is flattened into `Map<path, FlatSchemaItem>` for O(1) lookups
+- Each flattened collection item carries its ContentId (used for conflict tracking and ordering)
+- The root collection receives a sentinel `ROOT_COLLECTION_ID` since the content root directory has no embedded ID
 - All path resolution and validation happens at initialization, not request time
 
 **Error handling:**
@@ -569,6 +573,7 @@ At initialization, the hierarchical schema is flattened into a `Map<path, FlatSc
 **Collection item**:
 - `type: 'collection'`
 - `logicalPath`: Complete logical path from content root (e.g., "content/blog") - branded type for compile-time safety
+- `contentId`: The collection's stable identifier, extracted from its directory name (or `ROOT_COLLECTION_ID` sentinel for the content root)
 - `entries`: Optional array of entry type configurations
 - `collections`: Optional nested collections
 - `name`, `label`, `parentPath`: For navigation and display
@@ -1159,28 +1164,39 @@ After resolving all conflicts in a rebase step, the worker continues the rebase.
 
 ### Conflict Tracking
 
-After a rebase with conflicts, the worker records which files conflicted in the branch's metadata. Conflicting files are tracked by their ContentId (the immutable 12-character Base58 identifier embedded in every content filename) rather than by file path. This is important because:
+After a rebase with conflicts, the worker records which items conflicted in the branch's metadata. Conflicting items are tracked by their ContentId (the immutable 12-character Base58 identifier embedded in every content filename and directory name) rather than by file path. This is important because:
 
 - ContentIds are stable across slug renames and file moves
 - They provide a reliable identifier that survives future rebases
-- Only entry files (which have ContentIds in their filenames) are tracked; non-entry files like `.collection.json` have no editor form and are excluded
+- Both entry files and collection metadata files are tracked
+
+**How ContentIds are resolved for conflicting files:**
+- **Entry files** (e.g., `post.hello.a1b2c3d4e5f6.mdx`): The ContentId is extracted directly from the filename
+- **Collection metadata** (`.collection.json` in a subcollection like `posts.cNbR5xFm2Kpd/`): The ContentId is extracted from the parent directory name
+- **Root collection metadata** (`content/.collection.json`): The root content directory has no embedded ID, so a sentinel value (`ROOT_COLLECTION_ID`) is used. This sentinel uses underscores, which can never collide with real Base58 IDs
+- **Non-content files** (e.g., `README.md`): Files with no embedded ContentId in either their filename or parent directory are excluded from conflict tracking
 
 The branch metadata stores:
 - **conflictStatus**: Either `clean` (no conflicts) or `conflicts-detected`
-- **conflictFiles**: Array of ContentIds for entries where the editor's version was kept
+- **conflictFiles**: Array of ContentIds for entries and collections where the editor's version was kept
 
 This state is cleared automatically when a subsequent rebase completes without conflicts.
 
 ### Editor Conflict Notification
 
-When an editor opens an entry that has a content conflict, the editor form displays a non-blocking informational notice at the top of the form. The notice tells the editor that someone else recently changed the same content and that a reviewer will reconcile the changes during the review process.
+Conflicts are surfaced to editors at two levels in the UI:
+
+- **Entry-level notices**: When an editor opens an entry that has a content conflict, the editor form displays a non-blocking informational notice at the top of the form. The notice tells the editor that someone else recently changed the same content and that a reviewer will reconcile the changes during the review process.
+- **Collection-level badges**: When a collection's `.collection.json` conflicted during rebase, the sidebar navigation shows a conflict badge on that collection. This alerts editors that the collection structure (ordering, entry type configuration) may need review, even if individual entries within the collection are unaffected.
+
+Both levels use the same `conflictFiles` array from branch metadata, matching each item's ContentId against the recorded conflict IDs.
 
 **Design decisions behind this approach:**
 
 - **Conflicts are non-blocking**: Editors can continue editing and submitting normally. The conflict is informational, not a gate. This prevents editors from being stuck on merge conflicts they don't understand.
 - **Reviewer reconciliation**: The PR on GitHub will show the full diff, including the editor's version of conflicted files. Reviewers (who understand the content) can decide how to reconcile.
 - **No editor-facing git concepts**: The notice uses plain language about "recent changes" rather than exposing git terminology like "rebase conflict."
-- **Per-entry granularity**: The notice only appears on the specific entries that conflicted, not on the entire branch. This is possible because conflicts are tracked by ContentId.
+- **Per-item granularity**: Notices appear only on the specific entries or collections that conflicted, not on the entire branch. This is possible because conflicts are tracked by ContentId.
 
 ## Reference System
 
@@ -1426,7 +1442,7 @@ The `settings-helpers` pattern abstracts this branching logic so API handlers do
 The alternative would be to block editing on conflicted entries until the conflict is resolved, but that would require editors to understand merge conflicts—a git concept that non-technical users shouldn't need to know. Instead, the system keeps the editor's version during rebase and surfaces a gentle notification. The PR diff on GitHub shows both versions, letting reviewers (who understand the content and context) reconcile during review. This keeps the editing experience simple while still surfacing that a conflict exists.
 
 ### Why track conflicts by ContentId instead of file path?
-File paths can change when entries are renamed (slug changes). ContentIds are immutable identifiers embedded in every content filename that persist across renames and moves. Using ContentIds ensures that conflict tracking remains accurate even if the editor renames an entry after a conflict is detected.
+File paths can change when entries are renamed (slug changes). ContentIds are immutable identifiers embedded in every content filename and directory name that persist across renames and moves. Using ContentIds ensures that conflict tracking remains accurate even if the editor renames an entry or collection after a conflict is detected. For collection metadata files (`.collection.json`), the ContentId comes from the parent directory rather than the file itself. The root collection uses a sentinel value since the content root directory has no embedded ID.
 
 ### Why three permission layers?
 Defense in depth. Branch access controls who can see a branch. Path permissions control what content they can edit. Combining them provides flexible policies: you might let someone access a branch but restrict them to certain content paths within it.

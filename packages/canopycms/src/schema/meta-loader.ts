@@ -4,8 +4,9 @@ import { z } from 'zod'
 import chokidar from 'chokidar'
 
 import type { ContentFormat, CollectionConfig, RootCollectionConfig, EntryTypeConfig } from '../config'
+import type { ContentId } from '../paths/types'
 import type { EntrySchemaRegistry } from './types'
-import { extractSlugFromFilename } from '../content-id-index'
+import { extractSlugFromFilename, extractIdFromFilename } from '../content-id-index'
 
 /**
  * Zod schema for entry type metadata in .collection.json files.
@@ -104,8 +105,8 @@ function stripEmbeddedIdFromName(name: string): string {
 async function scanForCollectionMeta(
   baseDir: string,
   relativePath: string = ''
-): Promise<Array<CollectionMeta & { path: string }>> {
-  const collections: Array<CollectionMeta & { path: string }> = []
+): Promise<Array<CollectionMeta & { path: string; contentId?: ContentId }>> {
+  const collections: Array<CollectionMeta & { path: string; contentId?: ContentId }> = []
 
   try {
     const entries = await fs.readdir(baseDir, { withFileTypes: true })
@@ -117,6 +118,8 @@ async function scanForCollectionMeta(
       // Strip embedded ID from folder name for logical path
       // e.g., "docs.bChqT78gcaLd" -> "docs"
       const logicalName = stripEmbeddedIdFromName(folderName)
+      // Extract embedded ContentId from directory name (e.g., "posts.a1b2c3d4e5f6" → "a1b2c3d4e5f6")
+      const collectionContentId = extractIdFromFilename(folderName) ?? undefined
       const folderPath = relativePath ? `${relativePath}/${logicalName}` : logicalName
       const absolutePath = join(baseDir, folderName)
       const metaPath = join(absolutePath, '.collection.json')
@@ -133,6 +136,7 @@ async function scanForCollectionMeta(
         collections.push({
           ...meta,
           path: folderPath,  // Path derived from folder name
+          contentId: collectionContentId,
         })
 
         // Recursively scan for nested collection folders (they'll have their own .collection.json files)
@@ -179,7 +183,7 @@ export async function loadCollectionMetaFiles(
   contentRoot: string
 ): Promise<{
   root: RootCollectionMeta | null
-  collections: Array<CollectionMeta & { path: string }>
+  collections: Array<CollectionMeta & { path: string; contentId?: ContentId }>
 }> {
   // Load root .collection.json (optional)
   let root: RootCollectionMeta | null = null
@@ -248,15 +252,16 @@ function resolveEntryTypes(
  * Resolve schema references for a single collection
  */
 function resolveCollectionMeta(
-  meta: CollectionMeta & { path: string },
+  meta: CollectionMeta & { path: string; contentId?: ContentId },
   entrySchemaRegistry: EntrySchemaRegistry,
-  allCollections: Array<CollectionMeta & { path: string }>
+  allCollections: Array<CollectionMeta & { path: string; contentId?: ContentId }>
 ): CollectionConfig {
   // Build result object dynamically to avoid readonly conflicts
   const result: any = {
     name: meta.name,
     label: meta.label,
     path: meta.path,
+    contentId: meta.contentId,
   }
 
   // Resolve entry types
@@ -308,7 +313,7 @@ function resolveCollectionMeta(
 export function resolveCollectionReferences(
   metaFiles: {
     root: RootCollectionMeta | null
-    collections: Array<CollectionMeta & { path: string }>
+    collections: Array<CollectionMeta & { path: string; contentId?: ContentId }>
   },
   entrySchemaRegistry: EntrySchemaRegistry
 ): RootCollectionConfig {

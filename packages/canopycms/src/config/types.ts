@@ -6,7 +6,7 @@
 import type { CanopyGroupId, CanopyUserId } from '../types'
 import type { OperatingMode } from '../operating-mode'
 import type { AuthPlugin } from '../auth/plugin'
-import type { LogicalPath } from '../paths/types'
+import type { LogicalPath, ContentId } from '../paths/types'
 import type { PermissionPath } from '../authorization/types'
 
 // Field types
@@ -147,6 +147,8 @@ export type CollectionConfig = {
   readonly name: string
   readonly path: string
   readonly label?: string
+  /** 12-char content ID from the collection's directory name. Optional: absent in static configs. */
+  readonly contentId?: ContentId
   /** Array of entry types allowed in this collection */
   readonly entries?: readonly EntryTypeConfig[]
   readonly collections?: readonly CollectionConfig[]
@@ -259,6 +261,8 @@ export type FlatSchemaItem =
       logicalPath: LogicalPath
       name: string
       label?: string
+      /** 12-char content ID from the collection's directory name. Optional: absent in static configs. */
+      contentId?: ContentId
       parentPath?: LogicalPath
       /** Array of entry types in this collection */
       entries?: readonly EntryTypeConfig[]
