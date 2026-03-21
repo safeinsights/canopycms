@@ -175,6 +175,54 @@ describe('schema-meta-loader', () => {
       )
     })
 
+    it('should extract contentId from directory names with embedded IDs', async () => {
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir, { recursive: true })
+
+      // Directory with embedded ContentId: "posts.a1b2c3d4e5f6"
+      const postsDir = path.join(contentDir, 'posts.a1b2c3d4e5f6')
+      await fs.mkdir(postsDir, { recursive: true })
+      await fs.writeFile(
+        path.join(postsDir, '.collection.json'),
+        JSON.stringify({
+          name: 'posts',
+          label: 'Posts',
+          entries: [{ name: 'post', format: 'mdx', schema: 'postSchema' }],
+          order: [],
+        })
+      )
+
+      const result = await loadCollectionMetaFiles(contentDir)
+
+      expect(result.collections).toHaveLength(1)
+      expect(result.collections[0].contentId).toBe('a1b2c3d4e5f6')
+      // Logical path should strip the embedded ID
+      expect(result.collections[0].path).toBe('posts')
+    })
+
+    it('should leave contentId undefined for directories without embedded IDs', async () => {
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir, { recursive: true })
+
+      // Plain directory name, no embedded ID
+      const pagesDir = path.join(contentDir, 'pages')
+      await fs.mkdir(pagesDir, { recursive: true })
+      await fs.writeFile(
+        path.join(pagesDir, '.collection.json'),
+        JSON.stringify({
+          name: 'pages',
+          label: 'Pages',
+          entries: [{ name: 'page', format: 'json', schema: 'homeSchema' }],
+          order: [],
+        })
+      )
+
+      const result = await loadCollectionMetaFiles(contentDir)
+
+      expect(result.collections).toHaveLength(1)
+      expect(result.collections[0].contentId).toBeUndefined()
+    })
+
     it('should throw error if root file fails Zod validation', async () => {
       const contentDir = path.join(tempDir, 'content')
       await fs.mkdir(contentDir, { recursive: true })

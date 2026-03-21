@@ -63,7 +63,7 @@ export type WireFlatSchemaItem =
       logicalPath: LogicalPath
       name: string
       label?: string
-      contentId?: string
+      contentId?: ContentId
       parentPath?: LogicalPath
       entries?: readonly WireEntryType[]
       collections?: readonly WireCollectionConfig[]

@@ -6,7 +6,7 @@
  * - Branches with uncommitted changes (dirty working tree) are not rebased
  * - Already-in-sync branches get their stale conflict state cleared
  * - Clean rebases mark the branch as clean
- * - Conflicting files get --ours applied, ContentIds recorded in conflictFiles
+ * - Conflicting files keep the branch version (--theirs during rebase), ContentIds recorded in conflictFiles
  * - Non-entry files (no embedded ContentId) are excluded from conflictFiles
  */
 
@@ -315,7 +315,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
     const ENTRY_FILE = 'page.about.TESTENTRYabc.json'
     const ENTRY_ID = 'TESTENTRYabc'
 
-    it('applies --ours for conflicting entry files, keeps branch version, records ContentId', async () => {
+    it('applies --theirs for conflicting entry files, keeps branch version, records ContentId', async () => {
       const setup = await createBranchSetup(tmpDir, 'my-feature', {
         initialFiles: { [ENTRY_FILE]: '{"title":"base content"}' },
       })
@@ -340,7 +340,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const status = await setup.branchGit.status()
       expect(status.behind).toBe(0)
 
-      // Branch version should be preserved (--ours)
+      // Branch version should be preserved (--theirs during rebase)
       const fileContent = await fs.readFile(
         path.join(setup.branchPath, ENTRY_FILE),
         'utf8'

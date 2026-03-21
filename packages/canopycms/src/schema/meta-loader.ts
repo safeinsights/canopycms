@@ -256,42 +256,32 @@ function resolveCollectionMeta(
   entrySchemaRegistry: EntrySchemaRegistry,
   allCollections: Array<CollectionMeta & { path: string; contentId?: ContentId }>
 ): CollectionConfig {
-  // Build result object dynamically to avoid readonly conflicts
-  const result: any = {
-    name: meta.name,
-    label: meta.label,
-    path: meta.path,
-    contentId: meta.contentId,
-  }
-
   // Resolve entry types
-  if (meta.entries && meta.entries.length > 0) {
-    result.entries = resolveEntryTypes(
-      meta.entries,
-      entrySchemaRegistry,
-      `collection "${meta.name}"`
-    )
-  }
-
-  // Pass through order array (embedded IDs for sorting)
-  if (meta.order) {
-    result.order = meta.order
-  }
+  const entries = meta.entries && meta.entries.length > 0
+    ? resolveEntryTypes(meta.entries, entrySchemaRegistry, `collection "${meta.name}"`)
+    : undefined
 
   // Find nested collections (subfolders with .collection.json)
   const nestedCollections = allCollections.filter((col) => {
-    // Nested if it starts with this collection's path + /
     return col.path.startsWith(`${meta.path}/`) &&
            col.path.split('/').length === meta.path.split('/').length + 1
   })
 
-  if (nestedCollections.length > 0) {
-    result.collections = nestedCollections.map((nestedMeta) =>
-      resolveCollectionMeta(nestedMeta, entrySchemaRegistry, allCollections)
-    )
-  }
+  const collections = nestedCollections.length > 0
+    ? nestedCollections.map((nestedMeta) =>
+        resolveCollectionMeta(nestedMeta, entrySchemaRegistry, allCollections)
+      )
+    : undefined
 
-  return result as CollectionConfig
+  return {
+    name: meta.name,
+    label: meta.label,
+    path: meta.path,
+    contentId: meta.contentId,
+    ...(entries && { entries }),
+    ...(meta.order && { order: meta.order }),
+    ...(collections && { collections }),
+  }
 }
 
 /**

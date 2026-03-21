@@ -604,7 +604,13 @@ export const Editor: React.FC<EditorProps> = ({
     entriesState.forEach((entry) => {
       if (!entry.collectionPath) return
       const list = grouped.get(entry.collectionPath) ?? []
-      list.push({ path: entry.path, label: entry.label, status: entry.status, contentId: entry.contentId })
+      list.push({
+        path: entry.path,
+        label: entry.label,
+        status: entry.status,
+        contentId: entry.contentId,
+        conflictNotice: !!(entry.contentId && currentBranch?.conflictFiles?.includes(entry.contentId)),
+      })
       grouped.set(entry.collectionPath, list)
     })
 
