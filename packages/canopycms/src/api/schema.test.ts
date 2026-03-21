@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { ApiContext, ApiRequest } from './types'
 import type { FlatSchemaItem, FieldConfig } from '../config'
-import type { LogicalPath } from '../paths/types'
+import type { ContentId, LogicalPath } from '../paths/types'
 
 // Mock the SchemaOps
 vi.mock('../schema/schema-store', async (importOriginal) => {
@@ -49,6 +49,7 @@ describe('Schema API', () => {
       logicalPath: 'posts' as LogicalPath,
       name: 'posts',
       label: 'Posts',
+      contentId: 'a1b2c3d4e5f6' as ContentId,
       entries: [{ name: 'post', format: 'json', schema: [], schemaRef: 'postSchema' }],
       order: ['id1', 'id2'],
     },
@@ -110,6 +111,7 @@ describe('Schema API', () => {
           logicalPath: 'posts',
           name: 'posts',
           label: 'Posts',
+          contentId: 'a1b2c3d4e5f6',
           entries: [{ name: 'post', format: 'json', schemaRef: 'postSchema' }],
           order: ['id1', 'id2'],
         },

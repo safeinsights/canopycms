@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useMemo, useRef, useEffect } from 'react'
-import type { LogicalPath } from '../paths/types'
+import type { ContentId, LogicalPath } from '../paths/types'
 
 import {
   ActionIcon,
@@ -12,6 +12,7 @@ import {
   ScrollArea,
   Stack,
   Text,
+  Tooltip,
   Tree,
   useTree,
   type RenderTreeNodePayload,
@@ -38,14 +39,16 @@ export interface EntryNavItem {
   label: string
   status?: string
   collectionPath?: LogicalPath
-  contentId?: string // 12-char embedded ID for ordering
+  contentId?: ContentId // 12-char embedded ID for ordering
+  /** True when this entry's file conflicted during rebase */
+  conflictNotice?: boolean
 }
 
 export interface EntryNavCollection {
   path: LogicalPath
   label: string
   type: 'collection' | 'entry'
-  contentId?: string // 12-char embedded ID for ordering
+  contentId?: ContentId // 12-char embedded ID for ordering
   order?: readonly string[] // Order array for interleaving entries and children
   entries?: EntryNavItem[]
   children?: EntryNavCollection[]
@@ -124,6 +127,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               isEntry: true,
               entryPath: entry.path,
               contentId: entry.contentId,
+              conflictNotice: entry.conflictNotice,
               parentCollectionPath: col.path,
               childIndex: 0, // Will be set below
               totalChildrenCount: totalChildren,
@@ -187,6 +191,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               isEntry: true,
               entryPath: entry.path,
               contentId: entry.contentId,
+              conflictNotice: entry.conflictNotice,
               parentCollectionPath: col.path,
               childIndex: allChildren.length,
               totalChildrenCount: totalChildren,
@@ -434,9 +439,14 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
               </Badge>
             )}
             {conflictNotice && (
-              <Badge size="xs" variant="light" color="orange">
-                conflict
-              </Badge>
+              <Tooltip
+                label="This content was updated on the base branch — a reviewer will reconcile"
+                withArrow
+              >
+                <Badge size="xs" variant="light" color="orange">
+                  conflict
+                </Badge>
+              </Tooltip>
             )}
           </Group>
           <Group gap={4} wrap="nowrap">

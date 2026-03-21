@@ -659,6 +659,9 @@ export const Editor: React.FC<EditorProps> = ({
         label: entry.label,
         status: entry.status,
         contentId: entry.contentId,
+        conflictNotice: !!(
+          entry.contentId && currentBranch?.conflictFiles?.includes(entry.contentId)
+        ),
       })
       grouped.set(entry.collectionPath, list)
     })

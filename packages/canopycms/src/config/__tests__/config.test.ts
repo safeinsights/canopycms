@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import type { CanopyConfigFragment } from '../types'
+import type { CanopyConfigFragment, CollectionConfig } from '../types'
+import type { ContentId } from '../../paths/types'
+import { ROOT_COLLECTION_ID } from '../../paths/types'
 import { composeCanopyConfig, defineCanopyConfig } from '../helpers'
 import { flattenSchema } from '../flatten'
 import { validateCanopyConfig } from '../validation'
@@ -425,5 +427,80 @@ describe('config validation', () => {
     expect(posts).toBeDefined()
     expect(posts?.logicalPath).toBe('content/posts')
     expect(posts?.parentPath).toBe('content') // Now has content root as parent
+  })
+
+  it('threads contentId from CollectionConfig through to FlatSchemaItem', () => {
+    const TEST_ID = 'a1b2c3d4e5f6' as ContentId
+    const CHILD_ID = 'Xz9kL2mN4pQr' as ContentId
+
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          contentId: TEST_ID,
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+          collections: [
+            {
+              name: 'drafts',
+              path: 'posts/drafts',
+              contentId: CHILD_ID,
+              entries: [
+                {
+                  name: 'entry',
+                  format: 'json' as const,
+                  schema: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+            },
+          ],
+        } satisfies CollectionConfig,
+      ],
+    }
+
+    const flat = flattenSchema(schema, 'content')
+
+    const root = flat.find((item) => item.type === 'collection' && item.logicalPath === 'content')
+    const posts = flat.find((item) => item.type === 'collection' && item.name === 'posts')
+    const drafts = flat.find((item) => item.type === 'collection' && item.name === 'drafts')
+
+    // Root collection gets the sentinel
+    expect(root).toBeDefined()
+    expect(root?.type === 'collection' && root.contentId).toBe(ROOT_COLLECTION_ID)
+
+    // Child collections carry their own contentId
+    expect(posts?.type === 'collection' && posts.contentId).toBe(TEST_ID)
+    expect(drafts?.type === 'collection' && drafts.contentId).toBe(CHILD_ID)
+  })
+
+  it('leaves contentId undefined when CollectionConfig has no contentId', () => {
+    const schema = {
+      collections: [
+        {
+          name: 'pages',
+          path: 'pages',
+          // No contentId — simulates static config (not loaded from filesystem)
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    }
+
+    const flat = flattenSchema(schema, 'content')
+    const pages = flat.find((item) => item.type === 'collection' && item.name === 'pages')
+
+    expect(pages).toBeDefined()
+    expect(pages?.type === 'collection' && pages.contentId).toBeUndefined()
   })
 })

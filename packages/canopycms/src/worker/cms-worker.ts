@@ -53,6 +53,8 @@ export interface CmsWorkerConfig {
   taskTimeoutMs?: number
   /** Max retries for failed tasks (default: 3) */
   maxRetries?: number
+  /** Content root directory name relative to repo root (default: 'content') */
+  contentRoot?: string
 }
 
 const DEFAULT_TASK_TIMEOUT = 60_000
@@ -101,6 +103,7 @@ export class CmsWorker {
   private taskTimeoutMs: number
   private maxRetries: number
   private lockFilePath: string
+  private contentRoot: string
   private log = cmsTaskQueueLogger
 
   constructor(private config: CmsWorkerConfig) {
@@ -113,6 +116,7 @@ export class CmsWorker {
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
     this.lockFilePath = path.join(config.workspacePath, '.tasks', '.worker-lock')
+    this.contentRoot = config.contentRoot ?? 'content'
   }
 
   async start(): Promise<void> {
@@ -594,15 +598,24 @@ export class CmsWorker {
         const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
         const branchStatus = metaFile?.branch.status
 
-        // Skip branches in review — don't rewrite their history
-        if (branchStatus === 'submitted' || branchStatus === 'approved') {
-          console.log(`  Skipping ${branchDir} (${branchStatus}, in review)`)
+        // Skip branches that shouldn't be mutated:
+        // - submitted/approved: in review, don't rewrite history under an active PR
+        // - archived: already merged, no reason to rebase
+        if (
+          branchStatus === 'submitted' ||
+          branchStatus === 'approved' ||
+          branchStatus === 'archived'
+        ) {
+          console.log(`  Skipping ${branchDir} (${branchStatus})`)
           continue
         }
 
         const branchGit = simpleGit({ baseDir: branchPath, config: ['core.editor=true'] })
 
-        // Skip dirty branches — editor has unsaved changes that can't be rebased
+        // Skip dirty branches — editor has unsaved changes that can't be rebased.
+        // Note: there's a small TOCTOU window between this check and the rebase start.
+        // If an editor saves between here and `git rebase`, the rebase will fail and
+        // the catch block will abort safely — the branch stays behind and retries next cycle.
         const dirtyCheck = await branchGit.status()
         if (dirtyCheck.files.length > 0) {
           console.log(`  Skipping ${branchDir}: has uncommitted changes`)
@@ -660,10 +673,14 @@ export class CmsWorker {
                 msg.toLowerCase().includes('nothing to commit') ||
                 msg.toLowerCase().includes('apply --skip')
               ) {
-                // Empty commit after --ours resolution — skip it
+                // Empty commit after --theirs resolution — skip it
                 nextAction = 'skip'
               } else {
-                // Unexpected error — abort, leave branch behind
+                // Unexpected error — abort and leave branch behind.
+                // We intentionally don't update conflictStatus/conflictFiles here:
+                // the rebase didn't complete so we can't determine the true conflict
+                // state. Previous metadata (possibly stale) is preserved until the
+                // next successful rebase cycle corrects it.
                 console.warn(`  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`)
                 await branchGit.rebase(['--abort']).catch(() => {})
                 break
@@ -680,31 +697,40 @@ export class CmsWorker {
           continue
         }
 
-        // Convert file paths to ContentIds — immutable, survives slug renames
-        // For entry files: extract ID from filename (e.g., "post.slug.a1b2c3d4e5f6.mdx")
-        // For .collection.json: extract ID from parent directory, or use ROOT_COLLECTION_ID for root
+        // Convert file paths to ContentIds — immutable, survives slug renames.
+        // Entry files have IDs in their filename (e.g., "post.slug.a1b2c3d4e5f6.mdx").
+        // .collection.json files have no ID themselves (extractIdFromFilename returns null
+        // for dot-prefixed files), so we extract the ID from the parent directory instead.
+        // The root content directory (e.g., "content/") has no embedded ID, so we use
+        // ROOT_COLLECTION_ID as a sentinel — but only for the configured contentRoot.
         const conflictIds = [...new Set(conflictedFiles)]
           .map((f) => {
             const fileId = extractIdFromFilename(path.basename(f))
             if (fileId) return fileId
-            const dirId = extractIdFromFilename(path.basename(path.dirname(f)))
+            const parentDir = path.basename(path.dirname(f))
+            const dirId = extractIdFromFilename(parentDir)
             if (dirId) return dirId
-            if (path.basename(f) === '.collection.json') return ROOT_COLLECTION_ID
+            // Only assign ROOT_COLLECTION_ID when the parent matches the configured
+            // content root (e.g., "content"). Other unrecognized paths are filtered out.
+            if (path.basename(f) === '.collection.json' && parentDir === this.contentRoot) {
+              return ROOT_COLLECTION_ID
+            }
             return null
           })
           .filter((id): id is ContentId => id !== null)
+        const conflictIdsDeduped = [...new Set(conflictIds)]
 
-        const hadConflicts = conflictIds.length > 0
+        const hadConflicts = conflictIdsDeduped.length > 0
         console.log(
           hadConflicts
-            ? `  Rebased ${branchDir} (kept branch version for ${conflictIds.length} conflicting file(s))`
+            ? `  Rebased ${branchDir} (kept branch version for ${conflictIdsDeduped.length} conflicting file(s))`
             : `  Rebased ${branchDir} successfully`,
         )
         await meta.save({
           branch: {
             name: branchDir,
             conflictStatus: hadConflicts ? 'conflicts-detected' : 'clean',
-            conflictFiles: conflictIds,
+            conflictFiles: conflictIdsDeduped,
           },
         })
       } catch (err) {

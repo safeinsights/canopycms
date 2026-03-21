@@ -29,7 +29,7 @@ export interface BranchMetadata {
   syncStatus?: SyncStatus
   /** Whether this branch has unresolved merge conflicts with the base branch */
   conflictStatus?: ConflictStatus
-  /** ContentIds of entries where --ours was applied during rebase; cleared on clean rebase */
+  /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
   conflictFiles?: ContentId[]
 }
 

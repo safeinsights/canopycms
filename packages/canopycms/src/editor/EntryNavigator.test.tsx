@@ -5,7 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { EntryNavigator, type EntryNavCollection } from './EntryNavigator'
 import { CanopyCMSProvider } from './theme'
-import { unsafeAsLogicalPath } from '../paths/test-utils'
+import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
 
 // Setup browser APIs
 beforeAll(() => {
@@ -377,11 +377,15 @@ describe('EntryNavigator', () => {
           label: 'Posts',
           type: 'collection',
           entries: [
-            { path: unsafeAsLogicalPath('posts/first'), label: 'First', contentId: 'abc123456789' },
+            {
+              path: unsafeAsLogicalPath('posts/first'),
+              label: 'First',
+              contentId: unsafeAsContentId('abc123456789'),
+            },
             {
               path: unsafeAsLogicalPath('posts/second'),
               label: 'Second',
-              contentId: 'def456789012',
+              contentId: unsafeAsContentId('def456789012'),
             },
           ],
         },
@@ -416,11 +420,15 @@ describe('EntryNavigator', () => {
           label: 'Posts',
           type: 'collection',
           entries: [
-            { path: unsafeAsLogicalPath('posts/first'), label: 'First', contentId: 'abc123456789' },
+            {
+              path: unsafeAsLogicalPath('posts/first'),
+              label: 'First',
+              contentId: unsafeAsContentId('abc123456789'),
+            },
             {
               path: unsafeAsLogicalPath('posts/second'),
               label: 'Second',
-              contentId: 'def456789012',
+              contentId: unsafeAsContentId('def456789012'),
             },
           ],
         },
@@ -457,11 +465,15 @@ describe('EntryNavigator', () => {
           label: 'Posts',
           type: 'collection',
           entries: [
-            { path: unsafeAsLogicalPath('posts/first'), label: 'First', contentId: 'abc123456789' },
+            {
+              path: unsafeAsLogicalPath('posts/first'),
+              label: 'First',
+              contentId: unsafeAsContentId('abc123456789'),
+            },
             {
               path: unsafeAsLogicalPath('posts/second'),
               label: 'Second',
-              contentId: 'def456789012',
+              contentId: unsafeAsContentId('def456789012'),
             },
           ],
         },
@@ -498,11 +510,15 @@ describe('EntryNavigator', () => {
           label: 'Posts',
           type: 'collection',
           entries: [
-            { path: unsafeAsLogicalPath('posts/first'), label: 'First', contentId: 'abc123456789' },
+            {
+              path: unsafeAsLogicalPath('posts/first'),
+              label: 'First',
+              contentId: unsafeAsContentId('abc123456789'),
+            },
             {
               path: unsafeAsLogicalPath('posts/second'),
               label: 'Second',
-              contentId: 'def456789012',
+              contentId: unsafeAsContentId('def456789012'),
             },
           ],
         },
@@ -538,11 +554,15 @@ describe('EntryNavigator', () => {
           label: 'Posts',
           type: 'collection',
           entries: [
-            { path: unsafeAsLogicalPath('posts/first'), label: 'First', contentId: 'abc123456789' },
+            {
+              path: unsafeAsLogicalPath('posts/first'),
+              label: 'First',
+              contentId: unsafeAsContentId('abc123456789'),
+            },
             {
               path: unsafeAsLogicalPath('posts/second'),
               label: 'Second',
-              contentId: 'def456789012',
+              contentId: unsafeAsContentId('def456789012'),
             },
           ],
         },
