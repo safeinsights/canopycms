@@ -676,6 +676,9 @@ export const Editor: React.FC<EditorProps> = ({
         order: node.order,
         entries: entries.length > 0 ? entries : undefined,
         children: children.length > 0 ? children : undefined,
+        conflictNotice: !!(
+          node.contentId && currentBranch?.conflictFiles?.includes(node.contentId)
+        ),
         onAdd:
           node.type !== 'entry'
             ? () => (onCreateEntry ? onCreateEntry(node.path) : handleCreateEntry(node.path))
@@ -689,7 +692,14 @@ export const Editor: React.FC<EditorProps> = ({
       }
     }
     return activeCollections.map((node) => build(node))
-  }, [activeCollections, entriesState, onCreateEntry, handleCreateEntry, contentRoot])
+  }, [
+    activeCollections,
+    entriesState,
+    onCreateEntry,
+    handleCreateEntry,
+    contentRoot,
+    currentBranch,
+  ])
 
   // Tree expansion state - persists across drawer close/open
   const treeExpandedStateRef = useRef<Record<string, boolean>>({})

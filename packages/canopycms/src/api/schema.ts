@@ -69,6 +69,7 @@ export type WireFlatSchemaItem =
       logicalPath: LogicalPath
       name: string
       label?: string
+      contentId?: string
       parentPath?: LogicalPath
       entries?: readonly WireEntryType[]
       collections?: readonly WireCollectionConfig[]
@@ -141,6 +142,7 @@ function toWireFlatSchema(items: FlatSchemaItem[], registry: Registry): WireFlat
         logicalPath: item.logicalPath,
         name: item.name,
         ...(item.label !== undefined && { label: item.label }),
+        ...(item.contentId !== undefined && { contentId: item.contentId }),
         ...(item.parentPath !== undefined && { parentPath: item.parentPath }),
         ...(item.entries && { entries: item.entries.map((et) => toWireEntryType(et, registry)) }),
         ...(item.collections && {

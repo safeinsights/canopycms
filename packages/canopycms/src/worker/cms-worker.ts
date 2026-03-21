@@ -14,7 +14,7 @@ import {
 import type { Task } from './task-queue'
 import { getBranchMetadataFileManager, BranchMetadataFileManager } from '../branch-metadata'
 import { extractIdFromFilename } from '../content-id-index'
-import type { ContentId } from '../paths/types'
+import { type ContentId, ROOT_COLLECTION_ID } from '../paths/types'
 import { isFileExistsError } from '../utils/error'
 
 /**
@@ -600,7 +600,7 @@ export class CmsWorker {
           continue
         }
 
-        const branchGit = simpleGit({ baseDir: branchPath })
+        const branchGit = simpleGit({ baseDir: branchPath, config: ['core.editor=true'] })
 
         // Skip dirty branches — editor has unsaved changes that can't be rebased
         const dirtyCheck = await branchGit.status()
@@ -624,9 +624,9 @@ export class CmsWorker {
 
         console.log(`Rebasing ${branchDir} (${status.behind} commits behind)...`)
 
-        // Resolve-and-continue loop: apply --ours for conflicting files, then continue
+        // Resolve-and-continue loop: keep branch version for conflicting files, then continue
         // Non-conflicting files get main's changes; conflicting files keep branch version.
-        const ourFiles: string[] = []
+        const conflictedFiles: string[] = []
         let nextAction: 'start' | 'continue' | 'skip' = 'start'
         let completed = false
         const MAX_ROUNDS = 50 // safety limit against infinite loops
@@ -651,7 +651,7 @@ export class CmsWorker {
               for (const file of st.conflicted) {
                 await branchGit.raw(['checkout', '--theirs', file])
                 await branchGit.add(file)
-                ourFiles.push(file)
+                conflictedFiles.push(file)
               }
               // nextAction stays 'continue'
             } else {
@@ -672,11 +672,26 @@ export class CmsWorker {
           }
         }
 
-        if (!completed) continue
+        if (!completed) {
+          console.warn(
+            `  Rebase of ${branchDir} did not complete within ${MAX_ROUNDS} rounds, aborting`,
+          )
+          await branchGit.rebase(['--abort']).catch(() => {})
+          continue
+        }
 
         // Convert file paths to ContentIds — immutable, survives slug renames
-        const conflictIds = [...new Set(ourFiles)]
-          .map((f) => extractIdFromFilename(path.basename(f)))
+        // For entry files: extract ID from filename (e.g., "post.slug.a1b2c3d4e5f6.mdx")
+        // For .collection.json: extract ID from parent directory, or use ROOT_COLLECTION_ID for root
+        const conflictIds = [...new Set(conflictedFiles)]
+          .map((f) => {
+            const fileId = extractIdFromFilename(path.basename(f))
+            if (fileId) return fileId
+            const dirId = extractIdFromFilename(path.basename(path.dirname(f)))
+            if (dirId) return dirId
+            if (path.basename(f) === '.collection.json') return ROOT_COLLECTION_ID
+            return null
+          })
           .filter((id): id is ContentId => id !== null)
 
         const hadConflicts = conflictIds.length > 0

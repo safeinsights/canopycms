@@ -49,6 +49,8 @@ export interface EntryNavCollection {
   order?: readonly string[] // Order array for interleaving entries and children
   entries?: EntryNavItem[]
   children?: EntryNavCollection[]
+  /** True when this collection's .collection.json conflicted during rebase */
+  conflictNotice?: boolean
   onAdd?: () => void
   onEdit?: () => void
   onAddSubCollection?: () => void
@@ -221,6 +223,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             isCollection: true,
             type: col.type,
             collectionPath: col.path,
+            conflictNotice: col.conflictNotice,
             onAdd: col.onAdd,
             onEdit: col.onEdit,
             onAddSubCollection: col.onAddSubCollection,
@@ -366,6 +369,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     const totalChildrenCount = node.nodeProps?.totalChildrenCount as number | undefined
     const isCollection = node.nodeProps?.isCollection as boolean | undefined
     const isEntry = node.nodeProps?.isEntry as boolean | undefined
+    const conflictNotice = node.nodeProps?.conflictNotice as boolean | undefined
     const isLeaf = !hasChildren || isEntry
     const selected = node.value === selectedPath
 
@@ -427,6 +431,11 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             {status && (
               <Badge size="xs" variant="light" color="gray">
                 {status}
+              </Badge>
+            )}
+            {conflictNotice && (
+              <Badge size="xs" variant="light" color="orange">
+                conflict
               </Badge>
             )}
           </Group>

@@ -54,6 +54,7 @@ export const buildEditorCollections = (flatSchema: FlatSchemaItem[]): EditorColl
         }))
         results.push({
           path: item.logicalPath,
+          contentId: item.contentId,
           name: item.name,
           label: item.label,
           format: defaultEntry?.format || 'json',
