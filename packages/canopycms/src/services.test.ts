@@ -7,6 +7,7 @@ import { RESERVED_GROUPS } from './authorization'
 import type { AuthenticationResult } from './auth/types'
 import type { InternalGroup } from './authorization'
 import { unsafeAsPhysicalPath } from './paths/test-utils'
+import { mockConsole } from './test-utils/console-spy'
 
 vi.mock('simple-git', () => {
   const stub = vi.fn(() => ({
@@ -26,6 +27,10 @@ vi.mock('simple-git', () => {
 })
 
 describe('createCanopyServices', () => {
+  beforeEach(() => {
+    mockConsole()
+  })
+
   it('creates helpers with defaults and reuses config', async () => {
     const schema = {
       collections: [
@@ -333,6 +338,7 @@ describe('authResultToCanopyUser with internal groups', () => {
 
 describe('commitToSettingsBranch', () => {
   beforeEach(() => {
+    mockConsole()
     vi.clearAllMocks()
   })
 

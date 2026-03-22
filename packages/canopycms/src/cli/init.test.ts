@@ -3,11 +3,13 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { init, initDeployAws } from './init'
+import { mockConsole } from '../test-utils/console-spy'
 
 describe('canopycms init', () => {
   let tmpDir: string
 
   beforeEach(async () => {
+    mockConsole()
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-init-test-'))
   })
 
@@ -110,6 +112,7 @@ describe('canopycms init-deploy aws', () => {
   let tmpDir: string
 
   beforeEach(async () => {
+    mockConsole()
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-deploy-test-'))
   })
 

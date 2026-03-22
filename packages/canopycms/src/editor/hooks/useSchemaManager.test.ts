@@ -6,6 +6,7 @@ import type { MockApiClient } from '../../api/__test__/mock-client'
 import { setupMockApiClient, createApiClientWrapper } from './__test__/test-utils'
 import { mockSuccess, mockError } from '../../api/__test__/mock-client'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
+import { mockConsole } from '../../test-utils/console-spy'
 
 // Mock the API client module
 vi.mock('../../api', async () => {
@@ -28,6 +29,7 @@ describe('useSchemaManager', () => {
   let wrapper: ReturnType<typeof createApiClientWrapper>
 
   beforeEach(async () => {
+    mockConsole()
     vi.clearAllMocks()
     mockClient = await setupMockApiClient()
     wrapper = createApiClientWrapper(mockClient)
