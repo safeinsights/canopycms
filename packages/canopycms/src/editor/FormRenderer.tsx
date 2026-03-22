@@ -429,6 +429,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
           color="orange"
           variant="light"
           title="Page updated since your draft started"
+          data-testid="conflict-alert"
         >
           Someone else has recently changed this page. You can keep editing — a reviewer will
           reconcile your changes when you submit.

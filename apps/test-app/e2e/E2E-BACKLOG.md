@@ -135,6 +135,23 @@ Use existing fixtures:
 
 ---
 
+## Conflict Management
+
+### 20. ✅ Conflict detection — sidebar badge and form alert after rebase
+
+**Status:** Done — `conflict-management.spec.ts` › "conflict detection shows sidebar badge and form alert after rebase"
+**Spec file:** `conflict-management.spec.ts` (new file)
+**Scenario:** Create a branch, edit the Home Page entry, commit. Push a conflicting change to main. Trigger the worker's rebase cycle via the test-only API endpoint (`/api/e2e-test/rebase`). Reload and verify: orange "conflict" badge visible in the entry navigator sidebar, and orange "Page updated since your draft started" alert visible in the form. Verify editing still works on the conflicted entry.
+**Infrastructure added:**
+
+- `apps/test-app/app/api/e2e-test/rebase/route.ts` — test-only POST endpoint that instantiates CmsWorker and calls `rebaseActiveBranches()`
+- `commitBranchChanges(branchName)`, `pushConflictingChangeToMain(path, content)`, `triggerRebase(baseUrl)` helpers in `test-workspace.ts`
+  **data-testids added:** `data-testid="conflict-badge"` on the orange Badge in `EntryNavigator.tsx`; `data-testid="conflict-alert"` on the orange Alert in `FormRenderer.tsx`.
+  **Bug fix discovered:** `rebaseActiveBranches()` used `status.behind` which relies on git upstream tracking branches. Feature branches don't always have tracking configured, causing rebase to skip them. Fixed by switching to `git rev-list --count HEAD..origin/main`.
+  **Notes:** The test restores clean content on main at start and end to avoid polluting `remote.git` for other tests. After verifying the conflict badge in the navigator, press Escape to close the drawer before interacting with form fields. The entry navigator shows entries by their title, not slug — use first `[role="treeitem"]` instead of `selectEntry('Home Page')` after rebase since the title may have changed.
+
+---
+
 ## Branch Workflow Extensions
 
 ### 13. ⬜ Approve a submitted branch (if UI exists)
