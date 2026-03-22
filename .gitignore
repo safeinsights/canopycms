@@ -10,3 +10,8 @@ coverage
 reference
 test-results/
 playwright-report/
+
+# Claude Code local/personal
+.claude/settings.local.json
+.claude/memory/
+.claude/projects/

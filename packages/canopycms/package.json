@@ -3,6 +3,11 @@
   "version": "0.0.0",
   "description": "CanopyCMS core package: schema-driven content, branch-aware editing, and editor UI for Next.js.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/safeinsights/canopycms.git",
+    "directory": "packages/canopycms"
+  },
   "private": false,
   "type": "module",
   "main": "dist/index.js",
