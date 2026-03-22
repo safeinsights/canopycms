@@ -44,6 +44,8 @@ jobs:
 
       - name: Run tests
         working-directory: packages/canopycms
+        env:
+          BROWSERSLIST_IGNORE_OLD_DATA: true
         run: |
           git config --global user.email "ci@canopycms.test"
           git config --global user.name "CI Bot"

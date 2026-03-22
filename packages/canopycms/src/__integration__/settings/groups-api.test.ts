@@ -16,12 +16,17 @@ import { createMockApiContext } from '../../test-utils/api-test-helpers'
 import { RESERVED_GROUPS, type InternalGroup } from '../../authorization'
 import { GROUP_ROUTES } from '../../api/groups'
 import { operatingStrategy } from '../../operating-mode'
+import { mockConsole } from '../../test-utils/console-spy'
 
 // Extract handlers
 const getInternalGroups = GROUP_ROUTES.getInternal.handler
 const updateInternalGroups = GROUP_ROUTES.updateInternal.handler
 
 describe('Groups API Integration', () => {
+  beforeEach(() => {
+    mockConsole()
+  })
+
   describe('prod-sim mode', () => {
     let workspace: TestWorkspace
 

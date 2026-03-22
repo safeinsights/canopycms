@@ -19,7 +19,7 @@ import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { ROOT_COLLECTION_ID } from '../paths/types'
-import { initTestRepo } from '../test-utils'
+import { initTestRepo, mockConsole } from '../test-utils'
 import { CmsWorker } from './cms-worker'
 
 // ---------------------------------------------------------------------------
@@ -154,6 +154,7 @@ describe('CmsWorker rebaseActiveBranches', () => {
   let tmpDir: string
 
   beforeEach(async () => {
+    mockConsole()
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-rebase-test-'))
   })
 
