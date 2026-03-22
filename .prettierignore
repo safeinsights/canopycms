@@ -1,0 +1,10 @@
+node_modules
+dist
+.next
+.turbo
+coverage
+test-results
+playwright-report
+package-lock.json
+apps/example1/content
+apps/test-app/content

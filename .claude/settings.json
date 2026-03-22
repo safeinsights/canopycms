@@ -10,6 +10,7 @@
       "Bash(npx vitest:*)",
       "Bash(npx tsc:*)",
       "Bash(npx tsx:*)",
+      "Bash(npx eslint:*)",
       "Bash(npx playwright:*)",
       "Bash(npm run test:e2e:*)",
       "Bash(git diff:*)",
@@ -28,10 +29,11 @@
       "WebFetch(domain:mantine.dev)",
       "WebFetch(domain:clerk.com)",
       "WebFetch(domain:github.com)",
-      "mcp__playwright__browser_navigate"
+      "mcp__playwright__browser_navigate",
+      "Bash(npx prettier:*)",
+      "Bash(npm run:*)",
+      "Bash(npm test:*)"
     ],
-    "additionalDirectories": [
-      "/tmp"
-    ]
+    "additionalDirectories": ["/tmp"]
   }
 }
