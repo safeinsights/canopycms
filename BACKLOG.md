@@ -146,6 +146,3 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 
 All functionality works in production.
 
-### Related Plans
-- `.claude/plans/stateful-stirring-rabbit.md` - Main field-based comment system plan
-- `.claude/plans/rosy-popping-parrot.md` - GitHub PR workflow integration

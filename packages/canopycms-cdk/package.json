@@ -3,6 +3,11 @@
   "version": "0.0.0",
   "description": "AWS CDK constructs and EC2 worker for CanopyCMS deployment",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/safeinsights/canopycms.git",
+    "directory": "packages/canopycms-cdk"
+  },
   "private": false,
   "type": "module",
   "main": "dist/index.js",

@@ -3,6 +3,11 @@
   "version": "0.0.0",
   "description": "Development authentication provider for CanopyCMS",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/safeinsights/canopycms.git",
+    "directory": "packages/canopycms-auth-dev"
+  },
   "private": false,
   "type": "module",
   "main": "dist/index.js",
