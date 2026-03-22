@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import { simpleGit } from 'simple-git'
 import { testLogger as log } from '../../../../packages/canopycms/src/utils/debug'
 
 /**
@@ -415,4 +416,58 @@ export async function updateBranchAccessViaAPI(
     body: JSON.stringify(access),
   })
   return response
+}
+
+// ---------------------------------------------------------------------------
+// Conflict testing helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Commit all pending changes in a branch workspace.
+ * Used to make the branch "clean" so that rebaseActiveBranches() will process it.
+ * Does NOT change branch status metadata — the branch stays in "editing" status.
+ */
+export async function commitBranchChanges(branchName: string): Promise<void> {
+  const branchPath = path.join(BRANCHES_DIR, branchName)
+  const git = simpleGit({ baseDir: branchPath })
+  await git.addConfig('user.name', 'CanopyCMS Test Bot')
+  await git.addConfig('user.email', 'test@example.com')
+  await git.add('.')
+  await git.commit('E2E: branch edit')
+}
+
+/**
+ * Push a conflicting change to the main branch on remote.git.
+ * This creates divergence so that the next rebase on a feature branch will conflict.
+ *
+ * @param contentRelativePath - Path relative to the content/ dir (e.g., 'home.home.bo7QdSwn9Tod.json')
+ * @param newContent - Full file content to write
+ */
+export async function pushConflictingChangeToMain(
+  contentRelativePath: string,
+  newContent: string
+): Promise<void> {
+  const mainPath = path.join(BRANCHES_DIR, 'main')
+  const filePath = path.join(mainPath, 'content', contentRelativePath)
+  await fs.writeFile(filePath, newContent, 'utf8')
+
+  const git = simpleGit({ baseDir: mainPath })
+  await git.addConfig('user.name', 'CanopyCMS Test Bot')
+  await git.addConfig('user.email', 'test@example.com')
+  await git.add('.')
+  await git.commit('E2E: upstream conflict trigger')
+  await git.push('origin', 'main')
+}
+
+/**
+ * Trigger the worker's rebaseActiveBranches() via the test-only API endpoint.
+ */
+export async function triggerRebase(baseUrl: string): Promise<void> {
+  const response = await fetch(`${baseUrl}/api/e2e-test/rebase`, {
+    method: 'POST',
+  })
+  if (!response.ok) {
+    const body = await response.text()
+    throw new Error(`Rebase trigger failed: ${response.status} ${body}`)
+  }
 }

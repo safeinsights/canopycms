@@ -606,16 +606,22 @@ export class CmsWorker {
 
         await branchGit.fetch('origin', this.baseBranch)
 
-        const status = await branchGit.status()
+        // Use rev-list instead of status.behind — status.behind only works when the
+        // branch has an upstream tracking branch configured, which isn't guaranteed
+        // (checkoutBranch fallback paths create branches without --track).
+        const behindCount = parseInt(
+          (await branchGit.raw(['rev-list', '--count', `HEAD..origin/${this.baseBranch}`])).trim(),
+          10
+        )
         const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
 
-        if (status.behind === 0) {
+        if (behindCount === 0) {
           // Already in sync — clear any stale conflict state
           await meta.save({ branch: { name: branchDir, conflictStatus: 'clean', conflictFiles: [] } })
           continue
         }
 
-        console.log(`Rebasing ${branchDir} (${status.behind} commits behind)...`)
+        console.log(`Rebasing ${branchDir} (${behindCount} commits behind)...`)
 
         // Resolve-and-continue loop: keep branch version for conflicting files, then continue
         // Non-conflicting files get main's changes; conflicting files keep branch version.

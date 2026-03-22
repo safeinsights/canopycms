@@ -415,7 +415,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             )}
             {conflictNotice && (
               <Tooltip label="This content was updated on the base branch — a reviewer will reconcile" withArrow>
-                <Badge size="xs" variant="light" color="orange">
+                <Badge size="xs" variant="light" color="orange" data-testid="conflict-badge">
                   conflict
                 </Badge>
               </Tooltip>

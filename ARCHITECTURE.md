@@ -1147,6 +1147,7 @@ The worker's synchronization cycle fetches the latest base branch from GitHub in
 
 **Branches that are skipped:**
 - **In review** (`submitted` or `approved` status): Rebasing would rewrite commit history under a PR that reviewers are actively looking at. These branches are left untouched until they return to `editing` status.
+- **Archived**: Already merged branches have no reason to be rebased.
 - **Dirty working tree**: If the branch has uncommitted changes (an editor is actively saving), rebasing would fail or destroy their work. The worker skips the branch and tries again on the next cycle.
 
 **Clean rebases**: When no files conflict, the rebase applies cleanly. The branch gets the base branch's latest changes, and any previous conflict state is cleared.
