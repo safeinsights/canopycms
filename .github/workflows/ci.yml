@@ -39,6 +39,14 @@ jobs:
           fi
           echo "✅ Generated files are up to date"
 
+      - name: Lint (ESLint)
+        continue-on-error: true # remove once existing lint errors are cleaned up
+        run: npm run lint --workspaces --if-present
+
+      - name: Format check (Prettier)
+        continue-on-error: true # remove once codebase is formatted
+        run: npx prettier --check .
+
       - name: TypeScript type checking
         run: npm run typecheck
 
