@@ -2,6 +2,13 @@
   "name": "canopycms-monorepo",
   "version": "0.0.0",
   "private": true,
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/safeinsights/canopycms.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
   "workspaces": [
     "packages/*",
     "apps/*"

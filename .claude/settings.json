@@ -1,12 +1,34 @@
 {
+  "includeCoAuthoredBy": false,
   "permissions": {
     "allow": [
+      "Bash(npm run typecheck:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm run generate:client:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx tsx:*)",
+      "Bash(npx playwright:*)",
+      "Bash(npm run test:e2e:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git status:*)",
+      "Bash(git fetch:*)",
+      "Bash(git stash:*)",
+      "Bash(git show:*)",
+      "Bash(git ls-tree:*)",
+      "Bash(git --version)",
+      "Bash(ls:*)",
+      "Bash(python3 -m json.tool)",
       "WebFetch(domain:mdxeditor.dev)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebFetch(domain:api.github.com)",
-      "Bash(python3 -m json.tool)",
-      "mcp__playwright__browser_navigate",
-      "Bash(git --version)"
+      "WebFetch(domain:mantine.dev)",
+      "WebFetch(domain:clerk.com)",
+      "WebFetch(domain:github.com)",
+      "mcp__playwright__browser_navigate"
     ],
     "additionalDirectories": ["/tmp"]
   }
