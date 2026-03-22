@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest'
 import { simpleGit } from 'simple-git'
 
 import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
-import { defineCanopyConfig } from './config'
 import { defineCanopyTestConfig } from './config-test'
 import { BranchRegistry } from './branch-registry'
 import { initBareRepo } from './__integration__/test-utils/test-workspace'
@@ -26,7 +25,11 @@ describe('BranchWorkspaceManager', () => {
               name: 'posts',
               path: 'posts',
               entries: [
-                { name: 'post', format: 'md', schema: [{ name: 'title', type: 'string' }] },
+                {
+                  name: 'post',
+                  format: 'md',
+                  schema: [{ name: 'title', type: 'string' }],
+                },
               ],
             },
           ],
@@ -73,7 +76,11 @@ describe('BranchWorkspaceManager', () => {
               name: 'posts',
               path: 'posts',
               entries: [
-                { name: 'post', format: 'md', schema: [{ name: 'title', type: 'string' }] },
+                {
+                  name: 'post',
+                  format: 'md',
+                  schema: [{ name: 'title', type: 'string' }],
+                },
               ],
             },
           ],
@@ -133,7 +140,11 @@ describe('BranchWorkspaceManager', () => {
               name: 'posts',
               path: 'posts',
               entries: [
-                { name: 'post', format: 'md', schema: [{ name: 'title', type: 'string' }] },
+                {
+                  name: 'post',
+                  format: 'md',
+                  schema: [{ name: 'title', type: 'string' }],
+                },
               ],
             },
           ],

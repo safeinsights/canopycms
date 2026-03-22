@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { traverseFields, findFieldsByType, type TraversalContext } from '../field-traversal'
+import { traverseFields, findFieldsByType } from '../field-traversal'
 import type { FieldConfig } from '../../config'
 
 describe('field-traversal', () => {
@@ -100,8 +100,18 @@ describe('field-traversal', () => {
 
     it('collects results from visitor', () => {
       const schema: FieldConfig[] = [
-        { name: 'author', type: 'reference', label: 'Author', collections: ['authors'] },
-        { name: 'tags', type: 'reference', label: 'Tags', collections: ['tags'] },
+        {
+          name: 'author',
+          type: 'reference',
+          label: 'Author',
+          collections: ['authors'],
+        },
+        {
+          name: 'tags',
+          type: 'reference',
+          label: 'Tags',
+          collections: ['tags'],
+        },
         { name: 'title', type: 'string', label: 'Title' },
       ]
       const data = {
@@ -139,7 +149,12 @@ describe('field-traversal', () => {
                   type: 'object',
                   label: 'Metadata',
                   fields: [
-                    { name: 'ref', type: 'reference', label: 'Reference', collections: ['docs'] },
+                    {
+                      name: 'ref',
+                      type: 'reference',
+                      label: 'Reference',
+                      collections: ['docs'],
+                    },
                   ],
                 },
               ],
@@ -210,13 +225,23 @@ describe('field-traversal', () => {
     it('finds all reference fields', () => {
       const schema: FieldConfig[] = [
         { name: 'title', type: 'string', label: 'Title' },
-        { name: 'author', type: 'reference', label: 'Author', collections: ['authors'] },
+        {
+          name: 'author',
+          type: 'reference',
+          label: 'Author',
+          collections: ['authors'],
+        },
         {
           name: 'meta',
           type: 'object',
           label: 'Meta',
           fields: [
-            { name: 'reviewer', type: 'reference', label: 'Reviewer', collections: ['users'] },
+            {
+              name: 'reviewer',
+              type: 'reference',
+              label: 'Reviewer',
+              collections: ['users'],
+            },
           ],
         },
       ]

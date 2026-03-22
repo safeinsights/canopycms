@@ -34,8 +34,9 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   multiple,
   dataCanopyField,
 }) => {
+  const needsFetch = !staticOptions && !!collections && collections.length > 0
   const [options, setOptions] = useState<ReferenceOption[]>(staticOptions || [])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(needsFetch)
 
   // Extract ID from value - handle both string IDs and resolved objects
   const extractId = (val: unknown): string => {
@@ -49,18 +50,28 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
       ? value.map(extractId)
       : []
     : extractId(value)
-  const inputId = id ?? useId()
+  const generatedId = useId()
+  const inputId = id ?? generatedId
+
+  // Track deps to detect changes and reset loading during render
+  const [prevFetchKey, setPrevFetchKey] = useState('')
+  const fetchKey = needsFetch ? `${collections?.join(',')}:${displayField}:${branch}` : ''
+  if (fetchKey !== prevFetchKey) {
+    setPrevFetchKey(fetchKey)
+    if (needsFetch) {
+      setLoading(true)
+    }
+  }
 
   // Load options from API if collections are provided and no static options
   useEffect(() => {
-    if (!staticOptions && collections && collections.length > 0) {
-      setLoading(true)
+    if (needsFetch) {
       const apiClient = createApiClient()
 
       apiClient.content
         .getReferenceOptions({
           branch,
-          collections: collections.join(','),
+          collections: collections!.join(','),
           displayField,
         })
         .then((response) => {
@@ -81,7 +92,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
           setLoading(false)
         })
     }
-  }, [staticOptions, collections, displayField, branch])
+  }, [needsFetch, collections, displayField, branch])
 
   if (loading) {
     return (

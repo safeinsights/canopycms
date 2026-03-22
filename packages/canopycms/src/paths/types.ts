@@ -23,7 +23,9 @@ export type PhysicalPath = string & { readonly __brand: 'PhysicalPath' }
 /**
  * A branch name that has been sanitized for filesystem use.
  */
-export type SanitizedBranchName = string & { readonly __brand: 'SanitizedBranchName' }
+export type SanitizedBranchName = string & {
+  readonly __brand: 'SanitizedBranchName'
+}
 
 /**
  * A git branch name (before sanitization for filesystem use).

@@ -109,9 +109,9 @@ const MockFetch: React.FC<{ children: React.ReactNode }> = ({ children }) => {
         }),
       )
     }
-    global.fetch = handler as any
+    global.fetch = handler as typeof fetch
     return () => {
-      global.fetch = original as any
+      global.fetch = original as typeof fetch
     }
   }, [])
   return <>{children}</>

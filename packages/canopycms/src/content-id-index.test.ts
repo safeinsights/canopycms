@@ -121,7 +121,9 @@ describe('ContentIdIndex', () => {
 
     it('indexes collection directories with IDs', async () => {
       const collectionId = 'c1L2L3e4c5t6'
-      await fs.mkdir(path.join(tempDir, `content/posts.${collectionId}`), { recursive: true })
+      await fs.mkdir(path.join(tempDir, `content/posts.${collectionId}`), {
+        recursive: true,
+      })
 
       await index.buildFromFilenames('content')
 
@@ -327,7 +329,9 @@ describe('ContentIdIndex', () => {
     it('does not include collection directories in results', async () => {
       // Create nested collection structure
       const collectionId = 'c1L2L3e4c5t6'
-      await fs.mkdir(path.join(tempDir, `content/posts.${collectionId}`), { recursive: true })
+      await fs.mkdir(path.join(tempDir, `content/posts.${collectionId}`), {
+        recursive: true,
+      })
 
       const entryId = 'p1s2t3a4b5c6'
       await fs.writeFile(
@@ -427,7 +431,9 @@ describe('ContentIdIndex', () => {
 
     it('handles nested collections correctly', async () => {
       // Create nested structure
-      await fs.mkdir(path.join(tempDir, 'content/docs/api'), { recursive: true })
+      await fs.mkdir(path.join(tempDir, 'content/docs/api'), {
+        recursive: true,
+      })
 
       const apiEntryId = 'a1p2i3e4n5t6'
       await fs.writeFile(path.join(tempDir, `content/docs/api/doc.intro.${apiEntryId}.json`), '{}')

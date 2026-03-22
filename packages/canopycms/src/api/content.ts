@@ -6,7 +6,7 @@ import type { EntrySchema, EntryTypeConfig, FlatSchemaItem } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 import { branchNameSchema, logicalPathSchema, entrySlugSchema } from './validators'
-import type { LogicalPath, EntrySlug, PhysicalPath } from '../paths'
+import type { EntrySlug, PhysicalPath } from '../paths'
 
 /** Response type for content read operations */
 export type ContentReadResponse = ApiResponse<{
@@ -100,7 +100,9 @@ const readContentHandler = async (
   req: ApiRequest,
   params: z.infer<typeof readContentParamsSchema>,
 ): Promise<ContentReadResponse> => {
-  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
+  const context = await ctx.getBranchContext(params.branch, {
+    loadSchema: true,
+  })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -152,7 +154,9 @@ const writeContentHandler = async (
   params: z.infer<typeof writeContentParamsSchema>,
   body: z.infer<typeof writeContentBodySchema>,
 ): Promise<ContentWriteResponse> => {
-  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
+  const context = await ctx.getBranchContext(params.branch, {
+    loadSchema: true,
+  })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -230,7 +234,9 @@ const validateReferencesHandler = async (
   params: z.infer<typeof validateReferencesParamsSchema>,
   body: z.infer<typeof validateReferencesBodySchema>,
 ): Promise<ReferenceValidationResponse> => {
-  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
+  const context = await ctx.getBranchContext(params.branch, {
+    loadSchema: true,
+  })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -281,7 +287,11 @@ const validateReferencesHandler = async (
     if (params.entryType) {
       entryTypeConfig = schemaItem.entries?.find((e) => e.name === params.entryType)
       if (!entryTypeConfig) {
-        return { ok: false, status: 400, error: `Entry type '${params.entryType}' not found` }
+        return {
+          ok: false,
+          status: 400,
+          error: `Entry type '${params.entryType}' not found`,
+        }
       }
     } else if (schemaItem.entries && schemaItem.entries.length === 1) {
       entryTypeConfig = schemaItem.entries[0]
@@ -315,7 +325,9 @@ const renameEntryHandler = async (
   params: z.infer<typeof renameEntryParamsSchema>,
   body: z.infer<typeof renameEntryBodySchema>,
 ): Promise<RenameEntryResponse> => {
-  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
+  const context = await ctx.getBranchContext(params.branch, {
+    loadSchema: true,
+  })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }

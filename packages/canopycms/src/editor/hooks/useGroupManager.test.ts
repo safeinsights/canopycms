@@ -34,7 +34,9 @@ describe('useGroupManager', () => {
   })
 
   it('initializes with empty groups', () => {
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), {
+      wrapper,
+    })
 
     expect(result.current.groupsData).toEqual([])
     expect(result.current.groupsLoading).toBe(false)
@@ -52,7 +54,9 @@ describe('useGroupManager', () => {
       data: { groups: mockGroups },
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: true }), { wrapper })
+    const { result } = renderHook(() => useGroupManager({ isOpen: true }), {
+      wrapper,
+    })
 
     // Should start loading
     expect(result.current.groupsLoading).toBe(true)
@@ -66,13 +70,15 @@ describe('useGroupManager', () => {
   })
 
   it('handles load groups error', async () => {
-    const { error, restore } = setupMockConsole(['error'])
+    const { restore } = setupMockConsole(['error'])
     mockClient.groups.getInternal.mockResolvedValueOnce({
       ok: false,
       status: 500,
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: true }), { wrapper })
+    const { result } = renderHook(() => useGroupManager({ isOpen: true }), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.groupsLoading).toBe(false)
@@ -92,7 +98,9 @@ describe('useGroupManager', () => {
       data: { groups: [] },
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: true }), { wrapper })
+    const { result } = renderHook(() => useGroupManager({ isOpen: true }), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.groupsLoading).toBe(false)
@@ -117,7 +125,9 @@ describe('useGroupManager', () => {
       expect(result.current.groupsData).toEqual(mockGroups)
     })
 
-    expect(mockClient.groups.updateInternal).toHaveBeenCalledWith({ groups: mockGroups })
+    expect(mockClient.groups.updateInternal).toHaveBeenCalledWith({
+      groups: mockGroups,
+    })
   })
 
   it('handles save groups error', async () => {
@@ -127,15 +137,17 @@ describe('useGroupManager', () => {
       error: 'Save failed',
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), {
+      wrapper,
+    })
 
     await expect(result.current.handleSaveGroups([])).rejects.toThrow('Save failed')
   })
 
   it('searches users successfully', async () => {
     const mockUsers = [
-      { id: 'user1', name: 'John Doe' },
-      { id: 'user2', name: 'Jane Smith' },
+      { id: 'user1', name: 'John Doe', email: 'john@example.com' },
+      { id: 'user2', name: 'Jane Smith', email: 'jane@example.com' },
     ]
 
     mockClient.permissions.searchUsers.mockResolvedValueOnce({
@@ -144,17 +156,22 @@ describe('useGroupManager', () => {
       data: { users: mockUsers },
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), {
+      wrapper,
+    })
 
     const users = await result.current.handleSearchUsers('john', 10)
 
     expect(users).toEqual(mockUsers)
     // This assertion will fail until we fix the implementation
-    expect(mockClient.permissions.searchUsers).toHaveBeenCalledWith({ q: 'john', limit: '10' })
+    expect(mockClient.permissions.searchUsers).toHaveBeenCalledWith({
+      q: 'john',
+      limit: '10',
+    })
   })
 
   it('searches users without limit parameter', async () => {
-    const mockUsers = [{ id: 'user1', name: 'John Doe' }]
+    const mockUsers = [{ id: 'user1', name: 'John Doe', email: 'john@example.com' }]
 
     mockClient.permissions.searchUsers.mockResolvedValueOnce({
       ok: true,
@@ -162,13 +179,17 @@ describe('useGroupManager', () => {
       data: { users: mockUsers },
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), {
+      wrapper,
+    })
 
     const users = await result.current.handleSearchUsers('john')
 
     expect(users).toEqual(mockUsers)
     // This assertion will fail until we fix the implementation
-    expect(mockClient.permissions.searchUsers).toHaveBeenCalledWith({ q: 'john' })
+    expect(mockClient.permissions.searchUsers).toHaveBeenCalledWith({
+      q: 'john',
+    })
   })
 
   it('handles user search error', async () => {
@@ -177,7 +198,9 @@ describe('useGroupManager', () => {
       status: 500,
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), {
+      wrapper,
+    })
 
     const users = await result.current.handleSearchUsers('john')
 
@@ -196,12 +219,16 @@ describe('useGroupManager', () => {
       data: { groups: mockExternalGroups },
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), {
+      wrapper,
+    })
 
     const groups = await result.current.handleSearchExternalGroups('external')
 
     expect(groups).toEqual(mockExternalGroups)
-    expect(mockClient.groups.searchExternal).toHaveBeenCalledWith({ q: 'external' })
+    expect(mockClient.groups.searchExternal).toHaveBeenCalledWith({
+      q: 'external',
+    })
   })
 
   it('handles external group search error', async () => {
@@ -210,7 +237,9 @@ describe('useGroupManager', () => {
       status: 500,
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), {
+      wrapper,
+    })
 
     const groups = await result.current.handleSearchExternalGroups('external')
 
@@ -218,7 +247,9 @@ describe('useGroupManager', () => {
   })
 
   it('does not load groups when isOpen is false', async () => {
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), {
+      wrapper,
+    })
 
     expect(result.current.groupsLoading).toBe(false)
     expect(mockClient.groups.getInternal).not.toHaveBeenCalled()
@@ -233,7 +264,9 @@ describe('useGroupManager', () => {
       data: { groups: mockGroups },
     })
 
-    const { result } = renderHook(() => useGroupManager({ isOpen: false }), { wrapper })
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), {
+      wrapper,
+    })
 
     await result.current.loadGroups()
 

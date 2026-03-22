@@ -122,10 +122,7 @@ describe('useEditorLayout', () => {
       toJSON: () => {},
     }))
 
-    let resizeCallback: any
-
-    global.ResizeObserver = vi.fn().mockImplementation((callback) => {
-      resizeCallback = callback
+    global.ResizeObserver = vi.fn().mockImplementation(() => {
       return {
         observe: vi.fn(),
         disconnect: vi.fn(),

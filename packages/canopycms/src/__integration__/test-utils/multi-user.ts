@@ -59,8 +59,6 @@ export function createTestUser(role: TestUserRole): AuthenticatedUser {
  * Allows switching between test users to simulate multi-user scenarios.
  */
 export function createMockAuthPlugin(currentRole: TestUserRole): AuthPlugin {
-  const currentUser = TEST_USERS[currentRole]
-
   return {
     async authenticate(_context: unknown): Promise<AuthenticationResult> {
       const testUser = createTestUser(currentRole)
@@ -106,7 +104,11 @@ export function createMockAuthPlugin(currentRole: TestUserRole): AuthPlugin {
       const groups: Record<string, GroupMetadata> = {
         Admins: { id: 'Admins', name: 'Administrators', memberCount: 1 },
         Reviewers: { id: 'Reviewers', name: 'Reviewers', memberCount: 1 },
-        ContentEditors: { id: 'ContentEditors', name: 'Content Editors', memberCount: 1 },
+        ContentEditors: {
+          id: 'ContentEditors',
+          name: 'Content Editors',
+          memberCount: 1,
+        },
       }
       return groups[groupId] || null
     },
@@ -119,7 +121,7 @@ export function createMockAuthPlugin(currentRole: TestUserRole): AuthPlugin {
       ].slice(0, limit)
     },
 
-    async searchExternalGroups(query: string) {
+    async searchExternalGroups(_query: string) {
       // Return empty for tests - external groups are optional
       return []
     },

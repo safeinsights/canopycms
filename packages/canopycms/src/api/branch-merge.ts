@@ -14,7 +14,9 @@ export interface MarkAsMergedParams {
 }
 
 /** Response type for branch merge operations */
-export type BranchMergeResponse = ApiResponse<{ branch: { name: string; status: string } }>
+export type BranchMergeResponse = ApiResponse<{
+  branch: { name: string; status: string }
+}>
 
 const markAsMergedHandler = async (
   ctx: ApiContext,

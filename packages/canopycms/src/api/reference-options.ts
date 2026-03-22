@@ -30,7 +30,9 @@ const getReferenceOptionsHandler = async (
   req: ApiRequest,
   params: z.infer<typeof getReferenceOptionsParamsSchema>,
 ): Promise<ReferenceOptionsResponse> => {
-  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
+  const context = await ctx.getBranchContext(params.branch, {
+    loadSchema: true,
+  })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -38,7 +40,11 @@ const getReferenceOptionsHandler = async (
   // Manual query parameter validation
   const collectionsParam = req.query?.collections as string | undefined
   if (!collectionsParam) {
-    return { ok: false, status: 400, error: 'Query parameter "collections" is required' }
+    return {
+      ok: false,
+      status: 400,
+      error: 'Query parameter "collections" is required',
+    }
   }
 
   const displayField = (req.query?.displayField as string) || 'title'
@@ -59,7 +65,11 @@ const getReferenceOptionsHandler = async (
   for (const raw of rawCollections) {
     const result = parseLogicalPath(raw)
     if (!result.ok) {
-      return { ok: false, status: 400, error: `Invalid collection path "${raw}": ${result.error}` }
+      return {
+        ok: false,
+        status: 400,
+        error: `Invalid collection path "${raw}": ${result.error}`,
+      }
     }
     collections.push(result.path)
   }

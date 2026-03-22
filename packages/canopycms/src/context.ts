@@ -1,6 +1,6 @@
 import type { CanopyUser } from './user'
 import type { CanopyServices } from './services'
-import type { ContentReader, ReadContentInput } from './content-reader'
+import type { ReadContentInput } from './content-reader'
 import { isBuildMode, BUILD_USER } from './build-mode'
 import { createContentReader } from './content-reader'
 import { createLogicalPath, parseSlug, type EntrySlug } from './paths'

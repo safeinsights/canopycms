@@ -7,7 +7,10 @@ import { composeCanopyConfig, defineCanopyConfig } from '../helpers'
 import { flattenSchema } from '../flatten'
 import { validateCanopyConfig } from '../validation'
 
-const gitAuthor = { gitBotAuthorName: 'Test Bot', gitBotAuthorEmail: 'bot@example.com' }
+const gitAuthor = {
+  gitBotAuthorName: 'Test Bot',
+  gitBotAuthorEmail: 'bot@example.com',
+}
 
 describe('config validation', () => {
   it('accepts a valid config with mdx collection and blocks', () => {
@@ -32,7 +35,11 @@ describe('config validation', () => {
                       name: 'hero',
                       label: 'Hero',
                       fields: [
-                        { name: 'headline', type: 'string' as const, required: true },
+                        {
+                          name: 'headline',
+                          type: 'string' as const,
+                          required: true,
+                        },
                         { name: 'ctaLabel', type: 'string' as const },
                       ],
                     },
@@ -45,7 +52,7 @@ describe('config validation', () => {
       ],
     } as const
 
-    const configBundle = defineCanopyConfig({
+    defineCanopyConfig({
       ...gitAuthor,
       media: { adapter: 's3', bucket: 'my-bucket', region: 'us-east-1' },
     })

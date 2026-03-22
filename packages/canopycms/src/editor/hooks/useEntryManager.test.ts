@@ -91,7 +91,9 @@ describe('useEntryManager', () => {
   })
 
   it('initializes with provided entries and selects first entry', () => {
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     expect(result.current.entries).toEqual([mockEntry])
     expect(result.current.selectedPath).toBe('entry1')
@@ -108,7 +110,9 @@ describe('useEntryManager', () => {
   })
 
   it('builds collectionByPath map correctly', () => {
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     expect(result.current.collectionByPath.get(unsafeAsLogicalPath('content/posts'))).toEqual(
       mockCollections[0],
@@ -123,12 +127,21 @@ describe('useEntryManager', () => {
       data: mockData as any, // Mock uses simplified format that normalizeContentPayload handles
     })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     const loaded = await result.current.loadEntry(mockEntry)
 
-    expect(loaded).toEqual({ slug: 'test', title: 'Test Entry', body: 'Content' })
-    expect(mockClient.content.read).toHaveBeenCalledWith({ branch: 'main', path: 'posts/test' })
+    expect(loaded).toEqual({
+      slug: 'test',
+      title: 'Test Entry',
+      body: 'Content',
+    })
+    expect(mockClient.content.read).toHaveBeenCalledWith({
+      branch: 'main',
+      path: 'posts/test',
+    })
   })
 
   it('handles load entry error', async () => {
@@ -137,7 +150,9 @@ describe('useEntryManager', () => {
       status: 404,
     })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     await expect(result.current.loadEntry(mockEntry)).rejects.toThrow('Load failed: 404')
   })
@@ -151,7 +166,9 @@ describe('useEntryManager', () => {
       data: mockResponse as any, // Mock uses simplified format that normalizeContentPayload handles
     })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     const saved = await result.current.saveEntry(mockEntry, mockValue)
 
@@ -172,7 +189,9 @@ describe('useEntryManager', () => {
       status: 500,
     })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     await expect(result.current.saveEntry(mockEntry, {})).rejects.toThrow('Save failed: 500')
   })
@@ -203,7 +222,9 @@ describe('useEntryManager', () => {
         },
       })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.refreshEntries()
@@ -228,7 +249,10 @@ describe('useEntryManager', () => {
       .mockResolvedValueOnce({
         ok: true,
         status: 200,
-        data: { entries: [mockCollectionItem], pagination: { hasMore: false, limit: 100 } },
+        data: {
+          entries: [mockCollectionItem],
+          pagination: { hasMore: false, limit: 100 },
+        },
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -239,7 +263,9 @@ describe('useEntryManager', () => {
         },
       })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.refreshEntries()
@@ -251,7 +277,9 @@ describe('useEntryManager', () => {
   })
 
   it('opens create modal when creating entry', async () => {
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
@@ -293,7 +321,9 @@ describe('useEntryManager', () => {
       },
     })
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     // Open modal
     await act(async () => {
@@ -317,7 +347,9 @@ describe('useEntryManager', () => {
   })
 
   it('closes modal without creating entry', async () => {
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleCreateEntry(unsafeAsLogicalPath('content/posts'))
@@ -359,7 +391,9 @@ describe('useEntryManager', () => {
   })
 
   it('toggles navigator open state', () => {
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     expect(result.current.navigatorOpen).toBe(false)
 
@@ -371,7 +405,9 @@ describe('useEntryManager', () => {
   })
 
   it('updates selectedPath and syncs to URL', () => {
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     act(() => {
       result.current.setSelectedPath('entry1')
@@ -408,7 +444,9 @@ describe('useEntryManager', () => {
   it('reads entry from URL parameter on mount', () => {
     window.location.search = '?entry=entry1'
 
-    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
 
     waitFor(() => {
       expect(result.current.selectedPath).toBe('entry1')
@@ -431,7 +469,7 @@ describe('useEntryManager', () => {
     }
 
     // Start with empty entries (simulates SSR/hydration scenario)
-    const { result, rerender } = renderHook((props) => useEntryManager(props), {
+    const { result } = renderHook((props) => useEntryManager(props), {
       initialProps: { ...defaultOptions, initialEntries: [] },
       wrapper,
     })
@@ -466,7 +504,11 @@ describe('useEntryManager', () => {
     }
 
     const { result } = renderHook(
-      () => useEntryManager({ ...defaultOptions, initialEntries: [entry1, entry2] }),
+      () =>
+        useEntryManager({
+          ...defaultOptions,
+          initialEntries: [entry1, entry2],
+        }),
       { wrapper },
     )
 
@@ -494,9 +536,14 @@ describe('useEntryManager', () => {
     }
 
     // Start with entries already loaded (simulates client-side navigation)
-    renderHook(() => useEntryManager({ ...defaultOptions, initialEntries: [entry1, entry2] }), {
-      wrapper,
-    })
+    renderHook(
+      () =>
+        useEntryManager({
+          ...defaultOptions,
+          initialEntries: [entry1, entry2],
+        }),
+      { wrapper },
+    )
 
     // Wait for sync to complete
     await waitFor(() => {

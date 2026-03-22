@@ -107,7 +107,11 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
           return {
             value: entry?.path ?? `collection:${col.path}`,
             label: entry?.label ?? col.label,
-            nodeProps: { status: entry?.status, isEntry: true, entryPath: entry?.path },
+            nodeProps: {
+              status: entry?.status,
+              isEntry: true,
+              entryPath: entry?.path,
+            },
             children: [],
           }
         }
@@ -165,14 +169,20 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
         for (const contentId of order) {
           const entryNode = entryNodesByContentId.get(contentId)
           if (entryNode) {
-            entryNode.nodeProps = { ...entryNode.nodeProps, childIndex: allChildren.length }
+            entryNode.nodeProps = {
+              ...entryNode.nodeProps,
+              childIndex: allChildren.length,
+            }
             allChildren.push(entryNode)
             usedContentIds.add(contentId)
             continue
           }
           const childNode = childNodesByContentId.get(contentId)
           if (childNode) {
-            childNode.nodeProps = { ...childNode.nodeProps, childIndex: allChildren.length }
+            childNode.nodeProps = {
+              ...childNode.nodeProps,
+              childIndex: allChildren.length,
+            }
             allChildren.push(childNode)
             usedContentIds.add(contentId)
           }
@@ -426,7 +436,11 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
             <Box
               w={18}
               h={18}
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
             >
               <Chevron expanded={expanded} visible={showChevron} />
             </Box>

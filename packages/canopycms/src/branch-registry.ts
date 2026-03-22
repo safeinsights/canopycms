@@ -93,7 +93,10 @@ export class BranchRegistry {
     // Use random suffix to avoid conflicts between concurrent regenerations
     const uniqueTempPath = `${this.tempPath}.${Date.now()}.${Math.random().toString(36).slice(2)}`
     await fs.mkdir(this.root, { recursive: true })
-    const snapshot: BranchRegistrySnapshot = { version: REGISTRY_VERSION, branches }
+    const snapshot: BranchRegistrySnapshot = {
+      version: REGISTRY_VERSION,
+      branches,
+    }
     await fs.writeFile(uniqueTempPath, JSON.stringify(snapshot, null, 2) + '\n', 'utf8')
 
     try {

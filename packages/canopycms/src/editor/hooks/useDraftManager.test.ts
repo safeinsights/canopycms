@@ -56,10 +56,19 @@ describe('useDraftManager', () => {
         },
       }
     })()
-    Object.defineProperty(window, 'localStorage', { value: localStorageMock, writable: true })
+    Object.defineProperty(window, 'localStorage', {
+      value: localStorageMock,
+      writable: true,
+    })
 
-    mockLoadEntry.mockResolvedValue({ title: 'Loaded Title', body: 'Loaded Content' })
-    mockSaveEntry.mockResolvedValue({ title: 'Saved Title', body: 'Saved Content' })
+    mockLoadEntry.mockResolvedValue({
+      title: 'Loaded Title',
+      body: 'Loaded Content',
+    })
+    mockSaveEntry.mockResolvedValue({
+      title: 'Saved Title',
+      body: 'Saved Content',
+    })
   })
 
   afterEach(() => {
@@ -77,7 +86,9 @@ describe('useDraftManager', () => {
   })
 
   it('initializes with initialValues', () => {
-    const initialValues = { abc123def456: { title: 'Initial', body: 'Content' } }
+    const initialValues = {
+      abc123def456: { title: 'Initial', body: 'Content' },
+    }
     const { result } = renderHook(() => useDraftManager({ ...defaultOptions, initialValues }))
 
     expect(result.current.drafts).toEqual(initialValues)
@@ -87,23 +98,39 @@ describe('useDraftManager', () => {
     const { result } = renderHook(() => useDraftManager(defaultOptions))
 
     act(() => {
-      result.current.setDrafts({ abc123def456: { title: 'Draft', body: 'Draft Content' } })
+      result.current.setDrafts({
+        abc123def456: { title: 'Draft', body: 'Draft Content' },
+      })
     })
 
-    expect(result.current.selectedValue).toEqual({ title: 'Draft', body: 'Draft Content' })
-    expect(result.current.effectiveValue).toEqual({ title: 'Draft', body: 'Draft Content' })
+    expect(result.current.selectedValue).toEqual({
+      title: 'Draft',
+      body: 'Draft Content',
+    })
+    expect(result.current.effectiveValue).toEqual({
+      title: 'Draft',
+      body: 'Draft Content',
+    })
   })
 
   it('falls back to loadedValue when no draft exists', () => {
     const { result } = renderHook(() => useDraftManager(defaultOptions))
 
     act(() => {
-      result.current.setLoadedValues({ abc123def456: { title: 'Loaded', body: 'Loaded Content' } })
+      result.current.setLoadedValues({
+        abc123def456: { title: 'Loaded', body: 'Loaded Content' },
+      })
     })
 
     expect(result.current.selectedValue).toBeUndefined()
-    expect(result.current.loadedValue).toEqual({ title: 'Loaded', body: 'Loaded Content' })
-    expect(result.current.effectiveValue).toEqual({ title: 'Loaded', body: 'Loaded Content' })
+    expect(result.current.loadedValue).toEqual({
+      title: 'Loaded',
+      body: 'Loaded Content',
+    })
+    expect(result.current.effectiveValue).toEqual({
+      title: 'Loaded',
+      body: 'Loaded Content',
+    })
   })
 
   it('computes modifiedCount correctly', () => {
@@ -157,7 +184,9 @@ describe('useDraftManager', () => {
   it('restores drafts from localStorage on mount', () => {
     window.localStorage.setItem(
       'canopycms:drafts:main',
-      JSON.stringify({ abc123def456: { title: 'Restored', body: 'From Storage' } }),
+      JSON.stringify({
+        abc123def456: { title: 'Restored', body: 'From Storage' },
+      }),
     )
 
     const { result } = renderHook(() => useDraftManager(defaultOptions))
@@ -173,7 +202,9 @@ describe('useDraftManager', () => {
     const { result } = renderHook(() => useDraftManager(defaultOptions))
 
     act(() => {
-      result.current.setDrafts({ abc123def456: { title: 'New Draft', body: 'Content' } })
+      result.current.setDrafts({
+        abc123def456: { title: 'New Draft', body: 'Content' },
+      })
     })
 
     const stored = window.localStorage.getItem('canopycms:drafts:main')
@@ -184,14 +215,19 @@ describe('useDraftManager', () => {
     const { result } = renderHook(() => useDraftManager(defaultOptions))
 
     act(() => {
-      result.current.setDrafts({ abc123def456: { title: 'Draft', body: 'Content' } })
+      result.current.setDrafts({
+        abc123def456: { title: 'Draft', body: 'Content' },
+      })
     })
 
     await act(async () => {
       await result.current.handleSave()
     })
 
-    expect(mockSaveEntry).toHaveBeenCalledWith(mockEntry, { title: 'Draft', body: 'Content' })
+    expect(mockSaveEntry).toHaveBeenCalledWith(mockEntry, {
+      title: 'Draft',
+      body: 'Content',
+    })
     expect(mockSetBusy).toHaveBeenCalledWith(true)
     expect(mockSetBusy).toHaveBeenCalledWith(false)
     expect(result.current.drafts.abc123def456).toEqual({
@@ -268,7 +304,9 @@ describe('useDraftManager', () => {
       result.current.handleDiscardFileDraft()
     })
 
-    expect(result.current.drafts).toEqual({ xyz789uvw123: { title: 'Draft 2' } })
+    expect(result.current.drafts).toEqual({
+      xyz789uvw123: { title: 'Draft 2' },
+    })
   })
 
   it('reloads entry from server', async () => {

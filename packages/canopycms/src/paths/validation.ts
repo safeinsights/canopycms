@@ -317,6 +317,7 @@ export function parseBranchName(
   }
 
   // Git-forbidden characters: ~ ^ : ? * [ \ and control chars
+  // eslint-disable-next-line no-control-regex -- intentional: git forbids control characters in branch names
   if (/[~^:?*[\\\x00-\x1f\x7f]/.test(name)) {
     return { ok: false, error: 'Branch name contains invalid characters' }
   }

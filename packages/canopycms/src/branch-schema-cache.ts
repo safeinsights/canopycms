@@ -35,7 +35,10 @@ export interface BranchSchemaCacheEntry {
  * - Atomic file operations prevent corruption during concurrent access
  */
 export class BranchSchemaCache {
-  private devModeCache?: { schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }
+  private devModeCache?: {
+    schema: RootCollectionConfig
+    flatSchema: FlatSchemaItem[]
+  }
 
   constructor(private readonly mode: OperatingMode) {}
 

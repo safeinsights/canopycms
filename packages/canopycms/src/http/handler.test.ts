@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createCanopyRequestHandler } from './handler'
 import type { CanopyRequest } from './types'
 import type { AuthPlugin } from '../auth/plugin'
@@ -33,7 +33,11 @@ const ADMINS = 'Admins'
  * Create a mock AuthPlugin for testing.
  */
 const createMockAuthPlugin = (
-  user = { type: 'authenticated' as const, userId: 'test-user', groups: [ADMINS] },
+  user = {
+    type: 'authenticated' as const,
+    userId: 'test-user',
+    groups: [ADMINS],
+  },
 ): AuthPlugin => ({
   authenticate: async () => ({
     success: true,

@@ -52,7 +52,11 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const resolveBranchContext = async (branchName: string): Promise<BranchContext> => {
     const existing = options.getBranchContext
       ? await options.getBranchContext(branchName)
-      : await loadBranchContext({ branchName, mode: operatingMode, basePathOverride })
+      : await loadBranchContext({
+          branchName,
+          mode: operatingMode,
+          basePathOverride,
+        })
     if (existing) {
       return existing
     }
@@ -179,10 +183,15 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       throw new ContentStoreError(message ?? defaultMessage)
     }
     // For md/mdx format, merge the body into the data so callers get a complete object
-    const rawData = (doc as any).data as Record<string, unknown>
-    const body = (doc as any).body as string | undefined
+    const docRecord = doc as Record<string, unknown>
+    const rawData = docRecord.data as Record<string, unknown>
+    const body = docRecord.body as string | undefined
     const data = (body != null ? { ...rawData, body } : rawData) as T
-    const path = buildEntryPath({ collectionPath: entryPath, slug, branch: branchName })
+    const path = buildEntryPath({
+      collectionPath: entryPath,
+      slug,
+      branch: branchName,
+    })
     return { data, path }
   }
 

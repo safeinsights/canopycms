@@ -12,7 +12,7 @@ export function isTestEnvironment(): boolean {
     // Cypress sets window.Cypress
     'Cypress' in window ||
     // Check if running in test mode via env variable (set by test runner)
-    (window as any).__E2E_TEST__ === true ||
+    (window as unknown as Record<string, unknown>).__E2E_TEST__ === true ||
     // Some test frameworks set navigator.webdriver
     navigator.webdriver === true
   )

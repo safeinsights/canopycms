@@ -75,7 +75,10 @@ export const normalizeContentPayload = (raw: unknown): FormValue => {
     if (format === 'json') return payloadData
     return {
       ...payloadData,
-      body: typeof (data as any).body === 'string' ? (data as any).body : '',
+      body:
+        typeof (data as Record<string, unknown>).body === 'string'
+          ? (data as Record<string, unknown>).body
+          : '',
     }
   }
   return (data as FormValue) ?? {}

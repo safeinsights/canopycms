@@ -135,7 +135,10 @@ describe('Task Queue', () => {
 
   describe('full lifecycle', () => {
     it('enqueue → dequeue → complete', async () => {
-      const id = await enqueueTask(tmpDir, { action: 'send-email', payload: { to: 'a@b.com' } })
+      const id = await enqueueTask(tmpDir, {
+        action: 'send-email',
+        payload: { to: 'a@b.com' },
+      })
       const task = await dequeueTask(tmpDir)
       expect(task!.id).toBe(id)
 
@@ -241,7 +244,12 @@ describe('Task Queue', () => {
       await fs.mkdir(path.join(tmpDir, 'completed'), { recursive: true })
       await fs.writeFile(
         path.join(tmpDir, 'completed', `${id}.json`),
-        JSON.stringify({ id, action: 'push', payload: {}, status: 'completed' }),
+        JSON.stringify({
+          id,
+          action: 'push',
+          payload: {},
+          status: 'completed',
+        }),
         'utf-8',
       )
 
@@ -483,7 +491,13 @@ describe('Task Queue', () => {
 
     it('returns all zeros for empty queue', async () => {
       const stats = await getQueueStats(tmpDir)
-      expect(stats).toEqual({ pending: 0, processing: 0, completed: 0, failed: 0, corrupt: 0 })
+      expect(stats).toEqual({
+        pending: 0,
+        processing: 0,
+        completed: 0,
+        failed: 0,
+        corrupt: 0,
+      })
     })
   })
 

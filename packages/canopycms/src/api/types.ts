@@ -1,5 +1,5 @@
 import type { BranchContext } from '../types'
-import type { PermissionLevel } from '../config'
+import type { AuthPlugin } from '../auth/plugin'
 import type { CanopyServices } from '../services'
 import type { CanopyUser } from '../user'
 import type { AssetStore } from '../asset-store'
@@ -22,7 +22,7 @@ export interface ApiContext {
   /**
    * Auth plugin for user/group search (optional)
    */
-  authPlugin?: any
+  authPlugin?: AuthPlugin
 }
 
 export interface ApiRequest<TBody = unknown> {

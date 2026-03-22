@@ -70,7 +70,11 @@ describe('groups API', () => {
   describe('getInternalGroups', () => {
     it('should return 403 for non-admin users', async () => {
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'user-1' as CanopyUserId, groups: [] },
+        user: {
+          type: 'authenticated',
+          userId: 'user-1' as CanopyUserId,
+          groups: [],
+        },
       }
 
       const result = await getInternalGroups(mockContext, req)
@@ -106,10 +110,16 @@ describe('groups API', () => {
   describe('updateInternalGroups', () => {
     it('should return 403 for non-admin users', async () => {
       const req: ApiRequest = {
-        user: { type: 'authenticated', userId: 'user-1' as CanopyUserId, groups: [] },
+        user: {
+          type: 'authenticated',
+          userId: 'user-1' as CanopyUserId,
+          groups: [],
+        },
       }
 
-      const result = await updateInternalGroups(mockContext, req, { groups: [] })
+      const result = await updateInternalGroups(mockContext, req, {
+        groups: [],
+      })
 
       expect(result).toEqual({
         ok: false,
@@ -194,7 +204,11 @@ describe('groups API', () => {
   describe('searchExternalGroups', () => {
     it('should return 403 for non-admin users', async () => {
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'user-1' as CanopyUserId, groups: [] },
+        user: {
+          type: 'authenticated',
+          userId: 'user-1' as CanopyUserId,
+          groups: [],
+        },
       }
 
       const params: SearchExternalGroupsParams = { query: 'test' }
@@ -326,7 +340,11 @@ describe('groups API', () => {
 
     it('should return valid when bootstrap admins exist even if Admins group is empty', () => {
       const groups: InternalGroup[] = [
-        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
+        {
+          id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+          name: 'Admins',
+          members: [],
+        },
       ]
       const result = validateAdminGroupUpdate(groups, new Set(['bootstrap-admin']))
       expect(result.valid).toBe(true)
@@ -340,7 +358,11 @@ describe('groups API', () => {
 
     it('should return invalid when no admins exist', () => {
       const groups: InternalGroup[] = [
-        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
+        {
+          id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+          name: 'Admins',
+          members: [],
+        },
       ]
       const result = validateAdminGroupUpdate(groups, new Set())
       expect(result.valid).toBe(false)
@@ -372,7 +394,11 @@ describe('groups API', () => {
   describe('validateReservedGroups', () => {
     it('should return valid for non-reserved groups', () => {
       const groups: InternalGroup[] = [
-        { id: 'editors' as CanopyGroupId, name: 'Content Editors', members: [] },
+        {
+          id: 'editors' as CanopyGroupId,
+          name: 'Content Editors',
+          members: [],
+        },
       ]
       const result = validateReservedGroups(groups)
       expect(result.valid).toBe(true)
@@ -380,8 +406,16 @@ describe('groups API', () => {
 
     it('should return valid when reserved group name matches ID', () => {
       const groups: InternalGroup[] = [
-        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
-        { id: RESERVED_GROUPS.REVIEWERS as CanopyGroupId, name: 'Reviewers', members: [] },
+        {
+          id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+          name: 'Admins',
+          members: [],
+        },
+        {
+          id: RESERVED_GROUPS.REVIEWERS as CanopyGroupId,
+          name: 'Reviewers',
+          members: [],
+        },
       ]
       const result = validateReservedGroups(groups)
       expect(result.valid).toBe(true)
@@ -389,7 +423,11 @@ describe('groups API', () => {
 
     it('should return invalid when Admins group is renamed', () => {
       const groups: InternalGroup[] = [
-        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Administrators', members: [] },
+        {
+          id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+          name: 'Administrators',
+          members: [],
+        },
       ]
       const result = validateReservedGroups(groups)
       expect(result.valid).toBe(false)
@@ -398,7 +436,11 @@ describe('groups API', () => {
 
     it('should return invalid when Reviewers group is renamed', () => {
       const groups: InternalGroup[] = [
-        { id: RESERVED_GROUPS.REVIEWERS as CanopyGroupId, name: 'Content Reviewers', members: [] },
+        {
+          id: RESERVED_GROUPS.REVIEWERS as CanopyGroupId,
+          name: 'Content Reviewers',
+          members: [],
+        },
       ]
       const result = validateReservedGroups(groups)
       expect(result.valid).toBe(false)
@@ -412,7 +454,11 @@ describe('groups API', () => {
       vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
 
       const groups: InternalGroup[] = [
-        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
+        {
+          id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+          name: 'Admins',
+          members: [],
+        },
       ]
 
       const req: ApiRequest = {
@@ -472,7 +518,11 @@ describe('groups API', () => {
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
       const groups: InternalGroup[] = [
-        { id: RESERVED_GROUPS.ADMINS as CanopyGroupId, name: 'Admins', members: [] },
+        {
+          id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+          name: 'Admins',
+          members: [],
+        },
       ]
 
       const req: ApiRequest = {

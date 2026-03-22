@@ -264,7 +264,10 @@ describe('Settings Branch Isolation', () => {
         updatedAt: new Date().toISOString(),
         updatedBy: 'test',
         pathPermissions: [
-          { path: unsafeAsPermissionPath('content/**'), read: { allowedUsers: [user.userId] } },
+          {
+            path: unsafeAsPermissionPath('content/**'),
+            read: { allowedUsers: [user.userId] },
+          },
         ],
       }),
     )

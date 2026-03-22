@@ -4,7 +4,7 @@
  * Tests for both client-safe and client-unsafe strategies
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import {
   clientOperatingStrategy,
   clearClientStrategyCache,
@@ -265,7 +265,9 @@ describe('Operating Mode Strategies', () => {
 
       it('should use deploymentName for settings branch', () => {
         const strategy = operatingStrategy(mode)
-        const branchName = strategy.getSettingsBranchName({ deploymentName: 'staging' })
+        const branchName = strategy.getSettingsBranchName({
+          deploymentName: 'staging',
+        })
         expect(branchName).toBe('canopycms-settings-staging')
       })
 

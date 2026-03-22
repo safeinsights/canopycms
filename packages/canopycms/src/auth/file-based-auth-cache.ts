@@ -141,7 +141,9 @@ export class FileBasedAuthCache implements AuthCacheProvider {
     const [usersData, orgsData, membershipsData] = await Promise.all([
       this.readJsonFile<CachedUsers>(usersPath, { users: [] }),
       this.readJsonFile<CachedGroups>(orgsPath, { groups: [] }),
-      this.readJsonFile<CachedMemberships>(membershipsPath, { memberships: {} }),
+      this.readJsonFile<CachedMemberships>(membershipsPath, {
+        memberships: {},
+      }),
     ])
 
     const users = new Map<CanopyUserId, UserSearchResult>()
@@ -252,7 +254,10 @@ async function cleanupOldSnapshots(cachePath: string, keepCount: number): Promis
   // Skip the most recent `keepCount` snapshots
   for (const snapshot of snapshots.slice(keepCount)) {
     try {
-      await fs.rm(path.join(cachePath, snapshot), { recursive: true, force: true })
+      await fs.rm(path.join(cachePath, snapshot), {
+        recursive: true,
+        force: true,
+      })
     } catch {
       // Best effort cleanup
     }

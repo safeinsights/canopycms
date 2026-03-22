@@ -52,7 +52,7 @@ export async function getSettingsBranchContext(
 export async function commitSettings(
   ctx: ApiContext,
   options: {
-    context: any
+    context: { branchRoot: string }
     branchRoot: string
     fileName: string
     message: string

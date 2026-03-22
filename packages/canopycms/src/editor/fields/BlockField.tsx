@@ -1,4 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useMemo, useState } from 'react'
+
+let blockKeyCounter = 0
 
 import { ActionIcon, Button, Group, Paper, Select, Stack, Text } from '@mantine/core'
 import {
@@ -91,24 +93,26 @@ export const BlockField: React.FC<BlockFieldProps> = ({
   dataCanopyField,
 }) => {
   const [itemKeys, setItemKeys] = useState<string[]>(() =>
-    value.map((_, idx) => `block-${idx}-${Math.random().toString(36).slice(2, 8)}`),
+    value.map(() => `block-${blockKeyCounter++}`),
   )
   const [pendingTemplate, setPendingTemplate] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (value.length > itemKeys.length) {
-      const extras = Array.from({ length: value.length - itemKeys.length }, (_, idx) => {
-        return `block-${itemKeys.length + idx}-${Math.random().toString(36).slice(2, 8)}`
-      })
-      setItemKeys((prev) => [...prev, ...extras])
-    } else if (value.length < itemKeys.length) {
-      setItemKeys((prev) => prev.slice(0, value.length))
-    }
-  }, [value.length, itemKeys.length])
+  // Sync itemKeys length with value length (adjust state during render)
+  if (value.length > itemKeys.length) {
+    const extras = Array.from(
+      { length: value.length - itemKeys.length },
+      () => `block-${blockKeyCounter++}`,
+    )
+    setItemKeys((prev) => [...prev, ...extras])
+  } else if (value.length < itemKeys.length) {
+    setItemKeys((prev) => prev.slice(0, value.length))
+  }
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
   )
 
   const addBlock = (templateName: string) => {
@@ -233,7 +237,11 @@ export const BlockField: React.FC<BlockFieldProps> = ({
                               {renderField(
                                 f,
                                 block.value?.[f.name],
-                                (next) => updateBlockValue(idx, { ...block.value, [f.name]: next }),
+                                (next) =>
+                                  updateBlockValue(idx, {
+                                    ...block.value,
+                                    [f.name]: next,
+                                  }),
                                 [...currentPath, f.name],
                               )}
                             </React.Fragment>

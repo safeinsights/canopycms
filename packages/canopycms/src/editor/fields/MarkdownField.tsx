@@ -164,7 +164,8 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   onChange,
   dataCanopyField,
 }) => {
-  const inputId = id ?? useId()
+  const generatedId = useId()
+  const inputId = id ?? generatedId
   const editorRef = useRef<MDXEditorMethods>(null)
   const lastExternalValue = useRef(value)
 

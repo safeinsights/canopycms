@@ -116,7 +116,7 @@ export interface ThreadCarouselProps {
 export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   threads,
   label = 'Comments',
-  contextType,
+  contextType: _,
   currentUserId,
   canResolve,
   onAddComment,
@@ -323,7 +323,13 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
                 >
                   <IconChevronRight size={16} />
                 </ActionIcon>
-                <div style={{ width: 1, height: 16, background: 'var(--mantine-color-gray-4)' }} />
+                <div
+                  style={{
+                    width: 1,
+                    height: 16,
+                    background: 'var(--mantine-color-gray-4)',
+                  }}
+                />
               </>
             )}
 
@@ -506,7 +512,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
         {/* Empty state */}
         {sortedThreads.length === 0 && !showNewThreadBox && (
           <Text size="xs" c="dimmed" ta="center" py="xs">
-            No comments yet. Click "+ New" to start a thread.
+            No comments yet. Click &quot;+ New&quot; to start a thread.
           </Text>
         )}
       </Stack>

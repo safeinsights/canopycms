@@ -194,7 +194,10 @@ describe('PR Workflow Integration', () => {
     await fs.mkdir(contentDir, { recursive: true })
     await fs.writeFile(
       path.join(contentDir, 'first-post.json'),
-      JSON.stringify({ title: 'First Post', content: 'This is my first post!' }),
+      JSON.stringify({
+        title: 'First Post',
+        content: 'This is my first post!',
+      }),
       'utf8',
     )
 
@@ -242,7 +245,10 @@ describe('PR Workflow Integration', () => {
     })
 
     // Reload state and verify PR info
-    const submittedContext = await loadBranchContext({ branchName, mode: config.mode })
+    const submittedContext = await loadBranchContext({
+      branchName,
+      mode: config.mode,
+    })
     expect(submittedContext?.branch.status).toBe('submitted')
     expect(submittedContext?.branch.pullRequestNumber).toBe(1)
     expect(submittedContext?.branch.pullRequestUrl).toContain('pull/1')
@@ -251,7 +257,10 @@ describe('PR Workflow Integration', () => {
     await githubService.convertToDraft(prResult.number)
     await metadata.save({ branch: { status: 'editing' } })
 
-    const withdrawnContext = await loadBranchContext({ branchName, mode: config.mode })
+    const withdrawnContext = await loadBranchContext({
+      branchName,
+      mode: config.mode,
+    })
     expect(withdrawnContext?.branch.status).toBe('editing')
 
     // Mock PR as draft for next get() call
@@ -272,13 +281,19 @@ describe('PR Workflow Integration', () => {
     // ===== STEP 5: Request changes (reviewer action) =====
     await metadata.save({ branch: { status: 'editing' } })
 
-    const changesRequestedContext = await loadBranchContext({ branchName, mode: config.mode })
+    const changesRequestedContext = await loadBranchContext({
+      branchName,
+      mode: config.mode,
+    })
     expect(changesRequestedContext?.branch.status).toBe('editing')
 
     // ===== STEP 6: Make additional changes and resubmit =====
     await fs.writeFile(
       path.join(contentDir, 'second-post.json'),
-      JSON.stringify({ title: 'Second Post', content: 'Another post after changes requested' }),
+      JSON.stringify({
+        title: 'Second Post',
+        content: 'Another post after changes requested',
+      }),
       'utf8',
     )
 
@@ -314,7 +329,10 @@ describe('PR Workflow Integration', () => {
     await githubService.convertToReady(prResult.number)
     await metadata.save({ branch: { status: 'submitted' } })
 
-    const resubmittedContext = await loadBranchContext({ branchName, mode: config.mode })
+    const resubmittedContext = await loadBranchContext({
+      branchName,
+      mode: config.mode,
+    })
     expect(resubmittedContext?.branch.status).toBe('submitted')
     expect(resubmittedContext?.branch.pullRequestNumber).toBe(1) // Same PR number
 
@@ -332,7 +350,7 @@ describe('PR Workflow Integration', () => {
     })
 
     // Add entry comment
-    const entryThread = await commentStore.addComment({
+    await commentStore.addComment({
       text: 'Overall structure looks good',
       userId: 'reviewer1',
       type: 'entry',
@@ -340,7 +358,7 @@ describe('PR Workflow Integration', () => {
     })
 
     // Add branch comment
-    const branchThread = await commentStore.addComment({
+    await commentStore.addComment({
       text: 'Great work on this feature!',
       userId: 'reviewer1',
       type: 'branch',
@@ -402,7 +420,10 @@ describe('PR Workflow Integration', () => {
     // Mark branch as merged in CanopyCMS
     await metadata.save({ branch: { status: 'archived' } })
 
-    const archivedContext = await loadBranchContext({ branchName, mode: config.mode })
+    const archivedContext = await loadBranchContext({
+      branchName,
+      mode: config.mode,
+    })
     expect(archivedContext?.branch.status).toBe('archived')
     expect(archivedContext?.branch.pullRequestNumber).toBe(1)
 
@@ -445,7 +466,11 @@ describe('PR Workflow Integration', () => {
             name: 'home',
             path: 'home',
             entries: [
-              { name: 'entry', format: 'json', schema: [{ name: 'title', type: 'string' }] },
+              {
+                name: 'entry',
+                format: 'json',
+                schema: [{ name: 'title', type: 'string' }],
+              },
             ],
           },
         ],
@@ -473,7 +498,9 @@ describe('PR Workflow Integration', () => {
     const branchGit = simpleGit({ baseDir: workspace.branchRoot })
 
     // Make changes
-    await fs.mkdir(path.join(workspace.branchRoot, 'content'), { recursive: true })
+    await fs.mkdir(path.join(workspace.branchRoot, 'content'), {
+      recursive: true,
+    })
     await fs.writeFile(
       path.join(workspace.branchRoot, 'content', 'home.json'),
       JSON.stringify({ title: 'Home Page' }),

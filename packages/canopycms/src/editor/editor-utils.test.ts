@@ -26,7 +26,10 @@ describe('buildPreviewSrc', () => {
   it('returns the provided preview without modification', () => {
     const result = buildPreviewSrc(
       { previewSrc: '/custom-preview', itemType: 'entry' },
-      { branchName: 'feature/test', previewBaseByCollection: { posts: '/posts' } },
+      {
+        branchName: 'feature/test',
+        previewBaseByCollection: { posts: '/posts' },
+      },
     )
     expect(result).toBe('/custom-preview')
   })
@@ -34,7 +37,10 @@ describe('buildPreviewSrc', () => {
   it('applies preview base and branch for entries', () => {
     const result = buildPreviewSrc(
       { collectionPath: 'home', collectionName: 'home', itemType: 'entry' },
-      { branchName: 'feature/nested', previewBaseByCollection: { home: '/preview/' } },
+      {
+        branchName: 'feature/nested',
+        previewBaseByCollection: { home: '/preview/' },
+      },
     )
     expect(result).toBe('/preview?branch=feature%2Fnested')
   })
@@ -74,7 +80,9 @@ describe('buildPreviewSrc', () => {
 
 describe('normalizeContentPayload', () => {
   it('unwraps data payloads', () => {
-    expect(normalizeContentPayload({ data: { title: 'Hello' } })).toEqual({ title: 'Hello' })
+    expect(normalizeContentPayload({ data: { title: 'Hello' } })).toEqual({
+      title: 'Hello',
+    })
   })
 
   it('ignores top-level format/body when data is provided separately', () => {
@@ -321,7 +329,12 @@ describe('buildCollectionLabels', () => {
         type: 'collection',
         format: 'mdx',
       },
-      { path: unsafeAsLogicalPath('pages'), name: 'pages', type: 'collection', format: 'mdx' },
+      {
+        path: unsafeAsLogicalPath('pages'),
+        name: 'pages',
+        type: 'collection',
+        format: 'mdx',
+      },
     ]
 
     const result = buildCollectionLabels(collections)
@@ -588,7 +601,12 @@ describe('calculatePathToEntry', () => {
                   {
                     value: 'collection:content/docs/api/v1',
                     label: 'v1',
-                    children: [{ value: 'content/docs/api/v1/endpoint', label: 'Endpoint' }],
+                    children: [
+                      {
+                        value: 'content/docs/api/v1/endpoint',
+                        label: 'Endpoint',
+                      },
+                    ],
                   },
                 ],
               },

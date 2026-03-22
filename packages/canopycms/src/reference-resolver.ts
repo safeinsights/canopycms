@@ -137,9 +137,13 @@ export class ReferenceResolver {
   /**
    * Helper to list all entries in a collection.
    */
-  private async listEntriesInCollection(
-    collectionPath: LogicalPath,
-  ): Promise<Array<{ relativePath: PhysicalPath; collection: LogicalPath; slug: EntrySlug }>> {
+  private async listEntriesInCollection(collectionPath: LogicalPath): Promise<
+    Array<{
+      relativePath: PhysicalPath
+      collection: LogicalPath
+      slug: EntrySlug
+    }>
+  > {
     return this.store.listCollectionEntries(collectionPath)
   }
 

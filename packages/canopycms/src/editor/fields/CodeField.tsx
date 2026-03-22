@@ -20,7 +20,8 @@ export const CodeField: React.FC<CodeFieldProps> = ({
   language,
   dataCanopyField,
 }) => {
-  const inputId = id ?? useId()
+  const generatedId = useId()
+  const inputId = id ?? generatedId
   return (
     <Textarea
       id={inputId}

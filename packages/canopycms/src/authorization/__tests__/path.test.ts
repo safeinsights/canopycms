@@ -9,8 +9,14 @@ import { unsafeAsPhysicalPath } from '../../paths/test-utils'
 // Path permission rules (previously from config.pathPermissions, now from .canopycms/permissions.json)
 const rules: PathPermission[] = [
   { path: unsafeAsPermissionPath('content/admin/**'), edit: {} },
-  { path: unsafeAsPermissionPath('content/partners/**'), edit: { allowedGroups: ['partner-org'] } },
-  { path: unsafeAsPermissionPath('content/restricted/**'), edit: { allowedUsers: ['user-a'] } },
+  {
+    path: unsafeAsPermissionPath('content/partners/**'),
+    edit: { allowedGroups: ['partner-org'] },
+  },
+  {
+    path: unsafeAsPermissionPath('content/restricted/**'),
+    edit: { allowedUsers: ['user-a'] },
+  },
 ]
 
 // Helper to create authenticated users

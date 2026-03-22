@@ -364,14 +364,18 @@ describe('commitToSettingsBranch', () => {
 
   it('should default to strategy-computed branch name when settingsBranch not configured', async () => {
     // In prod mode, the strategy computes 'canopycms-settings-{deploymentName}' (default: 'canopycms-settings-prod')
-    const branchMock = vi
-      .fn()
-      .mockResolvedValue({ all: ['canopycms-settings-prod'], current: 'canopycms-settings-prod' })
+    const branchMock = vi.fn().mockResolvedValue({
+      all: ['canopycms-settings-prod'],
+      current: 'canopycms-settings-prod',
+    })
     const fetchMock = vi.fn()
     const mockGitInstance = {
-      status: vi
-        .fn()
-        .mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'canopycms-settings-prod' }),
+      status: vi.fn().mockResolvedValue({
+        files: [],
+        ahead: 0,
+        behind: 0,
+        current: 'canopycms-settings-prod',
+      }),
       branch: branchMock,
       checkout: vi.fn(),
       checkoutBranch: vi.fn(),
@@ -425,7 +429,12 @@ describe('commitToSettingsBranch', () => {
     const branchMock = vi.fn().mockResolvedValue({ all: ['my-settings'], current: 'my-settings' })
     const fetchMock = vi.fn()
     const mockGitInstance = {
-      status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'my-settings' }),
+      status: vi.fn().mockResolvedValue({
+        files: [],
+        ahead: 0,
+        behind: 0,
+        current: 'my-settings',
+      }),
       branch: branchMock,
       checkout: vi.fn(),
       checkoutBranch: vi.fn(),
@@ -476,15 +485,19 @@ describe('commitToSettingsBranch', () => {
   })
 
   it('should use configured settingsBranch value', async () => {
-    const branchMock = vi
-      .fn()
-      .mockResolvedValue({ all: ['custom-settings-branch'], current: 'custom-settings-branch' })
+    const branchMock = vi.fn().mockResolvedValue({
+      all: ['custom-settings-branch'],
+      current: 'custom-settings-branch',
+    })
     const fetchMock = vi.fn().mockResolvedValue(undefined)
     const pushMock = vi.fn().mockResolvedValue(undefined)
     const mockGitInstance = {
-      status: vi
-        .fn()
-        .mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'custom-settings-branch' }),
+      status: vi.fn().mockResolvedValue({
+        files: [],
+        ahead: 0,
+        behind: 0,
+        current: 'custom-settings-branch',
+      }),
       branch: branchMock,
       checkout: vi.fn().mockResolvedValue(undefined),
       checkoutBranch: vi.fn().mockResolvedValue(undefined),
@@ -496,15 +509,13 @@ describe('commitToSettingsBranch', () => {
       push: pushMock,
       revparse: vi.fn().mockResolvedValue('main'),
       addConfig: vi.fn().mockResolvedValue(undefined),
-      listConfig: vi
-        .fn()
-        .mockResolvedValue({
-          all: {
-            'canopycms.managed': 'true',
-            'user.name': 'Test Bot',
-            'user.email': 'bot@test.com',
-          },
-        }),
+      listConfig: vi.fn().mockResolvedValue({
+        all: {
+          'canopycms.managed': 'true',
+          'user.name': 'Test Bot',
+          'user.email': 'bot@test.com',
+        },
+      }),
     }
 
     const { simpleGit } = await import('simple-git')

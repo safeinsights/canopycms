@@ -1,8 +1,7 @@
 import fs from 'node:fs/promises'
-import type { Dirent } from 'node:fs'
 import path from 'node:path'
 
-import { generateId, isValidId } from './id'
+import { isValidId } from './id'
 import { isNotFoundError } from './utils/error'
 import { type LogicalPath, type PhysicalPath, type EntrySlug, type ContentId } from './paths'
 

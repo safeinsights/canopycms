@@ -21,7 +21,10 @@ const branchContext = {
 // Path permission rules (from .canopycms/permissions.json)
 // Rule with explicit constraints - only Admins group can edit admin paths
 const pathRules: PathPermission[] = [
-  { path: unsafeAsPermissionPath('content/admin/**'), edit: { allowedGroups: ['Admins'] } },
+  {
+    path: unsafeAsPermissionPath('content/admin/**'),
+    edit: { allowedGroups: ['Admins'] },
+  },
 ]
 
 describe('checkContentAccess', () => {

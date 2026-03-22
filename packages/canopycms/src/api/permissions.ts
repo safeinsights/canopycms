@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { PathPermission } from '../config'
-import type { UserSearchResult } from '../auth/types'
+import type { UserSearchResult, GroupMetadata } from '../auth/types'
 import {
   loadPathPermissions,
   savePathPermissions,
@@ -18,13 +18,15 @@ import { getSettingsBranchContext, commitSettings } from './settings-helpers'
 export type PermissionsResponse = ApiResponse<{ permissions: PathPermission[] }>
 
 /** Response type for user search */
-export type SearchUsersResponse = ApiResponse<{ users: any[] }>
+export type SearchUsersResponse = ApiResponse<{ users: UserSearchResult[] }>
 
 /** Response type for list groups */
-export type ListGroupsResponse = ApiResponse<{ groups: any[] }>
+export type ListGroupsResponse = ApiResponse<{ groups: GroupMetadata[] }>
 
 /** Response type for get user metadata */
-export type GetUserMetadataResponse = ApiResponse<{ user: UserSearchResult | null }>
+export type GetUserMetadataResponse = ApiResponse<{
+  user: UserSearchResult | null
+}>
 
 // ============================================================================
 // Zod Schemas for Validation
@@ -176,7 +178,11 @@ const searchUsersHandler = async (
 ): Promise<SearchUsersResponse> => {
   // Require admin or reviewer for user search
   if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
-    return { ok: false, status: 403, error: 'Admin or Reviewer access required' }
+    return {
+      ok: false,
+      status: 403,
+      error: 'Admin or Reviewer access required',
+    }
   }
 
   const authPlugin = ctx.authPlugin
@@ -205,7 +211,11 @@ const searchUsersHandler = async (
 const listGroupsHandler = async (ctx: ApiContext, req: ApiRequest): Promise<ListGroupsResponse> => {
   // Require admin or reviewer for group list
   if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
-    return { ok: false, status: 403, error: 'Admin or Reviewer access required' }
+    return {
+      ok: false,
+      status: 403,
+      error: 'Admin or Reviewer access required',
+    }
   }
 
   const authPlugin = ctx.authPlugin
@@ -235,7 +245,11 @@ const getUserMetadataHandler = async (
 ): Promise<GetUserMetadataResponse> => {
   // Require admin or reviewer for user metadata
   if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
-    return { ok: false, status: 403, error: 'Admin or Reviewer access required' }
+    return {
+      ok: false,
+      status: 403,
+      error: 'Admin or Reviewer access required',
+    }
   }
 
   const authPlugin = ctx.authPlugin

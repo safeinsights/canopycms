@@ -28,7 +28,10 @@ import { createMockApiContext, createMockBranchContext, createMockGitManager } f
 const getBranchStatus = WORKFLOW_ROUTES.getStatus.handler
 const submitBranchForMerge = WORKFLOW_ROUTES.submit.handler
 
-const baseContext = createMockBranchContext({ branchName: 'feature/x', createdBy: 'u1' })
+const baseContext = createMockBranchContext({
+  branchName: 'feature/x',
+  createdBy: 'u1',
+})
 
 const makeCtx = (allowed = true) => {
   const mockGit = createMockGitManager()

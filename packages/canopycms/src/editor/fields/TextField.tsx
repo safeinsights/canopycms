@@ -17,7 +17,8 @@ export const TextField: React.FC<TextFieldProps> = ({
   onChange,
   dataCanopyField,
 }) => {
-  const inputId = id ?? useId()
+  const generatedId = useId()
+  const inputId = id ?? generatedId
 
   return (
     <TextInput

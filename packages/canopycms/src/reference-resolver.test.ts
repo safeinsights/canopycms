@@ -20,7 +20,9 @@ describe('ReferenceResolver', () => {
   beforeEach(async () => {
     // Create temp directory with content structure
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-test-'))
-    await fs.mkdir(path.join(tempDir, 'content', 'authors'), { recursive: true })
+    await fs.mkdir(path.join(tempDir, 'content', 'authors'), {
+      recursive: true,
+    })
 
     // Create test author files with embedded IDs: {type}.{slug}.{id}.{ext}
     const aliceId = 'aXice123ABC4' // 12 chars, valid Base58

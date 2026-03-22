@@ -125,7 +125,11 @@ describe('comments api - addComment', () => {
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('feature/x') },
-      { text: 'test', type: 'field', entryPath: unsafeAsLogicalPath('posts/hello') } as any,
+      {
+        text: 'test',
+        type: 'field',
+        entryPath: unsafeAsLogicalPath('posts/hello'),
+      } as any,
     )
     expect(res.status).toBe(400)
     expect(res.error).toContain('canopyPath required')
@@ -175,7 +179,11 @@ describe('comments api - addComment', () => {
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('feature/x') },
-      { text: 'Entry feedback', type: 'entry', entryPath: unsafeAsLogicalPath('posts/hello') },
+      {
+        text: 'Entry feedback',
+        type: 'entry',
+        entryPath: unsafeAsLogicalPath('posts/hello'),
+      },
     )
     expect(res.ok).toBe(true)
   })
@@ -213,7 +221,13 @@ describe('comments api - resolveComment', () => {
     ctx.getBranchContext = vi.fn().mockResolvedValue(null)
     const res = await resolveComment(
       ctx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
       { branch: unsafeAsBranchName('missing'), threadId: 'thread1' },
     )
     expect(res.status).toBe(404)
@@ -242,7 +256,13 @@ describe('comments api - resolveComment', () => {
   it('allows admin to resolve', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { type: 'authenticated', userId: 'u2', groups: [RESERVED_GROUPS.ADMINS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u2',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
       { branch: unsafeAsBranchName('feature/x'), threadId: 'thread1' },
     )
     expect(res.ok).toBe(true)
@@ -251,7 +271,13 @@ describe('comments api - resolveComment', () => {
   it('allows reviewer to resolve', async () => {
     const res = await resolveComment(
       makeCtx(),
-      { user: { type: 'authenticated', userId: 'u2', groups: [RESERVED_GROUPS.REVIEWERS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u2',
+          groups: [RESERVED_GROUPS.REVIEWERS],
+        },
+      },
       { branch: unsafeAsBranchName('feature/x'), threadId: 'thread1' },
     )
     expect(res.ok).toBe(true)

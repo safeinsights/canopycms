@@ -173,7 +173,10 @@ export async function verifyWorkspaceReady(): Promise<void> {
  * Useful after creating a branch via API.
  */
 export async function waitForBranchWorkspace(branchName: string, timeoutMs = 10000): Promise<void> {
-  log.debug('workspace', 'Waiting for branch workspace', { branchName, timeoutMs })
+  log.debug('workspace', 'Waiting for branch workspace', {
+    branchName,
+    timeoutMs,
+  })
   const branchPath = path.join(BRANCHES_DIR, branchName)
   const start = Date.now()
   let attempts = 0

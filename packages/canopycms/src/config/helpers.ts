@@ -22,15 +22,6 @@ import type {
   SourceRoot,
 } from './types'
 
-/**
- * Deep readonly type helper for authoring.
- */
-type DeepReadonly<T> = T extends (infer U)[]
-  ? ReadonlyArray<DeepReadonly<U>>
-  : T extends object
-    ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
-    : T
-
 export type CanopyConfigAuthoring = CanopyConfigInput
 
 /**

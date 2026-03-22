@@ -316,7 +316,7 @@ export function resolveCollectionReferences(
   entrySchemaRegistry: EntrySchemaRegistry,
 ): RootCollectionConfig {
   // Build result object dynamically to avoid readonly conflicts
-  const result: any = {}
+  const result: Record<string, unknown> = {}
 
   // Pass through root label if present
   if (metaFiles.root?.label) {
@@ -353,7 +353,9 @@ export function resolveCollectionReferences(
  * Watch for changes to .collection.json files
  */
 export function watchCollectionMetaFiles(contentRoot: string, onChange: () => void): () => void {
-  const watcher = chokidar.watch(`${contentRoot}/**/.collection.json`, { ignoreInitial: true })
+  const watcher = chokidar.watch(`${contentRoot}/**/.collection.json`, {
+    ignoreInitial: true,
+  })
 
   watcher.on('add', onChange)
   watcher.on('change', onChange)

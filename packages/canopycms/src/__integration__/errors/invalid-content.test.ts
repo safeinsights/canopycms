@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { createMockAuthPlugin } from '../test-utils/multi-user'
-import { createApiClient, type ApiClient } from '../test-utils/api-client'
+import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { ApiResponse } from '../../api/types'
 
@@ -40,17 +40,14 @@ describe('Invalid Content Errors', () => {
     })
 
     // Try to write content missing required fields
-    const response = await editorClient.put(
-      '/api/canopycms/feature-validation-test/content/posts/invalid-post',
-      {
-        format: 'mdx',
-        data: {
-          // Missing required fields: title, author, date
-          tags: ['test'],
-        },
-        body: 'Some content',
+    await editorClient.put('/api/canopycms/feature-validation-test/content/posts/invalid-post', {
+      format: 'mdx',
+      data: {
+        // Missing required fields: title, author, date
+        tags: ['test'],
       },
-    )
+      body: 'Some content',
+    })
 
     // TODO: Once schema validation is enforced, this should be 400
     // For now, ContentStore may accept any data shape
@@ -89,13 +86,10 @@ describe('Invalid Content Errors', () => {
     })
 
     // Try to write with invalid data structure
-    const response = await editorClient.put(
-      '/api/canopycms/feature-malformed-test/content/posts/malformed',
-      {
-        format: 'json',
-        data: 'not an object', // Invalid: should be object, not string
-      },
-    )
+    await editorClient.put('/api/canopycms/feature-malformed-test/content/posts/malformed', {
+      format: 'json',
+      data: 'not an object', // Invalid: should be object, not string
+    })
 
     // TODO: Once validation is enforced, this should be 400
     // expect(response.status).toBe(400)
@@ -184,14 +178,11 @@ describe('Invalid Content Errors', () => {
     })
 
     // Try to write with invalid format
-    const response = await editorClient.put(
-      '/api/canopycms/feature-invalid-format/content/posts/test',
-      {
-        format: 'invalid-format', // Not a valid ContentFormat
-        data: { title: 'Test' },
-        body: 'Content',
-      },
-    )
+    await editorClient.put('/api/canopycms/feature-invalid-format/content/posts/test', {
+      format: 'invalid-format', // Not a valid ContentFormat
+      data: { title: 'Test' },
+      body: 'Content',
+    })
 
     // TODO: Once format validation is enforced, this should be 400
     // expect(response.status).toBe(400)
@@ -229,19 +220,16 @@ describe('Invalid Content Errors', () => {
     })
 
     // Try to write with wrong data types
-    const response = await editorClient.put(
-      '/api/canopycms/feature-type-validation/content/posts/test',
-      {
-        format: 'mdx',
-        data: {
-          title: 'Test',
-          author: 'Author',
-          date: 12345, // Should be string, not number
-          tags: 'not-an-array', // Should be array, not string
-        },
-        body: 'Content',
+    await editorClient.put('/api/canopycms/feature-type-validation/content/posts/test', {
+      format: 'mdx',
+      data: {
+        title: 'Test',
+        author: 'Author',
+        date: 12345, // Should be string, not number
+        tags: 'not-an-array', // Should be array, not string
       },
-    )
+      body: 'Content',
+    })
 
     // TODO: Once type validation is enforced, this should be 400
     // For now, ContentStore may accept any data

@@ -59,6 +59,7 @@ export const createTestServices = async (
 
   return createTestCanopyServices(canopyConfig, {
     ...options,
-    branchSchemaCache: mockBranchSchemaCache as any,
+    branchSchemaCache:
+      mockBranchSchemaCache as unknown as CreateCanopyServicesOptions['branchSchemaCache'],
   })
 }

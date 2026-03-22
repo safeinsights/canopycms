@@ -75,52 +75,47 @@ export async function validateEntrySchemaRegistry(
   try {
     await access(contentPath)
   } catch (err) {
-    if ((err as any).code === 'ENOENT') {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
       throw new Error(`Content directory not found: ${contentPath}`)
     }
     throw err
   }
 
-  try {
-    // Load all .collection.json files
-    const metaFiles = await loadCollectionMetaFiles(contentPath)
+  // Load all .collection.json files
+  const metaFiles = await loadCollectionMetaFiles(contentPath)
 
-    const availableSchemas = Object.keys(entrySchemaRegistry)
-    const errors: string[] = []
+  const availableSchemas = Object.keys(entrySchemaRegistry)
+  const errors: string[] = []
 
-    // Validate root entry type references
-    if (metaFiles.root?.entries) {
-      for (const entryType of metaFiles.root.entries) {
+  // Validate root entry type references
+  if (metaFiles.root?.entries) {
+    for (const entryType of metaFiles.root.entries) {
+      if (!entrySchemaRegistry[entryType.schema]) {
+        errors.push(
+          `Root entry type "${entryType.name}" references entry schema "${entryType.schema}" which does not exist in registry. ` +
+            `Available: ${availableSchemas.join(', ')}`,
+        )
+      }
+    }
+  }
+
+  // Validate collection entry type references
+  for (const collection of metaFiles.collections) {
+    if (collection.entries) {
+      for (const entryType of collection.entries) {
         if (!entrySchemaRegistry[entryType.schema]) {
           errors.push(
-            `Root entry type "${entryType.name}" references entry schema "${entryType.schema}" which does not exist in registry. ` +
+            `Entry type "${entryType.name}" in collection "${collection.name}" (${collection.path}) references entry schema "${entryType.schema}" which does not exist in registry. ` +
               `Available: ${availableSchemas.join(', ')}`,
           )
         }
       }
     }
+  }
 
-    // Validate collection entry type references
-    for (const collection of metaFiles.collections) {
-      if (collection.entries) {
-        for (const entryType of collection.entries) {
-          if (!entrySchemaRegistry[entryType.schema]) {
-            errors.push(
-              `Entry type "${entryType.name}" in collection "${collection.name}" (${collection.path}) references entry schema "${entryType.schema}" which does not exist in registry. ` +
-                `Available: ${availableSchemas.join(', ')}`,
-            )
-          }
-        }
-      }
-    }
-
-    if (errors.length > 0) {
-      throw new Error(
-        `Entry schema registry validation failed:\n${errors.map((e) => `  - ${e}`).join('\n')}`,
-      )
-    }
-  } catch (err) {
-    // Re-throw validation errors and other errors
-    throw err
+  if (errors.length > 0) {
+    throw new Error(
+      `Entry schema registry validation failed:\n${errors.map((e) => `  - ${e}`).join('\n')}`,
+    )
   }
 }

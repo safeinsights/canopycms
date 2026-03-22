@@ -92,7 +92,9 @@ describe('useBranchManager', () => {
       data: { branches: [] },
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
 
     expect(result.current.branchName).toBe('main')
     expect(result.current.branches).toEqual([])
@@ -105,7 +107,9 @@ describe('useBranchManager', () => {
       data: { branches: mockBranches },
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.branches).toEqual(mockBranches)
@@ -122,7 +126,9 @@ describe('useBranchManager', () => {
       status: 404,
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.branches).toEqual([])
@@ -152,7 +158,9 @@ describe('useBranchManager', () => {
       data: { branches: mockBranches },
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.currentBranch).toEqual(mockBranches[0])
@@ -178,7 +186,9 @@ describe('useBranchManager', () => {
       status: 200,
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.branches).toHaveLength(2)
@@ -188,7 +198,9 @@ describe('useBranchManager', () => {
       await result.current.handleSubmit('feature')
     })
 
-    expect(mockClient.workflow.submit).toHaveBeenCalledWith({ branch: 'feature' })
+    expect(mockClient.workflow.submit).toHaveBeenCalledWith({
+      branch: 'feature',
+    })
     expect(mockSetBusy).toHaveBeenCalledWith(true)
     expect(mockSetBusy).toHaveBeenCalledWith(false)
   })
@@ -207,7 +219,9 @@ describe('useBranchManager', () => {
       error: 'Submit failed',
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.branches).toHaveLength(2)
@@ -246,7 +260,9 @@ describe('useBranchManager', () => {
       status: 200,
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.branches).toHaveLength(2)
@@ -256,7 +272,9 @@ describe('useBranchManager', () => {
       await result.current.handleWithdraw('feature')
     })
 
-    expect(mockClient.workflow.withdraw).toHaveBeenCalledWith({ branch: 'feature' })
+    expect(mockClient.workflow.withdraw).toHaveBeenCalledWith({
+      branch: 'feature',
+    })
   })
 
   it('requests changes successfully', async () => {
@@ -277,7 +295,9 @@ describe('useBranchManager', () => {
       status: 200,
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.branches).toHaveLength(2)
@@ -303,7 +323,9 @@ describe('useBranchManager', () => {
         data: { branches: mockBranches },
       })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.branches).toHaveLength(2)
@@ -342,7 +364,9 @@ describe('useBranchManager', () => {
       data: { branches: mockBranches },
     })
 
-    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.branches).toHaveLength(2)

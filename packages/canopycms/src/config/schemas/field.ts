@@ -52,15 +52,16 @@ export const referenceFieldSchema = fieldBaseSchema.extend({
   options: z.array(referenceOptionSchema).optional(),
 })
 
-// Forward declarations for recursive types
-let fieldSchema: z.ZodTypeAny
-let knownFieldSchema: z.ZodTypeAny
+// Use a mutable holder to enable forward references in recursive z.lazy() closures.
+// blockSchema/objectFieldSchema reference fieldHolder[0] via z.lazy, which is resolved
+// after the full fieldSchema is constructed below.
+const fieldHolder: [z.ZodTypeAny] = [z.never()]
 
 // Block template schema
 export const blockSchema = z.object({
   name: z.string().min(1),
   label: z.string().optional(),
-  fields: z.array(z.lazy(() => fieldSchema)).min(1),
+  fields: z.array(z.lazy(() => fieldHolder[0])).min(1),
 })
 
 // Block field with templates
@@ -72,7 +73,7 @@ export const blockFieldSchema = fieldBaseSchema.extend({
 // Object field with nested fields
 export const objectFieldSchema = fieldBaseSchema.extend({
   type: z.literal('object'),
-  fields: z.array(z.lazy(() => fieldSchema)).min(1),
+  fields: z.array(z.lazy(() => fieldHolder[0])).min(1),
 })
 
 // Custom field (user-defined type)
@@ -90,7 +91,7 @@ export const customFieldSchema = z.lazy(() =>
 )
 
 // Known built-in field types (discriminated union)
-knownFieldSchema = z.discriminatedUnion('type', [
+const knownFieldSchema: z.ZodTypeAny = z.discriminatedUnion('type', [
   primitiveFieldSchema,
   selectFieldSchema,
   referenceFieldSchema,
@@ -99,6 +100,7 @@ knownFieldSchema = z.discriminatedUnion('type', [
 ])
 
 // Complete field schema (built-in or custom)
-fieldSchema = z.lazy(() => z.union([knownFieldSchema, customFieldSchema]))
+const fieldSchema: z.ZodTypeAny = z.lazy(() => z.union([knownFieldSchema, customFieldSchema]))
+fieldHolder[0] = fieldSchema
 
 export { fieldSchema, knownFieldSchema }

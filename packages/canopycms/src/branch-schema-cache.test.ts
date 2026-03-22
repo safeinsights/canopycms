@@ -1,9 +1,9 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { BranchSchemaCache } from './branch-schema-cache'
-import type { RootCollectionConfig, FieldConfig } from './config'
+import type { FieldConfig } from './config'
 
 describe('BranchSchemaCache', () => {
   let tempDir: string
@@ -65,9 +65,7 @@ describe('BranchSchemaCache', () => {
       }
 
       // First access - cache miss
-      const start1 = Date.now()
       const result1 = await registry.getSchema(branchRoot, entrySchemaRegistry)
-      const duration1 = Date.now() - start1
 
       // Second access - should be faster (cache hit)
       const start2 = Date.now()
@@ -135,7 +133,7 @@ describe('BranchSchemaCache', () => {
       }
 
       // First load (creates cache)
-      const result1 = await registry.getSchema(branchRoot, entrySchemaRegistry)
+      await registry.getSchema(branchRoot, entrySchemaRegistry)
       const cachePath = path.join(branchRoot, '.canopy-meta', 'schema-cache.json')
       const cache1Stat = await fs.stat(cachePath)
 
@@ -146,7 +144,7 @@ describe('BranchSchemaCache', () => {
       await registry.invalidate(branchRoot)
 
       // Second load (should regenerate because of .stale marker)
-      const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry)
+      await registry.getSchema(branchRoot, entrySchemaRegistry)
       const cache2Stat = await fs.stat(cachePath)
 
       // Cache file should have been regenerated (newer modification time)

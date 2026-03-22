@@ -16,7 +16,7 @@ export interface EditorPanesProps {
 
 export const EditorPanes: React.FC<EditorPanesProps> = ({
   layout: layoutProp = 'side',
-  onLayoutChange,
+  onLayoutChange: _,
   preview,
   form,
 }) => {
@@ -33,11 +33,6 @@ export const EditorPanes: React.FC<EditorPanesProps> = ({
   useEffect(() => {
     setLayout(layoutProp)
   }, [layoutProp])
-
-  const handleLayoutChange = (next: PaneLayout) => {
-    setLayout(next)
-    onLayoutChange?.(next)
-  }
 
   const direction = layout === 'side' ? 'vertical' : 'horizontal'
   const primarySize = useMemo(
@@ -117,7 +112,12 @@ export const EditorPanes: React.FC<EditorPanesProps> = ({
               height: '100%',
               userSelect: isDragging ? 'none' : undefined,
             }}
-            paneStyle={{ minWidth: 0, minHeight: 0, display: 'flex', overflow: 'auto' }}
+            paneStyle={{
+              minWidth: 0,
+              minHeight: 0,
+              display: 'flex',
+              overflow: 'auto',
+            }}
             resizerStyle={resizerStyle}
           >
             <Box

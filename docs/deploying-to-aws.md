@@ -77,7 +77,9 @@ Add `useCanopyPreview` to your page components so the editor can show live previ
 import { useCanopyPreview } from 'canopycms/client'
 
 export function PageView({ data }: { data: PageContent }) {
-  const { data: liveData } = useCanopyPreview<PageContent>({ initialData: data })
+  const { data: liveData } = useCanopyPreview<PageContent>({
+    initialData: data,
+  })
   return (
     <article>
       <h1>{liveData.title}</h1>
@@ -272,10 +274,14 @@ CanopyCMS handles one deployment. Instantiate the CDK stack multiple times for d
 
 ```typescript
 // Testing CMS (sandbox account)
-new CmsStack(app, 'CmsTest', { env: { account: '111111111111', region: 'us-east-1' } })
+new CmsStack(app, 'CmsTest', {
+  env: { account: '111111111111', region: 'us-east-1' },
+})
 
 // Production CMS (official account)
-new CmsStack(app, 'CmsProd', { env: { account: '222222222222', region: 'us-east-1' } })
+new CmsStack(app, 'CmsProd', {
+  env: { account: '222222222222', region: 'us-east-1' },
+})
 ```
 
 ## Troubleshooting

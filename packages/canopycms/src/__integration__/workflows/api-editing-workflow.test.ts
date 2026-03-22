@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { createMockAuthPlugin } from '../test-utils/multi-user'
-import { createApiClient, type ApiClient } from '../test-utils/api-client'
+import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchResponse, BranchListResponse } from '../../api/branch'
 import type { EntriesResponse } from '../../api/entries'
@@ -85,10 +85,13 @@ describe('API Editing Workflow Integration', () => {
     }
     expect(readResponse.status).toBe(200)
     expect(readResponse.ok).toBe(true)
-    const content =
-      await readResponse.json<
-        ApiResponse<{ format: string; data: Record<string, unknown>; body?: string }>
-      >()
+    const content = await readResponse.json<
+      ApiResponse<{
+        format: string
+        data: Record<string, unknown>
+        body?: string
+      }>
+    >()
     // content.data is the ContentDocument: { format, data: {...frontmatter}, body, ... }
     expect(content.data?.data.title).toBe('Hello World')
     expect(content.data?.body?.trim()).toBe('This is my first post!')

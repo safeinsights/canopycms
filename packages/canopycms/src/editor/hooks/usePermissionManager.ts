@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { PathPermission } from '../../config'
+import type { GroupMetadata } from '../../auth/types'
 import { useApiClient } from '../context'
 
 export interface UsePermissionManagerOptions {
@@ -15,7 +16,7 @@ export interface UsePermissionManagerReturn {
   permissionsData: PathPermission[]
   permissionsLoading: boolean
   handleSavePermissions: (permissions: PathPermission[]) => Promise<void>
-  handleListGroups: () => Promise<any[]>
+  handleListGroups: () => Promise<GroupMetadata[]>
   loadPermissions: () => Promise<void>
 }
 
@@ -56,7 +57,10 @@ export function usePermissionManager(
       setPermissionsData(result.data?.permissions ?? [])
     } catch (err) {
       console.error('Failed to load permissions:', err)
-      notifications.show({ message: 'Failed to load permissions', color: 'red' })
+      notifications.show({
+        message: 'Failed to load permissions',
+        color: 'red',
+      })
     } finally {
       setPermissionsLoading(false)
     }

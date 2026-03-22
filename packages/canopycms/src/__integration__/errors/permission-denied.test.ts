@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { createMockAuthPlugin } from '../test-utils/multi-user'
-import { createApiClient, type ApiClient } from '../test-utils/api-client'
+import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { ApiResponse } from '../../api/types'
 
@@ -203,19 +203,16 @@ describe('Permission Denied Errors', () => {
 
     // Reviewer tries to edit (should fail - reviewers have read-only access)
     // TODO: Once role-based write restrictions are enforced, this should be 403
-    const writeResponse = await reviewerClient.put(
-      '/api/canopycms/feature-reviewer-test/content/posts/test-post',
-      {
-        format: 'mdx',
-        data: {
-          title: 'Modified by Reviewer',
-          author: 'Reviewer',
-          date: '2024-01-01',
-          tags: ['test'],
-        },
-        body: 'Modified content',
+    await reviewerClient.put('/api/canopycms/feature-reviewer-test/content/posts/test-post', {
+      format: 'mdx',
+      data: {
+        title: 'Modified by Reviewer',
+        author: 'Reviewer',
+        date: '2024-01-01',
+        tags: ['test'],
       },
-    )
+      body: 'Modified content',
+    })
 
     // This might succeed if defaultPathAccess is 'allow', but eventually should be 403
     // expect(writeResponse.status).toBe(403)

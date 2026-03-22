@@ -74,7 +74,10 @@ describe('permissions API', () => {
     it('returns permissions for admin user', async () => {
       const mockPermissions: PathPermission[] = [
         { path: unsafeAsPermissionPath('content/admin/**'), edit: {} },
-        { path: unsafeAsPermissionPath('content/public/**'), edit: { allowedUsers: ['user-1'] } },
+        {
+          path: unsafeAsPermissionPath('content/public/**'),
+          edit: { allowedUsers: ['user-1'] },
+        },
       ]
 
       mockContext.getBranchContext = vi.fn().mockResolvedValue(
@@ -92,7 +95,11 @@ describe('permissions API', () => {
       vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue(mockPermissions)
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
       const result = await getPermissions(mockContext, req)
@@ -144,10 +151,16 @@ describe('permissions API', () => {
       mockContext.services.createGitManagerFor = vi.fn().mockReturnValue(localMockGit)
 
       const req: ApiRequest = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
-      const result = await updatePermissions(mockContext, req, { permissions: newPermissions })
+      const result = await updatePermissions(mockContext, req, {
+        permissions: newPermissions,
+      })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
@@ -161,7 +174,9 @@ describe('permissions API', () => {
         user: { type: 'authenticated', userId: 'user-1', groups: [] },
       }
 
-      const result = await updatePermissions(mockContext, req, { permissions: [] })
+      const result = await updatePermissions(mockContext, req, {
+        permissions: [],
+      })
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(403)
@@ -171,7 +186,11 @@ describe('permissions API', () => {
     it('requires permissions array in body', async () => {
       // Type as Partial to test runtime validation
       const req: ApiRequest = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
       const result = await updatePermissions(mockContext, req, {} as any)
@@ -192,7 +211,11 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.searchUsers).mockResolvedValue(mockUsers)
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
         query: { q: 'alice' },
       }
 
@@ -211,11 +234,18 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.searchUsers).mockResolvedValue(mockUsers)
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'reviewer-1', groups: [RESERVED_GROUPS.REVIEWERS] },
+        user: {
+          type: 'authenticated',
+          userId: 'reviewer-1',
+          groups: [RESERVED_GROUPS.REVIEWERS],
+        },
         query: { q: 'test', limit: '5' },
       }
 
-      const result = await searchUsers(mockContext, req, { q: 'test', limit: '5' })
+      const result = await searchUsers(mockContext, req, {
+        q: 'test',
+        limit: '5',
+      })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
@@ -239,7 +269,11 @@ describe('permissions API', () => {
       mockContext.authPlugin = undefined
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
         query: { q: 'test' },
       }
 
@@ -254,7 +288,11 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.searchUsers).mockRejectedValue(new Error('API error'))
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
         query: { q: 'test' },
       }
 
@@ -289,7 +327,11 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue(mockGroups)
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
       const result = await listGroups(mockContext, req)
@@ -307,7 +349,11 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.listGroups).mockResolvedValue(mockGroups)
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'reviewer-1', groups: [RESERVED_GROUPS.REVIEWERS] },
+        user: {
+          type: 'authenticated',
+          userId: 'reviewer-1',
+          groups: [RESERVED_GROUPS.REVIEWERS],
+        },
       }
 
       const result = await listGroups(mockContext, req)
@@ -332,7 +378,11 @@ describe('permissions API', () => {
       mockContext.authPlugin = undefined
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
       const result = await listGroups(mockContext, req)
@@ -346,7 +396,11 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.listGroups).mockRejectedValue(new Error('Network error'))
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
       const result = await listGroups(mockContext, req)
@@ -369,10 +423,16 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.getUserMetadata).mockResolvedValue(mockUser)
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
-      const result = await getUserMetadata(mockContext, req, { userId: 'user-1' })
+      const result = await getUserMetadata(mockContext, req, {
+        userId: 'user-1',
+      })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
@@ -392,10 +452,16 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.getUserMetadata).mockResolvedValue(mockUser)
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'reviewer-1', groups: [RESERVED_GROUPS.REVIEWERS] },
+        user: {
+          type: 'authenticated',
+          userId: 'reviewer-1',
+          groups: [RESERVED_GROUPS.REVIEWERS],
+        },
       }
 
-      const result = await getUserMetadata(mockContext, req, { userId: 'user-2' })
+      const result = await getUserMetadata(mockContext, req, {
+        userId: 'user-2',
+      })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
@@ -407,7 +473,9 @@ describe('permissions API', () => {
         user: { type: 'authenticated', userId: 'user-1', groups: [] },
       }
 
-      const result = await getUserMetadata(mockContext, req, { userId: 'user-2' })
+      const result = await getUserMetadata(mockContext, req, {
+        userId: 'user-2',
+      })
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(403)
@@ -419,10 +487,16 @@ describe('permissions API', () => {
       mockContext.authPlugin = undefined
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
-      const result = await getUserMetadata(mockContext, req, { userId: 'user-1' })
+      const result = await getUserMetadata(mockContext, req, {
+        userId: 'user-1',
+      })
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(501)
@@ -433,10 +507,16 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.getUserMetadata).mockRejectedValue(new Error('Database error'))
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
-      const result = await getUserMetadata(mockContext, req, { userId: 'user-1' })
+      const result = await getUserMetadata(mockContext, req, {
+        userId: 'user-1',
+      })
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(500)
@@ -447,10 +527,16 @@ describe('permissions API', () => {
       vi.mocked(mockAuthPlugin.getUserMetadata).mockResolvedValue(null)
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
-      const result = await getUserMetadata(mockContext, req, { userId: 'non-existent' })
+      const result = await getUserMetadata(mockContext, req, {
+        userId: 'non-existent',
+      })
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
@@ -489,7 +575,11 @@ describe('permissions API', () => {
       vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([])
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
       const result = await getPermissions(prodContext, req)
@@ -526,7 +616,11 @@ describe('permissions API', () => {
       vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([])
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
       const result = await getPermissions(localProdSimContext, req)
@@ -550,7 +644,11 @@ describe('permissions API', () => {
       })
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
       const body = {
@@ -578,7 +676,11 @@ describe('permissions API', () => {
       })
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
       const body = {
@@ -612,7 +714,11 @@ describe('permissions API', () => {
       })
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
       const body = {
@@ -631,7 +737,11 @@ describe('permissions API', () => {
       vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue(null)
 
       const req: ApiRequest<undefined> = {
-        user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
       }
 
       const body = {

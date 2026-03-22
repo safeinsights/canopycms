@@ -25,10 +25,7 @@ export interface GitManagerOptions {
   remote?: string
 }
 
-export interface GitStatus extends Pick<
-  StatusResult,
-  'files' | 'ahead' | 'behind' | 'current' | 'tracking'
-> {}
+export type GitStatus = Pick<StatusResult, 'files' | 'ahead' | 'behind' | 'current' | 'tracking'>
 
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
@@ -68,7 +65,11 @@ export class GitManager {
     targetPath: string,
     baseBranch = 'main',
   ): Promise<void> {
-    log.debug('git', 'Cloning repository', { remoteUrl, targetPath, baseBranch })
+    log.debug('git', 'Cloning repository', {
+      remoteUrl,
+      targetPath,
+      baseBranch,
+    })
     const git = simpleGit()
     await git.clone(remoteUrl, targetPath, ['--branch', baseBranch, '--single-branch'])
     log.debug('git', 'Clone complete')
@@ -317,7 +318,9 @@ export class GitManager {
       try {
         const stat = await fs.stat(config.autoDetectRemotePath)
         if (stat.isDirectory()) {
-          log.debug('git', 'Auto-detected local remote', { path: config.autoDetectRemotePath })
+          log.debug('git', 'Auto-detected local remote', {
+            path: config.autoDetectRemotePath,
+          })
           return config.autoDetectRemotePath
         }
       } catch {

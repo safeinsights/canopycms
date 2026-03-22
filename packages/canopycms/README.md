@@ -103,7 +103,13 @@ export default defineCanopyConfig({
         name: 'home',
         format: 'json',
         maxItems: 1, // acts as a singleton - only one instance allowed
-        fields: [{ name: 'hero', type: 'object', fields: [{ name: 'headline', type: 'string' }] }],
+        fields: [
+          {
+            name: 'hero',
+            type: 'object',
+            fields: [{ name: 'headline', type: 'string' }],
+          },
+        ],
       },
     ],
   },

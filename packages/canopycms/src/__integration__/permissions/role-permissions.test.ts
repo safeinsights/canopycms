@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { createMockAuthPlugin } from '../test-utils/multi-user'
-import { createApiClient, type ApiClient } from '../test-utils/api-client'
+import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchResponse, BranchListResponse } from '../../api/branch'
 
@@ -234,21 +234,18 @@ describe('Role Permission Integration', () => {
     expect(requestResponse.status).toBe(200)
 
     // Reviewer cannot write content (even after requesting changes)
-    const writeResponse = await reviewerClient.put(
-      '/api/canopycms/changes-test/content/posts/test',
-      {
-        collection: 'content/posts',
-        slug: 'test',
-        format: 'mdx',
-        data: {
-          title: 'Test',
-          author: 'Reviewer',
-          date: '2024-01-01',
-          tags: [],
-        },
-        body: 'Content',
+    await reviewerClient.put('/api/canopycms/changes-test/content/posts/test', {
+      collection: 'content/posts',
+      slug: 'test',
+      format: 'mdx',
+      data: {
+        title: 'Test',
+        author: 'Reviewer',
+        date: '2024-01-01',
+        tags: [],
       },
-    )
+      body: 'Content',
+    })
 
     // This might succeed if defaultPathAccess is 'allow', but the test demonstrates
     // that reviewers have read-only access by role

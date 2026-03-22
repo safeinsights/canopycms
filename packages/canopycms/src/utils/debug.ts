@@ -41,25 +41,25 @@ export class DebugLogger {
     return `[${timestamp}] [${prefix}:${category}] [${level}] ${message}`
   }
 
-  debug(category: string, message: string, data?: any) {
+  debug(category: string, message: string, data?: unknown) {
     if (this.shouldLog('DEBUG')) {
       console.log(this.formatMessage('DEBUG', category, message), data ?? '')
     }
   }
 
-  info(category: string, message: string, data?: any) {
+  info(category: string, message: string, data?: unknown) {
     if (this.shouldLog('INFO')) {
       console.log(this.formatMessage('INFO', category, message), data ?? '')
     }
   }
 
-  warn(category: string, message: string, data?: any) {
+  warn(category: string, message: string, data?: unknown) {
     if (this.shouldLog('WARN')) {
       console.warn(this.formatMessage('WARN', category, message), data ?? '')
     }
   }
 
-  error(category: string, message: string, data?: any) {
+  error(category: string, message: string, data?: unknown) {
     const msg = this.formatMessage('ERROR', category, message)
 
     if (this.shouldLog('ERROR')) {

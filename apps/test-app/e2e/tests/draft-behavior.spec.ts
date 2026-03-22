@@ -47,7 +47,9 @@ test.describe('Draft Behavior', () => {
 
       // Verify notification appears
       await expect(
-        page.locator('.mantine-Notification-root', { hasText: 'Draft cleared for file' }),
+        page.locator('.mantine-Notification-root', {
+          hasText: 'Draft cleared for file',
+        }),
       ).toBeVisible({ timeout: 5000 })
     })
 

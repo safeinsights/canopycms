@@ -38,7 +38,11 @@ function isNotFoundError(err: unknown): boolean {
  */
 export async function enqueueTask(
   taskDir: string,
-  task: { action: string; payload: Record<string, unknown>; maxRetries?: number },
+  task: {
+    action: string
+    payload: Record<string, unknown>
+    maxRetries?: number
+  },
   logger: TaskQueueLogger = nullLogger,
 ): Promise<string> {
   const id = crypto.randomUUID()
@@ -312,7 +316,9 @@ export async function recoverOrphanedTasks(
 
         if (await taskExistsIn(taskDir, task.id, ['completed', 'failed'])) {
           await fs.unlink(filePath).catch(() => {})
-          logger.debug('Cleaned up orphaned task (already finished)', { id: task.id })
+          logger.debug('Cleaned up orphaned task (already finished)', {
+            id: task.id,
+          })
           continue
         }
 
@@ -320,7 +326,10 @@ export async function recoverOrphanedTasks(
         await fs.mkdir(pendingDir, { recursive: true })
         await fs.writeFile(path.join(pendingDir, fileName), JSON.stringify(task, null, 2), 'utf-8')
         await fs.unlink(filePath)
-        logger.debug('Recovered orphaned task', { id: task.id, action: task.action })
+        logger.debug('Recovered orphaned task', {
+          id: task.id,
+          action: task.action,
+        })
         recovered++
       }
     } catch (err) {
@@ -431,7 +440,13 @@ export async function listTasks(
  * Get counts of tasks in each status directory.
  */
 export async function getQueueStats(taskDir: string): Promise<QueueStats> {
-  const stats: QueueStats = { pending: 0, processing: 0, completed: 0, failed: 0, corrupt: 0 }
+  const stats: QueueStats = {
+    pending: 0,
+    processing: 0,
+    completed: 0,
+    failed: 0,
+    corrupt: 0,
+  }
 
   for (const status of ['pending', 'processing', 'completed', 'failed', 'corrupt'] as const) {
     const dir = path.join(taskDir, status)

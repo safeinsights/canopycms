@@ -5,10 +5,14 @@ import { isAdmin, isPrivileged } from '../authorization'
 import { defineEndpoint } from './route-builder'
 
 /** Response type for listing assets */
-export type AssetsListResponse = ApiResponse<{ assets: { key: string; url?: string }[] }>
+export type AssetsListResponse = ApiResponse<{
+  assets: { key: string; url?: string }[]
+}>
 
 /** Response type for uploading an asset */
-export type AssetUploadResponse = ApiResponse<{ asset: { key: string; url?: string } }>
+export type AssetUploadResponse = ApiResponse<{
+  asset: { key: string; url?: string }
+}>
 
 /** Response type for deleting an asset */
 export type AssetDeleteResponse = ApiResponse<{ deleted: boolean }>
@@ -59,7 +63,11 @@ const uploadAssetHandler = async (
 
   // Require privileged access to upload assets
   if (!isPrivileged(req.user.groups)) {
-    return { ok: false, status: 403, error: 'Only Admins and Reviewers can upload assets' }
+    return {
+      ok: false,
+      status: 403,
+      error: 'Only Admins and Reviewers can upload assets',
+    }
   }
 
   const asset = await ctx.assetStore.upload(body.key, body.data, body.contentType)

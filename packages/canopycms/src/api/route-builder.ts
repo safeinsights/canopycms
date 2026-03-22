@@ -9,7 +9,7 @@
  */
 
 import type { z } from 'zod'
-import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import type { ApiContext, ApiRequest } from './types'
 
 /**
  * Cast specification for branded types in mock data.
@@ -35,7 +35,7 @@ export interface RouteMetadata {
   bodySchema?: z.ZodType
   bodyTypeName?: string
   responseTypeName: string
-  defaultMockData?: any
+  defaultMockData?: unknown
   /** Casts to apply to mock data fields for branded types */
   mockDataCasts?: MockDataCasts
 }
@@ -114,7 +114,7 @@ interface EndpointConfig<
   bodyType?: string // Optional: Type name for body parameter: 'UpdatePermissionsBody'
   responseType: string // Type name for generation: 'BranchDeleteResponse'
   response: TResponse // Type marker for TypeScript
-  defaultMockData?: any // Optional: data inside mockSuccess({ ...here })
+  defaultMockData?: unknown // Optional: data inside mockSuccess({ ...here })
   mockDataCasts?: MockDataCasts // Optional: casts for branded types in mock data
   handler: RouteHandler<TParams, TBody, TResponse>
 }
@@ -244,7 +244,7 @@ export function defineEndpoint<
   const pattern = config.path.split('/').filter(Boolean) // Remove empty strings from leading/trailing slashes
 
   // Build path function - handles param substitution
-  const buildPath = (paramsOrNothing?: any) => {
+  const buildPath = (paramsOrNothing?: Record<string, string>) => {
     if (!config.params) {
       return config.path
     }
@@ -260,13 +260,16 @@ export function defineEndpoint<
 
   // Validate params and body using Zod
   const validate = (extracted: { params?: Record<string, string>; body?: unknown }) => {
-    const result: any = { ok: true }
+    const result: { ok: true; params?: unknown; body?: unknown } = { ok: true }
 
     // Validate params
     if (config.params) {
       const paramsResult = config.params.safeParse(extracted.params)
       if (!paramsResult.success) {
-        return { ok: false, error: `Invalid params: ${paramsResult.error.message}` }
+        return {
+          ok: false,
+          error: `Invalid params: ${paramsResult.error.message}`,
+        }
       }
       result.params = paramsResult.data
     }
@@ -280,7 +283,7 @@ export function defineEndpoint<
       result.body = bodyResult.data
     }
 
-    return result
+    return result as ReturnType<RouteDefinition<TParams, TBody, TResponse>['validate']>
   }
 
   return {
@@ -290,8 +293,8 @@ export function defineEndpoint<
     params: config.params,
     body: config.body,
     response: config.response,
-    handler: config.handler as any, // Type assertion needed due to conditional handler signature
-    buildPath: buildPath as any, // Type assertion needed for conditional return type
+    handler: config.handler as unknown as RouteDefinition<TParams, TBody, TResponse>['handler'],
+    buildPath: buildPath as unknown as RouteDefinition<TParams, TBody, TResponse>['buildPath'],
     validate,
   }
 }

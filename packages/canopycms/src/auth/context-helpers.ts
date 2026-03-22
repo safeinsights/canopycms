@@ -18,7 +18,7 @@ export function isCanopyRequest(context: unknown): context is CanopyRequest {
     context !== null &&
     'header' in context &&
     'method' in context &&
-    typeof (context as any).header === 'function'
+    typeof (context as Record<string, unknown>).header === 'function'
   )
 }
 
@@ -31,7 +31,7 @@ export function isHeadersLike(context: unknown): context is HeadersLike {
     typeof context === 'object' &&
     context !== null &&
     'get' in context &&
-    typeof (context as any).get === 'function'
+    typeof (context as Record<string, unknown>).get === 'function'
   )
 }
 

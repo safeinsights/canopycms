@@ -146,7 +146,11 @@ export class ContentStore {
     schemaItem: FlatSchemaItem,
     slug: string,
     options: { existingId?: string; entryTypeName?: string } = {},
-  ): Promise<{ absolutePath: string; relativePath: PhysicalPath; id?: string }> {
+  ): Promise<{
+    absolutePath: string
+    relativePath: PhysicalPath
+    id?: string
+  }> {
     const rootWithSep = this.root.endsWith(path.sep) ? this.root : `${this.root}${path.sep}`
 
     // Entry-type items: delegate to their parent collection.
@@ -616,9 +620,13 @@ export class ContentStore {
    * Returns array of entry metadata (relativePath, collection, slug).
    * Returns empty array if the collection doesn't exist.
    */
-  async listCollectionEntries(
-    collectionPath: LogicalPath,
-  ): Promise<Array<{ relativePath: PhysicalPath; collection: LogicalPath; slug: EntrySlug }>> {
+  async listCollectionEntries(collectionPath: LogicalPath): Promise<
+    Array<{
+      relativePath: PhysicalPath
+      collection: LogicalPath
+      slug: EntrySlug
+    }>
+  > {
     const idIndex = await this.idIndex()
 
     // Try to find the collection in the schema index
@@ -653,8 +661,11 @@ export class ContentStore {
     const baseEntries = idIndex.getEntriesInCollection(collection.logicalPath)
 
     // Filter and map to required format
-    const entries: Array<{ relativePath: PhysicalPath; collection: LogicalPath; slug: EntrySlug }> =
-      []
+    const entries: Array<{
+      relativePath: PhysicalPath
+      collection: LogicalPath
+      slug: EntrySlug
+    }> = []
 
     for (const location of baseEntries) {
       if (location.type === 'entry' && location.slug) {
@@ -764,7 +775,9 @@ export class ContentStore {
       }
 
       // Read the referenced entry WITHOUT resolving its references (prevent infinite loops)
-      const doc = await this.read(location.collection, location.slug, { resolveReferences: false })
+      const doc = await this.read(location.collection, location.slug, {
+        resolveReferences: false,
+      })
 
       return {
         id,

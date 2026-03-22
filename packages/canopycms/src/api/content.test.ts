@@ -16,18 +16,22 @@ vi.mock('../content-store', () => {
         schemaItem: { logicalPath: 'content/posts', type: 'collection' },
         slug: 'hello',
       }),
-      resolveDocumentPath: vi
-        .fn()
-        .mockReturnValue({
-          relativePath: 'content/posts/hello',
-          absolutePath: '/abs/content/posts/hello',
-        }),
-      read: vi
-        .fn()
-        .mockResolvedValue({ collection: 'posts', format: 'md', data: {}, body: 'Hello' }),
-      write: vi
-        .fn()
-        .mockResolvedValue({ collection: 'posts', format: 'md', data: {}, body: 'Hello' }),
+      resolveDocumentPath: vi.fn().mockReturnValue({
+        relativePath: 'content/posts/hello',
+        absolutePath: '/abs/content/posts/hello',
+      }),
+      read: vi.fn().mockResolvedValue({
+        collection: 'posts',
+        format: 'md',
+        data: {},
+        body: 'Hello',
+      }),
+      write: vi.fn().mockResolvedValue({
+        collection: 'posts',
+        format: 'md',
+        data: {},
+        body: 'Hello',
+      }),
       renameEntry: vi.fn().mockResolvedValue({ newPath: 'content/posts/new-slug' }),
     })),
     ContentStoreError: class ContentStoreError extends Error {},
@@ -106,7 +110,10 @@ describe('content api', () => {
     const res = await readContent(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+      {
+        branch: unsafeAsBranchName('feature/x'),
+        path: unsafeAsLogicalPath('posts/hello'),
+      },
     )
     expect(res.status).toBe(403)
     expect(res.ok).toBe(false)
@@ -117,7 +124,10 @@ describe('content api', () => {
     const res = await readContent(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+      {
+        branch: unsafeAsBranchName('feature/x'),
+        path: unsafeAsLogicalPath('posts/hello'),
+      },
     )
     expect(res.ok).toBe(true)
   })
@@ -127,7 +137,10 @@ describe('content api', () => {
     const res = await writeContent(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+      {
+        branch: unsafeAsBranchName('feature/x'),
+        path: unsafeAsLogicalPath('posts/hello'),
+      },
       { format: 'json', data: { title: 'hi' } },
     )
     expect(res.ok).toBe(true)
@@ -139,7 +152,10 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/old-slug') },
+        {
+          branch: unsafeAsBranchName('feature/x'),
+          path: unsafeAsLogicalPath('posts/old-slug'),
+        },
         { newSlug: unsafeAsEntrySlug('new-slug') },
       )
       expect(res.ok).toBe(true)
@@ -154,7 +170,10 @@ describe('content api', () => {
           config: { schema: [] } as any,
           entrySchemaRegistry: {},
           branchSchemaCache: {
-            getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
+            getSchema: vi.fn().mockResolvedValue({
+              schema: { collections: [] },
+              flatSchema: [],
+            }),
             invalidate: vi.fn().mockResolvedValue(undefined),
             clearAll: vi.fn().mockResolvedValue(undefined),
           } as any,
@@ -185,7 +204,10 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/old-slug') },
+        {
+          branch: unsafeAsBranchName('feature/x'),
+          path: unsafeAsLogicalPath('posts/old-slug'),
+        },
         { newSlug: unsafeAsEntrySlug('new-slug') },
       )
       expect(res.status).toBe(403)
@@ -198,7 +220,10 @@ describe('content api', () => {
           config: { schema: [] } as any,
           entrySchemaRegistry: {},
           branchSchemaCache: {
-            getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
+            getSchema: vi.fn().mockResolvedValue({
+              schema: { collections: [] },
+              flatSchema: [],
+            }),
             invalidate: vi.fn().mockResolvedValue(undefined),
             clearAll: vi.fn().mockResolvedValue(undefined),
           } as any,
@@ -218,7 +243,10 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: unsafeAsBranchName('nonexistent'), path: unsafeAsLogicalPath('posts/old-slug') },
+        {
+          branch: unsafeAsBranchName('nonexistent'),
+          path: unsafeAsLogicalPath('posts/old-slug'),
+        },
         { newSlug: unsafeAsEntrySlug('new-slug') },
       )
       expect(res.status).toBe(404)
@@ -249,7 +277,10 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/nonexistent') },
+        {
+          branch: unsafeAsBranchName('feature/x'),
+          path: unsafeAsLogicalPath('posts/nonexistent'),
+        },
         { newSlug: unsafeAsEntrySlug('new-slug') },
       )
       expect(res.status).toBe(400)
@@ -284,7 +315,10 @@ describe('content api', () => {
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-        { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/old-slug') },
+        {
+          branch: unsafeAsBranchName('feature/x'),
+          path: unsafeAsLogicalPath('posts/old-slug'),
+        },
         { newSlug: unsafeAsEntrySlug('existing-slug') },
       )
       expect(res.status).toBe(400)

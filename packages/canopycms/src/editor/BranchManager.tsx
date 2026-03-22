@@ -61,7 +61,12 @@ export const getBranchPermissions = (
   canRequestChanges: boolean
 } => {
   if (!user) {
-    return { canSubmit: false, canWithdraw: false, canDelete: false, canRequestChanges: false }
+    return {
+      canSubmit: false,
+      canWithdraw: false,
+      canDelete: false,
+      canRequestChanges: false,
+    }
   }
 
   const userIsAdmin = isAdmin(user.groups)
@@ -139,7 +144,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
   onSubmit,
   onWithdraw,
   onRequestChanges,
-  onClose,
+  onClose: _,
   comments = [],
   currentUserId,
   canResolve = false,
@@ -331,7 +336,10 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                               href={b.pullRequestUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              style={{ textDecoration: 'underline', cursor: 'pointer' }}
+                              style={{
+                                textDecoration: 'underline',
+                                cursor: 'pointer',
+                              }}
                             >
                               View PR
                             </Text>

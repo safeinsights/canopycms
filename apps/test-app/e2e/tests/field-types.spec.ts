@@ -61,7 +61,10 @@ test.describe('Multi-Field Content Editing', () => {
       await editorPage.openEntryNavigator()
 
       const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
-      await collectionMenuButton.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+      await collectionMenuButton.waitFor({
+        state: 'visible',
+        timeout: STANDARD_TIMEOUT,
+      })
       await collectionMenuButton.click()
 
       const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
@@ -76,7 +79,9 @@ test.describe('Multi-Field Content Editing', () => {
 
       // Close the navigator drawer so the form pane is interactive
       await page.keyboard.press('Escape')
-      await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+      await expect(editorPage.entryNavigator).not.toBeVisible({
+        timeout: SHORT_TIMEOUT,
+      })
     })
 
     await test.step('fill title and body fields', async () => {
@@ -84,7 +89,9 @@ test.describe('Multi-Field Content Editing', () => {
       await editorPage.fillTextField('title', 'Test Body Post')
 
       // Body is a rich text (markdown) editor — interact via ARIA role
-      const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
+      const bodyEditor = page.getByRole('textbox', {
+        name: 'editable markdown',
+      })
       await bodyEditor.waitFor({ state: 'visible', timeout: LONG_TIMEOUT })
       await bodyEditor.fill('Hello world body content')
     })
@@ -98,7 +105,9 @@ test.describe('Multi-Field Content Editing', () => {
       await editorPage.waitForReady()
 
       // The post should still be selected after reload
-      const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
+      const bodyEditor = page.getByRole('textbox', {
+        name: 'editable markdown',
+      })
       await expect(bodyEditor).toBeVisible({ timeout: STANDARD_TIMEOUT })
       await expect(bodyEditor).toContainText('Hello world body content')
     })

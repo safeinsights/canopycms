@@ -65,7 +65,9 @@ describe('useBranchActions', () => {
   })
 
   it('handles branch change without unsaved changes', async () => {
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchActions(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleBranchChange('feature')
@@ -80,7 +82,9 @@ describe('useBranchActions', () => {
     const { modals } = await import('@mantine/modals')
     mockIsSelectedDirty.mockReturnValue(true)
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchActions(defaultOptions), {
+      wrapper,
+    })
 
     act(() => {
       result.current.handleBranchChange('feature')
@@ -92,7 +96,9 @@ describe('useBranchActions', () => {
   })
 
   it('does not switch branch when already on that branch', async () => {
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchActions(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleBranchChange('main')
@@ -111,7 +117,9 @@ describe('useBranchActions', () => {
       config.onCancel()
     })
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchActions(defaultOptions), {
+      wrapper,
+    })
 
     await expect(result.current.handleBranchChange('feature')).rejects.toThrow(
       'User cancelled branch switch',
@@ -136,7 +144,9 @@ describe('useBranchActions', () => {
       },
     })
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchActions(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleCreateBranch({
@@ -162,7 +172,9 @@ describe('useBranchActions', () => {
       error: 'Branch already exists',
     })
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchActions(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleCreateBranch({ name: 'existing-branch' })
@@ -177,7 +189,9 @@ describe('useBranchActions', () => {
     const { modals } = await import('@mantine/modals')
     mockIsSelectedDirty.mockReturnValue(true)
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchActions(defaultOptions), {
+      wrapper,
+    })
 
     act(() => {
       result.current.handleCreateBranch({ name: 'new-branch' })
@@ -197,7 +211,9 @@ describe('useBranchActions', () => {
       config.onCancel()
     })
 
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchActions(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleCreateBranch({ name: 'new-branch' })
@@ -207,7 +223,9 @@ describe('useBranchActions', () => {
   })
 
   it('updates URL when switching branches', async () => {
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchActions(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleBranchChange('feature')
@@ -220,7 +238,9 @@ describe('useBranchActions', () => {
   })
 
   it('calls onBranchSwitch callback when provided', async () => {
-    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useBranchActions(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleBranchChange('feature')

@@ -126,8 +126,12 @@ describe('listEntries', () => {
     const apiId = 'meiuwxTSo7UN'
     const v2Id = 'muwmyafM6mEJ'
 
-    await fs.mkdir(path.join(root, `content/docs.${docsId}`), { recursive: true })
-    await fs.mkdir(path.join(root, `content/docs.${docsId}/api.${apiId}`), { recursive: true })
+    await fs.mkdir(path.join(root, `content/docs.${docsId}`), {
+      recursive: true,
+    })
+    await fs.mkdir(path.join(root, `content/docs.${docsId}/api.${apiId}`), {
+      recursive: true,
+    })
     await fs.mkdir(path.join(root, `content/docs.${docsId}/api.${apiId}/v2.${v2Id}`), {
       recursive: true,
     })
@@ -249,7 +253,10 @@ describe('listEntries', () => {
     const docsNonRecursiveRes = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('main'), collection: unsafeAsLogicalPath('content/docs') },
+      {
+        branch: unsafeAsBranchName('main'),
+        collection: unsafeAsLogicalPath('content/docs'),
+      },
     )
 
     expect(docsNonRecursiveRes.ok).toBe(true)
@@ -470,7 +477,9 @@ describe('listEntries', () => {
 
     // Create collection folder with ID (like authors.q52DCVPuH4ga)
     const authorsId = 'q52DCVPuH4ga'
-    await fs.mkdir(path.join(root, `content/authors.${authorsId}`), { recursive: true })
+    await fs.mkdir(path.join(root, `content/authors.${authorsId}`), {
+      recursive: true,
+    })
 
     // Create .collection.json file (matching example1's approach)
     await fs.writeFile(
@@ -619,7 +628,9 @@ describe('listEntries', () => {
 
     // Also create a collection to verify both work together
     const postsId = '916jXZabYCxu'
-    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), {
+      recursive: true,
+    })
     await fs.writeFile(
       path.join(root, `content/posts.${postsId}/.collection.json`),
       JSON.stringify({
@@ -730,7 +741,9 @@ describe('sortEntriesByOrder', () => {
 
     // Create collection folder with embedded ID
     const postsId = 'q52DCVPuH4ga'
-    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), {
+      recursive: true,
+    })
 
     // Create .collection.json with an order array
     await fs.writeFile(
@@ -803,7 +816,10 @@ describe('sortEntriesByOrder', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('main'), collection: unsafeAsLogicalPath('content/posts') },
+      {
+        branch: unsafeAsBranchName('main'),
+        collection: unsafeAsLogicalPath('content/posts'),
+      },
     )
 
     expect(res.ok).toBe(true)
@@ -822,7 +838,9 @@ describe('sortEntriesByOrder', () => {
     const root = await tmpDir()
 
     const postsId = 'q52DCVPuH4ga'
-    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), {
+      recursive: true,
+    })
 
     // Order only has one entry
     await fs.writeFile(
@@ -852,7 +870,9 @@ describe('sortEntriesByOrder', () => {
       'utf8',
     )
 
-    const entrySchemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const entrySchemaRegistry = {
+      postSchema: [{ name: 'title', type: 'string' }],
+    }
     const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
     const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
@@ -891,7 +911,10 @@ describe('sortEntriesByOrder', () => {
     const res = await listEntriesHandler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('main'), collection: unsafeAsLogicalPath('content/posts') },
+      {
+        branch: unsafeAsBranchName('main'),
+        collection: unsafeAsLogicalPath('content/posts'),
+      },
     )
 
     expect(res.ok).toBe(true)
@@ -907,7 +930,9 @@ describe('dynamic collection discovery', () => {
 
     // Create initial collection folder
     const docsId = 'bChqT78gcaLd'
-    await fs.mkdir(path.join(root, `content/docs.${docsId}`), { recursive: true })
+    await fs.mkdir(path.join(root, `content/docs.${docsId}`), {
+      recursive: true,
+    })
 
     await fs.writeFile(
       path.join(root, `content/docs.${docsId}/.collection.json`),
@@ -930,7 +955,9 @@ describe('dynamic collection discovery', () => {
     // Now simulate a dynamically created subcollection that is NOT in the flatSchema
     // This is the scenario where a user creates a collection via the schema API
     const innerId = '2XWmsdeEU2Li'
-    await fs.mkdir(path.join(root, `content/docs.${docsId}/inner.${innerId}`), { recursive: true })
+    await fs.mkdir(path.join(root, `content/docs.${docsId}/inner.${innerId}`), {
+      recursive: true,
+    })
 
     await fs.writeFile(
       path.join(root, `content/docs.${docsId}/inner.${innerId}/.collection.json`),
@@ -959,7 +986,11 @@ describe('dynamic collection discovery', () => {
           label: 'Documentation',
           path: 'docs',
           entries: [
-            { name: 'doc', format: 'json' as const, schema: entrySchemaRegistry.docSchema },
+            {
+              name: 'doc',
+              format: 'json' as const,
+              schema: entrySchemaRegistry.docSchema,
+            },
           ],
         },
       ],
@@ -1017,7 +1048,9 @@ describe('deleteEntry', () => {
     const root = await tmpDir()
 
     const postsId = 'q52DCVPuH4ga'
-    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), {
+      recursive: true,
+    })
 
     await fs.writeFile(
       path.join(root, `content/posts.${postsId}/.collection.json`),
@@ -1036,7 +1069,9 @@ describe('deleteEntry', () => {
       'utf8',
     )
 
-    const entrySchemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const entrySchemaRegistry = {
+      postSchema: [{ name: 'title', type: 'string' }],
+    }
     const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
     const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
@@ -1096,7 +1131,9 @@ describe('deleteEntry', () => {
     const root = await tmpDir()
 
     const postsId = 'q52DCVPuH4ga'
-    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), {
+      recursive: true,
+    })
 
     await fs.writeFile(
       path.join(root, `content/posts.${postsId}/.collection.json`),
@@ -1114,7 +1151,9 @@ describe('deleteEntry', () => {
       'utf8',
     )
 
-    const entrySchemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const entrySchemaRegistry = {
+      postSchema: [{ name: 'title', type: 'string' }],
+    }
     const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
     const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
@@ -1178,7 +1217,9 @@ describe('deleteEntry', () => {
     const root = await tmpDir()
 
     const postsId = 'q52DCVPuH4ga'
-    await fs.mkdir(path.join(root, `content/posts.${postsId}`), { recursive: true })
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), {
+      recursive: true,
+    })
 
     await fs.writeFile(
       path.join(root, `content/posts.${postsId}/.collection.json`),
@@ -1190,7 +1231,9 @@ describe('deleteEntry', () => {
       'utf8',
     )
 
-    const entrySchemaRegistry = { postSchema: [{ name: 'title', type: 'string' }] }
+    const entrySchemaRegistry = {
+      postSchema: [{ name: 'title', type: 'string' }],
+    }
     const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
     const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
 
@@ -1283,7 +1326,10 @@ describe('deleteEntry', () => {
     const res = await deleteEntry.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('main'), entryPath: unsafeAsLogicalPath('invalid-no-slash') },
+      {
+        branch: unsafeAsBranchName('main'),
+        entryPath: unsafeAsLogicalPath('invalid-no-slash'),
+      },
     )
 
     expect(res.ok).toBe(false)

@@ -100,7 +100,10 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
       if (!result.ok) {
         throw new Error(result.error || 'Failed to create branch')
       }
-      notifications.show({ message: `Branch "${branch.name}" created`, color: 'green' })
+      notifications.show({
+        message: `Branch "${branch.name}" created`,
+        color: 'green',
+      })
       await options.onReloadBranches()
 
       // Switch to new branch (already confirmed dirty check)

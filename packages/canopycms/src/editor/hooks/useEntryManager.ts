@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { ListEntriesResponse } from '../../api/entries'
+import type { WriteContentBody } from '../../api/content'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
@@ -146,7 +147,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         branch: options.branchName,
         path,
       },
-      payload as any, // buildWritePayload returns the correct shape
+      payload as unknown as WriteContentBody, // buildWritePayload returns the correct shape
     )
     if (!result.ok) throw new Error(`Save failed: ${result.status}`)
     return normalizeContentPayload(result.data)
@@ -201,7 +202,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   /**
    * Open the create entry modal for the specified collection
    */
-  const handleCreateEntry = async (collectionPath: LogicalPath, entryTypeName?: string) => {
+  const handleCreateEntry = async (collectionPath: LogicalPath, _?: string) => {
     const col = collectionByPath.get(collectionPath)
     if (!col || col.type === 'entry') {
       return
@@ -236,7 +237,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
           path,
           entryType: entryTypeName,
         },
-        payload as any,
+        payload as unknown as WriteContentBody,
       )
 
       if (!result.ok) {
@@ -292,7 +293,10 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
       // Refresh entries to get updated paths
       await refreshEntries()
-      notifications.show({ message: 'Entry renamed successfully', color: 'green' })
+      notifications.show({
+        message: 'Entry renamed successfully',
+        color: 'green',
+      })
     } catch (err) {
       console.error(err)
       const errorMessage = err instanceof Error ? err.message : 'Rename failed'

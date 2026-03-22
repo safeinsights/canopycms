@@ -61,7 +61,10 @@ export const FieldWrapper: React.FC<FieldWrapperProps> = ({
   // Scroll to field when focused from preview
   useEffect(() => {
     if (autoFocus) {
-      wrapperRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      wrapperRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      })
     }
   }, [autoFocus])
 

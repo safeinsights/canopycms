@@ -780,7 +780,12 @@ describe('ContentStore', () => {
             name: 'content',
             path: 'content',
             entries: [
-              { name: 'post', format: 'mdx' as const, schema: [], default: true },
+              {
+                name: 'post',
+                format: 'mdx' as const,
+                schema: [],
+                default: true,
+              },
               { name: 'article', format: 'md' as const, schema: [] },
               { name: 'note', format: 'json' as const, schema: [] },
             ],
@@ -858,7 +863,12 @@ describe('ContentStore', () => {
             path: 'docs',
             entries: [
               { name: 'guide', format: 'md' as const, schema: [] },
-              { name: 'tutorial', format: 'mdx' as const, schema: [], default: true },
+              {
+                name: 'tutorial',
+                format: 'mdx' as const,
+                schema: [],
+                default: true,
+              },
             ],
           },
         ],

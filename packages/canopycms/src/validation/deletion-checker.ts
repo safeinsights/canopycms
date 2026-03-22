@@ -1,5 +1,5 @@
 import type { ContentStore } from '../content-store'
-import type { ContentIdIndex, IdLocation } from '../content-id-index'
+import type { ContentIdIndex } from '../content-id-index'
 import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig } from '../config'
 import { type LogicalPath, type EntrySlug, type PhysicalPath } from '../paths'
 
@@ -153,8 +153,8 @@ export class DeletionChecker {
         if (Array.isArray(value)) {
           value.forEach((item, index) => {
             if (typeof item === 'object' && item !== null) {
-              const blockType = (item as any)._type
-              const blockDef = blockField.templates?.find((b: any) => b.name === blockType)
+              const blockType = (item as Record<string, unknown>)._type
+              const blockDef = blockField.templates?.find((b) => b.name === blockType)
               if (blockDef && blockDef.fields) {
                 found.push(
                   ...this.findIdInData(
@@ -170,16 +170,19 @@ export class DeletionChecker {
         }
       } else if (field.type === 'array') {
         // Handle array fields
-        const arrayField = field as any
+        const arrayField = field as FieldConfig & {
+          of?: { type: string; fields?: FieldConfig[] }
+        }
         if (Array.isArray(value) && arrayField.of) {
-          if (arrayField.of.type === 'object' && arrayField.of.fields) {
+          const ofFields = arrayField.of.fields
+          if (arrayField.of.type === 'object' && ofFields) {
             value.forEach((item, index) => {
               if (typeof item === 'object' && item !== null) {
                 found.push(
                   ...this.findIdInData(
                     item as Record<string, unknown>,
                     targetId,
-                    arrayField.of.fields,
+                    ofFields,
                     `${fieldPath}[${index}]`,
                   ),
                 )
@@ -196,11 +199,16 @@ export class DeletionChecker {
   /**
    * Helper to list all entries in a collection from the ID index.
    */
-  private listEntriesInCollection(
-    collectionPath: LogicalPath,
-  ): Array<{ relativePath: PhysicalPath; collection: LogicalPath; slug: EntrySlug }> {
-    const entries: Array<{ relativePath: PhysicalPath; collection: LogicalPath; slug: EntrySlug }> =
-      []
+  private listEntriesInCollection(collectionPath: LogicalPath): Array<{
+    relativePath: PhysicalPath
+    collection: LogicalPath
+    slug: EntrySlug
+  }> {
+    const entries: Array<{
+      relativePath: PhysicalPath
+      collection: LogicalPath
+      slug: EntrySlug
+    }> = []
 
     // Get all locations from the index
     const allLocations = this.idIndex.getAllLocations()

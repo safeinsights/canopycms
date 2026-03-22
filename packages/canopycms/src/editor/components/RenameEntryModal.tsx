@@ -7,7 +7,7 @@
  * The content ID is preserved, so drafts and references remain intact.
  */
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { Modal, Stack, TextInput, Group, Button, Alert, Text } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
 
@@ -40,13 +40,17 @@ export function RenameEntryModal({
   const [newSlug, setNewSlug] = useState(currentSlug)
   const [validationError, setValidationError] = useState<string | null>(null)
 
-  // Reset state when modal opens
-  useEffect(() => {
+  // Reset state when modal opens (adjust state during render instead of effect)
+  const [prevIsOpen, setPrevIsOpen] = useState(isOpen)
+  const [prevSlug, setPrevSlug] = useState(currentSlug)
+  if (isOpen !== prevIsOpen || currentSlug !== prevSlug) {
+    setPrevIsOpen(isOpen)
+    setPrevSlug(currentSlug)
     if (isOpen) {
       setNewSlug(currentSlug)
       setValidationError(null)
     }
-  }, [isOpen, currentSlug])
+  }
 
   // Validate slug format
   const validateSlug = (slug: string): string | null => {
@@ -103,7 +107,7 @@ export function RenameEntryModal({
         )}
 
         <Text size="sm" c="dimmed">
-          Renaming "{entryLabel}"
+          Renaming &quot;{entryLabel}&quot;
         </Text>
 
         <TextInput

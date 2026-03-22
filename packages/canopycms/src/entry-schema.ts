@@ -18,7 +18,10 @@ type ObjectValue<F extends InferableField & { fields: readonly InferableField[] 
 
 type BlockValue<
   F extends InferableField & {
-    templates: ReadonlyArray<{ name: string; fields: readonly InferableField[] }>
+    templates: ReadonlyArray<{
+      name: string
+      fields: readonly InferableField[]
+    }>
   },
 > = RequiredValue<
   F,
@@ -32,7 +35,10 @@ type BlockValue<
   >
 >
 
-type FieldValue<F extends InferableField> = F extends { type: 'object'; fields: infer Fields }
+type FieldValue<F extends InferableField> = F extends {
+  type: 'object'
+  fields: infer Fields
+}
   ? ObjectValue<F & { fields: Extract<Fields, readonly InferableField[]> }>
   : F extends { type: 'block'; templates: infer Templates }
     ? BlockValue<

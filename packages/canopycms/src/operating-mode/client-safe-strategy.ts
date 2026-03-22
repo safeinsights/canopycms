@@ -165,10 +165,11 @@ export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy
     case 'dev':
       strategy = new LocalSimpleClientSafeStrategy()
       break
-    default:
+    default: {
       // Exhaustiveness check - TypeScript will error if a mode is not handled
       const _exhaustive: never = mode
       throw new Error(`Unknown operating mode: ${_exhaustive}`)
+    }
   }
 
   clientStrategyCache.set(mode, strategy)

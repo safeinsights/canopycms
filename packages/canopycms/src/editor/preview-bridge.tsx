@@ -62,9 +62,12 @@ export const useCanopyPreview = <T,>(opts: { path?: string; initialData: T }) =>
  * Hook for preview pages to listen for draft updates from the parent editor.
  * Returns both data and loading state.
  */
-export const usePreviewData = <T,>(path: string, initialData: T): { data: T; isLoading: any } => {
+export const usePreviewData = <T,>(
+  path: string,
+  initialData: T,
+): { data: T; isLoading: Record<string, boolean> } => {
   const [data, setData] = useState<T>(initialData)
-  const [isLoading, setIsLoading] = useState<any>({})
+  const [isLoading, setIsLoading] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     const handler = (event: MessageEvent) => {
@@ -72,7 +75,7 @@ export const usePreviewData = <T,>(path: string, initialData: T): { data: T; isL
       if (!msg || msg.type !== CANOPY_PREVIEW_MESSAGE || msg.path !== path) return
       setData(msg.data as T)
       if (msg.isLoading !== undefined) {
-        setIsLoading(msg.isLoading)
+        setIsLoading(msg.isLoading as Record<string, boolean>)
       }
     }
     window.addEventListener('message', handler)
@@ -173,9 +176,11 @@ export const PreviewFrame = ({
   const [syncPending, setSyncPending] = useState(data !== undefined)
 
   // Reset when navigating to a different entry (src change = new iframe page load).
-  useEffect(() => {
+  const [prevSrc, setPrevSrc] = useState(src)
+  if (src !== prevSrc) {
+    setPrevSrc(src)
     setSyncPending(data !== undefined)
-  }, [src])
+  }
 
   // Inject the progress bar keyframe animation once per page.
   useEffect(() => {
@@ -190,7 +195,12 @@ export const PreviewFrame = ({
 
   const post = () => {
     if (data === undefined) return
-    sendDraftUpdate(iframeRef.current, { type: CANOPY_PREVIEW_MESSAGE, path, data, isLoading })
+    sendDraftUpdate(iframeRef.current, {
+      type: CANOPY_PREVIEW_MESSAGE,
+      path,
+      data,
+      isLoading,
+    })
   }
   const postHighlight = () => {
     if (!iframeRef.current?.contentWindow) return
@@ -204,8 +214,10 @@ export const PreviewFrame = ({
   // Keep refs pointing at the latest closures so the ready handler below never goes stale.
   const postRef = useRef(post)
   const postHighlightRef = useRef(postHighlight)
-  postRef.current = post
-  postHighlightRef.current = postHighlight
+  useEffect(() => {
+    postRef.current = post
+    postHighlightRef.current = postHighlight
+  })
 
   useEffect(() => {
     post()

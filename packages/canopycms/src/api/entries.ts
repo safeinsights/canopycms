@@ -100,7 +100,9 @@ const readTitle = async (filePath: string, format: ContentFormat): Promise<strin
       return typeof title === 'string' ? title : undefined
     }
     const parsed = matter(raw)
-    const frontmatterTitle = (parsed.data as any)?.title ?? (parsed.data as any)?.name
+    const frontmatterTitle =
+      (parsed.data as Record<string, unknown>)?.title ??
+      (parsed.data as Record<string, unknown>)?.name
     return typeof frontmatterTitle === 'string' ? frontmatterTitle : undefined
   } catch {
     return undefined
@@ -170,7 +172,11 @@ const parseTypedFilename = (
       const id = parts[parts.length - 1]
       if (!isValidId(id)) return null
       const slug = parts.slice(1, -1).join('.')
-      return { type: potentialType, slug: slug as EntrySlug, id: id as ContentId }
+      return {
+        type: potentialType,
+        slug: slug as EntrySlug,
+        id: id as ContentId,
+      }
     }
   }
 
@@ -246,12 +252,9 @@ const listCollectionEntries = async (
       const { type: entryTypeName, slug, id: contentId } = parsed
 
       // Determine the entry type and format
-      let entryType: EntryTypeConfig | undefined
-      let format: ContentFormat
-
       // Type is always in filename now
-      entryType = entryTypes.find((e) => e.name === entryTypeName)
-      format = entryType?.format || 'json'
+      const entryType = entryTypes.find((e) => e.name === entryTypeName)
+      const format: ContentFormat = entryType?.format || 'json'
 
       const [stats, title] = await Promise.all([
         fs.stat(absolutePath),
@@ -313,7 +316,9 @@ export const listEntriesHandler = async (
     return { ok: false, status: 400, error: 'branch is required' }
   }
 
-  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
+  const context = await ctx.getBranchContext(params.branch, {
+    loadSchema: true,
+  })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -474,7 +479,10 @@ export const listEntries = defineEndpoint({
 // ============================================================================
 
 /** Response type for deleting an entry */
-export type DeleteEntryResponse = ApiResponse<{ deleted: boolean; contentId?: string }>
+export type DeleteEntryResponse = ApiResponse<{
+  deleted: boolean
+  contentId?: string
+}>
 
 const deleteEntryParamsSchema = z.object({
   branch: branchNameSchema,
@@ -491,7 +499,9 @@ const deleteEntryHandler = async (
   req: ApiRequest,
   params: z.infer<typeof deleteEntryParamsSchema>,
 ): Promise<DeleteEntryResponse> => {
-  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
+  const context = await ctx.getBranchContext(params.branch, {
+    loadSchema: true,
+  })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -536,7 +546,11 @@ const deleteEntryHandler = async (
   // Validate slug extracted from the path
   const slugResult = parseSlug(slug, 'entry')
   if (!slugResult.ok) {
-    return { ok: false, status: 400, error: `Invalid entry slug: ${slugResult.error}` }
+    return {
+      ok: false,
+      status: 400,
+      error: `Invalid entry slug: ${slugResult.error}`,
+    }
   }
   const entrySlug = slugResult.slug as EntrySlug
 
@@ -561,7 +575,11 @@ const deleteEntryHandler = async (
     'edit',
   )
   if (!editAccess.allowed) {
-    return { ok: false, status: 403, error: 'Edit permission required to delete entry' }
+    return {
+      ok: false,
+      status: 403,
+      error: 'Edit permission required to delete entry',
+    }
   }
 
   try {

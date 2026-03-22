@@ -32,8 +32,8 @@ export interface RouteDefinition {
   validate?: (extracted: { params?: Record<string, string>; body?: unknown }) =>
     | {
         ok: true
-        params?: any
-        body?: any
+        params?: unknown
+        body?: unknown
       }
     | {
         ok: false
@@ -90,7 +90,7 @@ function buildCanopyRoutes(): RouteDefinition[] {
       pattern: route.pattern,
       handler: route.handler,
       // Include validation function if present (new-style routes from defineEndpoint)
-      validate: 'validate' in route ? (route.validate as any) : undefined,
+      validate: 'validate' in route ? (route.validate as RouteDefinition['validate']) : undefined,
     }),
   )
 }

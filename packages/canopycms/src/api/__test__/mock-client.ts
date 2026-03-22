@@ -8,52 +8,30 @@
 import { vi, type Mock } from 'vitest'
 import type { CanopyApiClient } from '../client'
 import type { ApiResponse } from '../types'
-import { createLogicalPath, createPhysicalPath } from '../../paths'
+import { createLogicalPath } from '../../paths'
 import type { ContentId } from '../../paths'
-import type {
-  BranchDeleteResponse,
-  BranchListResponse,
-  BranchResponse,
-  CreateBranchBody,
-  UpdateBranchAccessBody,
-} from '../branch'
+import type { BranchDeleteResponse, BranchListResponse, BranchResponse } from '../branch'
 import type { BranchMergeResponse } from '../branch-status'
-import type { RequestChangesBody } from '../branch-review'
-import type {
-  AddCommentBody,
-  AddCommentResponse,
-  CommentsResponse,
-  ResolveCommentResponse,
-} from '../comments'
+import type { AddCommentResponse, CommentsResponse, ResolveCommentResponse } from '../comments'
 import type {
   ContentReadResponse,
   ContentWriteResponse,
   ReferenceValidationResponse,
-  RenameEntryBody,
   RenameEntryResponse,
-  ValidateReferencesBody,
-  WriteContentBody,
 } from '../content'
 import type { ReferenceOptionsResponse } from '../reference-options'
-import type { ResolveReferencesBody, ResolveReferencesResponse } from '../resolve-references'
+import type { ResolveReferencesResponse } from '../resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from '../entries'
-import type {
-  AssetDeleteResponse,
-  AssetUploadResponse,
-  AssetsListResponse,
-  UploadAssetBody,
-} from '../assets'
+import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse } from '../assets'
 import type {
   GetUserMetadataResponse,
   ListGroupsResponse,
   PermissionsResponse,
   SearchUsersResponse,
-  UpdatePermissionsBody,
 } from '../permissions'
 import type {
   ExternalGroupsResponse,
   InternalGroupsResponse,
-  UpdateInternalGroupsBody,
   UpdateInternalGroupsResponse,
 } from '../groups'
 import type { UserInfoResponse } from '../user'
@@ -68,14 +46,7 @@ import type {
   UpdateCollectionApiResponse,
   UpdateEntryTypeApiResponse,
   UpdateOrderApiResponse,
-  UpdateOrderBody,
 } from '../schema'
-import type {
-  CreateCollectionInput,
-  CreateEntryTypeInput,
-  UpdateCollectionInput,
-  UpdateEntryTypeInput,
-} from '../../schema/schema-store-types'
 
 /**
  * Type utility to convert CanopyApiClient methods to Vitest mocks.
@@ -99,120 +70,107 @@ export function createMockApiClient(): MockApiClient {
   return {
     branches: {
       list: vi.fn().mockResolvedValue(mockSuccess({ branches: [] })),
-      create: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'editing',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
+      create: vi.fn().mockResolvedValue(
+        mockSuccess({
+          branch: {
+            name: 'test-branch',
+            status: 'editing',
+            access: {},
+            createdBy: 'user-1',
+            createdAt: '2024-01-01',
+            updatedAt: '2024-01-01',
+          },
+        }),
+      ),
       delete: vi.fn().mockResolvedValue(mockSuccess({ deleted: true })),
-      updateAccess: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'editing',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
+      updateAccess: vi.fn().mockResolvedValue(
+        mockSuccess({
+          branch: {
+            name: 'test-branch',
+            status: 'editing',
+            access: {},
+            createdBy: 'user-1',
+            createdAt: '2024-01-01',
+            updatedAt: '2024-01-01',
+          },
+        }),
+      ),
     },
 
     workflow: {
-      withdraw: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'editing',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
-      requestChanges: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'editing',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
-      approve: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'approved',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
+      withdraw: vi.fn().mockResolvedValue(
+        mockSuccess({
+          branch: {
+            name: 'test-branch',
+            status: 'editing',
+            access: {},
+            createdBy: 'user-1',
+            createdAt: '2024-01-01',
+            updatedAt: '2024-01-01',
+          },
+        }),
+      ),
+      requestChanges: vi.fn().mockResolvedValue(
+        mockSuccess({
+          branch: {
+            name: 'test-branch',
+            status: 'editing',
+            access: {},
+            createdBy: 'user-1',
+            createdAt: '2024-01-01',
+            updatedAt: '2024-01-01',
+          },
+        }),
+      ),
+      approve: vi.fn().mockResolvedValue(
+        mockSuccess({
+          branch: {
+            name: 'test-branch',
+            status: 'approved',
+            access: {},
+            createdBy: 'user-1',
+            createdAt: '2024-01-01',
+            updatedAt: '2024-01-01',
+          },
+        }),
+      ),
       markMerged: vi
         .fn()
         .mockResolvedValue(mockSuccess({ branch: { name: 'test-branch', status: 'archived' } })),
-      getStatus: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'editing',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
-      submit: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({
-            branch: {
-              name: 'test-branch',
-              status: 'submitted',
-              access: {},
-              createdBy: 'user-1',
-              createdAt: '2024-01-01',
-              updatedAt: '2024-01-01',
-            },
-          }),
-        ),
+      getStatus: vi.fn().mockResolvedValue(
+        mockSuccess({
+          branch: {
+            name: 'test-branch',
+            status: 'editing',
+            access: {},
+            createdBy: 'user-1',
+            createdAt: '2024-01-01',
+            updatedAt: '2024-01-01',
+          },
+        }),
+      ),
+      submit: vi.fn().mockResolvedValue(
+        mockSuccess({
+          branch: {
+            name: 'test-branch',
+            status: 'submitted',
+            access: {},
+            createdBy: 'user-1',
+            createdAt: '2024-01-01',
+            updatedAt: '2024-01-01',
+          },
+        }),
+      ),
     },
 
     comments: {
       list: vi.fn().mockResolvedValue(mockSuccess({ threads: [] })),
-      add: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({ threadId: 'mock-thread-id', commentId: 'mock-comment-id' }),
-        ),
+      add: vi.fn().mockResolvedValue(
+        mockSuccess({
+          threadId: 'mock-thread-id',
+          commentId: 'mock-comment-id',
+        }),
+      ),
       resolve: vi.fn().mockResolvedValue(mockSuccess({ resolved: true })),
     },
 
@@ -226,11 +184,13 @@ export function createMockApiClient(): MockApiClient {
     },
 
     entries: {
-      list: vi
-        .fn()
-        .mockResolvedValue(
-          mockSuccess({ collections: [], entries: [], pagination: { hasMore: false, limit: 50 } }),
-        ),
+      list: vi.fn().mockResolvedValue(
+        mockSuccess({
+          collections: [],
+          entries: [],
+          pagination: { hasMore: false, limit: 50 },
+        }),
+      ),
       delete: vi.fn().mockResolvedValue(mockSuccess({ deleted: true })),
     },
 
@@ -358,7 +318,10 @@ export function mockCommentsResponse(): CommentsResponse {
  * Create a AddCommentResponse for testing
  */
 export function mockAddCommentResponse(): AddCommentResponse {
-  return mockSuccess({ threadId: 'mock-thread-id', commentId: 'mock-comment-id' })
+  return mockSuccess({
+    threadId: 'mock-thread-id',
+    commentId: 'mock-comment-id',
+  })
 }
 
 /**
@@ -414,7 +377,11 @@ export function mockResolveReferencesResponse(): ResolveReferencesResponse {
  * Create a EntriesResponse for testing
  */
 export function mockEntriesResponse(): EntriesResponse {
-  return mockSuccess({ collections: [], entries: [], pagination: { hasMore: false, limit: 50 } })
+  return mockSuccess({
+    collections: [],
+    entries: [],
+    pagination: { hasMore: false, limit: 50 },
+  })
 }
 
 /**
@@ -519,7 +486,10 @@ export function mockGetCollectionApiResponse(): GetCollectionApiResponse {
  * Create a CreateCollectionApiResponse for testing
  */
 export function mockCreateCollectionApiResponse(): CreateCollectionApiResponse {
-  return mockSuccess({ collectionPath: createLogicalPath(''), contentId: '' as ContentId })
+  return mockSuccess({
+    collectionPath: createLogicalPath(''),
+    contentId: '' as ContentId,
+  })
 }
 
 /**

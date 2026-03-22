@@ -45,7 +45,10 @@ describe('CanopyApiClient', () => {
       })
 
       const client = new CanopyApiClient({ fetch: mockFetch })
-      await client.content.read({ branch: 'main', path: 'my collection/my slug' })
+      await client.content.read({
+        branch: 'main',
+        path: 'my collection/my slug',
+      })
 
       expect(mockFetch).toHaveBeenCalledWith(
         '/api/canopycms/main/content/my%20collection/my%20slug',
@@ -75,7 +78,10 @@ describe('CanopyApiClient', () => {
       })
 
       const client = new CanopyApiClient({ fetch: mockFetch })
-      await client.content.read({ branch: 'main', path: 'col/lection?test/slug&special' })
+      await client.content.read({
+        branch: 'main',
+        path: 'col/lection?test/slug&special',
+      })
 
       expect(mockFetch).toHaveBeenCalledWith(
         '/api/canopycms/main/content/col/lection%3Ftest/slug%26special',
@@ -291,7 +297,11 @@ describe('CanopyApiClient', () => {
       const client = new CanopyApiClient({ fetch: mockFetch })
       const data = new Uint8Array([1, 2, 3, 4])
 
-      await client.assets.upload({ key: 'test.jpg', data, contentType: 'image/jpeg' })
+      await client.assets.upload({
+        key: 'test.jpg',
+        data,
+        contentType: 'image/jpeg',
+      })
 
       expect(mockFetch).toHaveBeenCalledWith(
         expect.any(String),

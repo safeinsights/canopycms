@@ -43,15 +43,24 @@ describe('Task Queue', () => {
     })
 
     it('creates unique IDs for multiple tasks', async () => {
-      const id1 = await enqueueTask(tmpDir, { action: 'push-branch', payload: {} })
-      const id2 = await enqueueTask(tmpDir, { action: 'push-branch', payload: {} })
+      const id1 = await enqueueTask(tmpDir, {
+        action: 'push-branch',
+        payload: {},
+      })
+      const id2 = await enqueueTask(tmpDir, {
+        action: 'push-branch',
+        payload: {},
+      })
       expect(id1).not.toBe(id2)
     })
   })
 
   describe('dequeueTask', () => {
     it('returns the oldest pending task', async () => {
-      const id1 = await enqueueTask(tmpDir, { action: 'push-branch', payload: { n: 1 } })
+      const id1 = await enqueueTask(tmpDir, {
+        action: 'push-branch',
+        payload: { n: 1 },
+      })
       await new Promise((r) => setTimeout(r, 5)) // Ensure different createdAt timestamp
       await enqueueTask(tmpDir, { action: 'push-branch', payload: { n: 2 } })
 
@@ -62,7 +71,10 @@ describe('Task Queue', () => {
     })
 
     it('moves task from pending to processing', async () => {
-      const id = await enqueueTask(tmpDir, { action: 'push-branch', payload: {} })
+      const id = await enqueueTask(tmpDir, {
+        action: 'push-branch',
+        payload: {},
+      })
 
       await dequeueTask(tmpDir)
 
@@ -92,7 +104,10 @@ describe('Task Queue', () => {
       })
       await dequeueTask(tmpDir)
 
-      await completeTask(tmpDir, id, { prUrl: 'https://github.com/pr/1', prNumber: 1 })
+      await completeTask(tmpDir, id, {
+        prUrl: 'https://github.com/pr/1',
+        prNumber: 1,
+      })
 
       // Should be in completed
       const filePath = path.join(tmpDir, 'completed', `${id}.json`)
@@ -126,7 +141,10 @@ describe('Task Queue', () => {
 
   describe('getTaskResult', () => {
     it('finds completed task', async () => {
-      const id = await enqueueTask(tmpDir, { action: 'push-branch', payload: {} })
+      const id = await enqueueTask(tmpDir, {
+        action: 'push-branch',
+        payload: {},
+      })
       await dequeueTask(tmpDir)
       await completeTask(tmpDir, id, { pushed: true })
 
@@ -137,7 +155,10 @@ describe('Task Queue', () => {
     })
 
     it('finds failed task', async () => {
-      const id = await enqueueTask(tmpDir, { action: 'push-branch', payload: {} })
+      const id = await enqueueTask(tmpDir, {
+        action: 'push-branch',
+        payload: {},
+      })
       await dequeueTask(tmpDir)
       await failTask(tmpDir, id, 'error')
 
@@ -146,14 +167,20 @@ describe('Task Queue', () => {
     })
 
     it('finds pending task', async () => {
-      const id = await enqueueTask(tmpDir, { action: 'push-branch', payload: {} })
+      const id = await enqueueTask(tmpDir, {
+        action: 'push-branch',
+        payload: {},
+      })
 
       const result = await getTaskResult(tmpDir, id)
       expect(result!.status).toBe('pending')
     })
 
     it('finds processing task', async () => {
-      const id = await enqueueTask(tmpDir, { action: 'push-branch', payload: {} })
+      const id = await enqueueTask(tmpDir, {
+        action: 'push-branch',
+        payload: {},
+      })
       await dequeueTask(tmpDir)
 
       const result = await getTaskResult(tmpDir, id)
@@ -289,7 +316,12 @@ describe('Task Queue', () => {
 
       // Simulate crash scenario: task in both pending and completed
       await fs.mkdir(path.join(tmpDir, 'completed'), { recursive: true })
-      const completedContent = { id, action: 'push-branch', payload: {}, status: 'completed' }
+      const completedContent = {
+        id,
+        action: 'push-branch',
+        payload: {},
+        status: 'completed',
+      }
       await fs.writeFile(
         path.join(tmpDir, 'completed', `${id}.json`),
         JSON.stringify(completedContent),
@@ -377,9 +409,15 @@ describe('Task Queue', () => {
 
   describe('cleanupOldTasks', () => {
     it('removes old completed and failed tasks', async () => {
-      const id1 = await enqueueTask(tmpDir, { action: 'push-branch', payload: {} })
+      const id1 = await enqueueTask(tmpDir, {
+        action: 'push-branch',
+        payload: {},
+      })
       await new Promise((r) => setTimeout(r, 5))
-      const id2 = await enqueueTask(tmpDir, { action: 'push-branch', payload: {} })
+      const id2 = await enqueueTask(tmpDir, {
+        action: 'push-branch',
+        payload: {},
+      })
       await dequeueTask(tmpDir)
       await completeTask(tmpDir, id1, {})
       await dequeueTask(tmpDir)
@@ -396,7 +434,10 @@ describe('Task Queue', () => {
     })
 
     it('keeps recent tasks', async () => {
-      const id = await enqueueTask(tmpDir, { action: 'push-branch', payload: {} })
+      const id = await enqueueTask(tmpDir, {
+        action: 'push-branch',
+        payload: {},
+      })
       await dequeueTask(tmpDir)
       await completeTask(tmpDir, id, {})
 

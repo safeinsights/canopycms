@@ -11,7 +11,7 @@
 import React, { useState, useCallback } from 'react'
 import { Alert, Button, Group, Loader, ScrollArea, Stack, Text } from '@mantine/core'
 import { IconAlertCircle } from '@tabler/icons-react'
-import type { PermissionManagerProps, PermissionLevel, PermissionTarget } from './types'
+import type { PermissionManagerProps, PermissionLevel } from './types'
 import { usePermissionTree } from './hooks/usePermissionTree'
 import { useGroupsAndUsers } from './hooks/useGroupsAndUsers'
 import { PermissionTree } from './PermissionTree'
@@ -26,7 +26,7 @@ export const PermissionManager: React.FC<PermissionManagerProps> = ({
   onSearchUsers,
   onGetUserMetadata,
   onListGroups,
-  onClose,
+  onClose: __,
   loading = false,
   contentTree,
 }) => {

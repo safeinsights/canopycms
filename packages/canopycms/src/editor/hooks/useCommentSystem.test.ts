@@ -125,7 +125,9 @@ describe('useCommentSystem', () => {
   })
 
   it('initializes with empty state', () => {
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     expect(result.current.comments).toEqual([])
     expect(result.current.focusedFieldPath).toBeUndefined()
@@ -138,7 +140,9 @@ describe('useCommentSystem', () => {
   })
 
   it('loads comments successfully', async () => {
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     // Override the default empty response with mockComments
     mockClient.comments.list.mockResolvedValueOnce({
@@ -160,7 +164,9 @@ describe('useCommentSystem', () => {
   it('handles load comments error gracefully', async () => {
     const { error, restore } = setupMockConsole(['error'])
 
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     // Override the default mock for this specific test
     mockClient.comments.list.mockResolvedValueOnce({
@@ -196,7 +202,9 @@ describe('useCommentSystem', () => {
     rerender({ ...defaultOptions, branchName: 'feature' })
 
     await waitFor(() => {
-      expect(mockClient.comments.list).toHaveBeenCalledWith({ branch: 'feature' })
+      expect(mockClient.comments.list).toHaveBeenCalledWith({
+        branch: 'feature',
+      })
     })
   })
 
@@ -218,7 +226,9 @@ describe('useCommentSystem', () => {
       status: 200,
     })
 
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleAddComment('Test comment', 'field', 'entry1', 'title')
@@ -256,7 +266,9 @@ describe('useCommentSystem', () => {
       status: 200,
     })
 
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleAddComment('Test comment', 'entry', 'entry1')
@@ -291,7 +303,9 @@ describe('useCommentSystem', () => {
       status: 200,
     })
 
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleAddComment('Test comment', 'branch')
@@ -319,7 +333,9 @@ describe('useCommentSystem', () => {
       status: 500,
     })
 
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleAddComment('Test comment', 'field', 'entry1', 'title')
@@ -346,7 +362,9 @@ describe('useCommentSystem', () => {
       status: 200,
     })
 
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleResolveThread('thread1')
@@ -372,7 +390,9 @@ describe('useCommentSystem', () => {
       status: 500,
     })
 
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     await act(async () => {
       await result.current.handleResolveThread('thread1')
@@ -388,14 +408,19 @@ describe('useCommentSystem', () => {
       data: { threads: mockComments },
     })
 
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.comments).toHaveLength(3)
     })
 
     act(() => {
-      result.current.setActiveCommentContext({ type: 'field', canopyPath: 'title' })
+      result.current.setActiveCommentContext({
+        type: 'field',
+        canopyPath: 'title',
+      })
     })
 
     expect(result.current.activeThreads).toHaveLength(1)
@@ -410,7 +435,9 @@ describe('useCommentSystem', () => {
       data: { threads: mockComments },
     })
 
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.comments).toHaveLength(3)
@@ -432,7 +459,9 @@ describe('useCommentSystem', () => {
       data: { threads: mockComments },
     })
 
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     await waitFor(() => {
       expect(result.current.comments).toHaveLength(3)
@@ -448,14 +477,18 @@ describe('useCommentSystem', () => {
   })
 
   it('returns empty activeThreads when no context is set', () => {
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     expect(result.current.activeThreads).toEqual([])
     expect(result.current.activeContextLabel).toBe('')
   })
 
   it('handles preview frame focus message', async () => {
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     // Create a mock DOM element
     const mockElement = document.createElement('div')
@@ -492,7 +525,9 @@ describe('useCommentSystem', () => {
   })
 
   it('ignores preview frame message for wrong entry', () => {
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     const mockElement = document.createElement('div')
     mockElement.setAttribute('data-canopy-field', 'title')
@@ -518,7 +553,9 @@ describe('useCommentSystem', () => {
   })
 
   it('updates state setters correctly', () => {
-    const { result } = renderHook(() => useCommentSystem(defaultOptions), { wrapper })
+    const { result } = renderHook(() => useCommentSystem(defaultOptions), {
+      wrapper,
+    })
 
     act(() => {
       result.current.setFocusedFieldPath('test-path')
@@ -541,9 +578,15 @@ describe('useCommentSystem', () => {
     expect(result.current.commentThreadPanelOpen).toBe(true)
 
     act(() => {
-      result.current.setActiveCommentContext({ type: 'field', canopyPath: 'title' })
+      result.current.setActiveCommentContext({
+        type: 'field',
+        canopyPath: 'title',
+      })
     })
-    expect(result.current.activeCommentContext).toEqual({ type: 'field', canopyPath: 'title' })
+    expect(result.current.activeCommentContext).toEqual({
+      type: 'field',
+      canopyPath: 'title',
+    })
   })
 
   it('does not add comment when branchName is empty', async () => {

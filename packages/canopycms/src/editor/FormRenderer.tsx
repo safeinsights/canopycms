@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react'
+import React from 'react'
 
 import { Alert, Button, Group, Paper, Stack, Text } from '@mantine/core'
 import { IconInfoCircle } from '@tabler/icons-react'
@@ -104,309 +104,289 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     onLoadingStateChange,
   })
 
-  const renderField = useCallback(
-    (
-      field: FieldConfig,
-      currentValue: unknown,
-      update: (v: unknown) => void,
-      path: Array<string | number>,
-    ) => {
-      const fieldId = `field-${fieldKey(path).replace(/[^a-zA-Z0-9_-]/g, '-')}`
-      const canopyPath = normalizeCanopyPath(path)
+  const renderField = (
+    field: FieldConfig,
+    currentValue: unknown,
+    update: (v: unknown) => void,
+    path: Array<string | number>,
+  ) => {
+    const fieldId = `field-${fieldKey(path).replace(/[^a-zA-Z0-9_-]/g, '-')}`
+    const canopyPath = normalizeCanopyPath(path)
 
-      // Filter comments for this specific field
-      const fieldThreads =
-        currentEntryPath && onAddComment
-          ? comments.filter(
-              (thread) =>
-                thread.type === 'field' &&
-                thread.entryPath === currentEntryPath &&
-                thread.canopyPath === canopyPath,
-            )
-          : []
+    // Filter comments for this specific field
+    const fieldThreads =
+      currentEntryPath && onAddComment
+        ? comments.filter(
+            (thread) =>
+              thread.type === 'field' &&
+              thread.entryPath === currentEntryPath &&
+              thread.canopyPath === canopyPath,
+          )
+        : []
 
-      const custom = customRenderers?.[field.type]
-      if (custom) {
-        const renderedField = (
-          <div key={fieldKey(path)}>
-            {custom({
-              field,
-              value: currentValue,
-              onChange: update,
-              path,
-              id: fieldId,
-            })}
-          </div>
+    const custom = customRenderers?.[field.type]
+    if (custom) {
+      const renderedField = (
+        <div key={fieldKey(path)}>
+          {custom({
+            field,
+            value: currentValue,
+            onChange: update,
+            path,
+            id: fieldId,
+          })}
+        </div>
+      )
+
+      // Wrap custom fields with FieldWrapper if comments enabled
+      if (currentEntryPath && currentUserId && onAddComment && onResolveThread) {
+        return (
+          <FieldWrapper
+            key={fieldKey(path)}
+            canopyPath={canopyPath}
+            entryPath={currentEntryPath}
+            threads={fieldThreads}
+            autoFocus={focusedFieldPath === canopyPath}
+            currentUserId={currentUserId}
+            canResolve={canResolve}
+            onAddComment={onAddComment}
+            onResolveThread={onResolveThread}
+            highlightThreadId={highlightThreadId}
+          >
+            {renderedField}
+          </FieldWrapper>
         )
-
-        // Wrap custom fields with FieldWrapper if comments enabled
-        if (currentEntryPath && currentUserId && onAddComment && onResolveThread) {
-          return (
-            <FieldWrapper
-              key={fieldKey(path)}
-              canopyPath={canopyPath}
-              entryPath={currentEntryPath}
-              threads={fieldThreads}
-              autoFocus={focusedFieldPath === canopyPath}
-              currentUserId={currentUserId}
-              canResolve={canResolve}
-              onAddComment={onAddComment}
-              onResolveThread={onResolveThread}
-              highlightThreadId={highlightThreadId}
-            >
-              {renderedField}
-            </FieldWrapper>
-          )
-        }
-
-        return renderedField
       }
 
-      const label = field.label ?? field.name
+      return renderedField
+    }
 
-      // Helper to wrap field with FieldWrapper if comments enabled
-      const wrapWithComments = (renderedField: React.ReactNode) => {
-        if (currentEntryPath && currentUserId && onAddComment && onResolveThread) {
-          return (
-            <FieldWrapper
-              canopyPath={canopyPath}
-              entryPath={currentEntryPath}
-              threads={fieldThreads}
-              autoFocus={focusedFieldPath === canopyPath}
-              currentUserId={currentUserId}
-              canResolve={canResolve}
-              onAddComment={onAddComment}
-              onResolveThread={onResolveThread}
-              highlightThreadId={highlightThreadId}
-            >
-              {renderedField}
-            </FieldWrapper>
-          )
-        }
-        return renderedField
+    const label = field.label ?? field.name
+
+    // Helper to wrap field with FieldWrapper if comments enabled
+    const wrapWithComments = (renderedField: React.ReactNode) => {
+      if (currentEntryPath && currentUserId && onAddComment && onResolveThread) {
+        return (
+          <FieldWrapper
+            canopyPath={canopyPath}
+            entryPath={currentEntryPath}
+            threads={fieldThreads}
+            autoFocus={focusedFieldPath === canopyPath}
+            currentUserId={currentUserId}
+            canResolve={canResolve}
+            onAddComment={onAddComment}
+            onResolveThread={onResolveThread}
+            highlightThreadId={highlightThreadId}
+          >
+            {renderedField}
+          </FieldWrapper>
+        )
       }
+      return renderedField
+    }
 
-      switch (field.type) {
-        case 'string':
-          return wrapWithComments(
-            <TextField
-              key={fieldKey(path)}
-              id={fieldId}
-              label={label}
-              value={(currentValue as string) ?? ''}
-              onChange={update}
-              dataCanopyField={normalizeCanopyPath(path)}
-            />,
-          )
-        case 'boolean':
-          return wrapWithComments(
-            <ToggleField
-              key={fieldKey(path)}
-              id={fieldId}
-              label={label}
-              value={Boolean(currentValue)}
-              onChange={(v) => update(Boolean(v))}
-              dataCanopyField={normalizeCanopyPath(path)}
-              testId={`field-toggle-${field.name}`}
-            />,
-          )
-        case 'markdown':
-        case 'mdx':
-          return wrapWithComments(
-            <MarkdownField
-              key={fieldKey(path)}
-              id={fieldId}
-              label={label}
-              value={(currentValue as string) ?? ''}
-              onChange={(v) => update(v)}
-              dataCanopyField={normalizeCanopyPath(path)}
-            />,
-          )
-        case 'select': {
-          const selectField = field as SelectFieldConfig
-          const options = normalizeOptions(selectField.options)
-          const isMulti = Boolean(selectField.list)
-          return wrapWithComments(
-            <SelectField
-              key={fieldKey(path)}
-              id={fieldId}
-              label={label}
-              options={options}
-              value={
-                isMulti
-                  ? Array.isArray(currentValue)
-                    ? (currentValue as string[])
-                    : []
-                  : ((currentValue as string) ?? '')
-              }
-              multiple={isMulti}
-              onChange={(next) => update(next)}
-              dataCanopyField={normalizeCanopyPath(path)}
-            />,
-          )
-        }
-        case 'reference': {
-          const referenceField = field as ReferenceFieldConfig
-          const staticOptions = referenceField.options
-            ? normalizeOptions(referenceField.options)
-            : undefined
-          const isMulti = Boolean(referenceField.list)
-          return wrapWithComments(
-            <ReferenceField
-              key={fieldKey(path)}
-              id={fieldId}
-              label={label}
-              options={staticOptions?.map((opt) => ({
-                label: opt.label,
-                value: opt.value,
-              }))}
-              collections={referenceField.collections}
-              displayField={referenceField.displayField}
-              branch={branch}
-              value={
-                isMulti
-                  ? Array.isArray(currentValue)
-                    ? (currentValue as string[])
-                    : []
-                  : ((currentValue as string) ?? '')
-              }
-              multiple={isMulti}
-              onChange={(next) => update(next)}
-              dataCanopyField={normalizeCanopyPath(path)}
-            />,
-          )
-        }
-        case 'block': {
-          const blockField = field as BlockFieldConfig
-          return wrapWithComments(
-            <BlockField
-              key={fieldKey(path)}
-              label={label}
-              templates={blockField.templates}
-              value={(Array.isArray(currentValue) ? currentValue : []) as BlockInstance[]}
-              onChange={(next) => update(next)}
-              renderField={renderField}
-              path={path}
-              dataCanopyField={normalizeCanopyPath(path)}
-            />,
-          )
-        }
-        case 'object': {
-          const objectField = field as ObjectFieldConfig
-          if (objectField.list) {
-            const items = Array.isArray(currentValue)
-              ? (currentValue as Record<string, unknown>[])
-              : []
-            return (
-              <Paper key={fieldKey(path)} withBorder radius="md" p="md" shadow="xs">
+    switch (field.type) {
+      case 'string':
+        return wrapWithComments(
+          <TextField
+            key={fieldKey(path)}
+            id={fieldId}
+            label={label}
+            value={(currentValue as string) ?? ''}
+            onChange={update}
+            dataCanopyField={normalizeCanopyPath(path)}
+          />,
+        )
+      case 'boolean':
+        return wrapWithComments(
+          <ToggleField
+            key={fieldKey(path)}
+            id={fieldId}
+            label={label}
+            value={Boolean(currentValue)}
+            onChange={(v) => update(Boolean(v))}
+            dataCanopyField={normalizeCanopyPath(path)}
+            testId={`field-toggle-${field.name}`}
+          />,
+        )
+      case 'markdown':
+      case 'mdx':
+        return wrapWithComments(
+          <MarkdownField
+            key={fieldKey(path)}
+            id={fieldId}
+            label={label}
+            value={(currentValue as string) ?? ''}
+            onChange={(v) => update(v)}
+            dataCanopyField={normalizeCanopyPath(path)}
+          />,
+        )
+      case 'select': {
+        const selectField = field as SelectFieldConfig
+        const options = normalizeOptions(selectField.options)
+        const isMulti = Boolean(selectField.list)
+        return wrapWithComments(
+          <SelectField
+            key={fieldKey(path)}
+            id={fieldId}
+            label={label}
+            options={options}
+            value={
+              isMulti
+                ? Array.isArray(currentValue)
+                  ? (currentValue as string[])
+                  : []
+                : ((currentValue as string) ?? '')
+            }
+            multiple={isMulti}
+            onChange={(next) => update(next)}
+            dataCanopyField={normalizeCanopyPath(path)}
+          />,
+        )
+      }
+      case 'reference': {
+        const referenceField = field as ReferenceFieldConfig
+        const staticOptions = referenceField.options
+          ? normalizeOptions(referenceField.options)
+          : undefined
+        const isMulti = Boolean(referenceField.list)
+        return wrapWithComments(
+          <ReferenceField
+            key={fieldKey(path)}
+            id={fieldId}
+            label={label}
+            options={staticOptions?.map((opt) => ({
+              label: opt.label,
+              value: opt.value,
+            }))}
+            collections={referenceField.collections}
+            displayField={referenceField.displayField}
+            branch={branch}
+            value={
+              isMulti
+                ? Array.isArray(currentValue)
+                  ? (currentValue as string[])
+                  : []
+                : ((currentValue as string) ?? '')
+            }
+            multiple={isMulti}
+            onChange={(next) => update(next)}
+            dataCanopyField={normalizeCanopyPath(path)}
+          />,
+        )
+      }
+      case 'block': {
+        const blockField = field as BlockFieldConfig
+        return wrapWithComments(
+          <BlockField
+            key={fieldKey(path)}
+            label={label}
+            templates={blockField.templates}
+            value={(Array.isArray(currentValue) ? currentValue : []) as BlockInstance[]}
+            onChange={(next) => update(next)}
+            renderField={renderField}
+            path={path}
+            dataCanopyField={normalizeCanopyPath(path)}
+          />,
+        )
+      }
+      case 'object': {
+        const objectField = field as ObjectFieldConfig
+        if (objectField.list) {
+          const items = Array.isArray(currentValue)
+            ? (currentValue as Record<string, unknown>[])
+            : []
+          return (
+            <Paper key={fieldKey(path)} withBorder radius="md" p="md" shadow="xs">
+              <Stack gap="sm">
+                <Group justify="space-between">
+                  <Text size="sm" fw={600}>
+                    {label}
+                  </Text>
+                  <Button
+                    size="xs"
+                    variant="light"
+                    onClick={() => update([...items, {} as Record<string, unknown>])}
+                  >
+                    Add item
+                  </Button>
+                </Group>
                 <Stack gap="sm">
-                  <Group justify="space-between">
-                    <Text size="sm" fw={600}>
-                      {label}
+                  {items.map((item, idx) => (
+                    <Paper key={fieldKey([...path, idx])} withBorder radius="md" p="sm" shadow="xs">
+                      <Stack gap="xs">
+                        <Group justify="space-between">
+                          <Text size="xs" fw={700}>
+                            {label} #{idx + 1}
+                          </Text>
+                          <Button
+                            size="xs"
+                            variant="subtle"
+                            color="red"
+                            onClick={() => update(items.filter((_, i) => i !== idx))}
+                          >
+                            Remove
+                          </Button>
+                        </Group>
+                        <ObjectField
+                          label={objectField.label}
+                          fields={objectField.fields}
+                          value={item}
+                          onChange={(next) => {
+                            const nextItems = [...items]
+                            nextItems[idx] = next
+                            update(nextItems)
+                          }}
+                          renderField={renderField}
+                          path={[...path, idx]}
+                          dataCanopyField={normalizeCanopyPath([...path, idx])}
+                        />
+                      </Stack>
+                    </Paper>
+                  ))}
+                  {items.length === 0 && (
+                    <Text size="xs" c="dimmed">
+                      No items yet. Add one to get started.
                     </Text>
-                    <Button
-                      size="xs"
-                      variant="light"
-                      onClick={() => update([...items, {} as Record<string, unknown>])}
-                    >
-                      Add item
-                    </Button>
-                  </Group>
-                  <Stack gap="sm">
-                    {items.map((item, idx) => (
-                      <Paper
-                        key={fieldKey([...path, idx])}
-                        withBorder
-                        radius="md"
-                        p="sm"
-                        shadow="xs"
-                      >
-                        <Stack gap="xs">
-                          <Group justify="space-between">
-                            <Text size="xs" fw={700}>
-                              {label} #{idx + 1}
-                            </Text>
-                            <Button
-                              size="xs"
-                              variant="subtle"
-                              color="red"
-                              onClick={() => update(items.filter((_, i) => i !== idx))}
-                            >
-                              Remove
-                            </Button>
-                          </Group>
-                          <ObjectField
-                            label={objectField.label}
-                            fields={objectField.fields}
-                            value={item}
-                            onChange={(next) => {
-                              const nextItems = [...items]
-                              nextItems[idx] = next
-                              update(nextItems)
-                            }}
-                            renderField={renderField}
-                            path={[...path, idx]}
-                            dataCanopyField={normalizeCanopyPath([...path, idx])}
-                          />
-                        </Stack>
-                      </Paper>
-                    ))}
-                    {items.length === 0 && (
-                      <Text size="xs" c="dimmed">
-                        No items yet. Add one to get started.
-                      </Text>
-                    )}
-                  </Stack>
+                  )}
                 </Stack>
-              </Paper>
-            )
-          }
-
-          return (
-            <ObjectField
-              key={fieldKey(path)}
-              label={label}
-              fields={objectField.fields}
-              value={currentValue as Record<string, unknown> | undefined}
-              onChange={(next) => update(next)}
-              renderField={renderField}
-              path={path}
-              dataCanopyField={normalizeCanopyPath(path)}
-            />
+              </Stack>
+            </Paper>
           )
         }
-        case 'code':
-          return wrapWithComments(
-            <CodeField
-              key={fieldKey(path)}
-              id={fieldId}
-              label={label}
-              value={typeof currentValue === 'string' ? currentValue : ''}
-              onChange={(v) => update(v)}
-              dataCanopyField={normalizeCanopyPath(path)}
-            />,
-          )
-        default:
-          return (
-            <Text key={fieldKey(path)} size="xs" c="dimmed">
-              Unsupported field: {field.type}
-            </Text>
-          )
+
+        return (
+          <ObjectField
+            key={fieldKey(path)}
+            label={label}
+            fields={objectField.fields}
+            value={currentValue as Record<string, unknown> | undefined}
+            onChange={(next) => update(next)}
+            renderField={renderField}
+            path={path}
+            dataCanopyField={normalizeCanopyPath(path)}
+          />
+        )
       }
-    },
-    [
-      customRenderers,
-      branch,
-      comments,
-      currentEntryPath,
-      currentUserId,
-      canResolve,
-      focusedFieldPath,
-      highlightThreadId,
-      onAddComment,
-      onResolveThread,
-    ],
-  )
+      case 'code':
+        return wrapWithComments(
+          <CodeField
+            key={fieldKey(path)}
+            id={fieldId}
+            label={label}
+            value={typeof currentValue === 'string' ? currentValue : ''}
+            onChange={(v) => update(v)}
+            dataCanopyField={normalizeCanopyPath(path)}
+          />,
+        )
+      default:
+        return (
+          <Text key={fieldKey(path)} size="xs" c="dimmed">
+            Unsupported field: {field.type}
+          </Text>
+        )
+    }
+  }
 
   return (
     <Stack gap="md" data-form-renderer>

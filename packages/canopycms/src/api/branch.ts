@@ -147,7 +147,11 @@ export const createBranchHandler = async (
     const canCreate = canCreateBranch(req.user, pathPermissions)
     if (!canCreate.allowed) {
       log.debug('api', 'Permission denied', { reason: canCreate.reason })
-      return { ok: false, status: 403, error: 'You do not have permission to create branches' }
+      return {
+        ok: false,
+        status: 403,
+        error: 'You do not have permission to create branches',
+      }
     }
 
     const manager = new BranchWorkspaceManager(ctx.services.config)
@@ -171,14 +175,22 @@ export const listBranchesHandler = async (
   req: ApiRequest,
 ): Promise<BranchListResponse> => {
   if (!ctx.services.registry) {
-    return { ok: false, status: 400, error: 'Branch operations not available in dev mode' }
+    return {
+      ok: false,
+      status: 400,
+      error: 'Branch operations not available in dev mode',
+    }
   }
 
   const allBranches = await ctx.services.registry.list()
 
   // Admins and Reviewers see all branches
   if (isPrivileged(req.user.groups)) {
-    return { ok: true, status: 200, data: { branches: allBranches.map((c) => c.branch) } }
+    return {
+      ok: true,
+      status: 200,
+      data: { branches: allBranches.map((c) => c.branch) },
+    }
   }
 
   // Regular users only see branches they created or have explicit access to
@@ -203,7 +215,11 @@ export const listBranchesHandler = async (
     return false
   })
 
-  return { ok: true, status: 200, data: { branches: visibleBranches.map((c) => c.branch) } }
+  return {
+    ok: true,
+    status: 200,
+    data: { branches: visibleBranches.map((c) => c.branch) },
+  }
 }
 
 /**
@@ -237,7 +253,11 @@ export const deleteBranchHandler = async (
   // Disallow delete in modes that don't support branching (branch = developer's git checkout)
   const operatingMode = ctx.services.config.mode
   if (!clientOperatingStrategy(operatingMode).supportsBranching()) {
-    return { ok: false, status: 400, error: 'Cannot delete branches in this operating mode' }
+    return {
+      ok: false,
+      status: 400,
+      error: 'Cannot delete branches in this operating mode',
+    }
   }
 
   // Get branch context
@@ -249,12 +269,20 @@ export const deleteBranchHandler = async (
   // Check permission
   const canDelete = canDeleteBranch(req.user, branchContext)
   if (!canDelete.allowed) {
-    return { ok: false, status: 403, error: 'You do not have permission to delete this branch' }
+    return {
+      ok: false,
+      status: 403,
+      error: 'You do not have permission to delete this branch',
+    }
   }
 
   // Block deletion if branch has open PR (submitted status)
   if (branchContext.branch.status === 'submitted') {
-    return { ok: false, status: 400, error: 'Cannot delete branch with open pull request' }
+    return {
+      ok: false,
+      status: 400,
+      error: 'Cannot delete branch with open pull request',
+    }
   }
 
   // Delete branch metadata file so it disappears from registry scans
@@ -284,7 +312,11 @@ export const deleteBranchHandler = async (
 
   // Invalidate registry cache so next list() will regenerate without this branch
   if (!ctx.services.registry) {
-    return { ok: false, status: 400, error: 'Branch operations not available in dev mode' }
+    return {
+      ok: false,
+      status: 400,
+      error: 'Branch operations not available in dev mode',
+    }
   }
   await ctx.services.registry.invalidate()
 
@@ -334,7 +366,11 @@ export const updateBranchAccessHandler = async (
   // Check permission
   const canModify = canModifyBranchAccess(req.user, branchContext)
   if (!canModify.allowed) {
-    return { ok: false, status: 403, error: 'You do not have permission to modify this branch' }
+    return {
+      ok: false,
+      status: 403,
+      error: 'You do not have permission to modify this branch',
+    }
   }
 
   // Build new access control

@@ -18,7 +18,10 @@ const meta: Meta<typeof EditorPanes> = {
 export default meta
 type Story = StoryObj<typeof EditorPanes>
 
-type HeroBlock = { template: 'hero'; value: { headline?: string; body?: string } }
+type HeroBlock = {
+  template: 'hero'
+  value: { headline?: string; body?: string }
+}
 type CtaBlock = { template: 'cta'; value: { title?: string; ctaText?: string } }
 type PostBlock = HeroBlock | CtaBlock
 
@@ -108,7 +111,10 @@ const initialPost: PostValue = {
   tags: ['typed', 'fast'],
   published: false,
   body: 'Some **MDX** content that mirrors another example.',
-  seo: { title: 'Hello World | CanopyCMS', description: 'Welcome to the demo story.' },
+  seo: {
+    title: 'Hello World | CanopyCMS',
+    description: 'Welcome to the demo story.',
+  },
   features: [
     { title: 'Fast', description: 'Built for speed' },
     { title: 'Typed', description: 'Type-safe content' },

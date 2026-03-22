@@ -48,7 +48,13 @@ describe('branch review api - requestChanges', () => {
     ctx.getBranchContext = vi.fn().mockResolvedValue(null)
     const res = await requestChangesHandler(
       ctx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
       { branch: 'missing' },
       {},
     )
@@ -75,7 +81,13 @@ describe('branch review api - requestChanges', () => {
     })
     const res = await requestChangesHandler(
       ctx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
       { branch: 'feature/x' },
       {},
     )
@@ -86,7 +98,13 @@ describe('branch review api - requestChanges', () => {
   it('requests changes when allowed (admin)', async () => {
     const res = await requestChangesHandler(
       makeCtx(),
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
       { branch: 'feature/x' },
       {},
     )
@@ -97,7 +115,13 @@ describe('branch review api - requestChanges', () => {
   it('requests changes when allowed (reviewer)', async () => {
     const res = await requestChangesHandler(
       makeCtx(),
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.REVIEWERS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.REVIEWERS],
+        },
+      },
       { branch: 'feature/x' },
       {},
     )
@@ -110,7 +134,13 @@ describe('branch review api - requestChanges', () => {
     const githubService = { convertToDraft }
     const res = await requestChangesHandler(
       makeCtx(githubService),
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
       { branch: 'feature/x' },
       {},
     )
@@ -124,7 +154,13 @@ describe('branch review api - requestChanges', () => {
     const githubService = { convertToDraft }
     const res = await requestChangesHandler(
       makeCtx(githubService),
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
       { branch: 'feature/x' },
       {},
     )
@@ -145,7 +181,13 @@ describe('branch review api - requestChanges', () => {
     })
     const res = await requestChangesHandler(
       ctx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
       { branch: 'feature/x' },
       {},
     )
@@ -156,7 +198,13 @@ describe('branch review api - requestChanges', () => {
   it('accepts optional comment parameter', async () => {
     const res = await requestChangesHandler(
       makeCtx(),
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
       { branch: 'feature/x' },
       { comment: 'Please fix the typo' },
     )
@@ -170,7 +218,13 @@ describe('branch review api - approveBranch', () => {
     ctx.getBranchContext = vi.fn().mockResolvedValue(null)
     const res = await approveBranchHandler(
       ctx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
       { branch: 'missing' },
     )
     expect(res.status).toBe(404)
@@ -195,7 +249,13 @@ describe('branch review api - approveBranch', () => {
     })
     const res = await approveBranchHandler(
       ctx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
       { branch: 'feature/x' },
     )
     expect(res.status).toBe(400)
@@ -205,7 +265,13 @@ describe('branch review api - approveBranch', () => {
   it('approves branch when allowed (admin)', async () => {
     const res = await approveBranchHandler(
       makeCtx(),
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.ADMINS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      },
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)
@@ -215,7 +281,13 @@ describe('branch review api - approveBranch', () => {
   it('approves branch when allowed (reviewer)', async () => {
     const res = await approveBranchHandler(
       makeCtx(),
-      { user: { type: 'authenticated', userId: 'u1', groups: [RESERVED_GROUPS.REVIEWERS] } },
+      {
+        user: {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [RESERVED_GROUPS.REVIEWERS],
+        },
+      },
       { branch: 'feature/x' },
     )
     expect(res.ok).toBe(true)

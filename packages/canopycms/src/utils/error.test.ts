@@ -61,7 +61,9 @@ describe('error utilities', () => {
     })
 
     it('returns false for other error codes', () => {
-      const err = Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+      const err = Object.assign(new Error('Permission denied'), {
+        code: 'EACCES',
+      })
       expect(isNotFoundError(err)).toBe(false)
     })
 
@@ -72,7 +74,9 @@ describe('error utilities', () => {
 
   describe('isPermissionError', () => {
     it('returns true for EACCES errors', () => {
-      const err = Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+      const err = Object.assign(new Error('Permission denied'), {
+        code: 'EACCES',
+      })
       expect(isPermissionError(err)).toBe(true)
     })
 

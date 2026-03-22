@@ -30,7 +30,10 @@ export interface EnsureSettingsWorkspaceOptions {
  * Returns true if lock was acquired, false if another process holds it.
  */
 async function acquireFileLock(lockPath: string): Promise<boolean> {
-  const lockContent = JSON.stringify({ pid: process.pid, timestamp: new Date().toISOString() })
+  const lockContent = JSON.stringify({
+    pid: process.pid,
+    timestamp: new Date().toISOString(),
+  })
 
   await fs.mkdir(path.dirname(lockPath), { recursive: true })
 

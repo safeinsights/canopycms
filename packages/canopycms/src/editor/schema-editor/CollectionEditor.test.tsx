@@ -146,8 +146,19 @@ describe('CollectionEditor', () => {
       label: 'Blog Posts',
       logicalPath: unsafeAsLogicalPath('posts'),
       entries: [
-        { name: 'post', label: 'Post', format: 'mdx', schema: 'postSchema', default: true },
-        { name: 'featured', label: 'Featured', format: 'json', schema: 'postSchema' },
+        {
+          name: 'post',
+          label: 'Post',
+          format: 'mdx',
+          schema: 'postSchema',
+          default: true,
+        },
+        {
+          name: 'featured',
+          label: 'Featured',
+          format: 'json',
+          schema: 'postSchema',
+        },
       ],
     }
 
@@ -172,7 +183,9 @@ describe('CollectionEditor', () => {
 
     it('only includes changed fields in update', async () => {
       const user = userEvent.setup()
-      const { props } = renderCollectionEditor({ editingCollection: existingCollection })
+      const { props } = renderCollectionEditor({
+        editingCollection: existingCollection,
+      })
 
       // Change only the label
       const labelInput = screen.getByLabelText(/^Label/)
@@ -216,7 +229,9 @@ describe('CollectionEditor', () => {
     it('shows saving state', () => {
       renderCollectionEditor({ isSaving: true })
 
-      const saveButton = screen.getByRole('button', { name: /Create Collection/i })
+      const saveButton = screen.getByRole('button', {
+        name: /Create Collection/i,
+      })
       expect(saveButton.getAttribute('data-loading')).toBe('true')
     })
   })

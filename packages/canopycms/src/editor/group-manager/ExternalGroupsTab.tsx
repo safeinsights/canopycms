@@ -31,7 +31,13 @@ export const ExternalGroupsTab: React.FC<ExternalGroupsTabProps> = ({
   // Read-only view (when !canEdit)
   if (!canEdit) {
     return (
-      <div style={{ flex: 1, overflow: 'auto', paddingTop: 'var(--mantine-spacing-md)' }}>
+      <div
+        style={{
+          flex: 1,
+          overflow: 'auto',
+          paddingTop: 'var(--mantine-spacing-md)',
+        }}
+      >
         <Text size="sm" c="dimmed" mb="md">
           External groups are read-only
         </Text>

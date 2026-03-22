@@ -24,7 +24,10 @@ export interface ListCommentsResponse {
 export type CommentsResponse = ApiResponse<ListCommentsResponse>
 
 /** Response type for adding a comment */
-export type AddCommentResponse = ApiResponse<{ threadId: string; commentId: string }>
+export type AddCommentResponse = ApiResponse<{
+  threadId: string
+  commentId: string
+}>
 
 /** Response type for resolving a comment */
 export type ResolveCommentResponse = ApiResponse<{ resolved: boolean }>
@@ -77,11 +80,19 @@ const addCommentHandler = async (
 
   // Validate required fields based on type
   if (body.type === 'field' && !body.canopyPath) {
-    return { ok: false, status: 400, error: 'canopyPath required for field comments' }
+    return {
+      ok: false,
+      status: 400,
+      error: 'canopyPath required for field comments',
+    }
   }
 
   if ((body.type === 'field' || body.type === 'entry') && !body.entryPath) {
-    return { ok: false, status: 400, error: 'entryPath required for field/entry comments' }
+    return {
+      ok: false,
+      status: 400,
+      error: 'entryPath required for field/entry comments',
+    }
   }
 
   const commentStore = new CommentStore(context.branchRoot)

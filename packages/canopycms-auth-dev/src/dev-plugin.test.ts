@@ -4,9 +4,7 @@ import type { DevUser, DevGroup } from './dev-plugin'
 import type { AuthenticationResult } from 'canopycms/auth'
 
 // Type guard to assert successful authentication
-function assertSuccess(
-  result: AuthenticationResult,
-): asserts result is AuthenticationResult & {
+function assertSuccess(result: AuthenticationResult): asserts result is AuthenticationResult & {
   success: true
   user: NonNullable<AuthenticationResult['user']>
 } {

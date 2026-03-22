@@ -11,7 +11,6 @@ import {
 } from './authorization'
 import { GitManager } from './git-manager'
 import { BranchRegistry } from './branch-registry'
-import { BranchWorkspaceManager } from './branch-workspace'
 import { SettingsWorkspaceManager } from './settings-workspace'
 import { getDefaultBranchBase } from './paths'
 import { createGitHubService, type GitHubService } from './github-service'
@@ -254,9 +253,9 @@ async function _createCanopyServicesInternal(
       // Note: BranchWorkspaceManager already ensured we're on the settings branch
       try {
         await git.pullCurrentBranch()
-      } catch (err) {
+      } catch {
         // First push, no remote branch yet, or no changes to pull
-        console.log('No remote settings branch changes to pull (this is normal for first commit)')
+        console.info('No remote settings branch changes to pull (this is normal for first commit)')
       }
 
       // Commit

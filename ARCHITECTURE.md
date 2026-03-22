@@ -997,7 +997,10 @@ Then in pages and API routes:
 ```typescript
 // In a page/component
 const canopy = await getCanopy()
-const { data } = await canopy.read({ entryPath: 'content/posts', slug: params.slug })
+const { data } = await canopy.read({
+  entryPath: 'content/posts',
+  slug: params.slug,
+})
 ```
 
 No manual user management, no config imports, no auth logic. The context handles everything.

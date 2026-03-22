@@ -72,7 +72,11 @@ const batchGetUserMetadataHandler = async (
 ): Promise<BatchGetUserMetadataResponse> => {
   // Require admin or reviewer for user metadata
   if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
-    return { ok: false, status: 403, error: 'Admin or Reviewer access required' }
+    return {
+      ok: false,
+      status: 403,
+      error: 'Admin or Reviewer access required',
+    }
   }
 
   const authPlugin = ctx.authPlugin
@@ -213,7 +217,11 @@ export function useBatchUserMetadata(
       try {
         const fetchedUsers = await batchGetUserMetadata(userIdsToFetch)
         if (!cancelled) {
-          setUserMetadataMap({ ...cachedUsers, ...fetchedUsers, ...anonymousUsers })
+          setUserMetadataMap({
+            ...cachedUsers,
+            ...fetchedUsers,
+            ...anonymousUsers,
+          })
           setError(null)
         }
       } catch (err) {
@@ -261,7 +269,9 @@ export interface UseGroupManagerReturn {
 // Implementation
 const handleBatchGetUserMetadata = async (userIds: string[]) => {
   try {
-    const result = await getApiClient().permissions.batchGetUserMetadata({ userIds })
+    const result = await getApiClient().permissions.batchGetUserMetadata({
+      userIds,
+    })
     if (!result.ok) return {}
     return result.data?.users ?? {}
   } catch (err) {
@@ -594,7 +604,11 @@ Instead of fetching user metadata separately, embed it directly in API responses
     {
       "id": "1",
       "userId": "alice",
-      "user": { "id": "alice", "name": "Alice Smith", "email": "alice@example.com" },
+      "user": {
+        "id": "alice",
+        "name": "Alice Smith",
+        "email": "alice@example.com"
+      },
       "text": "Great work!"
     },
     {

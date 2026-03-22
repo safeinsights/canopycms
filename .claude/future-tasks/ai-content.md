@@ -207,7 +207,13 @@ For JSON entries, schema-driven conversion:
       "path": "datasets",
       "allFile": "datasets/all.md",
       "entryCount": 15,
-      "entries": [{ "slug": "overview", "title": "Overview", "file": "datasets/overview.md" }],
+      "entries": [
+        {
+          "slug": "overview",
+          "title": "Overview",
+          "file": "datasets/overview.md"
+        }
+      ],
       "subcollections": [
         {
           "name": "openstax",

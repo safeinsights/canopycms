@@ -60,7 +60,10 @@ export class EditorPage {
   async openEntryNavigator(): Promise<void> {
     await this.fileDropdownButton.click()
     await this.allFilesMenuItem.click()
-    await this.entryNavigator.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await this.entryNavigator.waitFor({
+      state: 'visible',
+      timeout: STANDARD_TIMEOUT,
+    })
   }
 
   /**
@@ -77,7 +80,9 @@ export class EditorPage {
     await entry.click()
 
     // Wait for the file dropdown to show the selected entry name (condition-based, no blind wait)
-    await expect(this.fileDropdownButton).toContainText(label, { timeout: STANDARD_TIMEOUT })
+    await expect(this.fileDropdownButton).toContainText(label, {
+      timeout: STANDARD_TIMEOUT,
+    })
   }
 
   /**

@@ -80,7 +80,7 @@ describe('SchemaOps', () => {
 
     it('should create nested collection under parent', async () => {
       // First create parent
-      const parentResult = await store.createCollection({
+      await store.createCollection({
         name: 'docs',
         entries: [{ name: 'doc', format: 'mdx', schema: 'pageSchema' }],
       })
@@ -183,7 +183,9 @@ describe('SchemaOps', () => {
 
     it('should throw for non-existent collection', async () => {
       await expect(
-        store.updateCollection(unsafeAsLogicalPath('nonexistent'), { label: 'Test' }),
+        store.updateCollection(unsafeAsLogicalPath('nonexistent'), {
+          label: 'Test',
+        }),
       ).rejects.toThrow('Collection not found')
     })
 
@@ -194,7 +196,9 @@ describe('SchemaOps', () => {
       })
 
       // Rename slug from "posts" to "blog"
-      await store.updateCollection(unsafeAsLogicalPath('posts'), { slug: 'blog' })
+      await store.updateCollection(unsafeAsLogicalPath('posts'), {
+        slug: 'blog',
+      })
 
       // Verify old directory no longer exists
       const oldDirName = `posts.${result.contentId}`
@@ -217,7 +221,10 @@ describe('SchemaOps', () => {
       })
 
       // Update both name (metadata) and slug (directory)
-      await store.updateCollection(unsafeAsLogicalPath('posts'), { name: 'articles', slug: 'blog' })
+      await store.updateCollection(unsafeAsLogicalPath('posts'), {
+        name: 'articles',
+        slug: 'blog',
+      })
 
       // Verify directory was renamed
       const newDirName = `blog.${result.contentId}`
@@ -242,7 +249,9 @@ describe('SchemaOps', () => {
 
       // Try to rename posts to use articles' slug
       await expect(
-        store.updateCollection(unsafeAsLogicalPath('posts'), { slug: 'articles' }),
+        store.updateCollection(unsafeAsLogicalPath('posts'), {
+          slug: 'articles',
+        }),
       ).rejects.toThrow('already exists')
     })
 
@@ -254,12 +263,16 @@ describe('SchemaOps', () => {
 
       // Invalid slug (uppercase)
       await expect(
-        store.updateCollection(unsafeAsLogicalPath('posts'), { slug: 'Blog-Posts' }),
+        store.updateCollection(unsafeAsLogicalPath('posts'), {
+          slug: 'Blog-Posts',
+        }),
       ).rejects.toThrow('must start with a letter')
 
       // Invalid slug (starts with number)
       await expect(
-        store.updateCollection(unsafeAsLogicalPath('posts'), { slug: '2024-posts' }),
+        store.updateCollection(unsafeAsLogicalPath('posts'), {
+          slug: '2024-posts',
+        }),
       ).rejects.toThrow('must start with a letter')
     })
 
@@ -270,7 +283,9 @@ describe('SchemaOps', () => {
       })
 
       // Update with same slug - should not error or rename
-      await store.updateCollection(unsafeAsLogicalPath('posts'), { slug: 'posts' })
+      await store.updateCollection(unsafeAsLogicalPath('posts'), {
+        slug: 'posts',
+      })
 
       // Verify directory still exists with same name
       const dirName = `posts.${result.contentId}`

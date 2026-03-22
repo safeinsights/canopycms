@@ -212,7 +212,7 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
     breadcrumbSegments,
     editedFiles,
     modifiedCount,
-    unresolvedCommentCount,
+    unresolvedCommentCount: _,
     comments,
     onNavigatorOpen,
     onFileReload,

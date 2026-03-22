@@ -173,7 +173,10 @@ export async function workerRunOnce(options: { projectDir: string }): Promise<vo
     if (clerkSecretKey) {
       const { refreshClerkCache } = await import('canopycms-auth-clerk/cache-writer')
       refreshAuthCache = async () => {
-        const result = await refreshClerkCache({ secretKey: clerkSecretKey, cachePath })
+        const result = await refreshClerkCache({
+          secretKey: clerkSecretKey,
+          cachePath,
+        })
         console.log(`  ${result.userCount} users, ${result.groupCount} groups`)
       }
     }

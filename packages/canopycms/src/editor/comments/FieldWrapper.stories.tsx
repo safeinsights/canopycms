@@ -103,7 +103,13 @@ export const WithUnresolvedComments: Story = {
       canopyPath?: string,
       threadId?: string,
     ) => {
-      console.log('Add comment:', { text, type, entryPath, canopyPath, threadId })
+      console.log('Add comment:', {
+        text,
+        type,
+        entryPath,
+        canopyPath,
+        threadId,
+      })
       await new Promise((resolve) => setTimeout(resolve, 500))
     },
     onResolveThread: async (threadId: string) => {
@@ -129,7 +135,13 @@ export const WithResolvedComments: Story = {
       canopyPath?: string,
       threadId?: string,
     ) => {
-      console.log('Add comment:', { text, type, entryPath, canopyPath, threadId })
+      console.log('Add comment:', {
+        text,
+        type,
+        entryPath,
+        canopyPath,
+        threadId,
+      })
     },
     onResolveThread: async (threadId: string) => {
       console.log('Resolve thread:', threadId)
@@ -153,7 +165,13 @@ export const NoComments: Story = {
       canopyPath?: string,
       threadId?: string,
     ) => {
-      console.log('Add comment:', { text, type, entryPath, canopyPath, threadId })
+      console.log('Add comment:', {
+        text,
+        type,
+        entryPath,
+        canopyPath,
+        threadId,
+      })
     },
     onResolveThread: async (threadId: string) => {
       console.log('Resolve thread:', threadId)
@@ -177,7 +195,13 @@ export const AutoFocused: Story = {
       canopyPath?: string,
       threadId?: string,
     ) => {
-      console.log('Add comment:', { text, type, entryPath, canopyPath, threadId })
+      console.log('Add comment:', {
+        text,
+        type,
+        entryPath,
+        canopyPath,
+        threadId,
+      })
     },
     onResolveThread: async (threadId: string) => {
       console.log('Resolve thread:', threadId)

@@ -402,7 +402,11 @@ describe('createContentReader', () => {
       getBranchContext: async () => branchContext,
     })
 
-    const result = await reader.read<{ title: string; tags: string[]; body: string }>({
+    const result = await reader.read<{
+      title: string
+      tags: string[]
+      body: string
+    }>({
       entryPath: unsafeAsLogicalPath('content/posts'),
       slug: unsafeAsEntrySlug('hello'),
       user: ANONYMOUS_USER,

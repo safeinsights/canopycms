@@ -41,7 +41,7 @@ export async function resolveChangedReferences(
   currentValue: FormValue,
   schema: EntrySchema,
   branch: string,
-  cache: Map<string, any>,
+  cache: Map<string, unknown>,
 ): Promise<Partial<FormValue>> {
   const changedFields = findChangedFields(prevValue, currentValue, schema)
   const updates: Partial<FormValue> = {}
@@ -77,8 +77,8 @@ export async function resolveChangedReferences(
 async function resolveReferenceId(
   id: unknown,
   branch: string,
-  cache: Map<string, any>,
-): Promise<any> {
+  cache: Map<string, unknown>,
+): Promise<unknown> {
   // Only resolve string IDs
   if (typeof id !== 'string') {
     return id

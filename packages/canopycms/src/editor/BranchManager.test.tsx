@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { BranchManager, getBranchPermissions } from './BranchManager'
-import type { BranchSummary, UserContext } from './BranchManager'
+import type { BranchSummary } from './BranchManager'
 import { CanopyCMSProvider } from './theme'
 import { RESERVED_GROUPS } from '../authorization'
 
@@ -56,7 +56,11 @@ const renderBranchManager = (props: React.ComponentProps<typeof BranchManager>) 
 
 describe('getBranchPermissions', () => {
   it('returns all false when no user provided', () => {
-    const branch: BranchSummary = { name: 'main', status: 'editing', createdBy: 'user1' }
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'editing',
+      createdBy: 'user1',
+    }
     const perms = getBranchPermissions(branch, undefined)
     expect(perms.canSubmit).toBe(false)
     expect(perms.canWithdraw).toBe(false)
@@ -65,19 +69,31 @@ describe('getBranchPermissions', () => {
   })
 
   it('allows creator to submit editing branch', () => {
-    const branch: BranchSummary = { name: 'main', status: 'editing', createdBy: 'user1' }
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'editing',
+      createdBy: 'user1',
+    }
     const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
     expect(perms.canSubmit).toBe(true)
   })
 
   it('allows creator to withdraw submitted branch', () => {
-    const branch: BranchSummary = { name: 'main', status: 'submitted', createdBy: 'user1' }
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'submitted',
+      createdBy: 'user1',
+    }
     const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
     expect(perms.canWithdraw).toBe(true)
   })
 
   it('allows admin to delete any branch', () => {
-    const branch: BranchSummary = { name: 'main', status: 'editing', createdBy: 'other' }
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'editing',
+      createdBy: 'other',
+    }
     const perms = getBranchPermissions(branch, {
       userId: 'admin',
       groups: [RESERVED_GROUPS.ADMINS],
@@ -86,13 +102,21 @@ describe('getBranchPermissions', () => {
   })
 
   it('blocks delete for submitted branches', () => {
-    const branch: BranchSummary = { name: 'main', status: 'submitted', createdBy: 'user1' }
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'submitted',
+      createdBy: 'user1',
+    }
     const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
     expect(perms.canDelete).toBe(false)
   })
 
   it('allows reviewer to request changes on submitted branch', () => {
-    const branch: BranchSummary = { name: 'main', status: 'submitted', createdBy: 'other' }
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'submitted',
+      createdBy: 'other',
+    }
     const perms = getBranchPermissions(branch, {
       userId: 'reviewer',
       groups: [RESERVED_GROUPS.REVIEWERS],
@@ -151,7 +175,12 @@ describe('BranchManager', () => {
   it('calls onSubmit when Submit button clicked', async () => {
     const onSubmit = vi.fn()
     // Use creator user so they can submit their own branch
-    renderBranchManager({ branches: baseBranches, onSubmit, user: creatorUser, mode: 'prod' })
+    renderBranchManager({
+      branches: baseBranches,
+      onSubmit,
+      user: creatorUser,
+      mode: 'prod',
+    })
 
     const submitButton = screen.getByRole('button', { name: /submit/i })
     await userEvent.click(submitButton)
@@ -162,7 +191,12 @@ describe('BranchManager', () => {
   it('calls onWithdraw when Withdraw button clicked', async () => {
     const onWithdraw = vi.fn()
     // Use creator user so they can withdraw their own branch
-    renderBranchManager({ branches: baseBranches, onWithdraw, user: creatorUser, mode: 'prod' })
+    renderBranchManager({
+      branches: baseBranches,
+      onWithdraw,
+      user: creatorUser,
+      mode: 'prod',
+    })
 
     const withdrawButton = screen.getByRole('button', { name: /withdraw/i })
     await userEvent.click(withdrawButton)
@@ -173,7 +207,9 @@ describe('BranchManager', () => {
   it('shows create branch form when Create button clicked', async () => {
     renderBranchManager({ branches: baseBranches, mode: 'prod' })
 
-    const createButton = screen.getByRole('button', { name: /create new branch/i })
+    const createButton = screen.getByRole('button', {
+      name: /create new branch/i,
+    })
     await userEvent.click(createButton)
 
     await waitFor(() => {
@@ -186,7 +222,9 @@ describe('BranchManager', () => {
     renderBranchManager({ branches: baseBranches, onCreate, mode: 'prod' })
 
     // Open form
-    const createButton = screen.getByRole('button', { name: /create new branch/i })
+    const createButton = screen.getByRole('button', {
+      name: /create new branch/i,
+    })
     await userEvent.click(createButton)
 
     // Fill form
@@ -199,7 +237,9 @@ describe('BranchManager', () => {
     await userEvent.type(descriptionInput, 'A great new feature')
 
     // Submit form
-    const submitButton = screen.getByRole('button', { name: /^create branch$/i })
+    const submitButton = screen.getByRole('button', {
+      name: /^create branch$/i,
+    })
     await userEvent.click(submitButton)
 
     expect(onCreate).toHaveBeenCalledWith({
@@ -210,14 +250,22 @@ describe('BranchManager', () => {
   })
 
   it('disables create button when name is empty', async () => {
-    renderBranchManager({ branches: baseBranches, onCreate: vi.fn(), mode: 'prod' })
+    renderBranchManager({
+      branches: baseBranches,
+      onCreate: vi.fn(),
+      mode: 'prod',
+    })
 
     // Open form
-    const createButton = screen.getByRole('button', { name: /create new branch/i })
+    const createButton = screen.getByRole('button', {
+      name: /create new branch/i,
+    })
     await userEvent.click(createButton)
 
     // Submit button should be disabled with no name
-    const submitButton = await screen.findByRole('button', { name: /^create branch$/i })
+    const submitButton = await screen.findByRole('button', {
+      name: /^create branch$/i,
+    })
     expect(submitButton.hasAttribute('disabled')).toBe(true)
 
     // Type name
@@ -233,16 +281,25 @@ describe('BranchManager', () => {
   it('hides create form in dev mode', () => {
     renderBranchManager({ branches: baseBranches, mode: 'dev' })
 
-    const createButton = screen.queryByRole('button', { name: /create new branch/i })
+    const createButton = screen.queryByRole('button', {
+      name: /create new branch/i,
+    })
     expect(createButton).toBeNull()
   })
 
   it('calls onRequestChanges when button clicked', async () => {
     const onRequestChanges = vi.fn()
     // Use admin user who can request changes on submitted branches
-    renderBranchManager({ branches: baseBranches, onRequestChanges, user: adminUser, mode: 'prod' })
+    renderBranchManager({
+      branches: baseBranches,
+      onRequestChanges,
+      user: adminUser,
+      mode: 'prod',
+    })
 
-    const requestChangesButtons = screen.getAllByRole('button', { name: /request changes/i })
+    const requestChangesButtons = screen.getAllByRole('button', {
+      name: /request changes/i,
+    })
     // The second branch (feature/test) is submitted, so its button should be at index 1
     await userEvent.click(requestChangesButtons[1])
 
@@ -252,7 +309,12 @@ describe('BranchManager', () => {
   it('calls onDelete when delete button clicked', async () => {
     const onDelete = vi.fn()
     // Use creator user so they can delete their own branch (main is editing, not submitted)
-    renderBranchManager({ branches: baseBranches, onDelete, user: creatorUser, mode: 'prod' })
+    renderBranchManager({
+      branches: baseBranches,
+      onDelete,
+      user: creatorUser,
+      mode: 'prod',
+    })
 
     const deleteButtons = screen.getAllByRole('button', { name: /delete/i })
     await userEvent.click(deleteButtons[0])

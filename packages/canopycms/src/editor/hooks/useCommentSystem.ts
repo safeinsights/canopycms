@@ -57,7 +57,10 @@ export interface UseCommentSystemReturn {
   setCommentsPanelOpen: (open: boolean) => void
   commentThreadPanelOpen: boolean
   setCommentThreadPanelOpen: (open: boolean) => void
-  activeCommentContext: { type: 'field' | 'entry' | 'branch'; canopyPath?: string } | null
+  activeCommentContext: {
+    type: 'field' | 'entry' | 'branch'
+    canopyPath?: string
+  } | null
   setActiveCommentContext: (
     context: { type: 'field' | 'entry' | 'branch'; canopyPath?: string } | null,
   ) => void
@@ -156,7 +159,7 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
       await loadComments(options.branchName)
       // Branch summaries auto-update via useMemo watching comments
       notifications.show({ message: 'Comment added', color: 'green' })
-    } catch (err) {
+    } catch {
       notifications.show({ message: 'Failed to add comment', color: 'red' })
     }
   }
@@ -164,12 +167,15 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   const handleResolveThread = async (threadId: string) => {
     if (!options.branchName) return
     try {
-      const result = await apiClient.comments.resolve({ branch: options.branchName, threadId })
+      const result = await apiClient.comments.resolve({
+        branch: options.branchName,
+        threadId,
+      })
       if (!result.ok) throw new Error('Failed to resolve thread')
       await loadComments(options.branchName)
       // Branch summaries auto-update via useMemo watching comments
       notifications.show({ message: 'Thread resolved', color: 'green' })
-    } catch (err) {
+    } catch {
       notifications.show({ message: 'Failed to resolve thread', color: 'red' })
     }
   }
@@ -220,7 +226,11 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // Listen for field focus messages from preview frame
   useEffect(() => {
     const handleFocus = (event: MessageEvent) => {
-      const msg = event.data as { type?: string; entryPath?: string; fieldPath?: string }
+      const msg = event.data as {
+        type?: string
+        entryPath?: string
+        fieldPath?: string
+      }
       if (msg?.type !== 'canopycms:preview:focus') return
       if (
         msg.entryPath &&

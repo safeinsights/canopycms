@@ -196,11 +196,16 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         async () => {
           options.setBusy(true)
           try {
-            const result = await apiClient.workflow.submit({ branch: branchNameToSubmit })
+            const result = await apiClient.workflow.submit({
+              branch: branchNameToSubmit,
+            })
             if (!result.ok) {
               throw new Error(result.error || 'Failed to submit branch')
             }
-            notifications.show({ message: 'Branch submitted for review', color: 'green' })
+            notifications.show({
+              message: 'Branch submitted for review',
+              color: 'green',
+            })
             await loadBranches()
             resolve()
           } catch (err) {
@@ -223,7 +228,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         async () => {
           options.setBusy(true)
           try {
-            const result = await apiClient.workflow.withdraw({ branch: branchNameToWithdraw })
+            const result = await apiClient.workflow.withdraw({
+              branch: branchNameToWithdraw,
+            })
             if (!result.ok) {
               throw new Error(result.error || 'Failed to withdraw branch')
             }
@@ -263,7 +270,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const handleDelete = async (branchNameToDelete: string) => {
     options.setBusy(true)
     try {
-      const result = await apiClient.branches.delete({ branch: branchNameToDelete })
+      const result = await apiClient.branches.delete({
+        branch: branchNameToDelete,
+      })
       if (!result.ok) {
         throw new Error(result.error || 'Failed to delete branch')
       }

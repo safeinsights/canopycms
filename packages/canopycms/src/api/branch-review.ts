@@ -23,7 +23,7 @@ const requestChangesHandler = async (
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof branchParamSchema>,
-  body?: z.infer<typeof requestChangesBodySchema>,
+  _body?: z.infer<typeof requestChangesBodySchema>,
 ): Promise<BranchResponse> => {
   const accessResult = await guardBranchExists(ctx, params.branch)
   if (isBranchAccessError(accessResult)) return accessResult

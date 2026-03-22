@@ -4,7 +4,10 @@ import { useMemo, useState } from 'react'
 import type { FieldConfig } from '../config'
 import { FormRenderer } from './FormRenderer'
 
-type HeroBlock = { template: 'hero'; value: { headline?: string; body?: string } }
+type HeroBlock = {
+  template: 'hero'
+  value: { headline?: string; body?: string }
+}
 type CtaBlock = { template: 'cta'; value: { title?: string; ctaText?: string } }
 type PostBlock = HeroBlock | CtaBlock
 
@@ -184,8 +187,14 @@ export const Default: Story = {
         { title: 'Typed', description: 'Type-safe content' },
       ],
       blocks: [
-        { template: 'hero', value: { headline: 'Hero block', body: 'Hero copy' } },
-        { template: 'cta', value: { title: 'Try CanopyCMS', ctaText: 'Click me' } },
+        {
+          template: 'hero',
+          value: { headline: 'Hero block', body: 'Hero copy' },
+        },
+        {
+          template: 'cta',
+          value: { title: 'Try CanopyCMS', ctaText: 'Click me' },
+        },
       ],
     })
 

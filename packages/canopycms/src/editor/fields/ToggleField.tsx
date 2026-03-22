@@ -19,7 +19,8 @@ export const ToggleField: React.FC<ToggleFieldProps> = ({
   dataCanopyField,
   testId,
 }) => {
-  const inputId = id ?? useId()
+  const generatedId = useId()
+  const inputId = id ?? generatedId
   return (
     <Switch
       id={inputId}

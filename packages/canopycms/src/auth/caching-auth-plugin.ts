@@ -59,9 +59,11 @@ export class CachingAuthPlugin implements AuthPlugin {
           externalGroups,
         },
       }
-    } catch (err) {
+    } catch {
       // Cache error — still return authenticated with minimal info
-      log.debug('auth', 'Cache lookup failed, returning minimal user', { userId: identity.userId })
+      log.debug('auth', 'Cache lookup failed, returning minimal user', {
+        userId: identity.userId,
+      })
       return {
         success: true,
         user: {

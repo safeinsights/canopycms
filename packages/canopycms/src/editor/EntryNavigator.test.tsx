@@ -69,7 +69,10 @@ describe('EntryNavigator', () => {
       renderEntryNavigator({
         items: [
           { path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' },
-          { path: unsafeAsLogicalPath('posts/goodbye'), label: 'Goodbye World' },
+          {
+            path: unsafeAsLogicalPath('posts/goodbye'),
+            label: 'Goodbye World',
+          },
         ],
       })
 
@@ -318,7 +321,11 @@ describe('EntryNavigator', () => {
     it('shows status badge on entries with status', () => {
       renderEntryNavigator({
         items: [
-          { path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World', status: 'draft' },
+          {
+            path: unsafeAsLogicalPath('posts/hello'),
+            label: 'Hello World',
+            status: 'draft',
+          },
         ],
       })
 

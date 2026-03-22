@@ -144,12 +144,18 @@ describe('permissions loader', () => {
 
     it('overwrites existing file', async () => {
       const firstPermissions = [
-        { path: unsafeAsPermissionPath('content/first/**'), edit: { allowedUsers: ['user-1'] } },
+        {
+          path: unsafeAsPermissionPath('content/first/**'),
+          edit: { allowedUsers: ['user-1'] },
+        },
       ]
       await savePathPermissions(testRoot, firstPermissions, 'admin-1', 'prod')
 
       const secondPermissions = [
-        { path: unsafeAsPermissionPath('content/second/**'), edit: { allowedUsers: ['user-2'] } },
+        {
+          path: unsafeAsPermissionPath('content/second/**'),
+          edit: { allowedUsers: ['user-2'] },
+        },
       ]
       await savePathPermissions(testRoot, secondPermissions, 'admin-2', 'prod')
 
@@ -175,7 +181,10 @@ describe('permissions loader', () => {
 
     it('does nothing if file already exists', async () => {
       const existingPermissions = [
-        { path: unsafeAsPermissionPath('content/**'), edit: { allowedUsers: ['existing'] } },
+        {
+          path: unsafeAsPermissionPath('content/**'),
+          edit: { allowedUsers: ['existing'] },
+        },
       ]
       await savePathPermissions(testRoot, existingPermissions, 'original-admin', 'prod')
 

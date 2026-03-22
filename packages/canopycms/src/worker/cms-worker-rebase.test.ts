@@ -143,7 +143,13 @@ async function createBranchSetup(
     await branchGit.commit(message)
   }
 
-  return { branchPath, contentBranchesPath, branchGit, pushToRemote, commitToBranch }
+  return {
+    branchPath,
+    contentBranchesPath,
+    branchGit,
+    pushToRemote,
+    commitToBranch,
+  }
 }
 
 // ---------------------------------------------------------------------------

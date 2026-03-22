@@ -35,7 +35,8 @@ export const SelectField: React.FC<SelectFieldProps> = ({
     : typeof value === 'string'
       ? value
       : ''
-  const inputId = id ?? useId()
+  const generatedId = useId()
+  const inputId = id ?? generatedId
 
   return (
     <Stack gap={4} data-canopy-field={dataCanopyField}>

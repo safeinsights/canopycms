@@ -68,7 +68,10 @@ export const validateAdminGroupUpdate = (
   }
 
   if (totalAdmins === 0) {
-    return { valid: false, error: 'Cannot remove last admin - at least one admin is required' }
+    return {
+      valid: false,
+      error: 'Cannot remove last admin - at least one admin is required',
+    }
   }
 
   return { valid: true }
@@ -85,7 +88,10 @@ export const validateReservedGroups = (
     if (isReservedGroup(group.id)) {
       // Reserved group exists - make sure the name matches the ID
       if (group.name !== group.id) {
-        return { valid: false, error: `Reserved group '${group.id}' cannot be renamed` }
+        return {
+          valid: false,
+          error: `Reserved group '${group.id}' cannot be renamed`,
+        }
       }
     }
   }
@@ -205,7 +211,11 @@ const updateInternalGroupsHandler = async (
     const idSet = new Set<string>()
     for (const group of processedGroups) {
       if (idSet.has(group.id)) {
-        return { ok: false, status: 400, error: `Duplicate group ID detected: ${group.id}` }
+        return {
+          ok: false,
+          status: 400,
+          error: `Duplicate group ID detected: ${group.id}`,
+        }
       }
       idSet.add(group.id)
     }
@@ -215,7 +225,11 @@ const updateInternalGroupsHandler = async (
     for (const group of processedGroups) {
       const normalizedName = group.name.toLowerCase().trim()
       if (nameSet.has(normalizedName)) {
-        return { ok: false, status: 400, error: `Duplicate group name detected: ${group.name}` }
+        return {
+          ok: false,
+          status: 400,
+          error: `Duplicate group name detected: ${group.name}`,
+        }
       }
       nameSet.add(normalizedName)
     }
@@ -290,7 +304,11 @@ const searchExternalGroupsHandler = async (
 
   const authPlugin = ctx.authPlugin
   if (!authPlugin || !authPlugin.searchExternalGroups) {
-    return { ok: false, status: 501, error: 'External group search not configured' }
+    return {
+      ok: false,
+      status: 501,
+      error: 'External group search not configured',
+    }
   }
 
   try {

@@ -39,7 +39,7 @@ export async function loadPermissionsFile(
     return validated
   } catch (error) {
     // File doesn't exist
-    if ((error as any).code === 'ENOENT') {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       return null
     }
 

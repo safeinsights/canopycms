@@ -226,7 +226,13 @@ describe('Worker integration: task queue + auth cache', () => {
       await fs.writeFile(
         path.join(cachePath, 'users.json'),
         JSON.stringify({
-          users: [{ id: 'devuser_2nK8mP4xL9', name: 'User One', email: 'user1@localhost.dev' }],
+          users: [
+            {
+              id: 'devuser_2nK8mP4xL9',
+              name: 'User One',
+              email: 'user1@localhost.dev',
+            },
+          ],
         }),
       )
       await fs.writeFile(
@@ -243,7 +249,9 @@ describe('Worker integration: task queue + auth cache', () => {
       )
 
       // 2. Lambda authenticates user via CachingAuthPlugin
-      const devVerifier: TokenVerifier = async () => ({ userId: 'devuser_2nK8mP4xL9' })
+      const devVerifier: TokenVerifier = async () => ({
+        userId: 'devuser_2nK8mP4xL9',
+      })
       const plugin = new CachingAuthPlugin(devVerifier, new FileBasedAuthCache(cachePath))
       const auth = await plugin.authenticate({})
       expect(auth.success).toBe(true)

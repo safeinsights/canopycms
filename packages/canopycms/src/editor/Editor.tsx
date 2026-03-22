@@ -142,7 +142,7 @@ export const Editor: React.FC<EditorProps> = ({
   // Per-resource loading states
   const [branchesLoading, setBranchesLoading] = useState(false)
   const [entriesLoading, setEntriesLoading] = useState(false)
-  const [commentsLoading, setCommentsLoading] = useState(false)
+  const [commentsLoading] = useState(false)
   const busy = branchesLoading || entriesLoading || commentsLoading
 
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
@@ -192,7 +192,6 @@ export const Editor: React.FC<EditorProps> = ({
   const {
     branchName: branchNameState,
     setBranchName,
-    branches,
     branchSummaries,
     currentBranch,
     handleSubmit,
@@ -213,7 +212,6 @@ export const Editor: React.FC<EditorProps> = ({
     selectedPath,
     setSelectedPath,
     entries: entriesState,
-    setEntries: setEntriesState,
     collections: collectionsFromApi,
     currentEntry,
     navigatorOpen,
@@ -236,7 +234,11 @@ export const Editor: React.FC<EditorProps> = ({
     collections,
     previewBaseByCollection,
     resolvePreviewSrc: (entry) =>
-      buildPreviewSrc(entry, { branchName: branchNameState, previewBaseByCollection, contentRoot }),
+      buildPreviewSrc(entry, {
+        branchName: branchNameState,
+        previewBaseByCollection,
+        contentRoot,
+      }),
     setBusy: setEntriesLoading,
     contentRoot,
   })
@@ -248,7 +250,6 @@ export const Editor: React.FC<EditorProps> = ({
   const {
     drafts,
     setDrafts,
-    loadedValues,
     setLoadedValues,
     effectiveValue,
     modifiedCount,
@@ -286,7 +287,6 @@ export const Editor: React.FC<EditorProps> = ({
     setCommentsPanelOpen,
     handleAddComment,
     handleResolveThread,
-    loadComments,
     handleJumpToField,
     handleJumpToEntry,
     handleJumpToBranch,
@@ -331,25 +331,11 @@ export const Editor: React.FC<EditorProps> = ({
     onSchemaChange: () => refreshEntries(branchNameState),
   })
 
-  const flattenedCollections = useMemo(() => {
-    const all: EditorCollection[] = []
-    const walk = (nodes?: EditorCollection[]) => {
-      nodes?.forEach((node) => {
-        all.push(node)
-        if (node.children) {
-          walk(node.children)
-        }
-      })
-    }
-    walk(activeCollections)
-    return all
-  }, [activeCollections])
   const collectionLabels = useMemo(
     () => buildCollectionLabels(activeCollections),
     [activeCollections],
   )
   const schema = currentEntry?.schema ?? []
-  const previewKey = currentEntry?.previewSrc ?? currentEntry?.path
 
   // Effect to load entry data when selection changes
   useEffect(() => {
@@ -458,7 +444,7 @@ export const Editor: React.FC<EditorProps> = ({
           }
           setEditingCollection(existingCollection)
         }
-      } catch (err) {
+      } catch {
         // Fallback on error
         const existingCollection: ExistingCollection = {
           name: collection.name,
@@ -768,7 +754,11 @@ export const Editor: React.FC<EditorProps> = ({
         shadow="xs"
         h="100%"
         bg="white"
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
       >
         <Text size="sm" c="dimmed">
           Select an item to start editing.
@@ -850,7 +840,7 @@ export const Editor: React.FC<EditorProps> = ({
                     <CenteredMessage>Select an item to start editing.</CenteredMessage>
                   ) : currentEntry.canEdit === false ? (
                     <CenteredMessage>
-                      You don't have permission to edit this content.
+                      You don&apos;t have permission to edit this content.
                     </CenteredMessage>
                   ) : schema.length > 0 && effectiveValue ? (
                     <FormRenderer

@@ -44,7 +44,10 @@ import { createCanopyCatchAllHandler } from './adapter'
 import { createMockAuthPlugin } from './test-utils'
 
 describe('Next.js adapter', () => {
-  const mockAuthPlugin = createMockAuthPlugin({ userId: 'test-user', groups: ['Admins'] })
+  const mockAuthPlugin = createMockAuthPlugin({
+    userId: 'test-user',
+    groups: ['Admins'],
+  })
 
   describe('createCanopyCatchAllHandler', () => {
     it('converts NextRequest to CanopyRequest and returns NextResponse', async () => {

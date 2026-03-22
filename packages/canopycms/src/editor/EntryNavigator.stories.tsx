@@ -12,8 +12,16 @@ export default meta
 type Story = StoryObj<typeof EntryNavigator>
 
 const posts = [
-  { path: unsafeAsLogicalPath('posts/hello-world'), label: 'Hello World', collection: 'posts' },
-  { path: unsafeAsLogicalPath('posts/mermaid-demo'), label: 'Mermaid Demo', collection: 'posts' },
+  {
+    path: unsafeAsLogicalPath('posts/hello-world'),
+    label: 'Hello World',
+    collection: 'posts',
+  },
+  {
+    path: unsafeAsLogicalPath('posts/mermaid-demo'),
+    label: 'Mermaid Demo',
+    collection: 'posts',
+  },
 ]
 
 const entries = [{ path: unsafeAsLogicalPath('home'), label: 'Home', collection: 'home' }]
@@ -25,7 +33,12 @@ export const Grouped: Story = {
         selectedPath="posts/hello-world"
         onSelect={(id) => alert(`Select ${id}`)}
         collections={[
-          { path: unsafeAsLogicalPath('home'), label: 'Home', type: 'entry', entries: entries },
+          {
+            path: unsafeAsLogicalPath('home'),
+            label: 'Home',
+            type: 'entry',
+            entries: entries,
+          },
           {
             path: unsafeAsLogicalPath('posts'),
             label: 'Posts',

@@ -61,7 +61,10 @@ describe('branch access', () => {
     const res = checkBranchAccessWithDefault(
       {
         ...baseContext,
-        branch: { ...baseContext.branch, access: { managerOrAdminAllowed: true } },
+        branch: {
+          ...baseContext.branch,
+          access: { managerOrAdminAllowed: true },
+        },
       },
       { type: 'authenticated', userId: 'u', groups: [] },
     )
@@ -84,7 +87,10 @@ describe('branch access', () => {
     const res = checkBranchAccessWithDefault(
       {
         ...baseContext,
-        branch: { ...baseContext.branch, access: { allowedGroups: ['group-1'] } },
+        branch: {
+          ...baseContext.branch,
+          access: { allowedGroups: ['group-1'] },
+        },
       },
       { type: 'authenticated', userId: 'u', groups: ['group-1'] },
     )
@@ -105,7 +111,11 @@ describe('branch access', () => {
 })
 
 describe('canPerformWorkflowAction', () => {
-  const regularUser = { type: 'authenticated' as const, userId: 'user-1', groups: [] }
+  const regularUser = {
+    type: 'authenticated' as const,
+    userId: 'user-1',
+    groups: [],
+  }
   const admin = {
     type: 'authenticated' as const,
     userId: 'admin-1',
@@ -149,7 +159,11 @@ describe('canPerformWorkflowAction', () => {
     })
 
     it('allows user in allowedGroups ACL', () => {
-      const userInGroup = { type: 'authenticated' as const, userId: 'user-1', groups: ['team-a'] }
+      const userInGroup = {
+        type: 'authenticated' as const,
+        userId: 'user-1',
+        groups: ['team-a'],
+      }
       const context: BranchContext = {
         ...baseContext,
         branch: {
@@ -178,7 +192,11 @@ describe('canPerformWorkflowAction', () => {
     it('allows any user with general access on system branches', () => {
       const context: BranchContext = {
         ...baseContext,
-        branch: { ...baseContext.branch, createdBy: 'canopycms-system', access: {} },
+        branch: {
+          ...baseContext.branch,
+          createdBy: 'canopycms-system',
+          access: {},
+        },
       }
       expect(canPerformWorkflowAction(context, regularUser, 'allow')).toBe(true)
     })

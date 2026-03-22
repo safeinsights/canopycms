@@ -319,8 +319,16 @@ describe('CommentStore', () => {
 
       // Both add comments concurrently
       const results = await Promise.allSettled([
-        store1.addComment({ userId: 'user1', text: 'Comment 1', type: 'branch' }),
-        store2.addComment({ userId: 'user2', text: 'Comment 2', type: 'branch' }),
+        store1.addComment({
+          userId: 'user1',
+          text: 'Comment 1',
+          type: 'branch',
+        }),
+        store2.addComment({
+          userId: 'user2',
+          text: 'Comment 2',
+          type: 'branch',
+        }),
       ])
 
       // Check if any rejected
@@ -348,8 +356,16 @@ describe('CommentStore', () => {
 
     it('handles concurrent resolveThread calls', async () => {
       // Create two threads first
-      const thread1 = await store.addComment({ userId: 'user1', text: 'Thread 1', type: 'branch' })
-      const thread2 = await store.addComment({ userId: 'user2', text: 'Thread 2', type: 'branch' })
+      const thread1 = await store.addComment({
+        userId: 'user1',
+        text: 'Thread 1',
+        type: 'branch',
+      })
+      const thread2 = await store.addComment({
+        userId: 'user2',
+        text: 'Thread 2',
+        type: 'branch',
+      })
 
       const store1 = new CommentStore(tmpDir)
       const store2 = new CommentStore(tmpDir)
@@ -372,8 +388,16 @@ describe('CommentStore', () => {
 
     it('handles concurrent deleteThread calls', async () => {
       // Create two threads first
-      const thread1 = await store.addComment({ userId: 'user1', text: 'Thread 1', type: 'branch' })
-      const thread2 = await store.addComment({ userId: 'user2', text: 'Thread 2', type: 'branch' })
+      const thread1 = await store.addComment({
+        userId: 'user1',
+        text: 'Thread 1',
+        type: 'branch',
+      })
+      const thread2 = await store.addComment({
+        userId: 'user2',
+        text: 'Thread 2',
+        type: 'branch',
+      })
 
       const store1 = new CommentStore(tmpDir)
       const store2 = new CommentStore(tmpDir)

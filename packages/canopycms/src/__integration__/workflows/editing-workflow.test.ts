@@ -6,11 +6,10 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { simpleGit } from 'simple-git'
-import path from 'node:path'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { createMockAuthPlugin } from '../test-utils/multi-user'
-import { createApiClient, type ApiClient } from '../test-utils/api-client'
+import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchResponse } from '../../api/branch'
 import { initTestRepo } from '../../test-utils'
@@ -161,21 +160,36 @@ describe('Editing Workflow Integration', () => {
         collection: 'content/posts',
         slug: 'post-1',
         format: 'mdx',
-        data: { title: 'Post 1', author: 'Admin', date: '2024-01-01', tags: ['test'] },
+        data: {
+          title: 'Post 1',
+          author: 'Admin',
+          date: '2024-01-01',
+          tags: ['test'],
+        },
         body: 'First post',
       }),
       adminClient.put('/api/canopycms/feature-multi-file/content/posts/post-2', {
         collection: 'content/posts',
         slug: 'post-2',
         format: 'mdx',
-        data: { title: 'Post 2', author: 'Admin', date: '2024-01-02', tags: ['test'] },
+        data: {
+          title: 'Post 2',
+          author: 'Admin',
+          date: '2024-01-02',
+          tags: ['test'],
+        },
         body: 'Second post',
       }),
       adminClient.put('/api/canopycms/feature-multi-file/content/posts/post-3', {
         collection: 'content/posts',
         slug: 'post-3',
         format: 'mdx',
-        data: { title: 'Post 3', author: 'Admin', date: '2024-01-03', tags: ['test'] },
+        data: {
+          title: 'Post 3',
+          author: 'Admin',
+          date: '2024-01-03',
+          tags: ['test'],
+        },
         body: 'Third post',
       }),
     ])
@@ -183,7 +197,7 @@ describe('Editing Workflow Integration', () => {
     // TODO: Once collection bug is fixed, commit and verify
     if (branchRoot) {
       const git = simpleGit({ baseDir: branchRoot })
-      const status = await git.status()
+      await git.status()
       // Should have files if writes succeeded
       // expect(status.files.length).toBeGreaterThan(0)
     }

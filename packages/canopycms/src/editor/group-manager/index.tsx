@@ -26,7 +26,7 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   onSearchUsers,
   onGetUserMetadata,
   onSearchExternalGroups,
-  onClose,
+  onClose: _,
 }) => {
   // Group state management
   const {
@@ -56,7 +56,10 @@ export const GroupManager: React.FC<GroupManagerProps> = ({
   // Modal state for creating/editing groups
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingGroup, setEditingGroup] = useState<InternalGroup | null>(null)
-  const [formData, setFormData] = useState<GroupFormData>({ name: '', description: '' })
+  const [formData, setFormData] = useState<GroupFormData>({
+    name: '',
+    description: '',
+  })
 
   const handleCreateGroup = useCallback(() => {
     setEditingGroup(null)

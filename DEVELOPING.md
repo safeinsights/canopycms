@@ -436,7 +436,10 @@ To test build mode behavior:
 it('bypasses permissions during build', () => {
   process.env.CANOPY_BUILD_MODE = 'true'
   try {
-    const context = createCanopyContext({ config, extractUser: mockExtractUser })
+    const context = createCanopyContext({
+      config,
+      extractUser: mockExtractUser,
+    })
     const canopy = await context.getContext()
     expect(canopy.user).toEqual(BUILD_USER)
   } finally {
@@ -2088,7 +2091,11 @@ defineEndpoint({
   path: '/settings/:id',
   paramsSchema: z.object({ id: z.string() }),
   responseTypeName: 'SettingsResponse',
-  defaultMockData: { ok: true, status: 200, data: { id: '123', name: 'Default' } },
+  defaultMockData: {
+    ok: true,
+    status: 200,
+    data: { id: '123', name: 'Default' },
+  },
 })
 ```
 
@@ -2304,7 +2311,11 @@ const services = await createCanopyServices(config)
 const { getCanopy } = createNextCanopyContext({ config, authPlugin })
 
 // AFTER: Async Next.js context
-const { getCanopy } = await createNextCanopyContext({ config, authPlugin, entrySchemaRegistry })
+const { getCanopy } = await createNextCanopyContext({
+  config,
+  authPlugin,
+  entrySchemaRegistry,
+})
 ```
 
 **New required properties in mock services:**

@@ -186,7 +186,10 @@ export class CmsWorker {
   private async acquireLock(): Promise<void> {
     await fs.mkdir(path.dirname(this.lockFilePath), { recursive: true })
 
-    const lockContent = JSON.stringify({ pid: process.pid, timestamp: new Date().toISOString() })
+    const lockContent = JSON.stringify({
+      pid: process.pid,
+      timestamp: new Date().toISOString(),
+    })
 
     // Try atomic create first
     try {
@@ -201,7 +204,10 @@ export class CmsWorker {
     // Lock file exists — check staleness
     try {
       const content = await fs.readFile(this.lockFilePath, 'utf-8')
-      const { pid, timestamp } = JSON.parse(content) as { pid: number; timestamp: string }
+      const { pid, timestamp } = JSON.parse(content) as {
+        pid: number
+        timestamp: string
+      }
       const lockAgeMs = Date.now() - new Date(timestamp).getTime()
       const pidAlive = this.isPidAlive(pid)
 
@@ -478,7 +484,10 @@ export class CmsWorker {
 
     try {
       const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
-      const updates: Record<string, unknown> = { name: branch, syncStatus: 'synced' }
+      const updates: Record<string, unknown> = {
+        name: branch,
+        syncStatus: 'synced',
+      }
       if (result.prUrl) updates.pullRequestUrl = result.prUrl
       if (result.prNumber) updates.pullRequestNumber = result.prNumber
       await meta.save({ branch: updates })
@@ -610,7 +619,10 @@ export class CmsWorker {
           continue
         }
 
-        const branchGit = simpleGit({ baseDir: branchPath, config: ['core.editor=true'] })
+        const branchGit = simpleGit({
+          baseDir: branchPath,
+          config: ['core.editor=true'],
+        })
 
         // Skip dirty branches — editor has unsaved changes that can't be rebased.
         // Note: there's a small TOCTOU window between this check and the rebase start.
@@ -636,7 +648,11 @@ export class CmsWorker {
         if (behindCount === 0) {
           // Already in sync — clear any stale conflict state
           await meta.save({
-            branch: { name: branchDir, conflictStatus: 'clean', conflictFiles: [] },
+            branch: {
+              name: branchDir,
+              conflictStatus: 'clean',
+              conflictFiles: [],
+            },
           })
           continue
         }

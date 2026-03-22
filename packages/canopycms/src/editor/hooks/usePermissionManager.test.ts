@@ -43,8 +43,14 @@ describe('usePermissionManager', () => {
 
   it('loads permissions when isOpen becomes true', async () => {
     const mockPermissions = [
-      { path: unsafeAsPermissionPath('/content/pages'), edit: { allowedGroups: ['editors'] } },
-      { path: unsafeAsPermissionPath('/content/posts'), read: { allowedGroups: ['writers'] } },
+      {
+        path: unsafeAsPermissionPath('/content/pages'),
+        edit: { allowedGroups: ['editors'] },
+      },
+      {
+        path: unsafeAsPermissionPath('/content/posts'),
+        read: { allowedGroups: ['writers'] },
+      },
     ]
 
     mockClient.permissions.get.mockResolvedValueOnce({
@@ -67,7 +73,7 @@ describe('usePermissionManager', () => {
   })
 
   it('handles load permissions error', async () => {
-    const { error, restore } = setupMockConsole(['error'])
+    const { restore } = setupMockConsole(['error'])
     mockClient.permissions.get.mockResolvedValueOnce({
       ok: false,
       status: 500,
@@ -85,7 +91,10 @@ describe('usePermissionManager', () => {
 
   it('saves permissions successfully', async () => {
     const mockPermissions = [
-      { path: unsafeAsPermissionPath('/content/pages'), edit: { allowedGroups: ['editors'] } },
+      {
+        path: unsafeAsPermissionPath('/content/pages'),
+        edit: { allowedGroups: ['editors'] },
+      },
     ]
 
     // Mock initial load
@@ -120,7 +129,9 @@ describe('usePermissionManager', () => {
       expect(result.current.permissionsData).toEqual(mockPermissions)
     })
 
-    expect(mockClient.permissions.update).toHaveBeenCalledWith({ permissions: mockPermissions })
+    expect(mockClient.permissions.update).toHaveBeenCalledWith({
+      permissions: mockPermissions,
+    })
   })
 
   it('handles save permissions error', async () => {
@@ -177,7 +188,10 @@ describe('usePermissionManager', () => {
 
   it('can manually reload permissions', async () => {
     const mockPermissions = [
-      { path: unsafeAsPermissionPath('/content/pages'), edit: { allowedGroups: ['editors'] } },
+      {
+        path: unsafeAsPermissionPath('/content/pages'),
+        edit: { allowedGroups: ['editors'] },
+      },
     ]
 
     mockClient.permissions.get.mockResolvedValueOnce({

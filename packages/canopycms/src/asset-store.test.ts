@@ -11,7 +11,10 @@ const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-assets-'
 describe('LocalAssetStore', () => {
   it('uploads, lists, and deletes assets', async () => {
     const root = await tmpDir()
-    const store = new LocalAssetStore({ root, publicBaseUrl: 'https://cdn.test' })
+    const store = new LocalAssetStore({
+      root,
+      publicBaseUrl: 'https://cdn.test',
+    })
 
     const uploaded = await store.upload('images/foo.png', Buffer.from('hello'), 'image/png')
     expect(uploaded.key).toBe('images/foo.png')

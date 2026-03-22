@@ -126,7 +126,9 @@ function toWireCollection(col: CollectionConfig, registry: Registry): WireCollec
     name: col.name,
     path: col.path,
     ...(col.label !== undefined && { label: col.label }),
-    ...(col.entries && { entries: col.entries.map((et) => toWireEntryType(et, registry)) }),
+    ...(col.entries && {
+      entries: col.entries.map((et) => toWireEntryType(et, registry)),
+    }),
     ...(col.collections && {
       collections: col.collections.map((c) => toWireCollection(c, registry)),
     }),
@@ -144,7 +146,9 @@ function toWireFlatSchema(items: FlatSchemaItem[], registry: Registry): WireFlat
         ...(item.label !== undefined && { label: item.label }),
         ...(item.contentId !== undefined && { contentId: item.contentId }),
         ...(item.parentPath !== undefined && { parentPath: item.parentPath }),
-        ...(item.entries && { entries: item.entries.map((et) => toWireEntryType(et, registry)) }),
+        ...(item.entries && {
+          entries: item.entries.map((et) => toWireEntryType(et, registry)),
+        }),
         ...(item.collections && {
           collections: item.collections.map((c) => toWireCollection(c, registry)),
         }),
@@ -323,7 +327,9 @@ const getSchemaHandler = async (
   req: ApiRequest,
   params: z.infer<typeof branchParamsSchema>,
 ): Promise<GetSchemaApiResponse> => {
-  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
+  const context = await ctx.getBranchContext(params.branch, {
+    loadSchema: true,
+  })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -347,7 +353,9 @@ const getCollectionHandler = async (
   req: ApiRequest,
   params: z.infer<typeof collectionParamsSchema>,
 ): Promise<GetCollectionApiResponse> => {
-  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
+  const context = await ctx.getBranchContext(params.branch, {
+    loadSchema: true,
+  })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -372,7 +380,9 @@ const getCollectionHandler = async (
     name: item.name,
     path: item.logicalPath,
     ...(item.label !== undefined && { label: item.label }),
-    ...(item.entries && { entries: item.entries.map((et) => toWireEntryType(et, registry)) }),
+    ...(item.entries && {
+      entries: item.entries.map((et) => toWireEntryType(et, registry)),
+    }),
     ...(item.collections && {
       collections: item.collections.map((c) => toWireCollection(c, registry)),
     }),
@@ -792,7 +802,10 @@ export const createCollection = defineEndpoint({
   responseType: 'CreateCollectionApiResponse',
   response: {} as CreateCollectionApiResponse,
   defaultMockData: { collectionPath: '', contentId: '' },
-  mockDataCasts: { collectionPath: 'createLogicalPath', contentId: 'as ContentId' },
+  mockDataCasts: {
+    collectionPath: 'createLogicalPath',
+    contentId: 'as ContentId',
+  },
   handler: createCollectionHandler,
 })
 

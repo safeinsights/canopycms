@@ -94,7 +94,12 @@ export class BranchWorkspaceManager {
       basePathOverride,
     })
 
-    await this.ensureGitWorkspace({ branchRoot, branchName: safeName, mode, remoteUrl })
+    await this.ensureGitWorkspace({
+      branchRoot,
+      branchName: safeName,
+      mode,
+      remoteUrl,
+    })
 
     // save() handles both creation and updates, preserving existing values and invalidating registry
     const metadata = getBranchMetadataFileManager(branchRoot, baseRoot)

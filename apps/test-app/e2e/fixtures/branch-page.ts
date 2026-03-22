@@ -48,7 +48,10 @@ export class BranchPage {
   async openBranchManager(): Promise<void> {
     await this.branchDropdownButton.click()
     await this.manageBranchesMenuItem.click()
-    await this.branchManager.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await this.branchManager.waitFor({
+      state: 'visible',
+      timeout: STANDARD_TIMEOUT,
+    })
   }
 
   /**
@@ -63,7 +66,10 @@ export class BranchPage {
     await this.createBranchButton.click()
 
     // Wait for form to appear
-    await this.branchNameInput.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await this.branchNameInput.waitFor({
+      state: 'visible',
+      timeout: SHORT_TIMEOUT,
+    })
 
     // Fill in branch details
     await this.branchNameInput.fill(name)
@@ -140,7 +146,9 @@ export class BranchPage {
     await switchButton.click()
 
     // Wait for the branch dropdown to reflect the new branch (condition-based)
-    await expect(this.branchDropdownButton).toContainText(branchName, { timeout: STANDARD_TIMEOUT })
+    await expect(this.branchDropdownButton).toContainText(branchName, {
+      timeout: STANDARD_TIMEOUT,
+    })
   }
 
   /**
@@ -167,7 +175,10 @@ export class BranchPage {
     await submitButton.click()
 
     // Confirm the Mantine confirmation modal (exact: true avoids matching "Submit Branch..." in EditorHeader)
-    const confirmButton = this.page.getByRole('button', { name: 'Submit Branch', exact: true })
+    const confirmButton = this.page.getByRole('button', {
+      name: 'Submit Branch',
+      exact: true,
+    })
     await confirmButton.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
     await confirmButton.click()
   }
@@ -184,7 +195,10 @@ export class BranchPage {
     await withdrawButton.click()
 
     // Confirm the Mantine confirmation modal (exact: true avoids matching "Withdraw Branch..." in EditorHeader)
-    const confirmButton = this.page.getByRole('button', { name: 'Withdraw Branch', exact: true })
+    const confirmButton = this.page.getByRole('button', {
+      name: 'Withdraw Branch',
+      exact: true,
+    })
     await confirmButton.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
     await confirmButton.click()
   }
@@ -272,7 +286,10 @@ export class BranchPage {
    */
   async closeBranchManager(): Promise<void> {
     await this.page.keyboard.press('Escape')
-    await this.branchManager.waitFor({ state: 'hidden', timeout: SHORT_TIMEOUT })
+    await this.branchManager.waitFor({
+      state: 'hidden',
+      timeout: SHORT_TIMEOUT,
+    })
   }
 
   /**
@@ -283,7 +300,9 @@ export class BranchPage {
    */
   async verifyBranchStatus(branchName: string, expectedStatus: string): Promise<void> {
     const badge = this.getBranchStatusBadge(branchName)
-    await expect(badge).toContainText(expectedStatus, { timeout: STANDARD_TIMEOUT })
+    await expect(badge).toContainText(expectedStatus, {
+      timeout: STANDARD_TIMEOUT,
+    })
   }
 
   /**

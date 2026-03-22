@@ -15,12 +15,6 @@ export interface ValidationResult {
   errors: ValidationError[]
 }
 
-interface ReferenceInstance {
-  field: ReferenceFieldConfig
-  value: string | string[]
-  path: string
-}
-
 /**
  * ReferenceValidator validates that referenced content IDs exist and match collection constraints.
  *

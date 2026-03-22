@@ -148,7 +148,10 @@ export function usePermissionTree({
           if (!updatedLevel.allowedUsers && !updatedLevel.allowedGroups) {
             newPermissions[existingIndex] = { ...existing, [level]: undefined }
           } else {
-            newPermissions[existingIndex] = { ...existing, [level]: updatedLevel }
+            newPermissions[existingIndex] = {
+              ...existing,
+              [level]: updatedLevel,
+            }
           }
 
           // If all levels are empty, remove the permission entirely

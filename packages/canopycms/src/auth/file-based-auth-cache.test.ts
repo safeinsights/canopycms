@@ -10,7 +10,12 @@ describe('FileBasedAuthCache', () => {
 
   const testUsers = {
     users: [
-      { id: 'user_1', name: 'Alice', email: 'alice@test.com', avatarUrl: 'https://avatar/alice' },
+      {
+        id: 'user_1',
+        name: 'Alice',
+        email: 'alice@test.com',
+        avatarUrl: 'https://avatar/alice',
+      },
       { id: 'user_2', name: 'Bob', email: 'bob@test.com' },
     ],
   }

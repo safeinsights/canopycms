@@ -159,7 +159,9 @@ describe('EntryTypeEditor', () => {
 
     it('only includes changed fields in update', async () => {
       const user = userEvent.setup()
-      const { props } = renderEntryTypeEditor({ editingEntryType: existingEntryType })
+      const { props } = renderEntryTypeEditor({
+        editingEntryType: existingEntryType,
+      })
 
       // Change only the label
       const labelInput = screen.getByLabelText(/^Label/)
@@ -182,7 +184,9 @@ describe('EntryTypeEditor', () => {
     it('shows saving state', () => {
       renderEntryTypeEditor({ isSaving: true })
 
-      const saveButtons = screen.getAllByRole('button', { name: /Add Entry Type/i })
+      const saveButtons = screen.getAllByRole('button', {
+        name: /Add Entry Type/i,
+      })
       expect(saveButtons[0].getAttribute('data-loading')).toBe('true')
     })
   })
@@ -192,7 +196,9 @@ describe('EntryTypeEditor', () => {
       renderEntryTypeEditor({ availableSchemas: ['mySchema', 'otherSchema'] })
 
       // The schema input should have the first schema pre-selected
-      const schemaInput = screen.getByRole('textbox', { name: /Schema/ }) as HTMLInputElement
+      const schemaInput = screen.getByRole('textbox', {
+        name: /Schema/,
+      }) as HTMLInputElement
       expect(schemaInput.value).toBe('mySchema')
     })
 
@@ -200,7 +206,9 @@ describe('EntryTypeEditor', () => {
       renderEntryTypeEditor()
 
       // Format select should show JSON as selected
-      const formatInput = screen.getByRole('textbox', { name: /Format/ }) as HTMLInputElement
+      const formatInput = screen.getByRole('textbox', {
+        name: /Format/,
+      }) as HTMLInputElement
       expect(formatInput.value).toBe('JSON')
     })
   })

@@ -113,6 +113,7 @@ export function EntryTypeEditor({
   const [validationError, setValidationError] = useState<string | null>(null)
 
   // Reset form when modal opens or editing item changes
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional: sync form state from props on open */
   useEffect(() => {
     if (isOpen) {
       if (editingEntryType) {
@@ -137,6 +138,7 @@ export function EntryTypeEditor({
       setValidationError(null)
     }
   }, [isOpen, editingEntryType, availableSchemas])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Update a form field
   const updateField = useCallback(

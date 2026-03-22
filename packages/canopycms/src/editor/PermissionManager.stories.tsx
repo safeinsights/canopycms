@@ -181,7 +181,10 @@ export const ComplexPermissions: Story = {
       },
       {
         path: unsafeAsPermissionPath('content/posts/**'),
-        edit: { allowedGroups: ['editors', 'content-team'], allowedUsers: ['alice', 'bob'] },
+        edit: {
+          allowedGroups: ['editors', 'content-team'],
+          allowedUsers: ['alice', 'bob'],
+        },
       },
       {
         path: unsafeAsPermissionPath('content/pages/**'),
@@ -270,7 +273,11 @@ export const LargeSchema: Story = {
               name: 'advanced-features.mdx',
               type: 'file',
             },
-            { path: 'content/posts/best-practices.mdx', name: 'best-practices.mdx', type: 'file' },
+            {
+              path: 'content/posts/best-practices.mdx',
+              name: 'best-practices.mdx',
+              type: 'file',
+            },
           ],
         },
         {
@@ -279,7 +286,11 @@ export const LargeSchema: Story = {
           type: 'folder',
           children: [
             { path: 'content/pages/home.mdx', name: 'home.mdx', type: 'file' },
-            { path: 'content/pages/pricing.mdx', name: 'pricing.mdx', type: 'file' },
+            {
+              path: 'content/pages/pricing.mdx',
+              name: 'pricing.mdx',
+              type: 'file',
+            },
           ],
         },
         {
@@ -287,19 +298,33 @@ export const LargeSchema: Story = {
           name: 'products',
           type: 'folder',
           children: [
-            { path: 'content/products/pro-plan.json', name: 'pro-plan.json', type: 'file' },
-            { path: 'content/products/enterprise.json', name: 'enterprise.json', type: 'file' },
+            {
+              path: 'content/products/pro-plan.json',
+              name: 'pro-plan.json',
+              type: 'file',
+            },
+            {
+              path: 'content/products/enterprise.json',
+              name: 'enterprise.json',
+              type: 'file',
+            },
           ],
         },
       ],
     },
     permissions: [
-      { path: unsafeAsPermissionPath('content/posts/**'), edit: { allowedGroups: ['editors'] } },
+      {
+        path: unsafeAsPermissionPath('content/posts/**'),
+        edit: { allowedGroups: ['editors'] },
+      },
       {
         path: unsafeAsPermissionPath('content/posts/getting-started.mdx'),
         edit: { allowedUsers: ['alice', 'bob'] },
       },
-      { path: unsafeAsPermissionPath('content/pages/**'), edit: { allowedGroups: ['marketing'] } },
+      {
+        path: unsafeAsPermissionPath('content/pages/**'),
+        edit: { allowedGroups: ['marketing'] },
+      },
       {
         path: unsafeAsPermissionPath('content/products/**'),
         edit: { allowedGroups: ['engineering'] },
@@ -308,7 +333,10 @@ export const LargeSchema: Story = {
         path: unsafeAsPermissionPath('content/categories/**'),
         edit: { allowedGroups: ['content-team'] },
       },
-      { path: unsafeAsPermissionPath('content/authors/**'), edit: { allowedUsers: ['alice'] } },
+      {
+        path: unsafeAsPermissionPath('content/authors/**'),
+        edit: { allowedUsers: ['alice'] },
+      },
     ],
     canEdit: true,
     onSave: mockSave,
@@ -463,9 +491,15 @@ export const PermissionOverrides: Story = {
     collections: mockCollections,
     permissions: [
       // Parent folder has managers access
-      { path: unsafeAsPermissionPath('content/**'), edit: { allowedGroups: ['managers'] } },
+      {
+        path: unsafeAsPermissionPath('content/**'),
+        edit: { allowedGroups: ['managers'] },
+      },
       // Child folder overrides with editors
-      { path: unsafeAsPermissionPath('content/posts/**'), edit: { allowedGroups: ['editors'] } },
+      {
+        path: unsafeAsPermissionPath('content/posts/**'),
+        edit: { allowedGroups: ['editors'] },
+      },
       // Specific file overrides with specific user
       {
         path: unsafeAsPermissionPath('content/posts/sensitive-post.mdx'),
@@ -482,8 +516,16 @@ export const PermissionOverrides: Story = {
           name: 'posts',
           type: 'folder',
           children: [
-            { path: 'content/posts/public-post.mdx', name: 'public-post.mdx', type: 'file' },
-            { path: 'content/posts/sensitive-post.mdx', name: 'sensitive-post.mdx', type: 'file' },
+            {
+              path: 'content/posts/public-post.mdx',
+              name: 'public-post.mdx',
+              type: 'file',
+            },
+            {
+              path: 'content/posts/sensitive-post.mdx',
+              name: 'sensitive-post.mdx',
+              type: 'file',
+            },
           ],
         },
       ],

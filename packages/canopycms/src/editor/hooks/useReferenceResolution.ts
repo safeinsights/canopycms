@@ -25,13 +25,13 @@
  * where form data and resolved data could get out of sync during transitions
  * (e.g., "Discard All Drafts" was passing empty objects to preview).
  *
- * Cache structure: Map<string, any> with keys like "main:5NVkkrB1MJUvnLqEDqDkRN"
+ * Cache structure: Map&lt;string, unknown&gt; with keys like "main:5NVkkrB1MJUvnLqEDqDkRN"
  * - Branch-scoped to prevent stale cross-branch data
  * - Cleared on branch change
  * - Persists across edits for instant re-renders
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EntrySchema } from '../../config'
 import { resolveChangedReferences } from '../client-reference-resolver'
 

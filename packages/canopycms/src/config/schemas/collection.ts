@@ -12,7 +12,9 @@ export const relativePathSchema = z
   .string()
   .min(1)
   .refine((val) => !isAbsolute(val), { message: 'Path must be relative' })
-  .refine((val) => !val.split(/[\\/]+/).includes('..'), { message: 'Path must not contain ".."' })
+  .refine((val) => !val.split(/[\\/]+/).includes('..'), {
+    message: 'Path must not contain ".."',
+  })
   .transform((val) =>
     val
       .split(/[\\/]+/)
@@ -37,11 +39,8 @@ export const entryTypeSchema = z.object({
   maxItems: z.number().int().positive().optional(),
 })
 
-// Forward declaration for recursive collection schema
-let collectionSchema: z.ZodTypeAny
-
-// Nested collection: must have name and path
-collectionSchema = z.lazy(() =>
+// Recursive collection schema
+const collectionSchema: z.ZodTypeAny = z.lazy(() =>
   z
     .object({
       name: z.string().min(1),

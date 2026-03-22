@@ -71,7 +71,9 @@ describe('branch merge api - markAsMerged', () => {
   it('returns 404 if branch not found', async () => {
     ctx.getBranchContext = vi.fn().mockResolvedValue(null)
 
-    const result = await markAsMergedHandler(ctx, req, { branch: 'nonexistent' })
+    const result = await markAsMergedHandler(ctx, req, {
+      branch: 'nonexistent',
+    })
 
     expect(result.ok).toBe(false)
     expect(result.status).toBe(404)

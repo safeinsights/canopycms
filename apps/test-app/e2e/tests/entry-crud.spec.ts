@@ -37,7 +37,10 @@ test.describe('Entry CRUD Operations', () => {
 
     await test.step('open Posts collection menu and click Add Entry', async () => {
       const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
-      await collectionMenuButton.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+      await collectionMenuButton.waitFor({
+        state: 'visible',
+        timeout: STANDARD_TIMEOUT,
+      })
       await collectionMenuButton.click()
 
       const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
@@ -73,7 +76,10 @@ test.describe('Entry CRUD Operations', () => {
 
       // Expand the Posts collection (collapsed after reload)
       const postsCollection = page.locator('[data-testid="entry-nav-item-posts"]')
-      await postsCollection.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+      await postsCollection.waitFor({
+        state: 'visible',
+        timeout: STANDARD_TIMEOUT,
+      })
       await postsCollection.click()
 
       const navItem = page.locator('[data-testid="entry-nav-item-post"]')
@@ -94,7 +100,10 @@ test.describe('Entry CRUD Operations', () => {
 
     await test.step('create a post entry (setup)', async () => {
       const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
-      await collectionMenuButton.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+      await collectionMenuButton.waitFor({
+        state: 'visible',
+        timeout: STANDARD_TIMEOUT,
+      })
       await collectionMenuButton.click()
 
       const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
@@ -141,7 +150,10 @@ test.describe('Entry CRUD Operations', () => {
 
       // Expand the Posts collection (collapsed after reload)
       const postsCollection = page.locator('[data-testid="entry-nav-item-posts"]')
-      await postsCollection.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+      await postsCollection.waitFor({
+        state: 'visible',
+        timeout: STANDARD_TIMEOUT,
+      })
       await postsCollection.click()
 
       // Label stays "Post" (rename only changes slug, not the display label)
@@ -163,7 +175,10 @@ test.describe('Entry CRUD Operations', () => {
 
     await test.step('create a post entry (setup)', async () => {
       const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
-      await collectionMenuButton.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+      await collectionMenuButton.waitFor({
+        state: 'visible',
+        timeout: STANDARD_TIMEOUT,
+      })
       await collectionMenuButton.click()
 
       const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
@@ -211,7 +226,10 @@ test.describe('Entry CRUD Operations', () => {
 
       // Expand Posts collection
       const postsCollection = page.locator('[data-testid="entry-nav-item-posts"]')
-      await postsCollection.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+      await postsCollection.waitFor({
+        state: 'visible',
+        timeout: STANDARD_TIMEOUT,
+      })
       await postsCollection.click()
 
       const navItem = page.locator('[data-testid="entry-nav-item-post"]')

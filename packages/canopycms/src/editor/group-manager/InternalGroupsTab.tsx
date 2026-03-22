@@ -53,7 +53,13 @@ export const InternalGroupsTab: React.FC<InternalGroupsTabProps> = ({
   // Read-only view
   if (!canEdit) {
     return (
-      <div style={{ flex: 1, overflow: 'auto', paddingTop: 'var(--mantine-spacing-md)' }}>
+      <div
+        style={{
+          flex: 1,
+          overflow: 'auto',
+          paddingTop: 'var(--mantine-spacing-md)',
+        }}
+      >
         {groups.length === 0 ? (
           <Paper withBorder p="md" style={{ textAlign: 'center' }}>
             <IconUsers size={32} color="gray" style={{ margin: '0 auto', marginBottom: 8 }} />

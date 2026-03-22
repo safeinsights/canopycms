@@ -94,7 +94,9 @@ export const docSchema = defineEntrySchema([
   { name: 'body', type: 'markdown', label: 'Body' },
 ])
 
-export type DocContent = TypeFromEntrySchema<typeof docSchema> & { slug: string }
+export type DocContent = TypeFromEntrySchema<typeof docSchema> & {
+  slug: string
+}
 
 // Entry schema registry for CanopyCMS - references entry schemas by name in .collection.json files
 export const entrySchemaRegistry = createEntrySchemaRegistry({

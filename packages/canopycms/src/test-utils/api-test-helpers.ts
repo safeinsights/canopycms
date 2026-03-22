@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import type { ApiContext } from '../api/types'
-import type { BranchContext, BranchMetadata, BranchStatus, BranchAccessControl } from '../types'
+import type { BranchContext, BranchStatus, BranchAccessControl } from '../types'
 import type { CanopyServices } from '../services'
 import type { CanopyUser } from '../user'
 import type { CanopyConfig, PathPermission } from '../config'
@@ -60,7 +60,9 @@ export function createMockBranchContext(options: MockBranchContextOptions = {}):
       updatedAt: options.updatedAt ?? 'now',
       ...(options.title && { title: options.title }),
       ...(options.description && { description: options.description }),
-      ...(options.pullRequestNumber && { pullRequestNumber: options.pullRequestNumber }),
+      ...(options.pullRequestNumber && {
+        pullRequestNumber: options.pullRequestNumber,
+      }),
       ...(options.pullRequestUrl && { pullRequestUrl: options.pullRequestUrl }),
     },
   }

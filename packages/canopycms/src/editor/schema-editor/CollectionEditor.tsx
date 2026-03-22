@@ -150,6 +150,7 @@ export function CollectionEditor({
   } | null>(null)
 
   // Reset form when modal opens or editing item changes
+  /* eslint-disable react-hooks/set-state-in-effect -- intentional: sync form state from props on open */
   useEffect(() => {
     if (isOpen) {
       if (editingCollection) {
@@ -158,7 +159,7 @@ export function CollectionEditor({
           label: editingCollection.label || '',
           entries: [], // Entry types are managed separately in edit mode
         })
-        // Extract slug from logical path (e.g., "content/posts.abc123" → "posts")
+        // Extract slug from logical path (e.g., "content/posts.abc123" -> "posts")
         const pathParts = editingCollection.logicalPath.split('/')
         const lastPart = pathParts[pathParts.length - 1]
         const slugPart = lastPart?.split('.')[0] || ''
@@ -174,6 +175,7 @@ export function CollectionEditor({
       setValidationError(null)
     }
   }, [isOpen, editingCollection])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Update a form field
   const updateField = useCallback(

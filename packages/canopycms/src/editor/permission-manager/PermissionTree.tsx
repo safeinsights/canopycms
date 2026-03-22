@@ -145,7 +145,13 @@ export const PermissionTree: React.FC<PermissionTreeProps> = ({
 
         {/* Show permission level badges */}
         <div
-          style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center', minWidth: 0 }}
+          style={{
+            display: 'flex',
+            gap: 4,
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            minWidth: 0,
+          }}
         >
           {PERMISSION_LEVELS.map((level) => (
             <PermissionLevelBadge

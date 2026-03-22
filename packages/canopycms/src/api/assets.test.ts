@@ -73,7 +73,13 @@ describe('asset api', () => {
     it('allows Reviewers to upload', async () => {
       const res = await uploadAsset(
         makeCtx(),
-        { user: { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.REVIEWERS] } },
+        {
+          user: {
+            type: 'authenticated',
+            userId: 'u',
+            groups: [RESERVED_GROUPS.REVIEWERS],
+          },
+        },
         { key: 'a.png', data: Buffer.from('x') },
       )
       expect(res.ok).toBe(true)
@@ -82,7 +88,13 @@ describe('asset api', () => {
     it('allows Admins to upload', async () => {
       const res = await uploadAsset(
         makeCtx(),
-        { user: { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.ADMINS] } },
+        {
+          user: {
+            type: 'authenticated',
+            userId: 'u',
+            groups: [RESERVED_GROUPS.ADMINS],
+          },
+        },
         { key: 'a.png', data: Buffer.from('x') },
       )
       expect(res.ok).toBe(true)
@@ -102,7 +114,11 @@ describe('asset api', () => {
 
     it('returns 403 for Reviewers', async () => {
       const res = await deleteAsset(makeCtx(), {
-        user: { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.REVIEWERS] },
+        user: {
+          type: 'authenticated',
+          userId: 'u',
+          groups: [RESERVED_GROUPS.REVIEWERS],
+        },
         query: { key: 'a.png' },
       })
       expect(res.ok).toBe(false)
@@ -111,7 +127,11 @@ describe('asset api', () => {
 
     it('allows Admins to delete', async () => {
       const res = await deleteAsset(makeCtx(), {
-        user: { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.ADMINS] },
+        user: {
+          type: 'authenticated',
+          userId: 'u',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
         query: { key: 'a.png' },
       })
       expect(res.ok).toBe(true)

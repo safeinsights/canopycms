@@ -37,7 +37,10 @@ export const Default: Story = {
     ]
     const [blocks, setBlocks] = useState<BlockInstance[]>([
       { template: 'hero', value: { headline: 'Hello', body: 'Intro text' } },
-      { template: 'cta', value: { title: 'Call to action', ctaText: 'Click me' } },
+      {
+        template: 'cta',
+        value: { title: 'Call to action', ctaText: 'Click me' },
+      },
     ])
 
     const renderWidget = (field: FieldConfig, value: unknown, onChange: (v: unknown) => void) => {

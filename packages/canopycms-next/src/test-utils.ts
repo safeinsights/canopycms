@@ -8,7 +8,11 @@ const ADMINS = 'Admins'
  * Returns a valid user by default (as Admin), or can be configured to return specific users.
  */
 export const createMockAuthPlugin = (
-  user: AuthenticatedUser = { type: 'authenticated', userId: 'test-user', groups: [ADMINS] },
+  user: AuthenticatedUser = {
+    type: 'authenticated',
+    userId: 'test-user',
+    groups: [ADMINS],
+  },
 ): AuthPlugin => ({
   authenticate: async () => ({
     success: true,

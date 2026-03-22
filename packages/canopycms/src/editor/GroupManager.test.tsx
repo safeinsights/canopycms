@@ -248,7 +248,7 @@ describe('GroupManager', () => {
 
   describe('editing groups', () => {
     it('opens modal with group data when edit is clicked', async () => {
-      const { container } = render(
+      render(
         <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
         { wrapper },
       )
@@ -272,7 +272,7 @@ describe('GroupManager', () => {
     })
 
     it('shows read-only ID when editing existing group', async () => {
-      const { container } = render(
+      render(
         <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
         { wrapper },
       )
@@ -357,7 +357,7 @@ describe('GroupManager', () => {
     })
 
     it('disables Add Member button when onSearchUsers is not provided', () => {
-      const { container } = render(
+      render(
         <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
         { wrapper },
       )
@@ -601,7 +601,7 @@ describe('GroupManager', () => {
     })
 
     it('calls onSave when Save Groups is clicked', async () => {
-      const { container } = render(
+      render(
         <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockOnSave} />,
         { wrapper },
       )
@@ -652,7 +652,7 @@ describe('GroupManager', () => {
     it('shows error when save fails', async () => {
       const mockError = vi.fn().mockRejectedValue(new Error('Network error'))
 
-      const { container } = render(
+      render(
         <GroupManager internalGroups={mockInternalGroups} canEdit={true} onSave={mockError} />,
         { wrapper },
       )

@@ -1,6 +1,6 @@
 import type { CanopyRequest, CanopyResponse } from './types'
 import { jsonResponse } from './types'
-import { createCanopyRouter, type CanopyRouter } from './router'
+import { createCanopyRouter } from './router'
 import type { ApiContext, ApiResponse } from '../api/types'
 import type { AuthPlugin } from '../auth/plugin'
 import { createCanopyServices, type CanopyServices } from '../services'
@@ -41,7 +41,10 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
     options.getBranchContext ??
     (async (branch: string, opts?: { loadSchema?: boolean }): Promise<BranchContext | null> => {
       // Try to load existing branch
-      const existing = await loadBranchContext({ branchName: branch, mode: operatingMode })
+      const existing = await loadBranchContext({
+        branchName: branch,
+        mode: operatingMode,
+      })
       if (existing) {
         // Optionally load per-branch schema
         if (opts?.loadSchema) {
@@ -210,7 +213,9 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     }
 
     // Build API request
-    const branch = (mergedParams as any)?.branch ?? (body as any)?.branch
+    const branch =
+      (mergedParams as Record<string, string>)?.branch ??
+      (body as Record<string, unknown> | undefined)?.branch
     const apiReq = { user, body, branch, query: queryParams }
 
     // Validate params and body using the route's validation function (if available)
@@ -221,7 +226,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       }
 
       // Call handler with validated params/body based on what's defined
-      const handlerArgs: any[] = [apiCtx, apiReq]
+      const handlerArgs: unknown[] = [apiCtx, apiReq]
       if (validationResult.params !== undefined) {
         handlerArgs.push(validationResult.params)
       }
@@ -234,7 +239,11 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     } else {
       // Should not happen - all routes should use defineEndpoint now
       // This is here for safety in case any route doesn't have validation
-      const result = await match.handler(apiCtx as any, apiReq as any, mergedParams as any)
+      const result = await match.handler(
+        apiCtx as unknown,
+        apiReq as unknown,
+        mergedParams as unknown,
+      )
       return jsonResponse(result, result.status)
     }
   }

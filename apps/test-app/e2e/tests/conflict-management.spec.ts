@@ -80,7 +80,11 @@ test.describe('Conflict Management', () => {
       await pushConflictingChangeToMain(
         HOME_ENTRY_FILE,
         JSON.stringify(
-          { title: 'Upstream Conflict Title', tagline: 'Changed upstream', featuredPosts: [] },
+          {
+            title: 'Upstream Conflict Title',
+            tagline: 'Changed upstream',
+            featuredPosts: [],
+          },
           null,
           2,
         ) + '\n',

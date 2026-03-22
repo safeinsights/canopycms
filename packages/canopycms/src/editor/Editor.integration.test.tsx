@@ -1,7 +1,6 @@
 import React from 'react'
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import type { EditorEntry } from './Editor'
@@ -172,7 +171,9 @@ describe('Editor integration', () => {
     // Wait for the entry data to be loaded and form to render with loaded value
     let input: HTMLInputElement
     await waitFor(() => {
-      const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
+      const el = screen.queryByRole('textbox', {
+        name: /title/i,
+      }) as HTMLInputElement | null
       expect(el).not.toBeNull()
       expect(el?.value).toBe('Loaded title')
       input = el!

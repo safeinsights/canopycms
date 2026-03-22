@@ -12,7 +12,7 @@ export interface ResolveReferencesBody {
 
 /** Response type for resolved references */
 export type ResolveReferencesResponse = ApiResponse<{
-  resolved: Record<string, any>
+  resolved: Record<string, unknown>
 }>
 
 // ============================================================================
@@ -33,7 +33,9 @@ const resolveReferencesHandler = async (
   params: z.infer<typeof resolveReferencesParamsSchema>,
   body: z.infer<typeof resolveReferencesBodySchema>,
 ): Promise<ResolveReferencesResponse> => {
-  const context = await ctx.getBranchContext(params.branch, { loadSchema: true })
+  const context = await ctx.getBranchContext(params.branch, {
+    loadSchema: true,
+  })
   if (!context) {
     return { ok: false, status: 404, error: 'Branch not found' }
   }
@@ -49,7 +51,7 @@ const resolveReferencesHandler = async (
   // Resolve each ID to full document
   const resolver = new ReferenceResolver(store, idIndex)
 
-  const resolved: Record<string, any> = {}
+  const resolved: Record<string, unknown> = {}
 
   for (const id of ids) {
     try {
