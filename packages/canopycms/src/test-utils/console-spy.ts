@@ -39,7 +39,7 @@ export function mockConsole(): MockConsole {
     info: [],
     debug: [],
   }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const spies: any[] = []
 
   const methods: ConsoleMethod[] = ['log', 'warn', 'error', 'info', 'debug']

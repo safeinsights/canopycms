@@ -7,11 +7,7 @@ import { useCanopyPreview } from 'canopycms/client'
 import type { HomeContent } from '../schemas'
 
 export const HomeView: React.FC<{ data: HomeContent }> = ({ data }) => {
-  const {
-    data: liveData,
-    highlightEnabled,
-    fieldProps,
-  } = useCanopyPreview<HomeContent>({
+  const { data: liveData, fieldProps } = useCanopyPreview<HomeContent>({
     initialData: data,
   })
 

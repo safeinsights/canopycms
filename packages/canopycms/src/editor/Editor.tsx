@@ -338,6 +338,7 @@ export const Editor: React.FC<EditorProps> = ({
   const schema = currentEntry?.schema ?? []
 
   // Effect to load entry data when selection changes
+
   useEffect(() => {
     const load = async () => {
       const contentId = currentEntry?.contentId
@@ -362,6 +363,7 @@ export const Editor: React.FC<EditorProps> = ({
       setEntriesLoading(false)
       notifications.show({ message: 'Failed to load entry', color: 'red' })
     })
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters, run only on entry/path change
   }, [currentEntry, drafts, selectedPath])
 
   // Load available schemas when branch changes
@@ -681,6 +683,7 @@ export const Editor: React.FC<EditorProps> = ({
       }
     }
     return activeCollections.map((node) => build(node))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- handler refs are stable, rebuild only on data changes
   }, [
     activeCollections,
     entriesState,

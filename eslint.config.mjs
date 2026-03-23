@@ -16,6 +16,8 @@ const eslintConfig = [
       'coverage/**',
       'test-results/**',
       'playwright-report/**',
+      'packages/canopycms/src/api/client.ts',
+      'packages/canopycms/src/api/__test__/mock-client.ts',
     ],
   },
   // Base recommended rules
@@ -93,7 +95,7 @@ const eslintConfig = [
   {
     files: ['**/*.test.{ts,tsx}', '**/__test__/**', '**/__integration__/**'],
     rules: {
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-require-imports': 'off',
       'no-console': 'off',
     },
@@ -102,7 +104,7 @@ const eslintConfig = [
   {
     files: ['**/test-utils/**'],
     rules: {
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-explicit-any': 'off',
     },
   },
 

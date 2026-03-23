@@ -24,10 +24,12 @@
 
 Always do the following **before** proposing next work or providing a commit message:
 
-1. Run the `update-codebase-guide` agent and update the Code Organization list in AGENTS.md if you added, removed, renamed, or changed the API of any module.
-2. Run the `docs-architecture` agent if you made architectural changes, added packages, or made design decisions.
-3. Run the `docs-developing` agent if you introduced new dev patterns, test utilities, or workflows.
-4. Run the `docs-readme` agent if you made feature changes visible to adopters.
+1. Run `npx prettier --write` on any files you created or modified.
+2. Run `npm run lint` and fix any errors before finishing.
+3. Run the `update-codebase-guide` agent and update the Code Organization list in AGENTS.md if you added, removed, renamed, or changed the API of any module.
+4. Run the `docs-architecture` agent if you made architectural changes, added packages, or made design decisions.
+5. Run the `docs-developing` agent if you introduced new dev patterns, test utilities, or workflows.
+6. Run the `docs-readme` agent if you made feature changes visible to adopters.
 
 ## Project Context
 

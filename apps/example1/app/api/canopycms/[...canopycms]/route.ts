@@ -3,8 +3,10 @@ import type { NextRequest } from 'next/server'
 
 const handler = getHandler()
 
-export const GET = async (req: NextRequest, ctx: any) => (await handler)(req, ctx)
-export const POST = async (req: NextRequest, ctx: any) => (await handler)(req, ctx)
-export const PUT = async (req: NextRequest, ctx: any) => (await handler)(req, ctx)
-export const PATCH = async (req: NextRequest, ctx: any) => (await handler)(req, ctx)
-export const DELETE = async (req: NextRequest, ctx: any) => (await handler)(req, ctx)
+type RouteContext = { params: Promise<Record<string, string | string[]>> }
+
+export const GET = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)
+export const POST = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)
+export const PUT = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)
+export const PATCH = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)
+export const DELETE = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)

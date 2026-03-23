@@ -290,8 +290,10 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   })
 
   // Forward tree controller to parent for collapse/expand all functionality
+
   useEffect(() => {
     onTreeControllerReady?.(tree)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fire only when callback ref changes, not on tree state
   }, [onTreeControllerReady])
 
   // Cleanup: save current state when component unmounts
