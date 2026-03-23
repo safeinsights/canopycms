@@ -96,22 +96,42 @@ function extractBranchName(params: Record<string, unknown>): string | ApiRespons
   return branch
 }
 
-const runBranchGuard: GuardRunner = async (ctx, _req, params) => {
+/** Resolve branch context, reusing from accumulated if available */
+async function resolveBranchContext(
+  ctx: ApiContext,
+  params: Record<string, unknown>,
+  accumulated: GuardContext,
+  options?: { loadSchema?: boolean },
+): Promise<BranchContext | null> {
+  // Reuse accumulated context if it has everything we need
+  if (accumulated.branchContext) {
+    if (!options?.loadSchema || accumulated.branchContext.flatSchema) {
+      return accumulated.branchContext
+    }
+    // Need schema but accumulated doesn't have it — re-fetch with schema
+  }
+
+  const branch = extractBranchName(params)
+  if (typeof branch !== 'string') return null
+  return ctx.getBranchContext(branch, options)
+}
+
+const runBranchGuard: GuardRunner = async (ctx, _req, params, accumulated) => {
   const branch = extractBranchName(params)
   if (typeof branch !== 'string') return { ok: false, response: branch }
 
-  const context = await ctx.getBranchContext(branch)
+  const context = accumulated.branchContext ?? (await ctx.getBranchContext(branch))
   if (!context) {
     return { ok: false, response: { ok: false, status: 404, error: 'Branch not found' } }
   }
   return { ok: true, context: { branchContext: context } }
 }
 
-const runBranchAccessGuard: GuardRunner = async (ctx, req, params) => {
+const runBranchAccessGuard: GuardRunner = async (ctx, req, params, accumulated) => {
   const branch = extractBranchName(params)
   if (typeof branch !== 'string') return { ok: false, response: branch }
 
-  const context = await ctx.getBranchContext(branch)
+  const context = accumulated.branchContext ?? (await ctx.getBranchContext(branch))
   if (!context) {
     return { ok: false, response: { ok: false, status: 404, error: 'Branch not found' } }
   }
@@ -127,11 +147,11 @@ const runBranchAccessGuard: GuardRunner = async (ctx, req, params) => {
   return { ok: true, context: { branchContext: context } }
 }
 
-const runSchemaGuard: GuardRunner = async (ctx, _req, params) => {
+const runSchemaGuard: GuardRunner = async (ctx, _req, params, accumulated) => {
   const branch = extractBranchName(params)
   if (typeof branch !== 'string') return { ok: false, response: branch }
 
-  const context = await ctx.getBranchContext(branch, { loadSchema: true })
+  const context = await resolveBranchContext(ctx, params, accumulated, { loadSchema: true })
   if (!context) {
     return { ok: false, response: { ok: false, status: 404, error: 'Branch not found' } }
   }
@@ -145,12 +165,11 @@ const runSchemaGuard: GuardRunner = async (ctx, _req, params) => {
   return { ok: true, context: { branchContext: context as BranchContextWithSchema } }
 }
 
-const runBranchAccessWithSchemaGuard: GuardRunner = async (ctx, req, params) => {
+const runBranchAccessWithSchemaGuard: GuardRunner = async (ctx, req, params, accumulated) => {
   const branch = extractBranchName(params)
   if (typeof branch !== 'string') return { ok: false, response: branch }
 
-  // Load branch with schema and check access
-  const context = await ctx.getBranchContext(branch, { loadSchema: true })
+  const context = await resolveBranchContext(ctx, params, accumulated, { loadSchema: true })
   if (!context) {
     return { ok: false, response: { ok: false, status: 404, error: 'Branch not found' } }
   }

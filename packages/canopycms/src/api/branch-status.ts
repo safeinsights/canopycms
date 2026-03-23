@@ -134,6 +134,8 @@ const submitBranchForMerge = defineEndpoint({
       updatedAt: '2024-01-01',
     },
   },
+  // Branch-level access not checked here — handler uses canPerformWorkflowAction() for
+  // finer-grained authorization (creator OR ACL access).
   guards: ['branch'] as const,
   handler: submitBranchForMergeHandler,
 })

@@ -455,4 +455,79 @@ describe('executeGuards', () => {
       }
     })
   })
+
+  // ========================================================================
+  // Context reuse — guards should not double-fetch branch context
+  // ========================================================================
+
+  describe('context reuse', () => {
+    it('branch + branchAccess does not call getBranchContext twice', async () => {
+      const bc = createMockBranchContext()
+      const ctx = createMockApiContext({
+        branchContext: bc,
+        allowBranchAccess: true,
+      })
+      const getBranchContext = ctx.getBranchContext as ReturnType<typeof vi.fn>
+
+      const result = await executeGuards(['branch', 'branchAccess'] as const, ctx, makeReq(), {
+        branch: 'main',
+      })
+
+      expect(result.ok).toBe(true)
+      // branch guard fetches once, branchAccess should reuse
+      expect(getBranchContext).toHaveBeenCalledTimes(1)
+    })
+
+    it('admin + branch calls getBranchContext only once', async () => {
+      const bc = createMockBranchContext()
+      const ctx = createMockApiContext({ branchContext: bc })
+      const getBranchContext = ctx.getBranchContext as ReturnType<typeof vi.fn>
+
+      const result = await executeGuards(['admin', 'branch'] as const, ctx, makeReq('admin'), {
+        branch: 'main',
+      })
+
+      expect(result.ok).toBe(true)
+      // admin guard doesn't fetch; branch guard fetches once
+      expect(getBranchContext).toHaveBeenCalledTimes(1)
+    })
+
+    it('branch + schema re-fetches when accumulated lacks flatSchema', async () => {
+      const bcNoSchema = createMockBranchContext()
+      const bcWithSchema = { ...createMockBranchContext(), flatSchema: fakeFlatSchema }
+      const getBranchContext = vi
+        .fn()
+        .mockResolvedValueOnce(bcNoSchema) // first call: no schema
+        .mockResolvedValueOnce(bcWithSchema) // second call: with schema
+      const ctx = createMockApiContext({ branchContext: bcNoSchema })
+      // Override with our custom mock
+      ;(ctx as any).getBranchContext = getBranchContext
+
+      const result = await executeGuards(['branch', 'schema'] as const, ctx, makeReq(), {
+        branch: 'main',
+      })
+
+      expect(result.ok).toBe(true)
+      // branch guard fetches once (no schema), schema guard must re-fetch
+      expect(getBranchContext).toHaveBeenCalledTimes(2)
+      expect(getBranchContext).toHaveBeenLastCalledWith('main', { loadSchema: true })
+    })
+
+    it('branch + schema reuses when accumulated already has flatSchema', async () => {
+      const bc = { ...createMockBranchContext(), flatSchema: fakeFlatSchema }
+      const ctx = createMockApiContext({ branchContext: bc })
+      const getBranchContext = ctx.getBranchContext as ReturnType<typeof vi.fn>
+
+      const result = await executeGuards(['branch', 'schema'] as const, ctx, makeReq(), {
+        branch: 'main',
+      })
+
+      expect(result.ok).toBe(true)
+      // branch guard fetches once with schema already present, schema guard reuses
+      expect(getBranchContext).toHaveBeenCalledTimes(1)
+      if (result.ok) {
+        expect(result.guardContext.branchContext.flatSchema).toBe(fakeFlatSchema)
+      }
+    })
+  })
 })

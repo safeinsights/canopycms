@@ -196,7 +196,7 @@ const resolveComment = defineEndpoint({
   responseType: 'ResolveCommentResponse',
   response: {} as ResolveCommentResponse,
   defaultMockData: { resolved: true },
-  guards: ['branch'] as const,
+  guards: ['branchAccess'] as const,
   handler: resolveCommentHandler,
 })
 
