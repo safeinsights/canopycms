@@ -291,8 +291,10 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   }
 
   // Load branches on mount and when branchName changes
+   
   useEffect(() => {
     loadBranches().catch(console.error)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadBranches would cause infinite loop
   }, [branchName])
 
   // Sync branch to URL parameter

@@ -219,12 +219,16 @@ export const PreviewFrame = ({
     postHighlightRef.current = postHighlight
   })
 
-  useEffect(() => {
+   
+useEffect(() => {
     post()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- post is tracked via ref
   }, [data, isLoading])
 
-  useEffect(() => {
+   
+useEffect(() => {
     postHighlight()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- postHighlight is tracked via ref
   }, [highlightEnabled])
 
   // When the preview page's React effects have run and its message listener is ready,

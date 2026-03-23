@@ -93,7 +93,7 @@ const eslintConfig = [
   {
     files: ['**/*.test.{ts,tsx}', '**/__test__/**', '**/__integration__/**'],
     rules: {
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-require-imports': 'off',
       'no-console': 'off',
     },
@@ -102,7 +102,7 @@ const eslintConfig = [
   {
     files: ['**/test-utils/**'],
     rules: {
-      '@typescript-eslint/no-explicit-any': 'warn',
+      '@typescript-eslint/no-explicit-any': 'off',
     },
   },
 

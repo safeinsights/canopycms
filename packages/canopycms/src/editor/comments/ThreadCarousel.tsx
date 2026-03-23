@@ -152,6 +152,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
   )
 
   // Auto-scroll to first unresolved thread when autoFocus is true
+   
   useEffect(() => {
     if (autoFocus && sortedThreads.length > 0) {
       const firstUnresolved = sortedThreads.find((t) => !t.resolved)
@@ -162,9 +163,11 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
         scrollToIndex(index)
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollToIndex is stable
   }, [autoFocus, sortedThreads])
 
   // Scroll to and highlight specific thread when highlightThreadId changes
+   
   useEffect(() => {
     if (highlightThreadId && sortedThreads.length > 0) {
       const threadIndex = sortedThreads.findIndex((t) => t.id === highlightThreadId)
@@ -179,6 +182,7 @@ export const ThreadCarousel: React.FC<ThreadCarouselProps> = ({
         return () => window.clearTimeout(timer)
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scrollToIndex is stable
   }, [highlightThreadId, sortedThreads])
 
   // Auto-open new thread box when autoOpenNewThread is true

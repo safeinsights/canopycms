@@ -9,7 +9,6 @@ import type { HomeContent } from '../schemas'
 export const HomeView: React.FC<{ data: HomeContent }> = ({ data }) => {
   const {
     data: liveData,
-    highlightEnabled,
     fieldProps,
   } = useCanopyPreview<HomeContent>({
     initialData: data,
