@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   DevAuthPlugin,
   createDevAuthPlugin,
@@ -313,6 +313,13 @@ describe('DevAuthPlugin', () => {
   })
 
   describe('createDevAuthPlugin factory', () => {
+    beforeEach(() => {
+      vi.spyOn(console, 'info').mockImplementation(() => {})
+    })
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
     it('creates plugin with default config', () => {
       const plugin = createDevAuthPlugin()
       expect(plugin).toBeInstanceOf(DevAuthPlugin)
@@ -415,9 +422,11 @@ describe('DevAuthPlugin', () => {
 
     beforeEach(() => {
       originalEnv = process.env.CANOPY_BOOTSTRAP_ADMIN_IDS
+      vi.spyOn(console, 'info').mockImplementation(() => {})
     })
 
     afterEach(() => {
+      vi.restoreAllMocks()
       if (originalEnv === undefined) {
         delete process.env.CANOPY_BOOTSTRAP_ADMIN_IDS
       } else {
