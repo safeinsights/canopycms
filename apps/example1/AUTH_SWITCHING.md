@@ -37,7 +37,7 @@ Remove `.env.local` or change the mode:
 ```bash
 CANOPY_AUTH_MODE=dev
 NEXT_PUBLIC_CANOPY_AUTH_MODE=dev
-CANOPY_BOOTSTRAP_ADMIN_IDS=devuser_3xY6zW1qR5
+CANOPY_BOOTSTRAP_ADMIN_IDS=dev_admin_3xY6zW1qR5
 ```
 
 ## How It Works

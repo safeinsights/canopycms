@@ -8,8 +8,10 @@ import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
 import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { authResultToCanopyUser } from '../user'
-import { loadInternalGroups } from '../authorization'
+import { loadInternalGroups, RESERVED_GROUPS } from '../authorization'
 import { clientOperatingStrategy } from '../operating-mode'
+
+let warnedNoAdmins = false
 
 /**
  * Options for creating a Canopy request handler.
@@ -181,8 +183,21 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
           mainBranchContext.branchRoot,
           operatingMode,
           apiCtx.services.bootstrapAdminIds,
-        ).catch(() => [])
+        ).catch((err: unknown) => {
+          console.warn('CanopyCMS: Failed to load internal groups from main branch:', err)
+          return []
+        })
       : []
+
+    if (!warnedNoAdmins && Array.isArray(internalGroups)) {
+      const adminsGroup = internalGroups.find((g) => g.id === RESERVED_GROUPS.ADMINS)
+      if (!adminsGroup || adminsGroup.members.length === 0) {
+        console.warn(
+          'CanopyCMS: No admin users configured. Set CANOPY_BOOTSTRAP_ADMIN_IDS or add members to the Admins group.',
+        )
+      }
+      warnedNoAdmins = true
+    }
 
     const user = authResultToCanopyUser(
       authResult,

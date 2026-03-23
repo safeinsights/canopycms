@@ -1,5 +1,11 @@
-import { describe, it, expect } from 'vitest'
-import { DevAuthPlugin, createDevAuthPlugin, DEFAULT_USERS, DEFAULT_GROUPS } from './dev-plugin'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import {
+  DevAuthPlugin,
+  createDevAuthPlugin,
+  DEFAULT_USERS,
+  DEFAULT_GROUPS,
+  DEV_ADMIN_USER_ID,
+} from './dev-plugin'
 import type { DevUser, DevGroup } from './dev-plugin'
 import type { AuthenticationResult } from 'canopycms/auth'
 
@@ -21,7 +27,7 @@ describe('DevAuthPlugin', () => {
       const result = await plugin.authenticate(new Headers())
 
       assertSuccess(result)
-      expect(result.user.userId).toBe('devuser_2nK8mP4xL9') // user1
+      expect(result.user.userId).toBe('dev_user1_2nK8mP4xL9') // user1
       expect(result.user.name).toBe('User One')
       expect(result.user.email).toBe('user1@localhost.dev')
       expect(result.user.externalGroups).toEqual(['team-a', 'team-b'])
@@ -33,29 +39,29 @@ describe('DevAuthPlugin', () => {
       const result = await plugin.authenticate(headers)
 
       assertSuccess(result)
-      expect(result.user.userId).toBe('devuser_3xY6zW1qR5') // admin1
+      expect(result.user.userId).toBe('dev_admin_3xY6zW1qR5') // admin1
       expect(result.user.name).toBe('Admin One')
     })
 
     it('authenticates via x-dev-user-id header', async () => {
       const plugin = new DevAuthPlugin({})
-      const headers = new Headers({ 'x-dev-user-id': 'devuser_7qR3tY6wN2' })
+      const headers = new Headers({ 'x-dev-user-id': 'dev_user2_7qR3tY6wN2' })
       const result = await plugin.authenticate(headers)
 
       assertSuccess(result)
-      expect(result.user.userId).toBe('devuser_7qR3tY6wN2') // user2
+      expect(result.user.userId).toBe('dev_user2_7qR3tY6wN2') // user2
       expect(result.user.name).toBe('User Two')
     })
 
     it('authenticates via canopy-dev-user cookie', async () => {
       const plugin = new DevAuthPlugin({})
       const headers = new Headers({
-        cookie: 'canopy-dev-user=devuser_5vS1pM8kJ4; other=value',
+        cookie: 'canopy-dev-user=dev_user3_5vS1pM8kJ4; other=value',
       })
       const result = await plugin.authenticate(headers)
 
       assertSuccess(result)
-      expect(result.user.userId).toBe('devuser_5vS1pM8kJ4') // user3
+      expect(result.user.userId).toBe('dev_user3_5vS1pM8kJ4') // user3
       expect(result.user.name).toBe('User Three')
     })
 
@@ -63,22 +69,22 @@ describe('DevAuthPlugin', () => {
       const plugin = new DevAuthPlugin({})
       const headers = new Headers({
         'X-Test-User': 'admin',
-        cookie: 'canopy-dev-user=devuser_2nK8mP4xL9',
+        cookie: 'canopy-dev-user=dev_user1_2nK8mP4xL9',
       })
       const result = await plugin.authenticate(headers)
 
       assertSuccess(result)
-      expect(result.user.userId).toBe('devuser_3xY6zW1qR5') // admin1 from header
+      expect(result.user.userId).toBe('dev_admin_3xY6zW1qR5') // admin1 from header
     })
 
     it('maps test user keys to dev user IDs', async () => {
       const plugin = new DevAuthPlugin({})
 
       const testCases = [
-        { key: 'admin', expectedId: 'devuser_3xY6zW1qR5' },
-        { key: 'editor', expectedId: 'devuser_2nK8mP4xL9' },
-        { key: 'viewer', expectedId: 'devuser_7qR3tY6wN2' },
-        { key: 'reviewer', expectedId: 'devuser_9aB4cD2eF7' },
+        { key: 'admin', expectedId: 'dev_admin_3xY6zW1qR5' },
+        { key: 'editor', expectedId: 'dev_user1_2nK8mP4xL9' },
+        { key: 'viewer', expectedId: 'dev_user2_7qR3tY6wN2' },
+        { key: 'reviewer', expectedId: 'dev_reviewer_9aB4cD2eF7' },
       ]
 
       for (const { key, expectedId } of testCases) {
@@ -103,12 +109,12 @@ describe('DevAuthPlugin', () => {
 
     it('uses custom default user when specified', async () => {
       const plugin = new DevAuthPlugin({
-        defaultUserId: 'devuser_3xY6zW1qR5', // admin1
+        defaultUserId: 'dev_admin_3xY6zW1qR5', // admin1
       })
       const result = await plugin.authenticate(new Headers())
 
       assertSuccess(result)
-      expect(result.user.userId).toBe('devuser_3xY6zW1qR5')
+      expect(result.user.userId).toBe('dev_admin_3xY6zW1qR5')
     })
   })
 
@@ -118,7 +124,7 @@ describe('DevAuthPlugin', () => {
       const results = await plugin.searchUsers('')
 
       expect(results).toHaveLength(5)
-      expect(results[0].id).toBe('devuser_2nK8mP4xL9')
+      expect(results[0].id).toBe('dev_user1_2nK8mP4xL9')
       expect(results[0].name).toBe('User One')
       expect(results[0].email).toBe('user1@localhost.dev')
     })
@@ -136,7 +142,7 @@ describe('DevAuthPlugin', () => {
       const results = await plugin.searchUsers('reviewer1@')
 
       expect(results).toHaveLength(1)
-      expect(results[0].id).toBe('devuser_9aB4cD2eF7')
+      expect(results[0].id).toBe('dev_reviewer_9aB4cD2eF7')
     })
 
     it('is case insensitive', async () => {
@@ -174,10 +180,10 @@ describe('DevAuthPlugin', () => {
   describe('getUserMetadata', () => {
     it('returns user metadata for valid user', async () => {
       const plugin = new DevAuthPlugin({})
-      const metadata = await plugin.getUserMetadata('devuser_2nK8mP4xL9')
+      const metadata = await plugin.getUserMetadata('dev_user1_2nK8mP4xL9')
 
       expect(metadata).toEqual({
-        id: 'devuser_2nK8mP4xL9',
+        id: 'dev_user1_2nK8mP4xL9',
         name: 'User One',
         email: 'user1@localhost.dev',
         avatarUrl: undefined,
@@ -314,7 +320,7 @@ describe('DevAuthPlugin', () => {
 
     it('creates plugin with custom config', () => {
       const plugin = createDevAuthPlugin({
-        defaultUserId: 'devuser_3xY6zW1qR5',
+        defaultUserId: 'dev_admin_3xY6zW1qR5',
       })
       expect(plugin).toBeInstanceOf(DevAuthPlugin)
     })
@@ -328,8 +334,8 @@ describe('DevAuthPlugin', () => {
   describe('DEFAULT_USERS', () => {
     it('exports default users', () => {
       expect(DEFAULT_USERS).toHaveLength(5)
-      expect(DEFAULT_USERS[0].userId).toBe('devuser_2nK8mP4xL9')
-      expect(DEFAULT_USERS[4].userId).toBe('devuser_3xY6zW1qR5')
+      expect(DEFAULT_USERS[0].userId).toBe('dev_user1_2nK8mP4xL9')
+      expect(DEFAULT_USERS[4].userId).toBe('dev_admin_3xY6zW1qR5')
     })
 
     it('has correct user structure', () => {
@@ -362,34 +368,34 @@ describe('DevAuthPlugin', () => {
     it('extracts cookie from single cookie string', async () => {
       const plugin = new DevAuthPlugin({})
       const headers = new Headers({
-        cookie: 'canopy-dev-user=devuser_3xY6zW1qR5',
+        cookie: 'canopy-dev-user=dev_admin_3xY6zW1qR5',
       })
       const result = await plugin.authenticate(headers)
 
       assertSuccess(result)
-      expect(result.user.userId).toBe('devuser_3xY6zW1qR5')
+      expect(result.user.userId).toBe('dev_admin_3xY6zW1qR5')
     })
 
     it('extracts cookie from multiple cookies', async () => {
       const plugin = new DevAuthPlugin({})
       const headers = new Headers({
-        cookie: 'session=abc123; canopy-dev-user=devuser_7qR3tY6wN2; other=value',
+        cookie: 'session=abc123; canopy-dev-user=dev_user2_7qR3tY6wN2; other=value',
       })
       const result = await plugin.authenticate(headers)
 
       assertSuccess(result)
-      expect(result.user.userId).toBe('devuser_7qR3tY6wN2')
+      expect(result.user.userId).toBe('dev_user2_7qR3tY6wN2')
     })
 
     it('extracts cookie without semicolon separator', async () => {
       const plugin = new DevAuthPlugin({})
       const headers = new Headers({
-        cookie: 'canopy-dev-user=devuser_9aB4cD2eF7',
+        cookie: 'canopy-dev-user=dev_reviewer_9aB4cD2eF7',
       })
       const result = await plugin.authenticate(headers)
 
       assertSuccess(result)
-      expect(result.user.userId).toBe('devuser_9aB4cD2eF7')
+      expect(result.user.userId).toBe('dev_reviewer_9aB4cD2eF7')
     })
 
     it('returns default user when cookie not found', async () => {
@@ -400,7 +406,56 @@ describe('DevAuthPlugin', () => {
       const result = await plugin.authenticate(headers)
 
       assertSuccess(result)
-      expect(result.user.userId).toBe('devuser_2nK8mP4xL9') // default
+      expect(result.user.userId).toBe('dev_user1_2nK8mP4xL9') // default
+    })
+  })
+
+  describe('auto-bootstrap admin', () => {
+    let originalEnv: string | undefined
+
+    beforeEach(() => {
+      originalEnv = process.env.CANOPY_BOOTSTRAP_ADMIN_IDS
+    })
+
+    afterEach(() => {
+      if (originalEnv === undefined) {
+        delete process.env.CANOPY_BOOTSTRAP_ADMIN_IDS
+      } else {
+        process.env.CANOPY_BOOTSTRAP_ADMIN_IDS = originalEnv
+      }
+    })
+
+    it('auto-sets CANOPY_BOOTSTRAP_ADMIN_IDS when not already set', () => {
+      delete process.env.CANOPY_BOOTSTRAP_ADMIN_IDS
+      createDevAuthPlugin()
+      expect(process.env.CANOPY_BOOTSTRAP_ADMIN_IDS).toBe(DEV_ADMIN_USER_ID)
+    })
+
+    it('does not override existing CANOPY_BOOTSTRAP_ADMIN_IDS', () => {
+      process.env.CANOPY_BOOTSTRAP_ADMIN_IDS = 'custom_user_id'
+      createDevAuthPlugin()
+      expect(process.env.CANOPY_BOOTSTRAP_ADMIN_IDS).toBe('custom_user_id')
+    })
+
+    it('can be disabled via autoBootstrapAdmin: false', () => {
+      delete process.env.CANOPY_BOOTSTRAP_ADMIN_IDS
+      createDevAuthPlugin({ autoBootstrapAdmin: false })
+      expect(process.env.CANOPY_BOOTSTRAP_ADMIN_IDS).toBeUndefined()
+    })
+
+    it('skips auto-bootstrap when custom users do not include admin user', () => {
+      delete process.env.CANOPY_BOOTSTRAP_ADMIN_IDS
+      createDevAuthPlugin({
+        users: [
+          {
+            userId: 'custom_1',
+            name: 'Custom',
+            email: 'custom@test.com',
+            externalGroups: [],
+          },
+        ],
+      })
+      expect(process.env.CANOPY_BOOTSTRAP_ADMIN_IDS).toBeUndefined()
     })
   })
 })

@@ -66,7 +66,7 @@ Add admin1's user ID to your config:
 // canopycms.config.ts
 export default defineCanopyConfig({
   // ... other config
-  bootstrapAdminIds: ['devuser_3xY6zW1qR5'], // admin1
+  bootstrapAdminIds: ['dev_admin_3xY6zW1qR5'], // admin1
 })
 ```
 
@@ -84,7 +84,7 @@ For Reviewers and other internal groups, create `.canopycms/groups.json`:
       "id": "Reviewers",
       "name": "Reviewers",
       "description": "Users who can review and approve branches",
-      "members": ["devuser_9aB4cD2eF7"]
+      "members": ["dev_reviewer_9aB4cD2eF7"]
     }
   ]
 }
@@ -94,13 +94,13 @@ For Reviewers and other internal groups, create `.canopycms/groups.json`:
 
 The plugin comes with 5 pre-configured users:
 
-| User         | ID                   | Email                   | External Groups        |
-| ------------ | -------------------- | ----------------------- | ---------------------- |
-| User One     | `devuser_2nK8mP4xL9` | user1@localhost.dev     | team-a, team-b         |
-| User Two     | `devuser_7qR3tY6wN2` | user2@localhost.dev     | team-b                 |
-| User Three   | `devuser_5vS1pM8kJ4` | user3@localhost.dev     | team-c                 |
-| Reviewer One | `devuser_9aB4cD2eF7` | reviewer1@localhost.dev | team-a                 |
-| Admin One    | `devuser_3xY6zW1qR5` | admin1@localhost.dev    | team-a, team-b, team-c |
+| User         | ID                        | Email                   | External Groups        |
+| ------------ | ------------------------- | ----------------------- | ---------------------- |
+| User One     | `dev_user1_2nK8mP4xL9`    | user1@localhost.dev     | team-a, team-b         |
+| User Two     | `dev_user2_7qR3tY6wN2`    | user2@localhost.dev     | team-b                 |
+| User Three   | `dev_user3_5vS1pM8kJ4`    | user3@localhost.dev     | team-c                 |
+| Reviewer One | `dev_reviewer_9aB4cD2eF7` | reviewer1@localhost.dev | team-a                 |
+| Admin One    | `dev_admin_3xY6zW1qR5`    | admin1@localhost.dev    | team-a, team-b, team-c |
 
 **Note**: admin1 gets the 'Admins' group via `bootstrapAdminIds` config, not from external groups.
 
@@ -120,16 +120,16 @@ Send the `X-Test-User` header with one of these values:
 ```ts
 // In your test
 await page.setExtraHTTPHeaders({
-  'X-Test-User': 'admin', // Maps to admin1 (devuser_3xY6zW1qR5)
+  'X-Test-User': 'admin', // Maps to admin1 (dev_admin_3xY6zW1qR5)
 })
 ```
 
 Test user mappings:
 
-- `admin` → admin1 (devuser_3xY6zW1qR5)
-- `editor` → user1 (devuser_2nK8mP4xL9)
-- `viewer` → user2 (devuser_7qR3tY6wN2)
-- `reviewer` → reviewer1 (devuser_9aB4cD2eF7)
+- `admin` → admin1 (dev_admin_3xY6zW1qR5)
+- `editor` → user1 (dev_user1_2nK8mP4xL9)
+- `viewer` → user2 (dev_user2_7qR3tY6wN2)
+- `reviewer` → reviewer1 (dev_reviewer_9aB4cD2eF7)
 
 ## Configuration
 
@@ -139,7 +139,7 @@ Customize users and groups:
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
 
 const authPlugin = createDevAuthPlugin({
-  defaultUserId: 'devuser_2nK8mP4xL9', // user1
+  defaultUserId: 'dev_user1_2nK8mP4xL9', // user1
   users: [
     {
       userId: 'custom_user1',
@@ -305,7 +305,7 @@ To switch back to dev auth, just remove `.env.local` or set the mode to `dev`.
 
 ```bash
 # Bootstrap admin for dev mode
-CANOPY_BOOTSTRAP_ADMIN_IDS=devuser_3xY6zW1qR5
+CANOPY_BOOTSTRAP_ADMIN_IDS=dev_admin_3xY6zW1qR5
 ```
 
 ### Benefits
