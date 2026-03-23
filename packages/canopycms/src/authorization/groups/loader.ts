@@ -4,8 +4,8 @@
  * Handles loading and saving internal groups from the filesystem.
  */
 
-import { promises as fs } from 'fs'
-import { join } from 'path'
+import { promises as fs } from 'node:fs'
+import { join } from 'node:path'
 import type { CanopyUserId } from '../../types'
 import { GroupsFileSchema, type InternalGroup, type GroupsFile } from './schema'
 import type { OperatingMode } from '../../operating-mode'

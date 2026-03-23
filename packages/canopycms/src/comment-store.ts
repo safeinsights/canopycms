@@ -1,6 +1,6 @@
-import fs from 'fs/promises'
-import path from 'path'
-import { randomUUID } from 'crypto'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import { randomUUID } from 'node:crypto'
 
 /**
  * Error thrown when a concurrent modification is detected.
@@ -138,8 +138,8 @@ export class CommentStore {
       await fs.rename(tempPath, this.filePath)
 
       // Post-write verification with settling delay
-      // Wait a small amount to let concurrent renames complete, then verify our writeId
-      await new Promise((resolve) => setTimeout(resolve, 5))
+      // Wait to let concurrent renames complete on shared filesystems (EFS/NFS), then verify our writeId
+      await new Promise((resolve) => setTimeout(resolve, 50))
 
       const afterWrite = JSON.parse(await fs.readFile(this.filePath, 'utf-8'))
       if (afterWrite.writeId !== writeId) {

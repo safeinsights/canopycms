@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { branchNameSchema } from './validators'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { isAdmin } from '../authorization'
@@ -6,7 +7,7 @@ import { defineEndpoint } from './route-builder'
 import { guardBranchExists, isBranchAccessError } from './middleware'
 
 const markAsMergedParamsSchema = z.object({
-  branch: z.string().min(1),
+  branch: branchNameSchema,
 })
 
 export interface MarkAsMergedParams {

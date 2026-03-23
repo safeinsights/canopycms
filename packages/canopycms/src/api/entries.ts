@@ -11,7 +11,12 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
 import { resolveCollectionPath } from '../content-id-index'
-import { validateAndNormalizePath, normalizeFilesystemPath, parseSlug } from '../paths'
+import {
+  validateAndNormalizePath,
+  normalizeFilesystemPath,
+  parseSlug,
+  parseLogicalPath,
+} from '../paths'
 import { isNotFoundError } from '../utils/error'
 import { isValidId } from '../id'
 import type { LogicalPath, PhysicalPath, EntrySlug, ContentId } from '../paths/types'
@@ -324,7 +329,10 @@ export const listEntriesHandler = async (
   }
 
   const root = context.branchRoot
-  const flatSchema = context.flatSchema!
+  if (!context.flatSchema) {
+    return { ok: false, status: 500, error: 'Schema not loaded for branch' }
+  }
+  const flatSchema = context.flatSchema
   const flatCollections = flatSchema
 
   const targetPath = params.collection ? normalizeFilesystemPath(params.collection) : undefined
@@ -508,7 +516,18 @@ const deleteEntryHandler = async (
 
   // Parse entryPath to get collection and slug
   // Format: collectionPath/slug (e.g., "posts/hello-world" or "docs/api/getting-started")
-  const entryPath = decodeURIComponent(params.entryPath)
+  // Re-validate after decoding to prevent double-encoding path traversal attacks
+  const decoded = decodeURIComponent(params.entryPath)
+  const entryPathResult = parseLogicalPath(decoded)
+  if (!entryPathResult.ok) {
+    return {
+      ok: false,
+      status: 400,
+      error: `Invalid entry path: ${entryPathResult.error}`,
+    }
+  }
+  const entryPath = entryPathResult.path
+
   const lastSlash = entryPath.lastIndexOf('/')
   if (lastSlash === -1) {
     return {
@@ -529,7 +548,10 @@ const deleteEntryHandler = async (
     }
   }
 
-  const flatSchema = context.flatSchema!
+  if (!context.flatSchema) {
+    return { ok: false, status: 500, error: 'Schema not loaded for branch' }
+  }
+  const flatSchema = context.flatSchema
 
   // Check edit permission on the entry
   // Build the physical path for permission check
@@ -541,7 +563,6 @@ const deleteEntryHandler = async (
   }
 
   const contentStore = new ContentStore(context.branchRoot, flatSchema)
-  // collectionPath is a slice of a validated LogicalPath — safe to cast
   const collectionLogicalPath = collectionPath as LogicalPath
   // Validate slug extracted from the path
   const slugResult = parseSlug(slug, 'entry')

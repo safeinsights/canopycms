@@ -593,8 +593,8 @@ export class ContentStore {
         }
       }
     } catch (err) {
-      // Re-throw "already exists" errors
-      if ((err as Error).message.includes('already exists')) {
+      // Re-throw ContentStoreError (e.g., "already exists") — ignore filesystem errors
+      if (err instanceof ContentStoreError) {
         throw err
       }
       // Ignore other errors (e.g., ENOENT if parent dir doesn't exist)

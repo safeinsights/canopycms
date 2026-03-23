@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { branchNameSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
@@ -18,7 +19,7 @@ export type { BranchMergeResponse } from './branch-merge'
 // ============================================================================
 
 const branchParamSchema = z.object({
-  branch: z.string().min(1),
+  branch: branchNameSchema,
 })
 
 const getBranchStatusHandler = async (

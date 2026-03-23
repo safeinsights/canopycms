@@ -225,6 +225,24 @@ async function _createCanopyServicesInternal(
     }
   }
 
+  // Create GitHub service if applicable (only for modes that support pull requests)
+  // Must be initialized before closures that reference it (commitToSettingsBranch)
+  let githubService: GitHubService | undefined
+  if (operatingStrategy(config.mode).supportsPullRequests()) {
+    const remoteUrl = config.defaultRemoteUrl
+    if (remoteUrl) {
+      try {
+        const service = createGitHubService(config, remoteUrl)
+        if (service) {
+          githubService = service
+        }
+      } catch (err) {
+        console.warn('CanopyCMS: Failed to initialize GitHub service:', err)
+        // Continue without GitHub integration
+      }
+    }
+  }
+
   const commitToSettingsBranch = async (options: {
     branchRoot: string
     files: string | string[]
@@ -335,24 +353,6 @@ async function _createCanopyServicesInternal(
   const registry = modeStrategy.supportsBranching()
     ? new BranchRegistry(getDefaultBranchBase(operatingMode))
     : undefined
-
-  // Create GitHub service if applicable (only for modes that support pull requests)
-  let githubService: GitHubService | undefined
-  const mode = config.mode
-  if (operatingStrategy(mode).supportsPullRequests()) {
-    const remoteUrl = config.defaultRemoteUrl
-    if (remoteUrl) {
-      try {
-        const service = createGitHubService(config, remoteUrl)
-        if (service) {
-          githubService = service
-        }
-      } catch (err) {
-        console.warn('CanopyCMS: Failed to initialize GitHub service:', err)
-        // Continue without GitHub integration
-      }
-    }
-  }
 
   return {
     config,

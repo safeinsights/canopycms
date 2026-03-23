@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { BranchName } from '../paths/types'
 
 const mockMetadataSave = vi.fn().mockResolvedValue({
   schemaVersion: 1,
@@ -55,7 +56,7 @@ describe('branch review api - requestChanges', () => {
           groups: [RESERVED_GROUPS.ADMINS],
         },
       },
-      { branch: 'missing' },
+      { branch: 'missing' as BranchName },
       {},
     )
     expect(res.status).toBe(404)
@@ -66,7 +67,7 @@ describe('branch review api - requestChanges', () => {
     const res = await requestChangesHandler(
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
       {},
     )
     expect(res.status).toBe(403)
@@ -88,7 +89,7 @@ describe('branch review api - requestChanges', () => {
           groups: [RESERVED_GROUPS.ADMINS],
         },
       },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
       {},
     )
     expect(res.status).toBe(400)
@@ -105,7 +106,7 @@ describe('branch review api - requestChanges', () => {
           groups: [RESERVED_GROUPS.ADMINS],
         },
       },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
       {},
     )
     expect(res.ok).toBe(true)
@@ -122,7 +123,7 @@ describe('branch review api - requestChanges', () => {
           groups: [RESERVED_GROUPS.REVIEWERS],
         },
       },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
       {},
     )
     expect(res.ok).toBe(true)
@@ -141,7 +142,7 @@ describe('branch review api - requestChanges', () => {
           groups: [RESERVED_GROUPS.ADMINS],
         },
       },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
       {},
     )
     expect(res.ok).toBe(true)
@@ -161,7 +162,7 @@ describe('branch review api - requestChanges', () => {
           groups: [RESERVED_GROUPS.ADMINS],
         },
       },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
       {},
     )
     // Should still succeed even if GitHub API fails
@@ -188,7 +189,7 @@ describe('branch review api - requestChanges', () => {
           groups: [RESERVED_GROUPS.ADMINS],
         },
       },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
       {},
     )
     expect(res.ok).toBe(true)
@@ -205,7 +206,7 @@ describe('branch review api - requestChanges', () => {
           groups: [RESERVED_GROUPS.ADMINS],
         },
       },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
       { comment: 'Please fix the typo' },
     )
     expect(res.ok).toBe(true)
@@ -225,7 +226,7 @@ describe('branch review api - approveBranch', () => {
           groups: [RESERVED_GROUPS.ADMINS],
         },
       },
-      { branch: 'missing' },
+      { branch: 'missing' as BranchName },
     )
     expect(res.status).toBe(404)
     expect(res.error).toBe('Branch not found')
@@ -235,7 +236,7 @@ describe('branch review api - approveBranch', () => {
     const res = await approveBranchHandler(
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
     )
     expect(res.status).toBe(403)
     expect(res.error).toContain('Only Admins and Reviewers can approve branches')
@@ -256,7 +257,7 @@ describe('branch review api - approveBranch', () => {
           groups: [RESERVED_GROUPS.ADMINS],
         },
       },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
     )
     expect(res.status).toBe(400)
     expect(res.error).toContain("Only 'submitted' branches can be approved")
@@ -272,7 +273,7 @@ describe('branch review api - approveBranch', () => {
           groups: [RESERVED_GROUPS.ADMINS],
         },
       },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
     )
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
@@ -288,7 +289,7 @@ describe('branch review api - approveBranch', () => {
           groups: [RESERVED_GROUPS.REVIEWERS],
         },
       },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
     )
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)

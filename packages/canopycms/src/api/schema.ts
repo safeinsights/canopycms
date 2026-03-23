@@ -18,6 +18,7 @@ import { defineEndpoint } from './route-builder'
 import { isAdmin } from '../authorization/helpers'
 import { getErrorMessage } from '../utils/error'
 import { branchNameSchema, logicalPathSchema } from './validators'
+import { guardBranchAccess, isBranchAccessError } from './middleware'
 import {
   SchemaOps,
   createCollectionInputSchema,
@@ -36,7 +37,7 @@ import type {
   ContentFormat,
   EntrySchema,
 } from '../config'
-import { type LogicalPath, type ContentId } from '../paths'
+import { type LogicalPath, type ContentId, parseLogicalPath } from '../paths'
 
 // ============================================================================
 // Wire Types — API response shapes with schemaRef instead of resolved schema
@@ -308,11 +309,21 @@ function checkAdminAuth(req: ApiRequest): { error: string; status: number } | nu
 
 /**
  * Decode a collection path from URL params.
- * The path is already validated and branded as LogicalPath by the Zod schema;
- * this only applies URI decoding for catch-all route segments.
+ * The path is validated by Zod before decoding, then re-validated after
+ * decoding to prevent double-encoding path traversal attacks.
  */
-function decodeCollectionPath(collectionPath: LogicalPath): LogicalPath {
-  return decodeURIComponent(collectionPath) as LogicalPath
+function decodeCollectionPath(
+  collectionPath: LogicalPath,
+): { ok: true; path: LogicalPath } | { ok: false; error: string } {
+  const decoded = decodeURIComponent(collectionPath)
+  if (decoded === collectionPath) {
+    return { ok: true, path: collectionPath }
+  }
+  const result = parseLogicalPath(decoded)
+  if (!result.ok) {
+    return { ok: false, error: `Invalid collection path after decoding: ${result.error}` }
+  }
+  return { ok: true, path: result.path }
 }
 
 // ============================================================================
@@ -327,6 +338,10 @@ const getSchemaHandler = async (
   req: ApiRequest,
   params: z.infer<typeof branchParamsSchema>,
 ): Promise<GetSchemaApiResponse> => {
+  // Check branch access before loading any data
+  const accessResult = await guardBranchAccess(ctx, req, params.branch)
+  if (isBranchAccessError(accessResult)) return accessResult
+
   const context = await ctx.getBranchContext(params.branch, {
     loadSchema: true,
   })
@@ -334,11 +349,15 @@ const getSchemaHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
+  if (!context.flatSchema) {
+    return { ok: false, status: 500, error: 'Schema not loaded for branch' }
+  }
+
   return {
     ok: true,
     status: 200,
     data: {
-      flatSchema: toWireFlatSchema(context.flatSchema!, ctx.services.entrySchemaRegistry),
+      flatSchema: toWireFlatSchema(context.flatSchema, ctx.services.entrySchemaRegistry),
       entrySchemas: ctx.services.entrySchemaRegistry,
     },
   }
@@ -353,6 +372,10 @@ const getCollectionHandler = async (
   req: ApiRequest,
   params: z.infer<typeof collectionParamsSchema>,
 ): Promise<GetCollectionApiResponse> => {
+  // Check branch access before loading any data
+  const accessResult = await guardBranchAccess(ctx, req, params.branch)
+  if (isBranchAccessError(accessResult)) return accessResult
+
   const context = await ctx.getBranchContext(params.branch, {
     loadSchema: true,
   })
@@ -360,10 +383,17 @@ const getCollectionHandler = async (
     return { ok: false, status: 404, error: 'Branch not found' }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   // Find collection in per-branch flat schema
-  const flatSchema = context.flatSchema!
+  if (!context.flatSchema) {
+    return { ok: false, status: 500, error: 'Schema not loaded for branch' }
+  }
+  const flatSchema = context.flatSchema
   const item = flatSchema.find((i) => i.type === 'collection' && i.logicalPath === collectionPath)
 
   if (!item || item.type !== 'collection') {
@@ -482,7 +512,11 @@ const updateCollectionHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   try {
     await storeResult.store.updateCollection(collectionPath, body as UpdateCollectionInput)
@@ -520,7 +554,11 @@ const deleteCollectionHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   try {
     await storeResult.store.deleteCollection(collectionPath)
@@ -559,7 +597,11 @@ const addEntryTypeHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   try {
     await storeResult.store.addEntryType(collectionPath, body as CreateEntryTypeInput)
@@ -598,7 +640,11 @@ const updateEntryTypeHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   // Check if format or schema are being changed (breaking changes)
   const isBreakingChange = body.format !== undefined || body.schema !== undefined
@@ -658,7 +704,11 @@ const removeEntryTypeHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   try {
     await storeResult.store.removeEntryType(collectionPath, params.entryTypeName)
@@ -697,7 +747,11 @@ const updateOrderHandler = async (
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   try {
     await storeResult.store.updateOrder(collectionPath, body.order)

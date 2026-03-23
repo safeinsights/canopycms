@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { branchNameSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
@@ -8,7 +9,7 @@ import { guardBranchExists, isBranchAccessError } from './middleware'
 import { syncConvertToDraft } from './github-sync'
 
 const branchParamSchema = z.object({
-  branch: z.string().min(1),
+  branch: branchNameSchema,
 })
 
 const withdrawBranchHandler = async (

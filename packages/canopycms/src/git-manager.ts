@@ -277,7 +277,7 @@ export class GitManager {
         throw new Error(`Expected git repo at ${repoPath}`)
       }
     } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      if (isNotFoundError(err)) {
         throw new Error(`Expected git repo at ${repoPath}`)
       }
       throw err

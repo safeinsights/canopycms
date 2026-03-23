@@ -5,6 +5,7 @@ import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
 import { branchNameSchema, contentIdSchema } from './validators'
+import { guardBranchAccess, isBranchAccessError } from './middleware'
 
 export interface ResolveReferencesBody {
   ids: string[] // ContentId strings at runtime
@@ -33,6 +34,10 @@ const resolveReferencesHandler = async (
   params: z.infer<typeof resolveReferencesParamsSchema>,
   body: z.infer<typeof resolveReferencesBodySchema>,
 ): Promise<ResolveReferencesResponse> => {
+  // Check branch access before loading any data
+  const accessResult = await guardBranchAccess(ctx, req, params.branch)
+  if (isBranchAccessError(accessResult)) return accessResult
+
   const context = await ctx.getBranchContext(params.branch, {
     loadSchema: true,
   })
@@ -42,7 +47,10 @@ const resolveReferencesHandler = async (
 
   const { ids } = body
 
-  const flatSchema = context.flatSchema!
+  if (!context.flatSchema) {
+    return { ok: false, status: 500, error: 'Schema not loaded for branch' }
+  }
+  const flatSchema = context.flatSchema
   const store = new ContentStore(context.branchRoot, flatSchema)
 
   // Get ID index (automatically loads if needed)

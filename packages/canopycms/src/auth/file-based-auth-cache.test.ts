@@ -209,6 +209,26 @@ describe('FileBasedAuthCache', () => {
       expect(users2[0].name).toBe('Charlie')
     })
 
+    it('falls back to flat layout when symlink target escapes cache directory', async () => {
+      // Create a symlink pointing outside the cache directory
+      const currentLink = path.join(tmpDir, 'current')
+      try {
+        await fs.unlink(currentLink)
+      } catch {
+        // May not exist
+      }
+      await fs.symlink('/tmp', currentLink)
+
+      // Write users.json to the flat layout (in tmpDir directly)
+      await fs.writeFile(path.join(tmpDir, 'users.json'), JSON.stringify(testUsers))
+
+      const escapedCache = new FileBasedAuthCache(tmpDir)
+      // Should fall back to flat layout instead of following the escape symlink
+      const users = await escapedCache.getAllUsers()
+      expect(users).toHaveLength(2)
+      expect(users[0].name).toBe('Alice')
+    })
+
     it('cleans up old snapshots keeping only 2', async () => {
       // Write 3 snapshots
       await writeAuthCacheSnapshot(tmpDir, {

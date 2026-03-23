@@ -42,7 +42,21 @@ async function resolveActiveCacheDir(cachePath: string): Promise<string> {
   try {
     const target = await fs.readlink(currentLink)
     // Symlink target may be relative or absolute
-    return path.isAbsolute(target) ? target : path.resolve(cachePath, target)
+    const resolved = path.isAbsolute(target) ? target : path.resolve(cachePath, target)
+    // SECURITY: Validate that resolved target stays within the expected cache directory
+    const normalizedCache = path.resolve(cachePath)
+    const normalizedTarget = path.resolve(resolved)
+    if (
+      !normalizedTarget.startsWith(normalizedCache + path.sep) &&
+      normalizedTarget !== normalizedCache
+    ) {
+      log.debug('cache', 'Symlink target escapes cache directory', {
+        cachePath: normalizedCache,
+        target: normalizedTarget,
+      })
+      return cachePath
+    }
+    return resolved
   } catch {
     // No symlink — fall back to flat layout
     return cachePath

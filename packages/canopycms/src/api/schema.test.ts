@@ -79,6 +79,7 @@ describe('Schema API', () => {
       services: {
         config: {},
         entrySchemaRegistry: mockEntrySchemaRegistry,
+        checkBranchAccess: vi.fn().mockReturnValue({ allowed: true }),
         checkContentAccess: vi.fn().mockResolvedValue({ allowed: true }),
       },
     } as unknown as ApiContext

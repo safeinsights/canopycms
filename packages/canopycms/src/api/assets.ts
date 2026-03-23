@@ -44,10 +44,17 @@ export interface DeleteAssetBody {
 /**
  * List assets - any authenticated user can list assets.
  */
+const listAssetsQuerySchema = z.object({
+  prefix: z.string().optional(),
+})
+
 const listAssetsHandler = async (ctx: ApiContext, req: ApiRequest): Promise<AssetsListResponse> => {
   if (!ctx.assetStore) return { ok: false, status: 501, error: 'Asset store not configured' }
-  const prefix = req.query?.prefix as string | undefined
-  const assets = await ctx.assetStore.list(prefix ?? '')
+  const query = listAssetsQuerySchema.safeParse(req.query ?? {})
+  if (!query.success) {
+    return { ok: false, status: 400, error: query.error.message }
+  }
+  const assets = await ctx.assetStore.list(query.data.prefix ?? '')
   return { ok: true, status: 200, data: { assets } }
 }
 
@@ -88,12 +95,12 @@ const deleteAssetHandler = async (
     return { ok: false, status: 403, error: 'Only Admins can delete assets' }
   }
 
-  const key = req.query?.key as string | undefined
-  if (!key) {
+  const deleteQuery = z.object({ key: z.string().min(1) }).safeParse(req.query ?? {})
+  if (!deleteQuery.success) {
     return { ok: false, status: 400, error: 'key query parameter required' }
   }
 
-  await ctx.assetStore.delete(key)
+  await ctx.assetStore.delete(deleteQuery.data.key)
   return { ok: true, status: 200, data: { deleted: true } }
 }
 

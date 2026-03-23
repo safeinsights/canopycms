@@ -5,7 +5,7 @@
  * Client-safe functions are in normalize.ts.
  */
 
-import { sep, resolve, relative } from 'path'
+import { sep, resolve, relative } from 'node:path'
 import type { PathValidationResult } from './types'
 
 /**

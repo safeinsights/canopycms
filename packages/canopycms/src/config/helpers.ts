@@ -147,8 +147,8 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
   }
 
   const merged: CanopyConfigInput = {
-    gitBotAuthorName: gitBotAuthorName as string,
-    gitBotAuthorEmail: gitBotAuthorEmail as string,
+    gitBotAuthorName: gitBotAuthorName ?? '',
+    gitBotAuthorEmail: gitBotAuthorEmail ?? '',
     ...(media ? { media } : {}),
     ...(contentRoot ? { contentRoot } : {}),
     ...(sourceRoot ? { sourceRoot } : {}),
