@@ -4,7 +4,10 @@ import { createCanopyContext, type CanopyContext, createCanopyServices } from 'c
 import type { CanopyConfig, AuthPlugin, CanopyUser, FieldConfig } from 'canopycms'
 import { authResultToCanopyUser } from 'canopycms'
 import { loadInternalGroups, loadBranchContext } from 'canopycms/server'
+import type { InternalGroup } from 'canopycms/server'
 import { createCanopyCatchAllHandler } from './adapter'
+
+let warnedNoAdmins = false
 
 export interface NextCanopyOptions {
   config: CanopyConfig
@@ -35,13 +38,26 @@ export async function createNextCanopyContext(options: NextCanopyOptions) {
       branchName: baseBranch,
       mode: operatingMode,
     })
-    const internalGroups = mainBranchContext
+    const internalGroups: InternalGroup[] = mainBranchContext
       ? await loadInternalGroups(
           mainBranchContext.branchRoot,
           operatingMode,
           services.bootstrapAdminIds,
-        ).catch(() => [])
+        ).catch((err: unknown) => {
+          console.warn('CanopyCMS: Failed to load internal groups from main branch:', err)
+          return [] as InternalGroup[]
+        })
       : []
+
+    if (!warnedNoAdmins && Array.isArray(internalGroups)) {
+      const adminsGroup = internalGroups.find((g) => g.id === 'Admins')
+      if (!adminsGroup || adminsGroup.members.length === 0) {
+        console.warn(
+          'CanopyCMS: No admin users configured. Set CANOPY_BOOTSTRAP_ADMIN_IDS or add members to the Admins group.',
+        )
+      }
+      warnedNoAdmins = true
+    }
 
     return authResultToCanopyUser(authResult, services.bootstrapAdminIds, internalGroups)
   }

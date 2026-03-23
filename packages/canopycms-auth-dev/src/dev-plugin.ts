@@ -1,4 +1,4 @@
-import type { AuthPlugin, AuthPluginFactory } from 'canopycms/auth'
+import type { AuthPlugin } from 'canopycms/auth'
 import type { UserSearchResult, GroupMetadata, AuthenticationResult } from 'canopycms/auth'
 import { extractHeaders } from 'canopycms/auth'
 import type { CanopyUserId, CanopyGroupId } from 'canopycms'
@@ -23,6 +23,8 @@ export interface DevGroup {
   description?: string
 }
 
+export const DEV_ADMIN_USER_ID: CanopyUserId = 'dev_admin_3xY6zW1qR5'
+
 export interface DevAuthConfig {
   /**
    * Custom mock users. If not provided, uses default users.
@@ -36,43 +38,49 @@ export interface DevAuthConfig {
 
   /**
    * Default user ID when no user is selected.
-   * @default 'devuser_2nK8mP4xL9' (user1)
+   * @default 'dev_user1_2nK8mP4xL9' (user1)
    */
   defaultUserId?: CanopyUserId
+
+  /**
+   * Whether to auto-set CANOPY_BOOTSTRAP_ADMIN_IDS for the admin dev user
+   * when the env var is not already set. Defaults to true.
+   */
+  autoBootstrapAdmin?: boolean
 }
 
 export const DEFAULT_USERS: DevUser[] = [
   {
-    userId: 'devuser_2nK8mP4xL9',
+    userId: 'dev_user1_2nK8mP4xL9',
     name: 'User One',
     email: 'user1@localhost.dev',
     externalGroups: ['team-a', 'team-b'],
   },
   {
-    userId: 'devuser_7qR3tY6wN2',
+    userId: 'dev_user2_7qR3tY6wN2',
     name: 'User Two',
     email: 'user2@localhost.dev',
     externalGroups: ['team-b'],
   },
   {
-    userId: 'devuser_5vS1pM8kJ4',
+    userId: 'dev_user3_5vS1pM8kJ4',
     name: 'User Three',
     email: 'user3@localhost.dev',
     externalGroups: ['team-c'],
   },
   {
-    userId: 'devuser_9aB4cD2eF7',
+    userId: 'dev_reviewer_9aB4cD2eF7',
     name: 'Reviewer One',
     email: 'reviewer1@localhost.dev',
     externalGroups: ['team-a'],
     // Note: 'Reviewers' membership comes from internal groups file, not auth plugin
   },
   {
-    userId: 'devuser_3xY6zW1qR5',
+    userId: DEV_ADMIN_USER_ID,
     name: 'Admin One',
     email: 'admin1@localhost.dev',
     externalGroups: ['team-a', 'team-b', 'team-c'],
-    // Note: Does NOT include 'Admins' - that's applied by bootstrap admin config
+    // Note: Does NOT include 'Admins' - that's applied by bootstrap admin config or auto-bootstrap
   },
 ]
 
@@ -94,7 +102,7 @@ export class DevAuthPlugin implements AuthPlugin {
   constructor(config: DevAuthConfig = {}) {
     this.users = config.users ?? DEFAULT_USERS
     this.groups = config.groups ?? DEFAULT_GROUPS
-    this.defaultUserId = config.defaultUserId ?? 'devuser_2nK8mP4xL9'
+    this.defaultUserId = config.defaultUserId ?? 'dev_user1_2nK8mP4xL9'
   }
 
   async authenticate(context: unknown): Promise<AuthenticationResult> {
@@ -144,10 +152,10 @@ export class DevAuthPlugin implements AuthPlugin {
    */
   private mapTestUserKey(key: string): CanopyUserId {
     const testUserMap: Record<string, CanopyUserId> = {
-      admin: 'devuser_3xY6zW1qR5', // admin1
-      editor: 'devuser_2nK8mP4xL9', // user1
-      viewer: 'devuser_7qR3tY6wN2', // user2
-      reviewer: 'devuser_9aB4cD2eF7', // reviewer1
+      admin: DEV_ADMIN_USER_ID, // admin1
+      editor: 'dev_user1_2nK8mP4xL9', // user1
+      viewer: 'dev_user2_7qR3tY6wN2', // user2
+      reviewer: 'dev_reviewer_9aB4cD2eF7', // reviewer1
     }
     return testUserMap[key] ?? key
   }
@@ -212,8 +220,22 @@ export class DevAuthPlugin implements AuthPlugin {
 }
 
 /**
- * Factory function for creating dev auth plugin
+ * Factory function for creating dev auth plugin.
+ * By default, auto-sets CANOPY_BOOTSTRAP_ADMIN_IDS to the admin dev user
+ * if the env var is not already set. Disable with { autoBootstrapAdmin: false }.
  */
 export function createDevAuthPlugin(config?: DevAuthConfig): AuthPlugin {
+  const shouldAutoBootstrap = config?.autoBootstrapAdmin ?? true
+  if (shouldAutoBootstrap && !process.env.CANOPY_BOOTSTRAP_ADMIN_IDS) {
+    const users = config?.users ?? DEFAULT_USERS
+    const adminUser = users.find((u) => u.userId === DEV_ADMIN_USER_ID)
+    if (adminUser) {
+      process.env.CANOPY_BOOTSTRAP_ADMIN_IDS = adminUser.userId
+      console.info(
+        `CanopyCMS dev-auth: Auto-configured ${adminUser.name} (${adminUser.userId}) as bootstrap admin. ` +
+          `Set CANOPY_BOOTSTRAP_ADMIN_IDS env var or pass autoBootstrapAdmin: false to override.`,
+      )
+    }
+  }
   return new DevAuthPlugin(config ?? {})
 }

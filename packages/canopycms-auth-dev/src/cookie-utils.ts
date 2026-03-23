@@ -2,7 +2,7 @@ import type { HeadersLike } from 'canopycms/auth'
 
 export const DEV_USER_COOKIE_NAME = 'canopy-dev-user'
 export const DEV_USER_COOKIE_MAX_AGE = 60 * 60 * 24 * 7 // 7 days
-export const DEFAULT_USER_ID = 'devuser_2nK8mP4xL9'
+export const DEFAULT_USER_ID = 'dev_user1_2nK8mP4xL9'
 
 /**
  * Server-side: Extract cookie value from HTTP headers

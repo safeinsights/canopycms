@@ -1,16 +1,17 @@
 import { extractHeaders } from 'canopycms/auth'
 import type { TokenVerifier } from 'canopycms/auth'
 import { getDevUserCookieFromHeaders, DEFAULT_USER_ID } from './cookie-utils'
+import { DEV_ADMIN_USER_ID } from './dev-plugin'
 
 /**
  * Test user key → dev user ID mapping.
  * Matches the mapping in DevAuthPlugin.mapTestUserKey().
  */
 const TEST_USER_MAP: Record<string, string> = {
-  admin: 'devuser_3xY6zW1qR5',
-  editor: 'devuser_2nK8mP4xL9',
-  viewer: 'devuser_7qR3tY6wN2',
-  reviewer: 'devuser_9aB4cD2eF7',
+  admin: DEV_ADMIN_USER_ID,
+  editor: 'dev_user1_2nK8mP4xL9',
+  viewer: 'dev_user2_7qR3tY6wN2',
+  reviewer: 'dev_reviewer_9aB4cD2eF7',
 }
 
 /**

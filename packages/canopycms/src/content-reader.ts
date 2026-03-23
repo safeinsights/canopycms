@@ -157,6 +157,21 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
         'read',
       )
       if (!access.allowed) {
+        if (services.config.mode === 'dev' || services.config.mode === 'prod-sim') {
+          const reasons: string[] = []
+          if (!access.branch.allowed) {
+            reasons.push(`branch access denied (${access.branch.reason})`)
+          }
+          if (!access.path.allowed) {
+            reasons.push(`path access denied (${access.path.reason ?? 'unknown'})`)
+          }
+          const detail = reasons.length > 0 ? `: ${reasons.join(', ')}` : ''
+          const groupsHint =
+            user.groups.length === 0
+              ? ' (user has no group memberships — is CANOPY_BOOTSTRAP_ADMIN_IDS configured?)'
+              : ''
+          throw new ContentStoreError(`Forbidden${detail}${groupsHint}`)
+        }
         throw new ContentStoreError('Forbidden')
       }
     }
