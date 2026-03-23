@@ -16,6 +16,8 @@ const eslintConfig = [
       'coverage/**',
       'test-results/**',
       'playwright-report/**',
+      'packages/canopycms/src/api/client.ts',
+      'packages/canopycms/src/api/__test__/mock-client.ts',
     ],
   },
   // Base recommended rules

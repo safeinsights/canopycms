@@ -8,3 +8,5 @@ playwright-report
 package-lock.json
 apps/example1/content
 apps/test-app/content
+packages/canopycms/src/api/client.ts
+packages/canopycms/src/api/__test__/mock-client.ts

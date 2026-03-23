@@ -6,72 +6,20 @@
  */
 
 // Type imports
-import type {
-  BranchDeleteResponse,
-  BranchListResponse,
-  BranchResponse,
-  CreateBranchBody,
-  UpdateBranchAccessBody,
-} from './branch'
+import type { BranchDeleteResponse, BranchListResponse, BranchResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
 import type { BranchMergeResponse } from './branch-status'
 import type { RequestChangesBody } from './branch-review'
-import type {
-  AddCommentBody,
-  AddCommentResponse,
-  CommentsResponse,
-  ResolveCommentResponse,
-} from './comments'
-import type {
-  ContentReadResponse,
-  ContentWriteResponse,
-  ReferenceValidationResponse,
-  RenameEntryBody,
-  RenameEntryResponse,
-  ValidateReferencesBody,
-  WriteContentBody,
-} from './content'
+import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
+import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
 import type { ReferenceOptionsResponse } from './reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from './resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from './entries'
-import type {
-  AssetDeleteResponse,
-  AssetUploadResponse,
-  AssetsListResponse,
-  UploadAssetBody,
-} from './assets'
-import type {
-  GetUserMetadataResponse,
-  ListGroupsResponse,
-  PermissionsResponse,
-  SearchUsersResponse,
-  UpdatePermissionsBody,
-} from './permissions'
-import type {
-  ExternalGroupsResponse,
-  InternalGroupsResponse,
-  UpdateInternalGroupsBody,
-  UpdateInternalGroupsResponse,
-} from './groups'
+import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse, UploadAssetBody } from './assets'
+import type { GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from './permissions'
+import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from './groups'
 import type { UserInfoResponse } from './user'
-import type {
-  AddEntryTypeApiResponse,
-  CreateCollectionApiResponse,
-  DeleteCollectionApiResponse,
-  GetCollectionApiResponse,
-  GetSchemaApiResponse,
-  InvalidateSchemaCacheApiResponse,
-  RemoveEntryTypeApiResponse,
-  UpdateCollectionApiResponse,
-  UpdateEntryTypeApiResponse,
-  UpdateOrderApiResponse,
-  UpdateOrderBody,
-} from './schema'
-import type {
-  CreateCollectionInput,
-  CreateEntryTypeInput,
-  UpdateCollectionInput,
-  UpdateEntryTypeInput,
-} from './../schema/schema-store-types'
+import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from './schema'
+import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from './../schema/schema-store-types'
 
 /**
  * Options for creating an ApiClient
@@ -145,10 +93,7 @@ export class CanopyApiClient {
     /**
      * updateAccess - PATCH /:branch/access
      */
-    updateAccess: (
-      params: Record<string, string>,
-      body: UpdateBranchAccessBody,
-    ): Promise<BranchResponse> => {
+    updateAccess: (params: Record<string, string>, body: UpdateBranchAccessBody): Promise<BranchResponse> => {
       return this.request('PATCH', this.buildPath('/:branch/access', params), body)
     },
   }
@@ -167,10 +112,7 @@ export class CanopyApiClient {
     /**
      * requestChanges - POST /:branch/request-changes
      */
-    requestChanges: (
-      params: Record<string, string>,
-      body: RequestChangesBody,
-    ): Promise<BranchResponse> => {
+    requestChanges: (params: Record<string, string>, body: RequestChangesBody): Promise<BranchResponse> => {
       return this.request('POST', this.buildPath('/:branch/request-changes', params), body)
     },
 
@@ -243,34 +185,21 @@ export class CanopyApiClient {
     /**
      * write - PUT /:branch/content/...path
      */
-    write: (
-      params: Record<string, string>,
-      body: WriteContentBody,
-    ): Promise<ContentWriteResponse> => {
+    write: (params: Record<string, string>, body: WriteContentBody): Promise<ContentWriteResponse> => {
       return this.request('PUT', this.buildPath('/:branch/content/...path', params), body)
     },
 
     /**
      * validateReferences - POST /:branch/validate-references/...path
      */
-    validateReferences: (
-      params: Record<string, string>,
-      body: ValidateReferencesBody,
-    ): Promise<ReferenceValidationResponse> => {
-      return this.request(
-        'POST',
-        this.buildPath('/:branch/validate-references/...path', params),
-        body,
-      )
+    validateReferences: (params: Record<string, string>, body: ValidateReferencesBody): Promise<ReferenceValidationResponse> => {
+      return this.request('POST', this.buildPath('/:branch/validate-references/...path', params), body)
     },
 
     /**
      * renameEntry - PATCH /:branch/rename-entry/...path
      */
-    renameEntry: (
-      params: Record<string, string>,
-      body: RenameEntryBody,
-    ): Promise<RenameEntryResponse> => {
+    renameEntry: (params: Record<string, string>, body: RenameEntryBody): Promise<RenameEntryResponse> => {
       return this.request('PATCH', this.buildPath('/:branch/rename-entry/...path', params), body)
     },
 
@@ -284,10 +213,7 @@ export class CanopyApiClient {
     /**
      * resolveReferences - POST /:branch/resolve-references
      */
-    resolveReferences: (
-      params: Record<string, string>,
-      body: ResolveReferencesBody,
-    ): Promise<ResolveReferencesResponse> => {
+    resolveReferences: (params: Record<string, string>, body: ResolveReferencesBody): Promise<ResolveReferencesResponse> => {
       return this.request('POST', this.buildPath('/:branch/resolve-references', params), body)
     },
   }
@@ -430,104 +356,62 @@ export class CanopyApiClient {
      * getCollection - GET /:branch/schema/collection/...collectionPath
      */
     getCollection: (params: Record<string, string>): Promise<GetCollectionApiResponse> => {
-      return this.request(
-        'GET',
-        this.buildPath('/:branch/schema/collection/...collectionPath', params),
-      )
+      return this.request('GET', this.buildPath('/:branch/schema/collection/...collectionPath', params))
     },
 
     /**
      * createCollection - POST /:branch/schema/collections
      */
-    createCollection: (
-      params: Record<string, string>,
-      body: CreateCollectionInput,
-    ): Promise<CreateCollectionApiResponse> => {
+    createCollection: (params: Record<string, string>, body: CreateCollectionInput): Promise<CreateCollectionApiResponse> => {
       return this.request('POST', this.buildPath('/:branch/schema/collections', params), body)
     },
 
     /**
      * updateCollection - PATCH /:branch/schema/collection/...collectionPath
      */
-    updateCollection: (
-      params: Record<string, string>,
-      body: UpdateCollectionInput,
-    ): Promise<UpdateCollectionApiResponse> => {
-      return this.request(
-        'PATCH',
-        this.buildPath('/:branch/schema/collection/...collectionPath', params),
-        body,
-      )
+    updateCollection: (params: Record<string, string>, body: UpdateCollectionInput): Promise<UpdateCollectionApiResponse> => {
+      return this.request('PATCH', this.buildPath('/:branch/schema/collection/...collectionPath', params), body)
     },
 
     /**
      * deleteCollection - DELETE /:branch/schema/collection/...collectionPath
      */
     deleteCollection: (params: Record<string, string>): Promise<DeleteCollectionApiResponse> => {
-      return this.request(
-        'DELETE',
-        this.buildPath('/:branch/schema/collection/...collectionPath', params),
-      )
+      return this.request('DELETE', this.buildPath('/:branch/schema/collection/...collectionPath', params))
     },
 
     /**
      * addEntryType - POST /:branch/schema/entry-types/...collectionPath
      */
-    addEntryType: (
-      params: Record<string, string>,
-      body: CreateEntryTypeInput,
-    ): Promise<AddEntryTypeApiResponse> => {
-      return this.request(
-        'POST',
-        this.buildPath('/:branch/schema/entry-types/...collectionPath', params),
-        body,
-      )
+    addEntryType: (params: Record<string, string>, body: CreateEntryTypeInput): Promise<AddEntryTypeApiResponse> => {
+      return this.request('POST', this.buildPath('/:branch/schema/entry-types/...collectionPath', params), body)
     },
 
     /**
      * updateEntryType - PATCH /:branch/schema/entry-types/:entryTypeName/...collectionPath
      */
-    updateEntryType: (
-      params: Record<string, string>,
-      body: UpdateEntryTypeInput,
-    ): Promise<UpdateEntryTypeApiResponse> => {
-      return this.request(
-        'PATCH',
-        this.buildPath('/:branch/schema/entry-types/:entryTypeName/...collectionPath', params),
-        body,
-      )
+    updateEntryType: (params: Record<string, string>, body: UpdateEntryTypeInput): Promise<UpdateEntryTypeApiResponse> => {
+      return this.request('PATCH', this.buildPath('/:branch/schema/entry-types/:entryTypeName/...collectionPath', params), body)
     },
 
     /**
      * removeEntryType - DELETE /:branch/schema/entry-types/:entryTypeName/...collectionPath
      */
     removeEntryType: (params: Record<string, string>): Promise<RemoveEntryTypeApiResponse> => {
-      return this.request(
-        'DELETE',
-        this.buildPath('/:branch/schema/entry-types/:entryTypeName/...collectionPath', params),
-      )
+      return this.request('DELETE', this.buildPath('/:branch/schema/entry-types/:entryTypeName/...collectionPath', params))
     },
 
     /**
      * updateOrder - PATCH /:branch/schema/order/...collectionPath
      */
-    updateOrder: (
-      params: Record<string, string>,
-      body: UpdateOrderBody,
-    ): Promise<UpdateOrderApiResponse> => {
-      return this.request(
-        'PATCH',
-        this.buildPath('/:branch/schema/order/...collectionPath', params),
-        body,
-      )
+    updateOrder: (params: Record<string, string>, body: UpdateOrderBody): Promise<UpdateOrderApiResponse> => {
+      return this.request('PATCH', this.buildPath('/:branch/schema/order/...collectionPath', params), body)
     },
 
     /**
      * invalidateSchemaCache - POST /:branch/schema/invalidate-cache
      */
-    invalidateSchemaCache: (
-      params: Record<string, string>,
-    ): Promise<InvalidateSchemaCacheApiResponse> => {
+    invalidateSchemaCache: (params: Record<string, string>): Promise<InvalidateSchemaCacheApiResponse> => {
       return this.request('POST', this.buildPath('/:branch/schema/invalidate-cache', params))
     },
   }
@@ -554,10 +438,7 @@ export class CanopyApiClient {
         result = result.replace(pathParamPattern, encodeURIComponent(String(value)))
       } else if (result.includes(restParamPattern)) {
         // For rest parameters, encode each segment separately to preserve slashes
-        const encoded = String(value)
-          .split('/')
-          .map((segment) => encodeURIComponent(segment))
-          .join('/')
+        const encoded = String(value).split('/').map(segment => encodeURIComponent(segment)).join('/')
         result = result.replace(restParamPattern, encoded)
       } else {
         // Not in path template, so it's a query param
@@ -583,7 +464,7 @@ export class CanopyApiClient {
     method: string,
     path: string,
     body?: unknown,
-    headers: Record<string, string> = {},
+    headers: Record<string, string> = {}
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`
 
