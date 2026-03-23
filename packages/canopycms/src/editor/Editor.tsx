@@ -338,7 +338,7 @@ export const Editor: React.FC<EditorProps> = ({
   const schema = currentEntry?.schema ?? []
 
   // Effect to load entry data when selection changes
-   
+
   useEffect(() => {
     const load = async () => {
       const contentId = currentEntry?.contentId
@@ -635,7 +635,6 @@ export const Editor: React.FC<EditorProps> = ({
     return undefined
   }, [activeCollections, contentRoot])
 
-   
   const navCollections = useMemo<EntryNavCollection[] | undefined>(() => {
     if (!activeCollections) return undefined
 

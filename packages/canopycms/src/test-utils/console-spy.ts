@@ -39,7 +39,7 @@ export function mockConsole(): MockConsole {
     info: [],
     debug: [],
   }
-   
+
   const spies: any[] = []
 
   const methods: ConsoleMethod[] = ['log', 'warn', 'error', 'info', 'debug']
