@@ -1,11 +1,11 @@
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import type { BranchContext } from '../types'
 import type { CommentThread, CommentType } from '../comment-store'
 import { CommentStore } from '../comment-store'
 import { isReviewer } from '../authorization'
 import { defineEndpoint } from './route-builder'
-import { guardBranchAccess, guardBranchExists, isBranchAccessError } from './middleware'
 import { branchNameSchema, logicalPathSchema } from './validators'
 
 export interface AddCommentBody {
@@ -54,29 +54,27 @@ const addCommentBodySchema = z.object({
 })
 
 const listCommentsHandler = async (
-  ctx: ApiContext,
-  req: ApiRequest,
-  params: z.infer<typeof branchParamSchema>,
+  gc: { branchContext: BranchContext },
+  _ctx: ApiContext,
+  _req: ApiRequest,
+  _params: z.infer<typeof branchParamSchema>,
 ): Promise<CommentsResponse> => {
-  const result = await guardBranchAccess(ctx, req, params.branch)
-  if (isBranchAccessError(result)) return result
-  const { context } = result
+  const { branchContext } = gc
 
-  const commentStore = new CommentStore(context.branchRoot)
+  const commentStore = new CommentStore(branchContext.branchRoot)
   const threads = await commentStore.listThreads({ includeResolved: true })
 
   return { ok: true, status: 200, data: { threads } }
 }
 
 const addCommentHandler = async (
-  ctx: ApiContext,
+  gc: { branchContext: BranchContext },
+  _ctx: ApiContext,
   req: ApiRequest,
-  params: z.infer<typeof branchParamSchema>,
+  _params: z.infer<typeof branchParamSchema>,
   body: z.infer<typeof addCommentBodySchema>,
 ): Promise<AddCommentResponse> => {
-  const accessResult = await guardBranchAccess(ctx, req, params.branch)
-  if (isBranchAccessError(accessResult)) return accessResult
-  const { context } = accessResult
+  const { branchContext } = gc
 
   // Validate required fields based on type
   if (body.type === 'field' && !body.canopyPath) {
@@ -95,7 +93,7 @@ const addCommentHandler = async (
     }
   }
 
-  const commentStore = new CommentStore(context.branchRoot)
+  const commentStore = new CommentStore(branchContext.branchRoot)
 
   const result = await commentStore.addComment({
     userId: req.user.userId,
@@ -110,15 +108,14 @@ const addCommentHandler = async (
 }
 
 const resolveCommentHandler = async (
-  ctx: ApiContext,
+  gc: { branchContext: BranchContext },
+  _ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof threadParamSchema>,
 ): Promise<ResolveCommentResponse> => {
-  const accessResult = await guardBranchExists(ctx, params.branch)
-  if (isBranchAccessError(accessResult)) return accessResult
-  const { context } = accessResult
+  const { branchContext } = gc
 
-  const commentStore = new CommentStore(context.branchRoot)
+  const commentStore = new CommentStore(branchContext.branchRoot)
 
   // Get the thread to check permissions
   const thread = await commentStore.getThread(params.threadId)
@@ -163,6 +160,7 @@ const listComments = defineEndpoint({
   responseType: 'CommentsResponse',
   response: {} as CommentsResponse,
   defaultMockData: { threads: [] },
+  guards: ['branchAccess'] as const,
   handler: listCommentsHandler,
 })
 
@@ -181,6 +179,7 @@ const addComment = defineEndpoint({
   responseType: 'AddCommentResponse',
   response: {} as AddCommentResponse,
   defaultMockData: { threadId: 'mock-thread-id', commentId: 'mock-comment-id' },
+  guards: ['branchAccess'] as const,
   handler: addCommentHandler,
 })
 
@@ -197,6 +196,7 @@ const resolveComment = defineEndpoint({
   responseType: 'ResolveCommentResponse',
   response: {} as ResolveCommentResponse,
   defaultMockData: { resolved: true },
+  guards: ['branch'] as const,
   handler: resolveCommentHandler,
 })
 

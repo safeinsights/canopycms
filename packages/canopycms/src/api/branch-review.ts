@@ -1,11 +1,10 @@
 import { z } from 'zod'
 import { branchNameSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
+import type { BranchContext } from '../types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
-import { isReviewer } from '../authorization'
 import { defineEndpoint } from './route-builder'
-import { guardBranchExists, isBranchAccessError } from './middleware'
 import { syncConvertToDraft } from './github-sync'
 
 export interface RequestChangesBody {
@@ -21,41 +20,31 @@ const requestChangesBodySchema = z.object({
 })
 
 const requestChangesHandler = async (
+  gc: { branchContext: BranchContext },
   ctx: ApiContext,
-  req: ApiRequest,
-  params: z.infer<typeof branchParamSchema>,
+  _req: ApiRequest,
+  _params: z.infer<typeof branchParamSchema>,
   _body?: z.infer<typeof requestChangesBodySchema>,
 ): Promise<BranchResponse> => {
-  const accessResult = await guardBranchExists(ctx, params.branch)
-  if (isBranchAccessError(accessResult)) return accessResult
-  const { context } = accessResult
-
-  // Check user is a Reviewer (or Admin)
-  if (!isReviewer(req.user.groups)) {
-    return {
-      ok: false,
-      status: 403,
-      error: 'Only Admins and Reviewers can request changes',
-    }
-  }
+  const { branchContext } = gc
 
   // Verify branch is submitted
-  if (context.branch.status !== 'submitted') {
+  if (branchContext.branch.status !== 'submitted') {
     return {
       ok: false,
       status: 400,
-      error: `Cannot request changes on branch with status '${context.branch.status}'. Only 'submitted' branches can have changes requested.`,
+      error: `Cannot request changes on branch with status '${branchContext.branch.status}'. Only 'submitted' branches can have changes requested.`,
     }
   }
 
   // Convert PR to draft (sync via githubService, or async via task queue)
-  await syncConvertToDraft(ctx, context)
+  await syncConvertToDraft(ctx, branchContext)
 
   // Update branch status to 'editing'
-  const meta = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)
+  const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
   const updated = await meta.save({
-    branch: { name: context.branch.name, status: 'editing' },
+    branch: { name: branchContext.branch.name, status: 'editing' },
   })
 
   // TODO: Optionally record comment in .canopycms/comments.json when comment system is implemented
@@ -64,37 +53,27 @@ const requestChangesHandler = async (
 }
 
 const approveBranchHandler = async (
-  ctx: ApiContext,
-  req: ApiRequest,
-  params: z.infer<typeof branchParamSchema>,
+  gc: { branchContext: BranchContext },
+  _ctx: ApiContext,
+  _req: ApiRequest,
+  _params: z.infer<typeof branchParamSchema>,
 ): Promise<BranchResponse> => {
-  const accessResult = await guardBranchExists(ctx, params.branch)
-  if (isBranchAccessError(accessResult)) return accessResult
-  const { context } = accessResult
-
-  // Check user is a Reviewer (or Admin)
-  if (!isReviewer(req.user.groups)) {
-    return {
-      ok: false,
-      status: 403,
-      error: 'Only Admins and Reviewers can approve branches',
-    }
-  }
+  const { branchContext } = gc
 
   // Verify branch is submitted
-  if (context.branch.status !== 'submitted') {
+  if (branchContext.branch.status !== 'submitted') {
     return {
       ok: false,
       status: 400,
-      error: `Cannot approve branch with status '${context.branch.status}'. Only 'submitted' branches can be approved.`,
+      error: `Cannot approve branch with status '${branchContext.branch.status}'. Only 'submitted' branches can be approved.`,
     }
   }
 
   // Update branch status to 'approved'
-  const meta = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)
+  const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
   const updated = await meta.save({
-    branch: { name: context.branch.name, status: 'approved' },
+    branch: { name: branchContext.branch.name, status: 'approved' },
   })
 
   // TODO: Optionally call githubService.approvePullRequest() when GitHub integration is needed
@@ -126,6 +105,7 @@ export const requestChanges = defineEndpoint({
       updatedAt: '2024-01-01',
     },
   },
+  guards: ['reviewer', 'branch'] as const,
   handler: requestChangesHandler,
 })
 
@@ -151,5 +131,6 @@ export const approveBranch = defineEndpoint({
       updatedAt: '2024-01-01',
     },
   },
+  guards: ['reviewer', 'branch'] as const,
   handler: approveBranchHandler,
 })

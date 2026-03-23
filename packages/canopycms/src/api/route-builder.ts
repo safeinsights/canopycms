@@ -3,6 +3,7 @@
  *
  * This module provides a type-safe way to define API routes that:
  * - Validates params and body at runtime with Zod
+ * - Runs declarative guards (auth, branch access, schema loading) before handlers
  * - Provides full TypeScript type inference
  * - Makes code generation trivial (no regex parsing needed)
  * - Self-documents the API surface
@@ -10,6 +11,7 @@
 
 import type { z } from 'zod'
 import type { ApiContext, ApiRequest } from './types'
+import { type GuardId, type ComputeGuardContext, executeGuards } from './guards'
 
 /**
  * Cast specification for branded types in mock data.
@@ -82,9 +84,9 @@ export interface RouteDefinition<
 }
 
 /**
- * Handler function signature with validated params and body
+ * Handler function signature with validated params and body (no guards)
  */
-type RouteHandler<
+export type RouteHandler<
   TParams extends z.ZodType | undefined,
   TBody extends z.ZodType | undefined,
   TResponse,
@@ -98,134 +100,95 @@ type RouteHandler<
 ) => Promise<TResponse>
 
 /**
- * Configuration for defining an endpoint
+ * Guarded handler: receives guard context as first argument.
+ * The guard context shape is computed from the declared guards.
  */
-interface EndpointConfig<
+export type GuardedRouteHandler<
+  TGuards extends readonly GuardId[],
   TParams extends z.ZodType | undefined,
   TBody extends z.ZodType | undefined,
   TResponse,
+> = (
+  gc: ComputeGuardContext<TGuards>,
+  ctx: ApiContext,
+  req: ApiRequest,
+  ...args: [
+    ...(TParams extends z.ZodType ? [params: z.infer<TParams>] : []),
+    ...(TBody extends z.ZodType ? [body: z.infer<TBody>] : []),
+  ]
+) => Promise<TResponse>
+
+// ============================================================================
+// Endpoint configuration types
+// ============================================================================
+
+/** Base config fields shared by guarded and unguarded endpoints */
+interface EndpointConfigBase<
+  TParams extends z.ZodType | undefined,
+  TBody extends z.ZodType | undefined,
 > {
-  namespace: string // Client namespace: 'branches', 'workflow', etc.
-  name: string // Method name: 'list', 'delete', etc.
+  namespace: string
+  name: string
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
-  path: string // e.g., '/:branch' or '/branches' or '/:branch/content/:collection'
+  path: string
   params?: TParams
   body?: TBody
-  bodyType?: string // Optional: Type name for body parameter: 'UpdatePermissionsBody'
-  responseType: string // Type name for generation: 'BranchDeleteResponse'
-  response: TResponse // Type marker for TypeScript
-  defaultMockData?: unknown // Optional: data inside mockSuccess({ ...here })
-  mockDataCasts?: MockDataCasts // Optional: casts for branded types in mock data
+  bodyType?: string
+  responseType: string
+  response: unknown
+  defaultMockData?: unknown
+  mockDataCasts?: MockDataCasts
+}
+
+/** Config for an endpoint without guards */
+interface UnguardedEndpointConfig<
+  TParams extends z.ZodType | undefined,
+  TBody extends z.ZodType | undefined,
+  TResponse,
+> extends EndpointConfigBase<TParams, TBody> {
+  guards?: undefined
+  response: TResponse
   handler: RouteHandler<TParams, TBody, TResponse>
 }
 
-/**
- * Define an API endpoint with runtime validation and full type inference.
- *
- * @example No params or body (GET list)
- * ```ts
- * const list = defineEndpoint({
- *   namespace: 'branches',
- *   name: 'list',
- *   method: 'GET',
- *   path: '/branches',
- *   responseType: 'BranchListResponse',
- *   response: {} as BranchListResponse,
- *   defaultMockData: { branches: [] },
- *   handler: async (ctx, req) => {
- *     // ...
- *   }
- * })
- * ```
- *
- * @example With params (GET/DELETE single resource)
- * ```ts
- * const deleteBranch = defineEndpoint({
- *   namespace: 'branches',
- *   name: 'delete',
- *   method: 'DELETE',
- *   path: '/:branch',
- *   params: z.object({ branch: z.string() }),
- *   responseType: 'BranchDeleteResponse',
- *   response: {} as BranchDeleteResponse,
- *   defaultMockData: { deleted: true },
- *   handler: async (ctx, req, params) => {
- *     // params.branch is typed as string and VALIDATED!
- *   }
- * })
- * ```
- *
- * @example With body (POST/PUT/PATCH)
- * ```ts
- * const create = defineEndpoint({
- *   namespace: 'branches',
- *   name: 'create',
- *   method: 'POST',
- *   path: '/branches',
- *   body: z.object({
- *     name: z.string(),
- *     baseBranch: z.string().optional()
- *   }),
- *   responseType: 'BranchResponse',
- *   response: {} as BranchResponse,
- *   defaultMockData: { branch: {} },
- *   handler: async (ctx, req, body) => {
- *     // body.name is typed as string and VALIDATED!
- *     // body.baseBranch is typed as string | undefined
- *   }
- * })
- * ```
- *
- * @example With both params and body (PATCH resource)
- * ```ts
- * const updateAccess = defineEndpoint({
- *   namespace: 'branches',
- *   name: 'updateAccess',
- *   method: 'PATCH',
- *   path: '/:branch/access',
- *   params: z.object({ branch: z.string() }),
- *   body: z.object({
- *     allowedUsers: z.array(z.string()).optional()
- *   }),
- *   responseType: 'BranchResponse',
- *   response: {} as BranchResponse,
- *   defaultMockData: { branch: {} },
- *   handler: async (ctx, req, params, body) => {
- *     // params.branch is string (VALIDATED!)
- *     // body.allowedUsers is string[] | undefined (VALIDATED!)
- *   }
- * })
- * ```
- *
- * @example With query parameters (manual validation)
- * ```ts
- * const searchUsers = defineEndpoint({
- *   namespace: 'permissions',
- *   name: 'searchUsers',
- *   method: 'GET',
- *   path: '/permissions/users/search',
- *   responseType: 'SearchUsersResponse',
- *   response: {} as SearchUsersResponse,
- *   defaultMockData: { users: [] },
- *   handler: async (ctx, req) => {
- *     // NOTE: Query parameters currently require manual validation via req.query
- *     // Zod validation for query parameters will be added in a future update
- *     const query = req.query?.q as string | undefined
- *     if (!query) {
- *       return { ok: false, status: 400, error: 'Query parameter "q" is required' }
- *     }
- *     const limitStr = req.query?.limit as string | undefined
- *     const limit = limitStr ? parseInt(limitStr, 10) : undefined
- *     // ... use query and limit
- *   }
- * })
- * ```
- */
+/** Config for an endpoint with guards */
+interface GuardedEndpointConfig<
+  TGuards extends readonly [GuardId, ...GuardId[]],
+  TParams extends z.ZodType | undefined,
+  TBody extends z.ZodType | undefined,
+  TResponse,
+> extends EndpointConfigBase<TParams, TBody> {
+  guards: TGuards
+  response: TResponse
+  handler: GuardedRouteHandler<TGuards, TParams, TBody, TResponse>
+}
+
+// ============================================================================
+// defineEndpoint overloads
+// ============================================================================
+
+/** Define an endpoint without guards */
 export function defineEndpoint<
   TParams extends z.ZodType | undefined = undefined,
   TBody extends z.ZodType | undefined = undefined,
   TResponse = unknown,
->(config: EndpointConfig<TParams, TBody, TResponse>): RouteDefinition<TParams, TBody, TResponse> {
+>(
+  config: UnguardedEndpointConfig<TParams, TBody, TResponse>,
+): RouteDefinition<TParams, TBody, TResponse>
+
+/** Define an endpoint with declarative guards */
+export function defineEndpoint<
+  TGuards extends readonly [GuardId, ...GuardId[]],
+  TParams extends z.ZodType | undefined = undefined,
+  TBody extends z.ZodType | undefined = undefined,
+  TResponse = unknown,
+>(
+  config: GuardedEndpointConfig<TGuards, TParams, TBody, TResponse>,
+): RouteDefinition<TParams, TBody, TResponse>
+
+/** Implementation — uses `any` for the union of overloaded config types */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function defineEndpoint(config: any): RouteDefinition<any, any, any> {
   // Register for code generation
   ROUTE_REGISTRY.push({
     namespace: config.namespace,
@@ -241,15 +204,13 @@ export function defineEndpoint<
   })
 
   // Convert path template to pattern array for router
-  const pattern = config.path.split('/').filter(Boolean) // Remove empty strings from leading/trailing slashes
+  const pattern = config.path.split('/').filter(Boolean)
 
   // Build path function - handles param substitution
   const buildPath = (paramsOrNothing?: Record<string, string>) => {
     if (!config.params) {
       return config.path
     }
-
-    // Replace :param placeholders with actual values
     let result = config.path
     const params = paramsOrNothing as Record<string, string>
     for (const [key, value] of Object.entries(params)) {
@@ -262,7 +223,6 @@ export function defineEndpoint<
   const validate = (extracted: { params?: Record<string, string>; body?: unknown }) => {
     const result: { ok: true; params?: unknown; body?: unknown } = { ok: true }
 
-    // Validate params
     if (config.params) {
       const paramsResult = config.params.safeParse(extracted.params)
       if (!paramsResult.success) {
@@ -274,7 +234,6 @@ export function defineEndpoint<
       result.params = paramsResult.data
     }
 
-    // Validate body
     if (config.body) {
       const bodyResult = config.body.safeParse(extracted.body)
       if (!bodyResult.success) {
@@ -283,7 +242,29 @@ export function defineEndpoint<
       result.body = bodyResult.data
     }
 
-    return result as ReturnType<RouteDefinition<TParams, TBody, TResponse>['validate']>
+    return result
+  }
+
+  // Wrap handler with guard execution if guards are declared
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let handler: RouteHandler<any, any, any>
+  if (config.guards && config.guards.length > 0) {
+    const guards = config.guards as readonly GuardId[]
+    const guardedHandler = config.handler
+
+    handler = async (ctx: ApiContext, req: ApiRequest, ...args: unknown[]) => {
+      // Extract params from args (first arg after ctx/req if present)
+      const params = (args[0] as Record<string, unknown>) ?? {}
+      const guardResult = await executeGuards(guards, ctx, req, params)
+      if (!guardResult.ok) {
+        return guardResult.response
+      }
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
+      return (guardedHandler as Function)(guardResult.guardContext, ctx, req, ...args)
+    }
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    handler = config.handler as RouteHandler<any, any, any>
   }
 
   return {
@@ -293,8 +274,9 @@ export function defineEndpoint<
     params: config.params,
     body: config.body,
     response: config.response,
-    handler: config.handler as unknown as RouteDefinition<TParams, TBody, TResponse>['handler'],
-    buildPath: buildPath as unknown as RouteDefinition<TParams, TBody, TResponse>['buildPath'],
+    handler,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    buildPath: buildPath as any,
     validate,
   }
 }

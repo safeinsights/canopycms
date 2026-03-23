@@ -7,7 +7,6 @@ import {
   loadInternalGroups,
   saveInternalGroups,
   loadGroupsFile,
-  isAdmin,
   RESERVED_GROUPS,
   isReservedGroup,
 } from '../authorization'
@@ -103,14 +102,10 @@ export const validateReservedGroups = (
  * Get internal groups (admin only)
  */
 const getInternalGroupsHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
-  req: ApiRequest,
+  _req: ApiRequest,
 ): Promise<InternalGroupsResponse> => {
-  // Check admin permission
-  if (!isAdmin(req.user.groups)) {
-    return { ok: false, status: 403, error: 'Admin access required' }
-  }
-
   try {
     const result = await getSettingsBranchContext(ctx)
     if ('error' in result) {
@@ -146,15 +141,11 @@ export interface UpdateInternalGroupsBody {
  * Update internal groups (admin only)
  */
 const updateInternalGroupsHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   body: z.infer<typeof updateInternalGroupsBodySchema>,
 ): Promise<UpdateInternalGroupsResponse> => {
-  // Check admin permission
-  if (!isAdmin(req.user.groups)) {
-    return { ok: false, status: 403, error: 'Admin access required' }
-  }
-
   if (!body?.groups) {
     return { ok: false, status: 400, error: 'groups array required' }
   }
@@ -293,15 +284,11 @@ export interface ExternalGroup {
 }
 
 const searchExternalGroupsHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof searchExternalGroupsParamsSchema>,
 ): Promise<ExternalGroupsResponse> => {
-  // Require admin for external group search
-  if (!isAdmin(req.user.groups)) {
-    return { ok: false, status: 403, error: 'Admin access required' }
-  }
-
   const authPlugin = ctx.authPlugin
   if (!authPlugin || !authPlugin.searchExternalGroups) {
     return {
@@ -339,6 +326,7 @@ const getInternal = defineEndpoint({
   responseType: 'InternalGroupsResponse',
   response: {} as InternalGroupsResponse,
   defaultMockData: { groups: [] },
+  guards: ['admin'] as const,
   handler: getInternalGroupsHandler,
 })
 
@@ -356,6 +344,7 @@ const updateInternal = defineEndpoint({
   responseType: 'UpdateInternalGroupsResponse',
   response: {} as UpdateInternalGroupsResponse,
   defaultMockData: {},
+  guards: ['admin'] as const,
   handler: updateInternalGroupsHandler,
 })
 
@@ -372,6 +361,7 @@ const searchExternal = defineEndpoint({
   responseType: 'ExternalGroupsResponse',
   response: {} as ExternalGroupsResponse,
   defaultMockData: { groups: [] },
+  guards: ['admin'] as const,
   handler: searchExternalGroupsHandler,
 })
 

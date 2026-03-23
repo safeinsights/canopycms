@@ -8,6 +8,7 @@ import matter from 'gray-matter'
 import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from '../config'
 import { ContentStore, ContentStoreError } from '../content-store'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import type { BranchContextWithSchema } from '../types'
 import { defineEndpoint } from './route-builder'
 import { getFormatExtension } from '../utils/format'
 import { resolveCollectionPath } from '../content-id-index'
@@ -312,7 +313,8 @@ const listCollectionEntriesRecursive = async (
   return results.flat()
 }
 
-export const listEntriesHandler = async (
+const listEntriesHandler = async (
+  gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof listEntriesParamsSchema>,
@@ -321,18 +323,9 @@ export const listEntriesHandler = async (
     return { ok: false, status: 400, error: 'branch is required' }
   }
 
-  const context = await ctx.getBranchContext(params.branch, {
-    loadSchema: true,
-  })
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
-
-  const root = context.branchRoot
-  if (!context.flatSchema) {
-    return { ok: false, status: 500, error: 'Schema not loaded for branch' }
-  }
-  const flatSchema = context.flatSchema
+  const { branchContext } = gc
+  const root = branchContext.branchRoot
+  const flatSchema = branchContext.flatSchema
   const flatCollections = flatSchema
 
   const targetPath = params.collection ? normalizeFilesystemPath(params.collection) : undefined
@@ -364,7 +357,7 @@ export const listEntriesHandler = async (
       for (const item of items) {
         // Use the physicalPath for access control
         const readAccess = await ctx.services.checkContentAccess(
-          context,
+          branchContext,
           root,
           item.physicalPath,
           req.user,
@@ -372,7 +365,7 @@ export const listEntriesHandler = async (
         )
         if (!readAccess.allowed) continue
         const editAccess = await ctx.services.checkContentAccess(
-          context,
+          branchContext,
           root,
           item.physicalPath,
           req.user,
@@ -406,7 +399,7 @@ export const listEntriesHandler = async (
         for (const entry of items) {
           // Use the physicalPath for access control
           const readAccess = await ctx.services.checkContentAccess(
-            context,
+            branchContext,
             root,
             entry.physicalPath,
             req.user,
@@ -414,7 +407,7 @@ export const listEntriesHandler = async (
           )
           if (!readAccess.allowed) continue
           const editAccess = await ctx.services.checkContentAccess(
-            context,
+            branchContext,
             root,
             entry.physicalPath,
             req.user,
@@ -479,6 +472,7 @@ export const listEntries = defineEndpoint({
       limit: 50,
     },
   },
+  guards: ['schema'] as const,
   handler: listEntriesHandler,
 })
 
@@ -503,16 +497,12 @@ const deleteEntryParamsSchema = z.object({
  * Note: Uses catch-all to support paths with slashes (e.g., content/posts/hello-world)
  */
 const deleteEntryHandler = async (
+  gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof deleteEntryParamsSchema>,
 ): Promise<DeleteEntryResponse> => {
-  const context = await ctx.getBranchContext(params.branch, {
-    loadSchema: true,
-  })
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const { branchContext } = gc
 
   // Parse entryPath to get collection and slug
   // Format: collectionPath/slug (e.g., "posts/hello-world" or "docs/api/getting-started")
@@ -548,10 +538,7 @@ const deleteEntryHandler = async (
     }
   }
 
-  if (!context.flatSchema) {
-    return { ok: false, status: 500, error: 'Schema not loaded for branch' }
-  }
-  const flatSchema = context.flatSchema
+  const flatSchema = branchContext.flatSchema
 
   // Check edit permission on the entry
   // Build the physical path for permission check
@@ -562,7 +549,7 @@ const deleteEntryHandler = async (
     return { ok: false, status: 404, error: 'Collection not found' }
   }
 
-  const contentStore = new ContentStore(context.branchRoot, flatSchema)
+  const contentStore = new ContentStore(branchContext.branchRoot, flatSchema)
   const collectionLogicalPath = collectionPath as LogicalPath
   // Validate slug extracted from the path
   const slugResult = parseSlug(slug, 'entry')
@@ -589,8 +576,8 @@ const deleteEntryHandler = async (
 
   // Check edit access using the real physical path
   const editAccess = await ctx.services.checkContentAccess(
-    context,
-    context.branchRoot,
+    branchContext,
+    branchContext.branchRoot,
     physicalPath,
     req.user,
     'edit',
@@ -612,7 +599,7 @@ const deleteEntryHandler = async (
 
     // Update the collection's order array to remove the deleted item
     if (contentId && collection.type === 'collection' && collection.order) {
-      const schemaStore = new SchemaOps(context.branchRoot, ctx.services.entrySchemaRegistry)
+      const schemaStore = new SchemaOps(branchContext.branchRoot, ctx.services.entrySchemaRegistry)
       const newOrder = collection.order.filter((id) => id !== contentId)
       if (newOrder.length !== collection.order.length) {
         await schemaStore.updateOrder(collectionPath as LogicalPath, newOrder as string[])
@@ -650,6 +637,7 @@ export const deleteEntry = defineEndpoint({
   responseType: 'DeleteEntryResponse',
   response: {} as DeleteEntryResponse,
   defaultMockData: { deleted: true },
+  guards: ['schema'] as const,
   handler: deleteEntryHandler,
 })
 

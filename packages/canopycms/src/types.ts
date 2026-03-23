@@ -47,3 +47,8 @@ export interface BranchContext extends BranchPaths {
   /** Per-branch flattened schema (lazy-loaded via getBranchContext with loadSchema: true) */
   flatSchema?: import('./config').FlatSchemaItem[]
 }
+
+/** BranchContext with guaranteed flatSchema (loaded via schema guard or loadSchema: true) */
+export interface BranchContextWithSchema extends BranchContext {
+  flatSchema: import('./config').FlatSchemaItem[]
+}

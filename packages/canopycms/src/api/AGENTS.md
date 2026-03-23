@@ -5,30 +5,29 @@
 - **Do not edit `client.ts` or `__test__/mock-client.ts` directly** - these files are auto-generated
 - To modify the client, edit `packages/canopycms/scripts/generate-client.ts` and run `npm run generate:client`
 
-## Branch Access Middleware
+## Declarative Guards
 
-Use the middleware patterns from `middleware/branch-access.ts` for common access guard patterns:
+Use the `guards` array in `defineEndpoint()` for access control and context loading. Guards run before the handler and provide typed context via the `gc` first argument.
 
 ```typescript
-import {
-  guardBranchAccess,
-  guardBranchExists,
-  isBranchAccessError,
-} from '../middleware/branch-access'
+// Branch access + schema loading
+const getSchema = defineEndpoint({
+  guards: ['branchAccessWithSchema'] as const,
+  handler: async (gc, ctx, req, params) => {
+    const { branchContext } = gc // BranchContextWithSchema — flatSchema guaranteed
+  },
+})
 
-// For operations that need both branch existence and user access
-const branchAccess = guardBranchAccess(deps, context, user, branchName)
-if (isBranchAccessError(branchAccess)) {
-  return branchAccess // Returns 404 or 403 response
-}
-const { branch, branchRoot } = branchAccess
-
-// For operations that only need branch existence (e.g., read operations)
-const branchExists = guardBranchExists(deps, context, branchName)
-if (isBranchAccessError(branchExists)) {
-  return branchExists
-}
+// Role guard + branch loading
+const createCollection = defineEndpoint({
+  guards: ['admin', 'branch'] as const,
+  handler: async (gc, ctx, req, params, body) => {
+    const { branchContext } = gc // BranchContext — admin access already verified
+  },
+})
 ```
+
+Available guards: `branch`, `branchAccess`, `schema`, `branchAccessWithSchema`, `admin`, `reviewer`, `privileged`. See `guards.ts` for details.
 
 ## Adding New API Endpoints
 

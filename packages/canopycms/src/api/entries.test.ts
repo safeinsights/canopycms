@@ -10,7 +10,7 @@ import { createCheckBranchAccess } from '../authorization'
 import { createCheckContentAccess } from '../authorization'
 import { unsafeAsPermissionPath } from '../authorization/test-utils'
 import type { PathPermission } from '../config'
-import { listEntriesHandler } from './entries'
+import { listEntries } from './entries'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
 import { loadCollectionMetaFiles, resolveCollectionReferences } from '../schema'
 import { unsafeAsBranchName, unsafeAsLogicalPath } from '../paths/test-utils'
@@ -94,7 +94,7 @@ describe('listEntries', () => {
     })
 
     // Request limit=2 to get entries
-    const res = await listEntriesHandler(
+    const res = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('main'), limit: 2 },
@@ -108,7 +108,7 @@ describe('listEntries', () => {
 
   it('returns 404 when branch is missing', async () => {
     const ctx = createMockApiContext({ branchContext: null })
-    const res = await listEntriesHandler(
+    const res = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('missing') },
@@ -236,7 +236,7 @@ describe('listEntries', () => {
     })
 
     // Test 1: Without collection filter - lists entries from all collections (flat list)
-    const allEntriesRes = await listEntriesHandler(
+    const allEntriesRes = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('main') },
@@ -250,7 +250,7 @@ describe('listEntries', () => {
     expect(allEntriesRes.data?.entries.some((e) => e.slug === 'users')).toBe(true)
 
     // Test 2: With collection filter, non-recursive - only gets entries from 'content/docs' collection (no children)
-    const docsNonRecursiveRes = await listEntriesHandler(
+    const docsNonRecursiveRes = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       {
@@ -266,7 +266,7 @@ describe('listEntries', () => {
     expect(docsNonRecursiveRes.data?.entries.some((e) => e.slug === 'auth')).toBe(false) // From grandchild collection
 
     // Test 3: With collection filter and recursive flag - gets entries from 'content/docs' and all children
-    const docsRecursiveRes = await listEntriesHandler(
+    const docsRecursiveRes = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       {
@@ -284,7 +284,7 @@ describe('listEntries', () => {
     expect(docsRecursiveRes.data?.entries.some((e) => e.slug === 'users')).toBe(true)
 
     // Test 4: Nested collection with recursive - gets entries from 'content/docs/api' and its children
-    const apiRecursiveRes = await listEntriesHandler(
+    const apiRecursiveRes = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       {
@@ -366,7 +366,7 @@ describe('listEntries', () => {
       },
     })
 
-    const res = await listEntriesHandler(
+    const res = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('main') },
@@ -452,7 +452,7 @@ describe('listEntries', () => {
       },
     })
 
-    const res = await listEntriesHandler(
+    const res = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('main') },
@@ -557,7 +557,7 @@ describe('listEntries', () => {
       },
     })
 
-    const res = await listEntriesHandler(
+    const res = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('main') },
@@ -695,7 +695,7 @@ describe('listEntries', () => {
       },
     })
 
-    const res = await listEntriesHandler(
+    const res = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('main') },
@@ -813,7 +813,7 @@ describe('sortEntriesByOrder', () => {
       },
     })
 
-    const res = await listEntriesHandler(
+    const res = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       {
@@ -908,7 +908,7 @@ describe('sortEntriesByOrder', () => {
       },
     })
 
-    const res = await listEntriesHandler(
+    const res = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       {
@@ -1029,7 +1029,7 @@ describe('dynamic collection discovery', () => {
       },
     })
 
-    const res = await listEntriesHandler(
+    const res = await listEntries.handler(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: unsafeAsBranchName('main') },

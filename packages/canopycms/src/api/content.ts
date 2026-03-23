@@ -7,6 +7,7 @@ import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 import { branchNameSchema, logicalPathSchema, entrySlugSchema } from './validators'
 import type { EntrySlug, PhysicalPath } from '../paths'
+import type { BranchContextWithSchema } from '../types'
 
 /** Response type for content read operations */
 export type ContentReadResponse = ApiResponse<{
@@ -96,22 +97,14 @@ const renameEntryBodySchema = z.object({
 })
 
 const readContentHandler = async (
+  gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof readContentParamsSchema>,
 ): Promise<ContentReadResponse> => {
-  const context = await ctx.getBranchContext(params.branch, {
-    loadSchema: true,
-  })
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
-
-  if (!context.flatSchema) {
-    return { ok: false, status: 500, error: 'Schema not loaded for branch' }
-  }
-  const flatSchema = context.flatSchema
-  const store = new ContentStore(context.branchRoot, flatSchema)
+  const { branchContext } = gc
+  const flatSchema = branchContext.flatSchema
+  const store = new ContentStore(branchContext.branchRoot, flatSchema)
 
   // Parse path segments: params.path is like "content/posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -137,8 +130,8 @@ const readContentHandler = async (
   }
 
   const access = await ctx.services.checkContentAccess(
-    context,
-    context.branchRoot,
+    branchContext,
+    branchContext.branchRoot,
     relativePath,
     req.user,
     'read',
@@ -152,23 +145,15 @@ const readContentHandler = async (
 }
 
 const writeContentHandler = async (
+  gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof writeContentParamsSchema>,
   body: z.infer<typeof writeContentBodySchema>,
 ): Promise<ContentWriteResponse> => {
-  const context = await ctx.getBranchContext(params.branch, {
-    loadSchema: true,
-  })
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
-
-  if (!context.flatSchema) {
-    return { ok: false, status: 500, error: 'Schema not loaded for branch' }
-  }
-  const flatSchema = context.flatSchema
-  const store = new ContentStore(context.branchRoot, flatSchema)
+  const { branchContext } = gc
+  const flatSchema = branchContext.flatSchema
+  const store = new ContentStore(branchContext.branchRoot, flatSchema)
 
   // Parse path segments: params.path is like "content/posts/hello" or "posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -194,8 +179,8 @@ const writeContentHandler = async (
   }
 
   const access = await ctx.services.checkContentAccess(
-    context,
-    context.branchRoot,
+    branchContext,
+    branchContext.branchRoot,
     relativePath,
     req.user,
     'edit',
@@ -235,23 +220,15 @@ const writeContentHandler = async (
 }
 
 const validateReferencesHandler = async (
+  gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof validateReferencesParamsSchema>,
   body: z.infer<typeof validateReferencesBodySchema>,
 ): Promise<ReferenceValidationResponse> => {
-  const context = await ctx.getBranchContext(params.branch, {
-    loadSchema: true,
-  })
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
-
-  if (!context.flatSchema) {
-    return { ok: false, status: 500, error: 'Schema not loaded for branch' }
-  }
-  const flatSchema = context.flatSchema
-  const store = new ContentStore(context.branchRoot, flatSchema)
+  const { branchContext } = gc
+  const flatSchema = branchContext.flatSchema
+  const store = new ContentStore(branchContext.branchRoot, flatSchema)
 
   // Parse path segments to get collection/schema info
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -274,8 +251,8 @@ const validateReferencesHandler = async (
   }
 
   const access = await ctx.services.checkContentAccess(
-    context,
-    context.branchRoot,
+    branchContext,
+    branchContext.branchRoot,
     relativePath,
     req.user,
     'read',
@@ -329,23 +306,15 @@ const validateReferencesHandler = async (
 }
 
 const renameEntryHandler = async (
+  gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof renameEntryParamsSchema>,
   body: z.infer<typeof renameEntryBodySchema>,
 ): Promise<RenameEntryResponse> => {
-  const context = await ctx.getBranchContext(params.branch, {
-    loadSchema: true,
-  })
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
-
-  if (!context.flatSchema) {
-    return { ok: false, status: 500, error: 'Schema not loaded for branch' }
-  }
-  const flatSchema = context.flatSchema
-  const store = new ContentStore(context.branchRoot, flatSchema)
+  const { branchContext } = gc
+  const flatSchema = branchContext.flatSchema
+  const store = new ContentStore(branchContext.branchRoot, flatSchema)
 
   // Parse path segments
   const contentRoot = ctx.services.config.contentRoot || 'content'
@@ -372,8 +341,8 @@ const renameEntryHandler = async (
 
   // Check edit permission on current path
   const access = await ctx.services.checkContentAccess(
-    context,
-    context.branchRoot,
+    branchContext,
+    branchContext.branchRoot,
     relativePath,
     req.user,
     'edit',
@@ -410,6 +379,7 @@ const readContent = defineEndpoint({
   responseType: 'ContentReadResponse',
   response: {} as ContentReadResponse,
   defaultMockData: { format: 'json', data: {} },
+  guards: ['schema'] as const,
   handler: readContentHandler,
 })
 
@@ -429,6 +399,7 @@ const writeContent = defineEndpoint({
   responseType: 'ContentWriteResponse',
   response: {} as ContentWriteResponse,
   defaultMockData: { format: 'json', data: {} },
+  guards: ['schema'] as const,
   handler: writeContentHandler,
 })
 
@@ -448,6 +419,7 @@ const validateReferences = defineEndpoint({
   responseType: 'ReferenceValidationResponse',
   response: {} as ReferenceValidationResponse,
   defaultMockData: { valid: true },
+  guards: ['schema'] as const,
   handler: validateReferencesHandler,
 })
 
@@ -467,6 +439,7 @@ const renameEntry = defineEndpoint({
   responseType: 'RenameEntryResponse',
   response: {} as RenameEntryResponse,
   defaultMockData: { newPath: 'content/posts/new-slug' },
+  guards: ['schema'] as const,
   handler: renameEntryHandler,
 })
 

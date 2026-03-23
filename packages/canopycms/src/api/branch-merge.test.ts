@@ -88,7 +88,7 @@ describe('branch merge api - markAsMerged', () => {
 
     expect(result.ok).toBe(false)
     expect(result.status).toBe(403)
-    expect(result.error).toContain('admin access required')
+    expect(result.error).toContain('Admin access required')
   })
 
   it('returns 400 if branch is not submitted', async () => {

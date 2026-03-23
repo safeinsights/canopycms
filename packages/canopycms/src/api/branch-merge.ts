@@ -1,10 +1,9 @@
 import { z } from 'zod'
 import { branchNameSchema } from './validators'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import type { BranchContext } from '../types'
 import { getBranchMetadataFileManager } from '../branch-metadata'
-import { isAdmin } from '../authorization'
 import { defineEndpoint } from './route-builder'
-import { guardBranchExists, isBranchAccessError } from './middleware'
 
 const markAsMergedParamsSchema = z.object({
   branch: branchNameSchema,
@@ -20,31 +19,24 @@ export type BranchMergeResponse = ApiResponse<{
 }>
 
 const markAsMergedHandler = async (
+  gc: { branchContext: BranchContext },
   ctx: ApiContext,
-  req: ApiRequest,
+  _req: ApiRequest,
   params: z.infer<typeof markAsMergedParamsSchema>,
 ): Promise<BranchMergeResponse> => {
+  const { branchContext } = gc
   const { branch: branchName } = params
 
-  const accessResult = await guardBranchExists(ctx, branchName)
-  if (isBranchAccessError(accessResult)) return accessResult
-  const { context } = accessResult
-
-  // Check permissions - only admins can mark as merged
-  if (!isAdmin(req.user.groups)) {
-    return { ok: false, status: 403, error: 'Forbidden: admin access required' }
-  }
-
   // Verify branch is submitted with a PR
-  if (context.branch.status !== 'submitted') {
+  if (branchContext.branch.status !== 'submitted') {
     return {
       ok: false,
       status: 400,
-      error: `Cannot mark as merged: branch status is "${context.branch.status}", expected "submitted"`,
+      error: `Cannot mark as merged: branch status is "${branchContext.branch.status}", expected "submitted"`,
     }
   }
 
-  if (!context.branch.pullRequestNumber) {
+  if (!branchContext.branch.pullRequestNumber) {
     return {
       ok: false,
       status: 400,
@@ -55,12 +47,14 @@ const markAsMergedHandler = async (
   // Optionally verify PR is actually merged via GitHub API
   if (ctx.services.githubService) {
     try {
-      const pr = await ctx.services.githubService.getPullRequest(context.branch.pullRequestNumber)
+      const pr = await ctx.services.githubService.getPullRequest(
+        branchContext.branch.pullRequestNumber,
+      )
       if (!pr.merged) {
         return {
           ok: false,
           status: 400,
-          error: `Cannot mark as merged: PR #${context.branch.pullRequestNumber} is not merged on GitHub`,
+          error: `Cannot mark as merged: PR #${branchContext.branch.pullRequestNumber} is not merged on GitHub`,
         }
       }
     } catch (err) {
@@ -70,7 +64,7 @@ const markAsMergedHandler = async (
   }
 
   // Update branch status to 'archived'
-  const meta = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)
+  const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
   await meta.save({
     branch: {
       status: 'archived',
@@ -114,5 +108,6 @@ export const markAsMerged = defineEndpoint({
   responseType: 'BranchMergeResponse',
   response: {} as BranchMergeResponse,
   defaultMockData: { branch: { name: 'test-branch', status: 'archived' } },
+  guards: ['admin', 'branch'] as const,
   handler: markAsMergedHandler,
 })

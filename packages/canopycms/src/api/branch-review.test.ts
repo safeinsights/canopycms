@@ -71,7 +71,7 @@ describe('branch review api - requestChanges', () => {
       {},
     )
     expect(res.status).toBe(403)
-    expect(res.error).toContain('Only Admins and Reviewers can request changes')
+    expect(res.error).toContain('Reviewer access required')
   })
 
   it('returns 400 if branch not submitted', async () => {
@@ -239,7 +239,7 @@ describe('branch review api - approveBranch', () => {
       { branch: 'feature/x' as BranchName },
     )
     expect(res.status).toBe(403)
-    expect(res.error).toContain('Only Admins and Reviewers can approve branches')
+    expect(res.error).toContain('Reviewer access required')
   })
 
   it('returns 400 if branch not submitted', async () => {

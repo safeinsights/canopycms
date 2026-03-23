@@ -1,11 +1,11 @@
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import type { BranchContextWithSchema } from '../types'
 import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
 import { branchNameSchema, contentIdSchema } from './validators'
-import { guardBranchAccess, isBranchAccessError } from './middleware'
 
 export interface ResolveReferencesBody {
   ids: string[] // ContentId strings at runtime
@@ -29,29 +29,18 @@ const resolveReferencesBodySchema = z.object({
 })
 
 const resolveReferencesHandler = async (
+  gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof resolveReferencesParamsSchema>,
   body: z.infer<typeof resolveReferencesBodySchema>,
 ): Promise<ResolveReferencesResponse> => {
-  // Check branch access before loading any data
-  const accessResult = await guardBranchAccess(ctx, req, params.branch)
-  if (isBranchAccessError(accessResult)) return accessResult
-
-  const context = await ctx.getBranchContext(params.branch, {
-    loadSchema: true,
-  })
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const { branchContext } = gc
 
   const { ids } = body
 
-  if (!context.flatSchema) {
-    return { ok: false, status: 500, error: 'Schema not loaded for branch' }
-  }
-  const flatSchema = context.flatSchema
-  const store = new ContentStore(context.branchRoot, flatSchema)
+  const flatSchema = branchContext.flatSchema
+  const store = new ContentStore(branchContext.branchRoot, flatSchema)
 
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()
@@ -106,6 +95,7 @@ const resolveReferences = defineEndpoint({
   responseType: 'ResolveReferencesResponse',
   response: {} as ResolveReferencesResponse,
   defaultMockData: { resolved: {} },
+  guards: ['branchAccessWithSchema'] as const,
   handler: resolveReferencesHandler,
 })
 
