@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import type { BranchContextWithSchema } from '../types'
 import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
@@ -28,22 +29,18 @@ const resolveReferencesBodySchema = z.object({
 })
 
 const resolveReferencesHandler = async (
+  gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof resolveReferencesParamsSchema>,
   body: z.infer<typeof resolveReferencesBodySchema>,
 ): Promise<ResolveReferencesResponse> => {
-  const context = await ctx.getBranchContext(params.branch, {
-    loadSchema: true,
-  })
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const { branchContext } = gc
 
   const { ids } = body
 
-  const flatSchema = context.flatSchema!
-  const store = new ContentStore(context.branchRoot, flatSchema)
+  const flatSchema = branchContext.flatSchema
+  const store = new ContentStore(branchContext.branchRoot, flatSchema)
 
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()
@@ -98,6 +95,7 @@ const resolveReferences = defineEndpoint({
   responseType: 'ResolveReferencesResponse',
   response: {} as ResolveReferencesResponse,
   defaultMockData: { resolved: {} },
+  guards: ['branchAccessWithSchema'] as const,
   handler: resolveReferencesHandler,
 })
 

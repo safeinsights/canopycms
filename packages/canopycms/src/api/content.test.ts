@@ -38,6 +38,17 @@ vi.mock('../content-store', () => {
   }
 })
 
+const mockFlatSchema = [
+  {
+    type: 'collection',
+    logicalPath: 'content/posts',
+    name: 'posts',
+    label: 'Posts',
+    contentId: 'a1b2c3d4e5f6',
+    entries: [{ name: 'post', format: 'json', schema: [], schemaRef: 'postSchema' }],
+  },
+]
+
 const allowedCtx = (): ApiContext => ({
   services: {
     config: { schema: [] } as any,
@@ -61,6 +72,7 @@ const allowedCtx = (): ApiContext => ({
   getBranchContext: vi.fn().mockResolvedValue({
     baseRoot: '/tmp/base',
     branchRoot: '/tmp/base/feature-x',
+    flatSchema: mockFlatSchema,
     branch: {
       name: 'feature/x',
       status: 'editing',
@@ -97,6 +109,7 @@ describe('content api', () => {
       getBranchContext: vi.fn().mockResolvedValue({
         baseRoot: '/tmp/base',
         branchRoot: '/tmp/base/feature-x',
+        flatSchema: mockFlatSchema,
         branch: {
           name: 'feature/x',
           status: 'editing',
@@ -191,6 +204,7 @@ describe('content api', () => {
         getBranchContext: vi.fn().mockResolvedValue({
           baseRoot: '/tmp/base',
           branchRoot: '/tmp/base/feature-x',
+          flatSchema: mockFlatSchema,
           branch: {
             name: 'feature/x',
             status: 'editing',

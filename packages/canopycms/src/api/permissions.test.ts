@@ -262,7 +262,7 @@ describe('permissions API', () => {
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(403)
-      expect(result.error).toBe('Admin or Reviewer access required')
+      expect(result.error).toBe('Privileged access required')
     })
 
     it('returns error when auth plugin not configured', async () => {
@@ -371,7 +371,7 @@ describe('permissions API', () => {
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(403)
-      expect(result.error).toBe('Admin or Reviewer access required')
+      expect(result.error).toBe('Privileged access required')
     })
 
     it('returns error when auth plugin not configured', async () => {
@@ -479,7 +479,7 @@ describe('permissions API', () => {
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(403)
-      expect(result.error).toBe('Admin or Reviewer access required')
+      expect(result.error).toBe('Privileged access required')
       expect(mockAuthPlugin.getUserMetadata).not.toHaveBeenCalled()
     })
 

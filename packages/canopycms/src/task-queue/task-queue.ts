@@ -10,6 +10,10 @@
  *
  * Designed for shared filesystems (EFS/NFS) where one process enqueues
  * and another dequeues. No external dependencies — only Node.js stdlib.
+ *
+ * IMPORTANT: Single-consumer only. The dequeue operation is not atomic across
+ * processes — the worker lock (acquireLock) ensures only one consumer runs at
+ * a time. Do not run multiple dequeue consumers concurrently.
  */
 
 import fs from 'node:fs/promises'

@@ -67,7 +67,7 @@ describe('asset api', () => {
       )
       expect(res.ok).toBe(false)
       expect(res.status).toBe(403)
-      expect(res.error).toBe('Only Admins and Reviewers can upload assets')
+      expect(res.error).toBe('Privileged access required')
     })
 
     it('allows Reviewers to upload', async () => {
@@ -109,7 +109,7 @@ describe('asset api', () => {
       })
       expect(res.ok).toBe(false)
       expect(res.status).toBe(403)
-      expect(res.error).toBe('Only Admins can delete assets')
+      expect(res.error).toBe('Admin access required')
     })
 
     it('returns 403 for Reviewers', async () => {

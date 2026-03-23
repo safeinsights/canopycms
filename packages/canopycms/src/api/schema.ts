@@ -14,8 +14,8 @@ import { z } from 'zod'
 import path from 'node:path'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import type { BranchContext, BranchContextWithSchema } from '../types'
 import { defineEndpoint } from './route-builder'
-import { isAdmin } from '../authorization/helpers'
 import { getErrorMessage } from '../utils/error'
 import { branchNameSchema, logicalPathSchema } from './validators'
 import {
@@ -36,7 +36,7 @@ import type {
   ContentFormat,
   EntrySchema,
 } from '../config'
-import { type LogicalPath, type ContentId } from '../paths'
+import { type LogicalPath, type ContentId, parseLogicalPath } from '../paths'
 
 // ============================================================================
 // Wire Types — API response shapes with schemaRef instead of resolved schema
@@ -297,22 +297,22 @@ async function getSchemaOps(
 }
 
 /**
- * Check admin authorization
- */
-function checkAdminAuth(req: ApiRequest): { error: string; status: number } | null {
-  if (!isAdmin(req.user.groups)) {
-    return { error: 'Admin access required', status: 403 }
-  }
-  return null
-}
-
-/**
  * Decode a collection path from URL params.
- * The path is already validated and branded as LogicalPath by the Zod schema;
- * this only applies URI decoding for catch-all route segments.
+ * The path is validated by Zod before decoding, then re-validated after
+ * decoding to prevent double-encoding path traversal attacks.
  */
-function decodeCollectionPath(collectionPath: LogicalPath): LogicalPath {
-  return decodeURIComponent(collectionPath) as LogicalPath
+function decodeCollectionPath(
+  collectionPath: LogicalPath,
+): { ok: true; path: LogicalPath } | { ok: false; error: string } {
+  const decoded = decodeURIComponent(collectionPath)
+  if (decoded === collectionPath) {
+    return { ok: true, path: collectionPath }
+  }
+  const result = parseLogicalPath(decoded)
+  if (!result.ok) {
+    return { ok: false, error: `Invalid collection path after decoding: ${result.error}` }
+  }
+  return { ok: true, path: result.path }
 }
 
 // ============================================================================
@@ -323,22 +323,18 @@ function decodeCollectionPath(collectionPath: LogicalPath): LogicalPath {
  * GET /:branch/schema - Get full schema tree
  */
 const getSchemaHandler = async (
+  gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
-  req: ApiRequest,
-  params: z.infer<typeof branchParamsSchema>,
+  _req: ApiRequest,
+  _params: z.infer<typeof branchParamsSchema>,
 ): Promise<GetSchemaApiResponse> => {
-  const context = await ctx.getBranchContext(params.branch, {
-    loadSchema: true,
-  })
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const { branchContext } = gc
 
   return {
     ok: true,
     status: 200,
     data: {
-      flatSchema: toWireFlatSchema(context.flatSchema!, ctx.services.entrySchemaRegistry),
+      flatSchema: toWireFlatSchema(branchContext.flatSchema, ctx.services.entrySchemaRegistry),
       entrySchemas: ctx.services.entrySchemaRegistry,
     },
   }
@@ -349,21 +345,21 @@ const getSchemaHandler = async (
  * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
  */
 const getCollectionHandler = async (
+  gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof collectionParamsSchema>,
 ): Promise<GetCollectionApiResponse> => {
-  const context = await ctx.getBranchContext(params.branch, {
-    loadSchema: true,
-  })
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const { branchContext } = gc
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   // Find collection in per-branch flat schema
-  const flatSchema = context.flatSchema!
+  const flatSchema = branchContext.flatSchema
   const item = flatSchema.find((i) => i.type === 'collection' && i.logicalPath === collectionPath)
 
   if (!item || item.type !== 'collection') {
@@ -429,17 +425,12 @@ const getCollectionHandler = async (
  * POST /:branch/schema/collections - Create collection
  */
 const createCollectionHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof branchParamsSchema>,
   body: z.infer<typeof createCollectionBodySchema>,
 ): Promise<CreateCollectionApiResponse> => {
-  // Check admin auth
-  const authError = checkAdminAuth(req)
-  if (authError) {
-    return { ok: false, status: authError.status, error: authError.error }
-  }
-
   const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
@@ -466,23 +457,22 @@ const createCollectionHandler = async (
  * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
  */
 const updateCollectionHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof collectionParamsSchema>,
   body: z.infer<typeof updateCollectionBodySchema>,
 ): Promise<UpdateCollectionApiResponse> => {
-  // Check admin auth
-  const authError = checkAdminAuth(req)
-  if (authError) {
-    return { ok: false, status: authError.status, error: authError.error }
-  }
-
   const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   try {
     await storeResult.store.updateCollection(collectionPath, body as UpdateCollectionInput)
@@ -505,22 +495,21 @@ const updateCollectionHandler = async (
  * Note: Uses 'collection' (singular) with catch-all to support paths with slashes
  */
 const deleteCollectionHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof collectionParamsSchema>,
 ): Promise<DeleteCollectionApiResponse> => {
-  // Check admin auth
-  const authError = checkAdminAuth(req)
-  if (authError) {
-    return { ok: false, status: authError.status, error: authError.error }
-  }
-
   const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   try {
     await storeResult.store.deleteCollection(collectionPath)
@@ -543,23 +532,22 @@ const deleteCollectionHandler = async (
  * Note: Restructured URL with catch-all at end to support paths with slashes
  */
 const addEntryTypeHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof collectionParamsSchema>,
   body: z.infer<typeof addEntryTypeBodySchema>,
 ): Promise<AddEntryTypeApiResponse> => {
-  // Check admin auth
-  const authError = checkAdminAuth(req)
-  if (authError) {
-    return { ok: false, status: authError.status, error: authError.error }
-  }
-
   const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   try {
     await storeResult.store.addEntryType(collectionPath, body as CreateEntryTypeInput)
@@ -582,23 +570,22 @@ const addEntryTypeHandler = async (
  * Note: Restructured URL with entry type name before catch-all path
  */
 const updateEntryTypeHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof entryTypeParamsSchema>,
   body: z.infer<typeof updateEntryTypeBodySchema>,
 ): Promise<UpdateEntryTypeApiResponse> => {
-  // Check admin auth
-  const authError = checkAdminAuth(req)
-  if (authError) {
-    return { ok: false, status: authError.status, error: authError.error }
-  }
-
   const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   // Check if format or schema are being changed (breaking changes)
   const isBreakingChange = body.format !== undefined || body.schema !== undefined
@@ -643,22 +630,21 @@ const updateEntryTypeHandler = async (
  * Note: Restructured URL with entry type name before catch-all path
  */
 const removeEntryTypeHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof entryTypeParamsSchema>,
 ): Promise<RemoveEntryTypeApiResponse> => {
-  // Check admin auth
-  const authError = checkAdminAuth(req)
-  if (authError) {
-    return { ok: false, status: authError.status, error: authError.error }
-  }
-
   const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   try {
     await storeResult.store.removeEntryType(collectionPath, params.entryTypeName)
@@ -681,23 +667,22 @@ const removeEntryTypeHandler = async (
  * Note: Restructured URL with catch-all at end to support paths with slashes
  */
 const updateOrderHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof collectionParamsSchema>,
   body: z.infer<typeof updateOrderBodySchema>,
 ): Promise<UpdateOrderApiResponse> => {
-  // Check admin auth
-  const authError = checkAdminAuth(req)
-  if (authError) {
-    return { ok: false, status: authError.status, error: authError.error }
-  }
-
   const storeResult = await getSchemaOps(ctx, params.branch)
   if ('error' in storeResult) {
     return { ok: false, status: storeResult.status, error: storeResult.error }
   }
 
-  const collectionPath = decodeCollectionPath(params.collectionPath)
+  const decodedPath = decodeCollectionPath(params.collectionPath)
+  if (!decodedPath.ok) {
+    return { ok: false, status: 400, error: decodedPath.error }
+  }
+  const collectionPath = decodedPath.path
 
   try {
     await storeResult.store.updateOrder(collectionPath, body.order)
@@ -719,23 +704,15 @@ const updateOrderHandler = async (
  * POST /:branch/schema/invalidate-cache - Invalidate schema cache (for debugging/manual refresh)
  */
 const invalidateSchemaCacheHandler = async (
+  gc: { branchContext: BranchContext },
   ctx: ApiContext,
-  req: ApiRequest,
-  params: z.infer<typeof branchParamsSchema>,
+  _req: ApiRequest,
+  _params: z.infer<typeof branchParamsSchema>,
 ): Promise<InvalidateSchemaCacheApiResponse> => {
-  // Check admin auth
-  const authError = checkAdminAuth(req)
-  if (authError) {
-    return { ok: false, status: authError.status, error: authError.error }
-  }
-
-  const context = await ctx.getBranchContext(params.branch)
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const { branchContext } = gc
 
   try {
-    await ctx.services.branchSchemaCache.invalidate(context.branchRoot)
+    await ctx.services.branchSchemaCache.invalidate(branchContext.branchRoot)
     return {
       ok: true,
       status: 200,
@@ -769,6 +746,7 @@ export const getSchema = defineEndpoint({
   responseType: 'GetSchemaApiResponse',
   response: {} as GetSchemaApiResponse,
   defaultMockData: { flatSchema: [], entrySchemas: {} },
+  guards: ['branchAccessWithSchema'] as const,
   handler: getSchemaHandler,
 })
 
@@ -785,6 +763,7 @@ export const getCollection = defineEndpoint({
   responseType: 'GetCollectionApiResponse',
   response: {} as GetCollectionApiResponse,
   defaultMockData: { collection: null },
+  guards: ['branchAccessWithSchema'] as const,
   handler: getCollectionHandler,
 })
 
@@ -806,6 +785,7 @@ export const createCollection = defineEndpoint({
     collectionPath: 'createLogicalPath',
     contentId: 'as ContentId',
   },
+  guards: ['admin'] as const,
   handler: createCollectionHandler,
 })
 
@@ -824,6 +804,7 @@ export const updateCollection = defineEndpoint({
   responseType: 'UpdateCollectionApiResponse',
   response: {} as UpdateCollectionApiResponse,
   defaultMockData: { success: true },
+  guards: ['admin'] as const,
   handler: updateCollectionHandler,
 })
 
@@ -840,6 +821,7 @@ export const deleteCollection = defineEndpoint({
   responseType: 'DeleteCollectionApiResponse',
   response: {} as DeleteCollectionApiResponse,
   defaultMockData: { success: true },
+  guards: ['admin'] as const,
   handler: deleteCollectionHandler,
 })
 
@@ -858,6 +840,7 @@ export const addEntryType = defineEndpoint({
   responseType: 'AddEntryTypeApiResponse',
   response: {} as AddEntryTypeApiResponse,
   defaultMockData: { success: true },
+  guards: ['admin'] as const,
   handler: addEntryTypeHandler,
 })
 
@@ -876,6 +859,7 @@ export const updateEntryType = defineEndpoint({
   responseType: 'UpdateEntryTypeApiResponse',
   response: {} as UpdateEntryTypeApiResponse,
   defaultMockData: { success: true },
+  guards: ['admin'] as const,
   handler: updateEntryTypeHandler,
 })
 
@@ -892,6 +876,7 @@ export const removeEntryType = defineEndpoint({
   responseType: 'RemoveEntryTypeApiResponse',
   response: {} as RemoveEntryTypeApiResponse,
   defaultMockData: { success: true },
+  guards: ['admin'] as const,
   handler: removeEntryTypeHandler,
 })
 
@@ -910,6 +895,7 @@ export const updateOrder = defineEndpoint({
   responseType: 'UpdateOrderApiResponse',
   response: {} as UpdateOrderApiResponse,
   defaultMockData: { success: true },
+  guards: ['admin'] as const,
   handler: updateOrderHandler,
 })
 
@@ -925,6 +911,7 @@ export const invalidateSchemaCache = defineEndpoint({
   responseType: 'InvalidateSchemaCacheApiResponse',
   response: {} as InvalidateSchemaCacheApiResponse,
   defaultMockData: { success: true, message: 'Cache invalidated' },
+  guards: ['admin', 'branch'] as const,
   handler: invalidateSchemaCacheHandler,
 })
 

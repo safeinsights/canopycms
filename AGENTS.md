@@ -53,7 +53,7 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `editor/` - React editor components and hooks
 - `operating-mode/` - Operating mode strategies (prod, prod-sim, dev)
 - `api/` - API handlers (see [api/AGENTS.md](packages/canopycms/src/api/AGENTS.md) for API development guidelines)
-- `middleware/` - API middleware patterns (branch access guards)
+- `middleware/` - API middleware patterns (branch access guards); see also `api/guards.ts` for declarative guard system
 - `validation/` - Validation utilities (field traversal, reference validation)
 - `utils/` - Shared utilities (error handling, debug)
 - `worker/` - CmsWorker daemon, task queue, deployment infrastructure

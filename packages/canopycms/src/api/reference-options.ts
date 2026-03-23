@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
+import type { BranchContextWithSchema } from '../types'
 import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
@@ -26,20 +27,21 @@ const getReferenceOptionsParamsSchema = z.object({
 })
 
 const getReferenceOptionsHandler = async (
+  gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
   req: ApiRequest,
-  params: z.infer<typeof getReferenceOptionsParamsSchema>,
+  _params: z.infer<typeof getReferenceOptionsParamsSchema>,
 ): Promise<ReferenceOptionsResponse> => {
-  const context = await ctx.getBranchContext(params.branch, {
-    loadSchema: true,
-  })
-  if (!context) {
-    return { ok: false, status: 404, error: 'Branch not found' }
-  }
+  const { branchContext } = gc
 
-  // Manual query parameter validation
-  const collectionsParam = req.query?.collections as string | undefined
-  if (!collectionsParam) {
+  // Query parameter validation
+  const querySchema = z.object({
+    collections: z.string().min(1),
+    displayField: z.string().optional(),
+    search: z.string().optional(),
+  })
+  const queryResult = querySchema.safeParse(req.query ?? {})
+  if (!queryResult.success) {
     return {
       ok: false,
       status: 400,
@@ -47,11 +49,12 @@ const getReferenceOptionsHandler = async (
     }
   }
 
-  const displayField = (req.query?.displayField as string) || 'title'
-  const search = req.query?.search as string | undefined
+  const collectionsParam = queryResult.data.collections
+  const displayField = queryResult.data.displayField || 'title'
+  const search = queryResult.data.search
 
-  const flatSchema = context.flatSchema!
-  const store = new ContentStore(context.branchRoot, flatSchema)
+  const flatSchema = branchContext.flatSchema
+  const store = new ContentStore(branchContext.branchRoot, flatSchema)
 
   // Get ID index (automatically loads if needed)
   const idIndex = await store.idIndex()
@@ -103,6 +106,7 @@ const getReferenceOptions = defineEndpoint({
   responseType: 'ReferenceOptionsResponse',
   response: {} as ReferenceOptionsResponse,
   defaultMockData: { options: [] },
+  guards: ['branchAccessWithSchema'] as const,
   handler: getReferenceOptionsHandler,
 })
 

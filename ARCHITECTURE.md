@@ -67,10 +67,11 @@ The core package organizes code into focused modules, each with a single respons
 - Extracted hooks for state management (branch, entry, draft, comment, permissions, groups)
 - Component subdirectories for permission-manager and group-manager utilities
 
-**API** - API handlers and middleware:
+**API** - API handlers, declarative guards, and route building:
 
 - Route handlers for all API endpoints
-- Middleware patterns for common guards (branch access checking)
+- Declarative guard system for authorization, branch resolution, and schema loading
+- Route builder with Zod validation and typed guard context
 - API client for editor-to-server communication
 - Settings helpers for mode-aware configuration storage
 
@@ -690,31 +691,25 @@ The API exposes collections through a unified interface:
 - Entry type is determined by filename pattern or extension
 - All entries have a `collectionId` pointing to their parent collection path
 
-### API Middleware
+### Declarative Guard System
 
-Common patterns in API handlers are extracted into middleware functions to reduce duplication and ensure consistent behavior.
+API endpoints use a declarative guard system to handle common preconditions -- branch resolution, access control, schema loading, and role checks -- before the handler runs. Guards are declared as an array on the endpoint definition and execute in order, short-circuiting with an error response if any guard fails.
 
-**Branch Access Guards**: The `guardBranchAccess` middleware extracts the common pattern of checking both branch existence and user access permissions. It returns either a success result with the branch context or an error response ready to be returned to the client.
+**How it works**: Each endpoint declares which guards it needs. The guard runner executes them sequentially, accumulating a typed guard context. If all guards pass, the handler receives this context as its first argument with full type safety -- for example, a handler guarded by `branchAccessWithSchema` receives a context where the branch context and flattened schema are guaranteed to be present and non-null.
 
-```
-// Before: duplicated in many handlers
-const branch = await ctx.services.branchRegistry.get(branchName)
-if (!branch) return ctx.json({ error: 'Branch not found' }, 404)
-const hasAccess = await checkBranchAccess(...)
-if (!hasAccess) return ctx.json({ error: 'Access denied' }, 403)
+**Available guards**:
 
-// After: single middleware call
-const result = await guardBranchAccess(ctx, branchName)
-if (isBranchAccessError(result)) return result.response
-const { context } = result
-```
+- `branch`: Resolves the branch from request parameters (404 if not found)
+- `branchAccess`: Resolves branch and checks user access permissions (404/403)
+- `schema`: Resolves branch and loads the flattened schema (404/500)
+- `branchAccessWithSchema`: Combines access check and schema loading (404/403/500)
+- `admin`: Requires the user to be in the admin group (403)
+- `reviewer`: Requires reviewer-level access (403)
+- `privileged`: Requires admin or reviewer access (403)
 
-**Guard Variants**:
+**Design rationale**: The previous approach used imperative middleware calls (`guardBranchAccess`, `guardBranchExists`) that each handler invoked manually. This led to duplicated boilerplate -- every branch-aware handler had the same guard call, null check, and error return pattern. The declarative approach eliminates this duplication and makes each endpoint's preconditions visible at a glance in its definition. The guard system also provides stronger type guarantees: handlers with schema guards receive a context type where `flatSchema` is non-nullable, eliminating defensive null checks inside handler logic.
 
-- `guardBranchAccess`: Checks both existence and user permissions (for most handlers)
-- `guardBranchExists`: Checks only existence (for handlers that do their own permission logic)
-
-This pattern reduces code duplication across API handlers while keeping the authorization logic visible and explicit.
+**Scope boundary**: Guards run inside `defineEndpoint` at handler invocation time. They do not affect HTTP dispatch, URL routing, or client code generation. The generated API client remains unchanged -- guards are purely a server-side concern.
 
 ### Editor Integration
 

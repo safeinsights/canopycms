@@ -3,13 +3,7 @@ import { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { PathPermission } from '../config'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
-import {
-  loadPathPermissions,
-  savePathPermissions,
-  loadPermissionsFile,
-  isAdmin,
-  isReviewer,
-} from '../authorization'
+import { loadPathPermissions, savePathPermissions, loadPermissionsFile } from '../authorization'
 import { permissionPathSchema } from './validators'
 import { defineEndpoint } from './route-builder'
 import { getSettingsBranchContext, commitSettings } from './settings-helpers'
@@ -66,14 +60,10 @@ export type GetUserMetadataParams = z.infer<typeof getUserMetadataParamsSchema>
  * Get current permissions (admin only)
  */
 const getPermissionsHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
-  req: ApiRequest,
+  _req: ApiRequest,
 ): Promise<PermissionsResponse> => {
-  // Check admin permission
-  if (!isAdmin(req.user.groups)) {
-    return { ok: false, status: 403, error: 'Admin access required' }
-  }
-
   try {
     const result = await getSettingsBranchContext(ctx)
     if ('error' in result) {
@@ -101,15 +91,11 @@ const getPermissionsHandler = async (
  * Update permissions (admin only)
  */
 const updatePermissionsHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   body: z.infer<typeof updatePermissionsBodySchema>,
 ): Promise<ApiResponse> => {
-  // Check admin permission
-  if (!isAdmin(req.user.groups)) {
-    return { ok: false, status: 403, error: 'Admin access required' }
-  }
-
   if (!body?.permissions) {
     return { ok: false, status: 400, error: 'permissions array required' }
   }
@@ -172,19 +158,11 @@ const updatePermissionsHandler = async (
  * Search users (for permission UI)
  */
 const searchUsersHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof searchUsersParamsSchema>,
 ): Promise<SearchUsersResponse> => {
-  // Require admin or reviewer for user search
-  if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
-    return {
-      ok: false,
-      status: 403,
-      error: 'Admin or Reviewer access required',
-    }
-  }
-
   const authPlugin = ctx.authPlugin
   if (!authPlugin) {
     return { ok: false, status: 501, error: 'Auth plugin not configured' }
@@ -208,16 +186,11 @@ const searchUsersHandler = async (
 /**
  * List groups (for permission UI)
  */
-const listGroupsHandler = async (ctx: ApiContext, req: ApiRequest): Promise<ListGroupsResponse> => {
-  // Require admin or reviewer for group list
-  if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
-    return {
-      ok: false,
-      status: 403,
-      error: 'Admin or Reviewer access required',
-    }
-  }
-
+const listGroupsHandler = async (
+  _gc: Record<string, never>,
+  ctx: ApiContext,
+  _req: ApiRequest,
+): Promise<ListGroupsResponse> => {
   const authPlugin = ctx.authPlugin
   if (!authPlugin) {
     return { ok: false, status: 501, error: 'Auth plugin not configured' }
@@ -239,19 +212,11 @@ const listGroupsHandler = async (ctx: ApiContext, req: ApiRequest): Promise<List
  * Get user metadata by ID (for UI display)
  */
 const getUserMetadataHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   params: z.infer<typeof getUserMetadataParamsSchema>,
 ): Promise<GetUserMetadataResponse> => {
-  // Require admin or reviewer for user metadata
-  if (!isAdmin(req.user.groups) && !isReviewer(req.user.groups)) {
-    return {
-      ok: false,
-      status: 403,
-      error: 'Admin or Reviewer access required',
-    }
-  }
-
   const authPlugin = ctx.authPlugin
   if (!authPlugin) {
     return { ok: false, status: 501, error: 'Auth plugin not configured' }
@@ -285,6 +250,7 @@ const getPermissions = defineEndpoint({
   responseType: 'PermissionsResponse',
   response: {} as PermissionsResponse,
   defaultMockData: { permissions: [] },
+  guards: ['admin'] as const,
   handler: getPermissionsHandler,
 })
 
@@ -302,6 +268,7 @@ const updatePermissions = defineEndpoint({
   responseType: 'PermissionsResponse',
   response: {} as PermissionsResponse,
   defaultMockData: { permissions: [] },
+  guards: ['admin'] as const,
   handler: updatePermissionsHandler,
 })
 
@@ -318,6 +285,7 @@ const searchUsers = defineEndpoint({
   responseType: 'SearchUsersResponse',
   response: {} as SearchUsersResponse,
   defaultMockData: { users: [] },
+  guards: ['privileged'] as const,
   handler: searchUsersHandler,
 })
 
@@ -333,6 +301,7 @@ const listGroups = defineEndpoint({
   responseType: 'ListGroupsResponse',
   response: {} as ListGroupsResponse,
   defaultMockData: { groups: [] },
+  guards: ['privileged'] as const,
   handler: listGroupsHandler,
 })
 
@@ -349,6 +318,7 @@ const getUserMetadata = defineEndpoint({
   responseType: 'GetUserMetadataResponse',
   response: {} as GetUserMetadataResponse,
   defaultMockData: { user: null },
+  guards: ['privileged'] as const,
   handler: getUserMetadataHandler,
 })
 

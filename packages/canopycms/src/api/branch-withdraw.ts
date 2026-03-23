@@ -1,28 +1,28 @@
 import { z } from 'zod'
+import { branchNameSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
+import type { BranchContext } from '../types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 import { canPerformWorkflowAction } from '../authorization'
-import { guardBranchExists, isBranchAccessError } from './middleware'
 import { syncConvertToDraft } from './github-sync'
 
 const branchParamSchema = z.object({
-  branch: z.string().min(1),
+  branch: branchNameSchema,
 })
 
 const withdrawBranchHandler = async (
+  gc: { branchContext: BranchContext },
   ctx: ApiContext,
   req: ApiRequest,
-  params: z.infer<typeof branchParamSchema>,
+  _params: z.infer<typeof branchParamSchema>,
 ): Promise<BranchResponse> => {
-  const accessResult = await guardBranchExists(ctx, params.branch)
-  if (isBranchAccessError(accessResult)) return accessResult
-  const { context } = accessResult
+  const { branchContext } = gc
 
   // Check if user can perform workflow actions (creator OR ACL access)
   const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'
-  const canWithdraw = canPerformWorkflowAction(context, req.user, defaultAccess)
+  const canWithdraw = canPerformWorkflowAction(branchContext, req.user, defaultAccess)
   if (!canWithdraw) {
     return {
       ok: false,
@@ -33,22 +33,22 @@ const withdrawBranchHandler = async (
   }
 
   // Verify branch is in submitted status
-  if (context.branch.status !== 'submitted') {
+  if (branchContext.branch.status !== 'submitted') {
     return {
       ok: false,
       status: 400,
-      error: `Cannot withdraw branch with status '${context.branch.status}'. Only 'submitted' branches can be withdrawn.`,
+      error: `Cannot withdraw branch with status '${branchContext.branch.status}'. Only 'submitted' branches can be withdrawn.`,
     }
   }
 
   // Convert PR to draft (sync via githubService, or async via task queue)
-  await syncConvertToDraft(ctx, context)
+  await syncConvertToDraft(ctx, branchContext)
 
   // Update branch status to 'editing'
-  const meta = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)
+  const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
   const updated = await meta.save({
-    branch: { name: context.branch.name, status: 'editing' },
+    branch: { name: branchContext.branch.name, status: 'editing' },
   })
 
   return { ok: true, status: 200, data: { branch: updated.branch } }
@@ -76,5 +76,6 @@ export const withdrawBranch = defineEndpoint({
       updatedAt: '2024-01-01',
     },
   },
+  guards: ['branch'] as const,
   handler: withdrawBranchHandler,
 })

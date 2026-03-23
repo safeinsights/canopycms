@@ -9,8 +9,8 @@
  * All mutations are branch-specific (like content edits).
  */
 
-import { promises as fs } from 'fs'
-import path from 'path'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
 import { z } from 'zod'
 
 import type { ContentFormat } from '../config'

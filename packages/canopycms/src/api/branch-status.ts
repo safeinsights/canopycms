@@ -1,5 +1,7 @@
 import { z } from 'zod'
+import { branchNameSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
+import type { BranchContext } from '../types'
 import type { BranchResponse } from './branch'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { withdrawBranch } from './branch-withdraw'
@@ -7,7 +9,6 @@ import { requestChanges, approveBranch } from './branch-review'
 import { markAsMerged } from './branch-merge'
 import { defineEndpoint } from './route-builder'
 import { canPerformWorkflowAction } from '../authorization'
-import { guardBranchAccess, guardBranchExists, isBranchAccessError } from './middleware'
 import { syncSubmitPr } from './github-sync'
 
 // Re-export for client generation
@@ -18,33 +19,31 @@ export type { BranchMergeResponse } from './branch-merge'
 // ============================================================================
 
 const branchParamSchema = z.object({
-  branch: z.string().min(1),
+  branch: branchNameSchema,
 })
 
 const getBranchStatusHandler = async (
-  ctx: ApiContext,
-  req: ApiRequest,
-  params: z.infer<typeof branchParamSchema>,
+  gc: { branchContext: BranchContext },
+  _ctx: ApiContext,
+  _req: ApiRequest,
+  _params: z.infer<typeof branchParamSchema>,
 ): Promise<BranchResponse> => {
-  const accessResult = await guardBranchAccess(ctx, req, params.branch)
-  if (isBranchAccessError(accessResult)) return accessResult
-  const { context } = accessResult
+  const { branchContext } = gc
 
-  return { ok: true, status: 200, data: { branch: context.branch } }
+  return { ok: true, status: 200, data: { branch: branchContext.branch } }
 }
 
 const submitBranchForMergeHandler = async (
+  gc: { branchContext: BranchContext },
   ctx: ApiContext,
   req: ApiRequest,
-  params: z.infer<typeof branchParamSchema>,
+  _params: z.infer<typeof branchParamSchema>,
 ): Promise<BranchResponse> => {
-  const accessResult = await guardBranchExists(ctx, params.branch)
-  if (isBranchAccessError(accessResult)) return accessResult
-  const { context } = accessResult
+  const { branchContext } = gc
 
   // Check if user can perform workflow actions (creator OR ACL access)
   const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'
-  const canSubmit = canPerformWorkflowAction(context, req.user, defaultAccess)
+  const canSubmit = canPerformWorkflowAction(branchContext, req.user, defaultAccess)
   if (!canSubmit) {
     return {
       ok: false,
@@ -55,27 +54,27 @@ const submitBranchForMergeHandler = async (
 
   // Commit and push changes
   try {
-    await ctx.services.submitBranch({ context })
+    await ctx.services.submitBranch({ context: branchContext })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to push branch changes'
     return {
       ok: false,
       status: 500,
-      error: `Failed to push branch changes (${context.branchRoot}): ${message}`,
+      error: `Failed to push branch changes (${branchContext.branchRoot}): ${message}`,
     }
   }
 
   // Create or update PR (sync via githubService, or async via task queue)
-  const prResult = await syncSubmitPr(ctx, context)
+  const prResult = await syncSubmitPr(ctx, branchContext)
 
   // Update metadata with status and PR info
-  const meta = getBranchMetadataFileManager(context.branchRoot, context.baseRoot)
+  const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
   const updated = await meta.save({
     branch: {
-      name: context.branch.name,
+      name: branchContext.branch.name,
       status: 'submitted',
-      pullRequestUrl: prResult.prUrl ?? context.branch.pullRequestUrl,
-      pullRequestNumber: prResult.prNumber ?? context.branch.pullRequestNumber,
+      pullRequestUrl: prResult.prUrl ?? branchContext.branch.pullRequestUrl,
+      pullRequestNumber: prResult.prNumber ?? branchContext.branch.pullRequestNumber,
       ...(prResult.syncStatus !== undefined ? { syncStatus: prResult.syncStatus } : {}),
     },
   })
@@ -109,6 +108,7 @@ const getBranchStatus = defineEndpoint({
       updatedAt: '2024-01-01',
     },
   },
+  guards: ['branchAccess'] as const,
   handler: getBranchStatusHandler,
 })
 
@@ -134,6 +134,9 @@ const submitBranchForMerge = defineEndpoint({
       updatedAt: '2024-01-01',
     },
   },
+  // Branch-level access not checked here — handler uses canPerformWorkflowAction() for
+  // finer-grained authorization (creator OR ACL access).
+  guards: ['branch'] as const,
   handler: submitBranchForMergeHandler,
 })
 

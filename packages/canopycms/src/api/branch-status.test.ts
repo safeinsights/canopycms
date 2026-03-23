@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import type { BranchName } from '../paths/types'
 
 const mockMetadataUpdate = vi.fn().mockResolvedValue({
   schemaVersion: 1,
@@ -57,7 +58,7 @@ describe('branch status api', () => {
     const res = await getBranchStatus(
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
     )
     expect(res.ok).toBe(true)
     expect(res.data?.branch.name).toBe('feature/x')
@@ -68,7 +69,7 @@ describe('branch status api', () => {
     const res = await submitBranchForMerge(
       makeCtx(false),
       { user: { type: 'authenticated', userId: 'u2', groups: [] } },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
     )
     expect(res.status).toBe(403)
   })
@@ -77,7 +78,7 @@ describe('branch status api', () => {
     const res = await submitBranchForMerge(
       makeCtx(true),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: 'feature/x' },
+      { branch: 'feature/x' as BranchName },
     )
     expect(res.ok).toBe(true)
   })

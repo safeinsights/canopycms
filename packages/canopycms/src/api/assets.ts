@@ -1,7 +1,6 @@
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import { isAdmin, isPrivileged } from '../authorization'
 import { defineEndpoint } from './route-builder'
 
 /** Response type for listing assets */
@@ -44,10 +43,17 @@ export interface DeleteAssetBody {
 /**
  * List assets - any authenticated user can list assets.
  */
+const listAssetsQuerySchema = z.object({
+  prefix: z.string().optional(),
+})
+
 const listAssetsHandler = async (ctx: ApiContext, req: ApiRequest): Promise<AssetsListResponse> => {
   if (!ctx.assetStore) return { ok: false, status: 501, error: 'Asset store not configured' }
-  const prefix = req.query?.prefix as string | undefined
-  const assets = await ctx.assetStore.list(prefix ?? '')
+  const query = listAssetsQuerySchema.safeParse(req.query ?? {})
+  if (!query.success) {
+    return { ok: false, status: 400, error: query.error.message }
+  }
+  const assets = await ctx.assetStore.list(query.data.prefix ?? '')
   return { ok: true, status: 200, data: { assets } }
 }
 
@@ -55,20 +61,12 @@ const listAssetsHandler = async (ctx: ApiContext, req: ApiRequest): Promise<Asse
  * Upload asset - requires privileged access (Admin or Reviewer).
  */
 const uploadAssetHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
   body: z.infer<typeof uploadAssetBodySchema>,
 ): Promise<AssetUploadResponse> => {
   if (!ctx.assetStore) return { ok: false, status: 501, error: 'Asset store not configured' }
-
-  // Require privileged access to upload assets
-  if (!isPrivileged(req.user.groups)) {
-    return {
-      ok: false,
-      status: 403,
-      error: 'Only Admins and Reviewers can upload assets',
-    }
-  }
 
   const asset = await ctx.assetStore.upload(body.key, body.data, body.contentType)
   return { ok: true, status: 200, data: { asset } }
@@ -78,22 +76,18 @@ const uploadAssetHandler = async (
  * Delete asset - requires Admin access.
  */
 const deleteAssetHandler = async (
+  _gc: Record<string, never>,
   ctx: ApiContext,
   req: ApiRequest,
 ): Promise<AssetDeleteResponse> => {
   if (!ctx.assetStore) return { ok: false, status: 501, error: 'Asset store not configured' }
 
-  // Require admin access to delete assets
-  if (!isAdmin(req.user.groups)) {
-    return { ok: false, status: 403, error: 'Only Admins can delete assets' }
-  }
-
-  const key = req.query?.key as string | undefined
-  if (!key) {
+  const deleteQuery = z.object({ key: z.string().min(1) }).safeParse(req.query ?? {})
+  if (!deleteQuery.success) {
     return { ok: false, status: 400, error: 'key query parameter required' }
   }
 
-  await ctx.assetStore.delete(key)
+  await ctx.assetStore.delete(deleteQuery.data.key)
   return { ok: true, status: 200, data: { deleted: true } }
 }
 
@@ -130,6 +124,7 @@ const uploadAsset = defineEndpoint({
   responseType: 'AssetUploadResponse',
   response: {} as AssetUploadResponse,
   defaultMockData: { asset: { key: '', url: '' } },
+  guards: ['privileged'] as const,
   handler: uploadAssetHandler,
 })
 
@@ -145,6 +140,7 @@ const deleteAsset = defineEndpoint({
   responseType: 'AssetDeleteResponse',
   response: {} as AssetDeleteResponse,
   defaultMockData: { deleted: true },
+  guards: ['admin'] as const,
   handler: deleteAssetHandler,
 })
 

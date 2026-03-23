@@ -49,30 +49,30 @@ The codebase uses a modular structure with clear separation:
 
 **Top-level files** (intentionally not modularized):
 
-| File                     | Purpose                                                                |
-| ------------------------ | ---------------------------------------------------------------------- |
-| services.ts              | CanopyServices factory with git operations                             |
-| context.ts               | Context creation and management                                        |
-| types.ts                 | Core types (BranchContext, BranchMetadata, SyncStatus, ConflictStatus) |
-| branch-metadata.ts       | Branch metadata persistence                                            |
-| branch-registry.ts       | Branch tracking and listing                                            |
-| branch-workspace.ts      | Branch workspace management                                            |
-| branch-schema-cache.ts   | Per-branch schema caching                                              |
-| settings-workspace.ts    | Settings branch workspace                                              |
-| settings-branch-utils.ts | Settings branch utility helpers                                        |
-| content-store.ts         | Content persistence                                                    |
-| content-reader.ts        | Content reading                                                        |
-| content-id-index.ts      | Content ID indexing                                                    |
-| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)      |
-| entry-schema-registry.ts | Entry schema registry for reusable field definitions                   |
-| git-manager.ts           | Git operations wrapper                                                 |
-| github-service.ts        | GitHub API integration                                                 |
-| comment-store.ts         | Comment persistence                                                    |
-| reference-resolver.ts    | Reference resolution                                                   |
-| asset-store.ts           | Asset storage                                                          |
-| build-mode.ts            | Build mode detection                                                   |
-| user.ts                  | User utilities                                                         |
-| server.ts                | Server entrypoint exports                                              |
+| File                     | Purpose                                                                                         |
+| ------------------------ | ----------------------------------------------------------------------------------------------- |
+| services.ts              | CanopyServices factory with git operations                                                      |
+| context.ts               | Context creation and management                                                                 |
+| types.ts                 | Core types (BranchContext, BranchContextWithSchema, BranchMetadata, SyncStatus, ConflictStatus) |
+| branch-metadata.ts       | Branch metadata persistence                                                                     |
+| branch-registry.ts       | Branch tracking and listing                                                                     |
+| branch-workspace.ts      | Branch workspace management                                                                     |
+| branch-schema-cache.ts   | Per-branch schema caching                                                                       |
+| settings-workspace.ts    | Settings branch workspace                                                                       |
+| settings-branch-utils.ts | Settings branch utility helpers                                                                 |
+| content-store.ts         | Content persistence                                                                             |
+| content-reader.ts        | Content reading                                                                                 |
+| content-id-index.ts      | Content ID indexing                                                                             |
+| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                               |
+| entry-schema-registry.ts | Entry schema registry for reusable field definitions                                            |
+| git-manager.ts           | Git operations wrapper                                                                          |
+| github-service.ts        | GitHub API integration                                                                          |
+| comment-store.ts         | Comment persistence                                                                             |
+| reference-resolver.ts    | Reference resolution                                                                            |
+| asset-store.ts           | Asset storage                                                                                   |
+| build-mode.ts            | Build mode detection                                                                            |
+| user.ts                  | User utilities                                                                                  |
+| server.ts                | Server entrypoint exports                                                                       |
 
 ## API Layer
 
@@ -98,14 +98,15 @@ The codebase uses a modular structure with clear separation:
 
 **API Support Files**:
 
-| File                | Purpose                                                                                      |
-| ------------------- | -------------------------------------------------------------------------------------------- |
-| route-builder.ts    | Declarative route builder with Zod validation and code generation metadata                   |
-| github-sync.ts      | GitHub sync helpers (submit PR, convert to draft) - delegates to githubService or task queue |
-| settings-helpers.ts | Settings branch context resolution and commit helpers for permissions/groups                 |
-| validators.ts       | Zod schemas for branded types at API boundaries                                              |
-| types.ts            | ApiContext, ApiRequest, ApiResponse types                                                    |
-| client.ts           | Generated API client                                                                         |
+| File                | Purpose                                                                                         |
+| ------------------- | ----------------------------------------------------------------------------------------------- |
+| route-builder.ts    | Declarative route builder with Zod validation, declarative guards, and code generation metadata |
+| guards.ts           | Declarative guard system (branch access, schema loading, role checks) for route-builder         |
+| github-sync.ts      | GitHub sync helpers (submit PR, convert to draft) - delegates to githubService or task queue    |
+| settings-helpers.ts | Settings branch context resolution and commit helpers for permissions/groups                    |
+| validators.ts       | Zod schemas for branded types at API boundaries                                                 |
+| types.ts            | ApiContext, ApiRequest, ApiResponse types                                                       |
+| client.ts           | Generated API client                                                                            |
 
 **Key Types**: ApiContext (services, user, branch), ApiRequest, ApiResponse
 
