@@ -19,7 +19,7 @@ Key characteristics:
 
 CanopyCMS is organized as a monorepo with separate packages for extensibility:
 
-- **canopycms** (core): The main library containing content store, branch management, permissions, editor UI, and API handlers. This package is framework-agnostic and contains all business logic.
+- **canopycms** (core): The main library containing content store, branch management, permissions, editor UI, API handlers, and AI content generation. This package is framework-agnostic and contains all business logic. It exposes multiple entrypoints: `canopycms/server` (content reading, API setup), `canopycms/client` (editor components), `canopycms/config` (configuration helpers), `canopycms/ai` (AI content route handler and generation), and `canopycms/build` (static file generation utilities).
 
 - **canopycms-next**: Next.js adapter that provides thin integration (~10 lines of user extraction code). Wraps core context with React cache() for per-request memoization.
 
@@ -80,6 +80,18 @@ The core package organizes code into focused modules, each with a single respons
 - Client-safe strategies (UI flags, simple configuration)
 - Client-unsafe strategies (file system operations, git integration)
 - Type definitions for strategy interfaces
+
+**AI Content Generation** - Schema-driven content export for AI consumption:
+
+- Entry-to-markdown conversion using schema field definitions
+- Content tree walking with configurable exclusions and bundles
+- Manifest generation for AI tool discovery
+- Shared generation engine used by both the route handler and the build utility
+
+**Build Utilities** - Static file generation for build-time content export:
+
+- Static AI content writer (writes generated markdown and manifest to disk)
+- Used by the CLI and during static site builds
 
 **Validation** - Content validation utilities:
 
@@ -1486,6 +1498,70 @@ The system uses a two-phase approach:
 
 Alternative approaches (async state, callbacks, separate resolution state) create synchronization problems between two state trees (form data + resolved data). By computing resolved data synchronously from a single source (form data + cache), we eliminate timing issues and race conditions entirely.
 
+## AI Content Generation
+
+CanopyCMS can export its content as clean, AI-consumable markdown with a structured manifest. This enables AI tools, LLMs, and external indexing services to discover and ingest site content without parsing CMS-specific file formats or navigating the internal content ID system.
+
+### Design Goals
+
+- **Read-only, public access**: AI content is generated from the default branch (typically `main`) and requires no authentication. It represents the current published state of the site, not in-progress branch edits.
+- **Schema-aware conversion**: The generator uses schema field definitions to produce structured markdown rather than dumping raw JSON. Field labels, descriptions, select option labels, nested objects, and block structures are all rendered meaningfully.
+- **No internal identifiers exposed**: Embedded content IDs (the 12-character Base58 identifiers in filenames) are stripped from all output. AI consumers see clean paths and slugs only.
+- **Opt-out exclusion model**: All content is included by default. Adopters configure exclusions (by collection, entry type, or custom predicate) rather than inclusions.
+
+### Content Transformation
+
+The generation engine walks the schema tree, reads each entry from the content store, and converts it to markdown:
+
+- **MD/MDX entries**: Frontmatter fields are rendered as labeled metadata, and the markdown body is appended verbatim.
+- **JSON entries**: All fields undergo schema-driven conversion. Each field type (string, boolean, image, code, select, reference, object, block) has a dedicated rendering strategy that produces idiomatic markdown.
+- **Field descriptions**: The `description` field on schema configs (collections, entry types, blocks, and fields) is included in the markdown output, giving AI consumers semantic context about each field's purpose.
+- **Field transforms**: Adopters can provide custom per-entry-type, per-field markdown override functions for cases where the default conversion is insufficient (e.g., rendering a complex data structure as a table).
+
+### Output Structure
+
+The generator produces three kinds of files:
+
+- **Per-entry files** (e.g., `posts/hello-world.md`): One markdown file per content entry, with YAML-style frontmatter containing slug, collection, and type metadata.
+- **Per-collection rollup files** (e.g., `posts/all.md`): A single markdown file concatenating all entries in a collection (including subcollections), separated by horizontal rules. Useful for feeding an entire collection to an LLM in one request.
+- **Bundle files** (e.g., `bundles/research-data.md`): Named, filtered subsets of content defined by the adopter. Bundles can filter by collection, entry type, path glob, or custom predicate. Multiple filters are AND'd together. Bundles are additive views -- they do not remove content from per-entry or per-collection files.
+
+A **manifest** (`manifest.json`) describes the full content tree: collections with their entries and subcollections, root-level entries, and bundles. Each manifest entry includes a file path, entry count, and optional metadata (title, description, label). AI tools can read the manifest to discover available content without crawling the file tree.
+
+### Delivery Mechanisms
+
+The same generation engine powers two delivery paths. Both read from the default branch and share the same configuration and output format.
+
+**Route handler** (`canopycms/ai` entrypoint): A Next.js-native catch-all GET handler mounted at a separate route (e.g., `/ai/[...path]/route.ts`). It generates content lazily on first request and caches the result in memory. In dev mode, the cache is bypassed on every request so content changes are reflected immediately. In production, responses include a short `Cache-Control` header. The route handler returns standard `Response` objects directly -- it does not use the CanopyCMS `CanopyRequest`/`CanopyResponse` abstraction or the editor API's guard system, because it has no authentication or branch resolution requirements.
+
+**Static build utility** (`canopycms/build` entrypoint): Writes all generated files to a directory on disk (e.g., `public/ai/`). Used during `npm run build` or via the `npx canopycms generate-ai-content` CLI command. This path is appropriate for pure static exports where no Next.js server is running at request time.
+
+### Why a Separate Route Handler?
+
+The AI content handler is mounted at its own catch-all route rather than going through the existing editor API route. This is a deliberate separation:
+
+- **No authentication**: The editor API requires authentication for every request. AI content is public and read-only.
+- **No branch context**: The editor API resolves a branch for every request. AI content always reads from the default branch.
+- **Different caching model**: The editor API is stateless per-request. The AI handler uses a lazy singleton cache that persists across requests.
+- **Framework-native responses**: The handler returns `Response` objects directly, which is the natural API for Next.js route handlers. Wrapping this in `CanopyRequest`/`CanopyResponse` would add abstraction with no benefit.
+
+### Configuration
+
+AI content generation is configured via a `defineAIContentConfig()` helper that provides type-checked configuration. The configuration is shared between the route handler and the build utility and includes:
+
+- **Exclusions**: Collections to skip, entry types to skip globally, and a custom predicate for fine-grained filtering.
+- **Bundles**: Named filtered views with collection, entry type, path glob, and predicate filters.
+- **Field transforms**: Per-entry-type, per-field markdown override functions.
+
+### Package Entrypoints
+
+This feature introduces two new package entrypoints:
+
+- **`canopycms/ai`**: Exports the route handler factory, the generation engine, config helpers, and all related types. This is a server-side entrypoint (uses Node.js APIs for content reading).
+- **`canopycms/build`**: Exports the static file writer. This is a build-time entrypoint (uses `node:fs` to write files to disk).
+
+These join the existing entrypoints (`canopycms/server`, `canopycms/client`, `canopycms/config`).
+
 ## Extensibility Points
 
 ### Authentication
@@ -2215,3 +2291,47 @@ The schema meta file system provides an alternative to defining all schemas in `
 - Solo developers who prefer everything in code
 - Projects where TypeScript type checking is critical
 - Rapid prototyping where schema changes frequently
+
+### Why is AI content served from a separate route, not the editor API?
+
+The AI content handler uses a fundamentally different request model than the editor API:
+
+**No authentication or branch resolution**: The editor API authenticates every request and resolves a branch context. AI content is public, read-only, and always reads from the default branch. Routing through the editor API would require either bypassing the authentication pipeline (fragile, special-cased) or adding a no-auth mode to the pipeline (risky, increases security surface).
+
+**Different caching semantics**: The editor API is stateless per request -- each call resolves fresh branch state. The AI handler uses a lazy singleton cache that generates all content on first request and serves it from memory thereafter. These models are incompatible within a single handler.
+
+**Framework-native responses**: The AI handler returns standard `Response` objects, which is the natural API for Next.js route handlers. The editor API uses `CanopyRequest`/`CanopyResponse` abstractions for framework portability. Since AI content delivery is simpler and does not need framework-agnostic abstraction, the `Response` API is the better fit.
+
+**Minimal surface area**: The AI handler depends only on `ContentStore` and the schema -- it does not import the full service container, branch registry, authorization module, or any editor infrastructure. This keeps the dependency graph small and makes the feature easy to reason about in isolation.
+
+### Why in-memory caching for the AI route handler?
+
+The AI handler generates all content lazily on first request and caches the result as a singleton `Map<string, string>` in memory. In dev mode, the cache is invalidated on every request.
+
+**Why not per-request generation?** Generating AI content walks the entire content tree, reads every entry, and converts each to markdown. This is too expensive to repeat on every request (potentially hundreds of milliseconds for large sites).
+
+**Why not filesystem caching?** Filesystem caching would add complexity (cache directory management, invalidation logic, file I/O on every request). In-memory caching is simpler and faster. The AI content is regenerated on deploy (when the Lambda container restarts or the server process restarts), which matches the expected invalidation cadence for published content.
+
+**Why no cache in dev mode?** Developers edit content and expect to see changes immediately. Always regenerating in dev mode ensures the AI output reflects the latest content without requiring a manual cache clear.
+
+### Why two delivery mechanisms (route handler and static build)?
+
+Different deployment models need different content delivery strategies:
+
+**Route handler for server deployments**: When a Next.js server is running, the route handler serves AI content dynamically. This is simpler to set up (mount one route) and always reflects the latest published content.
+
+**Static build for static exports**: Pure static sites (e.g., `next export`) have no server at request time. The build utility writes files to `public/ai/` during the build step, and the hosting platform serves them as static assets. The CLI command (`npx canopycms generate-ai-content`) can also be used in CI/CD pipelines or as a standalone generation step.
+
+Both share the same generation engine and configuration, so the output is identical regardless of delivery mechanism. The separation is purely about how and when the content reaches consumers.
+
+### Why schema-driven markdown conversion instead of raw JSON export?
+
+The AI content generator uses schema field definitions to produce structured markdown rather than exposing the raw JSON data store:
+
+**Meaningful structure**: Schema-aware conversion renders field labels, descriptions, select option labels, and nested object/block structures as readable markdown sections. Raw JSON would require consumers to understand the CMS data model.
+
+**No internal identifiers**: The raw content store uses embedded IDs in filenames and stores reference fields as opaque ID strings. The markdown output strips these, producing clean paths and human-readable references.
+
+**Field description propagation**: The `description` field on schema configs gives AI consumers semantic context about each field's purpose. This metadata exists in the schema but not in the raw content files.
+
+**Custom transforms**: The field transform system lets adopters override the default conversion for specific fields (e.g., rendering a complex data structure as a markdown table). This extensibility point would not exist with a raw JSON export.

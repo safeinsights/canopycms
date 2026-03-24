@@ -248,13 +248,33 @@ async function main() {
       process.exit(1)
     }
     await workerRunOnce({ projectDir: process.cwd() })
+  } else if (command === 'generate-ai-content') {
+    const { generateAIContentCLI } = await import('./generate-ai-content')
+    // Parse --output and --config flags
+    let outputDir: string | undefined
+    let configPath: string | undefined
+    for (let i = 1; i < args.length; i++) {
+      if (args[i] === '--output' && args[i + 1]) {
+        outputDir = args[++i]
+      } else if (args[i] === '--config' && args[i + 1]) {
+        configPath = args[++i]
+      }
+    }
+    await generateAIContentCLI({
+      projectDir: process.cwd(),
+      outputDir,
+      configPath,
+    })
   } else {
     console.log('CanopyCMS CLI')
     console.log('')
     console.log('Commands:')
-    console.log('  init              Add CanopyCMS to a Next.js app')
-    console.log('  init-deploy aws   Generate AWS deployment artifacts')
-    console.log('  worker run-once   Process tasks, sync git, refresh auth cache')
+    console.log('  init                    Add CanopyCMS to a Next.js app')
+    console.log('  init-deploy aws         Generate AWS deployment artifacts')
+    console.log('  worker run-once         Process tasks, sync git, refresh auth cache')
+    console.log('  generate-ai-content     Generate static AI-ready content files')
+    console.log('    --output <dir>        Output directory (default: public/ai)')
+    console.log('    --config <path>       Path to AI content config file')
     process.exit(0)
   }
 }

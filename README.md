@@ -20,6 +20,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - [Content Identification and References](#content-identification--references)
 - [Integration Guide](#integration-guide)
 - [Features](#features)
+- [AI-Ready Content](#ai-ready-content)
 - [Using the Editor](#using-the-editor)
 - [Adopter Touchpoints Summary](#adopter-touchpoints-summary)
 - [Environment Variables](#environment-variables)
@@ -953,6 +954,150 @@ Access control uses three layers:
 
 The editor shows a live preview of your actual site pages in an iframe. Changes update immediately via postMessage. Clicking elements in the preview focuses the corresponding form field.
 
+## AI-Ready Content
+
+CanopyCMS can serve your content as clean markdown for AI consumption (LLM tools, Claude Code, documentation chatbots, etc.). Content is converted from your schema-driven JSON/MD/MDX entries into well-structured markdown with a discovery manifest. No authentication is required -- the output is read-only.
+
+All content is included by default (opt-out exclusion model). You can exclude specific collections, entry types, or entries matching a custom predicate.
+
+### Option 1: Route Handler (Runtime)
+
+Serve AI content dynamically from a Next.js catch-all route. Content is generated on first request and cached (in dev mode, regenerated on every request).
+
+Create `app/ai/[...path]/route.ts`:
+
+```typescript
+import { createAIContentHandler } from 'canopycms/ai'
+import config from '../../../canopycms.config'
+import { entrySchemaRegistry } from '../../schemas'
+
+export const GET = createAIContentHandler({
+  config: config.server,
+  entrySchemaRegistry,
+})
+```
+
+This serves:
+
+- `GET /ai/manifest.json` -- discovery manifest listing all collections, entries, and bundles
+- `GET /ai/posts/my-post.md` -- individual entry as markdown
+- `GET /ai/posts/all.md` -- all entries in a collection concatenated
+- `GET /ai/bundles/my-bundle.md` -- custom filtered bundle
+
+### Option 2: Static Build (CLI)
+
+Generate AI content as static files during your build process:
+
+```bash
+npx canopycms generate-ai-content --output public/ai
+```
+
+Options:
+
+- `--output <dir>` -- output directory (default: `public/ai`)
+- `--config <path>` -- path to an AI content config file
+
+### Option 3: Programmatic API
+
+Call the generator directly from a build script:
+
+```typescript
+import { generateAIContentFiles } from 'canopycms/build'
+import config from './canopycms.config'
+import { entrySchemaRegistry } from './app/schemas'
+
+await generateAIContentFiles({
+  config: config.server,
+  entrySchemaRegistry,
+  outputDir: 'public/ai',
+})
+```
+
+### AI Content Configuration
+
+Use `defineAIContentConfig` to customize what content is generated and how fields are converted:
+
+```typescript
+import { defineAIContentConfig } from 'canopycms/ai'
+
+const aiConfig = defineAIContentConfig({
+  // Opt-out exclusions
+  exclude: {
+    collections: ['drafts'], // Skip entire collections
+    entryTypes: ['internal-note'], // Skip entry types everywhere
+    where: (entry) => entry.data.hidden === true, // Custom predicate
+  },
+
+  // Custom bundles (filtered subsets as single files)
+  bundles: [
+    {
+      name: 'research-guides',
+      description: 'All research guide content',
+      filter: {
+        collections: ['docs'],
+        entryTypes: ['guide'],
+      },
+    },
+  ],
+
+  // Per-field markdown overrides
+  fieldTransforms: {
+    dataset: {
+      dataFields: (value) =>
+        `## Data Fields\n| Name | Type |\n|---|---|\n${(value as Array<{ name: string; type: string }>).map((f) => `| ${f.name} | ${f.type} |`).join('\n')}`,
+    },
+  },
+})
+```
+
+Pass the config to either delivery mechanism:
+
+```typescript
+// Route handler
+export const GET = createAIContentHandler({
+  config: config.server,
+  entrySchemaRegistry,
+  aiConfig,
+})
+
+// Static build
+await generateAIContentFiles({
+  config: config.server,
+  entrySchemaRegistry,
+  outputDir: 'public/ai',
+  aiConfig,
+})
+```
+
+### Manifest Format
+
+The manifest at `manifest.json` describes all generated content for tool discovery:
+
+```json
+{
+  "generated": "2026-03-23T12:00:00.000Z",
+  "entries": [],
+  "collections": [
+    {
+      "name": "posts",
+      "label": "Blog Posts",
+      "path": "posts",
+      "allFile": "posts/all.md",
+      "entryCount": 5,
+      "entries": [{ "slug": "my-post", "title": "My Post", "file": "posts/my-post.md" }]
+    }
+  ],
+  "bundles": [
+    {
+      "name": "research-guides",
+      "description": "All research guide content",
+      "file": "bundles/research-guides.md",
+      "entryCount": 3
+    }
+  ]
+}
+```
+
 ## Using the Editor
 
 This section describes how to use the CanopyCMS editor interface from a content editor's perspective.
@@ -1043,9 +1188,10 @@ CanopyCMS is designed for minimal integration effort. You need:
 | **Editor Page** | `app/edit/page.tsx`                         | Embed the editor component                                   |
 | **Middleware**  | `middleware.ts`                             | Protect editor routes with authentication                    |
 
-**Optional touchpoint:**
+**Optional touchpoints:**
 
 - **Server components**: Use `await getCanopy()` to read draft content with automatic auth
+- **AI content route**: `app/ai/[...path]/route.ts` -- serve content as AI-readable markdown (see [AI-Ready Content](#ai-ready-content))
 
 Everything else (branch management, content storage, permissions, comments, bootstrap admin groups, meta file loading) is handled automatically by CanopyCMS.
 

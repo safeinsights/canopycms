@@ -11,6 +11,7 @@ import type { FieldType } from '../types'
 export const fieldBaseSchema = z.object({
   name: z.string().min(1),
   label: z.string().optional(),
+  description: z.string().optional(),
   required: z.boolean().optional(),
   list: z.boolean().optional(),
 })
@@ -61,6 +62,7 @@ const fieldHolder: [z.ZodTypeAny] = [z.never()]
 export const blockSchema = z.object({
   name: z.string().min(1),
   label: z.string().optional(),
+  description: z.string().optional(),
   fields: z.array(z.lazy(() => fieldHolder[0])).min(1),
 })
 

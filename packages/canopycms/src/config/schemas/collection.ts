@@ -35,6 +35,7 @@ export const entryTypeSchema = z.object({
   format: z.enum(['md', 'mdx', 'json']),
   schema: z.array(z.lazy(() => fieldSchema)).min(1),
   label: z.string().optional(),
+  description: z.string().optional(),
   default: z.boolean().optional(),
   maxItems: z.number().int().positive().optional(),
 })
@@ -46,6 +47,7 @@ const collectionSchema: z.ZodTypeAny = z.lazy(() =>
       name: z.string().min(1),
       path: relativePathSchema,
       label: z.string().optional(),
+      description: z.string().optional(),
       entries: z.array(entryTypeSchema).optional(),
       collections: z.array(collectionSchema).optional(),
       order: z.array(z.string()).optional(), // Embedded IDs for ordering items
