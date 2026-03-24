@@ -1,6 +1,6 @@
 {
   "name": "canopycms",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "CanopyCMS core package: schema-driven content, branch-aware editing, and editor UI for Next.js.",
   "license": "MIT",
   "repository": {
