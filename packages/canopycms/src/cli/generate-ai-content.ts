@@ -7,6 +7,7 @@
 import path from 'node:path'
 
 import { generateAIContentFiles } from '../build/generate-ai-content'
+import { getErrorMessage } from '../utils/error'
 
 interface GenerateAIContentCLIOptions {
   projectDir: string
@@ -26,7 +27,7 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
     canopyConfigModule = (await import(canopyConfigPath)) as Record<string, unknown>
   } catch (err) {
     console.error(`Could not load config from ${canopyConfigPath}`)
-    console.error(err instanceof Error ? err.message : String(err))
+    console.error(getErrorMessage(err))
     process.exit(1)
   }
 
@@ -56,9 +57,15 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
       aiConfig = aiConfigModule.aiContentConfig ?? aiConfigModule.default ?? aiConfigModule.config
     } catch (err) {
       console.error(`Could not load AI config from ${configPath}`)
-      console.error(err instanceof Error ? err.message : String(err))
+      console.error(getErrorMessage(err))
       process.exit(1)
     }
+  }
+
+  // Validate AI config shape if provided
+  if (aiConfig !== undefined && (typeof aiConfig !== 'object' || aiConfig === null)) {
+    console.error('Invalid AI content config: expected an object.')
+    process.exit(1)
   }
 
   // Validate loaded config has required shape

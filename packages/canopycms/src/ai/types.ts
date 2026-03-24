@@ -153,8 +153,6 @@ export interface AIManifest {
 
 /** A fully-loaded entry ready for markdown conversion */
 export interface AIEntry extends AIEntryMeta {
-  /** The entry's parsed data (frontmatter for MD/MDX, full data for JSON) */
-  data: Record<string, unknown>
   /** Markdown body for MD/MDX entries */
   body?: string
   /** Schema fields for this entry type */

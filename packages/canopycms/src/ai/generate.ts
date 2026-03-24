@@ -13,6 +13,7 @@ import { minimatch } from 'minimatch'
 import type { ContentStore, ContentDocument, MarkdownDocument } from '../content-store'
 import type { FlatSchemaItem, EntryTypeConfig } from '../config'
 import { extractEntryTypeFromFilename } from '../content-id-index'
+import { getErrorMessage } from '../utils/error'
 import { entryToMarkdown } from './json-to-markdown'
 import type {
   AIContentConfig,
@@ -107,6 +108,10 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   const manifestBundles: AIManifestBundle[] = []
   if (config?.bundles) {
     for (const bundle of config.bundles) {
+      // Validate bundle name to prevent path traversal
+      if (/[/\\]|\.\./.test(bundle.name)) {
+        throw new Error(`Invalid bundle name "${bundle.name}": must not contain slashes or ".."`)
+      }
       const matchingEntries = allEntries.filter((entry) =>
         matchesBundleFilter(entry, bundle.filter, contentRoot),
       )
@@ -203,7 +208,7 @@ async function processCollection(
     } catch (err) {
       console.warn(
         `AI content: skipping entry "${listEntry.slug}" in ${collection.logicalPath}:`,
-        err instanceof Error ? err.message : err,
+        getErrorMessage(err),
       )
       continue
     }
@@ -302,10 +307,7 @@ async function processRootEntries(
         file: entryFilePath,
       })
     } catch (err) {
-      console.warn(
-        `AI content: skipping root entry "${listEntry.slug}":`,
-        err instanceof Error ? err.message : err,
-      )
+      console.warn(`AI content: skipping root entry "${listEntry.slug}":`, getErrorMessage(err))
       continue
     }
   }

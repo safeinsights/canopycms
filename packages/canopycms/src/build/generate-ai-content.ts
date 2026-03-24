@@ -10,10 +10,10 @@ import path from 'node:path'
 
 import { ContentStore } from '../content-store'
 import { BranchSchemaCache } from '../branch-schema-cache'
-import { loadBranchContext } from '../branch-metadata'
 import type { CanopyConfig, FlatSchemaItem } from '../config'
 import type { EntrySchemaRegistry } from '../schema/types'
 import { generateAIContent } from '../ai/generate'
+import { resolveBranchRoot } from '../ai/resolve-branch'
 import type { AIContentConfig } from '../ai/types'
 
 export interface GenerateAIContentFilesOptions {
@@ -38,20 +38,7 @@ export async function generateAIContentFiles(
   const contentRootName = config.contentRoot || 'content'
 
   // Resolve branch root
-  let branchRoot: string
-  if (config.mode === 'dev') {
-    branchRoot = process.cwd()
-  } else {
-    const baseBranch = config.defaultBaseBranch ?? 'main'
-    const context = await loadBranchContext({
-      branchName: baseBranch,
-      mode: config.mode,
-    })
-    if (!context) {
-      throw new Error(`Could not load branch context for "${baseBranch}"`)
-    }
-    branchRoot = context.branchRoot
-  }
+  const branchRoot = await resolveBranchRoot(config)
 
   // Load schema
   let flatSchema: FlatSchemaItem[]

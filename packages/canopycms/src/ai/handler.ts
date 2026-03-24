@@ -13,10 +13,11 @@
 
 import { ContentStore } from '../content-store'
 import { BranchSchemaCache } from '../branch-schema-cache'
-import { loadBranchContext } from '../branch-metadata'
 import type { CanopyConfig, FlatSchemaItem } from '../config'
 import type { EntrySchemaRegistry } from '../schema/types'
+import { getErrorMessage } from '../utils/error'
 import { generateAIContent, type GenerateResult } from './generate'
+import { resolveBranchRoot } from './resolve-branch'
 import type { AIContentConfig } from './types'
 
 export interface AIContentHandlerOptions {
@@ -112,38 +113,11 @@ export function createAIContentHandler(
       })
     } catch (error) {
       // Log the real error server-side; don't leak internals to unauthenticated callers
-      console.error('AI content handler error:', error instanceof Error ? error.message : error)
+      console.error('AI content handler error:', getErrorMessage(error))
       return new Response(JSON.stringify({ error: 'Internal server error' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       })
     }
   }
-}
-
-/**
- * Resolve the branch root directory for reading content.
- *
- * - Dev mode: current working directory (content is in the checkout)
- * - Prod/prod-sim: load the default base branch context
- */
-async function resolveBranchRoot(config: CanopyConfig): Promise<string> {
-  if (config.mode === 'dev') {
-    return process.cwd()
-  }
-
-  const baseBranch = config.defaultBaseBranch ?? 'main'
-  const context = await loadBranchContext({
-    branchName: baseBranch,
-    mode: config.mode,
-  })
-
-  if (!context) {
-    throw new Error(
-      `AI content handler: could not load branch context for "${baseBranch}". ` +
-        'Ensure the branch exists and has been initialized.',
-    )
-  }
-
-  return context.branchRoot
 }

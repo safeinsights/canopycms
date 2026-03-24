@@ -196,7 +196,7 @@ describe('generateAIContentFiles', () => {
           ],
         },
       }),
-    ).rejects.toThrow('Path traversal detected')
+    ).rejects.toThrow('Invalid bundle name')
   })
 
   it('creates correct directory structure', async () => {

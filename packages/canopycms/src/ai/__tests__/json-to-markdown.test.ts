@@ -431,27 +431,61 @@ describe('entryToMarkdown', () => {
     it('skips fields with null values', () => {
       const entry = makeEntry({
         fields: [
-          { name: 'title', type: 'string', label: 'Title' },
+          { name: 'summary', type: 'string', label: 'Summary' },
           { name: 'subtitle', type: 'string', label: 'Subtitle' },
         ],
-        data: { title: 'Hello', subtitle: null },
+        data: { summary: 'A summary', subtitle: null },
       })
       const md = entryToMarkdown(entry)
-      expect(md).toContain('## Title')
+      expect(md).toContain('## Summary')
       expect(md).not.toContain('## Subtitle')
     })
 
     it('skips fields with undefined values', () => {
       const entry = makeEntry({
         fields: [
-          { name: 'title', type: 'string', label: 'Title' },
+          { name: 'summary', type: 'string', label: 'Summary' },
           { name: 'subtitle', type: 'string', label: 'Subtitle' },
         ],
-        data: { title: 'Hello' },
+        data: { summary: 'A summary' },
       })
       const md = entryToMarkdown(entry)
-      expect(md).toContain('## Title')
+      expect(md).toContain('## Summary')
       expect(md).not.toContain('## Subtitle')
+    })
+  })
+
+  describe('title deduplication', () => {
+    it('does not render title in body when present in frontmatter (JSON)', () => {
+      const entry = makeEntry({
+        fields: [
+          { name: 'title', type: 'string', label: 'Title' },
+          { name: 'summary', type: 'string', label: 'Summary' },
+        ],
+        data: { title: 'My Page', summary: 'A summary' },
+      })
+      const md = entryToMarkdown(entry)
+      // Title in frontmatter
+      expect(md).toContain('title: My Page')
+      // Title NOT duplicated in body as a heading
+      expect(md).not.toContain('## Title')
+      // Other fields still render
+      expect(md).toContain('## Summary')
+    })
+
+    it('renders title in body when not present in data', () => {
+      const entry = makeEntry({
+        fields: [
+          { name: 'title', type: 'string', label: 'Title' },
+          { name: 'summary', type: 'string', label: 'Summary' },
+        ],
+        data: { summary: 'A summary' },
+      })
+      const md = entryToMarkdown(entry)
+      // No title in frontmatter
+      expect(md).not.toContain('title:')
+      // Summary renders normally
+      expect(md).toContain('## Summary')
     })
   })
 

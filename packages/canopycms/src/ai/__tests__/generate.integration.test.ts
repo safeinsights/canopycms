@@ -393,6 +393,38 @@ describe('generateAIContent', () => {
     })
   })
 
+  describe('bundle name validation', () => {
+    it('rejects bundle names with path traversal characters', async () => {
+      const aiConfig: AIContentConfig = {
+        bundles: [{ name: '../../malicious', filter: { collections: ['posts'] } }],
+      }
+
+      await expect(
+        generateAIContent({
+          store,
+          flatSchema: flat,
+          contentRoot: config.contentRoot,
+          config: aiConfig,
+        }),
+      ).rejects.toThrow('Invalid bundle name')
+    })
+
+    it('rejects bundle names with slashes', async () => {
+      const aiConfig: AIContentConfig = {
+        bundles: [{ name: 'foo/bar', filter: { collections: ['posts'] } }],
+      }
+
+      await expect(
+        generateAIContent({
+          store,
+          flatSchema: flat,
+          contentRoot: config.contentRoot,
+          config: aiConfig,
+        }),
+      ).rejects.toThrow('Invalid bundle name')
+    })
+  })
+
   describe('content correctness', () => {
     it('MD entry markdown contains frontmatter and body', async () => {
       const result = await generateAIContent({

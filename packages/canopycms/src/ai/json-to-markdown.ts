@@ -22,18 +22,22 @@ export function entryToMarkdown(entry: AIEntry, config?: AIContentConfig): strin
   if (entry.data.title) {
     parts.push(`title: ${yamlValue(String(entry.data.title))}`)
   }
-  parts.push(`slug: ${entry.slug}`)
-  parts.push(`collection: ${entry.collection}`)
-  parts.push(`type: ${entry.entryType}`)
+  parts.push(`slug: ${yamlValue(entry.slug)}`)
+  parts.push(`collection: ${yamlValue(entry.collection)}`)
+  parts.push(`type: ${yamlValue(entry.entryType)}`)
   parts.push('---')
   parts.push('')
 
+  // Fields already in frontmatter — skip from body rendering to avoid duplication
+  const skipFields = new Set<string>()
+  if (entry.data.title) skipFields.add('title')
+
   if (entry.format === 'md' || entry.format === 'mdx') {
     // For MD/MDX: render non-body fields as metadata, then body verbatim
-    parts.push(...renderMarkdownEntry(entry, config))
+    parts.push(...renderMarkdownEntry(entry, config, skipFields))
   } else {
     // For JSON: full schema-driven conversion
-    parts.push(...renderJsonEntry(entry, config))
+    parts.push(...renderJsonEntry(entry, config, skipFields))
   }
 
   return parts.join('\n')
@@ -42,12 +46,18 @@ export function entryToMarkdown(entry: AIEntry, config?: AIContentConfig): strin
 /**
  * Render a MD/MDX entry: metadata fields as a section, body verbatim.
  */
-function renderMarkdownEntry(entry: AIEntry, config?: AIContentConfig): string[] {
+function renderMarkdownEntry(
+  entry: AIEntry,
+  config: AIContentConfig | undefined,
+  skipFields: Set<string>,
+): string[] {
   const parts: string[] = []
 
-  // Render frontmatter fields (excluding body-like fields)
+  // Render frontmatter fields (excluding body-like fields and already-rendered fields)
   const bodyFieldTypes = new Set(['rich-text', 'markdown', 'mdx'])
-  const metadataFields = entry.fields.filter((f) => !bodyFieldTypes.has(f.type))
+  const metadataFields = entry.fields.filter(
+    (f) => !bodyFieldTypes.has(f.type) && !skipFields.has(f.name),
+  )
 
   for (const field of metadataFields) {
     const value = entry.data[field.name]
@@ -82,10 +92,15 @@ function renderMarkdownEntry(entry: AIEntry, config?: AIContentConfig): string[]
 /**
  * Render a JSON entry: full schema-driven conversion of all fields.
  */
-function renderJsonEntry(entry: AIEntry, config?: AIContentConfig): string[] {
+function renderJsonEntry(
+  entry: AIEntry,
+  config: AIContentConfig | undefined,
+  skipFields: Set<string>,
+): string[] {
   const parts: string[] = []
 
   for (const field of entry.fields) {
+    if (skipFields.has(field.name)) continue
     const value = entry.data[field.name]
     if (value === undefined || value === null) continue
 
