@@ -312,21 +312,25 @@ Generic file-based persistent task queue with zero Canopy dependencies.
 
 **Location**: packages/canopycms/src/cli/
 
-Bootstrapping scripts run via `npx canopycms <command>`.
+Bootstrapping scripts run via `npx canopycms <command>`. Uses `@clack/prompts` for interactive CLI experience.
 
-| File         | Purpose                                                                            |
-| ------------ | ---------------------------------------------------------------------------------- |
-| init.ts      | CLI entrypoint with init(), initDeployAws(), workerRunOnce() commands              |
-| templates.ts | Template file loader (reads .template files from templates/ directory)             |
-| templates/   | Template files for scaffolding (config, route, edit page, Dockerfile, CI workflow) |
+| File                   | Purpose                                                                                             |
+| ---------------------- | --------------------------------------------------------------------------------------------------- |
+| init.ts                | CLI entrypoint with init(), initDeployAws(), workerRunOnce() commands                               |
+| templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}}) |
+| generate-ai-content.ts | AI content generation CLI command                                                                   |
+| templates/             | Template files for scaffolding (config, route, edit page, Dockerfile, CI workflow)                  |
 
 **Commands**:
 
-| Command                     | Purpose                                                                       |
-| --------------------------- | ----------------------------------------------------------------------------- |
-| `canopycms init`            | Scaffold CanopyCMS into a Next.js app (config, API route, edit page, schemas) |
-| `canopycms init-deploy aws` | Generate AWS deployment artifacts (Dockerfile.cms, GitHub Actions workflow)   |
-| `canopycms worker run-once` | Process pending tasks, refresh auth cache, then exit                          |
+| Command                         | Purpose                                                                       |
+| ------------------------------- | ----------------------------------------------------------------------------- |
+| `canopycms init`                | Scaffold CanopyCMS into a Next.js app (config, API route, edit page, schemas) |
+| `canopycms init-deploy aws`     | Generate AWS deployment artifacts (Dockerfile.cms, GitHub Actions workflow)   |
+| `canopycms worker run-once`     | Process pending tasks, refresh auth cache, then exit                          |
+| `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)            |
+
+**`init` flags**: `--auth dev|clerk`, `--mode dev|prod-sim`, `--app-dir <path>`, `--force`, `--non-interactive`
 
 ## CDK Package (canopycms-cdk)
 

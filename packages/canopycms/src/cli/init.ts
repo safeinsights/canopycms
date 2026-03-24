@@ -3,25 +3,31 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import * as p from '@clack/prompts'
 import {
   canopyCmsConfig,
-  canopyContextClerk,
+  canopyContext,
   schemasTemplate,
   apiRoute,
-  editPageClerk,
+  editPage,
   dockerfileCms,
   githubWorkflowCms,
 } from './templates'
 
-interface InitOptions {
-  authProvider: 'clerk'
+export interface InitOptions {
+  authProvider: 'clerk' | 'dev'
   mode: 'prod-sim' | 'dev'
+  appDir: string
   projectDir: string
+  force: boolean
+  nonInteractive: boolean
 }
 
 interface InitDeployOptions {
   cloud: 'aws'
   projectDir: string
+  force: boolean
+  nonInteractive: boolean
 }
 
 async function fileExists(filePath: string): Promise<boolean> {
@@ -33,15 +39,49 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-async function writeIfNotExists(filePath: string, content: string): Promise<boolean> {
+/**
+ * Write a file, prompting for overwrite confirmation if it already exists.
+ * Returns true if the file was written, false if skipped.
+ */
+async function writeFile(
+  filePath: string,
+  content: string,
+  options: { force: boolean; nonInteractive: boolean },
+): Promise<boolean> {
+  const relativePath = path.relative(process.cwd(), filePath)
+
   if (await fileExists(filePath)) {
-    console.log(`  skip: ${path.relative(process.cwd(), filePath)} (already exists)`)
-    return false
+    if (options.force) {
+      // --force: overwrite without asking
+    } else if (options.nonInteractive) {
+      p.log.warn(`skip: ${relativePath} (already exists)`)
+      return false
+    } else {
+      const overwrite = await p.confirm({
+        message: `${relativePath} already exists. Overwrite?`,
+        initialValue: false,
+      })
+      if (p.isCancel(overwrite) || !overwrite) {
+        p.log.warn(`skip: ${relativePath}`)
+        return false
+      }
+    }
   }
+
   await fs.mkdir(path.dirname(filePath), { recursive: true })
   await fs.writeFile(filePath, content, 'utf-8')
-  console.log(`  created: ${path.relative(process.cwd(), filePath)}`)
+  p.log.success(`created: ${relativePath}`)
   return true
+}
+
+/**
+ * Compute the relative path from a file inside appDir to the project root.
+ * e.g. appDir="app" depth=1 → "../", appDir="src/app" depth=2 → "../../"
+ */
+function configImportPath(appDir: string, subdirs: number): string {
+  const appDepth = appDir.split('/').filter(Boolean).length
+  const totalDepth = appDepth + subdirs
+  return '../'.repeat(totalDepth) + 'canopycms.config'
 }
 
 /**
@@ -49,22 +89,35 @@ async function writeIfNotExists(filePath: string, content: string): Promise<bool
  * editing to a Next.js app. Cloud-agnostic.
  */
 export async function init(options: InitOptions): Promise<void> {
-  const { projectDir, mode } = options
+  const { projectDir, mode, appDir, force, nonInteractive } = options
+  const writeOpts = { force, nonInteractive }
 
-  console.log('\nCanopyCMS init\n')
+  p.intro('CanopyCMS init')
 
   // Generate files
-  await writeIfNotExists(
+  await writeFile(
     path.join(projectDir, 'canopycms.config.ts'),
     await canopyCmsConfig({ mode }),
+    writeOpts,
   )
-  await writeIfNotExists(path.join(projectDir, 'app/lib/canopy.ts'), await canopyContextClerk())
-  await writeIfNotExists(path.join(projectDir, 'app/schemas.ts'), await schemasTemplate())
-  await writeIfNotExists(
-    path.join(projectDir, 'app/api/canopycms/[...canopycms]/route.ts'),
-    await apiRoute(),
+  await writeFile(
+    path.join(projectDir, appDir, 'lib/canopy.ts'),
+    await canopyContext({ configImport: configImportPath(appDir, 1) }),
+    writeOpts,
   )
-  await writeIfNotExists(path.join(projectDir, 'app/edit/page.tsx'), await editPageClerk())
+  await writeFile(path.join(projectDir, appDir, 'schemas.ts'), await schemasTemplate(), writeOpts)
+  await writeFile(
+    path.join(projectDir, appDir, 'api/canopycms/[...canopycms]/route.ts'),
+    await apiRoute({
+      canopyImport: configImportPath(appDir, 4).replace('canopycms.config', 'lib/canopy'),
+    }),
+    writeOpts,
+  )
+  await writeFile(
+    path.join(projectDir, appDir, 'edit/page.tsx'),
+    await editPage({ configImport: configImportPath(appDir, 1) }),
+    writeOpts,
+  )
 
   // Update .gitignore
   const gitignorePath = path.join(projectDir, '.gitignore')
@@ -72,23 +125,30 @@ export async function init(options: InitOptions): Promise<void> {
     const content = await fs.readFile(gitignorePath, 'utf-8')
     if (!content.includes('.canopy-prod-sim')) {
       await fs.appendFile(gitignorePath, '\n# CanopyCMS\n.canopy-prod-sim/\n.canopy-dev/\n')
-      console.log('  updated: .gitignore')
+      p.log.success('updated: .gitignore')
     }
   }
 
-  console.log(`
-Next steps:
-  1. Install dependencies:
-     npm install canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev
+  const authPackages =
+    options.authProvider === 'clerk' ? 'canopycms-auth-clerk' : 'canopycms-auth-dev'
 
-  2. Add transpilePackages to next.config.ts:
-     transpilePackages: ['canopycms']
+  p.note(
+    [
+      '1. Install dependencies:',
+      `   npm install canopycms canopycms-next ${authPackages}`,
+      '',
+      '2. Add transpilePackages to next.config.ts:',
+      "   transpilePackages: ['canopycms']",
+      '',
+      '3. Customize ' + appDir + '/schemas.ts with your content schema',
+      '',
+      '4. Run: npm run dev',
+      '5. Visit: http://localhost:3000/edit',
+    ].join('\n'),
+    'Next steps',
+  )
 
-  3. Customize app/schemas.ts with your content schema
-
-  4. Run: npm run dev
-  5. Visit: http://localhost:3000/edit
-`)
+  p.outro('Done!')
 }
 
 /**
@@ -96,14 +156,16 @@ Next steps:
  * (Dockerfile, CI workflow).
  */
 export async function initDeployAws(options: InitDeployOptions): Promise<void> {
-  const { projectDir } = options
+  const { projectDir, force, nonInteractive } = options
+  const writeOpts = { force, nonInteractive }
 
-  console.log('\nCanopyCMS init-deploy aws\n')
+  p.intro('CanopyCMS init-deploy aws')
 
-  await writeIfNotExists(path.join(projectDir, 'Dockerfile.cms'), await dockerfileCms())
-  await writeIfNotExists(
+  await writeFile(path.join(projectDir, 'Dockerfile.cms'), await dockerfileCms(), writeOpts)
+  await writeFile(
     path.join(projectDir, '.github/workflows/deploy-cms.yml'),
     await githubWorkflowCms(),
+    writeOpts,
   )
 
   // Check if next.config already has CANOPY_BUILD support
@@ -118,18 +180,23 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   if (configPath) {
     const content = await fs.readFile(configPath, 'utf-8')
     if (!content.includes('CANOPY_BUILD')) {
-      console.log(`
-  NOTE: Add dual build support to ${path.basename(configPath)}:
-
-    output: process.env.CANOPY_BUILD === 'cms' ? 'standalone' : 'export',
-`)
+      p.note(
+        [
+          `Add dual build support to ${path.basename(configPath)}:`,
+          '',
+          "  output: process.env.CANOPY_BUILD === 'cms' ? 'standalone' : 'export',",
+        ].join('\n'),
+        'Manual step',
+      )
     }
   }
 
-  console.log(`
-  CDK constructs are available via the canopycms-cdk package.
-  See the deployment plan for CDK stack setup.
-`)
+  p.note(
+    'CDK constructs are available via the canopycms-cdk package.\nSee the deployment plan for CDK stack setup.',
+    'AWS deployment',
+  )
+
+  p.outro('Done!')
 }
 
 /**
@@ -141,10 +208,10 @@ export async function workerRunOnce(options: { projectDir: string }): Promise<vo
   const { getTaskQueueDir } = await import('../worker/task-queue-config')
 
   // Determine workspace and mode from config
-  const configPath = path.join(options.projectDir, 'canopycms.config.ts')
+  const cfgPath = path.join(options.projectDir, 'canopycms.config.ts')
   let mode: 'prod' | 'prod-sim' = 'prod-sim'
   try {
-    const configContent = await fs.readFile(configPath, 'utf-8')
+    const configContent = await fs.readFile(cfgPath, 'utf-8')
     // Match the mode property in the config object, not in comments or strings
     if (/^\s*mode:\s*['"]prod['"]\s*[,}]/m.test(configContent)) {
       mode = 'prod'
@@ -219,19 +286,117 @@ export async function workerRunOnce(options: { projectDir: string }): Promise<vo
   console.log('\nDone')
 }
 
+/** Parse CLI flags from argv, returning values and remaining positional args. */
+function parseFlags(args: string[]): {
+  flags: Record<string, string | boolean>
+  positional: string[]
+} {
+  const flags: Record<string, string | boolean> = {}
+  const positional: string[] = []
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (arg.startsWith('--')) {
+      const key = arg.slice(2)
+      // Boolean flags
+      if (key === 'force' || key === 'non-interactive') {
+        flags[key] = true
+      } else if (i + 1 < args.length && !args[i + 1].startsWith('--')) {
+        flags[key] = args[++i]
+      }
+    } else {
+      positional.push(arg)
+    }
+  }
+
+  return { flags, positional }
+}
+
 // CLI entrypoint
 async function main() {
   const args = process.argv.slice(2)
-  const command = args[0]
+  const { flags, positional } = parseFlags(args)
+  const command = positional[0]
 
   if (command === 'init') {
+    const nonInteractive = flags['non-interactive'] === true
+    const force = flags['force'] === true
+
+    // Resolve options: use flags if provided, otherwise prompt interactively
+    let authProvider: 'clerk' | 'dev'
+    if (flags['auth'] === 'clerk' || flags['auth'] === 'dev') {
+      authProvider = flags['auth']
+    } else if (nonInteractive) {
+      authProvider = 'dev'
+    } else {
+      const result = await p.select({
+        message: 'Which auth provider?',
+        options: [
+          { value: 'dev' as const, label: 'dev', hint: 'Local development, no real auth' },
+          { value: 'clerk' as const, label: 'clerk', hint: 'Clerk authentication' },
+        ],
+        initialValue: 'dev' as const,
+      })
+      if (p.isCancel(result)) {
+        p.cancel('Init cancelled.')
+        process.exit(0)
+      }
+      authProvider = result
+    }
+
+    let mode: 'dev' | 'prod-sim'
+    if (flags['mode'] === 'dev' || flags['mode'] === 'prod-sim') {
+      mode = flags['mode']
+    } else if (nonInteractive) {
+      mode = 'dev'
+    } else {
+      const result = await p.select({
+        message: 'Which operating mode?',
+        options: [
+          { value: 'dev' as const, label: 'dev', hint: 'Direct editing in current checkout' },
+          {
+            value: 'prod-sim' as const,
+            label: 'prod-sim',
+            hint: 'Simulates production with local branch clones',
+          },
+        ],
+        initialValue: 'dev' as const,
+      })
+      if (p.isCancel(result)) {
+        p.cancel('Init cancelled.')
+        process.exit(0)
+      }
+      mode = result
+    }
+
+    let appDir: string
+    if (typeof flags['app-dir'] === 'string') {
+      appDir = flags['app-dir']
+    } else if (nonInteractive) {
+      appDir = 'app'
+    } else {
+      const result = await p.text({
+        message: 'App directory?',
+        placeholder: 'app',
+        defaultValue: 'app',
+      })
+      if (p.isCancel(result)) {
+        p.cancel('Init cancelled.')
+        process.exit(0)
+      }
+      appDir = result
+    }
+
     await init({
-      authProvider: 'clerk',
-      mode: 'prod-sim',
+      authProvider,
+      mode,
+      appDir,
       projectDir: process.cwd(),
+      force,
+      nonInteractive,
     })
   } else if (command === 'init-deploy') {
-    const cloud = args[1]
+    const cloud = positional[1]
     if (cloud !== 'aws') {
       console.error('Usage: canopycms init-deploy aws')
       console.error('Only "aws" is currently supported.')
@@ -240,9 +405,11 @@ async function main() {
     await initDeployAws({
       cloud: 'aws',
       projectDir: process.cwd(),
+      force: flags['force'] === true,
+      nonInteractive: flags['non-interactive'] === true,
     })
   } else if (command === 'worker') {
-    const subcommand = args[1]
+    const subcommand = positional[1]
     if (subcommand !== 'run-once') {
       console.error('Usage: canopycms worker run-once')
       process.exit(1)
@@ -250,27 +417,26 @@ async function main() {
     await workerRunOnce({ projectDir: process.cwd() })
   } else if (command === 'generate-ai-content') {
     const { generateAIContentCLI } = await import('./generate-ai-content')
-    // Parse --output and --config flags
-    let outputDir: string | undefined
-    let configPath: string | undefined
-    for (let i = 1; i < args.length; i++) {
-      if (args[i] === '--output' && args[i + 1]) {
-        outputDir = args[++i]
-      } else if (args[i] === '--config' && args[i + 1]) {
-        configPath = args[++i]
-      }
-    }
     await generateAIContentCLI({
       projectDir: process.cwd(),
-      outputDir,
-      configPath,
+      outputDir: typeof flags['output'] === 'string' ? flags['output'] : undefined,
+      configPath: typeof flags['config'] === 'string' ? flags['config'] : undefined,
     })
   } else {
     console.log('CanopyCMS CLI')
     console.log('')
     console.log('Commands:')
     console.log('  init                    Add CanopyCMS to a Next.js app')
+    console.log('    --auth <dev|clerk>    Auth provider (default: dev)')
+    console.log('    --mode <dev|prod-sim> Operating mode (default: dev)')
+    console.log('    --app-dir <path>      App directory (default: app)')
+    console.log('    --force               Overwrite existing files without asking')
+    console.log('    --non-interactive     Use defaults, no prompts')
+    console.log('')
     console.log('  init-deploy aws         Generate AWS deployment artifacts')
+    console.log('    --force               Overwrite existing files without asking')
+    console.log('    --non-interactive     Use defaults, no prompts')
+    console.log('')
     console.log('  worker run-once         Process tasks, sync git, refresh auth cache')
     console.log('  generate-ai-content     Generate static AI-ready content files')
     console.log('    --output <dir>        Output directory (default: public/ai)')

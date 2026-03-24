@@ -19,20 +19,23 @@ export async function canopyCmsConfig(options: { mode: string }): Promise<string
   return template.replace('{{MODE}}', options.mode)
 }
 
-export async function canopyContextClerk(): Promise<string> {
-  return readTemplate('canopy.ts.template')
+export async function canopyContext(options: { configImport: string }): Promise<string> {
+  const template = await readTemplate('canopy.ts.template')
+  return template.replace('{{CONFIG_IMPORT}}', options.configImport)
 }
 
 export async function schemasTemplate(): Promise<string> {
   return readTemplate('schemas.ts.template')
 }
 
-export async function apiRoute(): Promise<string> {
-  return readTemplate('route.ts.template')
+export async function apiRoute(options: { canopyImport: string }): Promise<string> {
+  const template = await readTemplate('route.ts.template')
+  return template.replace('{{CANOPY_IMPORT}}', options.canopyImport)
 }
 
-export async function editPageClerk(): Promise<string> {
-  return readTemplate('edit-page.tsx.template')
+export async function editPage(options: { configImport: string }): Promise<string> {
+  const template = await readTemplate('edit-page.tsx.template')
+  return template.replace('{{CONFIG_IMPORT}}', options.configImport)
 }
 
 export async function dockerfileCms(): Promise<string> {
