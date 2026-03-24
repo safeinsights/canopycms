@@ -29,8 +29,7 @@
     "./build": "./src/build/index.ts"
   },
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "publishConfig": {
     "exports": {

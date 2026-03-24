@@ -17,8 +17,7 @@
     "./client": "./src/client.tsx"
   },
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "publishConfig": {
     "exports": {

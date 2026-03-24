@@ -18,8 +18,7 @@
     "./cache-writer": "./src/cache-writer.ts"
   },
   "files": [
-    "dist",
-    "src"
+    "dist"
   ],
   "publishConfig": {
     "exports": {
