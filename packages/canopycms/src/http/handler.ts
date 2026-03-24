@@ -191,7 +191,10 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
 
     if (!warnedNoAdmins && Array.isArray(internalGroups)) {
       const adminsGroup = internalGroups.find((g) => g.id === RESERVED_GROUPS.ADMINS)
-      if (!adminsGroup || adminsGroup.members.length === 0) {
+      const hasAdmins =
+        (adminsGroup && adminsGroup.members.length > 0) ||
+        apiCtx.services.bootstrapAdminIds.size > 0
+      if (!hasAdmins) {
         console.warn(
           'CanopyCMS: No admin users configured. Set CANOPY_BOOTSTRAP_ADMIN_IDS or add members to the Admins group.',
         )
