@@ -3,7 +3,7 @@
 import { useClerkAuthConfig } from 'canopycms-auth-clerk/client'
 import { useDevAuthConfig } from 'canopycms-auth-dev/client'
 import { NextCanopyEditorPage } from 'canopycms-next/client'
-import config from '../../canopycms.config'
+import config from '{{CONFIG_IMPORT}}'
 
 function useAuthConfig() {
   const authMode = process.env.NEXT_PUBLIC_CANOPY_AUTH_MODE || 'dev'

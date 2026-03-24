@@ -3,7 +3,7 @@ import { createClerkAuthPlugin, createClerkJwtVerifier } from 'canopycms-auth-cl
 import { createDevAuthPlugin, createDevTokenVerifier } from 'canopycms-auth-dev'
 import type { AuthPlugin } from 'canopycms/auth'
 import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth/cache'
-import config from '../../canopycms.config'
+import config from '{{CONFIG_IMPORT}}'
 import { entrySchemaRegistry } from '../schemas'
 
 /**

@@ -28,172 +28,61 @@ A schema-driven, branch-aware content management system for git-backed, statical
 
 ## Quick Start
 
-### 1. Install packages
+### 1. Run the init command
 
 ```bash
-npm install canopycms canopycms-next canopycms-auth-clerk
+npx canopycms init
 ```
 
-### 2. Create your config file
+The CLI will interactively ask for:
 
-Create `canopycms.config.ts` in your project root:
+- **Auth provider** — `dev` (local development, no real auth) or `clerk` (Clerk authentication). This only affects the post-init instructions; the generated code handles both providers at runtime via the `CANOPY_AUTH_MODE` environment variable.
+- **Operating mode** — `dev` (direct editing in checkout) or `prod-sim` (simulates production with branch clones). This is written into `canopycms.config.ts`.
+- **App directory** — where your Next.js app directory lives (default: `app`, use `src/app` for src-layout projects)
+
+You can also pass flags to skip prompts:
+
+```bash
+npx canopycms init --auth dev --mode dev --app-dir app
+```
+
+Use `--non-interactive` for CI (uses defaults) or `--force` to overwrite existing files.
+
+### What it creates
+
+| File                                             | Purpose                                              |
+| ------------------------------------------------ | ---------------------------------------------------- |
+| `canopycms.config.ts`                            | Main configuration (mode, editor settings)           |
+| `{appDir}/lib/canopy.ts`                         | Server-side context setup with auth plugin selection |
+| `{appDir}/schemas.ts`                            | Entry schema definitions and registry                |
+| `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all API route handler                   |
+| `{appDir}/edit/page.tsx`                         | Editor page component                                |
+
+It also updates `.gitignore` to exclude CanopyCMS runtime directories (`.canopy-dev/`, `.canopy-prod-sim/`).
+
+### 2. Install dependencies
+
+```bash
+npm install canopycms canopycms-next canopycms-auth-dev canopycms-auth-clerk
+```
+
+The generated `canopy.ts` template imports both auth packages and selects the active one at runtime based on the `CANOPY_AUTH_MODE` environment variable (defaults to `dev`). Both packages must be installed.
+
+### 3. Configure Next.js
+
+Add to your `next.config.ts`:
 
 ```typescript
-import { defineCanopyConfig, defineEntrySchema } from 'canopycms'
-
-// Define your content schemas
-const postSchema = defineEntrySchema([
-  { name: 'title', type: 'string', label: 'Title', required: true },
-  { name: 'author', type: 'string', label: 'Author' },
-  { name: 'published', type: 'boolean', label: 'Published' },
-  { name: 'body', type: 'markdown', label: 'Body' },
-])
-
-const homeSchema = defineEntrySchema([
-  { name: 'headline', type: 'string', label: 'Headline', required: true },
-  { name: 'tagline', type: 'string', label: 'Tagline' },
-  { name: 'content', type: 'markdown', label: 'Content' },
-])
-
-export default defineCanopyConfig({
-  gitBotAuthorName: 'CanopyCMS Bot',
-  gitBotAuthorEmail: 'bot@example.com',
-  mode: 'dev', // or 'prod-sim' or 'prod'
-  schema: {
-    collections: [
-      // Collection with repeatable entries
-      {
-        name: 'posts',
-        label: 'Blog Posts',
-        path: 'posts', // Files at content/posts/*.json
-        entries: [
-          {
-            name: 'post',
-            format: 'json',
-            schema: postSchema,
-          },
-        ],
-      },
-      // Collection with singleton-like entry (maxItems: 1)
-      {
-        name: 'pages',
-        label: 'Pages',
-        path: 'pages',
-        entries: [
-          {
-            name: 'home',
-            label: 'Homepage',
-            format: 'json',
-            schema: homeSchema,
-            maxItems: 1, // Only one homepage allowed
-          },
-        ],
-      },
-    ],
-  },
-})
+transpilePackages: ['canopycms']
 ```
 
-### 2.5. Configure .gitignore
+### 4. Customize your schemas
 
-Update your `.gitignore` to properly handle CanopyCMS files:
+Edit `{appDir}/schemas.ts` with your content types. See [Schema Registry and References](#schema-references-system) for details.
 
-```gitignore
-# CanopyCMS - ignore all runtime directories
-.canopy*
-```
+### 5. Protect editor routes (Clerk only)
 
-**That's it!** The single pattern `.canopy*` ignores all CanopyCMS runtime directories:
-
-- `.canopy-dev/` - Dev mode settings (not committed)
-- `.canopy-prod-sim/` - Prod-sim branch workspaces and local git remote (not committed)
-
-**Note**: Branch metadata (`.canopy-meta/`) is automatically excluded via git's info/exclude mechanism inside branch workspaces - you don't need to worry about it in your .gitignore.
-
-**Settings in production modes**: Permissions and groups are stored on a separate git branch (`canopycms-settings-{deploymentName}`) and are version-controlled through that branch, not in your working tree.
-
-### 3. Create the Canopy context (one-time setup)
-
-Create `app/lib/canopy.ts`:
-
-```typescript
-import { createNextCanopyContext } from 'canopycms-next'
-import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
-import config from '../../canopycms.config'
-
-// Context creation is now async (loads .collection.json meta files)
-const canopyContextPromise = createNextCanopyContext({
-  config: config.server,
-  authPlugin: createClerkAuthPlugin({
-    useOrganizationsAsGroups: true,
-  }),
-})
-
-// Export for server components
-export const getCanopy = async () => {
-  const context = await canopyContextPromise
-  return context.getCanopy()
-}
-
-// Export for API routes
-export const getHandler = async () => {
-  const context = await canopyContextPromise
-  return context.handler
-}
-```
-
-### 4. Add the API route handler
-
-Create `app/api/canopycms/[...canopycms]/route.ts`:
-
-```typescript
-import { getHandler } from '../../../lib/canopy'
-
-const handlerPromise = getHandler()
-
-export const GET = async (req: Request, context: any) => {
-  const handler = await handlerPromise
-  return handler(req, context)
-}
-
-export const POST = async (req: Request, context: any) => {
-  const handler = await handlerPromise
-  return handler(req, context)
-}
-
-export const PUT = async (req: Request, context: any) => {
-  const handler = await handlerPromise
-  return handler(req, context)
-}
-
-export const DELETE = async (req: Request, context: any) => {
-  const handler = await handlerPromise
-  return handler(req, context)
-}
-```
-
-### 5. Create the editor page
-
-Create `app/edit/page.tsx`:
-
-```typescript
-'use client'
-
-import { useClerkAuthConfig } from 'canopycms-auth-clerk/client'
-import { CanopyEditorPage } from 'canopycms/client'
-import config from '../../canopycms.config'
-
-export default function EditPage() {
-  const clerkAuth = useClerkAuthConfig()
-  const clientConfig = config.client(clerkAuth)
-  const EditorPage = CanopyEditorPage(clientConfig)
-  return <EditorPage searchParams={{}} />
-}
-```
-
-### 6. Protect editor routes with middleware
-
-Create `middleware.ts`:
+If using Clerk auth, add `middleware.ts` to protect editor routes:
 
 ```typescript
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
@@ -212,6 +101,17 @@ export const config = {
   ],
 }
 ```
+
+### 6. Run
+
+```bash
+npm run dev
+# Visit http://localhost:3000/edit
+```
+
+### .gitignore
+
+The init command adds `.canopy-prod-sim/` and `.canopy-dev/` to your `.gitignore`. Branch metadata (`.canopy-meta/`) is automatically excluded via git's `info/exclude` inside branch workspaces. In production modes, permissions and groups live on a separate git branch (`canopycms-settings-{deploymentName}`).
 
 ## Schema Registry and References
 
@@ -345,21 +245,44 @@ Then create nested collections in subfolders (e.g., `content/docs/guides/.collec
 
 ### Connecting the Schema Registry
 
-Pass your schema registry to `createNextCanopyContext` in `app/lib/canopy.ts`:
+Pass your schema registry to `createNextCanopyContext` in `app/lib/canopy.ts`. The generated template handles auth provider selection at runtime:
 
 ```typescript
 import { createNextCanopyContext } from 'canopycms-next'
-import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
+import { createClerkAuthPlugin, createClerkJwtVerifier } from 'canopycms-auth-clerk'
+import { createDevAuthPlugin, createDevTokenVerifier } from 'canopycms-auth-dev'
+import type { AuthPlugin } from 'canopycms/auth'
+import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth/cache'
 import config from '../../canopycms.config'
 import { entrySchemaRegistry } from '../schemas'
 
-// Pass entrySchemaRegistry to enable .collection.json file support
+function getAuthPlugin(): AuthPlugin {
+  const mode = config.server.mode
+  const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
+
+  // In prod/prod-sim: use CachingAuthPlugin (networkless JWT + file-based cache)
+  if (mode === 'prod' || mode === 'prod-sim') {
+    const cachePath =
+      process.env.CANOPY_AUTH_CACHE_PATH ??
+      (mode === 'prod-sim' ? '.canopy-prod-sim/.cache' : '/mnt/efs/workspace/.cache')
+    const tokenVerifier =
+      authMode === 'clerk'
+        ? createClerkJwtVerifier({ jwtKey: process.env.CLERK_JWT_KEY ?? '' })
+        : createDevTokenVerifier()
+    return new CachingAuthPlugin(tokenVerifier, new FileBasedAuthCache(cachePath))
+  }
+
+  // In dev mode: use auth plugin directly
+  if (authMode === 'clerk') {
+    return createClerkAuthPlugin({ useOrganizationsAsGroups: true })
+  }
+  return createDevAuthPlugin()
+}
+
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
-  authPlugin: createClerkAuthPlugin({
-    useOrganizationsAsGroups: true,
-  }),
-  entrySchemaRegistry, // Enable meta file schemas
+  authPlugin: getAuthPlugin(),
+  entrySchemaRegistry, // Enable .collection.json file support
 })
 
 export const getCanopy = async () => {
@@ -1177,21 +1100,23 @@ Admins can configure access control:
 
 ## Adopter Touchpoints Summary
 
-CanopyCMS is designed for minimal integration effort. You need:
+CanopyCMS is designed for minimal integration effort. Run `npx canopycms init` to generate all required files, or create them manually. Use `--app-dir` to customize the app directory path (default: `app`).
 
-| Touchpoint      | File                                        | Purpose                                                      |
-| --------------- | ------------------------------------------- | ------------------------------------------------------------ |
-| **Config**      | `canopycms.config.ts`                       | Define settings and operating mode                           |
-| **Schemas**     | `app/schemas.ts`                            | Field schemas and registry (for `.collection.json` approach) |
-| **Context**     | `app/lib/canopy.ts`                         | One-time async setup with auth plugin                        |
-| **API Route**   | `app/api/canopycms/[...canopycms]/route.ts` | Single catch-all handler                                     |
-| **Editor Page** | `app/edit/page.tsx`                         | Embed the editor component                                   |
-| **Middleware**  | `middleware.ts`                             | Protect editor routes with authentication                    |
+| Touchpoint      | File                                             | Purpose                                                      |
+| --------------- | ------------------------------------------------ | ------------------------------------------------------------ |
+| **Config**      | `canopycms.config.ts`                            | Define settings and operating mode                           |
+| **Schemas**     | `{appDir}/schemas.ts`                            | Field schemas and registry (for `.collection.json` approach) |
+| **Context**     | `{appDir}/lib/canopy.ts`                         | One-time async setup with auth plugin                        |
+| **API Route**   | `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all handler                                     |
+| **Editor Page** | `{appDir}/edit/page.tsx`                         | Embed the editor component                                   |
+| **Middleware**  | `middleware.ts`                                  | Protect editor routes with authentication (Clerk only)       |
 
 **Optional touchpoints:**
 
 - **Server components**: Use `await getCanopy()` to read draft content with automatic auth
 - **AI content route**: `app/ai/[...path]/route.ts` -- serve content as AI-readable markdown (see [AI-Ready Content](#ai-ready-content))
+
+To switch between auth providers, set the `CANOPY_AUTH_MODE` environment variable (`dev` or `clerk`). The generated code handles both providers without regenerating files.
 
 Everything else (branch management, content storage, permissions, comments, bootstrap admin groups, meta file loading) is handled automatically by CanopyCMS.
 
@@ -1200,7 +1125,9 @@ Everything else (branch management, content storage, permissions, comments, boot
 For CanopyCMS:
 
 ```env
-CANOPY_BOOTSTRAP_ADMIN_IDS=user_123,user_456  # Comma-separated user IDs that get auto-admin access
+CANOPY_AUTH_MODE=dev                           # Auth provider: "dev" (default) or "clerk"
+CANOPY_BOOTSTRAP_ADMIN_IDS=user_123,user_456   # Comma-separated user IDs that get auto-admin access
+CANOPY_AUTH_CACHE_PATH=.canopy-prod-sim/.cache  # Override auth cache location (prod/prod-sim only)
 ```
 
 For Clerk authentication:
