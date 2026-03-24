@@ -1,0 +1,81 @@
+name: Publish to npm
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build & Publish
+    runs-on: ubuntu-latest
+    # Only run after CI passes (CI also runs on push to main)
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate API clients
+        run: npm run generate:client
+        working-directory: packages/canopycms
+
+      - name: Bump version
+        id: bump
+        run: |
+          NEW_VERSION=$(node scripts/bump-version.mjs)
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Bumped to $NEW_VERSION"
+
+      - name: Build publishable packages
+        run: |
+          npm run build -w packages/canopycms
+          npm run build -w packages/canopycms-next
+          npm run build -w packages/canopycms-auth-clerk
+          npm run build -w packages/canopycms-auth-dev
+          npm run build -w packages/canopycms-cdk
+
+      - name: Publish canopycms
+        run: npm publish --access public --provenance
+        working-directory: packages/canopycms
+
+      - name: Publish canopycms-next
+        run: npm publish --access public --provenance
+        working-directory: packages/canopycms-next
+
+      - name: Publish canopycms-auth-clerk
+        run: npm publish --access public --provenance
+        working-directory: packages/canopycms-auth-clerk
+
+      - name: Publish canopycms-auth-dev
+        run: npm publish --access public --provenance
+        working-directory: packages/canopycms-auth-dev
+
+      - name: Publish canopycms-cdk
+        run: npm publish --access public --provenance
+        working-directory: packages/canopycms-cdk
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A '*/package.json' package.json
+          git commit -m "chore: release v${{ steps.bump.outputs.version }}"
+          git tag "v${{ steps.bump.outputs.version }}"
+          git push
+          git push --tags
