@@ -58,6 +58,7 @@ export type ReferenceOption = string | { label: string; value: string }
 export interface BaseFieldConfig {
   name: string
   label?: string
+  description?: string
   required?: boolean
   list?: boolean
 }
@@ -81,6 +82,7 @@ export interface ReferenceFieldConfig extends BaseFieldConfig {
 export interface BlockConfig {
   name: string
   label?: string
+  description?: string
   fields: FieldConfig[]
 }
 
@@ -141,6 +143,7 @@ export type EntryTypeConfig = {
   /** Entry schema registry key (e.g., "postSchema"). Set during schema resolution. */
   readonly schemaRef?: string
   readonly label?: string
+  readonly description?: string
   readonly default?: boolean // Is this the default type for "Add" button?
   readonly maxItems?: number // Limit instances (e.g., 1 = only one entry allowed)
 }
@@ -153,6 +156,7 @@ export type CollectionConfig = {
   readonly name: string
   readonly path: string
   readonly label?: string
+  readonly description?: string
   /** 12-char content ID from the collection's directory name. Optional: absent in static configs. */
   readonly contentId?: ContentId
   /** Array of entry types allowed in this collection */
@@ -267,6 +271,7 @@ export type FlatSchemaItem =
       logicalPath: LogicalPath
       name: string
       label?: string
+      description?: string
       /** 12-char content ID from the collection's directory name. Optional: absent in static configs. */
       contentId?: ContentId
       parentPath?: LogicalPath
@@ -283,6 +288,7 @@ export type FlatSchemaItem =
       /** The entry type name (e.g., 'post', 'doc') */
       name: string
       label?: string
+      description?: string
       /** Path of the parent collection */
       parentPath: LogicalPath
       format: ContentFormat

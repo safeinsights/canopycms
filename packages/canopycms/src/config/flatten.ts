@@ -87,6 +87,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
       logicalPath: createLogicalPath(normalizedFull),
       name: collection.name,
       label: collection.label,
+      description: collection.description,
       contentId: collection.contentId,
       parentPath: parentPath ? createLogicalPath(parentPath) : undefined,
       entries: collection.entries,
@@ -104,6 +105,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
           logicalPath: createLogicalPath(normalizePathValue(entryTypePath)),
           name: entryType.name,
           label: entryType.label,
+          description: entryType.description,
           parentPath: createLogicalPath(normalizedFull),
           format: entryType.format,
           schema: entryType.schema,
@@ -149,6 +151,7 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
         logicalPath: createLogicalPath(normalizePathValue(entryTypePath)),
         name: entryType.name,
         label: entryType.label,
+        description: entryType.description,
         parentPath: base ? createLogicalPath(base) : createLogicalPath(''), // Now references the root collection (e.g., 'content')
         format: entryType.format,
         schema: entryType.schema,

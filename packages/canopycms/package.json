@@ -24,7 +24,9 @@
     "./http": "./src/http/index.ts",
     "./task-queue": "./src/task-queue/index.ts",
     "./worker/task-queue": "./src/worker/task-queue.ts",
-    "./worker/cms-worker": "./src/worker/cms-worker.ts"
+    "./worker/cms-worker": "./src/worker/cms-worker.ts",
+    "./ai": "./src/ai/index.ts",
+    "./build": "./src/build/index.ts"
   },
   "files": [
     "dist"

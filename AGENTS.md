@@ -57,7 +57,9 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `validation/` - Validation utilities (field traversal, reference validation)
 - `utils/` - Shared utilities (error handling, debug)
 - `worker/` - CmsWorker daemon, task queue, deployment infrastructure
-- `cli/` - Bootstrapping scripts (`npx canopycms init`, `worker run-once`)
+- `ai/` - AI-ready content generation (markdown converter, engine, route handler)
+- `build/` - Static build utilities (write AI content files to disk)
+- `cli/` - Bootstrapping scripts (`npx canopycms init`, `worker run-once`, `generate-ai-content`)
 
 Top-level files (intentionally flat for discoverability): services.ts, content-store.ts, git-manager.ts, branch-registry.ts, etc.
 
