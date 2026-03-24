@@ -177,6 +177,28 @@ describe('generateAIContentFiles', () => {
     expect(bundleContent).not.toContain('Second')
   })
 
+  it('rejects path traversal in bundle names', async () => {
+    const { config, flat } = await setupContent(contentRoot, testSchema)
+    vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)
+
+    await expect(
+      generateAIContentFiles({
+        config: { ...config, mode: 'dev' },
+        entrySchemaRegistry: {},
+        outputDir,
+        _testFlatSchema: flat,
+        aiConfig: {
+          bundles: [
+            {
+              name: '../../etc/malicious',
+              filter: { collections: ['posts'] },
+            },
+          ],
+        },
+      }),
+    ).rejects.toThrow('Path traversal detected')
+  })
+
   it('creates correct directory structure', async () => {
     const { config, flat } = await setupContent(contentRoot, testSchema)
     vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)

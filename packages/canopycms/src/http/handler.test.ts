@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createCanopyRequestHandler } from './handler'
 import type { CanopyRequest } from './types'
 import type { AuthPlugin } from '../auth/plugin'
+import { mockConsole } from '../test-utils/console-spy'
 
 // Mock the BranchWorkspaceManager to avoid git operations
 vi.mock('../branch-workspace', () => ({
@@ -98,6 +99,10 @@ const createMockServices = () => ({
 })
 
 describe('createCanopyRequestHandler', () => {
+  beforeEach(() => {
+    mockConsole()
+  })
+
   it('routes requests to handlers and returns response', async () => {
     const services: any = createMockServices()
     const authPlugin = createMockAuthPlugin()

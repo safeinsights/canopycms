@@ -31,8 +31,11 @@ export interface AIContentHandlerOptions {
  * Create a Next.js GET handler for serving AI content.
  *
  * Returns a function compatible with Next.js route handlers.
- * Generates content lazily on first request and caches the result.
- * In dev mode, regenerates on every request.
+ *
+ * Caching strategy:
+ * - Dev mode: regenerates on every request (picks up content changes immediately)
+ * - Prod/prod-sim: generates once per process lifetime (Lambda instances are recycled
+ *   on deploy, so content changes via merge → deploy → new instance with fresh cache)
  */
 export function createAIContentHandler(
   options: AIContentHandlerOptions,
@@ -108,8 +111,9 @@ export function createAIContentHandler(
         headers: { 'Content-Type': 'application/json' },
       })
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Internal server error'
-      return new Response(JSON.stringify({ error: message }), {
+      // Log the real error server-side; don't leak internals to unauthenticated callers
+      console.error('AI content handler error:', error instanceof Error ? error.message : error)
+      return new Response(JSON.stringify({ error: 'Internal server error' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       })

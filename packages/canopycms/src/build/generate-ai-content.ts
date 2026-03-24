@@ -73,11 +73,15 @@ export async function generateAIContentFiles(
   })
 
   // Write files to disk
-  const absoluteOutputDir = path.resolve(outputDir)
+  const absoluteOutputDir = path.resolve(outputDir) + path.sep
   let fileCount = 0
 
   for (const [filePath, content] of result.files) {
-    const absolutePath = path.join(absoluteOutputDir, filePath)
+    const absolutePath = path.resolve(path.join(absoluteOutputDir, filePath))
+    // Security: prevent path traversal in output (e.g., malicious bundle names)
+    if (!absolutePath.startsWith(absoluteOutputDir)) {
+      throw new Error(`Path traversal detected in AI content output: ${filePath}`)
+    }
     await fs.mkdir(path.dirname(absolutePath), { recursive: true })
     await fs.writeFile(absolutePath, content, 'utf-8')
     fileCount++

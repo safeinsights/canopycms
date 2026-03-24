@@ -123,7 +123,8 @@ export interface AIManifestCollection {
   label?: string
   description?: string
   path: string
-  allFile: string
+  /** Path to the concatenated all.md file. Absent when the collection has no entries. */
+  allFile?: string
   entryCount: number
   entries: AIManifestEntry[]
   subcollections?: AIManifestCollection[]

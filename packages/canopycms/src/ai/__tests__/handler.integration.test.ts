@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
+import { mockConsole } from '../../test-utils/console-spy'
 
 import { defineCanopyTestConfig } from '../../config-test'
 import { flattenSchema, type RootCollectionConfig } from '../../config'
@@ -135,9 +136,11 @@ describe('createAIContentHandler', () => {
         const response = await callHandler(handler, entry.file)
         expect(response.status).toBe(200)
       }
-      // Check all.md
-      const allResponse = await callHandler(handler, collection.allFile)
-      expect(allResponse.status).toBe(200)
+      // Check all.md (only present when collection has entries)
+      if (collection.allFile) {
+        const allResponse = await callHandler(handler, collection.allFile)
+        expect(allResponse.status).toBe(200)
+      }
     }
 
     // Check root entries
@@ -151,6 +154,31 @@ describe('createAIContentHandler', () => {
       const response = await callHandler(handler, bundle.file)
       expect(response.status).toBe(200)
     }
+  })
+
+  it('returns 500 with generic message on internal error (no info leakage)', async () => {
+    const consoleSpy = mockConsole()
+
+    // Point cwd at nonexistent dir and don't provide test schema,
+    // forcing BranchSchemaCache to try to read .collection.json files that don't exist
+    vi.spyOn(process, 'cwd').mockReturnValue('/nonexistent/path/that/does/not/exist')
+
+    const badHandler = createAIContentHandler({
+      config: defineCanopyTestConfig({ schema: testSchema, mode: 'dev' }),
+      entrySchemaRegistry: {},
+      // No _testFlatSchema — forces real schema resolution, which will fail
+    })
+
+    const response = await callHandler(badHandler, 'manifest.json')
+    expect(response.status).toBe(500)
+    const body = (await response.json()) as { error: string }
+    // Must not contain internal paths or detailed error info
+    expect(body.error).toBe('Internal server error')
+    expect(body.error).not.toContain('/nonexistent')
+    // Error was logged server-side
+    expect(consoleSpy).toHaveErrored('AI content handler error')
+
+    consoleSpy.restore()
   })
 
   it('serves bundles when configured', async () => {

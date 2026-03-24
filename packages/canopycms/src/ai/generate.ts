@@ -10,10 +10,9 @@ import path from 'node:path'
 
 import { minimatch } from 'minimatch'
 
-import type { ContentStore, ContentDocument } from '../content-store'
+import type { ContentStore, ContentDocument, MarkdownDocument } from '../content-store'
 import type { FlatSchemaItem, EntryTypeConfig } from '../config'
 import { extractEntryTypeFromFilename } from '../content-id-index'
-import type { LogicalPath } from '../paths'
 import { entryToMarkdown } from './json-to-markdown'
 import type {
   AIContentConfig,
@@ -163,7 +162,7 @@ async function processCollection(
   const manifestEntries: AIManifestEntry[] = []
 
   // Read entries directly in this collection (not subcollections)
-  const listed = await store.listCollectionEntries(collection.logicalPath as LogicalPath)
+  const listed = await store.listCollectionEntries(collection.logicalPath)
 
   // Filter to only entries in this exact collection (not subcollections)
   const directEntries = listed.filter((e) => e.collection === collection.logicalPath)
@@ -180,7 +179,7 @@ async function processCollection(
     if (!entryTypeConfig) continue
 
     try {
-      const doc = await store.read(listEntry.collection as LogicalPath, listEntry.slug, {
+      const doc = await store.read(listEntry.collection, listEntry.slug, {
         resolveReferences: false,
       })
 
@@ -201,8 +200,11 @@ async function processCollection(
         title: aiEntry.data.title ? String(aiEntry.data.title) : undefined,
         file: entryFilePath,
       })
-    } catch {
-      // Skip entries that fail to read (e.g., corrupted files)
+    } catch (err) {
+      console.warn(
+        `AI content: skipping entry "${listEntry.slug}" in ${collection.logicalPath}:`,
+        err instanceof Error ? err.message : err,
+      )
       continue
     }
   }
@@ -237,7 +239,7 @@ async function processCollection(
     label: collection.label,
     description: collection.description,
     path: cleanPath,
-    allFile: `${cleanPath}/all.md`,
+    allFile: entries.length > 0 ? `${cleanPath}/all.md` : undefined,
     entryCount: entries.length,
     entries: manifestEntries,
     subcollections: manifestSubcollections.length > 0 ? manifestSubcollections : undefined,
@@ -266,7 +268,7 @@ async function processRootEntries(
   const entries: AIEntry[] = []
   const manifestEntries: AIManifestEntry[] = []
 
-  const listed = await store.listCollectionEntries(rootCollection.logicalPath as LogicalPath)
+  const listed = await store.listCollectionEntries(rootCollection.logicalPath)
   // Only direct entries in root (not in subcollections)
   const directEntries = listed.filter((e) => e.collection === rootCollection.logicalPath)
 
@@ -280,7 +282,7 @@ async function processRootEntries(
     if (!entryTypeConfig) continue
 
     try {
-      const doc = await store.read(listEntry.collection as LogicalPath, listEntry.slug, {
+      const doc = await store.read(listEntry.collection, listEntry.slug, {
         resolveReferences: false,
       })
 
@@ -299,7 +301,11 @@ async function processRootEntries(
         title: aiEntry.data.title ? String(aiEntry.data.title) : undefined,
         file: entryFilePath,
       })
-    } catch {
+    } catch (err) {
+      console.warn(
+        `AI content: skipping root entry "${listEntry.slug}":`,
+        err instanceof Error ? err.message : err,
+      )
       continue
     }
   }
@@ -357,7 +363,7 @@ function docToAIEntry(
     entryType: entryTypeName,
     format: doc.format,
     data: doc.data,
-    body: doc.format !== 'json' ? (doc as { body: string }).body : undefined,
+    body: doc.format !== 'json' ? (doc as MarkdownDocument).body : undefined,
     fields: entryTypeConfig.schema,
   }
 }

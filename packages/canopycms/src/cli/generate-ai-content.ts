@@ -61,6 +61,20 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
     }
   }
 
+  // Validate loaded config has required shape
+  if (
+    !serverConfig ||
+    typeof serverConfig !== 'object' ||
+    !('mode' in serverConfig) ||
+    !('contentRoot' in serverConfig)
+  ) {
+    console.error(
+      'Invalid CanopyCMS config: expected an object with mode and contentRoot properties.',
+    )
+    console.error('Make sure canopycms.config.ts uses defineCanopyConfig().')
+    process.exit(1)
+  }
+
   const resolvedOutput = path.resolve(projectDir, outputDir)
   console.log(`  Output: ${resolvedOutput}`)
   console.log(`  Mode: ${(serverConfig as { mode?: string }).mode ?? 'dev'}`)
