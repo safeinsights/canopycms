@@ -17,11 +17,20 @@
   },
   "files": [
     "dist",
+    "src",
     "worker/dist",
     "worker/canopy-worker.service"
   ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "import": "./dist/index.js",
+        "types": "./dist/index.d.ts"
+      }
+    }
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc",
     "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=worker/dist/index.js --external:@aws-sdk/*",
     "test": "echo \"No tests yet\"",
     "typecheck": "tsc --noEmit"

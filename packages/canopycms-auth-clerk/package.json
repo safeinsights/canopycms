@@ -18,8 +18,25 @@
     "./cache-writer": "./src/cache-writer.ts"
   },
   "files": [
-    "dist"
+    "dist",
+    "src"
   ],
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "import": "./dist/index.js",
+        "types": "./dist/index.d.ts"
+      },
+      "./client": {
+        "import": "./dist/client.js",
+        "types": "./dist/client.d.ts"
+      },
+      "./cache-writer": {
+        "import": "./dist/cache-writer.js",
+        "types": "./dist/cache-writer.d.ts"
+      }
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "test": "vitest run --reporter=dot",
