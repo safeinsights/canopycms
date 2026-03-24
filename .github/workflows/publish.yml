@@ -15,6 +15,7 @@ jobs:
     # Only run after CI passes (CI also runs on push to main)
     permissions:
       contents: write
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -50,34 +51,24 @@ jobs:
           npm run build -w packages/canopycms-cdk
 
       - name: Publish canopycms
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         working-directory: packages/canopycms
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish canopycms-next
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         working-directory: packages/canopycms-next
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish canopycms-auth-clerk
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         working-directory: packages/canopycms-auth-clerk
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish canopycms-auth-dev
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         working-directory: packages/canopycms-auth-dev
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish canopycms-cdk
-        run: npm publish --access public
+        run: npm publish --access public --provenance
         working-directory: packages/canopycms-cdk
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Commit version bump
         run: |
