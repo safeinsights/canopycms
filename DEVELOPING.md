@@ -2268,6 +2268,39 @@ Integration tests cover the full lifecycle: submit handler enqueues → worker d
 
 Rebase logic is tested with real git operations in `src/worker/cms-worker-rebase.test.ts`. These tests create local "remote" repos in temp directories to exercise branch skipping (submitted/approved/dirty), clean rebase, and conflict detection with ContentId extraction. See [Testing with Real Git Operations](#testing-with-real-git-operations) for the pattern.
 
+### CLI (`canopycms init`)
+
+The `canopycms init` CLI scaffolds a new CanopyCMS project. It lives at `src/cli/init.ts` and uses `tsx` as its runtime so TypeScript works in both source and published dist contexts.
+
+**Key implementation details:**
+
+- **Shebang:** `#!/usr/bin/env tsx` (not `node`). This means `tsx` is a production dependency -- it must be available at runtime for adopters who run `npx canopycms init`.
+- **Template files:** The CLI reads `.template` files from `src/cli/template-files/` at runtime using `import.meta.url` to locate the directory relative to the script. The directory was renamed from `templates/` to `template-files/` to avoid an ESM directory import collision with `templates.ts`.
+- **postbuild copy:** Since `tsc` only compiles `.ts` files, the template files must be copied to `dist/` separately. The `postbuild` script in `package.json` handles this:
+
+```bash
+# In packages/canopycms/package.json scripts:
+"postbuild": "cp -r src/cli/template-files dist/cli/template-files"
+```
+
+If you add new template files to `src/cli/template-files/`, the postbuild step picks them up automatically. If you rename the directory or change the copy target, update both `templates.ts` (the `TEMPLATES_DIR` constant) and the `postbuild` script.
+
+**CLI integration tests (`init.integration.test.ts`):**
+
+The CLI has integration tests that verify the binary actually runs and produces expected files. These tests exercise both source and dist execution paths:
+
+```typescript
+// Source path: runs src/cli/init.ts via tsx
+execFileAsync(tsxBin, [SRC_BIN, 'init', '--non-interactive', '--force'], { cwd: tmpDir })
+
+// Dist path: runs dist/cli/init.js via tsx (requires prior build)
+execFileAsync(tsxBin, [DIST_BIN, 'init', '--non-interactive', '--force'], { cwd: tmpDir })
+```
+
+The dist tests will fail if `npm run build` has not been run first, since they depend on compiled output in `dist/`. The test `beforeAll` hook checks for `dist/cli/init.js` and throws a clear error if it is missing.
+
+**When to update these tests:** If you change the set of files that `canopycms init` creates, update the `expectedFiles` array in both the dist and source test blocks in `init.integration.test.ts`.
+
 ## Quality Checks
 
 Before handoff, run typecheck and tests:

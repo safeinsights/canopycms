@@ -85,6 +85,7 @@
   "scripts": {
     "prebuild": "npx tsx scripts/generate-client.ts",
     "build": "tsc -p tsconfig.build.json",
+    "postbuild": "cp -r src/cli/template-files dist/cli/template-files",
     "lint": "eslint src/",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
@@ -117,6 +118,7 @@
     "react-split-pane": "^0.1.92",
     "short-uuid": "^6.0.3",
     "simple-git": "^3.22.0",
+    "tsx": "^4.19.0",
     "zod": "^3.23.8"
   },
   "peerDependencies": {

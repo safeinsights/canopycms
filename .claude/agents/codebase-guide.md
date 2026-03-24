@@ -319,7 +319,7 @@ Bootstrapping scripts run via `npx canopycms <command>`. Uses `@clack/prompts` f
 | init.ts                | CLI entrypoint with init(), initDeployAws(), workerRunOnce() commands                               |
 | templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}}) |
 | generate-ai-content.ts | AI content generation CLI command                                                                   |
-| templates/             | Template files for scaffolding (config, route, edit page, Dockerfile, CI workflow)                  |
+| template-files/        | Template files for scaffolding (config, route, edit page, Dockerfile, CI workflow)                  |
 
 **Commands**:
 

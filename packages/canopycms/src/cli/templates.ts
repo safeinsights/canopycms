@@ -1,6 +1,6 @@
 /**
  * File templates for `canopycms init` and `canopycms init-deploy aws`.
- * Reads .template files from the templates/ directory for readability.
+ * Reads .template files from the template-files/ directory for readability.
  */
 
 import fs from 'node:fs/promises'
@@ -8,7 +8,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const TEMPLATES_DIR = path.join(__dirname, 'templates')
+const TEMPLATES_DIR = path.join(__dirname, 'template-files')
 
 async function readTemplate(name: string): Promise<string> {
   return fs.readFile(path.join(TEMPLATES_DIR, name), 'utf-8')
