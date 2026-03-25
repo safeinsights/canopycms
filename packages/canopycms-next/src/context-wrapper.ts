@@ -44,22 +44,32 @@ export interface NextCanopyOptions {
  * This function is async because it needs to load .collection.json meta files.
  */
 export async function createNextCanopyContext(options: NextCanopyOptions) {
+  // Fail fast: authPlugin is required for server deployments
+  if (options.config.deployedAs !== 'static' && !options.authPlugin) {
+    throw new Error(
+      'CanopyCMS: authPlugin is required when deployedAs is "server". ' +
+        'Set deployedAs: "static" in your canopy config, or provide an authPlugin.',
+    )
+  }
+
+  // Warn when running in static deployment mode so it is not accidentally set in a server build
+  if (options.config.deployedAs === 'static') {
+    console.warn(
+      'CanopyCMS: running in static deployment mode — all CMS API requests will return 401. ' +
+        'Do not set deployedAs: "static" in a server deployment.',
+    )
+  }
+
   // Create services ONCE at initialization
   const services = await createCanopyServices(options.config, {
     entrySchemaRegistry: options.entrySchemaRegistry,
   })
 
   // User extractor: passes Next.js headers to auth plugin, loads internal groups, applies authorization
+  // authPlugin is guaranteed present for server deployments (validated at startup above)
   const extractUser = async (): Promise<CanopyUser> => {
-    if (!options.authPlugin) {
-      throw new Error(
-        'CanopyCMS: authPlugin is required when deployedAs is "server". ' +
-          'Set deployedAs: "static" in your canopy config, or provide an authPlugin.',
-      )
-    }
-
     const headersList = await headers()
-    const authResult = await options.authPlugin.authenticate(headersList)
+    const authResult = await options.authPlugin!.authenticate(headersList)
 
     // Load internal groups from main branch
     const baseBranch = services.config.defaultBaseBranch ?? 'main'

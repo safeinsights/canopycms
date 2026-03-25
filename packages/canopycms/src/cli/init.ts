@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 
 import fs from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as p from '@clack/prompts'
@@ -92,7 +93,7 @@ function configImportPath(appDir: string, subdirs: number): string {
  * editing to a Next.js app. Cloud-agnostic.
  */
 export async function init(options: InitOptions): Promise<void> {
-  const { projectDir, mode, appDir, ai, force, nonInteractive } = options
+  const { projectDir, mode, appDir, ai, authProvider, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
 
   p.intro('CanopyCMS init')
@@ -105,7 +106,7 @@ export async function init(options: InitOptions): Promise<void> {
   )
   await writeFile(
     path.join(projectDir, appDir, 'lib/canopy.ts'),
-    await canopyContext({ configImport: configImportPath(appDir, 1) }),
+    await canopyContext({ configImport: configImportPath(appDir, 1), authProvider }),
     writeOpts,
   )
   await writeFile(path.join(projectDir, appDir, 'schemas.ts'), await schemasTemplate(), writeOpts)
@@ -478,8 +479,6 @@ async function main() {
 // Only run when executed directly as a CLI, not when imported in tests.
 // Use realpathSync to resolve symlinks — npx creates a symlink in node_modules/.bin/
 // that won't match import.meta.url's resolved real path.
-import { realpathSync } from 'node:fs'
-
 const __filename = fileURLToPath(import.meta.url)
 const isDirectRun = realpathSync(process.argv[1]) === realpathSync(__filename)
 

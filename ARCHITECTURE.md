@@ -988,7 +988,7 @@ Framework adapters wrap the core context to provide framework-specific integrati
 - Static deployment and build mode detection
 - Content access control
 
-**Auth plugin is optional for static deployments**: When `deployedAs` is `'static'`, the adapter does not require an auth plugin. If one is omitted, the user extractor throws a clear error if called in a non-static context (preventing silent misconfiguration). The API handler receives a stub auth plugin that rejects all requests with 401, since a static deployment should never serve API requests to real users.
+**Auth plugin is optional for static deployments**: When `deployedAs` is `'static'`, the adapter does not require an auth plugin. If `deployedAs` is `'server'` (the default) and no auth plugin is provided, `createNextCanopyContext` throws at startup — before any traffic is served — to prevent silent misconfiguration. A `console.warn` is emitted at startup when `deployedAs` is `'static'` as a safeguard against accidentally setting this flag in a server build. The API handler receives a stub auth plugin that rejects all requests with 401, since a static deployment should never serve API requests to real users.
 
 The Next.js adapter is ~10 lines of user extraction code. The pattern is designed so adapters for Express, Fastify, Hono, or other frameworks would be similarly minimal.
 

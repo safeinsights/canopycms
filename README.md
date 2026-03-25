@@ -282,9 +282,13 @@ function getAuthPlugin(): AuthPlugin {
   return createDevAuthPlugin()
 }
 
+// Static deployments don't need auth — no HTTP requests, no users.
+// Server deployments should provide authPlugin for authenticated reads.
+const isStaticDeploy = config.server.deployedAs === 'static'
+
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
-  authPlugin: getAuthPlugin(),
+  ...(!isStaticDeploy ? { authPlugin: getAuthPlugin() } : {}),
   entrySchemaRegistry, // Enable .collection.json file support
 })
 
@@ -434,18 +438,19 @@ Available schemas: authorSchema, homeSchema, docSchema
 
 ### `defineCanopyConfig` Options
 
-| Option                | Type                            | Required | Default     | Description                                                                                                                           |
-| --------------------- | ------------------------------- | -------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema`              | `RootCollectionConfig`          | No\*     | -           | Object with `collections` and `entries` arrays defining your content structure. \*Required unless using `.collection.json` meta files |
-| `gitBotAuthorName`    | `string`                        | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                           |
-| `gitBotAuthorEmail`   | `string`                        | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                          |
-| `mode`                | `'dev' \| 'prod-sim' \| 'prod'` | No       | `'dev'`     | Operating mode (see below)                                                                                                            |
-| `contentRoot`         | `string`                        | No       | `'content'` | Root directory for content files relative to project root                                                                             |
-| `defaultBaseBranch`   | `string`                        | No       | `'main'`    | Default git branch to base edits on                                                                                                   |
-| `defaultBranchAccess` | `'allow' \| 'deny'`             | No       | `'deny'`    | Default access policy for new branches                                                                                                |
-| `defaultPathAccess`   | `'allow' \| 'deny'`             | No       | `'allow'`   | Default access policy for content paths                                                                                               |
-| `media`               | `MediaConfig`                   | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                       |
-| `editor`              | `EditorConfig`                  | No       | -           | Editor UI customization options                                                                                                       |
+| Option                | Type                            | Required | Default     | Description                                                                                                                                                                                              |
+| --------------------- | ------------------------------- | -------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`              | `RootCollectionConfig`          | No\*     | -           | Object with `collections` and `entries` arrays defining your content structure. \*Required unless using `.collection.json` meta files                                                                    |
+| `gitBotAuthorName`    | `string`                        | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                              |
+| `gitBotAuthorEmail`   | `string`                        | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                             |
+| `mode`                | `'dev' \| 'prod-sim' \| 'prod'` | No       | `'dev'`     | Operating mode (see below)                                                                                                                                                                               |
+| `contentRoot`         | `string`                        | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                |
+| `defaultBaseBranch`   | `string`                        | No       | `'main'`    | Default git branch to base edits on                                                                                                                                                                      |
+| `defaultBranchAccess` | `'allow' \| 'deny'`             | No       | `'deny'`    | Default access policy for new branches                                                                                                                                                                   |
+| `defaultPathAccess`   | `'allow' \| 'deny'`             | No       | `'allow'`   | Default access policy for content paths                                                                                                                                                                  |
+| `deployedAs`          | `'server' \| 'static'`          | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced. |
+| `media`               | `MediaConfig`                   | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                          |
+| `editor`              | `EditorConfig`                  | No       | -           | Editor UI customization options                                                                                                                                                                          |
 
 **Note**: You must define your schema using at least one of these approaches:
 

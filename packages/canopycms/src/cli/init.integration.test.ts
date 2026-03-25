@@ -19,7 +19,8 @@ async function fileExists(filePath: string): Promise<boolean> {
   }
 }
 
-// Both dist and source use tsx (via shebang #!/usr/bin/env tsx).
+// Both dist and source are invoked via tsx (passed as the executor in these tests).
+// The dist binary uses #!/usr/bin/env node at runtime; tsx is only needed here in tests.
 // Resolve the tsx binary — may be hoisted to monorepo root in workspaces.
 let tsxBin: string
 
@@ -68,6 +69,8 @@ describe('CLI binary execution (dist)', () => {
         'app/schemas.ts',
         'app/api/canopycms/[...canopycms]/route.ts',
         'app/edit/page.tsx',
+        'app/ai/config.ts',
+        'app/ai/[...path]/route.ts',
       ]
 
       for (const file of expectedFiles) {
@@ -102,6 +105,8 @@ describe('CLI binary execution (source via tsx)', () => {
         'app/schemas.ts',
         'app/api/canopycms/[...canopycms]/route.ts',
         'app/edit/page.tsx',
+        'app/ai/config.ts',
+        'app/ai/[...path]/route.ts',
       ]
 
       for (const file of expectedFiles) {

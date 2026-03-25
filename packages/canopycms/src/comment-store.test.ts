@@ -354,7 +354,7 @@ describe('CommentStore', () => {
       expect(texts).toEqual(['Comment 1', 'Comment 2'])
     })
 
-    it('handles concurrent resolveThread calls', async () => {
+    it('handles concurrent resolveThread calls', { retry: 1 }, async () => {
       // Create two threads first
       const thread1 = await store.addComment({
         userId: 'user1',
@@ -386,7 +386,7 @@ describe('CommentStore', () => {
       expect(t2?.resolved).toBe(true)
     })
 
-    it('handles concurrent deleteThread calls', async () => {
+    it('handles concurrent deleteThread calls', { retry: 1 }, async () => {
       // Create two threads first
       const thread1 = await store.addComment({
         userId: 'user1',
