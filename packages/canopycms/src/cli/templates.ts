@@ -38,6 +38,15 @@ export async function editPage(options: { configImport: string }): Promise<strin
   return template.replace('{{CONFIG_IMPORT}}', options.configImport)
 }
 
+export async function aiConfig(): Promise<string> {
+  return readTemplate('ai-config.ts.template')
+}
+
+export async function aiRoute(options: { configImport: string }): Promise<string> {
+  const template = await readTemplate('ai-route.ts.template')
+  return template.replace('{{CONFIG_IMPORT}}', options.configImport)
+}
+
 export async function dockerfileCms(): Promise<string> {
   return readTemplate('Dockerfile.cms.template')
 }

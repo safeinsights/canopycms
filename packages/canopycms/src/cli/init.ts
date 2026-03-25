@@ -10,6 +10,8 @@ import {
   schemasTemplate,
   apiRoute,
   editPage,
+  aiConfig,
+  aiRoute,
   dockerfileCms,
   githubWorkflowCms,
 } from './templates'
@@ -21,6 +23,7 @@ export interface InitOptions {
   projectDir: string
   force: boolean
   nonInteractive: boolean
+  ai: boolean
 }
 
 interface InitDeployOptions {
@@ -89,7 +92,7 @@ function configImportPath(appDir: string, subdirs: number): string {
  * editing to a Next.js app. Cloud-agnostic.
  */
 export async function init(options: InitOptions): Promise<void> {
-  const { projectDir, mode, appDir, force, nonInteractive } = options
+  const { projectDir, mode, appDir, ai, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
 
   p.intro('CanopyCMS init')
@@ -118,6 +121,14 @@ export async function init(options: InitOptions): Promise<void> {
     await editPage({ configImport: configImportPath(appDir, 1) }),
     writeOpts,
   )
+  if (ai) {
+    await writeFile(path.join(projectDir, appDir, 'ai/config.ts'), await aiConfig(), writeOpts)
+    await writeFile(
+      path.join(projectDir, appDir, 'ai/[...path]/route.ts'),
+      await aiRoute({ configImport: configImportPath(appDir, 2) }),
+      writeOpts,
+    )
+  }
 
   // Update .gitignore
   const gitignorePath = path.join(projectDir, '.gitignore')
@@ -299,7 +310,7 @@ function parseFlags(args: string[]): {
     if (arg.startsWith('--')) {
       const key = arg.slice(2)
       // Boolean flags
-      if (key === 'force' || key === 'non-interactive') {
+      if (key === 'force' || key === 'non-interactive' || key === 'no-ai') {
         flags[key] = true
       } else if (i + 1 < args.length && !args[i + 1].startsWith('--')) {
         flags[key] = args[++i]
@@ -387,10 +398,28 @@ async function main() {
       appDir = result
     }
 
+    let ai: boolean
+    if (flags['no-ai'] === true) {
+      ai = false
+    } else if (nonInteractive) {
+      ai = true
+    } else {
+      const result = await p.confirm({
+        message: 'Include AI content endpoint?',
+        initialValue: true,
+      })
+      if (p.isCancel(result)) {
+        p.cancel('Init cancelled.')
+        process.exit(0)
+      }
+      ai = result
+    }
+
     await init({
       authProvider,
       mode,
       appDir,
+      ai,
       projectDir: process.cwd(),
       force,
       nonInteractive,
@@ -430,6 +459,7 @@ async function main() {
     console.log('    --auth <dev|clerk>    Auth provider (default: dev)')
     console.log('    --mode <dev|prod-sim> Operating mode (default: dev)')
     console.log('    --app-dir <path>      App directory (default: app)')
+    console.log('    --no-ai               Skip AI content endpoint generation')
     console.log('    --force               Overwrite existing files without asking')
     console.log('    --non-interactive     Use defaults, no prompts')
     console.log('')
