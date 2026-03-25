@@ -153,6 +153,25 @@ export class ClerkAuthPlugin implements AuthPlugin {
     this.clerkClient = createClerkClient({ secretKey })
   }
 
+  async verifyTokenOnly(context: unknown): Promise<{ userId: string } | null> {
+    const headers = extractHeaders(context)
+    if (!headers) return null
+    const token = extractToken(headers)
+    if (!token) return null
+    try {
+      const verifyOptions: Parameters<typeof clerkVerifyToken>[1] = {
+        secretKey: this.config.secretKey,
+      }
+      if (this.config.jwtKey) verifyOptions.jwtKey = this.config.jwtKey
+      if (this.config.authorizedParties)
+        verifyOptions.authorizedParties = this.config.authorizedParties
+      const payload = await clerkVerifyToken(token, verifyOptions)
+      return payload?.sub ? { userId: payload.sub } : null
+    } catch {
+      return null
+    }
+  }
+
   async authenticate(context: unknown): Promise<AuthenticationResult> {
     try {
       // Extract headers from context (supports CanopyRequest and Headers)

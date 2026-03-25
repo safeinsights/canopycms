@@ -16,9 +16,9 @@ import {
   dockerfileCms,
   githubWorkflowCms,
 } from './templates'
+import { operatingStrategy } from '../operating-mode'
 
 export interface InitOptions {
-  authProvider: 'clerk' | 'dev'
   mode: 'prod-sim' | 'dev'
   appDir: string
   projectDir: string
@@ -93,7 +93,7 @@ function configImportPath(appDir: string, subdirs: number): string {
  * editing to a Next.js app. Cloud-agnostic.
  */
 export async function init(options: InitOptions): Promise<void> {
-  const { projectDir, mode, appDir, ai, authProvider, force, nonInteractive } = options
+  const { projectDir, mode, appDir, ai, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
 
   p.intro('CanopyCMS init')
@@ -106,7 +106,7 @@ export async function init(options: InitOptions): Promise<void> {
   )
   await writeFile(
     path.join(projectDir, appDir, 'lib/canopy.ts'),
-    await canopyContext({ configImport: configImportPath(appDir, 1), authProvider }),
+    await canopyContext({ configImport: configImportPath(appDir, 1) }),
     writeOpts,
   )
   await writeFile(path.join(projectDir, appDir, 'schemas.ts'), await schemasTemplate(), writeOpts)
@@ -141,13 +141,10 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  const authPackages =
-    options.authProvider === 'clerk' ? 'canopycms-auth-clerk' : 'canopycms-auth-dev'
-
   p.note(
     [
       '1. Install dependencies:',
-      `   npm install canopycms canopycms-next ${authPackages}`,
+      `   npm install canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev`,
       '',
       '2. Add transpilePackages to next.config.ts:',
       "   transpilePackages: ['canopycms']",
@@ -241,9 +238,8 @@ export async function workerRunOnce(options: { projectDir: string }): Promise<vo
   // For prod-sim without GitHub, just refresh auth cache
   const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
   const cachePath =
-    mode === 'prod-sim'
-      ? path.join(options.projectDir, '.canopy-prod-sim', '.cache')
-      : path.join(process.env.CANOPYCMS_WORKSPACE_ROOT ?? '/mnt/efs/workspace', '.cache')
+    process.env.CANOPY_AUTH_CACHE_PATH ??
+    path.join(operatingStrategy(mode).getWorkspaceRoot(options.projectDir), '.cache')
 
   let refreshAuthCache: (() => Promise<void>) | undefined
 
@@ -334,28 +330,6 @@ async function main() {
     const nonInteractive = flags['non-interactive'] === true
     const force = flags['force'] === true
 
-    // Resolve options: use flags if provided, otherwise prompt interactively
-    let authProvider: 'clerk' | 'dev'
-    if (flags['auth'] === 'clerk' || flags['auth'] === 'dev') {
-      authProvider = flags['auth']
-    } else if (nonInteractive) {
-      authProvider = 'dev'
-    } else {
-      const result = await p.select({
-        message: 'Which auth provider?',
-        options: [
-          { value: 'dev' as const, label: 'dev', hint: 'Local development, no real auth' },
-          { value: 'clerk' as const, label: 'clerk', hint: 'Clerk authentication' },
-        ],
-        initialValue: 'dev' as const,
-      })
-      if (p.isCancel(result)) {
-        p.cancel('Init cancelled.')
-        process.exit(0)
-      }
-      authProvider = result
-    }
-
     let mode: 'dev' | 'prod-sim'
     if (flags['mode'] === 'dev' || flags['mode'] === 'prod-sim') {
       mode = flags['mode']
@@ -417,7 +391,6 @@ async function main() {
     }
 
     await init({
-      authProvider,
       mode,
       appDir,
       ai,
@@ -457,7 +430,6 @@ async function main() {
     console.log('')
     console.log('Commands:')
     console.log('  init                    Add CanopyCMS to a Next.js app')
-    console.log('    --auth <dev|clerk>    Auth provider (default: dev)')
     console.log('    --mode <dev|prod-sim> Operating mode (default: dev)')
     console.log('    --app-dir <path>      App directory (default: app)')
     console.log('    --no-ai               Skip AI content endpoint generation')

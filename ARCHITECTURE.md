@@ -817,6 +817,14 @@ Operating modes are implemented using the Strategy pattern, which encapsulates m
 
 **Key design principle**: Strategies return configuration values and flags, not business logic. Complex operations (like git commands) are handled by domain-specific managers (GitManager, BranchWorkspaceManager) that use strategy flags to make decisions.
 
+**Workspace root as the single source of truth**: `ClientUnsafeStrategy` requires a `getWorkspaceRoot()` method that returns the mode-specific top-level directory for all CMS state:
+
+- `prod`: `CANOPYCMS_WORKSPACE_ROOT` env var, falling back to `/mnt/efs/workspace`
+- `prod-sim`: `{cwd}/.canopy-prod-sim`
+- `dev`: `{cwd}/.canopy-dev`
+
+All other path methods on `ClientUnsafeStrategy` (`getContentBranchesRoot`, `getSettingsRoot`, etc.) are derived from `getWorkspaceRoot()` internally. This consolidates the single-root principle: there is exactly one place per mode that determines where on disk the CMS writes its state, and all subdirectories fan out from there. The auth metadata cache (`.cache/`) also lives under the workspace root, making the path available automatically without adopter configuration.
+
 ## Deployment Architecture
 
 CanopyCMS is designed to work in multiple deployment scenarios, from a single server to a split Lambda + worker architecture optimized for cost and security.
@@ -879,6 +887,10 @@ Each auth plugin package provides its own token verifier and cache writer:
 - `canopycms-auth-dev`: `createDevTokenVerifier()` + `refreshDevCache()`
 
 The cache is populated by the worker daemon (or `npx canopycms worker run-once` in prod-sim). Lambda reads it on every request. Cache invalidation is mtime-based — when the worker writes new cache files, Lambda picks them up on the next request.
+
+**Transparent auto-wrapping via `verifyTokenOnly`**: Auth plugins can declare a `verifyTokenOnly?(context)` method on the `AuthPlugin` interface. This is a lightweight, networkless token verification path — it confirms the JWT signature and extracts a user ID without making any API calls or fetching metadata. When this optional method is present, `createNextCanopyContext` (the Next.js adapter) automatically wraps the plugin with `CachingAuthPlugin` + `FileBasedAuthCache` in `prod` and `prod-sim` modes. Adopters do not need to wire up caching manually; the adapter detects the capability and enables caching transparently.
+
+**Cache path derivation**: The auth cache directory is derived from the workspace root returned by the operating mode strategy: `{workspaceRoot}/.cache`. Adopters can override this with the `CANOPY_AUTH_CACHE_PATH` environment variable. Because the workspace root is already the authoritative base for all mode-specific state, no additional configuration is needed in the common case.
 
 #### Task Queue (Async GitHub Operations)
 
@@ -1580,6 +1592,10 @@ Auth plugins implement the `AuthPlugin` interface, which provides:
 - User identity extraction from requests
 - Group membership lookup
 - Session validation
+
+The interface also has one optional method:
+
+- **`verifyTokenOnly(context)`**: Lightweight, networkless JWT verification that returns just a user ID (no metadata). When implemented, framework adapters automatically enable file-based auth caching in prod/prod-sim modes. This is the recommended path for Lambda deployments that have no internet access.
 
 This abstraction means you can use Clerk, Auth0, NextAuth, Supabase Auth, or a custom solution. See `canopycms-auth-clerk` as a reference implementation. Creating a new auth plugin involves implementing the interface and publishing it as a package.
 

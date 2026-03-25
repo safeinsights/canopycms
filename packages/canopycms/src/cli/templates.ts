@@ -19,26 +19,9 @@ export async function canopyCmsConfig(options: { mode: string }): Promise<string
   return template.replace('{{MODE}}', options.mode)
 }
 
-export async function canopyContext(options: {
-  configImport: string
-  authProvider: 'clerk' | 'dev'
-}): Promise<string> {
+export async function canopyContext(options: { configImport: string }): Promise<string> {
   const template = await readTemplate('canopy.ts.template')
-  const isClerk = options.authProvider === 'clerk'
-  const authImports = isClerk
-    ? `import { createClerkAuthPlugin, createClerkJwtVerifier } from 'canopycms-auth-clerk'`
-    : `import { createDevAuthPlugin, createDevTokenVerifier } from 'canopycms-auth-dev'`
-  const authTokenVerifier = isClerk
-    ? `createClerkJwtVerifier({ jwtKey: process.env.CLERK_JWT_KEY ?? '' })`
-    : `createDevTokenVerifier()`
-  const authDirectPlugin = isClerk
-    ? `createClerkAuthPlugin({ useOrganizationsAsGroups: true })`
-    : `createDevAuthPlugin()`
-  return template
-    .replace('{{CONFIG_IMPORT}}', options.configImport)
-    .replace('{{AUTH_IMPORTS}}', authImports)
-    .replace('{{AUTH_TOKEN_VERIFIER}}', authTokenVerifier)
-    .replace('{{AUTH_DIRECT_PLUGIN}}', authDirectPlugin)
+  return template.replace('{{CONFIG_IMPORT}}', options.configImport)
 }
 
 export async function schemasTemplate(): Promise<string> {

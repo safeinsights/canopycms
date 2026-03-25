@@ -98,6 +98,15 @@ export interface ClientUnsafeStrategy extends ClientSafeStrategy {
   // ========================================================================
 
   /**
+   * Get the root directory for this mode's workspace.
+   * All mode-specific subdirectories (content-branches, settings, .cache, etc.) live under this.
+   * - prod: CANOPYCMS_WORKSPACE_ROOT ?? /mnt/efs/workspace
+   * - prod-sim: {sourceRoot ?? cwd}/.canopy-prod-sim
+   * - dev: {sourceRoot ?? cwd}/.canopy-dev
+   */
+  getWorkspaceRoot(sourceRoot?: string): string
+
+  /**
    * Get the content directory path (at project/workspace root).
    * - dev/prod-sim: {cwd}/content
    * - prod (in workspaces): {workspaceRoot}/content

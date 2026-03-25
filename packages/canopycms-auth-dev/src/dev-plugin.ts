@@ -105,6 +105,15 @@ export class DevAuthPlugin implements AuthPlugin {
     this.defaultUserId = config.defaultUserId ?? 'dev_user1_2nK8mP4xL9'
   }
 
+  async verifyTokenOnly(context: unknown): Promise<{ userId: string } | null> {
+    const headers = extractHeaders(context)
+    if (!headers) return null
+    let userId = headers.get('X-Test-User')
+    if (!userId) userId = headers.get('x-dev-user-id') ?? getDevUserCookieFromHeaders(headers)
+    if (!userId) userId = this.defaultUserId
+    return { userId: this.mapTestUserKey(userId) }
+  }
+
   async authenticate(context: unknown): Promise<AuthenticationResult> {
     // 1. Extract headers using extractHeaders() helper
     const headers = extractHeaders(context)

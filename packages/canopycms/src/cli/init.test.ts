@@ -25,7 +25,6 @@ vi.mock('@clack/prompts', () => ({
 
 function defaultOpts(tmpDir: string, overrides?: Partial<Parameters<typeof init>[0]>) {
   return {
-    authProvider: 'dev' as const,
     mode: 'dev' as const,
     appDir: 'app',
     ai: true,

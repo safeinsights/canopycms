@@ -29,16 +29,18 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
 
   // Add client-unsafe methods (use Node.js APIs)
 
+  getWorkspaceRoot(_sourceRoot?: string): string {
+    return path.resolve(process.env.CANOPYCMS_WORKSPACE_ROOT ?? DEFAULT_PROD_WORKSPACE)
+  }
+
   getContentRoot(sourceRoot?: string): string {
     // In prod, content is at workspace root (not project root)
     // This is called with sourceRoot = workspace path
     return path.resolve(sourceRoot ?? process.cwd(), 'content')
   }
 
-  getContentBranchesRoot(_sourceRoot?: string): string {
-    const envWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
-    const workspace = path.resolve(envWorkspace ?? DEFAULT_PROD_WORKSPACE)
-    return path.join(workspace, 'content-branches')
+  getContentBranchesRoot(sourceRoot?: string): string {
+    return path.join(this.getWorkspaceRoot(sourceRoot), 'content-branches')
   }
 
   getContentBranchRoot(branchName: string, sourceRoot?: string): string {
@@ -58,13 +60,11 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
   }
 
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
-    const envWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
-    const workspace = path.resolve(envWorkspace ?? DEFAULT_PROD_WORKSPACE)
     return {
       shouldAutoInitLocal: false,
       defaultRemotePath: '',
       envVarName: 'CANOPYCMS_REMOTE_URL',
-      autoDetectRemotePath: path.join(workspace, 'remote.git'),
+      autoDetectRemotePath: path.join(this.getWorkspaceRoot(), 'remote.git'),
     }
   }
 
@@ -82,10 +82,8 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
     return `canopycms-settings-${deploymentName}`
   }
 
-  getSettingsRoot(_sourceRoot?: string): string {
-    const envWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
-    const workspace = path.resolve(envWorkspace ?? DEFAULT_PROD_WORKSPACE)
-    return path.join(workspace, 'settings')
+  getSettingsRoot(sourceRoot?: string): string {
+    return path.join(this.getWorkspaceRoot(sourceRoot), 'settings')
   }
 
   usesSeparateSettingsBranch(): boolean {
@@ -110,7 +108,7 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
 class LocalProdSimStrategy extends LocalProdSimClientSafeStrategy implements ClientUnsafeStrategy {
   // Inherits client-safe methods from LocalProdSimClientSafeStrategy
 
-  private getProdSimRoot(sourceRoot?: string): string {
+  getWorkspaceRoot(sourceRoot?: string): string {
     return path.resolve(sourceRoot ?? process.cwd(), '.canopy-prod-sim')
   }
 
@@ -119,7 +117,7 @@ class LocalProdSimStrategy extends LocalProdSimClientSafeStrategy implements Cli
   }
 
   getContentBranchesRoot(sourceRoot?: string): string {
-    return path.join(this.getProdSimRoot(sourceRoot), 'content-branches')
+    return path.join(this.getWorkspaceRoot(sourceRoot), 'content-branches')
   }
 
   getContentBranchRoot(branchName: string, sourceRoot?: string): string {
@@ -161,7 +159,7 @@ class LocalProdSimStrategy extends LocalProdSimClientSafeStrategy implements Cli
   }
 
   getSettingsRoot(sourceRoot?: string): string {
-    return path.join(this.getProdSimRoot(sourceRoot), 'settings')
+    return path.join(this.getWorkspaceRoot(sourceRoot), 'settings')
   }
 
   usesSeparateSettingsBranch(): boolean {
@@ -184,7 +182,7 @@ class LocalProdSimStrategy extends LocalProdSimClientSafeStrategy implements Cli
 class LocalSimpleStrategy extends LocalSimpleClientSafeStrategy implements ClientUnsafeStrategy {
   // Inherits: supportsBranching() returns false, getPermissionsFileName() returns 'permissions.local.json'
 
-  private getDevConfigRoot(sourceRoot?: string): string {
+  getWorkspaceRoot(sourceRoot?: string): string {
     return path.resolve(sourceRoot ?? process.cwd(), '.canopy-dev')
   }
 
@@ -206,12 +204,12 @@ class LocalSimpleStrategy extends LocalSimpleClientSafeStrategy implements Clien
 
   getPermissionsFilePath(root: string): string {
     // Returns: {projectRoot}/.canopy-dev/settings/permissions.json
-    return path.join(this.getDevConfigRoot(root), 'settings', 'permissions.json')
+    return path.join(this.getWorkspaceRoot(root), 'settings', 'permissions.json')
   }
 
   getGroupsFilePath(root: string): string {
     // Returns: {projectRoot}/.canopy-dev/settings/groups.json
-    return path.join(this.getDevConfigRoot(root), 'settings', 'groups.json')
+    return path.join(this.getWorkspaceRoot(root), 'settings', 'groups.json')
   }
 
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
@@ -236,7 +234,7 @@ class LocalSimpleStrategy extends LocalSimpleClientSafeStrategy implements Clien
   }
 
   getSettingsRoot(sourceRoot?: string): string {
-    return path.join(this.getDevConfigRoot(sourceRoot), 'settings')
+    return path.join(this.getWorkspaceRoot(sourceRoot), 'settings')
   }
 
   usesSeparateSettingsBranch(): boolean {
