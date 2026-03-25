@@ -109,7 +109,7 @@ export async function init(options: InitOptions): Promise<void> {
   await writeFile(
     path.join(projectDir, appDir, 'api/canopycms/[...canopycms]/route.ts'),
     await apiRoute({
-      canopyImport: configImportPath(appDir, 4).replace('canopycms.config', 'lib/canopy'),
+      canopyImport: '../'.repeat(3) + 'lib/canopy',
     }),
     writeOpts,
   )
