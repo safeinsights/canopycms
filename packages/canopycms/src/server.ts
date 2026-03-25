@@ -13,3 +13,4 @@ export {
 } from './schema'
 export type { CollectionMeta, RootCollectionMeta } from './schema'
 export { createEntrySchemaRegistry, validateEntrySchemaRegistry } from './entry-schema-registry'
+export { generateId, isValidId } from './id'
