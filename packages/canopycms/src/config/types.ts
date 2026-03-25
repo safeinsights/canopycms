@@ -211,6 +211,7 @@ export type GithubTokenEnvVar = string
 export type CanopyOperatingMode = OperatingMode
 export type ContentRoot = string
 export type SourceRoot = string | undefined
+export type DeployedAs = 'static' | 'server'
 
 /**
  * Validated CanopyConfig - the runtime configuration object.
@@ -226,6 +227,8 @@ export interface CanopyConfig {
   gitBotAuthorEmail: GitBotAuthorEmail
   githubTokenEnvVar?: GithubTokenEnvVar
   mode: CanopyOperatingMode
+  /** How this build is deployed. 'static' = no request context, no auth. Default: 'server'. */
+  deployedAs: DeployedAs
   settingsBranch?: string
   autoCreateSettingsPR?: boolean
   deploymentName?: string
@@ -249,6 +252,8 @@ export interface CanopyConfigInput {
   gitBotAuthorEmail: string
   githubTokenEnvVar?: string
   mode?: OperatingMode
+  /** How this build is deployed. 'static' = no request context, no auth. Default: 'server'. */
+  deployedAs?: DeployedAs
   settingsBranch?: string
   autoCreateSettingsPR?: boolean
   deploymentName?: string

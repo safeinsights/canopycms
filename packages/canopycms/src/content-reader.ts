@@ -5,7 +5,7 @@ import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
-import { isBuildMode } from './build-mode'
+import { isDeployedStatic, isBuildMode } from './build-mode'
 import { isNotFoundError } from './utils/error'
 
 export interface ContentReaderOptions {
@@ -147,7 +147,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     }
 
     // Check permissions BEFORE reading the file (security)
-    const shouldCheckPermissions = !isBuildMode()
+    const shouldCheckPermissions = !(isDeployedStatic(services.config) || isBuildMode())
     if (shouldCheckPermissions) {
       const access = await services.checkContentAccess(
         context,

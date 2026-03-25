@@ -9,9 +9,32 @@ import { createCanopyCatchAllHandler } from './adapter'
 
 let warnedNoAdmins = false
 
+/**
+ * Stub auth plugin for static deployments where no real auth is needed.
+ * Returns unauthenticated for all requests — API routes will return 401.
+ */
+const staticDeployAuthPlugin: AuthPlugin = {
+  async authenticate() {
+    return { success: false as const, error: 'No auth plugin configured (static deployment)' }
+  },
+  async searchUsers() {
+    return []
+  },
+  async getUserMetadata() {
+    return null
+  },
+  async getGroupMetadata() {
+    return null
+  },
+  async listGroups() {
+    return []
+  },
+}
+
 export interface NextCanopyOptions {
   config: CanopyConfig
-  authPlugin: AuthPlugin
+  /** Auth plugin for user authentication. Optional for static deployments (deployedAs: 'static'). */
+  authPlugin?: AuthPlugin
   entrySchemaRegistry: Record<string, readonly FieldConfig[]>
 }
 
@@ -28,6 +51,13 @@ export async function createNextCanopyContext(options: NextCanopyOptions) {
 
   // User extractor: passes Next.js headers to auth plugin, loads internal groups, applies authorization
   const extractUser = async (): Promise<CanopyUser> => {
+    if (!options.authPlugin) {
+      throw new Error(
+        'CanopyCMS: authPlugin is required when deployedAs is "server". ' +
+          'Set deployedAs: "static" in your canopy config, or provide an authPlugin.',
+      )
+    }
+
     const headersList = await headers()
     const authResult = await options.authPlugin.authenticate(headersList)
 
@@ -73,9 +103,10 @@ export async function createNextCanopyContext(options: NextCanopyOptions) {
     return coreContext.getContext()
   })
 
-  // Create API handler using same services
+  // Create API handler using same services — use stub auth plugin for static deployments
   const handler = createCanopyCatchAllHandler({
     ...options,
+    authPlugin: options.authPlugin ?? staticDeployAuthPlugin,
     services,
   })
 

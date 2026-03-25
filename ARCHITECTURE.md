@@ -142,7 +142,7 @@ Some files remain at the source root because they represent core domain concepts
 - Comment store (review comment persistence)
 - Reference resolver (content reference handling)
 - Settings workspace (settings file management)
-- Build mode (static generation detection)
+- Build mode and deployment type detection (static vs server)
 
 ### Design Rationale
 
@@ -946,25 +946,30 @@ The context automatically handles:
 
 - User extraction via the provided `getUser` function
 - Bootstrap admin group application (designated users get Admins group)
-- Build mode detection (returns BUILD_USER with admin access during static generation)
+- Static deployment and build mode detection (returns STATIC_DEPLOY_USER with admin access when auth is unavailable)
 - Permission checks during content reading
 
-### Build Mode Support
+### Static Deployment and Build Mode
 
-Build mode allows content to be read during static site generation without authentication:
+CanopyCMS supports two deployment types, declared via the `deployedAs` config field:
 
-**Detection**: Checks environment variables in a framework-agnostic way:
+- **`'server'`** (default): A running server handles requests with full authentication and authorization. This is the standard CMS deployment.
+- **`'static'`**: The site is a static export with no request context, no users, and no auth. All content is assumed publicly readable.
+
+**The `deployedAs` field is the primary mechanism** for declaring deployment type. When `deployedAs` is `'static'`, the system uses a synthetic admin user (`STATIC_DEPLOY_USER`) and bypasses all permission checks—whether during `next build` or `next dev`. This covers the full lifecycle of a static site, not just the build phase.
+
+**Build mode detection** (`isBuildMode()`) remains as a safety net for edge cases in server deployments. It detects when auth is unavailable during build by checking environment variables:
 
 - `NEXT_PHASE=phase-production-build` (Next.js builds)
 - `CANOPY_BUILD_MODE=true` (generic builds, other frameworks)
 
-**Behavior**: When build mode is active:
+This covers situations like `getCanopy()` being called from `generateStaticParams` during a server deployment's build step, where there is no request context even though the deployment is not static.
 
-- Context returns `BUILD_USER` (special user with Admins group)
-- Content reader bypasses all permission checks
-- All content becomes readable for static generation
+**Combined check**: The content reader and context factory use `isDeployedStatic(config) || isBuildMode()` to determine when to bypass auth. The static deployment check is config-driven (stable, explicit); the build mode check is environment-driven (dynamic, safety net).
 
-This means you can use the same `read()` calls in both authenticated pages and build-time static generation—the context handles the difference automatically.
+**Two-deployment model**: A single codebase can produce both a static export and a CMS server build. The `deployedAs` field in each build's config controls which deployment type is active. This enables patterns like a public-facing static site alongside a separate CMS editor deployment, both reading from the same content repository.
+
+This means you can use the same `read()` calls in both authenticated pages and static generation—the context handles the difference automatically.
 
 ### Framework Adapter Pattern
 
@@ -980,8 +985,10 @@ Framework adapters wrap the core context to provide framework-specific integrati
 
 - All business logic (permissions, content reading, branch management)
 - Bootstrap admin group application
-- Build mode detection and handling
+- Static deployment and build mode detection
 - Content access control
+
+**Auth plugin is optional for static deployments**: When `deployedAs` is `'static'`, the adapter does not require an auth plugin. If one is omitted, the user extractor throws a clear error if called in a non-static context (preventing silent misconfiguration). The API handler receives a stub auth plugin that rejects all requests with 401, since a static deployment should never serve API requests to real users.
 
 The Next.js adapter is ~10 lines of user extraction code. The pattern is designed so adapters for Express, Fastify, Hono, or other frameworks would be similarly minimal.
 
@@ -1778,7 +1785,7 @@ The context architecture centralizes business logic in core while keeping framew
 
 **Benefits:**
 
-- **Consistency**: Bootstrap admin groups, build mode, and permission checks work identically across all frameworks
+- **Consistency**: Bootstrap admin groups, static deployment detection, and permission checks work identically across all frameworks
 - **Testability**: Core context can be tested without Next.js, Express, or any framework installed
 - **Maintainability**: Bug fixes and features only need to be implemented once in core
 - **Extensibility**: New frameworks require ~10 lines of user extraction code, not reimplementing business logic
@@ -1798,21 +1805,27 @@ Handling this in core context creation ensures:
 
 Without this, every page would need to manually apply bootstrap groups or risk inconsistent permissions.
 
-### Why bypass permissions in build mode?
+### Why separate `deployedAs` from build mode detection?
 
-Static site generators need to read all content to pre-render pages. Running permission checks during build would require:
+The old approach used `isBuildMode()` and a `BUILD_USER` to detect and handle static generation. But the real question is not "are we building?" — it is "is this deployed as a static site?" A static deployment means no users, no request context, and no auth, whether during `next build` or `next dev`.
 
-- Mock authentication in the build environment
-- Knowing all possible users ahead of time
-- Risk of incomplete pre-rendering if permission checks fail
+**The `deployedAs: 'static'` config field** makes this explicit. It is a stable, config-driven declaration that applies across the entire lifecycle of a static deployment. This is the primary mechanism for static sites.
 
-Build mode solves this by:
+**`isBuildMode()` remains as a safety net** for server deployments. During `next build` of a server-deployed site, functions like `generateStaticParams` call `getCanopy()` without a request context. Build mode detection catches this edge case.
 
-- **Detecting build environment automatically** (via `NEXT_PHASE` or `CANOPY_BUILD_MODE`)
-- **Providing BUILD_USER with admin access** (bypasses all permission checks)
-- **Working with the same `read()` calls** (no special build-specific code paths)
+**Why two checks instead of one?**
 
-This means you write `await canopy.read(...)` once, and it works in both authenticated runtime requests and build-time static generation.
+- `deployedAs` is a static declaration: "this deployment never has users." It works in build and dev.
+- `isBuildMode()` is a dynamic detection: "auth is unavailable right now, even though this is normally a server deployment." It only applies during build.
+- Combining them (`isDeployedStatic(config) || isBuildMode()`) covers all cases where permissions should be bypassed.
+
+**Why rename BUILD_USER to STATIC_DEPLOY_USER?**
+
+The synthetic admin user is used in both static deployments and build phases. The name `STATIC_DEPLOY_USER` reflects the primary concept (static deployment) rather than the secondary use case (build phase). This makes the code's intent clearer.
+
+**Why is authPlugin optional for static deployments?**
+
+Static sites have no users and no request context. Requiring an auth plugin for a static deployment would force adopters to install and configure an auth package they will never use. Making it optional reduces adopter friction. The framework adapter provides a clear error if `authPlugin` is omitted but `deployedAs` is not `'static'`, preventing silent misconfiguration.
 
 ### Why React Context for editor state management?
 

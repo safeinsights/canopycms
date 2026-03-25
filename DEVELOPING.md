@@ -380,68 +380,112 @@ export default async function PostPage({ params }: { params: { slug: string } })
 }
 ```
 
-### Build Mode Detection
+### Static Deployment Detection
 
-During static site generation, CanopyCMS needs to bypass auth checks to read content. The `isBuildMode()` function provides framework-agnostic detection:
+CanopyCMS has two deployment shapes: **server** (editor + API running at request time) and **static** (pre-built site with no request context and no auth). When running as a static deployment, auth checks are bypassed and all content is assumed publicly readable. Detection lives in `packages/canopycms/src/build-mode.ts`.
 
-**Build Mode Function**
+**Primary check: `isDeployedStatic(config)`**
+
+The preferred way to detect a static deployment. Reads the `deployedAs` config field, which defaults to `'server'`:
+
+```typescript
+// packages/canopycms/src/build-mode.ts
+export const isDeployedStatic = (config: { deployedAs?: string }): boolean => {
+  return config.deployedAs === 'static'
+}
+```
+
+The `deployedAs` field is set in the adopter's `canopycms.config.ts`, typically driven by an env var:
+
+```typescript
+// canopycms.config.ts (adopter code)
+deployedAs: process.env.CANOPY_BUILD === 'true' ? 'static' : 'server',
+```
+
+**Safety net: `isBuildMode()`**
+
+Covers edge cases like `getCanopy()` called from `generateStaticParams` in server deployments, where the config says `'server'` but there is no request context:
 
 ```typescript
 // packages/canopycms/src/build-mode.ts
 export const isBuildMode = (): boolean => {
-  // Next.js build phase
   if (process.env.NEXT_PHASE === 'phase-production-build') return true
-
-  // Generic build mode flag (can be set by any framework)
   if (process.env.CANOPY_BUILD_MODE === 'true') return true
-
   return false
 }
 ```
 
-**Build User Constant**
+**Combined check pattern**
+
+Both `context.ts` and `content-reader.ts` use the combined check:
 
 ```typescript
-// packages/canopycms/src/build-mode.ts
-export const BUILD_USER: AuthenticatedUser = Object.freeze({
-  type: 'authenticated',
-  userId: '__build__',
-  groups: ['Admins'],
-  email: 'build@canopycms',
-  name: 'Build Process',
-})
-```
-
-**Usage in Context Creation**
-
-```typescript
-// packages/canopycms/src/context.ts
-const getUserWithBootstrap = async (): Promise<CanopyUser> => {
-  // Build mode: bypass auth, return admin user
-  if (isBuildMode()) {
-    return BUILD_USER
-  }
-
-  // Runtime: get real user from adapter
-  const user = await options.getUser()
-  // ... apply bootstrap admin groups
+// Anywhere auth/permissions might be skipped
+if (isDeployedStatic(services.config) || isBuildMode()) {
+  // Skip auth / use STATIC_DEPLOY_USER
 }
 ```
 
-**Testing Build Mode**
+`isDeployedStatic` is the primary, config-driven check. `isBuildMode` is the env-var safety net.
 
-To test build mode behavior:
+**`STATIC_DEPLOY_USER` constant**
+
+Synthetic admin user used when auth is bypassed:
 
 ```typescript
-it('bypasses permissions during build', () => {
+// packages/canopycms/src/build-mode.ts
+export const STATIC_DEPLOY_USER: AuthenticatedUser = Object.freeze({
+  type: 'authenticated',
+  userId: '__static_deploy__',
+  groups: ['Admins'],
+  email: 'static-deploy@canopycms',
+  name: 'Static Deploy',
+})
+```
+
+**`authPlugin` is optional for static deployments**
+
+When `deployedAs` is `'static'`, the adopter does not need to provide an `authPlugin` to `createNextCanopyContext`. A stub plugin is used internally for the API handler:
+
+```typescript
+// canopy.ts (adopter code)
+const isStaticDeploy = config.server.deployedAs === 'static'
+
+const canopyContextPromise = createNextCanopyContext({
+  config: config.server,
+  ...(!isStaticDeploy ? { authPlugin: getAuthPlugin() } : {}),
+  entrySchemaRegistry,
+})
+```
+
+**Testing static deployment behavior**
+
+The preferred approach: set `deployedAs: 'static'` in the test config. This avoids env var manipulation and cleanup:
+
+```typescript
+it('bypasses permissions for static deployments', async () => {
+  const staticConfig = { ...config, deployedAs: 'static' as const }
+  const context = createCanopyContext({
+    services: await createCanopyServices(staticConfig, { entrySchemaRegistry }),
+    extractUser: mockExtractUser, // Should NOT be called
+  })
+  const canopy = await context.getContext()
+  expect(canopy.user).toEqual(STATIC_DEPLOY_USER)
+})
+```
+
+You can also test via env var for the `isBuildMode()` safety net path, but always clean up:
+
+```typescript
+it('bypasses permissions during Next.js build phase', async () => {
   process.env.CANOPY_BUILD_MODE = 'true'
   try {
     const context = createCanopyContext({
-      config,
+      services,
       extractUser: mockExtractUser,
     })
     const canopy = await context.getContext()
-    expect(canopy.user).toEqual(BUILD_USER)
+    expect(canopy.user).toEqual(STATIC_DEPLOY_USER)
   } finally {
     delete process.env.CANOPY_BUILD_MODE
   }
@@ -2009,27 +2053,23 @@ it('applies bootstrap admin groups to authenticated users', async () => {
 })
 ```
 
-**Testing Build Mode Bypass**
+**Testing Static Deployment Bypass**
 
 ```typescript
-it('returns BUILD_USER during static generation', async () => {
-  process.env.NEXT_PHASE = 'phase-production-build'
+it('returns STATIC_DEPLOY_USER for static deployments', async () => {
+  const staticConfig = { ...config, deployedAs: 'static' as const }
+  const services = await createCanopyServices(staticConfig, { entrySchemaRegistry })
+  const mockUser: CanopyUser = { type: 'anonymous' }
+  const context = createCanopyContext({
+    services,
+    extractUser: async () => mockUser, // This should NOT be called
+  })
 
-  try {
-    const mockUser: CanopyUser = { type: 'anonymous' }
-    const context = createCanopyContext({
-      config,
-      getUser: async () => mockUser, // This should NOT be called
-    })
+  const canopy = await context.getContext()
 
-    const canopy = await context.getContext()
-
-    // Should bypass getUser and return BUILD_USER
-    expect(canopy.user.userId).toBe('__build__')
-    expect(canopy.user.groups).toContain('Admins')
-  } finally {
-    delete process.env.NEXT_PHASE
-  }
+  // Should bypass extractUser and return STATIC_DEPLOY_USER
+  expect(canopy.user.userId).toBe('__static_deploy__')
+  expect(canopy.user.groups).toContain('Admins')
 })
 ```
 

@@ -38,9 +38,13 @@ function getAuthPlugin(): AuthPlugin {
   return createDevAuthPlugin()
 }
 
+// Static deployments don't need auth — no HTTP requests, no users.
+// Server deployments should provide authPlugin for authenticated reads.
+const isStaticDeploy = config.server.deployedAs === 'static'
+
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
-  authPlugin: getAuthPlugin(),
+  ...(!isStaticDeploy ? { authPlugin: getAuthPlugin() } : {}),
   entrySchemaRegistry,
 })
 
