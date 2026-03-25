@@ -445,9 +445,13 @@ async function main() {
   }
 }
 
-// Only run when executed directly as a CLI, not when imported in tests
+// Only run when executed directly as a CLI, not when imported in tests.
+// Use realpathSync to resolve symlinks — npx creates a symlink in node_modules/.bin/
+// that won't match import.meta.url's resolved real path.
+import { realpathSync } from 'node:fs'
+
 const __filename = fileURLToPath(import.meta.url)
-const isDirectRun = process.argv[1] === __filename
+const isDirectRun = realpathSync(process.argv[1]) === realpathSync(__filename)
 
 if (isDirectRun) {
   main().catch((err) => {
