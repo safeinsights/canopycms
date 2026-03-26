@@ -119,8 +119,10 @@ Some files remain at the source root because they represent core domain concepts
 **Content:**
 
 - Content ID index (bidirectional ID-to-path mapping)
+- Content listing (shared entry-listing utilities: filename parsing, entry data reading, ordering)
 - Content reader (authenticated content access)
 - Content store (file-based content persistence)
+- Content tree (build-time content tree builder for adopter navigation, sitemaps, etc.)
 - Content types (content data structures)
 
 **Git:**
@@ -951,6 +953,7 @@ This factory is framework-agnostic—it doesn't know about Next.js, Express, or 
 Calling `getContext()` returns a `CanopyContext` with:
 
 - **read()**: Content reader with user already injected, no need to pass user manually
+- **buildContentTree()**: Build-time content tree builder (see [Content Tree Builder](#content-tree-builder) below)
 - **services**: Access to underlying services if needed
 - **user**: Current authenticated user (with bootstrap admin groups applied)
 
@@ -1580,6 +1583,52 @@ This feature introduces two new package entrypoints:
 - **`canopycms/build`**: Exports the static file writer. This is a build-time entrypoint (uses `node:fs` to write files to disk).
 
 These join the existing entrypoints (`canopycms/server`, `canopycms/client`, `canopycms/config`).
+
+## Content Tree Builder
+
+CanopyCMS provides a build-time content tree builder that walks the schema and filesystem to produce a structured tree of content nodes. This gives adopters a single call to get their entire content hierarchy without understanding internal filesystem conventions, content ID encoding, or schema resolution.
+
+### Purpose
+
+Adopters frequently need a structured view of their content for navigation menus, sitemaps, breadcrumbs, search indexes, and similar build-time concerns. Without the content tree builder, they would need to understand CanopyCMS's internal schema flattening, filename conventions (type.slug.id.ext), collection directory naming, and ordering semantics. The builder encapsulates all of this behind a single `buildContentTree()` call on the context object.
+
+### How It Works
+
+The builder takes the flattened schema (already computed at service initialization) and walks the filesystem to discover entries in each collection:
+
+1. **Schema traversal**: Starting from the content root (or an optional `rootPath`), the builder groups collections by parent and traverses the hierarchy depth-first.
+2. **Entry discovery**: For each collection, it reads the directory to find entry files, parses their filenames to extract type, slug, and content ID, and reads their data (frontmatter for md/mdx, parsed JSON for json).
+3. **Interleaving**: Child collections and entries within a collection are interleaved according to the collection's `order` array. Items listed in the order array appear first in their specified order; remaining items are sorted alphabetically.
+4. **Node construction**: Each node in the tree carries structural facts from CanopyCMS (logical path, content ID, collection metadata, entry metadata) but leaves display concerns to the adopter.
+
+### Adopter Customization
+
+The builder supports several options that let adopters shape the tree to their needs:
+
+- **extract**: A callback that receives each node's raw data and returns typed custom fields. This is how adopters pull specific frontmatter fields (like `title`, `description`, `publishDate`) into the tree without the builder needing to know about adopter-specific schemas.
+- **filter**: A callback that excludes nodes (and their descendants) from the tree. Runs after `extract`, so adopter-extracted fields are available for filtering decisions.
+- **buildPath**: A callback that controls URL path generation. The default strips the content root prefix and joins segments with `/`. Adopters can override this for custom URL structures.
+- **maxDepth**: Limits traversal depth for performance or to build shallow navigation trees.
+
+The generic `<T>` parameter flows through the entire tree, so adopters get full type safety on their extracted fields.
+
+### Shared Content Listing Layer
+
+The content tree builder and the entries API endpoint both need to list entries in a collection directory. To avoid duplication, a shared content-listing module provides the common operations: filename parsing (extracting type, slug, and ID from the `type.slug.id.ext` pattern), entry data reading (frontmatter or JSON), and ordering by a collection's order array. This extraction ensures that entry-listing behavior is consistent between the API (which returns entries for the editor UI) and the tree builder (which returns entries for build-time consumption).
+
+### Export Strategy
+
+The `buildContentTree()` function and its types are exported from `canopycms/server` for direct use. Types only (`ContentTreeNode`, `BuildContentTreeOptions`) are also exported from the root `canopycms` entrypoint for use in adopter type definitions without importing server-side code.
+
+The primary access path for adopters is through the context object: `canopy.buildContentTree(options)`. This handles branch resolution (reading from the default branch) and schema setup automatically, so adopters do not need to manage branch contexts or flattened schemas themselves.
+
+### Design Rationale
+
+**Why a tree rather than a flat list?** Content in CanopyCMS is inherently hierarchical (collections contain entries and subcollections). A tree preserves this structure, which adopters need for nested navigation, breadcrumbs, and sitemap generation. Adopters can flatten the tree if they need a list.
+
+**Why separate from the AI content generator?** The AI content generator produces markdown files optimized for LLM consumption, with schema-aware field rendering and bundle rollups. The content tree builder returns structured data optimized for programmatic use (navigation, search indexes, routing). They serve different audiences and have different output formats, even though both walk the schema and filesystem.
+
+**Why on the context object?** Placing `buildContentTree()` on `CanopyContext` means adopters use the same `canopy` object for both content reading and tree building. The context handles branch resolution and schema access internally, keeping the adopter API surface minimal.
 
 ## Extensibility Points
 

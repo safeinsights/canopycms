@@ -19,10 +19,10 @@ import {
   parseLogicalPath,
 } from '../paths'
 import { isNotFoundError } from '../utils/error'
-import { isValidId } from '../id'
 import type { LogicalPath, PhysicalPath, EntrySlug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema } from './validators'
 import { SchemaOps } from '../schema/schema-store'
+import { parseTypedFilename, sortByOrder } from '../content-listing'
 
 /**
  * Summary of an entry type for client display.
@@ -113,80 +113,6 @@ const readTitle = async (filePath: string, format: ContentFormat): Promise<strin
   } catch {
     return undefined
   }
-}
-
-/**
- * Sort entries by the collection's order array.
- * Items in the order array come first (in order), items not in the array come at the end alphabetically by slug.
- * @param entries - The entries to sort
- * @param order - The order array (embedded IDs)
- * @returns Sorted entries
- */
-const sortEntriesByOrder = (
-  entries: CollectionItem[],
-  order?: readonly string[],
-): CollectionItem[] => {
-  if (!order || order.length === 0) {
-    // No order defined, sort alphabetically by slug
-    return entries.sort((a, b) => a.slug.localeCompare(b.slug))
-  }
-
-  // Create a map of contentId to order index
-  const orderMap = new Map<string, number>()
-  order.forEach((id, index) => orderMap.set(id, index))
-
-  return entries.sort((a, b) => {
-    const aIndex = orderMap.get(a.contentId)
-    const bIndex = orderMap.get(b.contentId)
-
-    // Both in order array: sort by order index
-    if (aIndex !== undefined && bIndex !== undefined) {
-      return aIndex - bIndex
-    }
-
-    // Only a is in order: a comes first
-    if (aIndex !== undefined) return -1
-
-    // Only b is in order: b comes first
-    if (bIndex !== undefined) return 1
-
-    // Neither in order: sort alphabetically by slug
-    return a.slug.localeCompare(b.slug)
-  })
-}
-
-/**
- * Parse a filename: {type}.{slug}.{id}.{ext}
- * Returns { type, slug, id } or null if the filename doesn't match the pattern.
- */
-const parseTypedFilename = (
-  filename: string,
-  entryTypes: readonly EntryTypeConfig[],
-): { type: string; slug: EntrySlug; id: ContentId } | null => {
-  // Remove extension
-  const lastDot = filename.lastIndexOf('.')
-  if (lastDot === -1) return null
-  const nameWithoutExt = filename.slice(0, lastDot)
-
-  // Parse: {type}.{slug}.{id}
-  const parts = nameWithoutExt.split('.')
-  if (parts.length >= 3) {
-    // Check if first part matches a known entry type
-    const potentialType = parts[0]
-    const matchingType = entryTypes.find((e) => e.name === potentialType)
-    if (matchingType) {
-      const id = parts[parts.length - 1]
-      if (!isValidId(id)) return null
-      const slug = parts.slice(1, -1).join('.')
-      return {
-        type: potentialType,
-        slug: slug as EntrySlug,
-        id: id as ContentId,
-      }
-    }
-  }
-
-  return null
 }
 
 const listCollectionEntries = async (
@@ -395,7 +321,7 @@ const listEntriesHandler = async (
       try {
         const items = await listCollectionEntries(root, item)
         // Sort by collection's order array (items in order first, then alphabetically)
-        sortEntriesByOrder(items, item.order)
+        sortByOrder(items, item.order, (i) => i.slug)
         for (const entry of items) {
           // Use the physicalPath for access control
           const readAccess = await ctx.services.checkContentAccess(

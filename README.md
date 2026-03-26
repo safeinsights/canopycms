@@ -19,6 +19,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - [Configuration Reference](#configuration-reference)
 - [Content Identification and References](#content-identification--references)
 - [Integration Guide](#integration-guide)
+- [Content Tree Builder](#content-tree-builder)
 - [Features](#features)
 - [AI-Ready Content](#ai-ready-content)
 - [Using the Editor](#using-the-editor)
@@ -803,6 +804,7 @@ export default async function PostPage({ params, searchParams }) {
 **The context object provides:**
 
 - `read()`: Read content with automatic auth and branch resolution
+- `buildContentTree()`: Build a typed content tree for navigation, sitemaps, etc. (see [Content Tree Builder](#content-tree-builder))
 - `user`: Current authenticated user (with bootstrap admin groups applied)
 - `services`: Underlying CanopyCMS services for advanced use cases
 
@@ -843,6 +845,105 @@ editor: {
     },
   },
 }
+```
+
+## Content Tree Builder
+
+`buildContentTree()` walks your schema and filesystem to produce a typed tree of all your content -- useful for navigation sidebars, sitemaps, search indexes, breadcrumbs, and similar use cases. It replaces hundreds of lines of manual filesystem-walking code.
+
+### Basic Usage
+
+```typescript
+// app/layout.tsx (or any server component)
+import { getCanopy } from './lib/canopy'
+
+export default async function RootLayout({ children }) {
+  const canopy = await getCanopy()
+
+  const tree = await canopy.buildContentTree()
+  // tree is ContentTreeNode[] — a hierarchy of collections and entries
+
+  return (
+    <html>
+      <body>
+        <Sidebar tree={tree} />
+        {children}
+      </body>
+    </html>
+  )
+}
+```
+
+Each node in the tree has:
+
+- `path` -- URL path (e.g., `"/docs/getting-started"`)
+- `logicalPath` -- CMS logical path
+- `kind` -- `"collection"` or `"entry"`
+- `collection` -- collection metadata (name, label) when `kind === "collection"`
+- `entry` -- entry metadata (slug, entryType, format, raw data) when `kind === "entry"`
+- `fields` -- custom fields extracted via your `extract` callback
+- `children` -- nested nodes (entries + subcollections, ordered by collection ordering)
+
+### Extracting Custom Fields
+
+Use the generic `extract` callback to pull typed fields from each node's raw data (frontmatter for md/mdx, parsed JSON for json entries):
+
+```typescript
+interface NavItem {
+  title: string
+  draft: boolean
+  order: number
+}
+
+const tree = await canopy.buildContentTree<NavItem>({
+  extract: (data) => ({
+    title: (data.title as string) ?? '',
+    draft: (data.draft as boolean) ?? false,
+    order: (data.order as number) ?? 0,
+  }),
+})
+
+// tree nodes now have typed `fields: NavItem`
+// e.g., tree[0].children?.[0].fields?.title
+```
+
+### Filtering Nodes
+
+The `filter` callback runs after `extract`, so you can filter based on extracted fields. Returning `false` excludes a node and all its descendants:
+
+```typescript
+const tree = await canopy.buildContentTree<NavItem>({
+  extract: (data) => ({
+    title: (data.title as string) ?? '',
+    draft: (data.draft as boolean) ?? false,
+    order: (data.order as number) ?? 0,
+  }),
+  filter: (node) => node.fields?.draft !== true,
+})
+```
+
+### Options Reference
+
+| Option      | Type                                    | Default             | Description                                                     |
+| ----------- | --------------------------------------- | ------------------- | --------------------------------------------------------------- |
+| `rootPath`  | `string`                                | Content root        | Starting collection path (e.g., `"content/docs"` for a subtree) |
+| `extract`   | `(data, node) => T`                     | -                   | Extract typed custom fields from raw entry/collection data      |
+| `filter`    | `(node: ContentTreeNode<T>) => boolean` | -                   | Return false to exclude a node and its descendants              |
+| `buildPath` | `(logicalPath, kind) => string`         | Strips content root | Custom URL path builder                                         |
+| `maxDepth`  | `number`                                | Unlimited           | Maximum depth to traverse                                       |
+
+### Imports
+
+```typescript
+// Types (for use in your components)
+import type { ContentTreeNode, BuildContentTreeOptions } from 'canopycms'
+
+// Via CanopyContext (recommended)
+const canopy = await getCanopy()
+const tree = await canopy.buildContentTree(options)
+
+// Raw function (advanced — requires branchRoot, flatSchema, contentRootName)
+import { buildContentTree } from 'canopycms/server'
 ```
 
 ## Features

@@ -3,7 +3,13 @@ import type { CanopyServices } from './services'
 import type { ReadContentInput } from './content-reader'
 import { isDeployedStatic, isBuildMode, STATIC_DEPLOY_USER } from './build-mode'
 import { createContentReader } from './content-reader'
-import { createLogicalPath, parseSlug, type EntrySlug } from './paths'
+import { createLogicalPath, parseSlug, resolveBranchPaths, type EntrySlug } from './paths'
+import { loadBranchContext } from './branch-workspace'
+import {
+  buildContentTree as buildContentTreeImpl,
+  type BuildContentTreeOptions,
+  type ContentTreeNode,
+} from './content-tree'
 
 export interface CanopyContextOptions {
   services: CanopyServices
@@ -24,6 +30,11 @@ export interface CanopyContext {
     branch?: string
     resolveReferences?: boolean
   }) => Promise<{ data: T; path: string }>
+
+  /** Build a content tree from the schema and filesystem entries. */
+  buildContentTree: <T = unknown>(
+    options?: BuildContentTreeOptions<T>,
+  ) => Promise<ContentTreeNode<T>[]>
 
   /** Underlying services */
   services: CanopyServices
@@ -97,8 +108,31 @@ export function createCanopyContext(options: CanopyContextOptions) {
       return baseReader.read<T>(readInput)
     }
 
+    const buildContentTree: CanopyContext['buildContentTree'] = async <T = unknown>(
+      options?: BuildContentTreeOptions<T>,
+    ) => {
+      const operatingMode = services.config.mode
+      const defaultBranch = services.config.defaultBaseBranch ?? 'main'
+      const branchContext = await loadBranchContext({
+        branchName: defaultBranch,
+        mode: operatingMode,
+      })
+      if (!branchContext) {
+        return []
+      }
+      const { branchRoot } = resolveBranchPaths(branchContext, operatingMode)
+      const contentRootName = services.config.contentRoot || 'content'
+      const { flatSchema } = await services.branchSchemaCache.getSchema(
+        branchRoot,
+        services.entrySchemaRegistry,
+        contentRootName,
+      )
+      return buildContentTreeImpl<T>(branchRoot, flatSchema, contentRootName, options)
+    }
+
     return {
       read,
+      buildContentTree,
       services,
       user,
     }
