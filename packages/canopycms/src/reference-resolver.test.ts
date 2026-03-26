@@ -59,6 +59,7 @@ describe('ReferenceResolver', () => {
       gitBotAuthorName: 'Test Bot',
       gitBotAuthorEmail: 'test@example.com',
       mode: 'prod',
+      deployedAs: 'server',
     }
 
     store = new ContentStore(tempDir, flattenSchema(schema, config.contentRoot))

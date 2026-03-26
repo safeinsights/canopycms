@@ -29,7 +29,7 @@
       "WebFetch(domain:mantine.dev)",
       "WebFetch(domain:clerk.com)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:npmjs.org)",
+      "WebFetch(domain:registry.npmjs.org)",
       "mcp__playwright__browser_navigate",
       "Bash(npx prettier:*)",
       "Bash(npm run:*)",

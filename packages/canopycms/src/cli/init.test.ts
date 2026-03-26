@@ -25,9 +25,9 @@ vi.mock('@clack/prompts', () => ({
 
 function defaultOpts(tmpDir: string, overrides?: Partial<Parameters<typeof init>[0]>) {
   return {
-    authProvider: 'dev' as const,
     mode: 'dev' as const,
     appDir: 'app',
+    ai: true,
     projectDir: tmpDir,
     force: false,
     nonInteractive: true,
@@ -56,6 +56,8 @@ describe('canopycms init', () => {
       'app/schemas.ts',
       'app/api/canopycms/[...canopycms]/route.ts',
       'app/edit/page.tsx',
+      'app/ai/config.ts',
+      'app/ai/[...path]/route.ts',
     ]
 
     for (const file of expectedFiles) {
@@ -157,6 +159,8 @@ describe('canopycms init', () => {
       'src/app/schemas.ts',
       'src/app/api/canopycms/[...canopycms]/route.ts',
       'src/app/edit/page.tsx',
+      'src/app/ai/config.ts',
+      'src/app/ai/[...path]/route.ts',
     ]
 
     for (const file of expectedFiles) {
@@ -182,6 +186,37 @@ describe('canopycms init', () => {
 
     const editPage = await fs.readFile(path.join(tmpDir, 'src/app/edit/page.tsx'), 'utf-8')
     expect(editPage).toContain('../../../canopycms.config')
+
+    const aiRoute = await fs.readFile(path.join(tmpDir, 'src/app/ai/[...path]/route.ts'), 'utf-8')
+    // src/app (depth 2) + ai/[...path] (depth 2) = 4 levels to root
+    expect(aiRoute).toContain('../../../../canopycms.config')
+    expect(aiRoute).toContain("from '../../schemas'")
+    expect(aiRoute).toContain("from '../config'")
+  })
+
+  it('generates AI route with correct content', async () => {
+    await init(defaultOpts(tmpDir))
+
+    const aiConfigFile = await fs.readFile(path.join(tmpDir, 'app/ai/config.ts'), 'utf-8')
+    expect(aiConfigFile).toContain('defineAIContentConfig')
+
+    const aiRoute = await fs.readFile(path.join(tmpDir, 'app/ai/[...path]/route.ts'), 'utf-8')
+    expect(aiRoute).toContain('createAIContentHandler')
+    expect(aiRoute).toContain("from '../../schemas'")
+    expect(aiRoute).toContain("from '../config'")
+    // app (depth 1) + ai/[...path] (depth 2) = 3 levels to root
+    expect(aiRoute).toContain("from '../../../canopycms.config'")
+  })
+
+  it('skips AI files when ai option is false', async () => {
+    await init(defaultOpts(tmpDir, { ai: false }))
+
+    await expect(fs.stat(path.join(tmpDir, 'app/ai/config.ts'))).rejects.toThrow()
+    await expect(fs.stat(path.join(tmpDir, 'app/ai/[...path]/route.ts'))).rejects.toThrow()
+
+    // Other files should still exist
+    const stat = await fs.stat(path.join(tmpDir, 'app/edit/page.tsx'))
+    expect(stat.isFile()).toBe(true)
   })
 })
 

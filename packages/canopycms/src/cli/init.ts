@@ -1,6 +1,7 @@
-#!/usr/bin/env node
+#!/usr/bin/env tsx
 
 import fs from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as p from '@clack/prompts'
@@ -10,17 +11,20 @@ import {
   schemasTemplate,
   apiRoute,
   editPage,
+  aiConfig,
+  aiRoute,
   dockerfileCms,
   githubWorkflowCms,
 } from './templates'
+import { operatingStrategy } from '../operating-mode'
 
 export interface InitOptions {
-  authProvider: 'clerk' | 'dev'
   mode: 'prod-sim' | 'dev'
   appDir: string
   projectDir: string
   force: boolean
   nonInteractive: boolean
+  ai: boolean
 }
 
 interface InitDeployOptions {
@@ -89,7 +93,7 @@ function configImportPath(appDir: string, subdirs: number): string {
  * editing to a Next.js app. Cloud-agnostic.
  */
 export async function init(options: InitOptions): Promise<void> {
-  const { projectDir, mode, appDir, force, nonInteractive } = options
+  const { projectDir, mode, appDir, ai, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
 
   p.intro('CanopyCMS init')
@@ -109,7 +113,7 @@ export async function init(options: InitOptions): Promise<void> {
   await writeFile(
     path.join(projectDir, appDir, 'api/canopycms/[...canopycms]/route.ts'),
     await apiRoute({
-      canopyImport: configImportPath(appDir, 4).replace('canopycms.config', 'lib/canopy'),
+      canopyImport: '../'.repeat(3) + 'lib/canopy',
     }),
     writeOpts,
   )
@@ -118,6 +122,14 @@ export async function init(options: InitOptions): Promise<void> {
     await editPage({ configImport: configImportPath(appDir, 1) }),
     writeOpts,
   )
+  if (ai) {
+    await writeFile(path.join(projectDir, appDir, 'ai/config.ts'), await aiConfig(), writeOpts)
+    await writeFile(
+      path.join(projectDir, appDir, 'ai/[...path]/route.ts'),
+      await aiRoute({ configImport: configImportPath(appDir, 2) }),
+      writeOpts,
+    )
+  }
 
   // Update .gitignore
   const gitignorePath = path.join(projectDir, '.gitignore')
@@ -129,13 +141,10 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
-  const authPackages =
-    options.authProvider === 'clerk' ? 'canopycms-auth-clerk' : 'canopycms-auth-dev'
-
   p.note(
     [
       '1. Install dependencies:',
-      `   npm install canopycms canopycms-next ${authPackages}`,
+      `   npm install canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev`,
       '',
       '2. Add transpilePackages to next.config.ts:',
       "   transpilePackages: ['canopycms']",
@@ -229,9 +238,8 @@ export async function workerRunOnce(options: { projectDir: string }): Promise<vo
   // For prod-sim without GitHub, just refresh auth cache
   const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
   const cachePath =
-    mode === 'prod-sim'
-      ? path.join(options.projectDir, '.canopy-prod-sim', '.cache')
-      : path.join(process.env.CANOPYCMS_WORKSPACE_ROOT ?? '/mnt/efs/workspace', '.cache')
+    process.env.CANOPY_AUTH_CACHE_PATH ??
+    path.join(operatingStrategy(mode).getWorkspaceRoot(options.projectDir), '.cache')
 
   let refreshAuthCache: (() => Promise<void>) | undefined
 
@@ -299,7 +307,7 @@ function parseFlags(args: string[]): {
     if (arg.startsWith('--')) {
       const key = arg.slice(2)
       // Boolean flags
-      if (key === 'force' || key === 'non-interactive') {
+      if (key === 'force' || key === 'non-interactive' || key === 'no-ai') {
         flags[key] = true
       } else if (i + 1 < args.length && !args[i + 1].startsWith('--')) {
         flags[key] = args[++i]
@@ -321,28 +329,6 @@ async function main() {
   if (command === 'init') {
     const nonInteractive = flags['non-interactive'] === true
     const force = flags['force'] === true
-
-    // Resolve options: use flags if provided, otherwise prompt interactively
-    let authProvider: 'clerk' | 'dev'
-    if (flags['auth'] === 'clerk' || flags['auth'] === 'dev') {
-      authProvider = flags['auth']
-    } else if (nonInteractive) {
-      authProvider = 'dev'
-    } else {
-      const result = await p.select({
-        message: 'Which auth provider?',
-        options: [
-          { value: 'dev' as const, label: 'dev', hint: 'Local development, no real auth' },
-          { value: 'clerk' as const, label: 'clerk', hint: 'Clerk authentication' },
-        ],
-        initialValue: 'dev' as const,
-      })
-      if (p.isCancel(result)) {
-        p.cancel('Init cancelled.')
-        process.exit(0)
-      }
-      authProvider = result
-    }
 
     let mode: 'dev' | 'prod-sim'
     if (flags['mode'] === 'dev' || flags['mode'] === 'prod-sim') {
@@ -387,10 +373,27 @@ async function main() {
       appDir = result
     }
 
+    let ai: boolean
+    if (flags['no-ai'] === true) {
+      ai = false
+    } else if (nonInteractive) {
+      ai = true
+    } else {
+      const result = await p.confirm({
+        message: 'Include AI content endpoint?',
+        initialValue: true,
+      })
+      if (p.isCancel(result)) {
+        p.cancel('Init cancelled.')
+        process.exit(0)
+      }
+      ai = result
+    }
+
     await init({
-      authProvider,
       mode,
       appDir,
+      ai,
       projectDir: process.cwd(),
       force,
       nonInteractive,
@@ -427,9 +430,9 @@ async function main() {
     console.log('')
     console.log('Commands:')
     console.log('  init                    Add CanopyCMS to a Next.js app')
-    console.log('    --auth <dev|clerk>    Auth provider (default: dev)')
     console.log('    --mode <dev|prod-sim> Operating mode (default: dev)')
     console.log('    --app-dir <path>      App directory (default: app)')
+    console.log('    --no-ai               Skip AI content endpoint generation')
     console.log('    --force               Overwrite existing files without asking')
     console.log('    --non-interactive     Use defaults, no prompts')
     console.log('')
@@ -445,9 +448,11 @@ async function main() {
   }
 }
 
-// Only run when executed directly as a CLI, not when imported in tests
+// Only run when executed directly as a CLI, not when imported in tests.
+// Use realpathSync to resolve symlinks — npx creates a symlink in node_modules/.bin/
+// that won't match import.meta.url's resolved real path.
 const __filename = fileURLToPath(import.meta.url)
-const isDirectRun = process.argv[1] === __filename
+const isDirectRun = realpathSync(process.argv[1]) === realpathSync(__filename)
 
 if (isDirectRun) {
   main().catch((err) => {

@@ -49,30 +49,30 @@ The codebase uses a modular structure with clear separation:
 
 **Top-level files** (intentionally not modularized):
 
-| File                     | Purpose                                                                                         |
-| ------------------------ | ----------------------------------------------------------------------------------------------- |
-| services.ts              | CanopyServices factory with git operations                                                      |
-| context.ts               | Context creation and management                                                                 |
-| types.ts                 | Core types (BranchContext, BranchContextWithSchema, BranchMetadata, SyncStatus, ConflictStatus) |
-| branch-metadata.ts       | Branch metadata persistence                                                                     |
-| branch-registry.ts       | Branch tracking and listing                                                                     |
-| branch-workspace.ts      | Branch workspace management                                                                     |
-| branch-schema-cache.ts   | Per-branch schema caching                                                                       |
-| settings-workspace.ts    | Settings branch workspace                                                                       |
-| settings-branch-utils.ts | Settings branch utility helpers                                                                 |
-| content-store.ts         | Content persistence                                                                             |
-| content-reader.ts        | Content reading                                                                                 |
-| content-id-index.ts      | Content ID indexing                                                                             |
-| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                               |
-| entry-schema-registry.ts | Entry schema registry for reusable field definitions                                            |
-| git-manager.ts           | Git operations wrapper                                                                          |
-| github-service.ts        | GitHub API integration                                                                          |
-| comment-store.ts         | Comment persistence                                                                             |
-| reference-resolver.ts    | Reference resolution                                                                            |
-| asset-store.ts           | Asset storage                                                                                   |
-| build-mode.ts            | Build mode detection                                                                            |
-| user.ts                  | User utilities                                                                                  |
-| server.ts                | Server entrypoint exports                                                                       |
+| File                     | Purpose                                                                                                    |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| services.ts              | CanopyServices factory with git operations                                                                 |
+| context.ts               | Context creation and management                                                                            |
+| types.ts                 | Core types (BranchContext, BranchContextWithSchema, BranchMetadata, SyncStatus, ConflictStatus)            |
+| branch-metadata.ts       | Branch metadata persistence                                                                                |
+| branch-registry.ts       | Branch tracking and listing                                                                                |
+| branch-workspace.ts      | Branch workspace management                                                                                |
+| branch-schema-cache.ts   | Per-branch schema caching                                                                                  |
+| settings-workspace.ts    | Settings branch workspace                                                                                  |
+| settings-branch-utils.ts | Settings branch utility helpers                                                                            |
+| content-store.ts         | Content persistence                                                                                        |
+| content-reader.ts        | Content reading                                                                                            |
+| content-id-index.ts      | Content ID indexing                                                                                        |
+| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                          |
+| entry-schema-registry.ts | Entry schema registry for reusable field definitions                                                       |
+| git-manager.ts           | Git operations wrapper                                                                                     |
+| github-service.ts        | GitHub API integration                                                                                     |
+| comment-store.ts         | Comment persistence                                                                                        |
+| reference-resolver.ts    | Reference resolution                                                                                       |
+| asset-store.ts           | Asset storage                                                                                              |
+| build-mode.ts            | Static deploy detection (`isDeployedStatic`), build-phase safety net (`isBuildMode`), `STATIC_DEPLOY_USER` |
+| user.ts                  | User utilities                                                                                             |
+| server.ts                | Server entrypoint exports                                                                                  |
 
 ## API Layer
 
@@ -314,23 +314,23 @@ Generic file-based persistent task queue with zero Canopy dependencies.
 
 Bootstrapping scripts run via `npx canopycms <command>`. Uses `@clack/prompts` for interactive CLI experience.
 
-| File                   | Purpose                                                                                             |
-| ---------------------- | --------------------------------------------------------------------------------------------------- |
-| init.ts                | CLI entrypoint with init(), initDeployAws(), workerRunOnce() commands                               |
-| templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}}) |
-| generate-ai-content.ts | AI content generation CLI command                                                                   |
-| templates/             | Template files for scaffolding (config, route, edit page, Dockerfile, CI workflow)                  |
+| File                   | Purpose                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| init.ts                | CLI entrypoint with init(), initDeployAws(), workerRunOnce() commands                                   |
+| templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}})     |
+| generate-ai-content.ts | AI content generation CLI command                                                                       |
+| template-files/        | Template files for scaffolding (config, route, edit page, AI content endpoint, Dockerfile, CI workflow) |
 
 **Commands**:
 
-| Command                         | Purpose                                                                       |
-| ------------------------------- | ----------------------------------------------------------------------------- |
-| `canopycms init`                | Scaffold CanopyCMS into a Next.js app (config, API route, edit page, schemas) |
-| `canopycms init-deploy aws`     | Generate AWS deployment artifacts (Dockerfile.cms, GitHub Actions workflow)   |
-| `canopycms worker run-once`     | Process pending tasks, refresh auth cache, then exit                          |
-| `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)            |
+| Command                         | Purpose                                                                                            |
+| ------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `canopycms init`                | Scaffold CanopyCMS into a Next.js app (config, API route, edit page, schemas, AI content endpoint) |
+| `canopycms init-deploy aws`     | Generate AWS deployment artifacts (Dockerfile.cms, GitHub Actions workflow)                        |
+| `canopycms worker run-once`     | Process pending tasks, refresh auth cache, then exit                                               |
+| `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)                                 |
 
-**`init` flags**: `--auth dev|clerk`, `--mode dev|prod-sim`, `--app-dir <path>`, `--force`, `--non-interactive`
+**`init` flags**: `--auth dev|clerk`, `--mode dev|prod-sim`, `--app-dir <path>`, `--no-ai`, `--force`, `--non-interactive`
 
 ## CDK Package (canopycms-cdk)
 
@@ -422,9 +422,19 @@ import { defineCanopyConfig } from 'canopycms/config'
 defineCanopyConfig({
   contentRoot: 'content',
   mode: 'prod-sim',
+  deployedAs: 'static', // or 'server' (default)
   // ...
 })
 ```
+
+### Deployment Mode (`deployedAs`)
+
+| Value      | Default | Behavior                                                                    |
+| ---------- | ------- | --------------------------------------------------------------------------- |
+| `'server'` | Yes     | Normal: auth plugin required, permissions enforced per-request              |
+| `'static'` | No      | No request context, no auth; `STATIC_DEPLOY_USER` used; permissions skipped |
+
+Checked via `isDeployedStatic(config)` in `context.ts` and `content-reader.ts`. `isBuildMode()` is kept as a safety net for build-phase edge cases in server deployments.
 
 ## Schema Module
 
@@ -812,21 +822,25 @@ try {
 3. app/edit/page.tsx - Editor component embedding
 4. app/lib/canopy.ts - Canopy context setup (auth plugin wiring)
 5. app/schemas.ts - Entry schema definitions
-6. middleware.ts - Auth route protection
+6. app/ai/config.ts - AI content configuration
+7. app/ai/[...path]/route.ts - AI content endpoint
+8. middleware.ts - Auth route protection
 
 ### Expected Structure
 
 ```
 apps/example1/
   app/
-    api/canopycms/[...canopycms]/route.ts  # Catch-all API
-    edit/page.tsx                           # Editor page
-    lib/canopy.ts                          # Context setup
-    schemas.ts                             # Entry schemas
+    ai/config.ts                            # AI content config
+    ai/[...path]/route.ts                   # AI content endpoint
+    api/canopycms/[...canopycms]/route.ts   # Catch-all API
+    edit/page.tsx                            # Editor page
+    lib/canopy.ts                           # Context setup
+    schemas.ts                              # Entry schemas
     layout.tsx
-  content/                                 # Content files
-  canopycms.config.ts                     # Config
-  middleware.ts                            # Auth protection
+  content/                                  # Content files
+  canopycms.config.ts                      # Config
+  middleware.ts                             # Auth protection
 ```
 
 ## Test Organization

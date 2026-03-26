@@ -1,7 +1,7 @@
 import type { CanopyUser } from './user'
 import type { CanopyServices } from './services'
 import type { ReadContentInput } from './content-reader'
-import { isBuildMode, BUILD_USER } from './build-mode'
+import { isDeployedStatic, isBuildMode, STATIC_DEPLOY_USER } from './build-mode'
 import { createContentReader } from './content-reader'
 import { createLogicalPath, parseSlug, type EntrySlug } from './paths'
 
@@ -48,12 +48,12 @@ export function createCanopyContext(options: CanopyContextOptions) {
 
   /**
    * Get the current user.
-   * Returns BUILD_USER during static generation, otherwise delegates to adapter.
+   * Returns STATIC_DEPLOY_USER for static deployments or during build, otherwise delegates to adapter.
    */
   const getUser = async (): Promise<CanopyUser> => {
-    // Build mode: static generation gets admin access
-    if (isBuildMode()) {
-      return BUILD_USER
+    // Static deployment or build phase: no request context, use synthetic admin user
+    if (isDeployedStatic(services.config) || isBuildMode()) {
+      return STATIC_DEPLOY_USER
     }
 
     // Runtime: delegate to adapter-provided user extractor

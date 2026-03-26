@@ -43,6 +43,13 @@ export interface AuthPlugin {
    * @param query - Search string (name, ID, etc.)
    */
   searchExternalGroups?(query: string): Promise<Array<{ id: CanopyGroupId; name: string }>>
+
+  /**
+   * Optional: lightweight token-only verification (no user metadata lookup, no network).
+   * When present, createNextCanopyContext automatically wraps this plugin with
+   * CachingAuthPlugin in prod/prod-sim modes. The cache is populated by the worker daemon.
+   */
+  verifyTokenOnly?(context: unknown): Promise<{ userId: CanopyUserId } | null>
 }
 
 /**

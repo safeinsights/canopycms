@@ -1,17 +1,49 @@
+import path from 'node:path'
 import { cache } from 'react'
 import { headers } from 'next/headers'
-import { createCanopyContext, type CanopyContext, createCanopyServices } from 'canopycms/server'
+import {
+  createCanopyContext,
+  type CanopyContext,
+  createCanopyServices,
+  operatingStrategy,
+  loadInternalGroups,
+  loadBranchContext,
+} from 'canopycms/server'
 import type { CanopyConfig, AuthPlugin, CanopyUser, FieldConfig } from 'canopycms'
 import { authResultToCanopyUser } from 'canopycms'
-import { loadInternalGroups, loadBranchContext } from 'canopycms/server'
 import type { InternalGroup } from 'canopycms/server'
+import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth/cache'
 import { createCanopyCatchAllHandler } from './adapter'
 
 let warnedNoAdmins = false
+let warnedStaticMode = false
+
+/**
+ * Stub auth plugin for static deployments where no real auth is needed.
+ * Returns unauthenticated for all requests — API routes will return 401.
+ */
+const staticDeployAuthPlugin: AuthPlugin = {
+  async authenticate() {
+    return { success: false as const, error: 'No auth plugin configured (static deployment)' }
+  },
+  async searchUsers() {
+    return []
+  },
+  async getUserMetadata() {
+    return null
+  },
+  async getGroupMetadata() {
+    return null
+  },
+  async listGroups() {
+    return []
+  },
+}
 
 export interface NextCanopyOptions {
   config: CanopyConfig
-  authPlugin: AuthPlugin
+  /** Auth plugin for user authentication. Optional for static deployments (deployedAs: 'static'). */
+  authPlugin?: AuthPlugin
   entrySchemaRegistry: Record<string, readonly FieldConfig[]>
 }
 
@@ -19,8 +51,48 @@ export interface NextCanopyOptions {
  * Create Next.js-specific wrapper around core context.
  * Adds React cache() for per-request memoization and API handler.
  * This function is async because it needs to load .collection.json meta files.
+ *
+ * In prod/prod-sim mode, if the provided authPlugin implements verifyTokenOnly(),
+ * it is automatically wrapped with CachingAuthPlugin + FileBasedAuthCache so that
+ * auth works without network access (Lambda). The cache is populated by the worker daemon.
  */
 export async function createNextCanopyContext(options: NextCanopyOptions) {
+  // Fail fast: authPlugin is required for server deployments
+  if (options.config.deployedAs !== 'static' && !options.authPlugin) {
+    throw new Error(
+      'CanopyCMS: authPlugin is required when deployedAs is "server". ' +
+        'Set deployedAs: "static" in your canopy config, or provide an authPlugin.',
+    )
+  }
+
+  // Warn when running in static deployment mode so it is not accidentally set in a server build
+  if (options.config.deployedAs === 'static' && !warnedStaticMode) {
+    console.warn(
+      'CanopyCMS: running in static deployment mode — all CMS API requests will return 401. ' +
+        'Do not set deployedAs: "static" in a server deployment.',
+    )
+    warnedStaticMode = true
+  }
+
+  // Resolve the auth plugin: auto-wrap with CachingAuthPlugin for prod/prod-sim when
+  // the plugin supports token-only verification. This keeps auth networkless (required for
+  // Lambda) without exposing caching internals to adopters.
+  // For static deployments, use the stub that returns 401 for all requests.
+  const { mode } = options.config
+  const authPlugin: AuthPlugin = (() => {
+    if (!options.authPlugin) return staticDeployAuthPlugin
+    if ((mode === 'prod' || mode === 'prod-sim') && options.authPlugin.verifyTokenOnly) {
+      const cachePath =
+        process.env.CANOPY_AUTH_CACHE_PATH ??
+        path.join(operatingStrategy(mode).getWorkspaceRoot(), '.cache')
+      return new CachingAuthPlugin(
+        (ctx) => options.authPlugin!.verifyTokenOnly!(ctx),
+        new FileBasedAuthCache(cachePath),
+      )
+    }
+    return options.authPlugin
+  })()
+
   // Create services ONCE at initialization
   const services = await createCanopyServices(options.config, {
     entrySchemaRegistry: options.entrySchemaRegistry,
@@ -29,7 +101,7 @@ export async function createNextCanopyContext(options: NextCanopyOptions) {
   // User extractor: passes Next.js headers to auth plugin, loads internal groups, applies authorization
   const extractUser = async (): Promise<CanopyUser> => {
     const headersList = await headers()
-    const authResult = await options.authPlugin.authenticate(headersList)
+    const authResult = await authPlugin.authenticate(headersList)
 
     // Load internal groups from main branch
     const baseBranch = services.config.defaultBaseBranch ?? 'main'
@@ -76,6 +148,7 @@ export async function createNextCanopyContext(options: NextCanopyOptions) {
   // Create API handler using same services
   const handler = createCanopyCatchAllHandler({
     ...options,
+    authPlugin,
     services,
   })
 

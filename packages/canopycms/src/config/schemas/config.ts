@@ -18,6 +18,7 @@ export const gitBotAuthorNameSchema = z.string().min(1)
 export const gitBotAuthorEmailSchema = z.string().email()
 export const githubTokenEnvVarSchema = z.string().default('GITHUB_BOT_TOKEN')
 export const operatingModeSchema = z.enum(['prod', 'prod-sim', 'dev']).default('dev')
+export const deployedAsSchema = z.enum(['static', 'server']).default('server')
 export const contentRootSchema = relativePathSchema.default('content')
 export const sourceRootSchema = z.string().min(1).optional()
 export const deploymentNameSchema = z.string().default('prod')
@@ -48,6 +49,7 @@ export const CanopyConfigSchema = z.object({
   gitBotAuthorEmail: gitBotAuthorEmailSchema,
   githubTokenEnvVar: githubTokenEnvVarSchema.optional(),
   mode: operatingModeSchema, // Has .default(), so not optional in output type
+  deployedAs: deployedAsSchema, // Has .default('server'), so always present after validation
   settingsBranch: z.string().optional(),
   autoCreateSettingsPR: z.boolean().optional(),
   deploymentName: deploymentNameSchema.optional(),

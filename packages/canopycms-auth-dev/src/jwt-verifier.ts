@@ -21,6 +21,9 @@ const TEST_USER_MAP: Record<string, string> = {
  *
  * Used with CachingAuthPlugin in prod-sim mode to simulate the prod
  * code path (token verification + cached metadata lookup) using dev users.
+ *
+ * @deprecated Use `DevAuthPlugin.verifyTokenOnly()` instead. The plugin's method is
+ * automatically wired into CachingAuthPlugin by `createNextCanopyContext()` in prod/prod-sim.
  */
 export function createDevTokenVerifier(options?: { defaultUserId?: string }): TokenVerifier {
   const defaultUserId = options?.defaultUserId ?? DEFAULT_USER_ID
