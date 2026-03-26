@@ -62,6 +62,8 @@ The codebase uses a modular structure with clear separation:
 | settings-branch-utils.ts | Settings branch utility helpers                                                                            |
 | content-store.ts         | Content persistence                                                                                        |
 | content-reader.ts        | Content reading                                                                                            |
+| content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading)                             |
+| content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs)                                      |
 | content-id-index.ts      | Content ID indexing                                                                                        |
 | entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                          |
 | entry-schema-registry.ts | Entry schema registry for reusable field definitions                                                       |
@@ -397,6 +399,32 @@ AWS CDK constructs for deploying CanopyCMS to AWS.
 - **Entry Types**: Define content structure within collections; `maxItems: 1` for single-instance entries
 - **Fields**: text, select, reference, object, code, block, markdown
 - **Format**: MD/MDX/JSON with frontmatter (gray-matter)
+
+## Content Tree
+
+**Location**: packages/canopycms/src/content-tree.ts, packages/canopycms/src/content-listing.ts
+
+Builds a tree of content nodes from the schema and filesystem for adopter use cases: navigation menus, sitemaps, search indexes, breadcrumbs.
+
+### Key Files
+
+| File               | Purpose                                                                   |
+| ------------------ | ------------------------------------------------------------------------- |
+| content-tree.ts    | `buildContentTree()` function and `ContentTreeNode` / options types       |
+| content-listing.ts | `listCollectionEntries()`, `sortByOrder()`, `parseTypedFilename()` shared |
+
+### BuildContentTreeOptions<T>
+
+| Option    | Default                                  | Description                                                         |
+| --------- | ---------------------------------------- | ------------------------------------------------------------------- |
+| rootPath  | contentRoot name                         | Starting collection path                                            |
+| extract   | none                                     | Extract typed custom fields from raw data                           |
+| filter    | none                                     | Exclude nodes (and descendants); runs after extract                 |
+| buildPath | strips content root prefix, prepends `/` | Custom URL path builder                                             |
+| sort      | order array then alphabetical            | Custom sort for children at each level; fully replaces default sort |
+| maxDepth  | unlimited                                | Max traversal depth                                                 |
+
+Without `sort`: children are ordered by the collection's `order` array first, then remaining items alphabetically. With `sort`: the comparator fully replaces the default sort. It runs after `extract` and `filter`, so `fields` is available.
 
 ## Configuration Module
 

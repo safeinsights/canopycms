@@ -64,6 +64,12 @@ export interface BuildContentTreeOptions<T = unknown> {
   filter?: (node: ContentTreeNode<T>) => boolean
   /** Custom URL path builder. Default: strips content root prefix, joins with /. */
   buildPath?: (logicalPath: LogicalPath, kind: 'collection' | 'entry') => string
+  /**
+   * Custom sort for children at each level.
+   * When provided, replaces the default sort (order array → alphabetical).
+   * Runs after extract + filter, so `fields` is available.
+   */
+  sort?: (a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number
   /** Max depth to traverse. Default: unlimited. */
   maxDepth?: number
 }
@@ -117,6 +123,7 @@ export async function buildContentTree<T = unknown>(
   const filter = options?.filter
   const buildPath =
     options?.buildPath ?? ((lp: LogicalPath) => defaultBuildPath(lp, contentRootName))
+  const customSort = options?.sort
   const maxDepth = options?.maxDepth
 
   // Find the starting collection(s)
@@ -172,11 +179,12 @@ export async function buildContentTree<T = unknown>(
       entryNodes.push(entryNode)
     }
 
-    // Combine and interleave by order array
+    // Combine and interleave by order array (or custom sort)
     const allChildren = interleaveChildren(
       childCollectionNodes.filter((n): n is ContentTreeNode<T> => n !== null),
       entryNodes,
       collection.order,
+      customSort,
     )
 
     // Prune empty collections (no children after filtering)
@@ -206,6 +214,7 @@ export async function buildContentTree<T = unknown>(
     collectionNodes.filter((n): n is ContentTreeNode<T> => n !== null),
     rootEntryNodes,
     rootCollection.order,
+    customSort,
   )
 }
 
@@ -237,15 +246,20 @@ function buildEntryNode<T>(
 }
 
 /**
- * Interleave collection nodes and entry nodes by the order array.
- * Items in the order array come first (by position), then the rest alphabetically.
+ * Interleave collection nodes and entry nodes.
+ * When a custom sort is provided, it replaces the default order-array sort entirely.
+ * Otherwise: items in the order array come first (by position), then the rest alphabetically.
  */
 function interleaveChildren<T>(
   collectionNodes: ContentTreeNode<T>[],
   entryNodes: ContentTreeNode<T>[],
   order: readonly string[] | undefined,
+  customSort?: (a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number,
 ): ContentTreeNode<T>[] {
   const all = [...collectionNodes, ...entryNodes]
+  if (customSort) {
+    return all.sort(customSort)
+  }
   return sortByOrder(all, order, (item) =>
     item.kind === 'collection' ? (item.collection?.name ?? '') : (item.entry?.slug ?? ''),
   )

@@ -1598,7 +1598,7 @@ The builder takes the flattened schema (already computed at service initializati
 
 1. **Schema traversal**: Starting from the content root (or an optional `rootPath`), the builder groups collections by parent and traverses the hierarchy depth-first.
 2. **Entry discovery**: For each collection, it reads the directory to find entry files, parses their filenames to extract type, slug, and content ID, and reads their data (frontmatter for md/mdx, parsed JSON for json).
-3. **Interleaving**: Child collections and entries within a collection are interleaved according to the collection's `order` array. Items listed in the order array appear first in their specified order; remaining items are sorted alphabetically.
+3. **Interleaving**: Child collections and entries within a collection are interleaved according to the collection's `order` array. Items listed in the order array appear first in their specified order; remaining items are sorted alphabetically. Adopters can supply a custom `sort` comparator that fully replaces this default ordering.
 4. **Node construction**: Each node in the tree carries structural facts from CanopyCMS (logical path, content ID, collection metadata, entry metadata) but leaves display concerns to the adopter.
 
 ### Adopter Customization
@@ -1607,6 +1607,7 @@ The builder supports several options that let adopters shape the tree to their n
 
 - **extract**: A callback that receives each node's raw data and returns typed custom fields. This is how adopters pull specific frontmatter fields (like `title`, `description`, `publishDate`) into the tree without the builder needing to know about adopter-specific schemas.
 - **filter**: A callback that excludes nodes (and their descendants) from the tree. Runs after `extract`, so adopter-extracted fields are available for filtering decisions.
+- **sort**: A custom comparator that fully replaces the default child ordering (order array followed by alphabetical) at each level. Runs after `extract` and `filter`, so adopter-extracted fields are available for sorting decisions. This is useful when adopters need to sort by a frontmatter field like `publishDate` or `weight` rather than relying on the schema's order array.
 - **buildPath**: A callback that controls URL path generation. The default strips the content root prefix and joins segments with `/`. Adopters can override this for custom URL structures.
 - **maxDepth**: Limits traversal depth for performance or to build shallow navigation trees.
 

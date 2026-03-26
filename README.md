@@ -922,15 +922,32 @@ const tree = await canopy.buildContentTree<NavItem>({
 })
 ```
 
+### Custom Sorting
+
+By default, children at each level are sorted by the collection's `order` array first, then alphabetically. The `sort` option lets you replace this entirely with your own comparator. It runs after `extract` and `filter`, so `fields` is available on every node:
+
+```typescript
+const tree = await canopy.buildContentTree<NavItem>({
+  extract: (data) => ({
+    title: (data.title as string) ?? '',
+    draft: (data.draft as boolean) ?? false,
+    order: (data.order as number) ?? 0,
+  }),
+  filter: (node) => node.fields?.draft !== true,
+  sort: (a, b) => (a.fields?.order ?? 0) - (b.fields?.order ?? 0),
+})
+```
+
 ### Options Reference
 
-| Option      | Type                                    | Default             | Description                                                     |
-| ----------- | --------------------------------------- | ------------------- | --------------------------------------------------------------- |
-| `rootPath`  | `string`                                | Content root        | Starting collection path (e.g., `"content/docs"` for a subtree) |
-| `extract`   | `(data, node) => T`                     | -                   | Extract typed custom fields from raw entry/collection data      |
-| `filter`    | `(node: ContentTreeNode<T>) => boolean` | -                   | Return false to exclude a node and its descendants              |
-| `buildPath` | `(logicalPath, kind) => string`         | Strips content root | Custom URL path builder                                         |
-| `maxDepth`  | `number`                                | Unlimited           | Maximum depth to traverse                                       |
+| Option      | Type                                                       | Default                       | Description                                                     |
+| ----------- | ---------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------- |
+| `rootPath`  | `string`                                                   | Content root                  | Starting collection path (e.g., `"content/docs"` for a subtree) |
+| `extract`   | `(data, node) => T`                                        | -                             | Extract typed custom fields from raw entry/collection data      |
+| `filter`    | `(node: ContentTreeNode<T>) => boolean`                    | -                             | Return false to exclude a node and its descendants              |
+| `buildPath` | `(logicalPath, kind) => string`                            | Strips content root           | Custom URL path builder                                         |
+| `sort`      | `(a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number` | Order array then alphabetical | Custom sort for children at each level (replaces default sort)  |
+| `maxDepth`  | `number`                                                   | Unlimited                     | Maximum depth to traverse                                       |
 
 ### Imports
 

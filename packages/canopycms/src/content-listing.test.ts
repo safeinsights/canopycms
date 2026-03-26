@@ -80,9 +80,9 @@ describe('sortByOrder', () => {
 
 describe('parseTypedFilename', () => {
   const entryTypes: EntryTypeConfig[] = [
-    { name: 'post', format: 'md', schema: { fields: {} } },
-    { name: 'doc', format: 'mdx', schema: { fields: {} } },
-    { name: 'page', format: 'json', schema: { fields: {} } },
+    { name: 'post', format: 'md', schema: [] },
+    { name: 'doc', format: 'mdx', schema: [] },
+    { name: 'page', format: 'json', schema: [] },
   ]
 
   it('parses a valid typed filename', () => {

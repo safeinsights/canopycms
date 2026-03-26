@@ -503,6 +503,41 @@ describe('buildContentTree', () => {
     expect(tree).toHaveLength(0)
   })
 
+  it('custom sort overrides default ordering', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    await createEntry(postsDir, 'post', 'alpha', 'md', { title: 'Alpha', navOrder: 3 })
+    await createEntry(postsDir, 'post', 'beta', 'md', { title: 'Beta', navOrder: 1 })
+    await createEntry(postsDir, 'post', 'gamma', 'md', { title: 'Gamma', navOrder: 2 })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    interface NavFields {
+      navOrder: number
+    }
+
+    const tree = await buildContentTree<NavFields>(tempDir, flat, 'content', {
+      extract: (data) => ({
+        navOrder: typeof data.navOrder === 'number' ? data.navOrder : 999,
+      }),
+      sort: (a, b) => (a.fields?.navOrder ?? 999) - (b.fields?.navOrder ?? 999),
+    })
+
+    const slugs = tree[0].children!.map((n) => n.entry?.slug)
+    expect(slugs).toEqual(['beta', 'gamma', 'alpha'])
+  })
+
   it('collection nodes have collection metadata from schema', async () => {
     const contentDir = path.join(tempDir, 'content')
     await fs.mkdir(contentDir)
