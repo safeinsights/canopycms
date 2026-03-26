@@ -14,4 +14,10 @@ await cp(resolve(root, 'src/cli/template-files'), resolve(root, 'dist/cli/templa
 // Replace tsx shebang with node in the compiled binary so it runs without tsx installed
 const binPath = resolve(root, 'dist/cli/init.js')
 const src = await readFile(binPath, 'utf8')
-await writeFile(binPath, src.replace('#!/usr/bin/env tsx\n', '#!/usr/bin/env node\n'))
+const replaced = src.replace('#!/usr/bin/env tsx\n', '#!/usr/bin/env node\n')
+if (replaced === src) {
+  throw new Error(
+    'postbuild: shebang replacement failed — dist/cli/init.js missing expected #!/usr/bin/env tsx',
+  )
+}
+await writeFile(binPath, replaced)

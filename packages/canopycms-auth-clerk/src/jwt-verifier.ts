@@ -28,6 +28,9 @@ export interface ClerkJwtVerifierConfig {
  * with no internet access.
  *
  * Returns a TokenVerifier compatible with CachingAuthPlugin.
+ *
+ * @deprecated Use `ClerkAuthPlugin.verifyTokenOnly()` instead. The plugin's method is
+ * automatically wired into CachingAuthPlugin by `createNextCanopyContext()` in prod/prod-sim.
  */
 export function createClerkJwtVerifier(config: ClerkJwtVerifierConfig): TokenVerifier {
   return async (context: unknown) => {

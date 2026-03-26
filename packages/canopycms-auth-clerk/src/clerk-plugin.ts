@@ -154,15 +154,20 @@ export class ClerkAuthPlugin implements AuthPlugin {
   }
 
   async verifyTokenOnly(context: unknown): Promise<{ userId: string } | null> {
+    if (!this.config.jwtKey) {
+      throw new Error(
+        'ClerkAuthPlugin: jwtKey is required for verifyTokenOnly() (networkless JWT verification). ' +
+          'Set CLERK_JWT_KEY or pass jwtKey in ClerkAuthConfig.',
+      )
+    }
     const headers = extractHeaders(context)
     if (!headers) return null
     const token = extractToken(headers)
     if (!token) return null
     try {
       const verifyOptions: Parameters<typeof clerkVerifyToken>[1] = {
-        secretKey: this.config.secretKey,
+        jwtKey: this.config.jwtKey,
       }
-      if (this.config.jwtKey) verifyOptions.jwtKey = this.config.jwtKey
       if (this.config.authorizedParties)
         verifyOptions.authorizedParties = this.config.authorizedParties
       const payload = await clerkVerifyToken(token, verifyOptions)
