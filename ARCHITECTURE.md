@@ -21,7 +21,7 @@ CanopyCMS is organized as a monorepo with separate packages for extensibility:
 
 - **canopycms** (core): The main library containing content store, branch management, permissions, editor UI, API handlers, and AI content generation. This package is framework-agnostic and contains all business logic. It exposes multiple entrypoints: `canopycms/server` (content reading, API setup), `canopycms/client` (editor components), `canopycms/config` (configuration helpers), `canopycms/ai` (AI content route handler and generation), and `canopycms/build` (static file generation utilities).
 
-- **canopycms-next**: Next.js adapter that provides thin integration (~10 lines of user extraction code). Wraps core context with React cache() for per-request memoization.
+- **canopycms-next**: Next.js adapter that provides thin integration (~10 lines of user extraction code). Wraps core context with React cache() for per-request memoization. Also provides a `withCanopy()` Next.js config wrapper that handles module transpilation and React deduplication (see [Framework Adapters](#framework-adapters) below).
 
 - **canopycms-auth-clerk**: Authentication plugin using Clerk.
 
@@ -1658,6 +1658,15 @@ Framework adapters provide thin integration between the framework and CanopyCMS 
 
 The `canopycms-next` adapter is ~10 lines for user extraction plus the request/response wrapper. All business logic stays in core—adapters are purely integration code.
 
+**Next.js Config Wrapper (`withCanopy`)**:
+
+The `canopycms-next` package also provides a `withCanopy()` function that wraps the adopter's Next.js config to handle two build-tooling concerns:
+
+- **Module transpilation**: CanopyCMS packages export raw TypeScript. `withCanopy()` adds all Canopy packages to `transpilePackages` so the Next.js bundler compiles them.
+- **React deduplication**: When consuming Canopy packages via `file:` symlinks or `npm link` during local development, the bundler can follow symlinks into the linked package's `node_modules` and resolve a second copy of React. Dual React instances cause "Invalid hook call" crashes. `withCanopy()` resolves React modules from the consumer's project root and disables symlink following, ensuring a single React instance.
+
+The wrapper handles both Webpack and Turbopack configurations. When installed from npm (not symlinked), the React aliases are harmless—they resolve to the same React the project already uses.
+
 **Creating a new adapter**:
 
 - Implement user extraction (read auth headers/cookies, call auth plugin)
@@ -1938,6 +1947,23 @@ Keeping adapters thin (like the ~10 line Next.js user extraction) provides sever
 - Confidence that adapters are just thin wrappers, not reimplementations
 
 If adapters contained business logic, we'd risk behavior divergence, duplicate maintenance, and harder-to-debug issues.
+
+### Why a Next.js config wrapper for React deduplication?
+
+CanopyCMS packages export raw TypeScript (no pre-compilation step). This means the Next.js bundler must transpile them, which requires adding each package to `transpilePackages`. Additionally, during local development adopters typically consume Canopy packages via `file:` references in `package.json`, which npm resolves as symlinks.
+
+Symlinks create a subtle problem: when the bundler follows a symlink into the linked package's directory, it can resolve React from that package's `node_modules` instead of from the consumer's `node_modules`. Two React instances in the same bundle cause "Invalid hook call" crashes that are notoriously difficult to debug.
+
+The `withCanopy()` wrapper in `canopycms-next` solves both problems in one call:
+
+- Adds all Canopy packages to `transpilePackages`
+- Resolves React (and react-dom, jsx-runtime) from the consumer's project root via `createRequire()`
+- Disables Webpack symlink following so resolution happens from the symlink location, not the target
+- Configures equivalent Turbopack aliases for projects using the Turbopack bundler
+
+**Why solve this in the adapter package?** The dual-React problem is specific to how Next.js resolves modules through symlinks. It is a build-tooling concern, not business logic. Placing it in the adapter keeps the core package clean and makes the fix discoverable for Next.js adopters in the package they already import. Other framework adapters would handle their bundler's equivalent quirks in their own way.
+
+**Why not require pre-compilation?** Pre-compiling Canopy packages would eliminate the `transpilePackages` requirement but would add a build step to the development workflow, slow down iteration, and make debugging harder (source maps through compiled output). Exporting raw TypeScript keeps the development loop fast and debuggable.
 
 ### Why branded types for paths?
 

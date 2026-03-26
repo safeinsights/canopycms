@@ -74,11 +74,23 @@ The generated `canopy.ts` template imports both auth packages and selects the ac
 
 ### 3. Configure Next.js
 
-Add to your `next.config.ts`:
+Wrap your Next.js config with `withCanopy()`:
 
 ```typescript
-transpilePackages: ['canopycms']
+// next.config.ts
+import { withCanopy } from 'canopycms-next'
+
+export default withCanopy({
+  // ...your existing Next.js config
+})
 ```
+
+`withCanopy()` handles two things:
+
+- **Transpilation** — Canopy packages export raw TypeScript; the wrapper adds them to `transpilePackages` automatically.
+- **React deduplication** — When developing locally with `file:` references or `npm link`, the bundler can follow symlinks and load a second copy of React from the linked package's `node_modules`, causing "Invalid hook call" crashes. The wrapper adds module aliases so React always resolves to your project's copy.
+
+The React aliases are harmless when not strictly needed (e.g., when installing from npm), so `withCanopy()` is the recommended configuration for all adopters.
 
 ### 4. Customize your schemas
 
@@ -1228,14 +1240,15 @@ Admins can configure access control:
 
 CanopyCMS is designed for minimal integration effort. Run `npx canopycms init` to generate all required files, or create them manually. Use `--app-dir` to customize the app directory path (default: `app`).
 
-| Touchpoint      | File                                             | Purpose                                                      |
-| --------------- | ------------------------------------------------ | ------------------------------------------------------------ |
-| **Config**      | `canopycms.config.ts`                            | Define settings and operating mode                           |
-| **Schemas**     | `{appDir}/schemas.ts`                            | Field schemas and registry (for `.collection.json` approach) |
-| **Context**     | `{appDir}/lib/canopy.ts`                         | One-time async setup with auth plugin                        |
-| **API Route**   | `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all handler                                     |
-| **Editor Page** | `{appDir}/edit/page.tsx`                         | Embed the editor component                                   |
-| **Middleware**  | `middleware.ts`                                  | Protect editor routes with authentication (Clerk only)       |
+| Touchpoint       | File                                             | Purpose                                                      |
+| ---------------- | ------------------------------------------------ | ------------------------------------------------------------ |
+| **Config**       | `canopycms.config.ts`                            | Define settings and operating mode                           |
+| **Next.js wrap** | `next.config.ts`                                 | Wrap with `withCanopy()` from `canopycms-next`               |
+| **Schemas**      | `{appDir}/schemas.ts`                            | Field schemas and registry (for `.collection.json` approach) |
+| **Context**      | `{appDir}/lib/canopy.ts`                         | One-time async setup with auth plugin                        |
+| **API Route**    | `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all handler                                     |
+| **Editor Page**  | `{appDir}/edit/page.tsx`                         | Embed the editor component                                   |
+| **Middleware**   | `middleware.ts`                                  | Protect editor routes with authentication (Clerk only)       |
 
 **Optional touchpoints:**
 

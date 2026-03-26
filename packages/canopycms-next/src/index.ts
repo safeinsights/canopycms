@@ -3,3 +3,5 @@ export { createCanopyCatchAllHandler, wrapNextRequest, type CanopyNextOptions } 
 export { createNextCanopyContext, type NextCanopyOptions } from './context-wrapper'
 
 export { createMockAuthPlugin, createRejectingAuthPlugin } from './test-utils'
+
+export { withCanopy, type WithCanopyOptions } from './with-canopy'

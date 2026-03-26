@@ -8,13 +8,13 @@ You are a codebase guide for CanopyCMS. Your job is to help navigate the project
 
 ## Package Structure
 
-| Package              | Location                       | Purpose                                                          |
-| -------------------- | ------------------------------ | ---------------------------------------------------------------- |
-| canopycms            | packages/canopycms/            | Core CMS library                                                 |
-| canopycms-next       | packages/canopycms-next/       | Next.js adapter                                                  |
-| canopycms-auth-clerk | packages/canopycms-auth-clerk/ | Clerk auth plugin                                                |
-| canopycms-auth-dev   | packages/canopycms-auth-dev/   | Dev auth plugin with cache-writer, JWT verifier for prod-sim     |
-| canopycms-cdk        | packages/canopycms-cdk/        | AWS CDK constructs for deployment (VPC, EFS, Lambda, EC2 worker) |
+| Package              | Location                       | Purpose                                                                         |
+| -------------------- | ------------------------------ | ------------------------------------------------------------------------------- |
+| canopycms            | packages/canopycms/            | Core CMS library                                                                |
+| canopycms-next       | packages/canopycms-next/       | Next.js adapter (config wrapper, catch-all handler, context, client components) |
+| canopycms-auth-clerk | packages/canopycms-auth-clerk/ | Clerk auth plugin                                                               |
+| canopycms-auth-dev   | packages/canopycms-auth-dev/   | Dev auth plugin with cache-writer, JWT verifier for prod-sim                    |
+| canopycms-cdk        | packages/canopycms-cdk/        | AWS CDK constructs for deployment (VPC, EFS, Lambda, EC2 worker)                |
 
 **Apps** (in apps/, not packages/):
 
@@ -359,6 +359,20 @@ AWS CDK constructs for deploying CanopyCMS to AWS.
 - ACM certificate (DNS validated)
 - CloudFront distribution with Function URL origin
 - Route53 A/AAAA alias records
+
+## canopycms-next Package
+
+**Location**: packages/canopycms-next/src/
+
+Next.js-specific adapter layer. Provides the catch-all API handler, context creation, a Next.js config wrapper, client components, and test utilities.
+
+| File               | Purpose                                                                                              |
+| ------------------ | ---------------------------------------------------------------------------------------------------- |
+| with-canopy.ts     | `withCanopy()` Next.js config wrapper: transpilePackages + React dedup aliases (webpack & Turbopack) |
+| adapter.ts         | `createCanopyCatchAllHandler()`, `wrapNextRequest()` for Next.js catch-all API route                 |
+| context-wrapper.ts | `createNextCanopyContext()` - React-cached Canopy context creation with Next.js headers              |
+| client.tsx         | `NextCanopyEditorPage` - client component that reads URL search params automatically                 |
+| test-utils.ts      | `createMockAuthPlugin()`, `createRejectingAuthPlugin()` for tests                                    |
 
 ## Comment System
 
@@ -896,6 +910,7 @@ packages/canopycms/src/worker/       # CMS Worker daemon
 packages/canopycms/src/task-queue/   # Generic task queue
 packages/canopycms/src/cli/          # CLI bootstrapping
 packages/canopycms-cdk/              # AWS CDK constructs
+packages/canopycms-next/             # Next.js adapter package
 packages/canopycms-auth-dev/         # Dev auth plugin + cache
 apps/example1/                       # Example app
 ```
