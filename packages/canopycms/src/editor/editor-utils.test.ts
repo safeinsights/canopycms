@@ -85,14 +85,14 @@ describe('normalizeContentPayload', () => {
     })
   })
 
-  it('ignores top-level format/body when data is provided separately', () => {
+  it('includes body from top-level format/data/body payload', () => {
     expect(
       normalizeContentPayload({
         format: 'mdx',
         data: { title: 'Post' },
         body: 'Body content',
       }),
-    ).toEqual({ title: 'Post' })
+    ).toEqual({ title: 'Post', body: 'Body content' })
   })
 
   it('handles nested payloads containing format/data/body', () => {

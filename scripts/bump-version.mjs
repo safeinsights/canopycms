@@ -35,7 +35,7 @@ for (const pkg of PACKAGES) {
   for (const depType of ['peerDependencies', 'devDependencies']) {
     if (!pkgJson[depType]) continue
     for (const dep of Object.keys(pkgJson[depType])) {
-      if (PACKAGES.some((p) => p.endsWith(dep))) {
+      if (PACKAGES.some((p) => p.split('/').pop() === dep)) {
         pkgJson[depType][dep] = `^${newVersion}`
       }
     }

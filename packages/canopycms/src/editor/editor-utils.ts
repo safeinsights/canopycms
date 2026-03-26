@@ -68,7 +68,10 @@ export const buildPreviewSrc = (
 
 export const normalizeContentPayload = (raw: unknown): FormValue => {
   const candidate = raw as Record<string, unknown> | undefined
-  const data = (candidate?.data as Record<string, unknown> | undefined) ?? candidate
+  const data =
+    candidate && 'format' in candidate && 'data' in candidate
+      ? candidate
+      : ((candidate?.data as Record<string, unknown> | undefined) ?? candidate)
   if (data && typeof data === 'object' && 'format' in data && 'data' in data) {
     const format = data.format as ContentFormat
     const payloadData = (data.data as Record<string, unknown>) ?? {}
