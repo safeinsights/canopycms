@@ -69,6 +69,7 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 - Media references stored in content as URLs; uploader handles permission checks and optional image transforms
 - Uploads use pre-signed URLs in cloud modes; local dev avoids committing assets when prod uses S3
 - Media manager UI: browsing, search, selection, deletion according to permissions
+- Wire `imagePlugin({ imageUploadHandler })` in MDXEditor to AssetStore so users can upload images directly from the editor toolbar
 
 ### 9. Editor polish
 

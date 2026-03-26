@@ -23,6 +23,7 @@ const MDXEditorLazy = React.lazy(async () => {
       markdownShortcutPlugin,
       linkPlugin,
       linkDialogPlugin,
+      imagePlugin,
       tablePlugin,
       toolbarPlugin,
       codeBlockPlugin,
@@ -31,6 +32,7 @@ const MDXEditorLazy = React.lazy(async () => {
       BlockTypeSelect,
       ListsToggle,
       CreateLink,
+      InsertImage,
       InsertTable,
       InsertThematicBreak,
       CodeToggle,
@@ -58,6 +60,7 @@ const MDXEditorLazy = React.lazy(async () => {
           markdownShortcutPlugin(),
           linkPlugin(),
           linkDialogPlugin(),
+          imagePlugin(),
           tablePlugin(),
           codeBlockPlugin({ defaultCodeBlockLanguage: '' }),
           codeMirrorPlugin({
@@ -89,6 +92,7 @@ const MDXEditorLazy = React.lazy(async () => {
                 <ListsToggle />
                 <Separator />
                 <CreateLink />
+                <InsertImage />
                 <InsertTable />
                 <InsertThematicBreak />
                 <InsertCodeBlock />
@@ -139,6 +143,7 @@ const EditorContentStyles: React.FC = () => (
     .canopy-mdx-content hr { border: none; border-top: 1px solid var(--mantine-color-gray-4, #ced4da); margin: 1em 0; }
     .canopy-mdx-content p { margin: 0.75em 0; }
     .canopy-mdx-content a { color: var(--mantine-color-blue-6, #228be6); text-decoration: underline; }
+    .canopy-mdx-content img { max-width: 100%; height: auto; }
   `}</style>
 )
 
