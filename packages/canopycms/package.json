@@ -85,7 +85,7 @@
   "scripts": {
     "prebuild": "npx tsx scripts/generate-client.ts",
     "build": "tsc -p tsconfig.build.json",
-    "postbuild": "rm -rf dist/cli/template-files && cp -r src/cli/template-files dist/cli/template-files && node -e \"var fs=require('fs'),f='dist/cli/init.js',c=fs.readFileSync(f,'utf8');fs.writeFileSync(f,c.replace('#!/usr/bin/env tsx','#!/usr/bin/env node'))\"",
+    "postbuild": "node scripts/postbuild.mjs",
     "lint": "eslint src/",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",

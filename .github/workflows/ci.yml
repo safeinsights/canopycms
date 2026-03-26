@@ -48,6 +48,10 @@ jobs:
       - name: TypeScript type checking
         run: npm run typecheck
 
+      - name: Build
+        run: npm run build
+        working-directory: packages/canopycms
+
       - name: Run tests
         working-directory: packages/canopycms
         env:

@@ -46,7 +46,6 @@ describe('CLI binary execution (dist)', () => {
       )
     }
   })
-
   it('prints help when run with no arguments', async () => {
     const { stdout } = await execFileAsync(tsxBin, [DIST_BIN], {
       timeout: 10_000,
