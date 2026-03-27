@@ -29,9 +29,6 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org'
-          # Do not set token here — trusted publishing uses OIDC, not a token.
-          # setup-node defaults token to github.token which is invalid for npmjs.org.
-          token: ''
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -56,23 +53,23 @@ jobs:
           pnpm --filter canopycms-cdk run build
 
       - name: Publish canopycms
-        run: npm publish --access public --provenance
+        run: pnpm publish --access public --provenance --no-git-checks
         working-directory: packages/canopycms
 
       - name: Publish canopycms-next
-        run: npm publish --access public --provenance
+        run: pnpm publish --access public --provenance --no-git-checks
         working-directory: packages/canopycms-next
 
       - name: Publish canopycms-auth-clerk
-        run: npm publish --access public --provenance
+        run: pnpm publish --access public --provenance --no-git-checks
         working-directory: packages/canopycms-auth-clerk
 
       - name: Publish canopycms-auth-dev
-        run: npm publish --access public --provenance
+        run: pnpm publish --access public --provenance --no-git-checks
         working-directory: packages/canopycms-auth-dev
 
       - name: Publish canopycms-cdk
-        run: npm publish --access public --provenance
+        run: pnpm publish --access public --provenance --no-git-checks
         working-directory: packages/canopycms-cdk
 
       - name: Commit version bump
