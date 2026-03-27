@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mockConsole } from '../../canopycms/src/test-utils/console-spy.js'
+import { mockConsole } from 'canopycms/test-utils'
 
 // Create mock objects
 const mockGetUser = vi.fn()

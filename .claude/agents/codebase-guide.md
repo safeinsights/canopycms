@@ -29,23 +29,23 @@ The codebase uses a modular structure with clear separation:
 
 **Core Modules** (packages/canopycms/src/):
 
-| Module          | Location            | Purpose                                                                                |
-| --------------- | ------------------- | -------------------------------------------------------------------------------------- |
-| authorization/  | src/authorization/  | Unified access control (branch + path permissions, groups)                             |
-| config/         | src/config/         | Configuration types, Zod schemas, validation                                           |
-| schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                 |
-| paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                          |
-| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, prod-sim, dev)                                        |
-| api/            | src/api/            | API handlers, middleware, route builder                                                |
-| http/           | src/http/           | HTTP request handling (router, types)                                                  |
-| editor/         | src/editor/         | React editor components, contexts, hooks                                               |
-| validation/     | src/validation/     | Validation utilities (field traversal, references)                                     |
-| utils/          | src/utils/          | Shared utilities (error handling, debug logging)                                       |
-| auth/           | src/auth/           | Authentication plugin interface and cache system                                       |
-| worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh) |
-| task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)      |
-| cli/            | src/cli/            | CLI bootstrapping (`npx canopycms init`, `init-deploy aws`, `worker run-once`)         |
-| test-utils/     | src/test-utils/     | Test helpers (API test helpers, console spy)                                           |
+| Module          | Location            | Purpose                                                                                                |
+| --------------- | ------------------- | ------------------------------------------------------------------------------------------------------ |
+| authorization/  | src/authorization/  | Unified access control (branch + path permissions, groups)                                             |
+| config/         | src/config/         | Configuration types, Zod schemas, validation                                                           |
+| schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                                 |
+| paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                                          |
+| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, prod-sim, dev)                                                        |
+| api/            | src/api/            | API handlers, middleware, route builder                                                                |
+| http/           | src/http/           | HTTP request handling (router, types)                                                                  |
+| editor/         | src/editor/         | React editor components, contexts, hooks                                                               |
+| validation/     | src/validation/     | Validation utilities (field traversal, references)                                                     |
+| utils/          | src/utils/          | Shared utilities (error handling, debug logging)                                                       |
+| auth/           | src/auth/           | Authentication plugin interface and cache system                                                       |
+| worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                 |
+| task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                      |
+| cli/            | src/cli/            | CLI bootstrapping (`npx canopycms init`, `init-deploy aws`, `worker run-once`)                         |
+| test-utils/     | src/test-utils/     | Shared test utilities (mock factories, console spy, git repo init); exported as `canopycms/test-utils` |
 
 **Top-level files** (intentionally not modularized):
 
@@ -846,12 +846,15 @@ try {
 
 **Location**: packages/canopycms/src/test-utils/
 
-| File                | Purpose                   |
-| ------------------- | ------------------------- |
-| api-test-helpers.ts | API testing utilities     |
-| console-spy.ts      | Console mocking for tests |
+**Subpath export**: `canopycms/test-utils` — available to satellite packages (e.g., canopycms-auth-clerk) and adopter test suites.
 
-**Integration Tests**: packages/canopycms/src/**integration**/
+| File                | Purpose                                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------- |
+| api-test-helpers.ts | Mock factories: createMockBranchContext, createMockUser, createMockServices, createMockApiContext, etc. |
+| console-spy.ts      | mockConsole() + consoleMatchers (toHaveLogged, toHaveWarned, toHaveErrored)                             |
+| git-helpers.ts      | initTestRepo() — initialize a git repo with CanopyCMS marker and user config                            |
+
+**Integration Tests**: packages/canopycms/src/\_\_integration\_\_/
 
 ## Example App
 

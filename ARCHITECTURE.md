@@ -25,7 +25,47 @@ CanopyCMS is organized as a monorepo with separate packages for extensibility:
 
 - **canopycms-auth-clerk**: Authentication plugin using Clerk.
 
+- **canopycms-auth-dev**: Development authentication plugin that provides a mock auth flow with configurable test users. Used for local development without requiring a real auth provider.
+
 This separation keeps the core framework-agnostic while allowing adapters to be minimal integration layers. All business logic lives in core—adapters only handle framework-specific concerns like extracting user identity from request contexts.
+
+The core package also exposes a `canopycms/test-utils` subpath export for shared test utilities (API test helpers, console spies, git test repo initialization). This replaces fragile cross-package relative imports and gives other packages in the monorepo a stable, versioned way to import test infrastructure.
+
+## Dependency Model
+
+### Nested Install Strategy
+
+The monorepo uses npm's `install-strategy=nested` (configured in `.npmrc`). This means each package gets its own complete `node_modules` tree rather than hoisting dependencies to the monorepo root. Every package must be self-sufficient with its own declared dependencies.
+
+**Why nested instead of hoisted?** The default hoisted strategy creates implicit dependency relationships: a package can accidentally import a dependency it does not declare because a sibling package hoisted it to the root. This works locally but breaks when the package is published and consumed in isolation. Nested installs catch these missing-declaration bugs during development by ensuring each package resolves only from its own `node_modules`.
+
+The tradeoff is increased disk usage (duplicate copies of shared dependencies) and slightly slower installs. For a monorepo of this size, the correctness guarantee is worth the cost.
+
+### Peer Dependencies for Plugins and Adapters
+
+Auth plugins and framework adapters declare their upstream framework and UI dependencies as `peerDependencies`. This means the adopter's project provides the actual dependency instances, and the plugin links against those same instances at runtime.
+
+For example, `canopycms-auth-clerk` declares `@clerk/nextjs` and `@clerk/backend` as peer dependencies. The adopter installs these in their project; the auth plugin uses whatever version the adopter provides (within the declared range). Similarly, `canopycms-auth-dev` declares `@mantine/core`, `@mantine/hooks`, and `react` as peers.
+
+**For monorepo development**, the same dependencies are also listed as `devDependencies` in each plugin's `package.json`. Under `install-strategy=nested`, this gives each package its own copy for building and testing. When the package is published, only the `peerDependencies` declaration ships -- consumers provide the actual installations.
+
+**Why peerDependencies?** Libraries like React and Mantine require a single instance in the bundle. If a plugin bundled its own copy of React, the adopter's app would have two React instances, causing hook crashes and context isolation bugs. Peer dependencies ensure the plugin and the adopter share the same instance.
+
+### Standard Type Boundaries at Package Edges
+
+The `canopycms-next` adapter uses standard Web API types (`Request` and `Response`) in its public handler signature rather than Next.js-specific types like `NextRequest`. This is a deliberate design choice for compatibility with the nested install strategy.
+
+Under nested installs, each package has its own copy of the `next` package. If the adapter's public API accepted `NextRequest` (from the adapter's copy of `next`), TypeScript would consider it a different type than the `NextRequest` the adopter creates (from the adopter's copy of `next`), even though they are structurally identical. This causes type errors at the integration boundary.
+
+Standard `Request` and `Response` types come from the global Web API type definitions, which are shared across all packages. By using these as the public contract, the adapter avoids cross-package type duplication entirely. Internally, the adapter can still use Next.js-specific APIs (like `NextResponse.json()`) for its own implementation.
+
+**Design principle**: Package boundaries should use standard, globally-available types. Framework-specific types should be confined to the package's internal implementation.
+
+### Root Package Hygiene
+
+The root `package.json` contains only monorepo tooling dependencies (eslint, prettier, typescript, husky, playwright). All library dependencies live in the packages that actually use them. For example, `simple-git` and `@tabler/icons-react` are dependencies of the `canopycms` core package, not the root.
+
+This ensures that the root `node_modules` contains only tooling and that each package's dependency declarations are accurate and complete.
 
 ## Module Structure
 
@@ -1658,6 +1698,8 @@ Framework adapters provide thin integration between the framework and CanopyCMS 
 
 The `canopycms-next` adapter is ~10 lines for user extraction plus the request/response wrapper. All business logic stays in core—adapters are purely integration code.
 
+**Standard type boundaries**: The adapter's public handler API accepts standard `Request` and returns standard `Response` rather than `NextRequest`/`NextResponse`. This avoids type duplication under `install-strategy=nested`, where each package has its own copy of the `next` package and therefore its own `NextRequest` type. Standard Web API types are globally shared, so they work correctly across package boundaries. See [Dependency Model](#dependency-model) for details.
+
 **Next.js Config Wrapper (`withCanopy`)**:
 
 The `canopycms-next` package also provides a `withCanopy()` function that wraps the adopter's Next.js config to handle two build-tooling concerns:
@@ -1762,6 +1804,26 @@ The tradeoff is slightly more complex import paths, but the improved maintainabi
 ### Why separate packages for auth and framework adapters?
 
 Keeps the core framework-agnostic. Adopters only install what they need. Testing is simpler because the core doesn't depend on Next.js or Clerk. New frameworks and auth providers can be supported without modifying core code.
+
+### Why nested install strategy?
+
+The monorepo uses `install-strategy=nested` to prevent dependency hoisting. Under the default hoisted strategy, a package can accidentally import a dependency it does not declare, because a sibling package hoisted that dependency to the root `node_modules`. This works locally but breaks when the package is published and a consumer installs it in isolation.
+
+Nested installs give each package its own `node_modules` tree, making implicit dependency relationships fail immediately during development. The cost is increased disk usage and slightly slower installs, but for a monorepo of this size, correctness is more valuable than convenience.
+
+This strategy also motivates two related design choices:
+
+- **Peer dependencies for plugins**: Auth plugins and adapters use `peerDependencies` for their upstream framework and UI dependencies (React, Mantine, Clerk, etc.). This prevents duplicate instances of libraries that require singleton semantics. The same deps are listed as `devDependencies` for local building and testing.
+
+- **Standard types at package boundaries**: The Next.js adapter accepts `Request`/`Response` (standard Web API types) rather than `NextRequest`/`NextResponse`. Under nested installs, each package has its own copy of `next`, so `NextRequest` from the adapter's `node_modules` is a different TypeScript type than `NextRequest` from the adopter's `node_modules`. Standard types are globally shared and avoid this cross-package type mismatch.
+
+### Why standard Request/Response types at adapter boundaries?
+
+When multiple packages each have their own copy of a framework library (as happens with `install-strategy=nested`), framework-specific types like `NextRequest` become different types across packages even though they are structurally identical. TypeScript's nominal type checking for class instances means the adopter's `NextRequest` and the adapter's `NextRequest` are incompatible at the type level.
+
+Standard Web API types (`Request`, `Response`) are defined in the global TypeScript lib and shared across all packages. Using them at the adapter's public API boundary eliminates cross-package type mismatches entirely. Internally, the adapter still uses framework-specific APIs (like `NextResponse.json()`) for its own implementation.
+
+This principle generalizes: any type that appears in a cross-package API should be either a standard global type or a type exported from a shared package, never a type from a framework-specific package that might be duplicated.
 
 ### Why git operations in the request cycle, with optional worker?
 

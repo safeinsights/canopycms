@@ -46,81 +46,50 @@ describe('withCanopy', () => {
   })
 
   describe('webpack config', () => {
-    it('adds React aliases', () => {
+    it('adds scoped React aliases via module.rules', () => {
       const result = withCanopy({})
-      const webpackConfig = { resolve: {} } as any
+      const webpackConfig = { module: { rules: [] } } as any
       const modified = invokeWebpack(result, webpackConfig)
-      expect(modified.resolve.alias).toHaveProperty('react')
-      expect(modified.resolve.alias).toHaveProperty('react-dom')
-      expect(modified.resolve.alias).toHaveProperty('react/jsx-runtime')
-      expect(modified.resolve.alias).toHaveProperty('react/jsx-dev-runtime')
-      expect(modified.resolve.alias).toHaveProperty('react-dom/client')
+      const reactRule = modified.module.rules.find((r: any) =>
+        r.include?.toString().includes('canopycms'),
+      )
+      expect(reactRule).toBeDefined()
+      expect(reactRule.resolve.alias).toHaveProperty('react')
+      expect(reactRule.resolve.alias).toHaveProperty('react-dom')
+      // Directory aliases — subpaths like react/jsx-runtime resolve naturally
+      expect(reactRule.resolve.alias.react).toMatch(/node_modules[\\/]react$/)
+      expect(reactRule.resolve.alias['react-dom']).toMatch(/node_modules[\\/]react-dom$/)
     })
 
-    it('sets resolve.symlinks to false', () => {
+    it('does not add global resolve.alias', () => {
       const result = withCanopy({})
-      const webpackConfig = { resolve: {} } as any
+      const webpackConfig = { resolve: {}, module: { rules: [] } } as any
       const modified = invokeWebpack(result, webpackConfig)
-      expect(modified.resolve.symlinks).toBe(false)
-    })
-
-    it('preserves existing webpack aliases', () => {
-      const result = withCanopy({})
-      const webpackConfig = {
-        resolve: { alias: { 'my-lib': '/path/to/my-lib' } },
-      } as any
-      const modified = invokeWebpack(result, webpackConfig)
-      expect(modified.resolve.alias['my-lib']).toBe('/path/to/my-lib')
-      expect(modified.resolve.alias).toHaveProperty('react')
+      expect(modified.resolve.alias).toBeUndefined()
     })
 
     it('chains existing webpack config function', () => {
       const existingWebpack = vi.fn((config: any) => ({ ...config, custom: true }))
       const result = withCanopy({ webpack: existingWebpack })
-      const webpackConfig = { resolve: {} } as any
+      const webpackConfig = { module: { rules: [] } } as any
       const modified = invokeWebpack(result, webpackConfig)
       expect(existingWebpack).toHaveBeenCalled()
       expect(modified.custom).toBe(true)
     })
 
-    it('initializes resolve when undefined', () => {
+    it('initializes module.rules when undefined', () => {
       const result = withCanopy({})
       const webpackConfig = {} as any
       const modified = invokeWebpack(result, webpackConfig)
-      expect(modified.resolve.alias).toHaveProperty('react')
+      expect(modified.module.rules.length).toBeGreaterThan(0)
     })
   })
 
-  describe('turbopack config', () => {
-    it('adds resolveAlias for React', () => {
-      const result = withCanopy({})
-      expect(result.experimental?.turbo?.resolveAlias).toHaveProperty('react')
-      expect(result.experimental?.turbo?.resolveAlias).toHaveProperty('react-dom')
-    })
-
-    it('preserves existing turbo config', () => {
-      const result = withCanopy({
-        experimental: {
-          turbo: {
-            resolveExtensions: ['.ts'],
-          },
-        },
-      })
-      expect(result.experimental?.turbo?.resolveExtensions).toEqual(['.ts'])
-      expect(result.experimental?.turbo?.resolveAlias).toHaveProperty('react')
-    })
-
-    it('merges with existing turbo resolveAlias', () => {
-      const result = withCanopy({
-        experimental: {
-          turbo: {
-            resolveAlias: { 'my-lib': '/path/to/my-lib' },
-          },
-        },
-      })
-      const aliases = result.experimental?.turbo?.resolveAlias as Record<string, string>
-      expect(aliases['my-lib']).toBe('/path/to/my-lib')
-      expect(aliases).toHaveProperty('react')
+  describe('turbopack limitation', () => {
+    it('does not set turbopack aliases (absolute paths unsupported)', () => {
+      const result = withCanopy({}) as any
+      expect(result.turbopack).toBeUndefined()
+      expect(result.experimental?.turbo).toBeUndefined()
     })
   })
 

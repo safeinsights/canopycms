@@ -26,12 +26,13 @@ export interface WithCanopyOptions {
 function resolveReactAliases(): Record<string, string> | null {
   try {
     const resolve = createRequire(path.join(process.cwd(), 'noop.js')).resolve
+    // Alias to DIRECTORIES, not files. Webpack uses prefix matching, so
+    // aliasing `react` to a directory lets `react/jsx-runtime` resolve
+    // to `<dir>/jsx-runtime` naturally. Pointing to a file (index.js)
+    // would break subpath resolution (e.g. react/index.js/jsx-runtime).
     return {
-      react: resolve('react'),
-      'react/jsx-runtime': resolve('react/jsx-runtime'),
-      'react/jsx-dev-runtime': resolve('react/jsx-dev-runtime'),
-      'react-dom': resolve('react-dom'),
-      'react-dom/client': resolve('react-dom/client'),
+      react: path.dirname(resolve('react')),
+      'react-dom': path.dirname(resolve('react-dom')),
     }
   } catch {
     // If resolution fails (unusual environment), skip aliases.
@@ -84,18 +85,23 @@ export function withCanopy(
 
   const reactAlias = resolveReactAliases()
 
-  // Build webpack config: add React aliases + disable symlink following
+  // Scope React aliases to only canopycms files using module.rules[].resolve.
+  // A global resolve.alias would also override Next.js's own internal React
+  // (bundled at next/dist/compiled/react/), breaking its devtools and internals.
   const existingWebpack = nextConfig.webpack
   const webpack: NextConfig['webpack'] = reactAlias
     ? (config, ctx) => {
-        config.resolve = config.resolve ?? {}
-        config.resolve.alias = {
-          ...config.resolve.alias,
-          ...reactAlias,
-        }
-        // Don't follow symlinks — resolve from the symlink location
-        // (the consumer's node_modules) rather than the target
-        config.resolve.symlinks = false
+        config.module = config.module ?? { rules: [] }
+        config.module.rules = config.module.rules ?? []
+
+        // Match canopycms source files by path (covers both symlink and real paths)
+        config.module.rules.push({
+          test: /\.(?:ts|tsx|js|jsx|mjs)$/,
+          include: /[\\/]canopycms/,
+          resolve: {
+            alias: reactAlias,
+          },
+        })
 
         // Chain consumer's existing webpack config
         if (typeof existingWebpack === 'function') {
@@ -105,25 +111,15 @@ export function withCanopy(
       }
     : existingWebpack
 
-  // Build Turbopack resolveAlias
-  const existingTurbo = nextConfig.experimental?.turbo
-  const turbo = reactAlias
-    ? {
-        ...existingTurbo,
-        resolveAlias: {
-          ...existingTurbo?.resolveAlias,
-          ...reactAlias,
-        },
-      }
-    : existingTurbo
+  // NOTE: Turbopack's resolveAlias does not support absolute file paths —
+  // it prepends './' and treats them as relative imports, which breaks.
+  // Until Turbopack supports absolute path aliases, consumers using
+  // file: symlinks must use `next dev --webpack` for local development.
+  // Turbopack works fine when canopycms is installed from npm (no symlinks).
 
   return {
     ...nextConfig,
     transpilePackages: allPackages,
     webpack,
-    experimental: {
-      ...nextConfig.experimental,
-      ...(turbo ? { turbo } : {}),
-    },
   }
 }

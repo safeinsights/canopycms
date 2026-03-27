@@ -72,6 +72,14 @@ npm install canopycms canopycms-next canopycms-auth-dev canopycms-auth-clerk
 
 The generated `canopy.ts` template imports both auth packages and selects the active one at runtime based on the `CANOPY_AUTH_MODE` environment variable (defaults to `dev`). Both packages must be installed.
 
+**Clerk peer dependencies:** `canopycms-auth-clerk` declares `@clerk/nextjs` and `@clerk/backend` as peer dependencies. If you plan to use Clerk authentication, you must install them yourself:
+
+```bash
+npm install @clerk/nextjs @clerk/backend
+```
+
+These are not bundled with `canopycms-auth-clerk` so you control the Clerk SDK versions in your project. If you only use dev auth (the default), you can skip this step -- the Clerk peer dependency warnings are harmless when `CANOPY_AUTH_MODE=dev`.
+
 ### 3. Configure Next.js
 
 Wrap your Next.js config with `withCanopy()`:

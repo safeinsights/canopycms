@@ -1,4 +1,3 @@
-import type { NextRequest } from 'next/server'
 import { NextResponse } from 'next/server'
 
 import {
@@ -12,12 +11,13 @@ import {
  * Options for creating a Canopy Next.js handler.
  * Same as core CanopyHandlerOptions - re-exported for convenience.
  */
-export interface CanopyNextOptions extends CanopyHandlerOptions {}
+export type CanopyNextOptions = CanopyHandlerOptions
 
 /**
- * Wrap a Next.js request to implement the CanopyRequest interface.
+ * Wrap a standard Request (or NextRequest) to implement the CanopyRequest interface.
+ * Only uses standard Request methods, so any Request subclass works.
  */
-export function wrapNextRequest(req: NextRequest): CanopyRequest {
+export function wrapNextRequest(req: Request): CanopyRequest {
   return {
     method: req.method,
     url: req.url,
@@ -40,7 +40,7 @@ export function wrapNextRequest(req: NextRequest): CanopyRequest {
 /**
  * Convert a CanopyResponse to a NextResponse.
  */
-function toNextResponse(response: CanopyResponse<unknown>): ReturnType<typeof NextResponse.json> {
+function toNextResponse(response: CanopyResponse<unknown>): Response {
   return NextResponse.json(response.body, {
     status: response.status,
     headers: response.headers,
@@ -90,13 +90,13 @@ export const createCanopyCatchAllHandler = (options: CanopyNextOptions) => {
   const coreHandler = createCanopyRequestHandler(options)
 
   return async (
-    req: NextRequest,
+    req: Request,
     ctx?: {
       params?:
-        | Promise<{ canopycms?: string[]; [key: string]: any }>
-        | { canopycms?: string[]; [key: string]: any }
+        | Promise<{ canopycms?: string[]; [key: string]: unknown }>
+        | { canopycms?: string[]; [key: string]: unknown }
     },
-  ) => {
+  ): Promise<Response> => {
     const canopyReq = wrapNextRequest(req)
     const segments = await extractPathSegments(ctx)
     const response = await coreHandler(canopyReq, segments)
