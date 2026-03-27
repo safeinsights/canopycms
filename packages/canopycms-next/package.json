@@ -1,6 +1,6 @@
 {
   "name": "canopycms-next",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Next.js adapter for CanopyCMS",
   "license": "MIT",
   "repository": {
@@ -41,14 +41,14 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "canopycms": "workspace:^",
+    "canopycms": "^0.0.6",
     "next": "^13.5.7 || ^14.2.25 || ^15.2.3 || ^16",
     "react": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
-    "canopycms": "workspace:*",
+    "canopycms": "^0.0.6",
     "next": "^14.2.25",
     "react": "^18.3.1",
     "typescript": "^5.6.3",

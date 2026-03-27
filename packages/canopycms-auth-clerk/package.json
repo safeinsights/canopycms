@@ -1,6 +1,6 @@
 {
   "name": "canopycms-auth-clerk",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Clerk authentication provider for CanopyCMS",
   "license": "MIT",
   "repository": {
@@ -46,7 +46,7 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "canopycms": "workspace:^",
+    "canopycms": "^0.0.6",
     "@clerk/backend": "^2.0.0",
     "@clerk/nextjs": "^6.0.0"
   },
@@ -54,7 +54,7 @@
     "@clerk/backend": "^2.0.0",
     "@clerk/nextjs": "^6.0.0",
     "@types/node": "^22.9.0",
-    "canopycms": "workspace:*",
+    "canopycms": "^0.0.6",
     "typescript": "^5.6.3",
     "vitest": "^1.6.0"
   }

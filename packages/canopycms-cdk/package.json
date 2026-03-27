@@ -1,6 +1,6 @@
 {
   "name": "canopycms-cdk",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "AWS CDK constructs and EC2 worker for CanopyCMS deployment",
   "license": "MIT",
   "repository": {
@@ -54,8 +54,8 @@
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
     "aws-cdk-lib": "^2.150.0",
-    "canopycms": "workspace:*",
-    "canopycms-auth-clerk": "workspace:*",
+    "canopycms": "^0.0.6",
+    "canopycms-auth-clerk": "^0.0.6",
     "@octokit/rest": "^20.0.2",
     "simple-git": "^3.22.0",
     "@aws-sdk/client-secrets-manager": "^3.600.0",

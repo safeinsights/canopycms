@@ -1,6 +1,6 @@
 {
   "name": "canopycms-auth-dev",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Development authentication provider for CanopyCMS",
   "license": "MIT",
   "repository": {
@@ -46,7 +46,7 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "canopycms": "workspace:^",
+    "canopycms": "^0.0.6",
     "react": "^18.0.0 || ^19.0.0",
     "@mantine/core": "^7.0.0 || ^8.0.0",
     "react-icons": "^5.0.0"
@@ -55,7 +55,7 @@
     "@mantine/core": "^7.0.0",
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
-    "canopycms": "workspace:*",
+    "canopycms": "^0.0.6",
     "react": "^18.3.1",
     "react-icons": "^5.0.0",
     "typescript": "^5.6.3",
