@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.12.1",
   "repository": {
     "type": "git",
-    "url": "https://github.com/safeinsights/canopycms.git"
+    "url": "git+https://github.com/safeinsights/canopycms.git"
   },
   "engines": {
     "node": ">=22"
