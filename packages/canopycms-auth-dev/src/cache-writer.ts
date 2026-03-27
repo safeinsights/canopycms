@@ -1,6 +1,6 @@
 import { writeAuthCacheSnapshot } from 'canopycms/auth/cache'
-import { DEFAULT_USERS, DEFAULT_GROUPS } from './dev-plugin'
-import type { DevUser, DevGroup } from './dev-plugin'
+import { DEFAULT_USERS, DEFAULT_GROUPS } from './dev-defaults'
+import type { DevUser, DevGroup } from './dev-defaults'
 
 export interface RefreshDevCacheOptions {
   /** Directory to write cache files to (e.g., .canopy-prod-sim/.cache) */

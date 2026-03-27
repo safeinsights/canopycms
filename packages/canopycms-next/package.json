@@ -33,6 +33,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint src/",
     "test": "vitest run --reporter=dot",
     "typecheck": "tsc --noEmit"
   },
