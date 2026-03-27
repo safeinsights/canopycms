@@ -3,16 +3,16 @@
 ## Prerequisites
 
 - Node.js 22+ (see `.nvmrc`)
-- npm (not yarn, pnpm, or bun)
+- pnpm (not npm, yarn, or bun)
 
 ## Getting Started
 
 ```bash
 git clone https://github.com/safeinsights/canopycms.git
 cd canopycms
-npm ci
-npm run typecheck
-npm test
+pnpm install
+pnpm typecheck
+pnpm test
 ```
 
 See [DEVELOPING.md](DEVELOPING.md) for detailed development patterns, testing practices, and architecture.
@@ -22,8 +22,8 @@ See [AGENTS.md](AGENTS.md) for project goals, code organization, and working agr
 
 1. Create a branch from `main`.
 2. Make your changes. Follow existing code style and conventions.
-3. Run `npm run typecheck` and `npm test` to verify.
-4. Run `npm run test:e2e` locally before submitting. E2E tests are currently disabled in CI, so local verification is important.
+3. Run `pnpm typecheck` and `pnpm test` to verify.
+4. Run `pnpm test:e2e` locally before submitting. E2E tests are currently disabled in CI, so local verification is important.
 5. Open a PR. CI must pass (typecheck + unit tests).
 
 ## Claude Code
@@ -32,7 +32,7 @@ This project uses [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 
 
 ## Project Structure
 
-This is an npm workspaces monorepo:
+This is a pnpm workspaces monorepo:
 
 - `packages/canopycms` — core CMS package
 - `packages/canopycms-next` — Next.js adapter

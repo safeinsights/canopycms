@@ -24,13 +24,13 @@ This is a minimal Next.js 14 app with:
 
 ```bash
 # Development server on port 5174
-npm run dev -w test-app
+pnpm --filter canopycms-test-app dev
 
 # Build for production
-npm run build -w test-app
+pnpm --filter canopycms-test-app build
 
 # Type check
-npm run typecheck -w test-app
+pnpm --filter canopycms-test-app typecheck
 ```
 
 ## Running E2E Tests
@@ -39,13 +39,13 @@ Playwright automatically starts this app before running tests:
 
 ```bash
 # Run E2E tests (auto-starts test-app)
-npm run test:e2e
+pnpm test:e2e
 
 # Run with UI mode
-npm run test:e2e:ui
+pnpm test:e2e:ui
 
 # Debug mode
-npm run test:e2e:debug
+pnpm test:e2e:debug
 ```
 
 ## Schema

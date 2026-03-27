@@ -3,7 +3,7 @@
 ## Generated Files
 
 - **Do not edit `client.ts` or `__test__/mock-client.ts` directly** - these files are auto-generated
-- To modify the client, edit `packages/canopycms/scripts/generate-client.ts` and run `npm run generate:client`
+- To modify the client, edit `packages/canopycms/scripts/generate-client.ts` and run `pnpm run generate:client`
 
 ## Declarative Guards
 
@@ -57,7 +57,7 @@ When adding a new API endpoint with a request body, follow these steps to ensure
    })
    ```
 
-3. **Regenerate the client** with `npm run generate:client`
+3. **Regenerate the client** with `pnpm run generate:client`
    - The generated client will have typed methods like `update(body: UpdatePermissionsBody)` instead of `update(body: unknown)`
 
 ## Why Both `body` and `bodyType`?

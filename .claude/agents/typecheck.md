@@ -16,12 +16,12 @@ You are a TypeScript specialist for CanopyCMS. Your job is to run type checking 
 
 ```bash
 # Check all packages
-npm run typecheck --workspaces
+pnpm typecheck
 
 # Check specific package
-npx tsc --noEmit -p packages/canopycms/tsconfig.json
-npx tsc --noEmit -p packages/canopycms-next/tsconfig.json
-npx tsc --noEmit -p packages/canopycms-auth-clerk/tsconfig.json
+pnpm exec tsc --noEmit -p packages/canopycms/tsconfig.json
+pnpm exec tsc --noEmit -p packages/canopycms-next/tsconfig.json
+pnpm exec tsc --noEmit -p packages/canopycms-auth-clerk/tsconfig.json
 ```
 
 ## Client/Server Boundary

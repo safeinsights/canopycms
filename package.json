@@ -2,6 +2,7 @@
   "name": "canopycms-monorepo",
   "version": "0.0.4",
   "private": true,
+  "packageManager": "pnpm@10.12.1",
   "repository": {
     "type": "git",
     "url": "https://github.com/safeinsights/canopycms.git"
@@ -9,21 +10,17 @@
   "engines": {
     "node": ">=22"
   },
-  "workspaces": [
-    "packages/*",
-    "apps/*"
-  ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
-    "lint:fix": "npm run lint --workspaces --if-present -- --fix",
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "lint:fix": "pnpm -r run lint -- --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test": "npm run test --workspaces --if-present",
+    "test": "pnpm -r run test",
     "test:e2e": "playwright test --workers=1",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck": "pnpm -r run typecheck",
     "prepare": "husky"
   },
   "devDependencies": {

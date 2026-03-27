@@ -17,21 +17,21 @@ You are a testing specialist for CanopyCMS. Your job is to run tests, analyze fa
 
 ```bash
 # Run all tests
-npm test --workspaces
+pnpm test
 
 # Run tests in a specific package
-npm test --workspace=packages/canopycms
-npm test --workspace=packages/canopycms-next
-npm test --workspace=packages/canopycms-auth-clerk
+pnpm --filterpackages/canopycms
+pnpm --filterpackages/canopycms-next
+pnpm --filterpackages/canopycms-auth-clerk
 
 # Run specific test file
-npx vitest run packages/canopycms/src/path/to/file.test.ts
+pnpm exec vitest run packages/canopycms/src/path/to/file.test.ts
 
 # Run tests matching a pattern
-npx vitest run -t "pattern"
+pnpm exec vitest run -t "pattern"
 
 # Run tests with coverage
-npx vitest run --coverage
+pnpm exec vitest run --coverage
 ```
 
 ## Test Status
@@ -66,4 +66,4 @@ npx vitest run --coverage
 3. When fixing tests, understand the component/function being tested first
 4. Note: 5 tests are intentionally skipped due to Mantine Button async issues in jsdom
 5. Check packages/canopycms/src/editor/comments/ for comment system tests
-6. Always run typecheck after test fixes: `npm run typecheck --workspaces`
+6. Always run typecheck after test fixes: `pnpm typecheck`

@@ -96,7 +96,7 @@ export default withCanopy({
 `withCanopy()` handles two things:
 
 - **Transpilation** — Canopy packages export raw TypeScript; the wrapper adds them to `transpilePackages` automatically.
-- **React deduplication** — When developing locally with `file:` references or `npm link`, the bundler can follow symlinks and load a second copy of React from the linked package's `node_modules`, causing "Invalid hook call" crashes. The wrapper adds module aliases so React always resolves to your project's copy.
+- **React deduplication** — When developing locally with `file:` references or linked packages (`npm link`, `pnpm link`, etc.), the bundler can follow symlinks and load a second copy of React from the linked package's `node_modules`, causing "Invalid hook call" crashes. The wrapper adds module aliases so React always resolves to your project's copy.
 
 The React aliases are harmless when not strictly needed (e.g., when installing from npm), so `withCanopy()` is the recommended configuration for all adopters.
 
@@ -1294,5 +1294,5 @@ GITHUB_BOT_TOKEN=ghp_...    # Bot token for PR creation
 
 ## Documentation
 
-- [DEVELOPING.md](DEVELOPING.md) - Development guidelines for contributors
+- [DEVELOPING.md](DEVELOPING.md) - Development guidelines for contributors (note: the CanopyCMS monorepo uses **pnpm** workspaces; see DEVELOPING.md for setup)
 - [ARCHITECTURE.md](ARCHITECTURE.md) - Internal architecture (for contributors)

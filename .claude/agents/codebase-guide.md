@@ -44,7 +44,7 @@ The codebase uses a modular structure with clear separation:
 | auth/           | src/auth/           | Authentication plugin interface and cache system                                                       |
 | worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                 |
 | task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                      |
-| cli/            | src/cli/            | CLI bootstrapping (`npx canopycms init`, `init-deploy aws`, `worker run-once`)                         |
+| cli/            | src/cli/            | CLI bootstrapping (`pnpm exec canopycms init`, `init-deploy aws`, `worker run-once`)                   |
 | test-utils/     | src/test-utils/     | Shared test utilities (mock factories, console spy, git repo init); exported as `canopycms/test-utils` |
 
 **Top-level files** (intentionally not modularized):
@@ -314,7 +314,7 @@ Generic file-based persistent task queue with zero Canopy dependencies.
 
 **Location**: packages/canopycms/src/cli/
 
-Bootstrapping scripts run via `npx canopycms <command>`. Uses `@clack/prompts` for interactive CLI experience.
+Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prompts` for interactive CLI experience.
 
 | File                   | Purpose                                                                                                 |
 | ---------------------- | ------------------------------------------------------------------------------------------------------- |
