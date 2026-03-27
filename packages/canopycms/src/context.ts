@@ -4,7 +4,7 @@ import type { ReadContentInput } from './content-reader'
 import { isDeployedStatic, isBuildMode, STATIC_DEPLOY_USER } from './build-mode'
 import { createContentReader } from './content-reader'
 import { createLogicalPath, parseSlug, resolveBranchPaths, type EntrySlug } from './paths'
-import { loadBranchContext } from './branch-workspace'
+import { loadOrCreateBranchContext } from './branch-workspace'
 import {
   buildContentTree as buildContentTreeImpl,
   type BuildContentTreeOptions,
@@ -113,13 +113,13 @@ export function createCanopyContext(options: CanopyContextOptions) {
     ) => {
       const operatingMode = services.config.mode
       const defaultBranch = services.config.defaultBaseBranch ?? 'main'
-      const branchContext = await loadBranchContext({
+      const branchContext = await loadOrCreateBranchContext({
+        config: services.config,
         branchName: defaultBranch,
         mode: operatingMode,
+        createdBy: 'canopycms-context',
+        remoteUrl: services.config.defaultRemoteUrl,
       })
-      if (!branchContext) {
-        return []
-      }
       const { branchRoot } = resolveBranchPaths(branchContext, operatingMode)
       const contentRootName = services.config.contentRoot || 'content'
       const { flatSchema } = await services.branchSchemaCache.getSchema(

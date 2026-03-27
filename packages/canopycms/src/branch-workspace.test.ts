@@ -5,7 +5,11 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
+import {
+  BranchWorkspaceManager,
+  loadBranchContext,
+  loadOrCreateBranchContext,
+} from './branch-workspace'
 import { defineCanopyTestConfig } from './config-test'
 import { BranchRegistry } from './branch-registry'
 import { initBareRepo } from './__integration__/test-utils/test-workspace'
@@ -164,6 +168,67 @@ describe('BranchWorkspaceManager', () => {
     expect(status.current).toBe('feature-foo')
     const remotes = await git.getRemotes(true)
     expect(remotes.find((r) => r.name === 'origin')?.refs.fetch).toBe(remotePath)
+  })
+
+  it('loadOrCreateBranchContext creates workspace when missing', async () => {
+    const root = await tmpDir()
+    const remotePath = path.join(root, 'remote.git')
+    const seedPath = path.join(root, 'seed')
+
+    await initBareRepo(remotePath)
+    await fs.mkdir(seedPath, { recursive: true })
+    const seedGit = simpleGit({ baseDir: seedPath })
+    await seedGit.init()
+    await seedGit.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(seedPath, 'README.md'), '# seed\n', 'utf8')
+    await seedGit.add(['.'])
+    await seedGit.commit('init')
+    await seedGit.addRemote('origin', remotePath)
+    await seedGit.push('origin', 'main', { '--set-upstream': null })
+
+    const config = defineCanopyTestConfig({
+      defaultBaseBranch: 'main',
+      defaultRemoteUrl: remotePath,
+      schema: {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [{ name: 'post', format: 'md', schema: [{ name: 'title', type: 'string' }] }],
+          },
+        ],
+      },
+    })
+
+    // No workspace exists yet — loadOrCreateBranchContext should create it
+    const context = await loadOrCreateBranchContext({
+      config,
+      branchName: 'main',
+      mode: 'prod-sim',
+      basePathOverride: root,
+      createdBy: 'test-runner',
+      remoteUrl: remotePath,
+    })
+
+    expect(context.branch.name).toBe('main')
+    expect(context.branchRoot).toBeDefined()
+
+    // Metadata should have been written
+    const metaFile = path.join(context.branchRoot, '.canopy-meta/branch.json')
+    const meta = JSON.parse(await fs.readFile(metaFile, 'utf8'))
+    expect(meta.branch.createdBy).toBe('test-runner')
+
+    // Calling again should return the existing context (no error)
+    const context2 = await loadOrCreateBranchContext({
+      config,
+      branchName: 'main',
+      mode: 'prod-sim',
+      basePathOverride: root,
+      createdBy: 'test-runner',
+      remoteUrl: remotePath,
+    })
+    expect(context2.branch.name).toBe('main')
+    expect(context2.branchRoot).toBe(context.branchRoot)
   })
 
   it('dev mode throws when trying to load branch state', async () => {

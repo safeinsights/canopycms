@@ -1,6 +1,6 @@
 import type { CanopyConfig } from './config'
 import { ensureBranchRoot } from './paths'
-import { getBranchMetadataFileManager } from './branch-metadata'
+import { getBranchMetadataFileManager, loadBranchContext } from './branch-metadata'
 import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
 import type { OperatingMode } from './operating-mode'
 import { GitManager } from './git-manager'
@@ -122,3 +122,30 @@ export class BranchWorkspaceManager {
 }
 
 export { loadBranchContext } from './branch-metadata'
+
+/**
+ * Load an existing branch context, or create the workspace if it doesn't exist yet.
+ */
+export async function loadOrCreateBranchContext(options: {
+  config: CanopyConfig
+  branchName: string
+  mode: OperatingMode
+  basePathOverride?: string
+  createdBy: CanopyUserId
+  remoteUrl?: string
+}): Promise<BranchContext> {
+  const existing = await loadBranchContext({
+    branchName: options.branchName,
+    mode: options.mode,
+    basePathOverride: options.basePathOverride,
+  })
+  if (existing) return existing
+  const manager = new BranchWorkspaceManager(options.config)
+  return manager.openOrCreateBranch({
+    branchName: options.branchName,
+    mode: options.mode,
+    basePathOverride: options.basePathOverride,
+    createdBy: options.createdBy,
+    remoteUrl: options.remoteUrl,
+  })
+}

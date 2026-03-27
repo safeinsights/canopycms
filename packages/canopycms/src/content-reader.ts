@@ -1,4 +1,4 @@
-import { BranchWorkspaceManager, loadBranchContext } from './branch-workspace'
+import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
 import { resolveBranchPaths, type LogicalPath, type PhysicalPath, type EntrySlug } from './paths'
 import { type OperatingMode } from './operating-mode'
@@ -10,7 +10,6 @@ import { isNotFoundError } from './utils/error'
 
 export interface ContentReaderOptions {
   services: CanopyServices
-  workspaceManager?: BranchWorkspaceManager
   basePathOverride?: string
   defaultBranch?: string
   createdBy?: string
@@ -44,32 +43,36 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const services = options.services
   const operatingMode: OperatingMode = services.config.mode
   const basePathOverride = options.basePathOverride
-  const workspaceManager = options.workspaceManager ?? new BranchWorkspaceManager(services.config)
   const defaultBranch = options.defaultBranch ?? services.config.defaultBaseBranch ?? 'main'
   const allowCreateBranch = options.allowCreateBranch ?? true
   const createdBy = options.createdBy ?? 'canopycms-content-reader'
 
   const resolveBranchContext = async (branchName: string): Promise<BranchContext> => {
-    const existing = options.getBranchContext
-      ? await options.getBranchContext(branchName)
-      : await loadBranchContext({
-          branchName,
-          mode: operatingMode,
-          basePathOverride,
-        })
-    if (existing) {
-      return existing
+    // Check custom resolver first (e.g., from HTTP handler)
+    if (options.getBranchContext) {
+      const existing = await options.getBranchContext(branchName)
+      if (existing) return existing
     }
-    if (!allowCreateBranch) {
-      throw new ContentStoreError(`Branch not found: ${branchName}`)
+
+    if (allowCreateBranch) {
+      return loadOrCreateBranchContext({
+        config: services.config,
+        branchName,
+        mode: operatingMode,
+        basePathOverride,
+        createdBy,
+        remoteUrl: services.config.defaultRemoteUrl,
+      })
     }
-    return await workspaceManager.openOrCreateBranch({
+
+    // Not allowed to create — must exist
+    const existing = await loadBranchContext({
       branchName,
       mode: operatingMode,
       basePathOverride,
-      createdBy,
-      remoteUrl: services.config.defaultRemoteUrl,
     })
+    if (!existing) throw new ContentStoreError(`Branch not found: ${branchName}`)
+    return existing
   }
 
   const resolveStore = async (branchName: string) => {
