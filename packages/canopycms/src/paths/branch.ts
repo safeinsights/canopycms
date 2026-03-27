@@ -34,7 +34,7 @@ export class BranchPathError extends Error {}
 export function sanitizeBranchName(branchName: string): SanitizedBranchName {
   const replaced = branchName.replace(/[^a-zA-Z0-9._-]/g, '-')
   const squashed = replaced.replace(/-+/g, '-')
-  const trimmedDots = squashed.replace(/^\.+/, '').replace(/\.+$/, '')
+  const trimmedDots = squashed.replace(/^\.+/, '').replace(/(?<!\.)\.+$/, '')
   return (trimmedDots || 'branch') as SanitizedBranchName
 }
 

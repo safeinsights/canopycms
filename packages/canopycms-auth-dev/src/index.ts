@@ -1,11 +1,6 @@
-export {
-  createDevAuthPlugin,
-  DevAuthPlugin,
-  DEFAULT_USERS,
-  DEFAULT_GROUPS,
-  DEV_ADMIN_USER_ID,
-} from './dev-plugin'
-export type { DevAuthConfig, DevUser, DevGroup } from './dev-plugin'
+export { createDevAuthPlugin, DevAuthPlugin } from './dev-plugin'
+export { DEFAULT_USERS, DEFAULT_GROUPS, DEV_ADMIN_USER_ID } from './dev-defaults'
+export type { DevAuthConfig, DevUser, DevGroup } from './dev-defaults'
 export { createDevTokenVerifier } from './jwt-verifier'
 export { refreshDevCache } from './cache-writer'
 export type { RefreshDevCacheOptions } from './cache-writer'

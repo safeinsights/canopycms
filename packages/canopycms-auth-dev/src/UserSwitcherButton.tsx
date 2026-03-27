@@ -1,25 +1,22 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { ActionIcon, Avatar } from '@mantine/core'
 import { UserSwitcherModal } from './UserSwitcherModal'
-import { DEFAULT_USERS } from './dev-plugin'
+import { DEFAULT_USERS } from './dev-defaults'
 import { getDevUserCookie, DEFAULT_USER_ID } from './cookie-utils'
+
+const noop = () => () => {}
+const getSnapshot = () => getDevUserCookie() ?? DEFAULT_USER_ID
+const getServerSnapshot = () => DEFAULT_USER_ID
 
 /**
  * User switcher button component that shows current user avatar and opens modal
  */
 export function UserSwitcherButton() {
   const [opened, setOpened] = useState(false)
-  const [mounted, setMounted] = useState(false)
+  const currentUserId = useSyncExternalStore(noop, getSnapshot, getServerSnapshot)
 
-  // Only read cookie after mount to avoid hydration mismatch
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-
-  // Read current user from cookie (only on client)
-  const currentUserId = mounted ? (getDevUserCookie() ?? DEFAULT_USER_ID) : DEFAULT_USER_ID
   const currentUser = DEFAULT_USERS.find((u) => u.userId === currentUserId)
 
   return (

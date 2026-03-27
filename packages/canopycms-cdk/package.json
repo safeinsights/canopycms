@@ -31,6 +31,7 @@
   "scripts": {
     "build": "tsc",
     "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=worker/dist/index.js --external:@aws-sdk/*",
+    "lint": "eslint src/",
     "test": "echo \"No tests yet\"",
     "typecheck": "tsc --noEmit"
   },

@@ -2,7 +2,7 @@
 
 import { Modal, Stack, Paper, Group, Avatar, Text, Badge } from '@mantine/core'
 import { MdCheck } from 'react-icons/md'
-import { DEFAULT_USERS } from './dev-plugin'
+import { DEFAULT_USERS } from './dev-defaults'
 import { setDevUserCookie } from './cookie-utils'
 
 interface Props {

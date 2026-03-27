@@ -1,7 +1,7 @@
 import { extractHeaders } from 'canopycms/auth'
 import type { TokenVerifier } from 'canopycms/auth'
 import { getDevUserCookieFromHeaders, DEFAULT_USER_ID } from './cookie-utils'
-import { DEV_ADMIN_USER_ID } from './dev-plugin'
+import { DEV_ADMIN_USER_ID } from './dev-defaults'
 
 /**
  * Test user key → dev user ID mapping.
