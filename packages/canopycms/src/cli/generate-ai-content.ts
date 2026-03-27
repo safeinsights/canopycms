@@ -13,10 +13,11 @@ interface GenerateAIContentCLIOptions {
   projectDir: string
   outputDir?: string
   configPath?: string
+  appDir?: string
 }
 
 export async function generateAIContentCLI(options: GenerateAIContentCLIOptions): Promise<void> {
-  const { projectDir, outputDir = 'public/ai', configPath } = options
+  const { projectDir, outputDir = 'public/ai', configPath, appDir = 'app' } = options
 
   console.log('\nCanopyCMS generate-ai-content\n')
 
@@ -39,14 +40,14 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
       : configExport
 
   // Load entry schema registry
-  const schemasPath = path.join(projectDir, 'app/schemas.ts')
+  const schemasPath = path.join(projectDir, appDir, 'schemas.ts')
   let entrySchemaRegistry: Record<string, unknown> = {}
   try {
     const schemasModule = (await import(schemasPath)) as Record<string, unknown>
     entrySchemaRegistry =
       (schemasModule.entrySchemaRegistry as Record<string, unknown>) ?? schemasModule
   } catch {
-    console.warn('  No app/schemas.ts found, using empty entry schema registry')
+    console.warn(`  No ${appDir}/schemas.ts found, using empty entry schema registry`)
   }
 
   // Load AI config if specified
