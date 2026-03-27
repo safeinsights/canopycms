@@ -5,9 +5,13 @@
  */
 
 import path from 'node:path'
+import { createJiti } from 'jiti'
 
 import { generateAIContentFiles } from '../build/generate-ai-content'
 import { getErrorMessage } from '../utils/error'
+
+// jiti lets the CLI import adopter .ts config files under plain node (no tsx needed)
+const jiti = createJiti(import.meta.url)
 
 interface GenerateAIContentCLIOptions {
   projectDir: string
@@ -25,7 +29,7 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
   const canopyConfigPath = path.join(projectDir, 'canopycms.config.ts')
   let canopyConfigModule: Record<string, unknown>
   try {
-    canopyConfigModule = (await import(canopyConfigPath)) as Record<string, unknown>
+    canopyConfigModule = (await jiti.import(canopyConfigPath)) as Record<string, unknown>
   } catch (err) {
     console.error(`Could not load config from ${canopyConfigPath}`)
     console.error(getErrorMessage(err))
@@ -43,7 +47,7 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
   const schemasPath = path.join(projectDir, appDir, 'schemas.ts')
   let entrySchemaRegistry: Record<string, unknown> = {}
   try {
-    const schemasModule = (await import(schemasPath)) as Record<string, unknown>
+    const schemasModule = (await jiti.import(schemasPath)) as Record<string, unknown>
     entrySchemaRegistry =
       (schemasModule.entrySchemaRegistry as Record<string, unknown>) ?? schemasModule
   } catch {
@@ -54,7 +58,10 @@ export async function generateAIContentCLI(options: GenerateAIContentCLIOptions)
   let aiConfig: unknown
   if (configPath) {
     try {
-      const aiConfigModule = (await import(path.resolve(configPath))) as Record<string, unknown>
+      const aiConfigModule = (await jiti.import(path.resolve(configPath))) as Record<
+        string,
+        unknown
+      >
       aiConfig = aiConfigModule.aiContentConfig ?? aiConfigModule.default ?? aiConfigModule.config
     } catch (err) {
       console.error(`Could not load AI config from ${configPath}`)
