@@ -28,6 +28,7 @@ jobs:
         with:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
+          registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -51,25 +52,49 @@ jobs:
           pnpm --filter canopycms-auth-dev run build
           pnpm --filter canopycms-cdk run build
 
+      # pnpm pack resolves workspace: protocol refs to real versions.
+      # npm publish handles OIDC trusted publishing auth.
+      # NODE_AUTH_TOKEN is unset so npm uses OIDC instead of the
+      # GITHUB_TOKEN that setup-node exports by default.
       - name: Publish canopycms
-        run: pnpm publish --access public --provenance --no-git-checks
+        run: |
+          pnpm pack
+          npm publish canopycms-*.tgz --access public --provenance
         working-directory: packages/canopycms
+        env:
+          NODE_AUTH_TOKEN: ''
 
       - name: Publish canopycms-next
-        run: pnpm publish --access public --provenance --no-git-checks
+        run: |
+          pnpm pack
+          npm publish canopycms-next-*.tgz --access public --provenance
         working-directory: packages/canopycms-next
+        env:
+          NODE_AUTH_TOKEN: ''
 
       - name: Publish canopycms-auth-clerk
-        run: pnpm publish --access public --provenance --no-git-checks
+        run: |
+          pnpm pack
+          npm publish canopycms-auth-clerk-*.tgz --access public --provenance
         working-directory: packages/canopycms-auth-clerk
+        env:
+          NODE_AUTH_TOKEN: ''
 
       - name: Publish canopycms-auth-dev
-        run: pnpm publish --access public --provenance --no-git-checks
+        run: |
+          pnpm pack
+          npm publish canopycms-auth-dev-*.tgz --access public --provenance
         working-directory: packages/canopycms-auth-dev
+        env:
+          NODE_AUTH_TOKEN: ''
 
       - name: Publish canopycms-cdk
-        run: pnpm publish --access public --provenance --no-git-checks
+        run: |
+          pnpm pack
+          npm publish canopycms-cdk-*.tgz --access public --provenance
         working-directory: packages/canopycms-cdk
+        env:
+          NODE_AUTH_TOKEN: ''
 
       - name: Commit version bump
         run: |
