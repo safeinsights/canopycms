@@ -5,17 +5,6 @@ import { realpathSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as p from '@clack/prompts'
-import {
-  canopyCmsConfig,
-  canopyContext,
-  schemasTemplate,
-  apiRoute,
-  editPage,
-  aiConfig,
-  aiRoute,
-  dockerfileCms,
-  githubWorkflowCms,
-} from './templates'
 import { operatingStrategy } from '../operating-mode'
 import type { AuthPlugin } from '../auth/plugin'
 
@@ -96,6 +85,8 @@ function configImportPath(appDir: string, subdirs: number): string {
 export async function init(options: InitOptions): Promise<void> {
   const { projectDir, mode, appDir, ai, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
+  const { canopyCmsConfig, canopyContext, schemasTemplate, apiRoute, editPage, aiConfig, aiRoute } =
+    await import('./templates')
 
   p.intro('CanopyCMS init')
 
@@ -169,6 +160,7 @@ export async function init(options: InitOptions): Promise<void> {
 export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   const { projectDir, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
+  const { dockerfileCms, githubWorkflowCms } = await import('./templates')
 
   p.intro('CanopyCMS init-deploy aws')
 
