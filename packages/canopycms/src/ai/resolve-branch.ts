@@ -4,16 +4,18 @@
  */
 
 import { loadBranchContext } from '../branch-metadata'
+import { isDeployedStatic } from '../build-mode'
 import type { CanopyConfig } from '../config'
 
 /**
  * Resolve the branch root directory for reading content.
  *
  * - Dev mode: current working directory (content is in the checkout)
- * - Prod/prod-sim: load the default base branch context
+ * - Static deployment: current working directory (content is in the checkout)
+ * - Prod/prod-sim server: load the default base branch context
  */
 export async function resolveBranchRoot(config: CanopyConfig): Promise<string> {
-  if (config.mode === 'dev') {
+  if (config.mode === 'dev' || isDeployedStatic(config)) {
     return process.cwd()
   }
 
