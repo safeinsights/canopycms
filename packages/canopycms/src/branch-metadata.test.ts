@@ -4,7 +4,11 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { BranchMetadataFileManager, getBranchMetadataFileManager } from './branch-metadata'
+import {
+  BranchMetadataFileManager,
+  getBranchMetadataFileManager,
+  type BranchMetadataFile,
+} from './branch-metadata'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branchmeta-'))
 
@@ -163,6 +167,118 @@ describe('BranchMetadataFileManager', () => {
 
       const loaded = await BranchMetadataFileManager.loadOnly(branchRoot)
       expect(loaded?.branch.name).toBe('feature/factory')
+    })
+  })
+
+  describe('atomic writes and concurrency', () => {
+    it('writes version and writeId fields', async () => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const meta = getBranchMetadataFileManager(root, registryDir)
+
+      await meta.save({
+        branch: { name: 'feature/versioned', status: 'editing', createdBy: 'u1' },
+      })
+
+      const loaded = await BranchMetadataFileManager.loadOnly(root)
+      expect(loaded?.version).toBe(1)
+      expect(loaded?.writeId).toBeDefined()
+    })
+
+    it('increments version on each save', async () => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const meta = getBranchMetadataFileManager(root, registryDir)
+
+      await meta.save({
+        branch: { name: 'feature/inc', status: 'editing', createdBy: 'u1' },
+      })
+      const v1 = await BranchMetadataFileManager.loadOnly(root)
+      expect(v1?.version).toBe(1)
+
+      await meta.save({ branch: { status: 'submitted' } })
+      const v2 = await BranchMetadataFileManager.loadOnly(root)
+      expect(v2?.version).toBe(2)
+    })
+
+    it('handles concurrent save() calls to the same file via in-memory lock', async () => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+
+      // Create initial metadata
+      const meta0 = getBranchMetadataFileManager(root, registryDir)
+      await meta0.save({
+        branch: { name: 'feature/race', status: 'editing', createdBy: 'u1' },
+      })
+
+      // Concurrently update from two separate instances
+      const meta1 = getBranchMetadataFileManager(root, registryDir)
+      const meta2 = getBranchMetadataFileManager(root, registryDir)
+
+      await Promise.all([
+        meta1.save({ branch: { title: 'Title A' } }),
+        meta2.save({ branch: { description: 'Desc B' } }),
+      ])
+
+      // Both should succeed (serialized by in-memory lock) and produce valid JSON
+      const final = await BranchMetadataFileManager.loadOnly(root)
+      expect(final).not.toBeNull()
+      expect(final?.branch.name).toBe('feature/race')
+      // The second save sees the first save's result, so both updates are present
+      expect(final?.branch.title).toBe('Title A')
+      expect(final?.branch.description).toBe('Desc B')
+      expect(final?.version).toBe(3) // initial=1, +2 concurrent saves
+    })
+
+    it('reads legacy files without version/writeId gracefully', async () => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const now = new Date().toISOString()
+
+      // Write a legacy-format file (no version/writeId)
+      const metaDir = path.join(root, '.canopy-meta')
+      await fs.mkdir(metaDir, { recursive: true })
+      const legacyContent: Omit<BranchMetadataFile, 'version'> = {
+        schemaVersion: 1,
+        branch: {
+          name: 'feature/legacy',
+          status: 'editing',
+          access: {},
+          createdBy: 'u1',
+          createdAt: now,
+          updatedAt: now,
+        },
+      }
+      await fs.writeFile(path.join(metaDir, 'branch.json'), JSON.stringify(legacyContent, null, 2))
+
+      // loadOnly should read it fine
+      const loaded = await BranchMetadataFileManager.loadOnly(root)
+      expect(loaded?.branch.name).toBe('feature/legacy')
+
+      // save() should upgrade it with version/writeId
+      const meta = getBranchMetadataFileManager(root, registryDir)
+      const updated = await meta.save({ branch: { status: 'submitted' } })
+      expect(updated.branch.status).toBe('submitted')
+
+      const reloaded = await BranchMetadataFileManager.loadOnly(root)
+      expect(reloaded?.version).toBe(1) // upgraded from missing (treated as 0) to 1
+      expect(reloaded?.writeId).toBeDefined()
+    })
+
+    it('produces valid JSON after save', async () => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const meta = getBranchMetadataFileManager(root, registryDir)
+
+      await meta.save({
+        branch: { name: 'feature/valid-json', status: 'editing', createdBy: 'u1' },
+      })
+
+      // Read raw file and verify it parses cleanly
+      const filePath = path.join(root, '.canopy-meta', 'branch.json')
+      const raw = await fs.readFile(filePath, 'utf8')
+      expect(() => JSON.parse(raw)).not.toThrow()
+      expect(raw.endsWith('\n')).toBe(true)
     })
   })
 })

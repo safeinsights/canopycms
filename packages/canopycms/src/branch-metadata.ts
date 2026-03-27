@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -5,17 +6,48 @@ import type { BranchContext, BranchMetadata, BranchStatus } from './types'
 import { BranchRegistry } from './branch-registry'
 import { resolveBranchPath } from './paths'
 import { type OperatingMode } from './operating-mode'
-import { isNotFoundError } from './utils/error'
+import { isFileExistsError, isNotFoundError } from './utils/error'
 
 const BRANCH_META_DIR = '.canopy-meta'
 const BRANCH_META_FILE = 'branch.json'
 
 export interface BranchMetadataFile {
   schemaVersion: number
+  version: number
+  writeId?: string
   branch: BranchMetadata
 }
 
 const CURRENT_SCHEMA_VERSION = 1
+
+export class BranchMetadataConflictError extends Error {
+  constructor() {
+    super('Concurrent modification detected in branch metadata')
+    this.name = 'BranchMetadataConflictError'
+  }
+}
+
+// Module-level lock: serializes access to each branch.json within this process.
+const fileLocks = new Map<string, Promise<void>>()
+
+async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
+  while (fileLocks.has(filePath)) {
+    await fileLocks.get(filePath)
+  }
+
+  let resolve!: () => void
+  const lockPromise = new Promise<void>((r) => {
+    resolve = r
+  })
+  fileLocks.set(filePath, lockPromise)
+
+  try {
+    return await fn()
+  } finally {
+    fileLocks.delete(filePath)
+    resolve()
+  }
+}
 
 export class BranchMetadataFileManager {
   private readonly branchRoot: string
@@ -53,60 +85,142 @@ export class BranchMetadataFileManager {
     return new BranchMetadataFileManager(branchRoot, baseRoot)
   }
 
-  private async load(): Promise<BranchMetadataFile | null> {
+  private async load(): Promise<{ meta: BranchMetadataFile | null; version: number | null }> {
     try {
       const raw = await fs.readFile(this.filePath, 'utf8')
       const parsed = JSON.parse(raw) as BranchMetadataFile
-      return parsed
+      const version = parsed.version ?? 0
+      return { meta: parsed, version }
     } catch (err: unknown) {
       if (isNotFoundError(err)) {
-        return null
+        return { meta: null, version: null }
       }
       throw err
     }
   }
 
-  private async write(meta: BranchMetadataFile): Promise<void> {
+  /**
+   * Atomic write using temp-file + rename + post-write verification.
+   * Follows the same pattern as CommentStore for EFS/NFS safety.
+   */
+  private async write(meta: BranchMetadataFile, expectedVersion: number | null): Promise<void> {
+    const newVersion = expectedVersion === null ? 1 : expectedVersion + 1
+    const writeId = randomUUID()
     const payload = {
       ...meta,
       schemaVersion: meta.schemaVersion ?? CURRENT_SCHEMA_VERSION,
+      version: newVersion,
+      writeId,
     }
+
     await fs.mkdir(path.dirname(this.filePath), { recursive: true })
-    await fs.writeFile(this.filePath, JSON.stringify(payload, null, 2) + '\n', 'utf8')
+
+    const content = JSON.stringify(payload, null, 2) + '\n'
+
+    if (expectedVersion === null) {
+      // New file: use exclusive create to prevent race
+      try {
+        await fs.writeFile(this.filePath, content, { flag: 'wx' })
+        return
+      } catch (err: unknown) {
+        if (isFileExistsError(err)) {
+          throw new BranchMetadataConflictError()
+        }
+        throw err
+      }
+    }
+
+    // Existing file: temp write + atomic rename + verification
+    const tempPath = `${this.filePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
+    await fs.writeFile(tempPath, content, 'utf-8')
+
+    try {
+      // Pre-rename version check
+      let currentVersion: number | null = null
+      try {
+        const current = JSON.parse(await fs.readFile(this.filePath, 'utf-8')) as {
+          version?: number
+        }
+        currentVersion = current.version ?? 0
+      } catch {
+        currentVersion = null
+      }
+
+      if (currentVersion !== expectedVersion) {
+        throw new BranchMetadataConflictError()
+      }
+
+      // Atomic rename
+      await fs.rename(tempPath, this.filePath)
+
+      // Post-write verification (EFS settling)
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      const afterWrite = JSON.parse(await fs.readFile(this.filePath, 'utf-8')) as {
+        writeId?: string
+      }
+      if (afterWrite.writeId !== writeId) {
+        throw new BranchMetadataConflictError()
+      }
+    } catch (err) {
+      await fs.unlink(tempPath).catch(() => {})
+      throw err
+    }
+  }
+
+  private async withRetry<T>(operation: () => Promise<T>, maxAttempts = 5): Promise<T> {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await operation()
+      } catch (err) {
+        if (err instanceof BranchMetadataConflictError && attempt < maxAttempts) {
+          const baseDelay = Math.min(10 * Math.pow(2, attempt - 1), 100)
+          const jitter = Math.random() * baseDelay
+          await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter))
+          continue
+        }
+        throw err
+      }
+    }
+    throw new Error('Unreachable')
   }
 
   async save(incoming: BranchMetadataUpdate): Promise<BranchMetadataFile> {
-    const existing = await this.load()
-    const now = new Date().toISOString()
+    return withFileLock(this.filePath, () =>
+      this.withRetry(async () => {
+        const { meta: existing, version } = await this.load()
+        const now = new Date().toISOString()
 
-    const defaults: BranchMetadata = {
-      name: 'unknown',
-      status: 'editing' as BranchStatus,
-      access: {},
-      createdBy: 'unknown',
-      createdAt: now,
-      updatedAt: now,
-    }
+        const defaults: BranchMetadata = {
+          name: 'unknown',
+          status: 'editing' as BranchStatus,
+          access: {},
+          createdBy: 'unknown',
+          createdAt: now,
+          updatedAt: now,
+        }
 
-    const merged: BranchMetadataFile = {
-      schemaVersion: CURRENT_SCHEMA_VERSION,
-      branch: {
-        ...defaults,
-        ...existing?.branch,
-        ...incoming.branch,
-        access: {
-          ...existing?.branch?.access,
-          ...incoming.branch?.access,
-        },
-        // Immutable after creation
-        createdBy: existing?.branch.createdBy ?? incoming.branch?.createdBy ?? defaults.createdBy,
-        createdAt: existing?.branch.createdAt ?? defaults.createdAt,
-      },
-    }
-    await this.write(merged)
-    await this.invalidateRegistry()
-
-    return merged
+        const merged: BranchMetadataFile = {
+          schemaVersion: CURRENT_SCHEMA_VERSION,
+          version: version ?? 0,
+          branch: {
+            ...defaults,
+            ...existing?.branch,
+            ...incoming.branch,
+            access: {
+              ...existing?.branch?.access,
+              ...incoming.branch?.access,
+            },
+            // Immutable after creation
+            createdBy:
+              existing?.branch.createdBy ?? incoming.branch?.createdBy ?? defaults.createdBy,
+            createdAt: existing?.branch.createdAt ?? defaults.createdAt,
+          },
+        }
+        await this.write(merged, version)
+        await this.invalidateRegistry()
+        return merged
+      }),
+    )
   }
 
   /**
