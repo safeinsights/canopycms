@@ -332,7 +332,9 @@ Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prom
 | `canopycms worker run-once`     | Process pending tasks, refresh auth cache, then exit                                               |
 | `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)                                 |
 
-**`init` flags**: `--auth dev|clerk`, `--mode dev|prod-sim`, `--app-dir <path>`, `--no-ai`, `--force`, `--non-interactive`
+**`init` flags**: `--mode dev|prod-sim`, `--app-dir <path>`, `--no-ai`, `--force`, `--non-interactive`
+
+**`generate-ai-content` flags**: `--output <dir>`, `--config <path>`, `--app-dir <path>` (locates schemas.ts; default: `app`)
 
 ## CDK Package (canopycms-cdk)
 

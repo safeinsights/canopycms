@@ -435,6 +435,7 @@ async function main() {
       projectDir: process.cwd(),
       outputDir: typeof flags['output'] === 'string' ? flags['output'] : undefined,
       configPath: typeof flags['config'] === 'string' ? flags['config'] : undefined,
+      appDir: typeof flags['app-dir'] === 'string' ? flags['app-dir'] : undefined,
     })
   } else {
     console.log('CanopyCMS CLI')
@@ -455,6 +456,7 @@ async function main() {
     console.log('  generate-ai-content     Generate static AI-ready content files')
     console.log('    --output <dir>        Output directory (default: public/ai)')
     console.log('    --config <path>       Path to AI content config file')
+    console.log('    --app-dir <path>      App directory (default: app)')
     process.exit(0)
   }
 }

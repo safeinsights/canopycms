@@ -1065,6 +1065,7 @@ Options:
 
 - `--output <dir>` -- output directory (default: `public/ai`)
 - `--config <path>` -- path to an AI content config file
+- `--app-dir <path>` -- app directory where `schemas.ts` lives (default: `app`; use `src/app` for src-layout projects)
 
 ### Option 3: Programmatic API
 
