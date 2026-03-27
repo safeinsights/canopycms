@@ -29,6 +29,9 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org'
+          # Do not set token here — trusted publishing uses OIDC, not a token.
+          # setup-node defaults token to github.token which is invalid for npmjs.org.
+          token: ''
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
