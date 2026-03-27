@@ -26,24 +26,11 @@ const DEFAULT_MAX_RETRIES = 3
 // Silent no-op logger
 const nullLogger: TaskQueueLogger = { debug: () => {} }
 
-// Intentionally local — the task-queue module has zero Canopy dependencies
-// to support eventual extraction as a standalone package.
+import { atomicWriteFile } from '../utils/atomic-write'
+
+// Local helper — only stdlib dependency, keeps task-queue easy to extract.
 function isNotFoundError(err: unknown): boolean {
   return err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT'
-}
-
-/** Atomic write via temp-file + rename to prevent corruption on NFS/EFS. */
-async function atomicWriteFile(filePath: string, content: string): Promise<void> {
-  const dir = path.dirname(filePath)
-  await fs.mkdir(dir, { recursive: true })
-  const tempPath = `${filePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
-  await fs.writeFile(tempPath, content, 'utf-8')
-  try {
-    await fs.rename(tempPath, filePath)
-  } catch (err) {
-    await fs.unlink(tempPath).catch(() => {})
-    throw err
-  }
 }
 
 // ============================================================================

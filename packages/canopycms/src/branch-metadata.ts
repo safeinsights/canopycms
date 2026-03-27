@@ -103,7 +103,10 @@ export class BranchMetadataFileManager {
    * Atomic write using temp-file + rename + post-write verification.
    * Follows the same pattern as CommentStore for EFS/NFS safety.
    */
-  private async write(meta: BranchMetadataFile, expectedVersion: number | null): Promise<void> {
+  private async write(
+    meta: BranchMetadataFile,
+    expectedVersion: number | null,
+  ): Promise<{ version: number; writeId: string }> {
     const newVersion = expectedVersion === null ? 1 : expectedVersion + 1
     const writeId = randomUUID()
     const payload = {
@@ -121,7 +124,7 @@ export class BranchMetadataFileManager {
       // New file: use exclusive create to prevent race
       try {
         await fs.writeFile(this.filePath, content, { flag: 'wx' })
-        return
+        return { version: newVersion, writeId }
       } catch (err: unknown) {
         if (isFileExistsError(err)) {
           throw new BranchMetadataConflictError()
@@ -135,7 +138,9 @@ export class BranchMetadataFileManager {
     await fs.writeFile(tempPath, content, 'utf-8')
 
     try {
-      // Pre-rename version check
+      // Fast-fail optimization: check version before rename to avoid unnecessary
+      // rename + verify cycle. Not a correctness guarantee — the post-write
+      // writeId verification below is what actually detects cross-process races.
       let currentVersion: number | null = null
       try {
         const current = JSON.parse(await fs.readFile(this.filePath, 'utf-8')) as {
@@ -153,8 +158,7 @@ export class BranchMetadataFileManager {
       // Atomic rename
       await fs.rename(tempPath, this.filePath)
 
-      // Post-write verification (EFS settling)
-      await new Promise((resolve) => setTimeout(resolve, 50))
+      // Post-write verification: confirm our write landed (catches cross-process races)
       const afterWrite = JSON.parse(await fs.readFile(this.filePath, 'utf-8')) as {
         writeId?: string
       }
@@ -165,6 +169,8 @@ export class BranchMetadataFileManager {
       await fs.unlink(tempPath).catch(() => {})
       throw err
     }
+
+    return { version: newVersion, writeId }
   }
 
   private async withRetry<T>(operation: () => Promise<T>, maxAttempts = 5): Promise<T> {
@@ -216,7 +222,9 @@ export class BranchMetadataFileManager {
             createdAt: existing?.branch.createdAt ?? defaults.createdAt,
           },
         }
-        await this.write(merged, version)
+        const written = await this.write(merged, version)
+        merged.version = written.version
+        merged.writeId = written.writeId
         await this.invalidateRegistry()
         return merged
       }),
