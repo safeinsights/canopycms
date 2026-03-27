@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import matter from 'gray-matter'
+import { atomicWriteFile } from './utils/atomic-write'
 
 import type {
   BlockFieldConfig,
@@ -408,7 +409,7 @@ export class ContentStore {
 
     if (input.format === 'json') {
       const json = JSON.stringify(input.data ?? {}, null, 2)
-      await fs.writeFile(absolutePath, `${json}\n`, 'utf8')
+      await atomicWriteFile(absolutePath, `${json}\n`)
 
       // Update index (ID is already in filename)
       if (id) {
@@ -440,7 +441,7 @@ export class ContentStore {
     }
 
     const file = matter.stringify(input.body, input.data ?? {})
-    await fs.writeFile(absolutePath, file, 'utf8')
+    await atomicWriteFile(absolutePath, file)
 
     // Update index (ID is already in filename)
     if (id) {
