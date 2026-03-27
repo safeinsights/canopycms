@@ -478,7 +478,7 @@ defineCanopyConfig({
 | `'server'` | Yes     | Normal: auth plugin required, permissions enforced per-request              |
 | `'static'` | No      | No request context, no auth; `STATIC_DEPLOY_USER` used; permissions skipped |
 
-Checked via `isDeployedStatic(config)` in `context.ts` and `content-reader.ts`. `isBuildMode()` is kept as a safety net for build-phase edge cases in server deployments.
+Checked via `isDeployedStatic(config)` in `context.ts`, `content-reader.ts`, `branch-workspace.ts` (short-circuits workspace creation), and `ai/resolve-branch.ts` (returns cwd). `isBuildMode()` is kept as a safety net for build-phase edge cases in server deployments.
 
 ## Schema Module
 

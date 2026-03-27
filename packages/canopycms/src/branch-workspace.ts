@@ -1,6 +1,7 @@
 import type { CanopyConfig } from './config'
 import { ensureBranchRoot } from './paths'
 import { getBranchMetadataFileManager, loadBranchContext } from './branch-metadata'
+import { isDeployedStatic } from './build-mode'
 import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
 import type { OperatingMode } from './operating-mode'
 import { GitManager } from './git-manager'
@@ -125,6 +126,9 @@ export { loadBranchContext } from './branch-metadata'
 
 /**
  * Load an existing branch context, or create the workspace if it doesn't exist yet.
+ *
+ * Static deployments skip all git/branch workspace operations and return
+ * a synthetic context pointing at the current working directory.
  */
 export async function loadOrCreateBranchContext(options: {
   config: CanopyConfig
@@ -134,6 +138,23 @@ export async function loadOrCreateBranchContext(options: {
   createdBy: CanopyUserId
   remoteUrl?: string
 }): Promise<BranchContext> {
+  // Static deployments read content directly from the checkout — no git ops needed
+  if (isDeployedStatic(options.config)) {
+    const cwd = process.cwd()
+    return {
+      branch: {
+        name: options.branchName,
+        status: 'editing',
+        access: {},
+        createdBy: '__static_deploy__',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      branchRoot: cwd,
+      baseRoot: cwd,
+    }
+  }
+
   const existing = await loadBranchContext({
     branchName: options.branchName,
     mode: options.mode,
