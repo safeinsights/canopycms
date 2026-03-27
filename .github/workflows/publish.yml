@@ -33,6 +33,14 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # setup-node creates .npmrc with _authToken=${NODE_AUTH_TOKEN} and
+      # exports NODE_AUTH_TOKEN=GITHUB_TOKEN. Both must be removed so npm
+      # falls through to OIDC trusted publishing for auth.
+      - name: Configure npm for OIDC trusted publishing
+        run: |
+          sed -i '/_authToken/d' "$NPM_CONFIG_USERCONFIG"
+          echo "NODE_AUTH_TOKEN=" >> "$GITHUB_ENV"
+
       - name: Generate API clients
         run: pnpm run generate:client
         working-directory: packages/canopycms
@@ -61,40 +69,30 @@ jobs:
           pnpm pack
           npm publish canopycms-*.tgz --access public --provenance
         working-directory: packages/canopycms
-        env:
-          NODE_AUTH_TOKEN: ''
 
       - name: Publish canopycms-next
         run: |
           pnpm pack
           npm publish canopycms-next-*.tgz --access public --provenance
         working-directory: packages/canopycms-next
-        env:
-          NODE_AUTH_TOKEN: ''
 
       - name: Publish canopycms-auth-clerk
         run: |
           pnpm pack
           npm publish canopycms-auth-clerk-*.tgz --access public --provenance
         working-directory: packages/canopycms-auth-clerk
-        env:
-          NODE_AUTH_TOKEN: ''
 
       - name: Publish canopycms-auth-dev
         run: |
           pnpm pack
           npm publish canopycms-auth-dev-*.tgz --access public --provenance
         working-directory: packages/canopycms-auth-dev
-        env:
-          NODE_AUTH_TOKEN: ''
 
       - name: Publish canopycms-cdk
         run: |
           pnpm pack
           npm publish canopycms-cdk-*.tgz --access public --provenance
         working-directory: packages/canopycms-cdk
-        env:
-          NODE_AUTH_TOKEN: ''
 
       - name: Commit version bump
         run: |
