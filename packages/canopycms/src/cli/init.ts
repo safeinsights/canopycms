@@ -17,6 +17,7 @@ import {
   githubWorkflowCms,
 } from './templates'
 import { operatingStrategy } from '../operating-mode'
+import type { AuthPlugin } from '../auth/plugin'
 
 export interface InitOptions {
   mode: 'prod-sim' | 'dev'
@@ -213,7 +214,10 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
  * Worker run-once: process pending tasks, sync git, refresh auth cache, then exit.
  * Used in prod-sim to trigger worker operations without a persistent daemon.
  */
-export async function workerRunOnce(options: { projectDir: string }): Promise<void> {
+export async function workerRunOnce(options: {
+  projectDir: string
+  authPlugin?: AuthPlugin
+}): Promise<void> {
   // Dynamic import to avoid loading worker deps when not needed
   const { getTaskQueueDir } = await import('../worker/task-queue-config')
 
@@ -237,33 +241,22 @@ export async function workerRunOnce(options: { projectDir: string }): Promise<vo
   }
 
   // For prod-sim without GitHub, just refresh auth cache
-  const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
   const cachePath =
     process.env.CANOPY_AUTH_CACHE_PATH ??
     path.join(operatingStrategy(mode).getWorkspaceRoot(options.projectDir), '.cache')
 
   let refreshAuthCache: (() => Promise<void>) | undefined
+  const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
 
-  if (authMode === 'clerk') {
-    const clerkSecretKey = process.env.CLERK_SECRET_KEY
-    if (clerkSecretKey) {
-      const { refreshClerkCache } = await import('canopycms-auth-clerk/cache-writer')
+  if (options.authPlugin?.createCacheRefresher) {
+    const refresher = options.authPlugin.createCacheRefresher(cachePath)
+    if (refresher) {
       refreshAuthCache = async () => {
-        const result = await refreshClerkCache({
-          secretKey: clerkSecretKey,
-          cachePath,
-        })
+        const result = await refresher()
         console.log(`  ${result.userCount} users, ${result.groupCount} groups`)
       }
     }
-  } else if (authMode === 'dev') {
-    const { refreshDevCache } = await import('canopycms-auth-dev/cache-writer')
-    refreshAuthCache = async () => {
-      const result = await refreshDevCache({ cachePath })
-      console.log(`  ${result.userCount} users, ${result.groupCount} groups`)
-    }
   }
-
   console.log(`\nCanopyCMS worker run-once (mode: ${mode}, auth: ${authMode})\n`)
 
   // Refresh auth cache
@@ -418,7 +411,24 @@ async function main() {
       console.error('Usage: canopycms worker run-once')
       process.exit(1)
     }
-    await workerRunOnce({ projectDir: process.cwd() })
+    // Resolve auth plugin from the adopter's installed packages.
+    // Uses variable-based import() so TypeScript doesn't resolve against canopycms's own deps.
+    const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
+    let authPlugin: AuthPlugin | undefined
+    try {
+      if (authMode === 'clerk') {
+        const pkg = 'canopycms-auth-clerk'
+        const { createClerkAuthPlugin } = await import(pkg)
+        authPlugin = createClerkAuthPlugin({})
+      } else if (authMode === 'dev') {
+        const pkg = 'canopycms-auth-dev'
+        const { createDevAuthPlugin } = await import(pkg)
+        authPlugin = createDevAuthPlugin()
+      }
+    } catch {
+      console.warn(`Could not load auth plugin for mode "${authMode}" — skipping cache refresh`)
+    }
+    await workerRunOnce({ projectDir: process.cwd(), authPlugin })
   } else if (command === 'generate-ai-content') {
     const { generateAIContentCLI } = await import('./generate-ai-content')
     await generateAIContentCLI({

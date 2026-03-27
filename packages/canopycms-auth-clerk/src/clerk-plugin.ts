@@ -329,6 +329,14 @@ export class ClerkAuthPlugin implements AuthPlugin {
       return []
     }
   }
+
+  createCacheRefresher(cachePath: string) {
+    const { secretKey, useOrganizationsAsGroups } = this.config
+    return async () => {
+      const { refreshClerkCache } = await import('./cache-writer')
+      return refreshClerkCache({ secretKey, cachePath, useOrganizationsAsGroups })
+    }
+  }
 }
 
 /**
