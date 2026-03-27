@@ -46,7 +46,7 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "canopycms": "^0.0.6",
+    "canopycms": "workspace:*",
     "@clerk/backend": "^2.0.0",
     "@clerk/nextjs": "^6.0.0"
   },
@@ -54,7 +54,7 @@
     "@clerk/backend": "^2.0.0",
     "@clerk/nextjs": "^6.0.0",
     "@types/node": "^22.9.0",
-    "canopycms": "^0.0.6",
+    "canopycms": "workspace:*",
     "typescript": "^5.6.3",
     "vitest": "^1.6.0"
   }

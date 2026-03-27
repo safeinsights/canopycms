@@ -588,16 +588,16 @@ Conflict indicators appear at two levels:
 
 ### Key Files
 
-| File                     | Purpose                                                       |
-| ------------------------ | ------------------------------------------------------------- |
-| git-manager.ts           | Wrapper around simple-git                                     |
-| branch-registry.ts       | Branch tracking (BranchRegistry class, cache-based listing)   |
-| branch-workspace.ts      | Workspace management (BranchWorkspaceManager class)           |
-| branch-metadata.ts       | PR info, status, lock state (BranchMetadataFileManager class) |
-| branch-schema-cache.ts   | Per-branch schema caching with invalidation                   |
-| settings-workspace.ts    | Settings branch workspace management                          |
-| settings-branch-utils.ts | Settings branch utility helpers                               |
-| github-service.ts        | GitHub API integration (PR creation, etc.)                    |
+| File                     | Purpose                                                                                                                                         |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| git-manager.ts           | Wrapper around simple-git                                                                                                                       |
+| branch-registry.ts       | Branch tracking (BranchRegistry class, cache-based listing)                                                                                     |
+| branch-workspace.ts      | Workspace management (BranchWorkspaceManager class)                                                                                             |
+| branch-metadata.ts       | Branch metadata with concurrency safety (in-memory per-path locking, atomic writes, optimistic locking with version/writeId, retry-on-conflict) |
+| branch-schema-cache.ts   | Per-branch schema caching with invalidation                                                                                                     |
+| settings-workspace.ts    | Settings branch workspace management                                                                                                            |
+| settings-branch-utils.ts | Settings branch utility helpers                                                                                                                 |
+| github-service.ts        | GitHub API integration (PR creation, etc.)                                                                                                      |
 
 ### Key Types
 
@@ -815,11 +815,12 @@ const refs = findFieldsByType(schema, data, 'reference')
 
 **Location**: packages/canopycms/src/utils/
 
-| File      | Purpose                                                                                     |
-| --------- | ------------------------------------------------------------------------------------------- |
-| error.ts  | Type-safe error handling (getErrorMessage, isNodeError, isNotFoundError, isFileExistsError) |
-| debug.ts  | Debug logging utilities (createDebugLogger)                                                 |
-| format.ts | Formatting utilities                                                                        |
+| File            | Purpose                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| error.ts        | Type-safe error handling (getErrorMessage, isNodeError, isNotFoundError, isFileExistsError) |
+| debug.ts        | Debug logging utilities (createDebugLogger)                                                 |
+| format.ts       | Formatting utilities                                                                        |
+| atomic-write.ts | Atomic file writes via temp-file + rename (prevents corruption on NFS/EFS)                  |
 
 **Error Handling Pattern**:
 
@@ -832,6 +833,14 @@ try {
   if (isNotFoundError(err)) return null
   throw new Error(`Failed: ${getErrorMessage(err)}`)
 }
+```
+
+**Atomic Write Pattern** (used by content-store.ts, authorization loaders, schema-store.ts):
+
+```typescript
+import { atomicWriteFile } from '../utils/atomic-write'
+
+await atomicWriteFile(filePath, JSON.stringify(data, null, 2) + '\n')
 ```
 
 ## HTTP Module

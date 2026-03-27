@@ -5,12 +5,12 @@
  */
 
 import fs from 'node:fs/promises'
-import path from 'node:path'
 import type { PathPermission } from '../../config'
 import type { PermissionsFile } from './schema'
 import { PermissionsFileSchema } from './schema'
 import type { OperatingMode } from '../../operating-mode'
 import { operatingStrategy } from '../../operating-mode'
+import { atomicWriteFile } from '../../utils/atomic-write'
 
 /**
  * Get the appropriate permissions file path based on mode
@@ -77,10 +77,6 @@ export async function savePathPermissions(
   contentVersion?: number,
 ): Promise<void> {
   const permissionsPath = getPermissionsFilePath(repoRoot, mode)
-  const canopyDir = path.dirname(permissionsPath)
-
-  // Ensure .canopycms directory exists
-  await fs.mkdir(canopyDir, { recursive: true })
 
   const permissionsFile: PermissionsFile = {
     version: 1,
@@ -93,7 +89,7 @@ export async function savePathPermissions(
   // Validate before writing
   PermissionsFileSchema.parse(permissionsFile)
 
-  await fs.writeFile(permissionsPath, JSON.stringify(permissionsFile, null, 2), 'utf-8')
+  await atomicWriteFile(permissionsPath, JSON.stringify(permissionsFile, null, 2))
 }
 
 /**

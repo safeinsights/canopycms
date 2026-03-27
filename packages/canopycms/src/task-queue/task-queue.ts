@@ -26,8 +26,9 @@ const DEFAULT_MAX_RETRIES = 3
 // Silent no-op logger
 const nullLogger: TaskQueueLogger = { debug: () => {} }
 
-// Intentionally local — the task-queue module has zero Canopy dependencies
-// to support eventual extraction as a standalone package.
+import { atomicWriteFile } from '../utils/atomic-write'
+
+// Local helper — only stdlib dependency, keeps task-queue easy to extract.
 function isNotFoundError(err: unknown): boolean {
   return err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'ENOENT'
 }
@@ -51,7 +52,6 @@ export async function enqueueTask(
 ): Promise<string> {
   const id = crypto.randomUUID()
   const pendingDir = path.join(taskDir, 'pending')
-  await fs.mkdir(pendingDir, { recursive: true })
 
   const queuedTask: Task = {
     id,
@@ -64,7 +64,7 @@ export async function enqueueTask(
   }
 
   const filePath = path.join(pendingDir, `${id}.json`)
-  await fs.writeFile(filePath, JSON.stringify(queuedTask, null, 2), 'utf-8')
+  await atomicWriteFile(filePath, JSON.stringify(queuedTask, null, 2))
   logger.debug('Enqueued task', { id, action: task.action })
   return id
 }
@@ -138,8 +138,7 @@ export async function dequeueTask(
 
   try {
     task.status = 'processing'
-    await fs.mkdir(processingDir, { recursive: true })
-    await fs.writeFile(destPath, JSON.stringify(task, null, 2), 'utf-8')
+    await atomicWriteFile(destPath, JSON.stringify(task, null, 2))
     await fs.unlink(sourcePath)
     logger.debug('Dequeued task', { id: task.id, action: task.action })
     return task
@@ -181,8 +180,7 @@ export async function completeTask(
   task.completedAt = new Date().toISOString()
   task.result = result
 
-  await fs.mkdir(completedDir, { recursive: true })
-  await fs.writeFile(completedPath, JSON.stringify(task, null, 2), 'utf-8')
+  await atomicWriteFile(completedPath, JSON.stringify(task, null, 2))
   await fs.unlink(processingPath).catch(() => {})
   logger.debug('Completed task', { id: taskId })
 }
@@ -219,8 +217,7 @@ export async function failTask(
   task.completedAt = new Date().toISOString()
   task.error = error
 
-  await fs.mkdir(failedDir, { recursive: true })
-  await fs.writeFile(failedPath, JSON.stringify(task, null, 2), 'utf-8')
+  await atomicWriteFile(failedPath, JSON.stringify(task, null, 2))
   await fs.unlink(processingPath).catch(() => {})
   logger.debug('Failed task', { id: taskId, error })
 }
@@ -263,8 +260,7 @@ export async function retryTask(
   task.retryAfter = new Date(Date.now() + backoffMs).toISOString()
   task.error = error
 
-  await fs.mkdir(pendingDir, { recursive: true })
-  await fs.writeFile(pendingPath, JSON.stringify(task, null, 2), 'utf-8')
+  await atomicWriteFile(pendingPath, JSON.stringify(task, null, 2))
   await fs.unlink(processingPath).catch(() => {})
   logger.debug('Retrying task', { id: taskId, retryCount, backoffMs })
 }
@@ -327,8 +323,7 @@ export async function recoverOrphanedTasks(
         }
 
         task.status = 'pending'
-        await fs.mkdir(pendingDir, { recursive: true })
-        await fs.writeFile(path.join(pendingDir, fileName), JSON.stringify(task, null, 2), 'utf-8')
+        await atomicWriteFile(path.join(pendingDir, fileName), JSON.stringify(task, null, 2))
         await fs.unlink(filePath)
         logger.debug('Recovered orphaned task', {
           id: task.id,

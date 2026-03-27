@@ -5,12 +5,12 @@
  */
 
 import { promises as fs } from 'node:fs'
-import { join } from 'node:path'
 import type { CanopyUserId } from '../../types'
 import { GroupsFileSchema, type InternalGroup, type GroupsFile } from './schema'
 import type { OperatingMode } from '../../operating-mode'
 import { operatingStrategy } from '../../operating-mode'
 import { RESERVED_GROUPS } from '../helpers'
+import { atomicWriteFile } from '../../utils/atomic-write'
 
 /**
  * Get the appropriate groups file path based on mode
@@ -107,10 +107,6 @@ export async function saveInternalGroups(
   contentVersion?: number,
 ): Promise<void> {
   const groupsPath = getGroupsFilePath(branchRoot, mode)
-  const groupsDir = join(groupsPath, '..')
-
-  // Ensure parent directory exists (e.g., .canopy-meta or .canopycms)
-  await fs.mkdir(groupsDir, { recursive: true })
 
   const groupsFile: GroupsFile = {
     version: 1,
@@ -123,5 +119,5 @@ export async function saveInternalGroups(
   // Validate before writing
   GroupsFileSchema.parse(groupsFile)
 
-  await fs.writeFile(groupsPath, JSON.stringify(groupsFile, null, 2), 'utf-8')
+  await atomicWriteFile(groupsPath, JSON.stringify(groupsFile, null, 2))
 }
