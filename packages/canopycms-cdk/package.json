@@ -51,6 +51,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
     "aws-cdk-lib": "^2.150.0",
     "canopycms": "workspace:*",
     "canopycms-auth-clerk": "workspace:*",
