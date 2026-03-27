@@ -6,6 +6,7 @@ coverage
 test-results
 playwright-report
 package-lock.json
+pnpm-lock.yaml
 apps/example1/content
 apps/test-app/content
 packages/canopycms/src/api/client.ts
