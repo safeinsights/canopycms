@@ -1219,7 +1219,7 @@ In `dev` mode (the default for development), CanopyCMS uses **gitignored** files
 
 ```bash
 # Start the CMS in dev mode (default)
-npm run dev
+pnpm dev
 
 # 1. Login as different test users (e.g., auth-dev, Clerk dev accounts)
 # 2. Add them to groups via the CMS UI
@@ -1408,22 +1408,22 @@ The codebase maintains high test coverage (1260+ tests, 98%+ coverage):
 
 ```bash
 # Run all tests
-npm test --workspaces
+pnpm test
 
 # Run tests for a specific package
-cd packages/canopycms && npm test
+pnpm --filter canopycms test
 
 # Run a specific test file
-cd packages/canopycms && npx vitest run src/github-service.test.ts
+pnpm --filter canopycms exec vitest run src/github-service.test.ts
 
 # Run tests matching a pattern
-cd packages/canopycms && npx vitest run --grep "authorization"
+pnpm --filter canopycms exec vitest run --grep "authorization"
 
 # Run with coverage
-cd packages/canopycms && npx vitest run --coverage
+pnpm --filter canopycms exec vitest run --coverage
 
 # Watch mode for development
-cd packages/canopycms && npx vitest
+pnpm --filter canopycms exec vitest
 ```
 
 ### Integration Test Structure
@@ -2165,7 +2165,7 @@ function namespaceToModule(namespace: string): string {
 **4. Generate the client**
 
 ```bash
-npm run generate:client
+pnpm run generate:client
 ```
 
 This creates typed methods in `src/api/client.ts` and mock helpers in `src/api/__test__/mock-client.ts`.
@@ -2299,7 +2299,7 @@ Each auth plugin provides a symmetric pair:
 For local development in prod-sim mode:
 
 ```bash
-npx canopycms worker run-once  # Refresh cache, process tasks, exit
+pnpm exec canopycms worker run-once  # Refresh cache, process tasks, exit
 ```
 
 ### Testing
@@ -2337,7 +2337,7 @@ execFileAsync(tsxBin, [SRC_BIN, 'init', '--non-interactive', '--force'], { cwd: 
 execFileAsync(tsxBin, [DIST_BIN, 'init', '--non-interactive', '--force'], { cwd: tmpDir })
 ```
 
-The dist tests will fail if `npm run build` has not been run first, since they depend on compiled output in `dist/`. The test `beforeAll` hook checks for `dist/cli/init.js` and throws a clear error if it is missing.
+The dist tests will fail if `pnpm build` has not been run first, since they depend on compiled output in `dist/`. The test `beforeAll` hook checks for `dist/cli/init.js` and throws a clear error if it is missing.
 
 **When to update these tests:** If you change the set of files that `canopycms init` creates, update the `expectedFiles` array in both the dist and source test blocks in `init.integration.test.ts`.
 
@@ -2346,8 +2346,8 @@ The dist tests will fail if `npm run build` has not been run first, since they d
 Before handoff, run typecheck and tests:
 
 ```bash
-npm run typecheck --workspaces
-npm test --workspaces
+pnpm typecheck
+pnpm test
 ```
 
 ### Storybook
@@ -2355,7 +2355,7 @@ npm test --workspaces
 Update stories when UI changes. Run Storybook to verify:
 
 ```bash
-npm run storybook --workspace=packages/canopycms
+pnpm --filter canopycms storybook
 ```
 
 ### Test Coverage

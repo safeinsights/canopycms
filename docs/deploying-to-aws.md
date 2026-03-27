@@ -59,10 +59,11 @@ This creates:
 Your `next.config.ts` needs to support two build modes:
 
 ```typescript
-const nextConfig = {
+import { withCanopy } from 'canopycms-next'
+
+export default withCanopy({
   output: process.env.CANOPY_BUILD === 'cms' ? 'standalone' : 'export',
-  transpilePackages: ['canopycms'],
-}
+})
 ```
 
 - `npm run build` → static export for S3 (public site)

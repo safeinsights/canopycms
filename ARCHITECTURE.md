@@ -21,11 +21,47 @@ CanopyCMS is organized as a monorepo with separate packages for extensibility:
 
 - **canopycms** (core): The main library containing content store, branch management, permissions, editor UI, API handlers, and AI content generation. This package is framework-agnostic and contains all business logic. It exposes multiple entrypoints: `canopycms/server` (content reading, API setup), `canopycms/client` (editor components), `canopycms/config` (configuration helpers), `canopycms/ai` (AI content route handler and generation), and `canopycms/build` (static file generation utilities).
 
-- **canopycms-next**: Next.js adapter that provides thin integration (~10 lines of user extraction code). Wraps core context with React cache() for per-request memoization.
+- **canopycms-next**: Next.js adapter that provides thin integration (~10 lines of user extraction code). Wraps core context with React cache() for per-request memoization. Also provides a `withCanopy()` Next.js config wrapper that handles module transpilation and React deduplication (see [Framework Adapters](#framework-adapters) below).
 
 - **canopycms-auth-clerk**: Authentication plugin using Clerk.
 
+- **canopycms-auth-dev**: Development authentication plugin that provides a mock auth flow with configurable test users. Used for local development without requiring a real auth provider.
+
 This separation keeps the core framework-agnostic while allowing adapters to be minimal integration layers. All business logic lives in core—adapters only handle framework-specific concerns like extracting user identity from request contexts.
+
+The core package also exposes a `canopycms/test-utils` subpath export for shared test utilities (API test helpers, console spies, git test repo initialization). This replaces fragile cross-package relative imports and gives other packages in the monorepo a stable, versioned way to import test infrastructure.
+
+## Dependency Model
+
+### pnpm Workspace Isolation
+
+The monorepo uses pnpm with workspaces defined in `pnpm-workspace.yaml`. pnpm's content-addressable store and strict dependency resolution provide workspace isolation by default: each package can only import dependencies it explicitly declares. There is no dependency hoisting to the root `node_modules`, so phantom dependency bugs (importing an undeclared package that happens to be hoisted by a sibling) are caught during development rather than after publishing.
+
+**Why pnpm?** pnpm provides the same correctness guarantees that previously required npm's `install-strategy=nested`, but with better performance and lower disk usage (shared content-addressable store instead of duplicated `node_modules` trees). Inter-package references use the `workspace:` protocol (`workspace:^` for peer dependencies, `workspace:*` for dev dependencies), which pnpm resolves to real version ranges at publish time.
+
+### Peer Dependencies for Plugins and Adapters
+
+Auth plugins and framework adapters declare their upstream framework and UI dependencies as `peerDependencies`. This means the adopter's project provides the actual dependency instances, and the plugin links against those same instances at runtime.
+
+For example, `canopycms-auth-clerk` declares `@clerk/nextjs` and `@clerk/backend` as peer dependencies. The adopter installs these in their project; the auth plugin uses whatever version the adopter provides (within the declared range). Similarly, `canopycms-auth-dev` declares `@mantine/core`, `@mantine/hooks`, and `react` as peers.
+
+**For monorepo development**, the same dependencies are also listed as `devDependencies` (using `workspace:*` for internal packages, or standard version ranges for external packages) in each plugin's `package.json`. pnpm's strict resolution ensures each package resolves only its declared dependencies. When the package is published, only the `peerDependencies` declaration ships -- consumers provide the actual installations.
+
+**Why peerDependencies?** Libraries like React and Mantine require a single instance in the bundle. If a plugin bundled its own copy of React, the adopter's app would have two React instances, causing hook crashes and context isolation bugs. Peer dependencies ensure the plugin and the adopter share the same instance.
+
+### Standard Type Boundaries at Package Edges
+
+The `canopycms-next` adapter uses standard Web API types (`Request` and `Response`) in its public handler signature rather than Next.js-specific types like `NextRequest`. This is a deliberate design choice that keeps package boundaries clean regardless of the package manager's dependency resolution strategy.
+
+Even with pnpm's strict isolation, framework-specific types from different resolution contexts can cause cross-package type mismatches. Standard `Request` and `Response` types come from the global Web API type definitions, which are shared across all packages. By using these as the public contract, the adapter avoids cross-package type duplication entirely. Internally, the adapter can still use Next.js-specific APIs (like `NextResponse.json()`) for its own implementation.
+
+**Design principle**: Package boundaries should use standard, globally-available types. Framework-specific types should be confined to the package's internal implementation.
+
+### Root Package Hygiene
+
+The root `package.json` contains only monorepo tooling dependencies (eslint, prettier, typescript, husky, playwright). All library dependencies live in the packages that actually use them. For example, `simple-git` and `@tabler/icons-react` are dependencies of the `canopycms` core package, not the root.
+
+This ensures that each package's dependency declarations are accurate and complete, and that root-level tooling does not leak into package resolution.
 
 ## Module Structure
 
@@ -1556,7 +1592,7 @@ The same generation engine powers two delivery paths. Both read from the default
 
 **Route handler** (`canopycms/ai` entrypoint): A Next.js-native catch-all GET handler mounted at a separate route (e.g., `/ai/[...path]/route.ts`). It generates content lazily on first request and caches the result in memory. In dev mode, the cache is bypassed on every request so content changes are reflected immediately. In production, responses include a short `Cache-Control` header. The route handler returns standard `Response` objects directly -- it does not use the CanopyCMS `CanopyRequest`/`CanopyResponse` abstraction or the editor API's guard system, because it has no authentication or branch resolution requirements.
 
-**Static build utility** (`canopycms/build` entrypoint): Writes all generated files to a directory on disk (e.g., `public/ai/`). Used during `npm run build` or via the `npx canopycms generate-ai-content` CLI command. This path is appropriate for pure static exports where no Next.js server is running at request time.
+**Static build utility** (`canopycms/build` entrypoint): Writes all generated files to a directory on disk (e.g., `public/ai/`). Used during the build step (e.g., `pnpm build`) or via the `npx canopycms generate-ai-content` CLI command. This path is appropriate for pure static exports where no Next.js server is running at request time.
 
 ### Why a Separate Route Handler?
 
@@ -1658,6 +1694,17 @@ Framework adapters provide thin integration between the framework and CanopyCMS 
 
 The `canopycms-next` adapter is ~10 lines for user extraction plus the request/response wrapper. All business logic stays in core—adapters are purely integration code.
 
+**Standard type boundaries**: The adapter's public handler API accepts standard `Request` and returns standard `Response` rather than `NextRequest`/`NextResponse`. This avoids type duplication across package boundaries -- pnpm's strict isolation means each package resolves its own copy of framework libraries, and framework-specific types from different copies are incompatible. Standard Web API types are globally shared, so they work correctly across all packages. See [Dependency Model](#dependency-model) for details.
+
+**Next.js Config Wrapper (`withCanopy`)**:
+
+The `canopycms-next` package also provides a `withCanopy()` function that wraps the adopter's Next.js config to handle two build-tooling concerns:
+
+- **Module transpilation**: CanopyCMS packages export raw TypeScript. `withCanopy()` adds all Canopy packages to `transpilePackages` so the Next.js bundler compiles them.
+- **React deduplication**: When consuming Canopy packages via `workspace:` references or linked packages during local development, the bundler can follow symlinks into the linked package's `node_modules` and resolve a second copy of React. Dual React instances cause "Invalid hook call" crashes. `withCanopy()` resolves React modules from the consumer's project root and disables symlink following, ensuring a single React instance.
+
+The wrapper handles both Webpack and Turbopack configurations. When installed from npm (not symlinked), the React aliases are harmless—they resolve to the same React the project already uses.
+
 **Creating a new adapter**:
 
 - Implement user extraction (read auth headers/cookies, call auth plugin)
@@ -1753,6 +1800,26 @@ The tradeoff is slightly more complex import paths, but the improved maintainabi
 ### Why separate packages for auth and framework adapters?
 
 Keeps the core framework-agnostic. Adopters only install what they need. Testing is simpler because the core doesn't depend on Next.js or Clerk. New frameworks and auth providers can be supported without modifying core code.
+
+### Why pnpm with strict workspace isolation?
+
+The monorepo uses pnpm, which provides strict dependency isolation by default. Unlike npm's hoisted `node_modules`, pnpm's content-addressable store means each package can only import dependencies it explicitly declares. This catches phantom dependency bugs during development rather than after publishing.
+
+The monorepo previously used npm with `install-strategy=nested` to achieve the same correctness guarantee, but pnpm provides this natively with better performance and lower disk usage (a shared store instead of duplicated `node_modules` trees). Inter-package references use the `workspace:` protocol, which pnpm resolves to real version ranges at publish time.
+
+This strict isolation motivates two related design choices:
+
+- **Peer dependencies for plugins**: Auth plugins and adapters use `peerDependencies` for their upstream framework and UI dependencies (React, Mantine, Clerk, etc.). This prevents duplicate instances of libraries that require singleton semantics. The same deps are listed as `devDependencies` (using `workspace:*` for internal packages) for local building and testing.
+
+- **Standard types at package boundaries**: The Next.js adapter accepts `Request`/`Response` (standard Web API types) rather than `NextRequest`/`NextResponse`. Framework-specific types can cause cross-package type mismatches when packages resolve their own copies of framework libraries. Standard types are globally shared and avoid this entirely.
+
+### Why standard Request/Response types at adapter boundaries?
+
+When packages resolve their own copies of a framework library (which can happen with pnpm's isolated `node_modules` or any strict package manager), framework-specific types like `NextRequest` become different types across packages even though they are structurally identical. TypeScript's nominal type checking for class instances means the adopter's `NextRequest` and the adapter's `NextRequest` are incompatible at the type level.
+
+Standard Web API types (`Request`, `Response`) are defined in the global TypeScript lib and shared across all packages. Using them at the adapter's public API boundary eliminates cross-package type mismatches entirely. Internally, the adapter still uses framework-specific APIs (like `NextResponse.json()`) for its own implementation.
+
+This principle generalizes: any type that appears in a cross-package API should be either a standard global type or a type exported from a shared package, never a type from a framework-specific package that might be duplicated.
 
 ### Why git operations in the request cycle, with optional worker?
 
@@ -1938,6 +2005,23 @@ Keeping adapters thin (like the ~10 line Next.js user extraction) provides sever
 - Confidence that adapters are just thin wrappers, not reimplementations
 
 If adapters contained business logic, we'd risk behavior divergence, duplicate maintenance, and harder-to-debug issues.
+
+### Why a Next.js config wrapper for React deduplication?
+
+CanopyCMS packages export raw TypeScript (no pre-compilation step). This means the Next.js bundler must transpile them, which requires adding each package to `transpilePackages`. Additionally, during local development the monorepo's `workspace:` references are resolved by pnpm as symlinks.
+
+Symlinks create a subtle problem: when the bundler follows a symlink into the linked package's directory, it can resolve React from that package's `node_modules` instead of from the consumer's `node_modules`. Two React instances in the same bundle cause "Invalid hook call" crashes that are notoriously difficult to debug.
+
+The `withCanopy()` wrapper in `canopycms-next` solves both problems in one call:
+
+- Adds all Canopy packages to `transpilePackages`
+- Resolves React (and react-dom, jsx-runtime) from the consumer's project root via `createRequire()`
+- Disables Webpack symlink following so resolution happens from the symlink location, not the target
+- Configures equivalent Turbopack aliases for projects using the Turbopack bundler
+
+**Why solve this in the adapter package?** The dual-React problem is specific to how Next.js resolves modules through symlinks. It is a build-tooling concern, not business logic. Placing it in the adapter keeps the core package clean and makes the fix discoverable for Next.js adopters in the package they already import. Other framework adapters would handle their bundler's equivalent quirks in their own way.
+
+**Why not require pre-compilation?** Pre-compiling Canopy packages would eliminate the `transpilePackages` requirement but would add a build step to the development workflow, slow down iteration, and make debugging harder (source maps through compiled output). Exporting raw TypeScript keeps the development loop fast and debuggable.
 
 ### Why branded types for paths?
 

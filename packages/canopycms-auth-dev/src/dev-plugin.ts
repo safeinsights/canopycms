@@ -226,6 +226,15 @@ export class DevAuthPlugin implements AuthPlugin {
         name: g.name,
       }))
   }
+
+  createCacheRefresher(cachePath: string) {
+    const users = this.users
+    const groups = this.groups
+    return async () => {
+      const { refreshDevCache } = await import('./cache-writer')
+      return refreshDevCache({ cachePath, users, groups })
+    }
+  }
 }
 
 /**

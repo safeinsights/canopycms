@@ -50,6 +50,15 @@ export interface AuthPlugin {
    * CachingAuthPlugin in prod/prod-sim modes. The cache is populated by the worker daemon.
    */
   verifyTokenOnly?(context: unknown): Promise<{ userId: CanopyUserId } | null>
+
+  /**
+   * Optional: create a function that refreshes the auth cache for this plugin.
+   * Used by the worker daemon and CLI run-once to populate the file-based auth cache.
+   * Returns undefined if this plugin doesn't support cache refresh (e.g., missing credentials).
+   */
+  createCacheRefresher?(
+    cachePath: string,
+  ): (() => Promise<{ userCount: number; groupCount: number }>) | undefined
 }
 
 /**

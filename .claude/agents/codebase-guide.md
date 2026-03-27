@@ -8,13 +8,13 @@ You are a codebase guide for CanopyCMS. Your job is to help navigate the project
 
 ## Package Structure
 
-| Package              | Location                       | Purpose                                                          |
-| -------------------- | ------------------------------ | ---------------------------------------------------------------- |
-| canopycms            | packages/canopycms/            | Core CMS library                                                 |
-| canopycms-next       | packages/canopycms-next/       | Next.js adapter                                                  |
-| canopycms-auth-clerk | packages/canopycms-auth-clerk/ | Clerk auth plugin                                                |
-| canopycms-auth-dev   | packages/canopycms-auth-dev/   | Dev auth plugin with cache-writer, JWT verifier for prod-sim     |
-| canopycms-cdk        | packages/canopycms-cdk/        | AWS CDK constructs for deployment (VPC, EFS, Lambda, EC2 worker) |
+| Package              | Location                       | Purpose                                                                         |
+| -------------------- | ------------------------------ | ------------------------------------------------------------------------------- |
+| canopycms            | packages/canopycms/            | Core CMS library                                                                |
+| canopycms-next       | packages/canopycms-next/       | Next.js adapter (config wrapper, catch-all handler, context, client components) |
+| canopycms-auth-clerk | packages/canopycms-auth-clerk/ | Clerk auth plugin                                                               |
+| canopycms-auth-dev   | packages/canopycms-auth-dev/   | Dev auth plugin with cache-writer, JWT verifier for prod-sim                    |
+| canopycms-cdk        | packages/canopycms-cdk/        | AWS CDK constructs for deployment (VPC, EFS, Lambda, EC2 worker)                |
 
 **Apps** (in apps/, not packages/):
 
@@ -29,23 +29,23 @@ The codebase uses a modular structure with clear separation:
 
 **Core Modules** (packages/canopycms/src/):
 
-| Module          | Location            | Purpose                                                                                |
-| --------------- | ------------------- | -------------------------------------------------------------------------------------- |
-| authorization/  | src/authorization/  | Unified access control (branch + path permissions, groups)                             |
-| config/         | src/config/         | Configuration types, Zod schemas, validation                                           |
-| schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                 |
-| paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                          |
-| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, prod-sim, dev)                                        |
-| api/            | src/api/            | API handlers, middleware, route builder                                                |
-| http/           | src/http/           | HTTP request handling (router, types)                                                  |
-| editor/         | src/editor/         | React editor components, contexts, hooks                                               |
-| validation/     | src/validation/     | Validation utilities (field traversal, references)                                     |
-| utils/          | src/utils/          | Shared utilities (error handling, debug logging)                                       |
-| auth/           | src/auth/           | Authentication plugin interface and cache system                                       |
-| worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh) |
-| task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)      |
-| cli/            | src/cli/            | CLI bootstrapping (`npx canopycms init`, `init-deploy aws`, `worker run-once`)         |
-| test-utils/     | src/test-utils/     | Test helpers (API test helpers, console spy)                                           |
+| Module          | Location            | Purpose                                                                                                |
+| --------------- | ------------------- | ------------------------------------------------------------------------------------------------------ |
+| authorization/  | src/authorization/  | Unified access control (branch + path permissions, groups)                                             |
+| config/         | src/config/         | Configuration types, Zod schemas, validation                                                           |
+| schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                                 |
+| paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                                          |
+| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, prod-sim, dev)                                                        |
+| api/            | src/api/            | API handlers, middleware, route builder                                                                |
+| http/           | src/http/           | HTTP request handling (router, types)                                                                  |
+| editor/         | src/editor/         | React editor components, contexts, hooks                                                               |
+| validation/     | src/validation/     | Validation utilities (field traversal, references)                                                     |
+| utils/          | src/utils/          | Shared utilities (error handling, debug logging)                                                       |
+| auth/           | src/auth/           | Authentication plugin interface and cache system                                                       |
+| worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                 |
+| task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                      |
+| cli/            | src/cli/            | CLI bootstrapping (`pnpm exec canopycms init`, `init-deploy aws`, `worker run-once`)                   |
+| test-utils/     | src/test-utils/     | Shared test utilities (mock factories, console spy, git repo init); exported as `canopycms/test-utils` |
 
 **Top-level files** (intentionally not modularized):
 
@@ -314,7 +314,7 @@ Generic file-based persistent task queue with zero Canopy dependencies.
 
 **Location**: packages/canopycms/src/cli/
 
-Bootstrapping scripts run via `npx canopycms <command>`. Uses `@clack/prompts` for interactive CLI experience.
+Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prompts` for interactive CLI experience.
 
 | File                   | Purpose                                                                                                 |
 | ---------------------- | ------------------------------------------------------------------------------------------------------- |
@@ -359,6 +359,20 @@ AWS CDK constructs for deploying CanopyCMS to AWS.
 - ACM certificate (DNS validated)
 - CloudFront distribution with Function URL origin
 - Route53 A/AAAA alias records
+
+## canopycms-next Package
+
+**Location**: packages/canopycms-next/src/
+
+Next.js-specific adapter layer. Provides the catch-all API handler, context creation, a Next.js config wrapper, client components, and test utilities.
+
+| File               | Purpose                                                                                              |
+| ------------------ | ---------------------------------------------------------------------------------------------------- |
+| with-canopy.ts     | `withCanopy()` Next.js config wrapper: transpilePackages + React dedup aliases (webpack & Turbopack) |
+| adapter.ts         | `createCanopyCatchAllHandler()`, `wrapNextRequest()` for Next.js catch-all API route                 |
+| context-wrapper.ts | `createNextCanopyContext()` - React-cached Canopy context creation with Next.js headers              |
+| client.tsx         | `NextCanopyEditorPage` - client component that reads URL search params automatically                 |
+| test-utils.ts      | `createMockAuthPlugin()`, `createRejectingAuthPlugin()` for tests                                    |
 
 ## Comment System
 
@@ -832,12 +846,15 @@ try {
 
 **Location**: packages/canopycms/src/test-utils/
 
-| File                | Purpose                   |
-| ------------------- | ------------------------- |
-| api-test-helpers.ts | API testing utilities     |
-| console-spy.ts      | Console mocking for tests |
+**Subpath export**: `canopycms/test-utils` — available to satellite packages (e.g., canopycms-auth-clerk) and adopter test suites.
 
-**Integration Tests**: packages/canopycms/src/**integration**/
+| File                | Purpose                                                                                                 |
+| ------------------- | ------------------------------------------------------------------------------------------------------- |
+| api-test-helpers.ts | Mock factories: createMockBranchContext, createMockUser, createMockServices, createMockApiContext, etc. |
+| console-spy.ts      | mockConsole() + consoleMatchers (toHaveLogged, toHaveWarned, toHaveErrored)                             |
+| git-helpers.ts      | initTestRepo() — initialize a git repo with CanopyCMS marker and user config                            |
+
+**Integration Tests**: packages/canopycms/src/\_\_integration\_\_/
 
 ## Example App
 
@@ -896,6 +913,7 @@ packages/canopycms/src/worker/       # CMS Worker daemon
 packages/canopycms/src/task-queue/   # Generic task queue
 packages/canopycms/src/cli/          # CLI bootstrapping
 packages/canopycms-cdk/              # AWS CDK constructs
+packages/canopycms-next/             # Next.js adapter package
 packages/canopycms-auth-dev/         # Dev auth plugin + cache
 apps/example1/                       # Example app
 ```

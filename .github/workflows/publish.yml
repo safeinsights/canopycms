@@ -22,20 +22,19 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: 'npm'
+          cache: 'pnpm'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Update npm (trusted publishers require recent npm)
-        run: npm install -g npm@latest
-
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Generate API clients
-        run: npm run generate:client
+        run: pnpm run generate:client
         working-directory: packages/canopycms
 
       - name: Bump version
@@ -47,11 +46,11 @@ jobs:
 
       - name: Build publishable packages
         run: |
-          npm run build -w packages/canopycms
-          npm run build -w packages/canopycms-next
-          npm run build -w packages/canopycms-auth-clerk
-          npm run build -w packages/canopycms-auth-dev
-          npm run build -w packages/canopycms-cdk
+          pnpm --filter canopycms run build
+          pnpm --filter canopycms-next run build
+          pnpm --filter canopycms-auth-clerk run build
+          pnpm --filter canopycms-auth-dev run build
+          pnpm --filter canopycms-cdk run build
 
       - name: Publish canopycms
         run: npm publish --access public --provenance

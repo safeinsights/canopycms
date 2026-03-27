@@ -4,7 +4,7 @@
 
 - Never git add or git commit without being asked. Always provide a commit message when finishing work.
 - Propose next work at the end of each iteration.
-- Use `npm`/`npx`, NOT bun.
+- Use `pnpm`/`pnpm exec`, NOT npm or bun.
 - Use extensionless local imports.
 - Avoid `any` — use real types, and if we can't, use `unknown` with type guards.
 - Use `getErrorMessage()` / `isNodeError()` from `utils/error.ts`.
@@ -24,8 +24,8 @@
 
 Always do the following **before** proposing next work or providing a commit message:
 
-1. Run `npx prettier --write` on any files you created or modified.
-2. Run `npm run lint` and fix any errors before finishing.
+1. Run `pnpm exec prettier --write` on any files you created or modified.
+2. Run `pnpm lint` and fix any errors before finishing.
 3. Run the `update-codebase-guide` agent and update the Code Organization list in AGENTS.md if you added, removed, renamed, or changed the API of any module.
 4. Run the `docs-architecture` agent if you made architectural changes, added packages, or made design decisions.
 5. Run the `docs-developing` agent if you introduced new dev patterns, test utilities, or workflows.

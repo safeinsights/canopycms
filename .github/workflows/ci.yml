@@ -13,16 +13,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: 'npm'
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Generate API clients
-        run: npm run generate:client
+        run: pnpm run generate:client
         working-directory: packages/canopycms
 
       - name: Check generated files are committed
@@ -30,7 +32,7 @@ jobs:
           if [ -n "$(git status --porcelain packages/canopycms/src/api/client.ts packages/canopycms/src/api/__test__/mock-client.ts)" ]; then
             echo "❌ Generated files are out of sync!"
             echo ""
-            echo "Run 'npm run generate:client' in packages/canopycms and commit the changes."
+            echo "Run 'pnpm run generate:client' in packages/canopycms and commit the changes."
             echo ""
             echo "Changes detected:"
             git diff packages/canopycms/src/api/client.ts
@@ -40,16 +42,16 @@ jobs:
           echo "✅ Generated files are up to date"
 
       - name: Lint (ESLint)
-        run: npm run lint --workspaces --if-present
+        run: pnpm lint
 
       - name: Format check (Prettier)
-        run: npx prettier --check .
+        run: pnpm exec prettier --check .
 
       - name: TypeScript type checking
-        run: npm run typecheck
+        run: pnpm typecheck
 
       - name: Build
-        run: npm run build
+        run: pnpm run build
         working-directory: packages/canopycms
 
       - name: Run tests
@@ -59,7 +61,7 @@ jobs:
         run: |
           git config --global user.email "ci@canopycms.test"
           git config --global user.name "CI Bot"
-          npm test
+          pnpm test
 
   e2e:
     name: E2E Tests
@@ -72,13 +74,15 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: '.nvmrc'
-          cache: 'npm'
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Configure git
         run: |
@@ -93,17 +97,17 @@ jobs:
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ hashFiles('package-lock.json') }}
+          key: playwright-chromium-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        run: npx playwright install chromium
+        run: pnpm exec playwright install chromium
 
       - name: Install Playwright system dependencies
-        run: npx playwright install-deps chromium
+        run: pnpm exec playwright install-deps chromium
 
       - name: Run E2E tests
-        run: npm run test:e2e
+        run: pnpm test:e2e
 
       - name: Upload test results
         uses: actions/upload-artifact@v4

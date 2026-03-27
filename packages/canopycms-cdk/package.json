@@ -51,9 +51,10 @@
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
     "aws-cdk-lib": "^2.150.0",
-    "canopycms": "^0.0.5",
-    "canopycms-auth-clerk": "^0.0.5",
+    "canopycms": "workspace:*",
+    "canopycms-auth-clerk": "workspace:*",
     "@octokit/rest": "^20.0.2",
     "simple-git": "^3.22.0",
     "@aws-sdk/client-secrets-manager": "^3.600.0",
