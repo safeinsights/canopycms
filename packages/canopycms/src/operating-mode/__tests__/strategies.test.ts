@@ -70,12 +70,12 @@ describe('Operating Mode Strategies', () => {
       })
     })
 
-    describe('Local Production Simulation Mode', () => {
-      const mode: OperatingMode = 'prod-sim'
+    describe('Dev Mode', () => {
+      const mode: OperatingMode = 'dev'
 
       it('should have correct mode identifier', () => {
         const strategy = clientOperatingStrategy(mode)
-        expect(strategy.mode).toBe('prod-sim')
+        expect(strategy.mode).toBe('dev')
       })
 
       it('should support branching', () => {
@@ -116,55 +116,6 @@ describe('Operating Mode Strategies', () => {
       it('should push changes', () => {
         const strategy = clientOperatingStrategy(mode)
         expect(strategy.shouldPush()).toBe(true)
-      })
-    })
-
-    describe('Local Simple Mode', () => {
-      const mode: OperatingMode = 'dev'
-
-      it('should have correct mode identifier', () => {
-        const strategy = clientOperatingStrategy(mode)
-        expect(strategy.mode).toBe('dev')
-      })
-
-      it('should NOT support branching', () => {
-        const strategy = clientOperatingStrategy(mode)
-        expect(strategy.supportsBranching()).toBe(false)
-      })
-
-      it('should NOT support status badge', () => {
-        const strategy = clientOperatingStrategy(mode)
-        expect(strategy.supportsStatusBadge()).toBe(false)
-      })
-
-      it('should NOT support comments', () => {
-        const strategy = clientOperatingStrategy(mode)
-        expect(strategy.supportsComments()).toBe(false)
-      })
-
-      it('should NOT support pull requests', () => {
-        const strategy = clientOperatingStrategy(mode)
-        expect(strategy.supportsPullRequests()).toBe(false)
-      })
-
-      it('should use standard permissions file name', () => {
-        const strategy = clientOperatingStrategy(mode)
-        expect(strategy.getPermissionsFileName()).toBe('permissions.json')
-      })
-
-      it('should use standard groups file name', () => {
-        const strategy = clientOperatingStrategy(mode)
-        expect(strategy.getGroupsFileName()).toBe('groups.json')
-      })
-
-      it('should NOT commit changes', () => {
-        const strategy = clientOperatingStrategy(mode)
-        expect(strategy.shouldCommit()).toBe(false)
-      })
-
-      it('should NOT push changes', () => {
-        const strategy = clientOperatingStrategy(mode)
-        expect(strategy.shouldPush()).toBe(false)
       })
     })
 
@@ -334,21 +285,21 @@ describe('Operating Mode Strategies', () => {
       })
     })
 
-    describe('Local Production Simulation Mode', () => {
-      const mode: OperatingMode = 'prod-sim'
+    describe('Dev Mode', () => {
+      const mode: OperatingMode = 'dev'
 
       it('should inherit all client-safe methods', () => {
         const strategy = operatingStrategy(mode)
-        expect(strategy.mode).toBe('prod-sim')
+        expect(strategy.mode).toBe('dev')
         expect(strategy.supportsBranching()).toBe(true)
         expect(strategy.shouldCommit()).toBe(true)
         expect(strategy.supportsPullRequests()).toBe(false)
       })
 
-      it('should use .canopy-prod-sim/content-branches as branches root', () => {
+      it('should use .canopy-dev/content-branches as branches root', () => {
         const strategy = operatingStrategy(mode)
         const branchesRoot = strategy.getContentBranchesRoot()
-        expect(branchesRoot).toContain('.canopy-prod-sim/content-branches')
+        expect(branchesRoot).toContain('.canopy-dev/content-branches')
       })
 
       it('should create branch subdirectories', () => {
@@ -370,91 +321,6 @@ describe('Operating Mode Strategies', () => {
       it('should NOT create permissions PR', () => {
         const strategy = operatingStrategy(mode)
         expect(strategy.shouldCreateSettingsPR({})).toBe(false)
-      })
-
-      it('should return git exclude pattern', () => {
-        const strategy = operatingStrategy(mode)
-        expect(strategy.getGitExcludePattern()).toBe('.canopy-meta/')
-      })
-    })
-
-    describe('Local Simple Mode', () => {
-      const mode: OperatingMode = 'dev'
-
-      it('should inherit all client-safe methods', () => {
-        const strategy = operatingStrategy(mode)
-        expect(strategy.mode).toBe('dev')
-        expect(strategy.supportsBranching()).toBe(false)
-        expect(strategy.shouldCommit()).toBe(false)
-        expect(strategy.getPermissionsFileName()).toBe('permissions.json')
-      })
-
-      it('should get content root', () => {
-        const strategy = operatingStrategy(mode)
-        const contentRoot = strategy.getContentRoot()
-        expect(contentRoot).toContain('content')
-      })
-
-      it('should throw error when getting content branches root', () => {
-        const strategy = operatingStrategy(mode)
-        expect(() => strategy.getContentBranchesRoot()).toThrow('No branching in dev mode')
-      })
-
-      it('should throw error when getting content branch root', () => {
-        const strategy = operatingStrategy(mode)
-        expect(() => strategy.getContentBranchRoot('feature-branch')).toThrow(
-          'No branching in dev mode',
-        )
-      })
-
-      it('should construct permissions file path in .canopy-dev', () => {
-        const strategy = operatingStrategy(mode)
-        const path = strategy.getPermissionsFilePath('/root')
-        expect(path).toContain('.canopy-dev')
-        expect(path).toContain('permissions.json')
-      })
-
-      it('should require existing repo', () => {
-        const strategy = operatingStrategy(mode)
-        expect(strategy.requiresExistingRepo()).toBe(true)
-      })
-
-      it('should use main branch for settings by default', () => {
-        const strategy = operatingStrategy(mode)
-        const branchName = strategy.getSettingsBranchName({})
-        expect(branchName).toBe('main')
-      })
-
-      it('should respect custom default base branch', () => {
-        const strategy = operatingStrategy(mode)
-        const branchName = strategy.getSettingsBranchName({
-          defaultBaseBranch: 'master',
-        })
-        expect(branchName).toBe('master')
-      })
-
-      it('should NOT use separate settings branch', () => {
-        const strategy = operatingStrategy(mode)
-        expect(strategy.usesSeparateSettingsBranch()).toBe(false)
-      })
-
-      it('should NOT validate config', () => {
-        const strategy = operatingStrategy(mode)
-        expect(() => {
-          strategy.validateConfig({})
-        }).not.toThrow()
-      })
-
-      it('should NOT create permissions PR', () => {
-        const strategy = operatingStrategy(mode)
-        expect(strategy.shouldCreateSettingsPR({})).toBe(false)
-      })
-
-      it('should not auto-init local remote', () => {
-        const strategy = operatingStrategy(mode)
-        const config = strategy.getRemoteUrlConfig()
-        expect(config.shouldAutoInitLocal).toBe(false)
-        expect(config.envVarName).toBe('CANOPYCMS_REMOTE_URL')
       })
 
       it('should return git exclude pattern', () => {

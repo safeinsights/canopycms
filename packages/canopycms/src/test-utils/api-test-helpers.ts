@@ -161,7 +161,7 @@ export interface MockServicesOptions {
  *
  * @example
  * const services = createMockServices({
- *   config: { mode: 'prod-sim' }
+ *   config: { mode: 'dev' }
  * })
  */
 export function createMockServices(options: MockServicesOptions = {}): CanopyServices {

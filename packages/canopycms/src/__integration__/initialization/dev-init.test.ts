@@ -1,5 +1,5 @@
 /**
- * Integration tests for prod-sim mode initialization.
+ * Integration tests for dev mode initialization.
  * Tests that branch workspaces are created correctly with proper
  * handling of concurrent requests (no race conditions).
  */
@@ -12,13 +12,13 @@ import { BranchWorkspaceManager } from '../../branch-workspace'
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 
-describe('prod-sim Initialization', () => {
+describe('dev Initialization', () => {
   let workspace: TestWorkspace
 
   beforeEach(async () => {
     workspace = await createTestWorkspace({
       schema: BLOG_SCHEMA,
-      mode: 'prod-sim',
+      mode: 'dev',
     })
   })
 
@@ -34,27 +34,27 @@ describe('prod-sim Initialization', () => {
     const initPromises = Promise.all([
       manager.openOrCreateBranch({
         branchName: 'main',
-        mode: 'prod-sim',
+        mode: 'dev',
         createdBy: 'test-1',
       }),
       manager.openOrCreateBranch({
         branchName: 'main',
-        mode: 'prod-sim',
+        mode: 'dev',
         createdBy: 'test-2',
       }),
       manager.openOrCreateBranch({
         branchName: 'main',
-        mode: 'prod-sim',
+        mode: 'dev',
         createdBy: 'test-3',
       }),
       manager.openOrCreateBranch({
         branchName: 'main',
-        mode: 'prod-sim',
+        mode: 'dev',
         createdBy: 'test-4',
       }),
       manager.openOrCreateBranch({
         branchName: 'main',
-        mode: 'prod-sim',
+        mode: 'dev',
         createdBy: 'test-5',
       }),
     ])
@@ -71,7 +71,7 @@ describe('prod-sim Initialization', () => {
     })
 
     // Verify only one workspace was created (no duplicates from race)
-    const branchesDir = path.join(workspace.tmpRoot, '.canopy-prod-sim', 'content-branches')
+    const branchesDir = path.join(workspace.tmpRoot, '.canopy-dev', 'content-branches')
     const entries = await fs.readdir(branchesDir)
 
     // Should have main workspace + branches.json
@@ -86,7 +86,7 @@ describe('prod-sim Initialization', () => {
     // Trigger initialization
     const context = await manager.openOrCreateBranch({
       branchName: 'main',
-      mode: 'prod-sim',
+      mode: 'dev',
       createdBy: 'test',
     })
 
@@ -116,14 +116,14 @@ describe('prod-sim Initialization', () => {
     // First initialization
     const firstContext = await manager.openOrCreateBranch({
       branchName: 'main',
-      mode: 'prod-sim',
+      mode: 'dev',
       createdBy: 'test-1',
     })
 
     // Second access should load existing workspace
     const secondContext = await manager.openOrCreateBranch({
       branchName: 'main',
-      mode: 'prod-sim',
+      mode: 'dev',
       createdBy: 'test-2',
     })
 
@@ -131,7 +131,7 @@ describe('prod-sim Initialization', () => {
     expect(secondContext.branchRoot).toBe(firstContext.branchRoot)
 
     // Verify only one workspace exists
-    const branchesDir = path.join(workspace.tmpRoot, '.canopy-prod-sim', 'content-branches')
+    const branchesDir = path.join(workspace.tmpRoot, '.canopy-dev', 'content-branches')
     const entries = await fs.readdir(branchesDir)
     const mainDirs = entries.filter((e) => e === 'main')
     expect(mainDirs.length).toBe(1)

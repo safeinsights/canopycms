@@ -76,7 +76,7 @@ describe('createAIContentHandler', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(root)
 
     handler = createAIContentHandler({
-      config: { ...config, mode: 'dev' },
+      config: { ...config, mode: 'dev', deployedAs: 'static' },
       entrySchemaRegistry: {},
       _testFlatSchema: flat,
     })
@@ -182,7 +182,11 @@ describe('createAIContentHandler', () => {
   })
 
   it('serves bundles when configured', async () => {
-    const testConfig = defineCanopyTestConfig({ schema: testSchema, mode: 'dev' })
+    const testConfig = defineCanopyTestConfig({
+      schema: testSchema,
+      mode: 'dev',
+      deployedAs: 'static',
+    })
     const testFlat = flattenSchema(testSchema, testConfig.contentRoot)
     // Re-create handler with bundle config
     handler = createAIContentHandler({

@@ -59,7 +59,7 @@ export interface ContentAccessDeps {
   mode: import('../operating-mode').OperatingMode
   /**
    * Get the settings branch root path for loading centralized permissions.
-   * Only used in prod/prod-sim modes.
+   * Used in modes with a separate settings branch.
    * Must throw if settings branch cannot be loaded.
    */
   getSettingsBranchRoot?: () => Promise<string>

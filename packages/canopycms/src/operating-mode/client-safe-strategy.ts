@@ -52,11 +52,11 @@ export class ProdClientSafeStrategy implements ClientSafeStrategy {
 }
 
 // ============================================================================
-// Local Production Simulation - Client-Safe Strategy
+// Dev Mode - Client-Safe Strategy
 // ============================================================================
 
-export class LocalProdSimClientSafeStrategy implements ClientSafeStrategy {
-  readonly mode: OperatingMode = 'prod-sim'
+export class DevClientSafeStrategy implements ClientSafeStrategy {
+  readonly mode: OperatingMode = 'dev'
 
   // UI Feature Flags
   supportsBranching(): boolean {
@@ -94,48 +94,6 @@ export class LocalProdSimClientSafeStrategy implements ClientSafeStrategy {
 }
 
 // ============================================================================
-// Local Simple Mode - Client-Safe Strategy
-// ============================================================================
-
-export class LocalSimpleClientSafeStrategy implements ClientSafeStrategy {
-  readonly mode: OperatingMode = 'dev'
-
-  // UI Feature Flags
-  supportsBranching(): boolean {
-    return false
-  }
-
-  supportsStatusBadge(): boolean {
-    return false
-  }
-
-  supportsComments(): boolean {
-    return false
-  }
-
-  supportsPullRequests(): boolean {
-    return false
-  }
-
-  // Simple Data
-  getPermissionsFileName(): string {
-    return 'permissions.json'
-  }
-
-  getGroupsFileName(): string {
-    return 'groups.json'
-  }
-
-  shouldCommit(): boolean {
-    return false
-  }
-
-  shouldPush(): boolean {
-    return false
-  }
-}
-
-// ============================================================================
 // Factory with Memoization
 // ============================================================================
 
@@ -159,11 +117,8 @@ export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy
     case 'prod':
       strategy = new ProdClientSafeStrategy()
       break
-    case 'prod-sim':
-      strategy = new LocalProdSimClientSafeStrategy()
-      break
     case 'dev':
-      strategy = new LocalSimpleClientSafeStrategy()
+      strategy = new DevClientSafeStrategy()
       break
     default: {
       // Exhaustiveness check - TypeScript will error if a mode is not handled

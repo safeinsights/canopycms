@@ -59,7 +59,6 @@ import {
   canDeleteBranch,
   canModifyBranchAccess,
 } from './branch'
-import type { ApiContext } from './types'
 import { RESERVED_GROUPS } from '../authorization'
 import { unsafeAsPermissionPath } from '../authorization/test-utils'
 import { createMockApiContext, createMockBranchContext, createMockRegistry } from '../test-utils'
@@ -403,24 +402,7 @@ describe('deleteBranch api', () => {
   const makeBranchContext = (createdBy: string, status: 'editing' | 'submitted' = 'editing') =>
     createMockBranchContext({ branchName: 'feature/x', createdBy, status })
 
-  // Context with mode that allows deletion
-  const deleteCtx: ApiContext = {
-    ...baseCtx,
-    services: {
-      ...baseCtx.services,
-      config: { ...baseCtx.services.config, mode: 'prod-sim' } as any,
-    },
-  }
-
-  it('returns 400 in modes that do not support branching', async () => {
-    const res = await deleteBranch(
-      baseCtx,
-      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
-      { branch: unsafeAsBranchName('feature/x') },
-    )
-    expect(res.status).toBe(400)
-    expect(res.error).toBe('Cannot delete branches in this operating mode')
-  })
+  const deleteCtx = baseCtx
 
   it('returns 404 if branch not found', async () => {
     const ctx = {

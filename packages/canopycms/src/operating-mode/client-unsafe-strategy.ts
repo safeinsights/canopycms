@@ -8,11 +8,7 @@
  */
 
 import path from 'node:path'
-import {
-  ProdClientSafeStrategy,
-  LocalProdSimClientSafeStrategy,
-  LocalSimpleClientSafeStrategy,
-} from './client-safe-strategy'
+import { ProdClientSafeStrategy, DevClientSafeStrategy } from './client-safe-strategy'
 import type { OperatingMode, ClientUnsafeStrategy } from './types'
 import type { CanopyConfig } from '../config'
 import { DEFAULT_PROD_WORKSPACE } from '../config'
@@ -102,14 +98,14 @@ class ProdStrategy extends ProdClientSafeStrategy implements ClientUnsafeStrateg
 }
 
 // ============================================================================
-// Local Production Simulation - Full Strategy
+// Dev Mode - Full Strategy
 // ============================================================================
 
-class LocalProdSimStrategy extends LocalProdSimClientSafeStrategy implements ClientUnsafeStrategy {
-  // Inherits client-safe methods from LocalProdSimClientSafeStrategy
+class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy {
+  // Inherits client-safe methods from DevClientSafeStrategy
 
   getWorkspaceRoot(sourceRoot?: string): string {
-    return path.resolve(sourceRoot ?? process.cwd(), '.canopy-prod-sim')
+    return path.resolve(sourceRoot ?? process.cwd(), '.canopy-dev')
   }
 
   getContentRoot(sourceRoot?: string): string {
@@ -139,7 +135,7 @@ class LocalProdSimStrategy extends LocalProdSimClientSafeStrategy implements Cli
   getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
     return {
       shouldAutoInitLocal: true,
-      defaultRemotePath: '.canopy-prod-sim/remote.git',
+      defaultRemotePath: '.canopy-dev/remote.git',
       envVarName: 'CANOPYCMS_REMOTE_URL',
     }
   }
@@ -167,86 +163,11 @@ class LocalProdSimStrategy extends LocalProdSimClientSafeStrategy implements Cli
   }
 
   validateConfig(_config: Partial<CanopyConfig>): void {
-    // No special validation for prod-sim
+    // No special validation for dev mode
   }
 
   shouldCreateSettingsPR(_config: { autoCreateSettingsPR?: boolean }): boolean {
     return false // No real GitHub in simulation
-  }
-}
-
-// ============================================================================
-// Local Simple Mode - Full Strategy
-// ============================================================================
-
-class LocalSimpleStrategy extends LocalSimpleClientSafeStrategy implements ClientUnsafeStrategy {
-  // Inherits: supportsBranching() returns false, getPermissionsFileName() returns 'permissions.local.json'
-
-  getWorkspaceRoot(sourceRoot?: string): string {
-    return path.resolve(sourceRoot ?? process.cwd(), '.canopy-dev')
-  }
-
-  getContentRoot(sourceRoot?: string): string {
-    return path.resolve(sourceRoot ?? process.cwd(), 'content')
-  }
-
-  getContentBranchesRoot(_sourceRoot?: string): string {
-    throw new Error('No branching in dev mode')
-  }
-
-  getContentBranchRoot(_branchName: string, _sourceRoot?: string): string {
-    throw new Error('No branching in dev mode')
-  }
-
-  getGitExcludePattern(): string {
-    return '.canopy-meta/'
-  }
-
-  getPermissionsFilePath(root: string): string {
-    // Returns: {projectRoot}/.canopy-dev/settings/permissions.json
-    return path.join(this.getWorkspaceRoot(root), 'settings', 'permissions.json')
-  }
-
-  getGroupsFilePath(root: string): string {
-    // Returns: {projectRoot}/.canopy-dev/settings/groups.json
-    return path.join(this.getWorkspaceRoot(root), 'settings', 'groups.json')
-  }
-
-  getRemoteUrlConfig(): import('./types').RemoteUrlConfig {
-    return {
-      shouldAutoInitLocal: false,
-      defaultRemotePath: '',
-      envVarName: 'CANOPYCMS_REMOTE_URL',
-    }
-  }
-
-  requiresExistingRepo(): boolean {
-    return true // Must have existing repo
-  }
-
-  getSettingsBranchName(config: {
-    settingsBranch?: string
-    deploymentName?: string
-    defaultBaseBranch?: string
-  }): string {
-    // Use main branch for settings in dev (no separate settings branch)
-    return config.defaultBaseBranch ?? 'main'
-  }
-
-  getSettingsRoot(sourceRoot?: string): string {
-    return path.join(this.getWorkspaceRoot(sourceRoot), 'settings')
-  }
-
-  usesSeparateSettingsBranch(): boolean {
-    return false
-  }
-
-  validateConfig(_config: Partial<CanopyConfig>): void {
-    // No special validation for dev
-  }
-
-  shouldCreateSettingsPR(_config: { autoCreateSettingsPR?: boolean }): boolean {
-    return false // No GitHub in dev
   }
 }
 
@@ -276,11 +197,8 @@ export function operatingStrategy(mode: OperatingMode): ClientUnsafeStrategy {
     case 'prod':
       strategy = new ProdStrategy()
       break
-    case 'prod-sim':
-      strategy = new LocalProdSimStrategy()
-      break
     case 'dev':
-      strategy = new LocalSimpleStrategy()
+      strategy = new DevStrategy()
       break
     default: {
       // Exhaustiveness check - TypeScript will error if a mode is not handled

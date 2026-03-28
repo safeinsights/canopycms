@@ -35,6 +35,7 @@ describe('checkContentAccess', () => {
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/repo'),
     })
 
     const res = await checkContent(
@@ -57,6 +58,7 @@ describe('checkContentAccess', () => {
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/repo'),
     })
 
     const res = await checkContent(
@@ -82,6 +84,7 @@ describe('checkContentAccess', () => {
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/repo'),
     })
 
     const res = await checkContent(
@@ -103,6 +106,7 @@ describe('checkContentAccess', () => {
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'deny',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/repo'),
     })
 
     const res = await checkContent(
@@ -125,6 +129,7 @@ describe('checkContentAccess', () => {
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/repo'),
     })
 
     const res = await checkContent(

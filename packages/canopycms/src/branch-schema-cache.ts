@@ -25,8 +25,7 @@ export interface BranchSchemaCacheEntry {
  * Manages per-branch schema caching with lazy loading and automatic invalidation.
  *
  * Caching Strategy:
- * - Prod/Prod-sim: File-based cache at {branchRoot}/.canopy-meta/schema-cache.json
- * - Dev mode: In-memory singleton (no file I/O)
+ * - File-based cache at {branchRoot}/.canopy-meta/schema-cache.json
  * - Invalidation: Writers create .stale marker, causing cache regeneration on next access
  *
  * Multi-User Support:
@@ -35,17 +34,12 @@ export interface BranchSchemaCacheEntry {
  * - Atomic file operations prevent corruption during concurrent access
  */
 export class BranchSchemaCache {
-  private devModeCache?: {
-    schema: RootCollectionConfig
-    flatSchema: FlatSchemaItem[]
-  }
-
   constructor(private readonly mode: OperatingMode) {}
 
   /**
    * Get schema for a branch (loads from cache or resolves fresh).
    *
-   * @param branchRoot - Root directory of the branch (e.g., .canopy-prod-sim/content-branches/main)
+   * @param branchRoot - Root directory of the branch (e.g., .canopy-dev/content-branches/main)
    * @param entrySchemaRegistry - Map of schema names to field definitions
    * @param contentRootName - Name of content directory (e.g., "content") from config
    * @returns Resolved schema tree and flattened schema
@@ -55,31 +49,6 @@ export class BranchSchemaCache {
     entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string = 'content',
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
-    // Dev mode: use in-memory singleton
-    if (this.mode === 'dev') {
-      if (!this.devModeCache) {
-        const contentRoot = path.join(branchRoot, contentRootName)
-        const result = await resolveSchema(contentRoot, entrySchemaRegistry)
-
-        // Validate schema has content
-        if (!isValidSchema(result.schema)) {
-          throw new Error(
-            `No schema found in ${contentRoot}. Create .collection.json files ` +
-              'with references to field schemas defined in your entry schema registry.',
-          )
-        }
-
-        // Use configured contentRoot name as base path for logical paths
-        const flatSchema = flattenSchema(result.schema, contentRootName)
-        this.devModeCache = {
-          schema: result.schema,
-          flatSchema,
-        }
-      }
-      return this.devModeCache
-    }
-
-    // Prod/prod-sim: use file-based cache with stale marker invalidation
     return this.loadFromCacheOrResolve(branchRoot, entrySchemaRegistry, contentRootName)
   }
 
@@ -160,13 +129,6 @@ export class BranchSchemaCache {
    * @param branchRoot - Root directory of the branch
    */
   async invalidate(branchRoot: string): Promise<void> {
-    if (this.mode === 'dev') {
-      // Clear in-memory cache
-      this.devModeCache = undefined
-      return
-    }
-
-    // Prod/prod-sim: create stale marker (empty file)
     const cacheDir = path.join(branchRoot, '.canopy-meta')
     const stalePath = path.join(cacheDir, 'schema-cache.stale')
 
@@ -176,14 +138,10 @@ export class BranchSchemaCache {
 
   /**
    * Clear all caches (for testing).
-   * In dev mode, clears in-memory cache.
-   * In prod/prod-sim modes, this would need to traverse all branch directories.
+   * Clearing all caches would require knowing all branch roots;
+   * tests should use invalidate() on specific branches instead.
    */
   async clearAll(): Promise<void> {
-    if (this.mode === 'dev') {
-      this.devModeCache = undefined
-    }
-    // For prod/prod-sim, clearing all caches would require knowing all branch roots
-    // For now, just clear dev mode cache. Tests can invalidate specific branches.
+    // No-op: use invalidate(branchRoot) to clear a specific branch cache
   }
 }

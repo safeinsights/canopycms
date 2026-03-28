@@ -10,20 +10,16 @@ import type { CanopyConfig } from '../config'
 /**
  * Resolve the branch root directory for reading content.
  *
- * - Dev mode: current working directory (content is in the checkout)
  * - Static deployment: current working directory (content is in the checkout)
- * - Prod/prod-sim server: load the default base branch context
+ * - Server: load the default base branch context
  */
 export async function resolveBranchRoot(config: CanopyConfig): Promise<string> {
-  if (config.mode === 'dev' || isDeployedStatic(config)) {
+  if (isDeployedStatic(config)) {
     return process.cwd()
   }
 
   const baseBranch = config.defaultBaseBranch ?? 'main'
-  const context = await loadBranchContext({
-    branchName: baseBranch,
-    mode: config.mode,
-  })
+  const context = await loadBranchContext({ branchName: baseBranch, mode: config.mode })
 
   if (!context) {
     throw new Error(

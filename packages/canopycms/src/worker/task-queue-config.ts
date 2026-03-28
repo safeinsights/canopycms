@@ -4,22 +4,18 @@ import { DEFAULT_PROD_WORKSPACE } from '../config'
 
 /**
  * Get the task queue directory for async worker operations.
- * Returns null if the mode doesn't support task queuing (e.g., dev mode).
  *
  * In prod mode: {CANOPYCMS_WORKSPACE_ROOT}/.tasks
- * In prod-sim mode: {cwd}/.canopy-prod-sim/.tasks
- * In dev mode: null (no task queue needed)
+ * In dev mode: {cwd}/.canopy-dev/.tasks
  */
-export function getTaskQueueDir(config: Pick<CanopyConfig, 'mode'>): string | null {
+export function getTaskQueueDir(config: Pick<CanopyConfig, 'mode'>): string {
   switch (config.mode) {
     case 'prod': {
       const workspace = process.env.CANOPYCMS_WORKSPACE_ROOT ?? DEFAULT_PROD_WORKSPACE
       return path.join(path.resolve(workspace), '.tasks')
     }
-    case 'prod-sim': {
-      return path.join(process.cwd(), '.canopy-prod-sim', '.tasks')
+    case 'dev': {
+      return path.join(process.cwd(), '.canopy-dev', '.tasks')
     }
-    case 'dev':
-      return null
   }
 }

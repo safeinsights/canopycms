@@ -87,7 +87,7 @@ describe('generateAIContentFiles', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)
 
     const result = await generateAIContentFiles({
-      config: { ...config, mode: 'dev' },
+      config: { ...config, mode: 'dev', deployedAs: 'static' },
       entrySchemaRegistry: {},
       outputDir,
       _testFlatSchema: flat,
@@ -124,7 +124,7 @@ describe('generateAIContentFiles', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)
 
     const result = await generateAIContentFiles({
-      config: { ...config, mode: 'dev' },
+      config: { ...config, mode: 'dev', deployedAs: 'static' },
       entrySchemaRegistry: {},
       outputDir,
       _testFlatSchema: flat,
@@ -153,7 +153,7 @@ describe('generateAIContentFiles', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)
 
     await generateAIContentFiles({
-      config: { ...config, mode: 'dev' },
+      config: { ...config, mode: 'dev', deployedAs: 'static' },
       entrySchemaRegistry: {},
       outputDir,
       _testFlatSchema: flat,
@@ -183,7 +183,7 @@ describe('generateAIContentFiles', () => {
 
     await expect(
       generateAIContentFiles({
-        config: { ...config, mode: 'dev' },
+        config: { ...config, mode: 'dev', deployedAs: 'static' },
         entrySchemaRegistry: {},
         outputDir,
         _testFlatSchema: flat,
@@ -204,7 +204,7 @@ describe('generateAIContentFiles', () => {
     vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)
 
     await generateAIContentFiles({
-      config: { ...config, mode: 'dev' },
+      config: { ...config, mode: 'dev', deployedAs: 'static' },
       entrySchemaRegistry: {},
       outputDir,
       _testFlatSchema: flat,

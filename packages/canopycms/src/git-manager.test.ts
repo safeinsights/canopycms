@@ -189,7 +189,7 @@ describe('GitManager.resolveRemoteUrl', () => {
 
   it('returns explicit remoteUrl when provided (highest priority)', async () => {
     const result = await GitManager.resolveRemoteUrl({
-      mode: 'prod-sim',
+      mode: 'dev',
       remoteUrl: 'https://explicit.com/repo.git',
       defaultRemoteUrl: 'https://default.com/repo.git',
       baseBranch: 'main',
@@ -200,7 +200,7 @@ describe('GitManager.resolveRemoteUrl', () => {
 
   it('returns defaultRemoteUrl when no explicit url', async () => {
     const result = await GitManager.resolveRemoteUrl({
-      mode: 'prod-sim',
+      mode: 'dev',
       defaultRemoteUrl: 'https://default.com/repo.git',
       baseBranch: 'main',
     })
@@ -212,14 +212,14 @@ describe('GitManager.resolveRemoteUrl', () => {
     process.env.CANOPYCMS_REMOTE_URL = 'https://env.com/repo.git'
 
     const result = await GitManager.resolveRemoteUrl({
-      mode: 'prod-sim',
+      mode: 'dev',
       baseBranch: 'main',
     })
 
     expect(result).toBe('https://env.com/repo.git')
   })
 
-  it('auto-initializes and returns local remote path for prod-sim', async () => {
+  it('auto-initializes and returns local remote path for dev mode', async () => {
     // Setup: create git repo in tmpDir with commit
     const git = simpleGit({ baseDir: tmpDir })
     await git.init()
@@ -237,27 +237,18 @@ describe('GitManager.resolveRemoteUrl', () => {
 
     try {
       const result = await GitManager.resolveRemoteUrl({
-        mode: 'prod-sim',
+        mode: 'dev',
         baseBranch: 'main',
       })
 
-      expect(result).toBe(path.join(gitRoot, '.canopy-prod-sim/remote.git'))
+      expect(result).toBe(path.join(gitRoot, '.canopy-dev/remote.git'))
 
       // Verify remote was created
-      const remoteStat = await fs.stat(path.join(gitRoot, '.canopy-prod-sim/remote.git'))
+      const remoteStat = await fs.stat(path.join(gitRoot, '.canopy-dev/remote.git'))
       expect(remoteStat.isDirectory()).toBe(true)
     } finally {
       cwdSpy.mockRestore()
     }
-  })
-
-  it('returns undefined for dev mode', async () => {
-    const result = await GitManager.resolveRemoteUrl({
-      mode: 'dev',
-      baseBranch: 'main',
-    })
-
-    expect(result).toBeUndefined()
   })
 
   it('skips auto-init when explicit remoteUrl provided', async () => {
@@ -265,7 +256,7 @@ describe('GitManager.resolveRemoteUrl', () => {
 
     try {
       const result = await GitManager.resolveRemoteUrl({
-        mode: 'prod-sim',
+        mode: 'dev',
         remoteUrl: 'https://explicit.com/repo.git',
         baseBranch: 'main',
       })
@@ -279,7 +270,7 @@ describe('GitManager.resolveRemoteUrl', () => {
     }
   })
 
-  it('uses sourceRoot when provided for prod-sim', async () => {
+  it('uses sourceRoot when provided for dev mode', async () => {
     // Setup: create git repo with subdirectory structure
     const git = await initTestRepo(tmpDir)
     await git.raw(['branch', '-M', 'main'])
@@ -300,29 +291,29 @@ describe('GitManager.resolveRemoteUrl', () => {
 
     try {
       const result = await GitManager.resolveRemoteUrl({
-        mode: 'prod-sim',
+        mode: 'dev',
         baseBranch: 'main',
         sourceRoot: 'packages/example',
       })
 
       // Should resolve to the subdirectory (using real git root path)
-      expect(result).toBe(path.join(gitRoot, 'packages/example/.canopy-prod-sim/remote.git'))
+      expect(result).toBe(path.join(gitRoot, 'packages/example/.canopy-dev/remote.git'))
 
       // Verify remote was created in the subdirectory
       const actualSubdir = path.join(gitRoot, 'packages/example')
-      const remoteStat = await fs.stat(path.join(actualSubdir, '.canopy-prod-sim/remote.git'))
+      const remoteStat = await fs.stat(path.join(actualSubdir, '.canopy-dev/remote.git'))
       expect(remoteStat.isDirectory()).toBe(true)
 
       // Verify remote contains main branch
       const remoteGit = simpleGit({
-        baseDir: path.join(actualSubdir, '.canopy-prod-sim/remote.git'),
+        baseDir: path.join(actualSubdir, '.canopy-dev/remote.git'),
       })
       const branches = await remoteGit.branch()
       expect(branches.all).toContain('main')
 
       // Clone and verify only subdirectory content was pushed (via git subtree)
       const clonePath = path.join(tmpDir, 'clone-test')
-      await simpleGit().clone(path.join(actualSubdir, '.canopy-prod-sim/remote.git'), clonePath)
+      await simpleGit().clone(path.join(actualSubdir, '.canopy-dev/remote.git'), clonePath)
       const cloneFiles = await fs.readdir(clonePath)
       expect(cloneFiles).toContain('test.txt')
       // Should NOT contain packages/ dir since we used git subtree split

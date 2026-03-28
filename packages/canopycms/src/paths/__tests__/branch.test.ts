@@ -22,32 +22,32 @@ describe('paths', () => {
   it('sanitizes branch names and prevents traversal', () => {
     expect(() =>
       resolveBranchPath({
-        mode: 'prod-sim',
+        mode: 'dev',
         branchName: '../evil',
       }),
     ).toThrow(BranchPathError)
   })
 
-  it('ensures branch root is created under base in prod-sim', async () => {
+  it('ensures branch root is created under base in dev mode', async () => {
     const temp = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branches-'))
     const { branchRoot, baseRoot } = await ensureBranchRoot({
-      mode: 'prod-sim',
+      mode: 'dev',
       branchName: 'feature/test',
       basePathOverride: temp,
     })
     const stat = await fs.stat(branchRoot)
     expect(stat.isDirectory()).toBe(true)
-    // baseRoot is now .canopy-prod-sim/content-branches inside the override path
-    expect(baseRoot).toBe(path.resolve(temp, '.canopy-prod-sim', 'content-branches'))
+    // baseRoot is now .canopy-dev/content-branches inside the override path
+    expect(baseRoot).toBe(path.resolve(temp, '.canopy-dev', 'content-branches'))
     expect(branchRoot.startsWith(baseRoot)).toBe(true)
   })
 
-  it('throws error when using branching functions in dev mode', () => {
-    expect(() =>
-      resolveBranchPath({
-        mode: 'dev',
-        branchName: 'current',
-      }),
-    ).toThrow('No branching in dev mode')
+  it('resolves branch path correctly in dev mode', () => {
+    const result = resolveBranchPath({
+      mode: 'dev',
+      branchName: 'current',
+    })
+    expect(result.branchRoot).toContain('.canopy-dev/content-branches/current')
+    expect(result.baseRoot).toContain('.canopy-dev/content-branches')
   })
 })

@@ -4,8 +4,7 @@ import { operatingStrategy } from '../operating-mode'
 
 /**
  * Get the appropriate root path for settings (permissions/groups).
- * In dev mode, returns the main branch root (.canopy-dev/settings/).
- * In prod/prod-sim modes, returns the settings root (settings/).
+ * Returns the settings root managed by the settings workspace.
  */
 export async function getSettingsBranchContext(
   ctx: ApiContext,
@@ -33,8 +32,7 @@ export async function getSettingsBranchContext(
     }
   }
 
-  // For dev mode, settings are stored in .canopy-dev/settings/
-  // We need to pass the workspace root, not a branch root
+  // Fallback for modes without a separate settings branch
   const workspaceRoot = ctx.services.config.sourceRoot ?? process.cwd()
   return {
     context: { branchRoot: workspaceRoot },
@@ -45,9 +43,8 @@ export async function getSettingsBranchContext(
 
 /**
  * Commit and push settings changes based on the mode.
- * In dev mode, does nothing (no git operations).
  * In prod mode, uses commitToSettingsBranch.
- * In prod-sim mode, uses regular commitFiles.
+ * In dev mode, uses regular commitFiles.
  */
 export async function commitSettings(
   ctx: ApiContext,

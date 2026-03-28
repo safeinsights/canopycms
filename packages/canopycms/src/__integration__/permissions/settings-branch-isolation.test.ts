@@ -30,7 +30,7 @@ describe('Settings Branch Isolation', () => {
     workspace = await createTestWorkspace({
       schema: BLOG_SCHEMA,
       defaultPathAccess: 'deny', // Default deny to ensure permissions are checked
-      mode: 'prod-sim',
+      mode: 'dev',
     })
   })
 
@@ -55,14 +55,14 @@ describe('Settings Branch Isolation', () => {
     // Create main branch
     const mainBranch = await manager.openOrCreateBranch({
       branchName: 'main',
-      mode: 'prod-sim',
+      mode: 'dev',
       createdBy: 'system',
       remoteUrl: workspace.remotePath,
     })
 
     // Create settings workspace using SettingsWorkspaceManager
     const settingsManager = new SettingsWorkspaceManager(workspace.config)
-    const strategy = operatingStrategy('prod-sim')
+    const strategy = operatingStrategy('dev')
     const settingsRoot = strategy.getSettingsRoot(workspace.tmpRoot)
     const settingsBranchName = strategy.getSettingsBranchName({
       settingsBranch: 'canopycms-settings',
@@ -71,7 +71,7 @@ describe('Settings Branch Isolation', () => {
     await settingsManager.ensureGitWorkspace({
       settingsRoot,
       branchName: settingsBranchName,
-      mode: 'prod-sim',
+      mode: 'dev',
       remoteUrl: workspace.remotePath,
     })
 
@@ -118,11 +118,11 @@ describe('Settings Branch Isolation', () => {
       }),
     )
 
-    // Create services with prod-sim mode
+    // Create services with dev mode
     const services = await createTestServices({
       ...workspace.config,
       schema: BLOG_SCHEMA,
-      mode: 'prod-sim',
+      mode: 'dev',
       settingsBranch: 'canopycms-settings',
     })
 
@@ -158,7 +158,7 @@ describe('Settings Branch Isolation', () => {
     expect(allowedUserAccess.path.reason).toBe('allowed_by_rule')
   })
 
-  it('does not read from current branch permissions file in prod-sim', async () => {
+  it('does not read from current branch permissions file in dev mode', async () => {
     const user: AuthenticatedUser = {
       type: 'authenticated',
       userId: 'test-user',
@@ -169,12 +169,12 @@ describe('Settings Branch Isolation', () => {
     // Create main branch with permissive permissions IN THE BRANCH
     const mainBranch = await manager.openOrCreateBranch({
       branchName: 'main',
-      mode: 'prod-sim',
+      mode: 'dev',
       createdBy: 'system',
       remoteUrl: workspace.remotePath,
     })
 
-    // Write permissions directly to main branch (wrong location in prod-sim)
+    // Write permissions directly to main branch (wrong location in dev mode)
     const mainPermissionsDir = mainBranch.branchRoot
     await fs.mkdir(mainPermissionsDir, { recursive: true })
     await fs.writeFile(
@@ -195,7 +195,7 @@ describe('Settings Branch Isolation', () => {
     // Create settings branch with NO permissions (empty file)
     const settingsBranch = await manager.openOrCreateBranch({
       branchName: 'canopycms-settings',
-      mode: 'prod-sim',
+      mode: 'dev',
       createdBy: 'system',
       remoteUrl: workspace.remotePath,
     })
@@ -216,7 +216,7 @@ describe('Settings Branch Isolation', () => {
     const services = await createTestServices({
       ...workspace.config,
       schema: BLOG_SCHEMA,
-      mode: 'prod-sim',
+      mode: 'dev',
       settingsBranch: 'canopycms-settings',
     })
 
@@ -238,7 +238,7 @@ describe('Settings Branch Isolation', () => {
   })
 
   it('verifies settings branch isolation works consistently across modes', async () => {
-    // This test verifies the same behavior as the prod-sim test above,
+    // This test verifies the same behavior as the dev mode test above,
     // but demonstrates it works for any mode that uses settings branch
     const user: AuthenticatedUser = {
       type: 'authenticated',
@@ -250,7 +250,7 @@ describe('Settings Branch Isolation', () => {
     // Create feature branch with permissive permissions
     const featureBranch = await manager.openOrCreateBranch({
       branchName: 'feature-x',
-      mode: 'prod-sim',
+      mode: 'dev',
       createdBy: user.userId,
       remoteUrl: workspace.remotePath,
     })
@@ -275,7 +275,7 @@ describe('Settings Branch Isolation', () => {
     // Create settings branch with restrictive permissions
     const settingsBranch = await manager.openOrCreateBranch({
       branchName: 'canopycms-settings',
-      mode: 'prod-sim',
+      mode: 'dev',
       createdBy: 'system',
       remoteUrl: workspace.remotePath,
     })
@@ -292,11 +292,11 @@ describe('Settings Branch Isolation', () => {
       }),
     )
 
-    // Create services in prod-sim mode
+    // Create services in dev mode
     const services = await createTestServices({
       ...workspace.config,
       schema: BLOG_SCHEMA,
-      mode: 'prod-sim',
+      mode: 'dev',
       settingsBranch: 'canopycms-settings',
     })
 

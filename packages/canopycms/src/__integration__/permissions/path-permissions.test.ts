@@ -38,7 +38,7 @@ describe('Path Permission Integration', () => {
 
     const branch = await manager.openOrCreateBranch({
       branchName: 'test-permissions',
-      mode: 'prod-sim',
+      mode: 'dev',
       title: 'Permission Test',
       createdBy: editor.userId,
       remoteUrl: workspace.remotePath,
@@ -54,11 +54,11 @@ describe('Path Permission Integration', () => {
         },
       ],
       'test-admin',
-      'prod-sim',
+      'dev',
     )
 
     // Load permissions and check access
-    const rules = await loadPathPermissions(branch.branchRoot, 'prod-sim')
+    const rules = await loadPathPermissions(branch.branchRoot, 'dev')
     const pathChecker = createCheckPathAccess(rules, workspace.config.defaultPathAccess ?? 'deny')
 
     const access = pathChecker({
@@ -77,7 +77,7 @@ describe('Path Permission Integration', () => {
 
     const branch = await manager.openOrCreateBranch({
       branchName: 'test-admin-bypass',
-      mode: 'prod-sim',
+      mode: 'dev',
       title: 'Admin Bypass Test',
       createdBy: admin.userId,
       remoteUrl: workspace.remotePath,
@@ -98,11 +98,11 @@ describe('Path Permission Integration', () => {
         },
       ],
       admin.userId,
-      'prod-sim',
+      'dev',
     )
 
     // Admin bypasses at branch level, so path restrictions don't matter
-    const rules = await loadPathPermissions(branch.branchRoot, 'prod-sim')
+    const rules = await loadPathPermissions(branch.branchRoot, 'dev')
     const pathChecker = createCheckPathAccess(rules, workspace.config.defaultPathAccess ?? 'deny')
 
     // Path check alone would fail for non-BlogAuthors
@@ -124,7 +124,7 @@ describe('Path Permission Integration', () => {
 
     const branch = await manager.openOrCreateBranch({
       branchName: 'test-glob-matching',
-      mode: 'prod-sim',
+      mode: 'dev',
       title: 'Glob Pattern Test',
       createdBy: editor.userId,
       remoteUrl: workspace.remotePath,
@@ -144,10 +144,10 @@ describe('Path Permission Integration', () => {
         },
       ],
       'test-admin',
-      'prod-sim',
+      'dev',
     )
 
-    const rules = await loadPathPermissions(branch.branchRoot, 'prod-sim')
+    const rules = await loadPathPermissions(branch.branchRoot, 'dev')
     const pathChecker = createCheckPathAccess(rules, workspace.config.defaultPathAccess ?? 'deny')
 
     // Check access to public post (should match first rule)
@@ -176,7 +176,7 @@ describe('Path Permission Integration', () => {
 
     const branch = await manager.openOrCreateBranch({
       branchName: 'test-permission-levels',
-      mode: 'prod-sim',
+      mode: 'dev',
       title: 'Permission Levels Test',
       createdBy: editor.userId,
       remoteUrl: workspace.remotePath,
@@ -194,10 +194,10 @@ describe('Path Permission Integration', () => {
         },
       ],
       'test-admin',
-      'prod-sim',
+      'dev',
     )
 
-    const rules = await loadPathPermissions(branch.branchRoot, 'prod-sim')
+    const rules = await loadPathPermissions(branch.branchRoot, 'dev')
     const pathChecker = createCheckPathAccess(rules, workspace.config.defaultPathAccess ?? 'deny')
 
     // Reviewer can read and review, but not edit
@@ -251,7 +251,7 @@ describe('Path Permission Integration', () => {
 
     const branch = await manager.openOrCreateBranch({
       branchName: 'test-entry-perms',
-      mode: 'prod-sim',
+      mode: 'dev',
       title: 'Entry Permission Test',
       createdBy: editor.userId,
       remoteUrl: workspace.remotePath,
@@ -267,10 +267,10 @@ describe('Path Permission Integration', () => {
         },
       ],
       'test-admin',
-      'prod-sim',
+      'dev',
     )
 
-    const rules = await loadPathPermissions(branch.branchRoot, 'prod-sim')
+    const rules = await loadPathPermissions(branch.branchRoot, 'dev')
     const pathChecker = createCheckPathAccess(rules, workspace.config.defaultPathAccess ?? 'deny')
 
     // Editor should have access to about page
@@ -289,7 +289,7 @@ describe('Path Permission Integration', () => {
 
     const branch = await manager.openOrCreateBranch({
       branchName: 'test-persist-perms',
-      mode: 'prod-sim',
+      mode: 'dev',
       title: 'Permission Persistence Test',
       createdBy: admin.userId,
       remoteUrl: workspace.remotePath,
@@ -303,10 +303,10 @@ describe('Path Permission Integration', () => {
       },
     ]
 
-    await savePathPermissions(branch.branchRoot, initialRules, admin.userId, 'prod-sim')
+    await savePathPermissions(branch.branchRoot, initialRules, admin.userId, 'dev')
 
     // Load and verify
-    const loadedRules = await loadPathPermissions(branch.branchRoot, 'prod-sim')
+    const loadedRules = await loadPathPermissions(branch.branchRoot, 'dev')
     expect(loadedRules).toHaveLength(1)
     expect(loadedRules[0].path).toBe('content/posts/**')
     expect(loadedRules[0].edit?.allowedGroups).toContain('BlogAuthors')

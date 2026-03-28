@@ -123,7 +123,7 @@ export class BranchRegistry {
       const entries = await fs.readdir(this.root, { withFileTypes: true })
 
       for (const entry of entries) {
-        // Skip non-directories and hidden directories (like .canopy-meta, .canopy-prod-sim)
+        // Skip non-directories and hidden directories (like .canopy-meta)
         if (!entry.isDirectory() || entry.name.startsWith('.')) {
           continue
         }

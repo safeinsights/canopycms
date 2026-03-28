@@ -175,9 +175,9 @@ describe('groups API', () => {
       expect(result.status).toBe(200)
 
       // Verify groups were saved with generated IDs
-      // In dev mode, uses workspace root instead of branch root
+      // Groups are saved to the settings branch root (from getSettingsBranchRoot)
       expect(groupsLoader.saveInternalGroups).toHaveBeenCalledWith(
-        '/test/workspace',
+        '/mock/settings',
         expect.arrayContaining([
           expect.objectContaining({
             name: 'Content Editors',

@@ -160,7 +160,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
         'read',
       )
       if (!access.allowed) {
-        if (services.config.mode === 'dev' || services.config.mode === 'prod-sim') {
+        if (services.config.mode !== 'prod') {
           const reasons: string[] = []
           if (!access.branch.allowed) {
             reasons.push(`branch access denied (${access.branch.reason})`)

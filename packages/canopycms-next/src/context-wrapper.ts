@@ -81,7 +81,7 @@ export async function createNextCanopyContext(options: NextCanopyOptions) {
   const { mode } = options.config
   const authPlugin: AuthPlugin = (() => {
     if (!options.authPlugin) return staticDeployAuthPlugin
-    if ((mode === 'prod' || mode === 'prod-sim') && options.authPlugin.verifyTokenOnly) {
+    if (mode === 'prod' && options.authPlugin.verifyTokenOnly) {
       const cachePath =
         process.env.CANOPY_AUTH_CACHE_PATH ??
         path.join(operatingStrategy(mode).getWorkspaceRoot(), '.cache')

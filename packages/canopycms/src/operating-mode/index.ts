@@ -16,8 +16,8 @@
  *   import { operatingStrategy } from '@/operating-mode'
  *   const strategy = operatingStrategy(mode)
  *   const contentRoot = strategy.getContentRoot()
- *   const branchesRoot = strategy.getContentBranchesRoot() // throws in dev mode
- *   const branchRoot = strategy.getContentBranchRoot('my-branch') // throws in dev mode
+ *   const branchesRoot = strategy.getContentBranchesRoot()
+ *   const branchRoot = strategy.getContentBranchRoot('my-branch')
  *   const settingsRoot = strategy.getSettingsRoot()
  *   if (strategy.supportsBranching()) { ... } // can also use client-safe methods
  */
@@ -28,7 +28,7 @@ export { clientOperatingStrategy, clearClientStrategyCache } from './client-safe
 // Client-unsafe factory and strategy (server-side only)
 export { operatingStrategy, clearStrategyCache } from './client-unsafe-strategy'
 
-export type OperatingMode = 'prod' | 'prod-sim' | 'dev'
+export type OperatingMode = 'prod' | 'dev'
 
 // Type exports
 export type { ClientSafeStrategy, ClientUnsafeStrategy, ResolveRemoteUrlOptions } from './types'

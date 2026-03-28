@@ -13,7 +13,7 @@ export async function POST() {
     return NextResponse.json({ error: 'Not available in production' }, { status: 403 })
   }
 
-  const workspacePath = path.resolve(process.cwd(), '.canopy-prod-sim')
+  const workspacePath = path.resolve(process.cwd(), '.canopy-dev')
 
   const worker = new CmsWorker({
     workspacePath,

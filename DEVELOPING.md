@@ -641,8 +641,8 @@ it('returns correct config for each mode', () => {
   const prodStrategy = operatingStrategy('prod')
   expect(prodStrategy.shouldAutoInitLocal()).toBe(false)
 
-  const localProdSimStrategy = operatingStrategy('prod-sim')
-  expect(localProdSimStrategy.shouldAutoInitLocal()).toBe(true)
+  const devStrategy = operatingStrategy('dev')
+  expect(devStrategy.shouldAutoInitLocal()).toBe(true)
 })
 ```
 
@@ -1268,27 +1268,20 @@ git status  # .canopy-dev/ should not appear
 }
 ```
 
-#### Understanding the Three Modes
+#### Understanding the Two Modes
 
-| Mode         | Settings Files                                                          | Git Operations                            | Use Case                               |
-| ------------ | ----------------------------------------------------------------------- | ----------------------------------------- | -------------------------------------- |
-| **dev**      | `.canopy-dev/*.json` (gitignored)                                       | None                                      | Local development, testing permissions |
-| **prod-sim** | Orphan branch `canopycms-settings-{deployment}` (gitignored workspaces) | Standard commits to settings branch       | Testing branch workflows locally       |
-| **prod**     | Orphan branch `canopycms-settings-{deployment}` (committed)             | Commits to settings branch + PR to GitHub | Production deployment                  |
+| Mode     | Settings Files                                                      | Git Operations                            | Use Case                                          |
+| -------- | ------------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------- |
+| **dev**  | Orphan branch `canopycms-settings-{deployment}` (gitignored clones) | Standard commits to settings branch       | Local development with full branching and git ops |
+| **prod** | Orphan branch `canopycms-settings-{deployment}` (committed)         | Commits to settings branch + PR to GitHub | Production deployment                             |
 
 **dev (Default for Development):**
 
-- No git operations
-- Settings in `.canopy-dev/` directory (gitignored)
-- Instant feedback, no branch management overhead
-- Perfect for testing different users and permissions
-
-**prod-sim (Testing Branch Workflows):**
-
-- Full branch simulation with clones in `.canopy-prod-sim/branches/`
+- Full branch support: local bare remote at `.canopy-dev/remote.git`, branch workspaces at `.canopy-dev/content-branches/`
 - Settings on separate orphan branch (deployment-specific)
-- All of `.canopy-prod-sim/` is gitignored
-- Tests branch creation, merging, permission inheritance
+- All of `.canopy-dev/` is gitignored
+- `defaultBaseBranch` auto-detected from current git HEAD if not set in config
+- Tests branch creation, merging, permission inheritance locally
 
 **prod (Production):**
 
@@ -1381,16 +1374,15 @@ git status
 
 # List what would be committed
 git add -n .
-# Should not include .canopy-dev/ or .canopy-prod-sim/
+# Should not include .canopy-dev/
 
 # If you accidentally staged CanopyCMS runtime directories
 git reset HEAD .canopy-dev/
-git reset HEAD .canopy-prod-sim/
 ```
 
-**Common mistake:** Forgetting to add `.canopy*` to .gitignore when setting up a new app.
+**Common mistake:** Forgetting to add `.canopy-dev/` to `.gitignore` when setting up a new app.
 
-**Fix:** Always add `.canopy*` to your .gitignore pattern. This single pattern covers all CanopyCMS runtime directories (`.canopy-dev/`, `.canopy-prod-sim/`).
+**Fix:** Always add `.canopy-dev/` (or the `.canopy*` glob) to your `.gitignore`. The `npx canopycms init` command does this automatically.
 
 ## Testing
 
@@ -1456,7 +1448,7 @@ describe('my integration test', () => {
   beforeEach(async () => {
     workspace = await createTestWorkspace({
       schema: BLOG_SCHEMA,
-      mode: 'prod-sim',
+      mode: 'dev',
     })
   })
 
@@ -1544,7 +1536,7 @@ import { createMockServices, createMockApiContext } from '../test-utils/api-test
 it('tests some API handler', async () => {
   // Create mock services with entrySchemaRegistry (required!)
   const services = createMockServices({
-    config: { mode: 'prod-sim' },
+    config: { mode: 'dev' },
     entrySchemaRegistry: {}, // Always include this
   })
 
@@ -1618,7 +1610,7 @@ import path from 'node:path'
 it('loads collections from .collection.json files', async () => {
   const workspace = await createTestWorkspace({
     schema: BLOG_SCHEMA, // Base schema
-    mode: 'prod-sim',
+    mode: 'dev',
   })
 
   // Add a .collection.json file
@@ -1679,7 +1671,7 @@ describe('Schema meta file integration', () => {
   let workspace: TestWorkspace
 
   beforeEach(async () => {
-    workspace = await createTestWorkspace({ mode: 'prod-sim' })
+    workspace = await createTestWorkspace({ mode: 'dev' })
   })
 
   afterEach(async () => {
@@ -2296,7 +2288,7 @@ Each auth plugin provides a symmetric pair:
 
 ### Worker CLI
 
-For local development in prod-sim mode:
+For local development in dev mode:
 
 ```bash
 pnpm exec canopycms worker run-once  # Refresh cache, process tasks, exit

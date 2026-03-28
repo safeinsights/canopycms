@@ -3,7 +3,7 @@ import { defineCanopyConfig } from 'canopycms'
 export default defineCanopyConfig({
   defaultBranchAccess: 'allow',
   defaultPathAccess: 'allow',
-  mode: 'prod-sim',
+  mode: 'dev',
   sourceRoot: 'apps/test-app',
   gitBotAuthorName: 'CanopyCMS Test Bot',
   gitBotAuthorEmail: 'test@example.com',

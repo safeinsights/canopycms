@@ -549,7 +549,7 @@ describe('permissions API', () => {
 
   describe('settings branch auto-creation', () => {
     it('should auto-create settings branch in prod mode when it does not exist', async () => {
-      // Note: In prod and prod-sim modes, settings use a separate settings branch
+      // Note: In prod and dev modes, settings use a separate settings branch
       // In dev mode, settings use the main branch
 
       // Create a new context with prod mode
@@ -590,11 +590,11 @@ describe('permissions API', () => {
       expect(prodContext.services.getSettingsBranchRoot).toHaveBeenCalled()
     })
 
-    it('should auto-create settings branch in prod-sim mode when it does not exist', async () => {
-      // Create a new context with prod-sim mode
+    it('should auto-create settings branch in dev mode when it does not exist', async () => {
+      // Create a new context with dev mode
       const localProdSimConfig: Partial<CanopyConfig> = {
         defaultBaseBranch: 'main',
-        mode: 'prod-sim',
+        mode: 'dev',
         settingsBranch: 'canopycms-settings',
         gitBotAuthorName: 'Test Bot',
         gitBotAuthorEmail: 'bot@test.com',
@@ -611,7 +611,7 @@ describe('permissions API', () => {
       // Mock getSettingsBranchRoot to simulate settings workspace
       localProdSimContext.services.getSettingsBranchRoot = vi
         .fn()
-        .mockResolvedValue('/test/repo/.canopy-prod-sim/settings')
+        .mockResolvedValue('/test/repo/.canopy-dev/settings')
 
       vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([])
 

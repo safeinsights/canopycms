@@ -13,7 +13,7 @@ You are a codebase guide for CanopyCMS. Your job is to help navigate the project
 | canopycms            | packages/canopycms/            | Core CMS library                                                                |
 | canopycms-next       | packages/canopycms-next/       | Next.js adapter (config wrapper, catch-all handler, context, client components) |
 | canopycms-auth-clerk | packages/canopycms-auth-clerk/ | Clerk auth plugin                                                               |
-| canopycms-auth-dev   | packages/canopycms-auth-dev/   | Dev auth plugin with cache-writer, JWT verifier for prod-sim                    |
+| canopycms-auth-dev   | packages/canopycms-auth-dev/   | Dev auth plugin with cache-writer, JWT verifier for dev mode                    |
 | canopycms-cdk        | packages/canopycms-cdk/        | AWS CDK constructs for deployment (VPC, EFS, Lambda, EC2 worker)                |
 
 **Apps** (in apps/, not packages/):
@@ -35,7 +35,7 @@ The codebase uses a modular structure with clear separation:
 | config/         | src/config/         | Configuration types, Zod schemas, validation                                                           |
 | schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                                 |
 | paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                                          |
-| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, prod-sim, dev)                                                        |
+| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, dev)                                                                  |
 | api/            | src/api/            | API handlers, middleware, route builder                                                                |
 | http/           | src/http/           | HTTP request handling (router, types)                                                                  |
 | editor/         | src/editor/         | React editor components, contexts, hooks                                                               |
@@ -57,7 +57,7 @@ The codebase uses a modular structure with clear separation:
 | branch-metadata.ts       | Branch metadata persistence                                                                                |
 | branch-registry.ts       | Branch tracking and listing                                                                                |
 | branch-workspace.ts      | Branch workspace management                                                                                |
-| branch-schema-cache.ts   | Per-branch schema caching                                                                                  |
+| branch-schema-cache.ts   | Per-branch schema caching (always file-based; no in-memory path)                                           |
 | settings-workspace.ts    | Settings branch workspace                                                                                  |
 | settings-branch-utils.ts | Settings branch utility helpers                                                                            |
 | content-store.ts         | Content persistence                                                                                        |
@@ -232,7 +232,7 @@ if (result.allowed) {
 | --------------- | ----------------------------------------------------------------------------------------------- |
 | dev-plugin.ts   | DevAuthPlugin - mock users/groups for development; DEFAULT_USERS, DEFAULT_GROUPS                |
 | cookie-utils.ts | Dev user cookie extraction                                                                      |
-| jwt-verifier.ts | createDevTokenVerifier - extracts userId from headers/cookies for CachingAuthPlugin in prod-sim |
+| jwt-verifier.ts | createDevTokenVerifier - extracts userId from headers/cookies for CachingAuthPlugin in dev mode |
 | cache-writer.ts | refreshDevCache - writes dev users/groups to EFS-style cache for FileBasedAuthCache             |
 | client.ts       | Client-side components (UserSwitcherModal, UserSwitcherButton)                                  |
 | index.ts        | All public exports                                                                              |
@@ -332,7 +332,7 @@ Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prom
 | `canopycms worker run-once`     | Process pending tasks, refresh auth cache, then exit                                               |
 | `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)                                 |
 
-**`init` flags**: `--mode dev|prod-sim`, `--app-dir <path>`, `--no-ai`, `--force`, `--non-interactive`
+**`init` flags**: `--mode dev|prod`, `--app-dir <path>`, `--no-ai`, `--force`, `--non-interactive`
 
 **`generate-ai-content` flags**: `--output <dir>`, `--config <path>`, `--app-dir <path>` (locates schemas.ts; default: `app`)
 
@@ -465,7 +465,7 @@ import { defineCanopyConfig } from 'canopycms/config'
 
 defineCanopyConfig({
   contentRoot: 'content',
-  mode: 'prod-sim',
+  mode: 'dev',
   deployedAs: 'static', // or 'server' (default)
   // ...
 })
@@ -594,7 +594,7 @@ Conflict indicators appear at two levels:
 | branch-registry.ts       | Branch tracking (BranchRegistry class, cache-based listing)                                                                                     |
 | branch-workspace.ts      | Workspace management (BranchWorkspaceManager class)                                                                                             |
 | branch-metadata.ts       | Branch metadata with concurrency safety (in-memory per-path locking, atomic writes, optimistic locking with version/writeId, retry-on-conflict) |
-| branch-schema-cache.ts   | Per-branch schema caching with invalidation                                                                                                     |
+| branch-schema-cache.ts   | Per-branch schema caching with invalidation (always file-based; stale-marker pattern)                                                           |
 | settings-workspace.ts    | Settings branch workspace management                                                                                                            |
 | settings-branch-utils.ts | Settings branch utility helpers                                                                                                                 |
 | github-service.ts        | GitHub API integration (PR creation, etc.)                                                                                                      |
@@ -610,17 +610,26 @@ Conflict indicators appear at two levels:
 
 **Location**: packages/canopycms/src/operating-mode/
 
-| File                      | Purpose                                   |
-| ------------------------- | ----------------------------------------- |
-| client-safe-strategy.ts   | Client-safe strategy (no Node.js imports) |
-| client-unsafe-strategy.ts | Full server-side strategy                 |
-| types.ts                  | Strategy interfaces                       |
+| File                      | Purpose                                                                    |
+| ------------------------- | -------------------------------------------------------------------------- | ---------------------------- |
+| index.ts                  | Public API; exports `OperatingMode = 'prod'                                | 'dev'` and factory functions |
+| client-safe-strategy.ts   | `ProdClientSafeStrategy`, `DevClientSafeStrategy` (no Node.js imports)     |
+| client-unsafe-strategy.ts | `ProdStrategy`, `DevStrategy` — full server-side strategies                |
+| types.ts                  | `ClientSafeStrategy`, `ClientUnsafeStrategy`, `RemoteUrlConfig` interfaces |
 
-**Operating Modes**:
+**Operating Modes** (`OperatingMode = 'prod' | 'dev'`):
 
-- `prod`: Branch clones in configurable filesystem directory (e.g., EFS)
-- `prod-sim`: Clones in .canopy-prod-sim/ (gitignored)
-- `dev`: No clones, works in current checkout
+- `prod`: Branch clones on persistent filesystem (e.g., EFS at `/mnt/efs/workspace`). Full PR workflow, real GitHub integration, task-queue-based git ops. Env var: `CANOPYCMS_WORKSPACE_ROOT`.
+- `dev`: Branch clones in `.canopy-dev/` (gitignored). Full-featured branching and git ops (same as prod), but no real GitHub PRs (`supportsPullRequests()` → false). Auto-detects current git HEAD branch when `defaultBaseBranch` is not set.
+
+**Strategy classes**:
+
+| Class                  | Layer       | Mode | Key behaviour                                               |
+| ---------------------- | ----------- | ---- | ----------------------------------------------------------- |
+| ProdClientSafeStrategy | client-safe | prod | All features true; commits + pushes enabled                 |
+| ProdStrategy           | server      | prod | Workspace root from env/EFS; auto-detects remote.git        |
+| DevClientSafeStrategy  | client-safe | dev  | All features true except `supportsPullRequests→false`       |
+| DevStrategy            | server      | dev  | Workspace root: `{cwd}/.canopy-dev`; auto-init local remote |
 
 **Usage**:
 
@@ -697,6 +706,8 @@ await ctx.services.submitBranch({ context })
 **Git Author Handling**: Both methods automatically call `git.ensureAuthor()` using `gitBotAuthorName` and `gitBotAuthorEmail` from config. No manual author setup needed.
 
 **GitManager.add()**: Accepts `string | string[]` for convenience.
+
+**Dev mode branch auto-detection** (`services.ts` → `detectDevBaseBranch()`): In `dev` mode, if `defaultBaseBranch` is not set in config, the base branch is auto-detected from the current git HEAD (`git rev-parse --abbrev-ref HEAD`). Falls back to `'main'` on error or detached HEAD. This means no manual `defaultBaseBranch` update is needed when switching feature branches locally.
 
 ## Path Utilities Module
 
@@ -842,6 +853,28 @@ import { atomicWriteFile } from '../utils/atomic-write'
 
 await atomicWriteFile(filePath, JSON.stringify(data, null, 2) + '\n')
 ```
+
+## AI Module
+
+**Location**: packages/canopycms/src/ai/
+
+Lightweight, read-only AI content serving. Does not require auth or the editor API.
+
+| File              | Purpose                                                               |
+| ----------------- | --------------------------------------------------------------------- |
+| handler.ts        | `createAIContentHandler()` — Next.js GET handler for AI-ready content |
+| generate.ts       | `generateAIContent()` — converts entries to AI-ready markdown         |
+| resolve-branch.ts | `resolveBranchRoot()` — resolves branch root for AI handler           |
+| types.ts          | `AIContentConfig` type                                                |
+
+**Caching strategy in `createAIContentHandler()`**:
+
+- `prod`: result cached for the process lifetime (Lambda instances recycled on deploy, so fresh on each deploy)
+- `dev` (`mode !== 'prod'`): cache cleared on every request so content changes are reflected immediately without restarts
+
+**Schema cache**: Uses `BranchSchemaCache` (file-based); no special in-memory path.
+
+**Cache-Control headers**: `no-cache` when `mode !== 'prod'`; `public, max-age=60` in prod.
 
 ## HTTP Module
 

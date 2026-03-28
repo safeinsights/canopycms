@@ -83,7 +83,10 @@ describe('createContentReader', () => {
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createTestServices({ ...config, schema }),
+      services: await createTestServices(
+        { ...config, schema },
+        { getSettingsBranchRoot: () => Promise.resolve(root) },
+      ),
       allowCreateBranch: false,
       getBranchContext: async (branch) => (branch === 'main' ? branchContext : null),
     })
@@ -155,7 +158,10 @@ describe('createContentReader', () => {
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createTestServices({ ...config, schema }),
+      services: await createTestServices(
+        { ...config, schema },
+        { getSettingsBranchRoot: () => Promise.resolve(root) },
+      ),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -201,7 +207,10 @@ describe('createContentReader', () => {
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createTestServices({ ...config, schema }),
+      services: await createTestServices(
+        { ...config, schema },
+        { getSettingsBranchRoot: () => Promise.resolve(root) },
+      ),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -267,7 +276,10 @@ describe('createContentReader', () => {
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createTestServices({ ...config, schema }),
+      services: await createTestServices(
+        { ...config, schema },
+        { getSettingsBranchRoot: () => Promise.resolve(root) },
+      ),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -330,13 +342,16 @@ describe('createContentReader', () => {
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
-      mode: 'prod-sim',
+      mode: 'dev',
       schema,
     })
 
     try {
       const reader = createContentReader({
-        services: await createTestServices({ ...config, schema }),
+        services: await createTestServices(
+          { ...config, schema },
+          { getSettingsBranchRoot: () => Promise.resolve(root) },
+        ),
         basePathOverride: root,
       })
       const doc = await reader.read<{ hero: { title: string } }>({
@@ -347,11 +362,8 @@ describe('createContentReader', () => {
       expect(doc.path).toBe('/pages/home?branch=main')
       expect(doc.data.hero.title).toBe('Welcome')
 
-      // In prod-sim, workspace is at .canopy-prod-sim/content-branches/main
-      const metaPath = path.join(
-        root,
-        '.canopy-prod-sim/content-branches/main/.canopy-meta/branch.json',
-      )
+      // In dev mode, workspace is at .canopy-dev/content-branches/main
+      const metaPath = path.join(root, '.canopy-dev/content-branches/main/.canopy-meta/branch.json')
       const metaRaw = await fs.readFile(metaPath, 'utf8')
       const meta = JSON.parse(metaRaw)
       expect(meta.branch.name).toBe('main')
@@ -397,7 +409,10 @@ describe('createContentReader', () => {
     })
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createTestServices({ ...config, schema }),
+      services: await createTestServices(
+        { ...config, schema },
+        { getSettingsBranchRoot: () => Promise.resolve(root) },
+      ),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })
@@ -450,7 +465,10 @@ describe('createContentReader', () => {
 
     const branchContext = buildBranchContext(root)
     const reader = createContentReader({
-      services: await createTestServices({ ...config, schema }),
+      services: await createTestServices(
+        { ...config, schema },
+        { getSettingsBranchRoot: () => Promise.resolve(root) },
+      ),
       allowCreateBranch: false,
       getBranchContext: async () => branchContext,
     })

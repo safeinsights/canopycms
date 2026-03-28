@@ -9,7 +9,7 @@ import { operatingStrategy } from '../operating-mode'
 import type { AuthPlugin } from '../auth/plugin'
 
 export interface InitOptions {
-  mode: 'prod-sim' | 'dev'
+  mode: 'dev'
   appDir: string
   projectDir: string
   force: boolean
@@ -127,8 +127,8 @@ export async function init(options: InitOptions): Promise<void> {
   const gitignorePath = path.join(projectDir, '.gitignore')
   if (await fileExists(gitignorePath)) {
     const content = await fs.readFile(gitignorePath, 'utf-8')
-    if (!content.includes('.canopy-prod-sim')) {
-      await fs.appendFile(gitignorePath, '\n# CanopyCMS\n.canopy-prod-sim/\n.canopy-dev/\n')
+    if (!content.includes('.canopy-dev')) {
+      await fs.appendFile(gitignorePath, '\n# CanopyCMS\n.canopy-dev/\n')
       p.log.success('updated: .gitignore')
     }
   }
@@ -204,7 +204,7 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
 
 /**
  * Worker run-once: process pending tasks, sync git, refresh auth cache, then exit.
- * Used in prod-sim to trigger worker operations without a persistent daemon.
+ * Used in dev mode to trigger worker operations without a persistent daemon.
  */
 export async function workerRunOnce(options: {
   projectDir: string
@@ -215,7 +215,7 @@ export async function workerRunOnce(options: {
 
   // Determine workspace and mode from config
   const cfgPath = path.join(options.projectDir, 'canopycms.config.ts')
-  let mode: 'prod' | 'prod-sim' = 'prod-sim'
+  let mode: 'prod' | 'dev' = 'dev'
   try {
     const configContent = await fs.readFile(cfgPath, 'utf-8')
     // Match the mode property in the config object, not in comments or strings
@@ -223,16 +223,12 @@ export async function workerRunOnce(options: {
       mode = 'prod'
     }
   } catch {
-    // Default to prod-sim
+    // Default to dev
   }
 
   const taskDir = getTaskQueueDir({ mode })
-  if (!taskDir) {
-    console.log('Worker not needed in dev mode')
-    return
-  }
 
-  // For prod-sim without GitHub, just refresh auth cache
+  // For dev mode without GitHub, just refresh auth cache
   const cachePath =
     process.env.CANOPY_AUTH_CACHE_PATH ??
     path.join(operatingStrategy(mode).getWorkspaceRoot(options.projectDir), '.cache')
@@ -264,7 +260,7 @@ export async function workerRunOnce(options: {
   let task
   while ((task = await dequeueTask(taskDir)) !== null) {
     console.log(`Processing task: ${task.action} (${task.id})`)
-    // In prod-sim without GitHub, just mark tasks as completed
+    // In dev mode without GitHub, just mark tasks as completed
     // A real worker would execute the GitHub operations
     console.warn(`  WARNING: Task skipped — GitHub operations require the full worker daemon`)
     await completeTask(taskDir, task.id, { skipped: true })
@@ -316,30 +312,7 @@ async function main() {
     const nonInteractive = flags['non-interactive'] === true
     const force = flags['force'] === true
 
-    let mode: 'dev' | 'prod-sim'
-    if (flags['mode'] === 'dev' || flags['mode'] === 'prod-sim') {
-      mode = flags['mode']
-    } else if (nonInteractive) {
-      mode = 'dev'
-    } else {
-      const result = await p.select({
-        message: 'Which operating mode?',
-        options: [
-          { value: 'dev' as const, label: 'dev', hint: 'Direct editing in current checkout' },
-          {
-            value: 'prod-sim' as const,
-            label: 'prod-sim',
-            hint: 'Simulates production with local branch clones',
-          },
-        ],
-        initialValue: 'dev' as const,
-      })
-      if (p.isCancel(result)) {
-        p.cancel('Init cancelled.')
-        process.exit(0)
-      }
-      mode = result
-    }
+    const mode = 'dev' as const
 
     let appDir: string
     if (typeof flags['app-dir'] === 'string') {
@@ -434,7 +407,7 @@ async function main() {
     console.log('')
     console.log('Commands:')
     console.log('  init                    Add CanopyCMS to a Next.js app')
-    console.log('    --mode <dev|prod-sim> Operating mode (default: dev)')
+    console.log('    --mode <dev>          Operating mode (default: dev)')
     console.log('    --app-dir <path>      App directory (default: app)')
     console.log('    --no-ai               Skip AI content endpoint generation')
     console.log('    --force               Overwrite existing files without asking')

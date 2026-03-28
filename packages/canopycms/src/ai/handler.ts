@@ -34,9 +34,9 @@ export interface AIContentHandlerOptions {
  * Returns a function compatible with Next.js route handlers.
  *
  * Caching strategy:
- * - Dev mode: regenerates on every request (picks up content changes immediately)
- * - Prod/prod-sim: generates once per process lifetime (Lambda instances are recycled
- *   on deploy, so content changes via merge → deploy → new instance with fresh cache)
+ * - Dev mode: regenerates on every request (content changes without deploys)
+ * - Prod: generates once per process lifetime (Lambda instances are recycled on deploy,
+ *   so content changes via merge → deploy → new instance with fresh cache)
  */
 export function createAIContentHandler(
   options: AIContentHandlerOptions,
@@ -47,10 +47,7 @@ export function createAIContentHandler(
 
   const generate = async (): Promise<GenerateResult> => {
     // In dev mode, always regenerate (content changes without deploys)
-    if (config.mode === 'dev') {
-      if (!_testFlatSchema) {
-        await schemaCache.clearAll()
-      }
+    if (config.mode !== 'prod') {
       cachedResult = null
     }
 
@@ -91,7 +88,7 @@ export function createAIContentHandler(
         return new Response(result.files.get('manifest.json'), {
           headers: {
             'Content-Type': 'application/json; charset=utf-8',
-            'Cache-Control': config.mode === 'dev' ? 'no-cache' : 'public, max-age=60',
+            'Cache-Control': config.mode !== 'prod' ? 'no-cache' : 'public, max-age=60',
           },
         })
       }
@@ -102,7 +99,7 @@ export function createAIContentHandler(
         return new Response(content, {
           headers: {
             'Content-Type': 'text/markdown; charset=utf-8',
-            'Cache-Control': config.mode === 'dev' ? 'no-cache' : 'public, max-age=60',
+            'Cache-Control': config.mode !== 'prod' ? 'no-cache' : 'public, max-age=60',
           },
         })
       }
