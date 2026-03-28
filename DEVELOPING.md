@@ -2333,6 +2333,57 @@ The dist tests will fail if `pnpm build` has not been run first, since they depe
 
 **When to update these tests:** If you change the set of files that `canopycms init` creates, update the `expectedFiles` array in both the dist and source test blocks in `init.integration.test.ts`.
 
+### CLI (`canopycms sync`)
+
+The `canopycms sync` command provides bidirectional content sync between the developer's working repo and the `.canopy-dev` local remote used by the CMS editor in dev mode. Implementation is in `src/cli/sync.ts`.
+
+**Why this exists:** In dev mode, the CMS editor works against a local bare remote (`.canopy-dev/remote.git`) and branch workspaces (`.canopy-dev/content-branches/`). When a developer edits content files directly in their working tree (outside the CMS), the editor does not see those changes. Conversely, when content is edited through the CMS UI, the developer's working tree is not updated. `canopycms sync` bridges this gap.
+
+**Commands:**
+
+```bash
+# Push working-tree content into the local remote (repo -> editor)
+npx canopycms sync --push
+
+# Pull published content from a branch workspace back to the working tree (editor -> repo)
+npx canopycms sync --pull
+
+# Both directions (push first, then pull)
+npx canopycms sync
+
+# Pull from a specific branch workspace
+npx canopycms sync --pull --branch my-feature
+
+# Specify a custom content directory (default: content)
+npx canopycms sync --content-root src/content
+```
+
+**Push flow:** Creates a temporary clone of the bare remote, replaces its content directory with the working tree's content, commits, and pushes. Then fetches in all existing branch workspaces so the editor sees the updated base. Does not touch the developer's repo git state.
+
+**Pull flow:** Copies content from a branch workspace back into the working tree's content directory. If multiple branch workspaces exist and `--branch` is not specified, an interactive prompt lets you choose. After pulling, review the changes with `git diff` and commit when ready.
+
+**Prerequisites:** The CMS must have been started at least once to initialize `.canopy-dev/remote.git`. If the local remote does not exist, the command prints an error with instructions.
+
+**Typical workflow:**
+
+```bash
+# 1. Make content changes in your editor (IDE)
+vim content/posts/new-post.mdx
+
+# 2. Push changes so the CMS editor can see them
+npx canopycms sync --push
+
+# 3. Open the CMS editor, refine content, publish
+
+# 4. Pull the published changes back to your working tree
+npx canopycms sync --pull
+
+# 5. Review and commit
+git diff
+git add content/
+git commit -m "Update posts"
+```
+
 ## Quality Checks
 
 Before handoff, run typecheck and tests:

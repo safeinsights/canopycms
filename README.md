@@ -24,6 +24,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - [AI-Ready Content](#ai-ready-content)
 - [Using the Editor](#using-the-editor)
 - [Adopter Touchpoints Summary](#adopter-touchpoints-summary)
+- [Local Development Sync](#local-development-sync)
 - [Environment Variables](#environment-variables)
 - [Documentation](#documentation)
 
@@ -485,6 +486,36 @@ See the [Schema Registry and References](#schema-references-system) section for 
 
 - **`dev`**: Full-featured local development with branching and git operations. Uses a local bare remote at `.canopy-dev/remote.git` and branch workspaces at `.canopy-dev/content-branches/`. `defaultBaseBranch` is auto-detected from the current git HEAD if not set. Add `.canopy-dev/` to `.gitignore`.
 - **`prod`**: Production deployment with branch workspaces on persistent storage (e.g., AWS Lambda + EFS). Permissions and groups are tracked in git on an orphan settings branch.
+
+### Local Development Sync
+
+When working in `dev` mode, your content lives in two places: the working tree of your repo and the `.canopy-dev` local remote that the editor reads from. The `canopycms sync` command keeps them in sync.
+
+**Push** (repo to editor) -- updates the `.canopy-dev` local remote with your current working-tree content so the editor sees your latest changes (e.g., after pulling from GitHub or editing files directly):
+
+```bash
+npx canopycms sync --push
+```
+
+**Pull** (editor to repo) -- copies content from a branch workspace back into your working tree so you can review, commit, and push the changes yourself:
+
+```bash
+npx canopycms sync --pull
+```
+
+If multiple branch workspaces exist, the CLI will prompt you to choose one. You can also specify it directly:
+
+```bash
+npx canopycms sync --pull --branch update-homepage
+```
+
+**Both directions:** omit both flags to push and then pull in one step:
+
+```bash
+npx canopycms sync
+```
+
+**Note:** The CMS workspace must be initialized first (start the dev server at least once). If `.canopy-dev/remote.git` does not exist, the sync command will tell you to start the CMS first.
 
 ### Schema Definition
 

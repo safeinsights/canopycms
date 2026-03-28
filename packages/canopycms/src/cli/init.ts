@@ -289,7 +289,13 @@ function parseFlags(args: string[]): {
     if (arg.startsWith('--')) {
       const key = arg.slice(2)
       // Boolean flags
-      if (key === 'force' || key === 'non-interactive' || key === 'no-ai') {
+      if (
+        key === 'force' ||
+        key === 'non-interactive' ||
+        key === 'no-ai' ||
+        key === 'push' ||
+        key === 'pull'
+      ) {
         flags[key] = true
       } else if (i + 1 < args.length && !args[i + 1].startsWith('--')) {
         flags[key] = args[++i]
@@ -402,6 +408,17 @@ async function main() {
       configPath: typeof flags['config'] === 'string' ? flags['config'] : undefined,
       appDir: typeof flags['app-dir'] === 'string' ? flags['app-dir'] : undefined,
     })
+  } else if (command === 'sync') {
+    const { sync } = await import('./sync')
+    const pushOnly = flags['push'] === true
+    const pullOnly = flags['pull'] === true
+    const direction = pushOnly ? 'push' : pullOnly ? 'pull' : 'both'
+    await sync({
+      projectDir: process.cwd(),
+      direction,
+      branch: typeof flags['branch'] === 'string' ? flags['branch'] : undefined,
+      contentRoot: typeof flags['content-root'] === 'string' ? flags['content-root'] : undefined,
+    })
   } else {
     console.log('CanopyCMS CLI')
     console.log('')
@@ -422,6 +439,12 @@ async function main() {
     console.log('    --output <dir>        Output directory (default: public/ai)')
     console.log('    --config <path>       Path to AI content config file')
     console.log('    --app-dir <path>      App directory (default: app)')
+    console.log('')
+    console.log('  sync                    Sync content between working tree and CMS')
+    console.log('    --push                Push working-tree content to the local remote')
+    console.log('    --pull                Pull published content from a branch workspace')
+    console.log('    --branch <name>       Branch workspace to pull from')
+    console.log('    --content-root <path> Content directory (default: content)')
     process.exit(0)
   }
 }

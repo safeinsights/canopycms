@@ -20,9 +20,18 @@ describe('BranchWorkspaceManager', () => {
   it('dev mode supports branching via local workspace', async () => {
     const root = await tmpDir()
     const git = simpleGit({ baseDir: root })
-    await git.init()
+    await git.init(['--initial-branch=main'])
+    await git.addConfig('user.name', 'Test')
+    await git.addConfig('user.email', 'test@test.com')
+    // Need at least one commit so ensureLocalSimulatedRemote can push the base branch
+    await fs.mkdir(path.join(root, 'content'), { recursive: true })
+    await fs.writeFile(path.join(root, 'content', 'hello.md'), '# Hello\n')
+    await git.add('-A')
+    await git.commit('initial commit')
+
     const manager = new BranchWorkspaceManager(
       defineCanopyTestConfig({
+        defaultBaseBranch: 'main',
         schema: {
           collections: [
             {

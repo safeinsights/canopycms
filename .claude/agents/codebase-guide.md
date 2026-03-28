@@ -44,7 +44,7 @@ The codebase uses a modular structure with clear separation:
 | auth/           | src/auth/           | Authentication plugin interface and cache system                                                       |
 | worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                 |
 | task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                      |
-| cli/            | src/cli/            | CLI bootstrapping (`pnpm exec canopycms init`, `init-deploy aws`, `worker run-once`)                   |
+| cli/            | src/cli/            | CLI bootstrapping (`pnpm exec canopycms init`, `init-deploy aws`, `worker run-once`, `sync`)           |
 | test-utils/     | src/test-utils/     | Shared test utilities (mock factories, console spy, git repo init); exported as `canopycms/test-utils` |
 
 **Top-level files** (intentionally not modularized):
@@ -318,9 +318,10 @@ Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prom
 
 | File                   | Purpose                                                                                                 |
 | ---------------------- | ------------------------------------------------------------------------------------------------------- |
-| init.ts                | CLI entrypoint with init(), initDeployAws(), workerRunOnce() commands                                   |
+| init.ts                | CLI entrypoint with init(), initDeployAws(), workerRunOnce(), sync commands                             |
 | templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}})     |
 | generate-ai-content.ts | AI content generation CLI command                                                                       |
+| sync.ts                | Bidirectional content sync between working repo and .canopy-dev local remote (push/pull)                |
 | template-files/        | Template files for scaffolding (config, route, edit page, AI content endpoint, Dockerfile, CI workflow) |
 
 **Commands**:
@@ -331,10 +332,13 @@ Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prom
 | `canopycms init-deploy aws`     | Generate AWS deployment artifacts (Dockerfile.cms, GitHub Actions workflow)                        |
 | `canopycms worker run-once`     | Process pending tasks, refresh auth cache, then exit                                               |
 | `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)                                 |
+| `canopycms sync`                | Bidirectional content sync between working tree and .canopy-dev local remote                       |
 
 **`init` flags**: `--mode dev|prod`, `--app-dir <path>`, `--no-ai`, `--force`, `--non-interactive`
 
 **`generate-ai-content` flags**: `--output <dir>`, `--config <path>`, `--app-dir <path>` (locates schemas.ts; default: `app`)
+
+**`sync` flags**: `--push` (push only), `--pull` (pull only), `--branch <name>` (branch to pull from), `--content-root <path>` (default: `content`). Without `--push`/`--pull`, runs both directions.
 
 ## CDK Package (canopycms-cdk)
 

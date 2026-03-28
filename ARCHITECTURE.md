@@ -834,7 +834,7 @@ Full-featured local development with branching and git operations — a local si
 
 `defaultBaseBranch` is auto-detected from the current git HEAD if not explicitly set in the config. Settings (groups and permissions) are stored in `.canopy-dev/` as local files rather than on a git branch, keeping permission changes immediate and lightweight during development. The AI content cache is invalidated on every request in dev mode so content edits are reflected immediately.
 
-Use `npx canopycms worker run-once` to process queued tasks, refresh the auth cache, and simulate the EC2 worker locally.
+Use `npx canopycms worker run-once` to process queued tasks, refresh the auth cache, and simulate the EC2 worker locally. Use `npx canopycms sync` to synchronize content between the developer's working tree and the CMS editor's branch workspaces (see [Content Sync CLI](#content-sync-cli) below).
 
 ### prod
 
@@ -964,6 +964,20 @@ npx canopycms worker run-once
 ```
 
 This processes pending tasks, refreshes the auth cache, and exits. It simulates what the EC2 worker daemon does continuously in production.
+
+#### Content Sync CLI
+
+In dev mode, the developer's working tree and the CMS editor operate on separate git structures. The developer edits files in their normal repo, while the editor works through branch workspaces cloned from the local bare remote (`.canopy-dev/remote.git`). These two worlds can drift apart: the developer might update content files directly, or an editor might publish changes through the CMS that the developer wants to pull back into their repo.
+
+The `sync` command bridges this gap with bidirectional content synchronization:
+
+- **Push** (`npx canopycms sync --push`): Takes the developer's current working-tree content (including uncommitted changes) and updates the local bare remote. It then fetches in all existing branch workspaces so the editor immediately sees the latest content. This is useful after the developer makes direct content edits outside the CMS.
+
+- **Pull** (`npx canopycms sync --pull`): Copies published content from a branch workspace back into the developer's working tree. The developer can then review the changes with normal git tools and commit when ready. This closes the loop after content is edited through the CMS.
+
+- **Both** (`npx canopycms sync`): Runs push followed by pull, synchronizing in both directions.
+
+**Why a separate sync step?** The CMS editor intentionally does not write directly to the developer's repo. In dev mode, the local bare remote acts as a boundary between the developer's git state and the CMS's branch workspaces. This isolation prevents the CMS from creating unexpected commits or modifying the developer's index. The sync command gives the developer explicit control over when content crosses that boundary.
 
 ## Context Architecture
 

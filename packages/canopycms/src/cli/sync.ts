@@ -1,0 +1,242 @@
+/**
+ * CLI command: npx canopycms sync
+ *
+ * Bidirectional sync between the developer's working repo and the
+ * .canopy-dev local remote used by the CMS editor.
+ *
+ * - Push: updates the local remote with current working-tree content
+ *   (including uncommitted changes), then fetches in all branch workspaces
+ *   so the editor sees the latest content.
+ *
+ * - Pull: copies published content from a branch workspace back into the
+ *   working repo's content directory so the developer can review and commit.
+ */
+
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import { simpleGit } from 'simple-git'
+import * as p from '@clack/prompts'
+import { isNotFoundError } from '../utils/error'
+
+export interface SyncOptions {
+  projectDir: string
+  direction: 'push' | 'pull' | 'both'
+  /** For pull: which branch workspace to pull from */
+  branch?: string
+  contentRoot?: string
+}
+
+/** Recursively copy a directory, creating the destination if needed. */
+async function copyDir(src: string, dest: string): Promise<void> {
+  await fs.mkdir(dest, { recursive: true })
+  const entries = await fs.readdir(src, { withFileTypes: true })
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name)
+    const destPath = path.join(dest, entry.name)
+    if (entry.isDirectory()) {
+      await copyDir(srcPath, destPath)
+    } else {
+      await fs.copyFile(srcPath, destPath)
+    }
+  }
+}
+
+/** Check if a path exists on disk. */
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fs.stat(p)
+    return true
+  } catch (err: unknown) {
+    if (isNotFoundError(err)) return false
+    throw err
+  }
+}
+
+/**
+ * Push: update the local bare remote (.canopy-dev/remote.git) with the
+ * current working-tree content, then fetch in all existing branch workspaces.
+ *
+ * Uses a temp clone of the bare remote to stage and push content without
+ * touching the developer's repo git state at all.
+ */
+async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
+  const { projectDir } = options
+  const contentRoot = options.contentRoot || 'content'
+  const remotePath = path.join(projectDir, '.canopy-dev', 'remote.git')
+  const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
+
+  // Verify the local remote exists
+  if (!(await pathExists(remotePath))) {
+    p.log.error('Local remote not found at .canopy-dev/remote.git')
+    p.log.info('Start the CMS first to initialize the workspace, then run sync.')
+    return { fileCount: 0 }
+  }
+
+  // Detect the current branch in the source repo
+  const sourceGit = simpleGit({ baseDir: projectDir })
+  const head = (await sourceGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
+  const baseBranch = head && head !== 'HEAD' ? head : 'main'
+
+  p.log.step(`Pushing content to local remote (branch: ${baseBranch})`)
+
+  const srcContentDir = path.join(projectDir, contentRoot)
+  if (!(await pathExists(srcContentDir))) {
+    p.log.warn(`Content directory not found: ${contentRoot}/`)
+    return { fileCount: 0 }
+  }
+
+  // Clone the bare remote into a temp directory
+  const tmpDir = path.join(projectDir, '.canopy-dev', `.sync-tmp-${Date.now()}`)
+  try {
+    await simpleGit().clone(remotePath, tmpDir, ['--branch', baseBranch, '--single-branch'])
+
+    const tmpGit = simpleGit({ baseDir: tmpDir })
+    await tmpGit.addConfig('user.name', 'CanopyCMS Sync')
+    await tmpGit.addConfig('user.email', 'sync@canopycms.local')
+
+    // Replace content in the temp clone with the working-tree content
+    const dstContentDir = path.join(tmpDir, contentRoot)
+    await fs.rm(dstContentDir, { recursive: true, force: true })
+    await copyDir(srcContentDir, dstContentDir)
+
+    // Stage and check for changes
+    await tmpGit.add('-A')
+    const status = await tmpGit.status()
+
+    if (status.files.length === 0) {
+      p.log.info('Content is already up to date — nothing to push')
+      return { fileCount: 0 }
+    }
+
+    await tmpGit.commit('sync: update content from working tree')
+    await tmpGit.push('origin', baseBranch)
+
+    p.log.success(`Pushed ${status.files.length} file change(s) to local remote`)
+
+    // Fetch in existing branch workspaces so they see the updated base
+    if (await pathExists(branchesDir)) {
+      const entries = await fs.readdir(branchesDir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue
+        const branchPath = path.join(branchesDir, entry.name)
+        try {
+          await simpleGit({ baseDir: branchPath }).fetch('origin')
+          p.log.info(`  Fetched in branch workspace: ${entry.name}`)
+        } catch {
+          // Skip branches that can't be fetched (e.g., missing .git)
+        }
+      }
+    }
+
+    return { fileCount: status.files.length }
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Pull: copy published content from a branch workspace back into the
+ * working repo's content directory.
+ */
+async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
+  const { projectDir } = options
+  const contentRoot = options.contentRoot || 'content'
+  const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
+
+  // List available branch workspaces
+  let branches: string[] = []
+  if (await pathExists(branchesDir)) {
+    const entries = await fs.readdir(branchesDir, { withFileTypes: true })
+    branches = entries.filter((e) => e.isDirectory()).map((e) => e.name)
+  }
+
+  if (branches.length === 0) {
+    p.log.error('No branch workspaces found. Create a branch in the editor first.')
+    return { fileCount: 0 }
+  }
+
+  // Select which branch to pull from
+  let branchName = options.branch
+  if (!branchName) {
+    if (branches.length === 1) {
+      branchName = branches[0]
+    } else {
+      const result = await p.select({
+        message: 'Which branch to pull content from?',
+        options: branches.map((b) => ({ value: b, label: b })),
+      })
+      if (p.isCancel(result)) {
+        p.cancel('Sync cancelled.')
+        return { fileCount: 0 }
+      }
+      branchName = result
+    }
+  }
+
+  if (!branches.includes(branchName)) {
+    p.log.error(`Branch workspace "${branchName}" not found.`)
+    p.log.info(`Available branches: ${branches.join(', ')}`)
+    return { fileCount: 0 }
+  }
+
+  const branchContentDir = path.join(branchesDir, branchName, contentRoot)
+  if (!(await pathExists(branchContentDir))) {
+    p.log.error(`Content directory not found in branch workspace: ${branchName}/${contentRoot}`)
+    return { fileCount: 0 }
+  }
+
+  p.log.step(`Pulling content from branch: ${branchName}`)
+
+  // Replace the working-tree content with the branch workspace content
+  const destContentDir = path.join(projectDir, contentRoot)
+  await fs.rm(destContentDir, { recursive: true, force: true })
+  await copyDir(branchContentDir, destContentDir)
+
+  // Show what changed using git status
+  const sourceGit = simpleGit({ baseDir: projectDir })
+  const status = await sourceGit.status()
+  const contentChanges = status.files.filter(
+    (f) => f.path.startsWith(contentRoot + '/') || f.path === contentRoot,
+  )
+
+  if (contentChanges.length === 0) {
+    p.log.info('Content is already up to date — nothing to pull')
+  } else {
+    p.log.success(`Pulled ${contentChanges.length} changed file(s) from branch "${branchName}"`)
+    for (const file of contentChanges.slice(0, 20)) {
+      const indicator = file.working_dir === '?' ? 'A' : file.working_dir || file.index
+      p.log.info(`  ${indicator} ${file.path}`)
+    }
+    if (contentChanges.length > 20) {
+      p.log.info(`  ... and ${contentChanges.length - 20} more`)
+    }
+    p.log.info('\nReview the changes, then git add and commit when ready.')
+  }
+
+  return { fileCount: contentChanges.length }
+}
+
+/**
+ * Run the sync command.
+ *
+ * @returns Summary of what was synced
+ */
+export async function sync(options: SyncOptions): Promise<{ pushed: number; pulled: number }> {
+  p.intro('CanopyCMS sync')
+
+  let pushed = 0
+  let pulled = 0
+
+  if (options.direction === 'push' || options.direction === 'both') {
+    const result = await syncPush(options)
+    pushed = result.fileCount
+  }
+
+  if (options.direction === 'pull' || options.direction === 'both') {
+    const result = await syncPull(options)
+    pulled = result.fileCount
+  }
+
+  p.outro('Done!')
+  return { pushed, pulled }
+}
