@@ -318,10 +318,11 @@ Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prom
 
 | File                   | Purpose                                                                                                 |
 | ---------------------- | ------------------------------------------------------------------------------------------------------- |
-| init.ts                | CLI entrypoint with init(), initDeployAws(), workerRunOnce(), sync commands                             |
-| templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}})     |
-| generate-ai-content.ts | AI content generation CLI command                                                                       |
+| cli.ts                 | CLI entrypoint: flag parsing, command routing, `isDirectRun` guard; dynamically imports command modules |
+| init.ts                | Library functions: `init()`, `initDeployAws()`, `workerRunOnce()` (no CLI logic, imported by cli.ts)    |
 | sync.ts                | Bidirectional content sync between working repo and .canopy-dev local remote (push/pull)                |
+| generate-ai-content.ts | AI content generation CLI command                                                                       |
+| templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}})     |
 | template-files/        | Template files for scaffolding (config, route, edit page, AI content endpoint, Dockerfile, CI workflow) |
 
 **Commands**:
@@ -334,7 +335,7 @@ Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prom
 | `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)                                 |
 | `canopycms sync`                | Bidirectional content sync between working tree and .canopy-dev local remote                       |
 
-**`init` flags**: `--mode dev|prod`, `--app-dir <path>`, `--no-ai`, `--force`, `--non-interactive`
+**`init` flags**: `--app-dir <path>`, `--no-ai`, `--force`, `--non-interactive`
 
 **`generate-ai-content` flags**: `--output <dir>`, `--config <path>`, `--app-dir <path>` (locates schemas.ts; default: `app`)
 

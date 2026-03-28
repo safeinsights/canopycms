@@ -2335,17 +2335,17 @@ The dist tests will fail if `pnpm build` has not been run first, since they depe
 
 ### CLI (`canopycms sync`)
 
-The `canopycms sync` command provides bidirectional content sync between the developer's working repo and the `.canopy-dev` local remote used by the CMS editor in dev mode. Implementation is in `src/cli/sync.ts`.
+The `canopycms sync` command provides bidirectional content sync between the developer's working tree and the `.canopy-dev` local remote used by the CMS in dev mode. Implementation is in `src/cli/sync.ts`.
 
-**Why this exists:** In dev mode, the CMS editor works against a local bare remote (`.canopy-dev/remote.git`) and branch workspaces (`.canopy-dev/content-branches/`). When a developer edits content files directly in their working tree (outside the CMS), the editor does not see those changes. Conversely, when content is edited through the CMS UI, the developer's working tree is not updated. `canopycms sync` bridges this gap.
+**Why this exists:** In dev mode, the CMS works against a local bare remote (`.canopy-dev/remote.git`) and branch workspaces (`.canopy-dev/content-branches/`). When a developer edits content files directly in their working tree, the CMS does not see those changes. Conversely, when content is edited through the CMS UI, the developer's working tree is not updated. `canopycms sync` bridges this gap.
 
 **Commands:**
 
 ```bash
-# Push working-tree content into the local remote (repo -> editor)
+# Push working-tree content into the local remote (working tree → CMS)
 npx canopycms sync --push
 
-# Pull published content from a branch workspace back to the working tree (editor -> repo)
+# Pull published content from a branch workspace (CMS → working tree)
 npx canopycms sync --pull
 
 # Both directions (push first, then pull)
@@ -2358,22 +2358,20 @@ npx canopycms sync --pull --branch my-feature
 npx canopycms sync --content-root src/content
 ```
 
-**Push flow:** Creates a temporary clone of the bare remote, replaces its content directory with the working tree's content, commits, and pushes. Then fetches in all existing branch workspaces so the editor sees the updated base. Does not touch the developer's repo git state.
+**Push flow:** Auto-initializes `.canopy-dev/remote.git` if needed, then creates a temporary clone of the bare remote, replaces its content directory with the working tree's content, commits, and pushes. If the developer switched git branches since the remote was first seeded, push creates the new branch in the remote automatically. Then fetches in all existing branch workspaces so the CMS sees the updated base. Does not touch the developer's repo git state.
 
 **Pull flow:** Copies content from a branch workspace back into the working tree's content directory. If multiple branch workspaces exist and `--branch` is not specified, an interactive prompt lets you choose. After pulling, review the changes with `git diff` and commit when ready.
-
-**Prerequisites:** The CMS must have been started at least once to initialize `.canopy-dev/remote.git`. If the local remote does not exist, the command prints an error with instructions.
 
 **Typical workflow:**
 
 ```bash
-# 1. Make content changes in your editor (IDE)
+# 1. Edit content files directly
 vim content/posts/new-post.mdx
 
-# 2. Push changes so the CMS editor can see them
+# 2. Push changes so the CMS can see them
 npx canopycms sync --push
 
-# 3. Open the CMS editor, refine content, publish
+# 3. Open the CMS UI, refine content, publish
 
 # 4. Pull the published changes back to your working tree
 npx canopycms sync --pull

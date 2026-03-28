@@ -7,8 +7,8 @@ import os from 'node:os'
 
 const execFileAsync = promisify(execFile)
 
-const DIST_BIN = path.resolve(__dirname, '../../dist/cli/init.js')
-const SRC_BIN = path.resolve(__dirname, './init.ts')
+const DIST_BIN = path.resolve(__dirname, '../../dist/cli/cli.js')
+const SRC_BIN = path.resolve(__dirname, './cli.ts')
 
 async function fileExists(filePath: string): Promise<boolean> {
   try {
@@ -41,9 +41,7 @@ beforeAll(async () => {
 describe('CLI binary execution (dist)', () => {
   beforeAll(async () => {
     if (!(await fileExists(DIST_BIN))) {
-      throw new Error(
-        `dist/cli/init.js not found — run "npm run build" in packages/canopycms first`,
-      )
+      throw new Error(`dist/cli/cli.js not found — run "npm run build" in packages/canopycms first`)
     }
   })
   it('prints help when run with no arguments', async () => {

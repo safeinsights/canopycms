@@ -154,15 +154,58 @@ describe('canopycms sync', () => {
       expect(log.latest?.message).toContain('sync')
     })
 
-    it('reports error when local remote does not exist', async () => {
+    it('auto-initializes remote when .canopy-dev does not exist', async () => {
+      // Create a minimal git repo with content but no .canopy-dev
       projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-sync-test-'))
+      const git = simpleGit({ baseDir: projectDir })
+      await git.init(['--initial-branch=main'])
+      await git.addConfig('user.name', 'Test')
+      await git.addConfig('user.email', 'test@test.com')
+      await fs.mkdir(path.join(projectDir, 'content'), { recursive: true })
+      await fs.writeFile(path.join(projectDir, 'content', 'index.md'), '# Hello\n')
+      await git.add('-A')
+      await git.commit('initial')
 
       const result = await sync({
         projectDir,
         direction: 'push',
       })
 
+      // Should auto-init and report no changes (remote was just seeded from same content)
       expect(result.pushed).toBe(0)
+      // Remote should now exist
+      const remoteStat = await fs.stat(path.join(projectDir, '.canopy-dev', 'remote.git'))
+      expect(remoteStat.isDirectory()).toBe(true)
+    })
+
+    it('handles branch mismatch when developer switched git branches', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+
+      // Remote was seeded from 'main'. Create a new branch in the source repo.
+      const sourceGit = simpleGit({ baseDir: projectDir })
+      await sourceGit.checkoutLocalBranch('feat-bar')
+
+      // Make a content change on the new branch
+      await fs.writeFile(
+        path.join(projectDir, 'content', 'index.md'),
+        '# Hello\n\nFrom feat-bar.\n',
+      )
+
+      const result = await sync({
+        projectDir,
+        direction: 'push',
+      })
+
+      // Should create feat-bar in the remote and push content
+      expect(result.pushed).toBeGreaterThan(0)
+
+      // Verify feat-bar exists in the remote by cloning it
+      const verifyDir = path.join(projectDir, '.canopy-dev', '.verify-tmp')
+      await simpleGit().clone(workspace.remotePath, verifyDir, ['--branch', 'feat-bar'])
+      const content = await fs.readFile(path.join(verifyDir, 'content', 'index.md'), 'utf-8')
+      expect(content).toBe('# Hello\n\nFrom feat-bar.\n')
+      await fs.rm(verifyDir, { recursive: true, force: true })
     })
   })
 

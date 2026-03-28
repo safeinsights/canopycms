@@ -489,15 +489,15 @@ See the [Schema Registry and References](#schema-references-system) section for 
 
 ### Local Development Sync
 
-When working in `dev` mode, your content lives in two places: the working tree of your repo and the `.canopy-dev` local remote that the editor reads from. The `canopycms sync` command keeps them in sync.
+When working in `dev` mode, your content lives in two places: the working tree of your repo and the `.canopy-dev` local remote that the CMS reads from. The `canopycms sync` command keeps them in sync.
 
-**Push** (repo to editor) -- updates the `.canopy-dev` local remote with your current working-tree content so the editor sees your latest changes (e.g., after pulling from GitHub or editing files directly):
+**Push** (working tree → CMS) -- updates the `.canopy-dev` local remote with your current working-tree content so the CMS sees your latest changes (e.g., after pulling from GitHub or editing files directly):
 
 ```bash
 npx canopycms sync --push
 ```
 
-**Pull** (editor to repo) -- copies content from a branch workspace back into your working tree so you can review, commit, and push the changes yourself:
+**Pull** (CMS → working tree) -- copies content from a CMS branch workspace back into your working tree so you can review, commit, and push the changes yourself:
 
 ```bash
 npx canopycms sync --pull
@@ -515,7 +515,7 @@ npx canopycms sync --pull --branch update-homepage
 npx canopycms sync
 ```
 
-**Note:** The CMS workspace must be initialized first (start the dev server at least once). If `.canopy-dev/remote.git` does not exist, the sync command will tell you to start the CMS first.
+The sync command auto-initializes `.canopy-dev/remote.git` if it doesn't exist yet, and handles branch switches gracefully (e.g., if you switch from `main` to `feat/foo`, push will create the new branch in the local remote automatically).
 
 ### Schema Definition
 

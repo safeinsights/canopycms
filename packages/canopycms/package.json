@@ -14,7 +14,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "canopycms": "./src/cli/init.ts"
+    "canopycms": "./src/cli/cli.ts"
   },
   "exports": {
     ".": "./src/index.ts",
@@ -85,7 +85,7 @@
       }
     },
     "bin": {
-      "canopycms": "./dist/cli/init.js"
+      "canopycms": "./dist/cli/cli.js"
     }
   },
   "scripts": {

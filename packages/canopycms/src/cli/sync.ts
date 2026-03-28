@@ -16,6 +16,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import * as p from '@clack/prompts'
+import { GitManager } from '../git-manager'
 import { isNotFoundError } from '../utils/error'
 
 export interface SyncOptions {
@@ -65,17 +66,21 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
   const remotePath = path.join(projectDir, '.canopy-dev', 'remote.git')
   const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
 
-  // Verify the local remote exists
-  if (!(await pathExists(remotePath))) {
-    p.log.error('Local remote not found at .canopy-dev/remote.git')
-    p.log.info('Start the CMS first to initialize the workspace, then run sync.')
-    return { fileCount: 0 }
-  }
-
   // Detect the current branch in the source repo
   const sourceGit = simpleGit({ baseDir: projectDir })
   const head = (await sourceGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
   const baseBranch = head && head !== 'HEAD' ? head : 'main'
+
+  // Auto-initialize the local remote if it doesn't exist
+  if (!(await pathExists(remotePath))) {
+    p.log.step('Initializing local remote...')
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath,
+      sourcePath: projectDir,
+      baseBranch,
+    })
+    p.log.success('Created .canopy-dev/remote.git')
+  }
 
   p.log.step(`Pushing content to local remote (branch: ${baseBranch})`)
 
@@ -85,14 +90,32 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
     return { fileCount: 0 }
   }
 
-  // Clone the bare remote into a temp directory
+  // Clone the bare remote into a temp directory.
+  // If the target branch doesn't exist in the remote (e.g., developer switched
+  // git branches since the remote was first seeded), clone the default branch
+  // and create the target branch from it.
   const tmpDir = path.join(projectDir, '.canopy-dev', `.sync-tmp-${Date.now()}`)
   try {
-    await simpleGit().clone(remotePath, tmpDir, ['--branch', baseBranch, '--single-branch'])
+    let clonedBranch: string
+    try {
+      await simpleGit().clone(remotePath, tmpDir, ['--branch', baseBranch, '--single-branch'])
+      clonedBranch = baseBranch
+    } catch {
+      // Target branch doesn't exist in remote — clone whatever default branch exists
+      await simpleGit().clone(remotePath, tmpDir)
+      clonedBranch = (
+        await simpleGit({ baseDir: tmpDir }).revparse(['--abbrev-ref', 'HEAD'])
+      ).trim()
+    }
 
     const tmpGit = simpleGit({ baseDir: tmpDir })
     await tmpGit.addConfig('user.name', 'CanopyCMS Sync')
     await tmpGit.addConfig('user.email', 'sync@canopycms.local')
+
+    // If we cloned a different branch, create the target branch
+    if (clonedBranch !== baseBranch) {
+      await tmpGit.checkoutLocalBranch(baseBranch)
+    }
 
     // Replace content in the temp clone with the working-tree content
     const dstContentDir = path.join(tmpDir, contentRoot)
@@ -109,7 +132,7 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
     }
 
     await tmpGit.commit('sync: update content from working tree')
-    await tmpGit.push('origin', baseBranch)
+    await tmpGit.push('origin', `${baseBranch}:${baseBranch}`, ['--set-upstream'])
 
     p.log.success(`Pushed ${status.files.length} file change(s) to local remote`)
 
