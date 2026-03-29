@@ -15,7 +15,7 @@ export const isSettingsBranch = (
 ): boolean => {
   const strategy = operatingStrategy(config.mode)
 
-  // Dev mode doesn't have separate settings branch
+  // Check if mode uses a separate settings branch (both prod and dev do)
   if (!strategy.usesSeparateSettingsBranch()) {
     return false
   }
@@ -30,8 +30,8 @@ export const isSettingsBranch = (
 }
 
 /**
- * Get the settings branch name for the current configuration
- * Returns null if operating mode doesn't use separate settings branch (dev mode)
+ * Get the settings branch name for the current configuration.
+ * Returns null if operating mode doesn't use a separate settings branch.
  */
 export const getSettingsBranchName = (config: {
   mode: OperatingMode

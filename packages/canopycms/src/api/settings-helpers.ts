@@ -21,21 +21,10 @@ export async function getSettingsBranchContext(
     defaultBaseBranch: ctx.services.config.defaultBaseBranch,
   })
 
-  // For modes with separate settings branch, use settings root
-  if (strategy.usesSeparateSettingsBranch()) {
-    // Get settings root and ensure workspace exists
-    const settingsRoot = await ctx.services.getSettingsBranchRoot()
-    return {
-      context: { branchRoot: settingsRoot },
-      mode,
-      branchName,
-    }
-  }
-
-  // Fallback for modes without a separate settings branch
-  const workspaceRoot = ctx.services.config.sourceRoot ?? process.cwd()
+  // Both prod and dev use a separate settings branch
+  const settingsRoot = await ctx.services.getSettingsBranchRoot()
   return {
-    context: { branchRoot: workspaceRoot },
+    context: { branchRoot: settingsRoot },
     mode,
     branchName,
   }
@@ -43,8 +32,8 @@ export async function getSettingsBranchContext(
 
 /**
  * Commit and push settings changes based on the mode.
- * In prod mode, uses commitToSettingsBranch.
- * In dev mode, uses regular commitFiles.
+ * Both prod and dev use commitToSettingsBranch.
+ * In dev mode, commits to the settings branch but does not create a PR.
  */
 export async function commitSettings(
   ctx: ApiContext,

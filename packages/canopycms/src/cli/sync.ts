@@ -17,8 +17,8 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import * as p from '@clack/prompts'
 import { GitManager } from '../git-manager'
-import { isNotFoundError } from '../utils/error'
 import { detectHeadBranch } from '../utils/git'
+import { filePathExists } from '../utils/fs'
 
 export interface SyncOptions {
   projectDir: string
@@ -43,17 +43,6 @@ async function copyDir(src: string, dest: string): Promise<void> {
     } else {
       await fs.copyFile(srcPath, destPath)
     }
-  }
-}
-
-/** Check if a path exists on disk. */
-async function filePathExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.stat(filePath)
-    return true
-  } catch (err: unknown) {
-    if (isNotFoundError(err)) return false
-    throw err
   }
 }
 
@@ -96,7 +85,11 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
   // If the target branch doesn't exist in the remote (e.g., developer switched
   // git branches since the remote was first seeded), clone the default branch
   // and create the target branch from it.
-  const tmpDir = path.join(projectDir, '.canopy-dev', `.sync-tmp-${Date.now()}`)
+  const tmpDir = path.join(
+    projectDir,
+    '.canopy-dev',
+    `.sync-tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  )
   try {
     let clonedBranch: string
     try {

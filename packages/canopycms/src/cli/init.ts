@@ -3,6 +3,7 @@ import path from 'node:path'
 import * as p from '@clack/prompts'
 import { operatingStrategy } from '../operating-mode'
 import type { AuthPlugin } from '../auth/plugin'
+import { filePathExists } from '../utils/fs'
 
 export interface InitOptions {
   mode: 'dev'
@@ -20,15 +21,6 @@ interface InitDeployOptions {
   nonInteractive: boolean
 }
 
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.stat(filePath)
-    return true
-  } catch {
-    return false
-  }
-}
-
 /**
  * Write a file, prompting for overwrite confirmation if it already exists.
  * Returns true if the file was written, false if skipped.
@@ -40,7 +32,7 @@ async function writeFile(
 ): Promise<boolean> {
   const relativePath = path.relative(process.cwd(), filePath)
 
-  if (await fileExists(filePath)) {
+  if (await filePathExists(filePath)) {
     if (options.force) {
       // --force: overwrite without asking
     } else if (options.nonInteractive) {
@@ -121,7 +113,7 @@ export async function init(options: InitOptions): Promise<void> {
 
   // Update .gitignore
   const gitignorePath = path.join(projectDir, '.gitignore')
-  if (await fileExists(gitignorePath)) {
+  if (await filePathExists(gitignorePath)) {
     const content = await fs.readFile(gitignorePath, 'utf-8')
     if (!content.includes('.canopy-dev')) {
       await fs.appendFile(gitignorePath, '\n# CanopyCMS\n.canopy-dev/\n')
@@ -170,9 +162,9 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   // Check if next.config already has CANOPY_BUILD support
   const nextConfigPath = path.join(projectDir, 'next.config.ts')
   const nextConfigMjsPath = path.join(projectDir, 'next.config.mjs')
-  const configPath = (await fileExists(nextConfigPath))
+  const configPath = (await filePathExists(nextConfigPath))
     ? nextConfigPath
-    : (await fileExists(nextConfigMjsPath))
+    : (await filePathExists(nextConfigMjsPath))
       ? nextConfigMjsPath
       : null
 

@@ -3,7 +3,7 @@ import { DEFAULT_USERS, DEFAULT_GROUPS } from './dev-defaults'
 import type { DevUser, DevGroup } from './dev-defaults'
 
 export interface RefreshDevCacheOptions {
-  /** Directory to write cache files to (e.g., .canopy-prod-sim/.cache) */
+  /** Directory to write cache files to (e.g., .canopy-dev/.cache) */
   cachePath: string
   /** Custom users (defaults to DEFAULT_USERS) */
   users?: DevUser[]
@@ -18,7 +18,7 @@ export interface RefreshDevCacheOptions {
  * the same JSON files that CachingAuthPlugin reads. Since dev users are
  * hardcoded, no API calls are needed.
  *
- * Used by the worker's `run-once` command in prod-sim mode with dev auth.
+ * Used by the worker's `run-once` command in dev mode with dev auth.
  */
 export async function refreshDevCache(
   options: RefreshDevCacheOptions,

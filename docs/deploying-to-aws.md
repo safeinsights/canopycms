@@ -100,12 +100,12 @@ This creates:
 - `Dockerfile.cms` — Lambda Web Adapter image
 - `.github/workflows/deploy-cms.yml` — CI/CD workflow template
 
-## Step 3: Test Locally in prod-sim Mode
+## Step 3: Test Locally in Dev Mode
 
 Before deploying, test the full workflow locally:
 
 ```bash
-# Set mode in canopycms.config.ts to 'prod-sim'
+# Set mode in canopycms.config.ts to 'dev'
 npm run dev
 
 # In another terminal, initialize the auth cache:
@@ -114,11 +114,11 @@ npx canopycms worker run-once
 # Visit http://localhost:3000/edit
 ```
 
-In prod-sim mode, CanopyCMS:
+In dev mode, CanopyCMS:
 
-- Creates a local bare repo at `.canopy-prod-sim/remote.git`
+- Creates a local bare repo at `.canopy-dev/remote.git`
 - Uses `CachingAuthPlugin` with file-based cache (same code path as prod)
-- Queues PR tasks to `.canopy-prod-sim/.tasks/` (processed by `run-once`)
+- Queues PR tasks to `.canopy-dev/.tasks/` (processed by `run-once`)
 
 ## Step 4: CDK Stack
 
