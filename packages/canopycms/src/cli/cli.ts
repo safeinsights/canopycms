@@ -58,7 +58,7 @@ async function main() {
     const nonInteractive = flags['non-interactive'] === true
     const force = flags['force'] === true
 
-    const mode = 'dev' as const
+    const mode = 'dev'
 
     let appDir: string
     if (typeof flags['app-dir'] === 'string') {
@@ -160,6 +160,7 @@ async function main() {
       direction,
       branch: typeof flags['branch'] === 'string' ? flags['branch'] : undefined,
       contentRoot: typeof flags['content-root'] === 'string' ? flags['content-root'] : undefined,
+      force: flags['force'] === true,
     })
   } else {
     console.log('CanopyCMS CLI')
@@ -186,6 +187,7 @@ async function main() {
     console.log('    --pull                Pull published content from a branch workspace')
     console.log('    --branch <name>       Branch workspace to pull from')
     console.log('    --content-root <path> Content directory (default: content)')
+    console.log('    --force               Overwrite uncommitted changes without asking')
     process.exit(0)
   }
 }

@@ -18,6 +18,7 @@ import { simpleGit } from 'simple-git'
 import * as p from '@clack/prompts'
 import { GitManager } from '../git-manager'
 import { isNotFoundError } from '../utils/error'
+import { detectHeadBranch } from '../utils/git'
 
 export interface SyncOptions {
   projectDir: string
@@ -25,13 +26,16 @@ export interface SyncOptions {
   /** For pull: which branch workspace to pull from */
   branch?: string
   contentRoot?: string
+  /** Skip confirmation prompts (for testing or scripts). */
+  force?: boolean
 }
 
-/** Recursively copy a directory, creating the destination if needed. */
+/** Recursively copy a directory, creating the destination if needed. Skips .git directories. */
 async function copyDir(src: string, dest: string): Promise<void> {
   await fs.mkdir(dest, { recursive: true })
   const entries = await fs.readdir(src, { withFileTypes: true })
   for (const entry of entries) {
+    if (entry.name === '.git') continue
     const srcPath = path.join(src, entry.name)
     const destPath = path.join(dest, entry.name)
     if (entry.isDirectory()) {
@@ -43,9 +47,9 @@ async function copyDir(src: string, dest: string): Promise<void> {
 }
 
 /** Check if a path exists on disk. */
-async function pathExists(p: string): Promise<boolean> {
+async function filePathExists(filePath: string): Promise<boolean> {
   try {
-    await fs.stat(p)
+    await fs.stat(filePath)
     return true
   } catch (err: unknown) {
     if (isNotFoundError(err)) return false
@@ -67,12 +71,10 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
   const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
 
   // Detect the current branch in the source repo
-  const sourceGit = simpleGit({ baseDir: projectDir })
-  const head = (await sourceGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
-  const baseBranch = head && head !== 'HEAD' ? head : 'main'
+  const baseBranch = await detectHeadBranch(projectDir)
 
   // Auto-initialize the local remote if it doesn't exist
-  if (!(await pathExists(remotePath))) {
+  if (!(await filePathExists(remotePath))) {
     p.log.step('Initializing local remote...')
     await GitManager.ensureLocalSimulatedRemote({
       remotePath,
@@ -85,7 +87,7 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
   p.log.step(`Pushing content to local remote (branch: ${baseBranch})`)
 
   const srcContentDir = path.join(projectDir, contentRoot)
-  if (!(await pathExists(srcContentDir))) {
+  if (!(await filePathExists(srcContentDir))) {
     p.log.warn(`Content directory not found: ${contentRoot}/`)
     return { fileCount: 0 }
   }
@@ -137,7 +139,7 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
     p.log.success(`Pushed ${status.files.length} file change(s) to local remote`)
 
     // Fetch in existing branch workspaces so they see the updated base
-    if (await pathExists(branchesDir)) {
+    if (await filePathExists(branchesDir)) {
       const entries = await fs.readdir(branchesDir, { withFileTypes: true })
       for (const entry of entries) {
         if (!entry.isDirectory()) continue
@@ -168,7 +170,7 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
 
   // List available branch workspaces
   let branches: string[] = []
-  if (await pathExists(branchesDir)) {
+  if (await filePathExists(branchesDir)) {
     const entries = await fs.readdir(branchesDir, { withFileTypes: true })
     branches = entries.filter((e) => e.isDirectory()).map((e) => e.name)
   }
@@ -203,22 +205,49 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
   }
 
   const branchContentDir = path.join(branchesDir, branchName, contentRoot)
-  if (!(await pathExists(branchContentDir))) {
+  if (!(await filePathExists(branchContentDir))) {
     p.log.error(`Content directory not found in branch workspace: ${branchName}/${contentRoot}`)
     return { fileCount: 0 }
   }
 
   p.log.step(`Pulling content from branch: ${branchName}`)
 
-  // Replace the working-tree content with the branch workspace content
   const destContentDir = path.join(projectDir, contentRoot)
+
+  // Check for uncommitted changes in the content directory before overwriting
+  const sourceGit = simpleGit({ baseDir: projectDir })
+  const status = await sourceGit.status()
+  const uncommittedContent = status.files.filter(
+    (f) => f.path.startsWith(contentRoot + '/') || f.path === contentRoot,
+  )
+
+  if (uncommittedContent.length > 0 && !options.force) {
+    p.log.warn(
+      `You have ${uncommittedContent.length} uncommitted change(s) in ${contentRoot}/ that will be overwritten:`,
+    )
+    for (const file of uncommittedContent.slice(0, 10)) {
+      p.log.warn(`  ${file.path}`)
+    }
+    if (uncommittedContent.length > 10) {
+      p.log.warn(`  ... and ${uncommittedContent.length - 10} more`)
+    }
+    const confirm = await p.confirm({
+      message: 'Overwrite uncommitted content changes?',
+      initialValue: false,
+    })
+    if (p.isCancel(confirm) || !confirm) {
+      p.cancel('Pull cancelled. Commit or stash your changes first.')
+      return { fileCount: 0 }
+    }
+  }
+
+  // Replace the working-tree content with the branch workspace content
   await fs.rm(destContentDir, { recursive: true, force: true })
   await copyDir(branchContentDir, destContentDir)
 
-  // Show what changed using git status
-  const sourceGit = simpleGit({ baseDir: projectDir })
-  const status = await sourceGit.status()
-  const contentChanges = status.files.filter(
+  // Show what changed using git status (re-check after copy)
+  const postStatus = await sourceGit.status()
+  const contentChanges = postStatus.files.filter(
     (f) => f.path.startsWith(contentRoot + '/') || f.path === contentRoot,
   )
 

@@ -12,6 +12,7 @@ import {
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { isNotFoundError } from './utils/error'
+import { detectHeadBranch } from './utils/git'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
 
@@ -362,17 +363,10 @@ export class GitManager {
     // In dev mode, auto-detect the current HEAD branch when baseBranch is not explicitly set
     let baseBranch = options.baseBranch
     if (!baseBranch && options.mode === 'dev') {
-      try {
-        const sourceRoot = options.sourceRoot
-          ? path.resolve(process.cwd(), options.sourceRoot)
-          : process.cwd()
-        const git = simpleGit({ baseDir: sourceRoot })
-        const head = await git.revparse(['--abbrev-ref', 'HEAD'])
-        const branch = head.trim()
-        baseBranch = branch && branch !== 'HEAD' ? branch : undefined
-      } catch {
-        // Fall through to default
-      }
+      const sourceRoot = options.sourceRoot
+        ? path.resolve(process.cwd(), options.sourceRoot)
+        : process.cwd()
+      baseBranch = await detectHeadBranch(sourceRoot)
     }
     baseBranch = baseBranch ?? 'main'
     const remoteName = options.remoteName ?? 'origin'

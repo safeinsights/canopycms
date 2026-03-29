@@ -224,6 +224,7 @@ describe('canopycms sync', () => {
         projectDir,
         direction: 'pull',
         branch: 'test-branch',
+        force: true,
       })
 
       expect(result.pulled).toBeGreaterThan(0)
@@ -247,11 +248,42 @@ describe('canopycms sync', () => {
       const result = await sync({
         projectDir,
         direction: 'pull',
+        force: true,
       })
 
       expect(result.pulled).toBeGreaterThan(0)
       const content = await fs.readFile(path.join(projectDir, 'content', 'about.md'), 'utf-8')
       expect(content).toBe('# About\n\nUpdated about.\n')
+    })
+
+    it('aborts when there are uncommitted content changes and user declines', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+
+      // Make an uncommitted change in the working tree
+      await fs.writeFile(
+        path.join(projectDir, 'content', 'index.md'),
+        '# Hello\n\nLocal uncommitted edit.\n',
+      )
+
+      // Simulate a CMS edit in the branch workspace
+      await fs.writeFile(
+        path.join(workspace.branchPath, 'content', 'index.md'),
+        '# Hello\n\nEdited in CMS.\n',
+      )
+
+      // confirm mock returns false by default — user declines
+      const result = await sync({
+        projectDir,
+        direction: 'pull',
+        branch: 'test-branch',
+      })
+
+      expect(result.pulled).toBe(0)
+
+      // Working tree should still have the local edit
+      const content = await fs.readFile(path.join(projectDir, 'content', 'index.md'), 'utf-8')
+      expect(content).toBe('# Hello\n\nLocal uncommitted edit.\n')
     })
 
     it('reports error when branch workspace does not exist', async () => {
@@ -297,6 +329,7 @@ describe('canopycms sync', () => {
         projectDir,
         direction: 'both',
         branch: 'test-branch',
+        force: true,
       })
 
       // Push should have synced the new file

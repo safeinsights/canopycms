@@ -173,24 +173,26 @@ describe('BranchSchemaCache', () => {
     })
   })
 
-  describe('clearAll', () => {
-    it('should clear in-memory cache in dev mode', async () => {
+  describe('invalidate', () => {
+    it('should force cache regeneration after invalidate()', async () => {
       const registry = new BranchSchemaCache('dev')
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
 
-      // Load schema
+      // Load schema (populates cache)
       const result1 = await registry.getSchema(branchRoot, entrySchemaRegistry)
 
-      // Clear all
-      await registry.clearAll()
+      // Invalidate the specific branch
+      await registry.invalidate(branchRoot)
 
-      // Load again
+      // Load again — should regenerate from disk, producing a new object
       const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry)
 
       // Should not be the same reference
       expect(result2).not.toBe(result1)
+      // But should have the same content
+      expect(result2.schema).toEqual(result1.schema)
     })
   })
 })

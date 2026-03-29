@@ -135,13 +135,4 @@ export class BranchSchemaCache {
     await fs.mkdir(cacheDir, { recursive: true })
     await fs.writeFile(stalePath, '', 'utf-8')
   }
-
-  /**
-   * Clear all caches (for testing).
-   * Clearing all caches would require knowing all branch roots;
-   * tests should use invalidate() on specific branches instead.
-   */
-  async clearAll(): Promise<void> {
-    // No-op: use invalidate(branchRoot) to clear a specific branch cache
-  }
 }

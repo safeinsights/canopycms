@@ -1,5 +1,4 @@
 import path from 'node:path'
-import { simpleGit } from 'simple-git'
 import type { CanopyConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
 import { getConfigDefaults } from './config'
@@ -20,6 +19,7 @@ import { operatingStrategy } from './operating-mode'
 import { BranchSchemaCache } from './branch-schema-cache'
 import { enqueueTask } from './worker/task-queue'
 import { getTaskQueueDir } from './worker/task-queue-config'
+import { detectHeadBranch } from './utils/git'
 
 /**
  * In dev mode, auto-detect the current HEAD branch if defaultBaseBranch is not set.
@@ -28,15 +28,8 @@ import { getTaskQueueDir } from './worker/task-queue-config'
 async function detectDevBaseBranch(config: CanopyConfig): Promise<string> {
   if (config.defaultBaseBranch) return config.defaultBaseBranch
   if (config.mode !== 'dev') return config.defaultBaseBranch ?? 'main'
-  try {
-    const repoRoot = config.sourceRoot ? path.resolve(config.sourceRoot) : process.cwd()
-    const git = simpleGit({ baseDir: repoRoot })
-    const head = await git.revparse(['--abbrev-ref', 'HEAD'])
-    const branch = head.trim()
-    return branch && branch !== 'HEAD' ? branch : 'main'
-  } catch {
-    return 'main'
-  }
+  const repoRoot = config.sourceRoot ? path.resolve(config.sourceRoot) : process.cwd()
+  return detectHeadBranch(repoRoot)
 }
 
 /**
