@@ -12,6 +12,7 @@ import {
 } from './branch-workspace'
 import { defineCanopyTestConfig } from './config-test'
 import { BranchRegistry } from './branch-registry'
+import { GitManager } from './git-manager'
 import { initBareRepo } from './__integration__/test-utils/test-workspace'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branchws-'))
@@ -29,9 +30,19 @@ describe('BranchWorkspaceManager', () => {
     await git.add('-A')
     await git.commit('initial commit')
 
+    // Create a local bare remote so the workspace manager doesn't
+    // try to auto-init one at the monorepo root via process.cwd()
+    const remotePath = path.join(root, '.canopy-dev', 'remote.git')
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath,
+      sourcePath: root,
+      baseBranch: 'main',
+    })
+
     const manager = new BranchWorkspaceManager(
       defineCanopyTestConfig({
         defaultBaseBranch: 'main',
+        defaultRemoteUrl: remotePath,
         schema: {
           collections: [
             {
