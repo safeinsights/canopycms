@@ -72,7 +72,7 @@ export class DevClientSafeStrategy implements ClientSafeStrategy {
   }
 
   supportsPullRequests(): boolean {
-    return false // No real GitHub in simulation
+    return false // No real GitHub in local dev mode
   }
 
   // Simple Data

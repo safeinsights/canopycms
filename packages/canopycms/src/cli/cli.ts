@@ -12,46 +12,19 @@
 
 import { realpathSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import minimist from 'minimist'
 import * as p from '@clack/prompts'
 import type { AuthPlugin } from '../auth/plugin'
 
-/** Parse CLI flags from argv, returning values and remaining positional args. */
-function parseFlags(args: string[]): {
-  flags: Record<string, string | boolean>
-  positional: string[]
-} {
-  const flags: Record<string, string | boolean> = {}
-  const positional: string[] = []
-
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i]
-    if (arg.startsWith('--')) {
-      const key = arg.slice(2)
-      // Boolean flags
-      if (
-        key === 'force' ||
-        key === 'non-interactive' ||
-        key === 'no-ai' ||
-        key === 'push' ||
-        key === 'pull'
-      ) {
-        flags[key] = true
-      } else if (i + 1 < args.length && !args[i + 1].startsWith('--')) {
-        flags[key] = args[++i]
-      }
-    } else {
-      positional.push(arg)
-    }
-  }
-
-  return { flags, positional }
-}
-
 // CLI entrypoint
 async function main() {
-  const args = process.argv.slice(2)
-  const { flags, positional } = parseFlags(args)
-  const command = positional[0]
+  const argv = minimist(process.argv.slice(2), {
+    boolean: ['force', 'non-interactive', 'no-ai', 'push', 'pull'],
+    string: ['app-dir', 'branch', 'content-root', 'output', 'config'],
+    alias: { f: 'force' },
+  })
+  const flags = argv as Record<string, string | boolean>
+  const command = argv._[0] as string | undefined
 
   if (command === 'init') {
     const { init } = await import('./init')
@@ -105,7 +78,7 @@ async function main() {
     })
   } else if (command === 'init-deploy') {
     const { initDeployAws } = await import('./init')
-    const cloud = positional[1]
+    const cloud = argv._[1]
     if (cloud !== 'aws') {
       console.error('Usage: canopycms init-deploy aws')
       console.error('Only "aws" is currently supported.')
@@ -119,7 +92,7 @@ async function main() {
     })
   } else if (command === 'worker') {
     const { workerRunOnce } = await import('./init')
-    const subcommand = positional[1]
+    const subcommand = argv._[1]
     if (subcommand !== 'run-once') {
       console.error('Usage: canopycms worker run-once')
       process.exit(1)
@@ -196,7 +169,12 @@ async function main() {
 // Use realpathSync to resolve symlinks — npx creates a symlink in node_modules/.bin/
 // that won't match import.meta.url's resolved real path.
 const __filename = fileURLToPath(import.meta.url)
-const isDirectRun = realpathSync(process.argv[1]) === realpathSync(__filename)
+let isDirectRun = false
+try {
+  isDirectRun = realpathSync(process.argv[1]) === realpathSync(__filename)
+} catch {
+  // process.argv[1] may be undefined or point to a non-existent file
+}
 
 if (isDirectRun) {
   main().catch((err) => {

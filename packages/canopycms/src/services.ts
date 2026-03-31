@@ -158,14 +158,17 @@ async function _createCanopyServicesInternal(
   const strategy = operatingStrategy(config.mode)
   strategy.validateConfig(config)
 
-  // In dev mode, auto-detect the current git branch if defaultBaseBranch is not set
+  // In dev mode, auto-detect the current git branch if defaultBaseBranch is not set.
+  // Bake the result into config so all downstream code (BranchWorkspaceManager, GitManager)
+  // uses the same detected value without re-detecting (avoids race if HEAD changes mid-request).
   const effectiveBaseBranch = await detectDevBaseBranch(config)
+  config = { ...config, defaultBaseBranch: effectiveBaseBranch }
 
   // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
 
   // Create per-branch schema cache (or use provided one for testing)
-  const branchSchemaCache = options.branchSchemaCache ?? new BranchSchemaCache(config.mode)
+  const branchSchemaCache = options.branchSchemaCache ?? new BranchSchemaCache()
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
   // Path permissions are loaded dynamically from the settings branch at request time.

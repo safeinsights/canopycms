@@ -272,6 +272,7 @@ describe('createContentReader', () => {
     const config = defineCanopyTestConfig({
       defaultBranchAccess: 'allow',
       defaultPathAccess: 'allow',
+      defaultBaseBranch: 'main',
       schema,
     })
     const branchContext = buildBranchContext(root)

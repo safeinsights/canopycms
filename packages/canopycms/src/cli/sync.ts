@@ -20,6 +20,18 @@ import { GitManager } from '../git-manager'
 import { detectHeadBranch } from '../utils/git'
 import { filePathExists } from '../utils/fs'
 
+/** Validate that a resolved path stays within the expected parent directory. */
+function assertWithinDir(resolved: string, parent: string, label: string): void {
+  const normalizedResolved = path.resolve(resolved)
+  const normalizedParent = path.resolve(parent)
+  if (
+    !normalizedResolved.startsWith(normalizedParent + path.sep) &&
+    normalizedResolved !== normalizedParent
+  ) {
+    throw new Error(`${label} escapes the expected directory: ${resolved}`)
+  }
+}
+
 export interface SyncOptions {
   projectDir: string
   direction: 'push' | 'pull' | 'both'
@@ -30,12 +42,13 @@ export interface SyncOptions {
   force?: boolean
 }
 
-/** Recursively copy a directory, creating the destination if needed. Skips .git directories. */
+/** Recursively copy a directory, creating the destination if needed. Skips .git directories and symlinks. */
 async function copyDir(src: string, dest: string): Promise<void> {
   await fs.mkdir(dest, { recursive: true })
   const entries = await fs.readdir(src, { withFileTypes: true })
   for (const entry of entries) {
     if (entry.name === '.git') continue
+    if (entry.isSymbolicLink()) continue
     const srcPath = path.join(src, entry.name)
     const destPath = path.join(dest, entry.name)
     if (entry.isDirectory()) {
@@ -76,6 +89,7 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
   p.log.step(`Pushing content to local remote (branch: ${baseBranch})`)
 
   const srcContentDir = path.join(projectDir, contentRoot)
+  assertWithinDir(srcContentDir, projectDir, '--content-root')
   if (!(await filePathExists(srcContentDir))) {
     p.log.warn(`Content directory not found: ${contentRoot}/`)
     return { fileCount: 0 }
@@ -198,6 +212,7 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
   }
 
   const branchContentDir = path.join(branchesDir, branchName, contentRoot)
+  assertWithinDir(branchContentDir, branchesDir, '--content-root')
   if (!(await filePathExists(branchContentDir))) {
     p.log.error(`Content directory not found in branch workspace: ${branchName}/${contentRoot}`)
     return { fileCount: 0 }
@@ -206,6 +221,7 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
   p.log.step(`Pulling content from branch: ${branchName}`)
 
   const destContentDir = path.join(projectDir, contentRoot)
+  assertWithinDir(destContentDir, projectDir, '--content-root')
 
   // Check for uncommitted changes in the content directory before overwriting
   const sourceGit = simpleGit({ baseDir: projectDir })
@@ -234,9 +250,19 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
     }
   }
 
-  // Replace the working-tree content with the branch workspace content
-  await fs.rm(destContentDir, { recursive: true, force: true })
-  await copyDir(branchContentDir, destContentDir)
+  // Replace the working-tree content with the branch workspace content.
+  // Use a temp directory + rename for atomicity: if copyDir fails midway,
+  // the original content directory is preserved.
+  const tmpDestDir = `${destContentDir}.sync-tmp-${Date.now()}`
+  try {
+    await copyDir(branchContentDir, tmpDestDir)
+    await fs.rm(destContentDir, { recursive: true, force: true })
+    await fs.rename(tmpDestDir, destContentDir)
+  } catch (err) {
+    // Clean up temp dir on failure, preserve original
+    await fs.rm(tmpDestDir, { recursive: true, force: true }).catch(() => {})
+    throw err
+  }
 
   // Show what changed using git status (re-check after copy)
   const postStatus = await sourceGit.status()

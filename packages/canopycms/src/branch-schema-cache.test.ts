@@ -44,7 +44,7 @@ describe('BranchSchemaCache', () => {
 
   describe('dev mode', () => {
     it('should load schema from .collection.json files on first access (cache miss)', async () => {
-      const registry = new BranchSchemaCache('dev')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -59,7 +59,7 @@ describe('BranchSchemaCache', () => {
     })
 
     it('should use cache on second access (cache hit)', async () => {
-      const registry = new BranchSchemaCache('dev')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -81,7 +81,7 @@ describe('BranchSchemaCache', () => {
     })
 
     it('should write cache file to .canopy-meta/schema-cache.json', async () => {
-      const registry = new BranchSchemaCache('dev')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -106,7 +106,7 @@ describe('BranchSchemaCache', () => {
     })
 
     it('should invalidate cache when invalidate() is called', async () => {
-      const registry = new BranchSchemaCache('dev')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -127,7 +127,7 @@ describe('BranchSchemaCache', () => {
     })
 
     it('should regenerate cache when .stale marker exists', async () => {
-      const registry = new BranchSchemaCache('dev')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -160,7 +160,7 @@ describe('BranchSchemaCache', () => {
     })
 
     it('should handle missing cache file gracefully', async () => {
-      const registry = new BranchSchemaCache('dev')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -175,7 +175,7 @@ describe('BranchSchemaCache', () => {
 
   describe('invalidate', () => {
     it('should force cache regeneration after invalidate()', async () => {
-      const registry = new BranchSchemaCache('dev')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }

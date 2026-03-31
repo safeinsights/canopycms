@@ -150,7 +150,7 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
     defaultBaseBranch?: string
   }): string {
     if (config.settingsBranch) return config.settingsBranch
-    const deploymentName = config.deploymentName ?? 'prod'
+    const deploymentName = config.deploymentName ?? 'local'
     return `canopycms-settings-${deploymentName}`
   }
 
@@ -167,7 +167,7 @@ class DevStrategy extends DevClientSafeStrategy implements ClientUnsafeStrategy 
   }
 
   shouldCreateSettingsPR(_config: { autoCreateSettingsPR?: boolean }): boolean {
-    return false // No real GitHub in simulation
+    return false // No real GitHub in local dev mode
   }
 }
 

@@ -141,15 +141,15 @@ const { context } = result
 
 **Location**: packages/canopycms/src/auth/
 
-| File                     | Purpose                                                                                                 |
-| ------------------------ | ------------------------------------------------------------------------------------------------------- |
-| plugin.ts                | AuthPlugin interface definition                                                                         |
-| types.ts                 | CanopyUser, AuthPluginConfig, AuthenticationResult, UserSearchResult, GroupMetadata types               |
-| context-helpers.ts       | Auth context helper utilities (extractHeaders, isCanopyRequest)                                         |
-| caching-auth-plugin.ts   | CachingAuthPlugin - wraps token verifier with cached metadata lookups; AuthCacheProvider interface      |
-| file-based-auth-cache.ts | FileBasedAuthCache - reads JSON cache from EFS; writeAuthCacheSnapshot - atomic snapshot+symlink writes |
-| cache.ts                 | Server-only re-exports for `canopycms/auth/cache` import path                                           |
-| index.ts                 | Public exports (types only for cache; implementations via `canopycms/auth/cache`)                       |
+| File                     | Purpose                                                                                                                                                     |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| plugin.ts                | AuthPlugin interface definition                                                                                                                             |
+| types.ts                 | CanopyUser, AuthPluginConfig, AuthenticationResult, UserSearchResult, GroupMetadata types                                                                   |
+| context-helpers.ts       | Auth context helper utilities (extractHeaders, isCanopyRequest)                                                                                             |
+| caching-auth-plugin.ts   | CachingAuthPlugin - wraps token verifier with cached metadata lookups; optional lazyRefresher for auto-populating cache in dev; AuthCacheProvider interface |
+| file-based-auth-cache.ts | FileBasedAuthCache - reads JSON cache from EFS; writeAuthCacheSnapshot - atomic snapshot+symlink writes                                                     |
+| cache.ts                 | Server-only re-exports for `canopycms/auth/cache` import path                                                                                               |
+| index.ts                 | Public exports (types only for cache; implementations via `canopycms/auth/cache`)                                                                           |
 
 ### Auth Cache System
 
@@ -157,13 +157,13 @@ For Lambda/production environments where the auth provider API is unreachable (n
 
 **Architecture**: Token verification is done locally (JWT). User/group metadata comes from JSON files on EFS populated by the EC2 worker.
 
-| Component              | Location                      | Purpose                                                  |
-| ---------------------- | ----------------------------- | -------------------------------------------------------- |
-| AuthCacheProvider      | auth/caching-auth-plugin.ts   | Interface for any cache backend                          |
-| CachingAuthPlugin      | auth/caching-auth-plugin.ts   | AuthPlugin impl: local token verify + cached metadata    |
-| TokenVerifier          | auth/caching-auth-plugin.ts   | Function type: extract/verify token from request context |
-| FileBasedAuthCache     | auth/file-based-auth-cache.ts | Reads users.json, orgs.json, memberships.json from EFS   |
-| writeAuthCacheSnapshot | auth/file-based-auth-cache.ts | Atomic write: timestamped snapshot dir + symlink swap    |
+| Component              | Location                      | Purpose                                                                                                                    |
+| ---------------------- | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| AuthCacheProvider      | auth/caching-auth-plugin.ts   | Interface for any cache backend                                                                                            |
+| CachingAuthPlugin      | auth/caching-auth-plugin.ts   | AuthPlugin impl: local token verify + cached metadata; optional lazyRefresher auto-populates cache on first request in dev |
+| TokenVerifier          | auth/caching-auth-plugin.ts   | Function type: extract/verify token from request context                                                                   |
+| FileBasedAuthCache     | auth/file-based-auth-cache.ts | Reads users.json, orgs.json, memberships.json from EFS                                                                     |
+| writeAuthCacheSnapshot | auth/file-based-auth-cache.ts | Atomic write: timestamped snapshot dir + symlink swap                                                                      |
 
 **Import paths**:
 
@@ -316,14 +316,14 @@ Generic file-based persistent task queue with zero Canopy dependencies.
 
 Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prompts` for interactive CLI experience.
 
-| File                   | Purpose                                                                                                 |
-| ---------------------- | ------------------------------------------------------------------------------------------------------- |
-| cli.ts                 | CLI entrypoint: flag parsing, command routing, `isDirectRun` guard; dynamically imports command modules |
-| init.ts                | Library functions: `init()`, `initDeployAws()`, `workerRunOnce()` (no CLI logic, imported by cli.ts)    |
-| sync.ts                | Bidirectional content sync between working repo and .canopy-dev local remote (push/pull)                |
-| generate-ai-content.ts | AI content generation CLI command                                                                       |
-| templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}})     |
-| template-files/        | Template files for scaffolding (config, route, edit page, AI content endpoint, Dockerfile, CI workflow) |
+| File                   | Purpose                                                                                                                                            |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| cli.ts                 | CLI entrypoint: minimist-based flag parsing, command routing, `isDirectRun` guard; dynamically imports command modules                             |
+| init.ts                | Library functions: `init()`, `initDeployAws()`, `workerRunOnce()` (no CLI logic, imported by cli.ts)                                               |
+| sync.ts                | Bidirectional content sync between working repo and .canopy-dev local remote (push/pull); path traversal guards, atomic pull with symlink handling |
+| generate-ai-content.ts | AI content generation CLI command                                                                                                                  |
+| templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}})                                                |
+| template-files/        | Template files for scaffolding (config, route, edit page, AI content endpoint, Dockerfile, CI workflow)                                            |
 
 **Commands**:
 

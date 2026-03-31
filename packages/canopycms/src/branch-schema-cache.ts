@@ -4,7 +4,6 @@ import path from 'node:path'
 import type { RootCollectionConfig } from './config'
 import type { FlatSchemaItem } from './config/types'
 import type { EntrySchemaRegistry } from './schema/types'
-import type { OperatingMode } from './operating-mode'
 import { resolveSchema, isValidSchema } from './schema/resolver'
 import { flattenSchema } from './config/flatten'
 
@@ -34,8 +33,6 @@ export interface BranchSchemaCacheEntry {
  * - Atomic file operations prevent corruption during concurrent access
  */
 export class BranchSchemaCache {
-  constructor(private readonly mode: OperatingMode) {}
-
   /**
    * Get schema for a branch (loads from cache or resolves fresh).
    *

@@ -42,7 +42,7 @@ export function createAIContentHandler(
   options: AIContentHandlerOptions,
 ): (req: Request, ctx: { params: Promise<{ path: string[] }> }) => Promise<Response> {
   const { config, entrySchemaRegistry, aiConfig, _testFlatSchema } = options
-  const schemaCache = new BranchSchemaCache(config.mode)
+  const schemaCache = new BranchSchemaCache()
   let cachedResult: GenerateResult | null = null
 
   const generate = async (): Promise<GenerateResult> => {

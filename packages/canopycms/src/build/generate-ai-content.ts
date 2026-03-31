@@ -45,7 +45,7 @@ export async function generateAIContentFiles(
   if (_testFlatSchema) {
     flatSchema = _testFlatSchema
   } else {
-    const schemaCache = new BranchSchemaCache(config.mode)
+    const schemaCache = new BranchSchemaCache()
     const cached = await schemaCache.getSchema(branchRoot, entrySchemaRegistry, contentRootName)
     flatSchema = cached.flatSchema
   }

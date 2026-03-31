@@ -1201,19 +1201,17 @@ CanopyCMS manages permissions and groups through JSON files. The storage locatio
 
 #### Local Development: `.canopy-dev/` Directory
 
-In `dev` mode (the default for development), CanopyCMS uses **gitignored** files in the `.canopy-dev/` directory:
+In `dev` mode (the default for development), CanopyCMS uses the same orphan branch mechanism as prod for settings, with the workspace at `.canopy-dev/settings/`:
 
-- **Files:**
-  - `.canopy-dev/permissions.json` - path-level permissions
-  - `.canopy-dev/groups.json` - user groups and memberships
+- **Settings storage:** `permissions.json` and `groups.json` on orphan branch `canopycms-settings-{deploymentName}`, cloned into `.canopy-dev/settings/`
 
 - **Purpose:** These files allow you to test different permission scenarios and user roles without polluting the git history or conflicting with other developers.
 
 - **Behavior:**
   - Changes persist across CMS restarts
   - Entire `.canopy-dev/` directory is **automatically gitignored** (via `.canopy*` pattern)
-  - Files are completely separate from production settings (no fallback behavior)
-  - All reads and writes go to `.canopy-dev/` in dev mode
+  - Settings are stored in the local bare remote only — never pushed to GitHub
+  - Dev mode mirrors prod's settings architecture for consistent behavior
 
 **Example workflow:**
 
@@ -1224,48 +1222,11 @@ pnpm dev
 # 1. Login as different test users (e.g., auth-dev, Clerk dev accounts)
 # 2. Add them to groups via the CMS UI
 # 3. Test permission restrictions
-# 4. Changes are saved to .canopy-dev/permissions.json and .canopy-dev/groups.json
+# 4. Changes are committed to the local settings branch in .canopy-dev/
 # 5. Files persist but won't show up in git status
 
 # Verify files are gitignored
 git status  # .canopy-dev/ should not appear
-```
-
-**Testing different permission scenarios:**
-
-```typescript
-// In your local .canopy-dev/permissions.json
-{
-  "version": 1,
-  "updatedAt": "2026-01-12T10:00:00Z",
-  "updatedBy": "test-user",
-  "pathPermissions": [
-    {
-      "path": "content/posts",
-      "groups": {
-        "Editors": ["read", "write"],
-        "Viewers": ["read"]
-      }
-    }
-  ]
-}
-
-// In your local .canopy-dev/groups.json
-{
-  "version": 1,
-  "updatedAt": "2026-01-12T10:00:00Z",
-  "updatedBy": "test-user",
-  "groups": [
-    {
-      "name": "Editors",
-      "userIds": ["auth-dev-user-1", "clerk-test-user"]
-    },
-    {
-      "name": "Viewers",
-      "userIds": ["auth-dev-user-2"]
-    }
-  ]
-}
 ```
 
 #### Understanding the Two Modes
@@ -1380,9 +1341,9 @@ git add -n .
 git reset HEAD .canopy-dev/
 ```
 
-**Common mistake:** Forgetting to add `.canopy-dev/` to `.gitignore` when setting up a new app.
+**Common mistake:** Forgetting to add `.canopy*/` to `.gitignore` when setting up a new app.
 
-**Fix:** Always add `.canopy-dev/` (or the `.canopy*` glob) to your `.gitignore`. The `npx canopycms init` command does this automatically.
+**Fix:** Always add `.canopy*/` to your `.gitignore`. The `npx canopycms init` command does this automatically.
 
 ## Testing
 

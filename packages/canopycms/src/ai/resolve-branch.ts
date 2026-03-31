@@ -4,6 +4,7 @@
  */
 
 import { loadOrCreateBranchContext } from '../branch-workspace'
+import { isDeployedStatic } from '../build-mode'
 import type { CanopyConfig } from '../config'
 
 /**
@@ -13,6 +14,11 @@ import type { CanopyConfig } from '../config'
  * - Server (prod/dev): load or create the default base branch workspace
  */
 export async function resolveBranchRoot(config: CanopyConfig): Promise<string> {
+  // Static deployments read content directly from the checkout — no branch workspace needed
+  if (isDeployedStatic(config)) {
+    return process.cwd()
+  }
+
   const baseBranch = config.defaultBaseBranch ?? 'main'
   const context = await loadOrCreateBranchContext({
     config,

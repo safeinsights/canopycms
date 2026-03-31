@@ -85,9 +85,16 @@ export async function createNextCanopyContext(options: NextCanopyOptions) {
       const cachePath =
         process.env.CANOPY_AUTH_CACHE_PATH ??
         path.join(operatingStrategy(mode).getWorkspaceRoot(), '.cache')
+      // In dev mode, provide a lazy refresher so the cache is auto-populated
+      // on first request without requiring manual `worker run-once`.
+      const lazyRefresher =
+        mode === 'dev' && options.authPlugin.createCacheRefresher
+          ? options.authPlugin.createCacheRefresher(cachePath)
+          : undefined
       return new CachingAuthPlugin(
         (ctx) => options.authPlugin!.verifyTokenOnly!(ctx),
         new FileBasedAuthCache(cachePath),
+        lazyRefresher ?? undefined,
       )
     }
     return options.authPlugin
