@@ -85,6 +85,21 @@ describe('CachingAuthPlugin', () => {
 
       expect(mockVerifier).toHaveBeenCalledWith(context)
     })
+
+    it('returns minimal user info when cache throws', async () => {
+      const failingCache = createMockCache({
+        getUser: vi.fn().mockRejectedValue(new Error('cache corrupt')),
+        getUserExternalGroups: vi.fn().mockRejectedValue(new Error('cache corrupt')),
+      })
+      plugin = new CachingAuthPlugin(mockVerifier, failingCache)
+
+      const result = await plugin.authenticate({})
+
+      expect(result.success).toBe(true)
+      expect(result.user?.userId).toBe('user_1')
+      expect(result.user?.name).toBe('user_1') // falls back to userId
+      expect(result.user?.externalGroups).toEqual([])
+    })
   })
 
   describe('searchUsers', () => {
@@ -113,6 +128,16 @@ describe('CachingAuthPlugin', () => {
     it('returns empty for no matches', async () => {
       const results = await plugin.searchUsers('nonexistent')
       expect(results).toHaveLength(0)
+    })
+
+    it('returns empty array when getAllUsers throws', async () => {
+      const failingCache = createMockCache({
+        getAllUsers: vi.fn().mockRejectedValue(new Error('cache unavailable')),
+      })
+      plugin = new CachingAuthPlugin(mockVerifier, failingCache)
+
+      const results = await plugin.searchUsers('alice')
+      expect(results).toEqual([])
     })
   })
 
@@ -191,6 +216,16 @@ describe('CachingAuthPlugin', () => {
     it('respects limit', async () => {
       const groups = await plugin.listGroups(1)
       expect(groups).toHaveLength(1)
+    })
+
+    it('returns empty array when getAllGroups throws', async () => {
+      const failingCache = createMockCache({
+        getAllGroups: vi.fn().mockRejectedValue(new Error('cache unavailable')),
+      })
+      plugin = new CachingAuthPlugin(mockVerifier, failingCache)
+
+      const groups = await plugin.listGroups()
+      expect(groups).toEqual([])
     })
   })
 })

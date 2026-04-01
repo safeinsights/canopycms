@@ -178,6 +178,21 @@ describe('canopycms sync', () => {
       expect(remoteStat.isDirectory()).toBe(true)
     })
 
+    it('reports no changes when content directory does not exist', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+
+      // Remove the content directory entirely
+      await fs.rm(path.join(projectDir, 'content'), { recursive: true, force: true })
+
+      const result = await sync({
+        projectDir,
+        direction: 'push',
+      })
+
+      expect(result.pushed).toBe(0)
+    })
+
     it('handles branch mismatch when developer switched git branches', async () => {
       const workspace = await setupTestWorkspace()
       projectDir = workspace.projectDir
