@@ -36,7 +36,7 @@ beforeAll(async () => {
       return
     }
   }
-  throw new Error('tsx not found in node_modules — run "npm install" first')
+  throw new Error('tsx not found in node_modules — run "pnpm install" first')
 })
 
 const distExists = existsSync(DIST_BIN)

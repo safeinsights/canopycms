@@ -56,7 +56,6 @@ const allowedCtx = (): ApiContext => ({
     branchSchemaCache: {
       getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
       invalidate: vi.fn().mockResolvedValue(undefined),
-      clearAll: vi.fn().mockResolvedValue(undefined),
     } as any,
     checkBranchAccess: vi.fn(),
     checkPathAccess: undefined as any,

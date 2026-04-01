@@ -592,7 +592,7 @@ describe('permissions API', () => {
 
     it('should auto-create settings branch in dev mode when it does not exist', async () => {
       // Create a new context with dev mode
-      const localProdSimConfig: Partial<CanopyConfig> = {
+      const devConfig: Partial<CanopyConfig> = {
         defaultBaseBranch: 'main',
         mode: 'dev',
         settingsBranch: 'canopycms-settings',
@@ -600,16 +600,16 @@ describe('permissions API', () => {
         gitBotAuthorEmail: 'bot@test.com',
       }
 
-      const localProdSimContext = createMockApiContext({
+      const devContext = createMockApiContext({
         services: {
-          config: localProdSimConfig as CanopyConfig,
+          config: devConfig as CanopyConfig,
           createGitManagerFor: vi.fn(() => mockGit) as any,
         },
         authPlugin: mockAuthPlugin,
       })
 
       // Mock getSettingsBranchRoot to simulate settings workspace
-      localProdSimContext.services.getSettingsBranchRoot = vi
+      devContext.services.getSettingsBranchRoot = vi
         .fn()
         .mockResolvedValue('/test/repo/.canopy-dev/settings')
 
@@ -623,12 +623,12 @@ describe('permissions API', () => {
         },
       }
 
-      const result = await getPermissions(localProdSimContext, req)
+      const result = await getPermissions(devContext, req)
 
       // Should succeed because getSettingsBranchRoot returns settings path
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-      expect(localProdSimContext.services.getSettingsBranchRoot).toHaveBeenCalled()
+      expect(devContext.services.getSettingsBranchRoot).toHaveBeenCalled()
     })
   })
 

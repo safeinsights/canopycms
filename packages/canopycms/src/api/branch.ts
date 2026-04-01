@@ -315,7 +315,7 @@ export const deleteBranchHandler = async (
     return {
       ok: false,
       status: 400,
-      error: 'Branch operations not available in dev mode',
+      error: 'Branch registry not initialized for this operating mode',
     }
   }
   await ctx.services.registry.invalidate()

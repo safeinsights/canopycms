@@ -140,6 +140,48 @@ describe('CachingAuthPlugin', () => {
     })
   })
 
+  describe('lazyRefresher', () => {
+    it('calls the lazy refresher on first successful authenticate', async () => {
+      const refresher = vi.fn().mockResolvedValue(undefined)
+      plugin = new CachingAuthPlugin(mockVerifier, mockCache, refresher)
+
+      await plugin.authenticate({})
+
+      expect(refresher).toHaveBeenCalledOnce()
+    })
+
+    it('calls the refresher only once across multiple authenticate calls', async () => {
+      const refresher = vi.fn().mockResolvedValue(undefined)
+      plugin = new CachingAuthPlugin(mockVerifier, mockCache, refresher)
+
+      await plugin.authenticate({})
+      await plugin.authenticate({})
+      await plugin.authenticate({})
+
+      expect(refresher).toHaveBeenCalledOnce()
+    })
+
+    it('does not block authentication when the refresher fails', async () => {
+      const refresher = vi.fn().mockRejectedValue(new Error('network error'))
+      plugin = new CachingAuthPlugin(mockVerifier, mockCache, refresher)
+
+      const result = await plugin.authenticate({})
+
+      expect(result.success).toBe(true)
+      expect(result.user?.userId).toBe('user_1')
+    })
+
+    it('does not call the refresher when token verification fails', async () => {
+      const refresher = vi.fn().mockResolvedValue(undefined)
+      mockVerifier = vi.fn(async () => null)
+      plugin = new CachingAuthPlugin(mockVerifier, mockCache, refresher)
+
+      await plugin.authenticate({})
+
+      expect(refresher).not.toHaveBeenCalled()
+    })
+  })
+
   describe('listGroups', () => {
     it('returns all groups', async () => {
       const groups = await plugin.listGroups()

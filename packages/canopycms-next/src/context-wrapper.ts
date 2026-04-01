@@ -94,7 +94,7 @@ export async function createNextCanopyContext(options: NextCanopyOptions) {
       return new CachingAuthPlugin(
         (ctx) => options.authPlugin!.verifyTokenOnly!(ctx),
         new FileBasedAuthCache(cachePath),
-        lazyRefresher ?? undefined,
+        lazyRefresher,
       )
     }
     return options.authPlugin

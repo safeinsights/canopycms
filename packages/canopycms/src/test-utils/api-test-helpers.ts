@@ -182,7 +182,6 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
           flatSchema: [],
         }),
         invalidate: vi.fn().mockResolvedValue(undefined),
-        clearAll: vi.fn().mockResolvedValue(undefined),
       } as any),
     checkBranchAccess:
       options.checkBranchAccess ?? vi.fn().mockReturnValue({ allowed: true, reason: 'allowed' }),

@@ -127,7 +127,7 @@ async function main() {
     const { sync } = await import('./sync')
     const pushOnly = flags['push'] === true
     const pullOnly = flags['pull'] === true
-    const direction = pushOnly ? 'push' : pullOnly ? 'pull' : 'both'
+    const direction = pushOnly && !pullOnly ? 'push' : pullOnly && !pushOnly ? 'pull' : 'both'
     await sync({
       projectDir: process.cwd(),
       direction,

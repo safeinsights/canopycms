@@ -57,6 +57,7 @@ export async function createApiClient(options: ApiClientOptions) {
           context.branchRoot,
           services.entrySchemaRegistry,
           contentRootName,
+          services.config.mode === 'dev',
         )
         context.flatSchema = cached.flatSchema
       }

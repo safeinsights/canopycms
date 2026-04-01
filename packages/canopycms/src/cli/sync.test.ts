@@ -46,7 +46,7 @@ async function setupTestWorkspace(): Promise<{
 
   // Initialize source repo
   const sourceGit = simpleGit({ baseDir: projectDir })
-  await sourceGit.init()
+  await sourceGit.init(['--initial-branch=main'])
   await sourceGit.addConfig('user.name', 'Test User')
   await sourceGit.addConfig('user.email', 'test@test.com')
 
@@ -308,6 +308,52 @@ describe('canopycms sync', () => {
       })
 
       expect(result.pulled).toBe(0)
+    })
+
+    it('rejects --content-root that escapes the project directory', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+
+      await expect(
+        sync({
+          projectDir,
+          direction: 'pull',
+          branch: 'test-branch',
+          contentRoot: '../../etc',
+          force: true,
+        }),
+      ).rejects.toThrow('escapes the expected directory')
+    })
+
+    it('replaces entire content directory (files absent in branch are deleted)', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+
+      // Branch workspace has index.md but NOT about.md
+      await fs.rm(path.join(workspace.branchPath, 'content', 'about.md'))
+
+      const result = await sync({
+        projectDir,
+        direction: 'pull',
+        branch: 'test-branch',
+        force: true,
+      })
+
+      expect(result.pulled).toBeGreaterThan(0)
+
+      // about.md should be gone from the working tree
+      const aboutExists = await fs
+        .stat(path.join(projectDir, 'content', 'about.md'))
+        .then(() => true)
+        .catch(() => false)
+      expect(aboutExists).toBe(false)
+
+      // index.md should still be there
+      const indexExists = await fs
+        .stat(path.join(projectDir, 'content', 'index.md'))
+        .then(() => true)
+        .catch(() => false)
+      expect(indexExists).toBe(true)
     })
   })
 

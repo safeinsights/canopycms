@@ -16,7 +16,6 @@ const makeCtx = (): ApiContext => ({
     branchSchemaCache: {
       getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
       invalidate: vi.fn().mockResolvedValue(undefined),
-      clearAll: vi.fn().mockResolvedValue(undefined),
     } as any,
     checkBranchAccess: () => ({ allowed: true, reason: 'no_acl' }),
     checkPathAccess: undefined as any,

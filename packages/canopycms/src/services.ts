@@ -180,13 +180,6 @@ async function _createCanopyServicesInternal(
     (async (): Promise<string> => {
       const strategy = operatingStrategy(config.mode)
 
-      // Only applicable in modes that use separate settings branch
-      if (!strategy.usesSeparateSettingsBranch()) {
-        throw new Error(
-          'getSettingsBranchRoot called in mode that does not use separate settings branch',
-        )
-      }
-
       const settingsRoot = strategy.getSettingsRoot()
       const branchName = strategy.getSettingsBranchName(config)
 
@@ -341,22 +334,20 @@ async function _createCanopyServicesInternal(
 
         // Async path: queue task for worker (prod Lambda has no internet)
         const taskDir = getTaskQueueDir(config)
-        if (taskDir) {
-          try {
-            await enqueueTask(taskDir, {
-              action: 'push-and-create-or-update-pr',
-              payload: {
-                branch: settingsBranch,
-                baseBranch: config.defaultBaseBranch ?? 'main',
-                title: 'Update permissions and groups',
-                body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
-              },
-            })
-            return { committed: true, pushed: true, syncStatus: 'pending-sync' }
-          } catch (err) {
-            console.warn('Failed to enqueue settings PR task:', err)
-            return { committed: true, pushed: true, syncStatus: 'sync-failed' }
-          }
+        try {
+          await enqueueTask(taskDir, {
+            action: 'push-and-create-or-update-pr',
+            payload: {
+              branch: settingsBranch,
+              baseBranch: config.defaultBaseBranch ?? 'main',
+              title: 'Update permissions and groups',
+              body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
+            },
+          })
+          return { committed: true, pushed: true, syncStatus: 'pending-sync' }
+        } catch (err) {
+          console.warn('Failed to enqueue settings PR task:', err)
+          return { committed: true, pushed: true, syncStatus: 'sync-failed' }
         }
       }
 

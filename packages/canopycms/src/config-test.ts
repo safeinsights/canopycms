@@ -54,7 +54,6 @@ export const createTestServices = async (
       flatSchema,
     }),
     invalidate: async () => {},
-    clearAll: async () => {},
   }
 
   return createTestCanopyServices(canopyConfig, {

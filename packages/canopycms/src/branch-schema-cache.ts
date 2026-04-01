@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
 import path from 'node:path'
 
 import type { RootCollectionConfig } from './config'
@@ -18,6 +19,29 @@ export interface BranchSchemaCacheEntry {
   schema: RootCollectionConfig
   flatSchema: FlatSchemaItem[]
   cachedAt: string // ISO timestamp
+}
+
+/**
+ * In dev mode, check whether any .collection.json file under dir has been
+ * modified more recently than cachedAt. Returns true if stale.
+ */
+async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
+  let entries: Dirent[]
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true, encoding: 'utf-8' })
+  } catch {
+    return true
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) {
+      if (await isStaleByMtime(full, cachedAt)) return true
+    } else if (entry.isFile() && entry.name.endsWith('.collection.json')) {
+      const stat = await fs.stat(full)
+      if (stat.mtimeMs > cachedAt.getTime()) return true
+    }
+  }
+  return false
 }
 
 /**
@@ -45,8 +69,9 @@ export class BranchSchemaCache {
     branchRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string = 'content',
+    devMode = false,
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
-    return this.loadFromCacheOrResolve(branchRoot, entrySchemaRegistry, contentRootName)
+    return this.loadFromCacheOrResolve(branchRoot, entrySchemaRegistry, contentRootName, devMode)
   }
 
   /**
@@ -56,6 +81,7 @@ export class BranchSchemaCache {
     branchRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string,
+    devMode: boolean,
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
     const contentRoot = path.join(branchRoot, contentRootName)
     const cacheDir = path.join(branchRoot, '.canopy-meta')
@@ -79,7 +105,12 @@ export class BranchSchemaCache {
     }
 
     if (cacheData && cacheData.version === SCHEMA_CACHE_VERSION) {
-      return { schema: cacheData.schema, flatSchema: cacheData.flatSchema }
+      // In dev mode, also check file mtimes so direct schema edits (outside the CMS) are picked up
+      if (devMode && (await isStaleByMtime(contentRoot, new Date(cacheData.cachedAt)))) {
+        cacheData = null
+      } else {
+        return { schema: cacheData.schema, flatSchema: cacheData.flatSchema }
+      }
     }
 
     // Cache miss or stale - regenerate

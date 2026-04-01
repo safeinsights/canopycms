@@ -109,8 +109,10 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
     try {
       await simpleGit().clone(remotePath, tmpDir, ['--branch', baseBranch, '--single-branch'])
       clonedBranch = baseBranch
-    } catch {
+    } catch (err) {
       // Target branch doesn't exist in remote — clone whatever default branch exists
+      const msg = err instanceof Error ? err.message : String(err)
+      p.log.info(`Branch "${baseBranch}" not in remote (${msg}), cloning default branch`)
       await simpleGit().clone(remotePath, tmpDir)
       clonedBranch = (
         await simpleGit({ baseDir: tmpDir }).revparse(['--abbrev-ref', 'HEAD'])
