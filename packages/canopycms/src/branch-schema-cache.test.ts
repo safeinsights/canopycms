@@ -76,8 +76,8 @@ describe('BranchSchemaCache', () => {
       expect(result2.schema).toEqual(result1.schema)
       expect(result2.flatSchema).toEqual(result1.flatSchema)
 
-      // Second access (cache hit) should be very fast (no filesystem I/O)
-      expect(duration2).toBeLessThan(10)
+      // Second access (cache hit via file read) should be fast
+      expect(duration2).toBeLessThan(100)
     })
 
     it('should write cache file to .canopy-meta/schema-cache.json', async () => {
@@ -157,6 +157,70 @@ describe('BranchSchemaCache', () => {
         .then(() => true)
         .catch(() => false)
       expect(staleExists).toBe(false)
+    })
+
+    it('should invalidate cache when .collection.json is modified (devMode=true)', async () => {
+      const registry = new BranchSchemaCache()
+      const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
+        pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
+      }
+
+      // First access — populates the cache
+      const result1 = await registry.getSchema(branchRoot, entrySchemaRegistry, 'content', true)
+
+      // Wait so mtime is clearly different
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      // Modify the .collection.json file (simulating a direct edit outside the CMS)
+      const collectionPath = path.join(branchRoot, 'content', '.collection.json')
+      await fs.writeFile(
+        collectionPath,
+        JSON.stringify({
+          label: 'Updated Root',
+          entries: [{ name: 'page', format: 'md', schema: 'pageSchema' }],
+          order: [],
+        }),
+        'utf-8',
+      )
+
+      // Second access with devMode=true — should detect stale cache via mtime
+      const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry, 'content', true)
+
+      // The schema should reflect the updated label
+      expect(result2.schema.label).toBe('Updated Root')
+      // Should be a new object (cache was regenerated)
+      expect(result2).not.toBe(result1)
+    })
+
+    it('should NOT invalidate cache on mtime when devMode=false', async () => {
+      const registry = new BranchSchemaCache()
+      const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
+        pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
+      }
+
+      // First access — populates the cache
+      await registry.getSchema(branchRoot, entrySchemaRegistry, 'content', false)
+
+      // Wait so mtime is clearly different
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      // Modify the .collection.json
+      const collectionPath = path.join(branchRoot, 'content', '.collection.json')
+      await fs.writeFile(
+        collectionPath,
+        JSON.stringify({
+          label: 'Updated Root',
+          entries: [{ name: 'page', format: 'md', schema: 'pageSchema' }],
+          order: [],
+        }),
+        'utf-8',
+      )
+
+      // Second access with devMode=false — should use cached version (no mtime check)
+      const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry, 'content', false)
+
+      // Should still have the original label (cache was NOT invalidated)
+      expect(result2.schema.label).toBe('Root')
     })
 
     it('should handle missing cache file gracefully', async () => {

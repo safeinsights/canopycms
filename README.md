@@ -46,10 +46,8 @@ The CLI will interactively ask for:
 You can also pass flags to skip prompts:
 
 ```bash
-npx canopycms init --auth dev --mode dev --app-dir app
+npx canopycms init --app-dir app
 ```
-
-The `--mode` flag defaults to `dev` (full local simulation with branching).
 
 Use `--non-interactive` for CI (uses defaults), `--force` to overwrite existing files, or `--no-ai` to skip generating the AI content endpoint.
 
@@ -297,7 +295,8 @@ function getAuthPlugin(): AuthPlugin {
     return new CachingAuthPlugin(tokenVerifier, new FileBasedAuthCache(cachePath))
   }
 
-  // In dev mode: use auth plugin directly
+  // In dev mode: use auth plugin directly (CachingAuthPlugin is auto-wrapped
+  // by createNextCanopyContext when the plugin exposes verifyTokenOnly)
   if (authMode === 'clerk') {
     return createClerkAuthPlugin({ useOrganizationsAsGroups: true })
   }

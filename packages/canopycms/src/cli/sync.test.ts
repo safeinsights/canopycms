@@ -325,6 +325,19 @@ describe('canopycms sync', () => {
       ).rejects.toThrow('escapes the expected directory')
     })
 
+    it('rejects --content-root that escapes the project directory on push', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+
+      await expect(
+        sync({
+          projectDir,
+          direction: 'push',
+          contentRoot: '../../etc',
+        }),
+      ).rejects.toThrow('escapes the expected directory')
+    })
+
     it('replaces entire content directory (files absent in branch are deleted)', async () => {
       const workspace = await setupTestWorkspace()
       projectDir = workspace.projectDir

@@ -42,6 +42,28 @@ export interface SyncOptions {
   force?: boolean
 }
 
+/** Recursively list all file paths relative to `dir`. Skips .git and symlinks. */
+async function listFilesRecursive(dir: string, prefix = ''): Promise<string[]> {
+  const results: string[] = []
+  let entries: import('node:fs').Dirent[]
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true })
+  } catch {
+    return results
+  }
+  for (const entry of entries) {
+    if (entry.name === '.git') continue
+    if (entry.isSymbolicLink()) continue
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (entry.isDirectory()) {
+      results.push(...(await listFilesRecursive(path.join(dir, entry.name), rel)))
+    } else {
+      results.push(rel)
+    }
+  }
+  return results
+}
+
 /** Recursively copy a directory, creating the destination if needed. Skips .git directories and symlinks. */
 async function copyDir(src: string, dest: string): Promise<void> {
   await fs.mkdir(dest, { recursive: true })
@@ -225,25 +247,57 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
   const destContentDir = path.join(projectDir, contentRoot)
   assertWithinDir(destContentDir, projectDir, '--content-root')
 
-  // Check for uncommitted changes in the content directory before overwriting
+  // Check for uncommitted changes AND untracked files in the content directory
+  // before overwriting. The pull replaces the entire content directory, so any
+  // file not in the branch workspace will be lost.
   const sourceGit = simpleGit({ baseDir: projectDir })
   const status = await sourceGit.status()
   const uncommittedContent = status.files.filter(
     (f) => f.path.startsWith(contentRoot + '/') || f.path === contentRoot,
   )
 
-  if (uncommittedContent.length > 0 && !options.force) {
-    p.log.warn(
-      `You have ${uncommittedContent.length} uncommitted change(s) in ${contentRoot}/ that will be overwritten:`,
-    )
-    for (const file of uncommittedContent.slice(0, 10)) {
-      p.log.warn(`  ${file.path}`)
+  // Also detect untracked files that git status doesn't report (e.g., new files
+  // in subdirectories that haven't been staged). Walk the content directory and
+  // compare against the branch workspace to find files that would be deleted.
+  const untrackedLosses: string[] = []
+  if (await filePathExists(destContentDir)) {
+    const localFiles = await listFilesRecursive(destContentDir)
+    const branchFiles = new Set(await listFilesRecursive(branchContentDir))
+    for (const file of localFiles) {
+      if (!branchFiles.has(file)) {
+        const relativePath = contentRoot + '/' + file
+        // Only flag files not already captured by git status
+        if (!uncommittedContent.some((f) => f.path === relativePath)) {
+          untrackedLosses.push(relativePath)
+        }
+      }
     }
-    if (uncommittedContent.length > 10) {
-      p.log.warn(`  ... and ${uncommittedContent.length - 10} more`)
+  }
+
+  const totalWarnings = uncommittedContent.length + untrackedLosses.length
+  if (totalWarnings > 0 && !options.force) {
+    if (uncommittedContent.length > 0) {
+      p.log.warn(`You have ${uncommittedContent.length} uncommitted change(s) in ${contentRoot}/:`)
+      for (const file of uncommittedContent.slice(0, 10)) {
+        p.log.warn(`  ${file.path}`)
+      }
+      if (uncommittedContent.length > 10) {
+        p.log.warn(`  ... and ${uncommittedContent.length - 10} more`)
+      }
+    }
+    if (untrackedLosses.length > 0) {
+      p.log.warn(
+        `${untrackedLosses.length} file(s) in ${contentRoot}/ not present in branch "${branchName}" will be deleted:`,
+      )
+      for (const file of untrackedLosses.slice(0, 10)) {
+        p.log.warn(`  ${file}`)
+      }
+      if (untrackedLosses.length > 10) {
+        p.log.warn(`  ... and ${untrackedLosses.length - 10} more`)
+      }
     }
     const confirm = await p.confirm({
-      message: 'Overwrite uncommitted content changes?',
+      message: 'Overwrite content directory? Files listed above will be lost.',
       initialValue: false,
     })
     if (p.isCancel(confirm) || !confirm) {

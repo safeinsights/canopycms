@@ -845,7 +845,7 @@ Settings (groups and permissions) are stored on a separate orphan branch whose n
 
 Settings PR creation follows the same dual-path as content branches: when `githubService` is available the PR is created directly; when it is not (e.g., Lambda with no internet), a `push-and-create-or-update-pr` task is queued for the EC2 worker. Because the same settings branch is updated repeatedly, this task checks for an existing open PR before creating a new one.
 
-**Security**: In prod mode, the system will throw an error if the settings branch cannot be loaded, ensuring permissions are never accidentally read from a content branch. Settings files also include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
+**Security**: In both prod and dev modes, the system will throw an error if the settings branch cannot be loaded, ensuring permissions are never accidentally read from a content branch. Settings files also include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
 
 ### Mode Strategy Pattern
 
@@ -1233,7 +1233,7 @@ Content operations always work on the current branch. Settings operations need t
 - Returns appropriate branch context based on operating mode
 - In both `prod` and `dev` modes: Uses the branch name computed by the operating mode strategy (`canopycms-settings-{deploymentName}`)
 - Returns both the context and mode for downstream operations
-- **Security**: Throws error if settings branch cannot be loaded in prod mode
+- **Security**: Throws error if settings branch cannot be loaded (both prod and dev modes)
 
 **`commitSettings()`**: Commits and pushes settings changes with mode-specific logic
 

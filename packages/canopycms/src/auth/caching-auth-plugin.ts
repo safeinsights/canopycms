@@ -37,7 +37,7 @@ export type TokenVerifier = (context: unknown) => Promise<{ userId: CanopyUserId
  * the cache on first request, eliminating the need to run `worker run-once` manually.
  */
 export class CachingAuthPlugin implements AuthPlugin {
-  private lazyRefreshDone = false
+  private refreshPromise: Promise<void> | null = null
 
   constructor(
     private readonly verifyToken: TokenVerifier,
@@ -46,14 +46,12 @@ export class CachingAuthPlugin implements AuthPlugin {
   ) {}
 
   private async ensureCachePopulated(): Promise<void> {
-    if (this.lazyRefreshDone || !this.lazyRefresher) return
-    this.lazyRefreshDone = true
-    try {
-      await this.lazyRefresher()
-      log.debug('auth', 'Lazy cache refresh completed')
-    } catch (err) {
-      log.debug('auth', 'Lazy cache refresh failed', { error: String(err) })
-    }
+    if (!this.lazyRefresher) return
+    // Use a shared promise so concurrent callers coalesce into a single refresh
+    this.refreshPromise ??= this.lazyRefresher()
+      .then(() => log.debug('auth', 'Lazy cache refresh completed'))
+      .catch((err) => log.debug('auth', 'Lazy cache refresh failed', { error: String(err) }))
+    await this.refreshPromise
   }
 
   async authenticate(context: unknown): Promise<AuthenticationResult> {

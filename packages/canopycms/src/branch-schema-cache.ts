@@ -48,7 +48,8 @@ async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
  * Manages per-branch schema caching with lazy loading and automatic invalidation.
  *
  * Caching Strategy:
- * - File-based cache at {branchRoot}/.canopy-meta/schema-cache.json
+ * - File-based cache at {branchRoot}/.canopy-meta/schema-cache.json (no in-memory layer
+ *   — intentional: matches prod behavior and keeps cache coherent across Lambda invocations)
  * - Invalidation: Writers create .stale marker, causing cache regeneration on next access
  *
  * Multi-User Support:
