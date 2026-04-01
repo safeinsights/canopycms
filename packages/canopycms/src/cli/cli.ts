@@ -16,15 +16,26 @@ import minimist from 'minimist'
 import * as p from '@clack/prompts'
 import type { AuthPlugin } from '../auth/plugin'
 
-// CLI entrypoint
-async function main() {
-  const argv = minimist(process.argv.slice(2), {
+/** Parse raw CLI args into structured flags and positional command. Exported for testing. */
+export function parseArgs(rawArgs: string[]) {
+  const argv = minimist(rawArgs, {
     boolean: ['force', 'non-interactive', 'no-ai', 'push', 'pull'],
     string: ['app-dir', 'branch', 'content-root', 'output', 'config'],
     alias: { f: 'force' },
   })
   const flags = argv as Record<string, string | boolean>
   const command = argv._[0] as string | undefined
+  return { argv, flags, command }
+}
+
+/** Resolve sync direction from --push/--pull flags. Exported for testing. */
+export function resolveSyncDirection(push: boolean, pull: boolean): 'push' | 'pull' | 'both' {
+  return push && !pull ? 'push' : pull && !push ? 'pull' : 'both'
+}
+
+// CLI entrypoint
+async function main() {
+  const { argv, flags, command } = parseArgs(process.argv.slice(2))
 
   if (command === 'init') {
     const { init } = await import('./init')
@@ -52,7 +63,7 @@ async function main() {
     }
 
     let ai: boolean
-    if (flags['no-ai'] === true) {
+    if (flags['no-ai'] === true || flags['ai'] === false) {
       ai = false
     } else if (nonInteractive) {
       ai = true
@@ -125,9 +136,7 @@ async function main() {
     })
   } else if (command === 'sync') {
     const { sync } = await import('./sync')
-    const pushOnly = flags['push'] === true
-    const pullOnly = flags['pull'] === true
-    const direction = pushOnly && !pullOnly ? 'push' : pullOnly && !pushOnly ? 'pull' : 'both'
+    const direction = resolveSyncDirection(flags['push'] === true, flags['pull'] === true)
     await sync({
       projectDir: process.cwd(),
       direction,
