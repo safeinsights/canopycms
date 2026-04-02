@@ -86,7 +86,6 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       branchRoot,
       services.entrySchemaRegistry,
       contentRootName,
-      operatingMode === 'dev',
     )
 
     return {

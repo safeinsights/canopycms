@@ -126,7 +126,6 @@ export function createCanopyContext(options: CanopyContextOptions) {
         branchRoot,
         services.entrySchemaRegistry,
         contentRootName,
-        operatingMode === 'dev',
       )
       return buildContentTreeImpl<T>(branchRoot, flatSchema, contentRootName, options)
     }

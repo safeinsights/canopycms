@@ -55,7 +55,6 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
             existing.branchRoot,
             services.entrySchemaRegistry,
             contentRootName,
-            operatingMode === 'dev',
           )
           existing.flatSchema = cached.flatSchema
         }

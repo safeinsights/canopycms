@@ -168,7 +168,7 @@ async function _createCanopyServicesInternal(
   const bootstrapAdminIds = getBootstrapAdminIds()
 
   // Create per-branch schema cache (or use provided one for testing)
-  const branchSchemaCache = options.branchSchemaCache ?? new BranchSchemaCache()
+  const branchSchemaCache = options.branchSchemaCache ?? new BranchSchemaCache(config.mode)
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
   // Path permissions are loaded dynamically from the settings branch at request time.

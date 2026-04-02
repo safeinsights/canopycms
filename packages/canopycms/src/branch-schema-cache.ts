@@ -1,15 +1,18 @@
 import fs from 'node:fs/promises'
-import type { Dirent } from 'node:fs'
 import path from 'node:path'
 
 import type { RootCollectionConfig } from './config'
 import type { FlatSchemaItem } from './config/types'
+import type { OperatingMode } from './operating-mode'
 import type { EntrySchemaRegistry } from './schema/types'
 import { resolveSchema, isValidSchema } from './schema/resolver'
 import { flattenSchema } from './config/flatten'
 
 /** Bump when BranchSchemaCacheEntry shape changes to auto-invalidate stale caches */
 const SCHEMA_CACHE_VERSION = 2
+
+/** Minimum interval between mtime staleness checks (ms) */
+const MTIME_CHECK_DEBOUNCE_MS = 1000
 
 /**
  * Schema cache structure stored in {branchRoot}/.canopy-meta/schema-cache.json
@@ -24,21 +27,26 @@ export interface BranchSchemaCacheEntry {
 /**
  * In dev mode, check whether any .collection.json file under dir has been
  * modified more recently than cachedAt. Returns true if stale.
+ *
+ * Uses a single recursive readdir to find all .collection.json files,
+ * then stats only those files.
  */
 async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
-  let entries: Dirent[]
+  let entries: string[]
   try {
-    entries = await fs.readdir(dir, { withFileTypes: true, encoding: 'utf-8' })
+    entries = await fs.readdir(dir, { recursive: true, encoding: 'utf-8' })
   } catch {
     return true
   }
   for (const entry of entries) {
-    const full = path.join(dir, entry.name)
-    if (entry.isDirectory()) {
-      if (await isStaleByMtime(full, cachedAt)) return true
-    } else if (entry.isFile() && entry.name.endsWith('.collection.json')) {
+    if (!entry.endsWith('.collection.json')) continue
+    const full = path.join(dir, entry)
+    try {
       const stat = await fs.stat(full)
       if (stat.mtimeMs > cachedAt.getTime()) return true
+    } catch {
+      // File may have been deleted between readdir and stat
+      return true
     }
   }
   return false
@@ -58,6 +66,15 @@ async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
  * - Atomic file operations prevent corruption during concurrent access
  */
 export class BranchSchemaCache {
+  /** Tracks when we last checked mtimes per contentRoot, to debounce rapid requests */
+  private lastMtimeCheck = new Map<string, number>()
+
+  private readonly devMode: boolean
+
+  constructor(mode: OperatingMode = 'prod') {
+    this.devMode = mode === 'dev'
+  }
+
   /**
    * Get schema for a branch (loads from cache or resolves fresh).
    *
@@ -70,9 +87,8 @@ export class BranchSchemaCache {
     branchRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string = 'content',
-    devMode = false,
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
-    return this.loadFromCacheOrResolve(branchRoot, entrySchemaRegistry, contentRootName, devMode)
+    return this.loadFromCacheOrResolve(branchRoot, entrySchemaRegistry, contentRootName)
   }
 
   /**
@@ -82,7 +98,6 @@ export class BranchSchemaCache {
     branchRoot: string,
     entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string,
-    devMode: boolean,
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
     const contentRoot = path.join(branchRoot, contentRootName)
     const cacheDir = path.join(branchRoot, '.canopy-meta')
@@ -106,10 +121,19 @@ export class BranchSchemaCache {
     }
 
     if (cacheData && cacheData.version === SCHEMA_CACHE_VERSION) {
-      // In dev mode, also check file mtimes so direct schema edits (outside the CMS) are picked up
-      if (devMode && (await isStaleByMtime(contentRoot, new Date(cacheData.cachedAt)))) {
+      // In dev mode, also check file mtimes so direct schema edits (outside the CMS) are picked up.
+      // Debounce: skip the walk if we checked this contentRoot within the last second.
+      const now = Date.now()
+      const lastCheck = this.lastMtimeCheck.get(contentRoot) ?? 0
+      if (
+        this.devMode &&
+        now - lastCheck >= MTIME_CHECK_DEBOUNCE_MS &&
+        (await isStaleByMtime(contentRoot, new Date(cacheData.cachedAt)))
+      ) {
+        this.lastMtimeCheck.set(contentRoot, now)
         cacheData = null
       } else {
+        if (this.devMode) this.lastMtimeCheck.set(contentRoot, now)
         return { schema: cacheData.schema, flatSchema: cacheData.flatSchema }
       }
     }

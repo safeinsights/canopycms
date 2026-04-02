@@ -160,13 +160,13 @@ describe('BranchSchemaCache', () => {
     })
 
     it('should invalidate cache when .collection.json is modified (devMode=true)', async () => {
-      const registry = new BranchSchemaCache()
+      const registry = new BranchSchemaCache('dev')
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
 
       // First access — populates the cache
-      const result1 = await registry.getSchema(branchRoot, entrySchemaRegistry, 'content', true)
+      const result1 = await registry.getSchema(branchRoot, entrySchemaRegistry)
 
       // Wait so mtime is clearly different
       await new Promise((resolve) => setTimeout(resolve, 50))
@@ -184,7 +184,7 @@ describe('BranchSchemaCache', () => {
       )
 
       // Second access with devMode=true — should detect stale cache via mtime
-      const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry, 'content', true)
+      const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry)
 
       // The schema should reflect the updated label
       expect(result2.schema.label).toBe('Updated Root')
@@ -193,13 +193,13 @@ describe('BranchSchemaCache', () => {
     })
 
     it('should NOT invalidate cache on mtime when devMode=false', async () => {
-      const registry = new BranchSchemaCache()
+      const registry = new BranchSchemaCache('prod')
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
 
       // First access — populates the cache
-      await registry.getSchema(branchRoot, entrySchemaRegistry, 'content', false)
+      await registry.getSchema(branchRoot, entrySchemaRegistry)
 
       // Wait so mtime is clearly different
       await new Promise((resolve) => setTimeout(resolve, 50))
@@ -217,7 +217,7 @@ describe('BranchSchemaCache', () => {
       )
 
       // Second access with devMode=false — should use cached version (no mtime check)
-      const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry, 'content', false)
+      const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry)
 
       // Should still have the original label (cache was NOT invalidated)
       expect(result2.schema.label).toBe('Root')

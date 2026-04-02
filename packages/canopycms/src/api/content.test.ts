@@ -92,7 +92,6 @@ describe('content api', () => {
         branchSchemaCache: {
           getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
           invalidate: vi.fn().mockResolvedValue(undefined),
-          clearAll: vi.fn().mockResolvedValue(undefined),
         } as any,
         checkBranchAccess: vi.fn(),
         checkPathAccess: undefined as any,
@@ -187,7 +186,6 @@ describe('content api', () => {
               flatSchema: [],
             }),
             invalidate: vi.fn().mockResolvedValue(undefined),
-            clearAll: vi.fn().mockResolvedValue(undefined),
           } as any,
           checkBranchAccess: vi.fn(),
           checkPathAccess: undefined as any,
@@ -238,7 +236,6 @@ describe('content api', () => {
               flatSchema: [],
             }),
             invalidate: vi.fn().mockResolvedValue(undefined),
-            clearAll: vi.fn().mockResolvedValue(undefined),
           } as any,
           checkBranchAccess: vi.fn(),
           checkPathAccess: undefined as any,

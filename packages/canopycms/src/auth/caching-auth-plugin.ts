@@ -50,7 +50,10 @@ export class CachingAuthPlugin implements AuthPlugin {
     // Use a shared promise so concurrent callers coalesce into a single refresh
     this.refreshPromise ??= this.lazyRefresher()
       .then(() => log.debug('auth', 'Lazy cache refresh completed'))
-      .catch((err) => log.debug('auth', 'Lazy cache refresh failed', { error: String(err) }))
+      .catch((err) => {
+        log.debug('auth', 'Lazy cache refresh failed', { error: String(err) })
+        this.refreshPromise = null // allow retry on next call
+      })
     await this.refreshPromise
   }
 
@@ -108,11 +111,19 @@ export class CachingAuthPlugin implements AuthPlugin {
   }
 
   async getUserMetadata(userId: CanopyUserId): Promise<UserSearchResult | null> {
-    return this.cache.getUser(userId)
+    try {
+      return await this.cache.getUser(userId)
+    } catch {
+      return null
+    }
   }
 
   async getGroupMetadata(groupId: CanopyGroupId): Promise<GroupMetadata | null> {
-    return this.cache.getGroup(groupId)
+    try {
+      return await this.cache.getGroup(groupId)
+    } catch {
+      return null
+    }
   }
 
   async listGroups(limit = 50): Promise<GroupMetadata[]> {

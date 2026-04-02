@@ -86,12 +86,14 @@ async function setupTestWorkspace(): Promise<{
 
 describe('canopycms sync', () => {
   let projectDir: string
+  let consoleMock: ReturnType<typeof mockConsole>
 
   beforeEach(() => {
-    mockConsole()
+    consoleMock = mockConsole()
   })
 
   afterEach(async () => {
+    consoleMock.restore()
     if (projectDir) {
       await fs.rm(projectDir, { recursive: true, force: true })
     }
@@ -304,6 +306,7 @@ describe('canopycms sync', () => {
     it('reports error when branch workspace does not exist', async () => {
       const workspace = await setupTestWorkspace()
       projectDir = workspace.projectDir
+      const p = await import('@clack/prompts')
 
       const result = await sync({
         projectDir,
@@ -312,10 +315,12 @@ describe('canopycms sync', () => {
       })
 
       expect(result.pulled).toBe(0)
+      expect(p.log.error).toHaveBeenCalledWith(expect.stringContaining('nonexistent-branch'))
     })
 
     it('reports error when no branch workspaces exist', async () => {
       projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-sync-test-'))
+      const p = await import('@clack/prompts')
 
       const result = await sync({
         projectDir,
@@ -323,6 +328,9 @@ describe('canopycms sync', () => {
       })
 
       expect(result.pulled).toBe(0)
+      expect(p.log.error).toHaveBeenCalledWith(
+        expect.stringContaining('No branch workspaces found'),
+      )
     })
 
     it('rejects --content-root that escapes the project directory', async () => {
