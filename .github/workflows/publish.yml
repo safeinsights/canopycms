@@ -31,7 +31,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Update npm (trusted publishers require recent npm)
-        run: npm install -g npm@latest
+        run: npm install -g npm@10
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
