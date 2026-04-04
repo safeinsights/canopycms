@@ -316,14 +316,14 @@ Generic file-based persistent task queue with zero Canopy dependencies.
 
 Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prompts` for interactive CLI experience.
 
-| File                   | Purpose                                                                                                                                                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| cli.ts                 | CLI entrypoint: minimist-based flag parsing, command routing, `isDirectRun` guard; dynamically imports command modules                                                                                       |
-| init.ts                | Library functions: `init()`, `initDeployAws()`, `workerRunOnce()` (no CLI logic, imported by cli.ts)                                                                                                         |
-| sync.ts                | Bidirectional content sync between working tree and branch workspaces; push copies+commits to workspace, pull copies back, both does 3-way git merge via canopycms-sync-base tag; selectBranch shared helper |
-| generate-ai-content.ts | AI content generation CLI command                                                                                                                                                                            |
-| templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}})                                                                                                          |
-| template-files/        | Template files for scaffolding (config, route, edit page, AI content endpoint, Dockerfile, CI workflow)                                                                                                      |
+| File                   | Purpose                                                                                                                                                                                                                                                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| cli.ts                 | CLI entrypoint: minimist-based flag parsing, command routing, `isDirectRun` guard; dynamically imports command modules                                                                                                                                                                                                                                       |
+| init.ts                | Library functions: `init()`, `initDeployAws()`, `workerRunOnce()` (no CLI logic, imported by cli.ts)                                                                                                                                                                                                                                                         |
+| sync.ts                | Bidirectional content sync between working tree and branch workspaces; push copies+commits to workspace, pull copies back, both does 3-way git merge via canopycms-sync-base tag, abort cancels a failed merge; includes `assertWithinDir` path-traversal guard, `safeReplaceDir` crash-safe directory replacement, `selectBranch` interactive branch picker |
+| generate-ai-content.ts | AI content generation CLI command                                                                                                                                                                                                                                                                                                                            |
+| templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}})                                                                                                                                                                                                                                                          |
+| template-files/        | Template files for scaffolding (config, route, edit page, AI content endpoint, Dockerfile, CI workflow)                                                                                                                                                                                                                                                      |
 
 **Commands**:
 
@@ -339,7 +339,7 @@ Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prom
 
 **`generate-ai-content` flags**: `--output <dir>`, `--config <path>`, `--app-dir <path>` (locates schemas.ts; default: `app`)
 
-**`sync` flags**: `--direction push|pull|both`, `--branch <name>` (target branch workspace), `--content-root <path>` (default: `content`), `--force` (skip confirmation prompts). Push copies content into a workspace and commits; pull copies back to working tree; both does a 3-way merge via `canopycms-sync-base` tag. Sync does not interact with remote.git.
+**`sync` flags**: `--push` (push working-tree content to a branch workspace), `--pull` (pull content from a branch workspace), `--abort` (cancel a failed merge in a branch workspace), `--branch <name>` (target branch workspace), `--content-root <path>` (default: `content`), `--force` (skip confirmation prompts). With no direction flag or both `--push` and `--pull`, defaults to `both` (3-way git merge via `canopycms-sync-base` tag). `--abort` takes precedence over other direction flags. Sync does not interact with remote.git.
 
 ## CDK Package (canopycms-cdk)
 

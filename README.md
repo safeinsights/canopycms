@@ -493,28 +493,34 @@ When working in `dev` mode, your content lives in two places: the working tree o
 **Push** (working tree → branch workspace) -- copies your current working-tree content into a branch workspace and commits it, so the CMS editor sees your latest changes (e.g., after pulling from GitHub or editing files directly):
 
 ```bash
-npx canopycms sync --direction=push
+npx canopycms sync --push
 ```
 
 **Pull** (branch workspace → working tree) -- copies content from a CMS branch workspace back into your working tree so you can review, commit, and push the changes yourself:
 
 ```bash
-npx canopycms sync --direction=pull
+npx canopycms sync --pull
 ```
 
 Both push and pull support `--branch` to target a specific workspace. If multiple branch workspaces exist and no `--branch` is given, the CLI will prompt you to choose one:
 
 ```bash
-npx canopycms sync --direction=pull --branch update-homepage
+npx canopycms sync --pull --branch update-homepage
 ```
 
-**Both directions** (3-way merge): merges your working-tree changes with any editor changes using a 3-way git merge, then pulls the merged result back into your working tree:
+**Both directions** (3-way merge) -- when neither `--push` nor `--pull` is given, sync merges your working-tree changes with any editor changes using a 3-way git merge, then pulls the merged result back into your working tree:
 
 ```bash
-npx canopycms sync --direction=both
+npx canopycms sync
 ```
 
 This is useful when both you and the editor have made changes to the same branch and you want to reconcile them in one step.
+
+**Abort** -- if a merge fails due to conflicts, you can cancel it and restore the branch workspace to its pre-merge state:
+
+```bash
+npx canopycms sync --abort
+```
 
 ### Schema Definition
 

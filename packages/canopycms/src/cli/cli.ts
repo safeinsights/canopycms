@@ -19,7 +19,7 @@ import type { AuthPlugin } from '../auth/plugin'
 /** Parse raw CLI args into structured flags and positional command. Exported for testing. */
 export function parseArgs(rawArgs: string[]) {
   const argv = minimist(rawArgs, {
-    boolean: ['force', 'non-interactive', 'no-ai', 'push', 'pull'],
+    boolean: ['force', 'non-interactive', 'push', 'pull', 'abort'],
     string: ['app-dir', 'branch', 'content-root', 'output', 'config'],
     alias: { f: 'force' },
   })
@@ -68,7 +68,7 @@ async function main() {
     }
 
     let ai: boolean
-    if (flags['no-ai'] === true || flags['ai'] === false) {
+    if (flags['ai'] === false) {
       ai = false
     } else if (nonInteractive) {
       ai = true

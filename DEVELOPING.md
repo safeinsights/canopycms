@@ -2296,32 +2296,41 @@ The dist tests will fail if `pnpm build` has not been run first, since they depe
 
 ### CLI (`canopycms sync`)
 
-The `canopycms sync` command provides bidirectional content sync between the developer's working tree and the `.canopy-dev` local remote used by the CMS in dev mode. Implementation is in `src/cli/sync.ts`.
+The `canopycms sync` command provides bidirectional content sync between the developer's working tree and CMS branch workspaces in `.canopy-dev/content-branches/`. Implementation is in `src/cli/sync.ts`.
 
-**Why this exists:** In dev mode, the CMS works against a local bare remote (`.canopy-dev/remote.git`) and branch workspaces (`.canopy-dev/content-branches/`). When a developer edits content files directly in their working tree, the CMS does not see those changes. Conversely, when content is edited through the CMS UI, the developer's working tree is not updated. `canopycms sync` bridges this gap.
+**Why this exists:** In dev mode, the CMS works against branch workspaces (`.canopy-dev/content-branches/`). When a developer edits content files directly in their working tree, the CMS does not see those changes. Conversely, when content is edited through the CMS UI, the developer's working tree is not updated. `canopycms sync` bridges this gap.
 
 **Commands:**
 
 ```bash
-# Push working-tree content into the local remote (working tree → CMS)
-npx canopycms sync --push
-
-# Pull published content from a branch workspace (CMS → working tree)
-npx canopycms sync --pull
-
-# Both directions (push first, then pull)
+# 3-way merge: merge working-tree and editor changes, pull result back (default)
 npx canopycms sync
 
-# Pull from a specific branch workspace
-npx canopycms sync --pull --branch my-feature
+# Push working-tree content into a branch workspace (working tree → CMS)
+npx canopycms sync --push
+
+# Pull content from a branch workspace (CMS → working tree)
+npx canopycms sync --pull
+
+# Abort a failed merge in the branch workspace
+npx canopycms sync --abort
+
+# Target a specific branch workspace
+npx canopycms sync --push --branch my-feature
 
 # Specify a custom content directory (default: content)
 npx canopycms sync --content-root src/content
 ```
 
-**Push flow:** Auto-initializes `.canopy-dev/remote.git` if needed, then creates a temporary clone of the bare remote, replaces its content directory with the working tree's content, commits, and pushes. If the developer switched git branches since the remote was first seeded, push creates the new branch in the remote automatically. Then fetches in all existing branch workspaces so the CMS sees the updated base. Does not touch the developer's repo git state.
+**Push flow:** Copies the working tree's content directory into the branch workspace, replacing it. Uncommitted editor changes in the workspace are auto-committed to git history before overwriting, so nothing is lost. The resulting commit is tagged `canopycms-sync-base` for future 3-way merges. Uses crash-safe directory replacement (backup-rename pattern) so that if interrupted, at least one copy always exists on disk.
 
-**Pull flow:** Copies content from a branch workspace back into the working tree's content directory. If multiple branch workspaces exist and `--branch` is not specified, an interactive prompt lets you choose. After pulling, review the changes with `git diff` and commit when ready.
+**Pull flow:** Copies content from a branch workspace back into the working tree's content directory. Before overwriting, detects both uncommitted changes and untracked files that would be deleted, and warns with a confirmation prompt. If multiple branch workspaces exist and `--branch` is not specified, an interactive prompt lets you choose. After pulling, review the changes with `git diff` and commit when ready.
+
+**Both (3-way merge) flow:** The default when running `canopycms sync` without flags. Uses a `canopycms-sync-base` git tag as the merge base to perform a proper 3-way merge between working-tree changes and editor changes in the workspace. If the merge produces conflicts, the workspace is left in a merge state with instructions to resolve manually, then run `canopycms sync --pull` or `canopycms sync --abort`.
+
+**Abort flow:** Runs `git merge --abort` in the branch workspace to cancel a failed merge and restore the workspace to its pre-merge state.
+
+**Security: path traversal guards.** The `--branch` and `--content-root` flags are validated with `assertWithinDir()` to prevent path traversal attacks (e.g., `--branch ../../etc`). Every resolved path is checked to ensure it stays within its expected parent directory before any file operations.
 
 **Typical workflow:**
 
@@ -2341,6 +2350,9 @@ npx canopycms sync --pull
 git diff
 git add content/
 git commit -m "Update posts"
+
+# Or use 3-way merge to handle both directions at once
+npx canopycms sync
 ```
 
 ## Quality Checks

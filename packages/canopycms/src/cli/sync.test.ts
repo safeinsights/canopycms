@@ -336,6 +336,20 @@ describe('canopycms sync', () => {
         }),
       ).rejects.toThrow('escapes the expected directory')
     })
+
+    it('rejects --branch that escapes the branches directory', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+
+      await expect(
+        sync({
+          projectDir,
+          direction: 'push',
+          branch: '../../.git',
+          force: true,
+        }),
+      ).rejects.toThrow('escapes the expected directory')
+    })
   })
 
   describe('pull', () => {
@@ -455,6 +469,20 @@ describe('canopycms sync', () => {
           direction: 'pull',
           branch: 'test-branch',
           contentRoot: '../../etc',
+          force: true,
+        }),
+      ).rejects.toThrow('escapes the expected directory')
+    })
+
+    it('rejects --branch that escapes the branches directory', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+
+      await expect(
+        sync({
+          projectDir,
+          direction: 'pull',
+          branch: '../../.git',
           force: true,
         }),
       ).rejects.toThrow('escapes the expected directory')
@@ -767,6 +795,19 @@ describe('canopycms sync', () => {
       })
 
       expect(pMock.log.info).toHaveBeenCalledWith(expect.stringContaining('not in a merge state'))
+    })
+
+    it('rejects --branch that escapes the branches directory', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+
+      await expect(
+        sync({
+          projectDir,
+          direction: 'abort',
+          branch: '../../.git',
+        }),
+      ).rejects.toThrow('escapes the expected directory')
     })
 
     it('offers interactive abort when push encounters merge conflicts', async () => {

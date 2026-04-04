@@ -31,6 +31,31 @@ function assertWithinDir(resolved: string, parent: string, label: string): void 
   }
 }
 
+/**
+ * Safely replace a directory by renaming the old one to a backup, renaming
+ * the new one into place, then deleting the backup. If interrupted between
+ * steps, at least one copy always exists on disk.
+ */
+async function safeReplaceDir(oldDir: string, newDir: string): Promise<void> {
+  const backupDir = `${oldDir}.sync-backup-${Date.now()}`
+  const oldExists = await filePathExists(oldDir)
+  if (oldExists) {
+    await fs.rename(oldDir, backupDir)
+  }
+  try {
+    await fs.rename(newDir, oldDir)
+  } catch (err) {
+    // Restore backup if the rename failed
+    if (oldExists) {
+      await fs.rename(backupDir, oldDir).catch(() => {})
+    }
+    throw err
+  }
+  if (oldExists) {
+    await fs.rm(backupDir, { recursive: true, force: true }).catch(() => {})
+  }
+}
+
 export interface SyncOptions {
   projectDir: string
   direction: 'push' | 'pull' | 'both' | 'abort'
@@ -118,6 +143,10 @@ async function selectBranch(
     }
   }
 
+  // Validate branch name does not escape the branches directory
+  const branchPath = path.join(branchesDir, branchName)
+  assertWithinDir(branchPath, branchesDir, '--branch')
+
   if (!branches.includes(branchName)) {
     p.log.error(`Branch workspace "${branchName}" not found.`)
     p.log.info(`Available branches: ${branches.join(', ')}`)
@@ -140,6 +169,7 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
   if (!branchName) return { fileCount: 0 }
 
   const branchPath = path.join(branchesDir, branchName)
+  assertWithinDir(branchPath, branchesDir, '--branch')
   const wsGit = simpleGit({ baseDir: branchPath })
 
   // Validate source content
@@ -197,14 +227,13 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
 
   p.log.step(`Pushing content to branch workspace: ${branchName}`)
 
-  // Atomic copy: working-tree content → workspace content dir
+  // Copy working-tree content → workspace content dir
   const wsContentDir = path.join(branchPath, contentRoot)
   assertWithinDir(wsContentDir, branchPath, '--content-root')
   const tmpDir = `${wsContentDir}.sync-tmp-${Date.now()}`
   try {
     await copyDir(srcContentDir, tmpDir)
-    await fs.rm(wsContentDir, { recursive: true, force: true })
-    await fs.rename(tmpDir, wsContentDir)
+    await safeReplaceDir(wsContentDir, tmpDir)
   } catch (err) {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
     throw err
@@ -241,7 +270,9 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
   const branchName = await selectBranch(options, branchesDir)
   if (!branchName) return { fileCount: 0 }
 
-  const branchContentDir = path.join(branchesDir, branchName, contentRoot)
+  const branchPath = path.join(branchesDir, branchName)
+  assertWithinDir(branchPath, branchesDir, '--branch')
+  const branchContentDir = path.join(branchPath, contentRoot)
   assertWithinDir(branchContentDir, branchesDir, '--content-root')
   if (!(await filePathExists(branchContentDir))) {
     p.log.error(`Content directory not found in branch workspace: ${branchName}/${contentRoot}`)
@@ -313,13 +344,11 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
   }
 
   // Replace the working-tree content with the branch workspace content.
-  // Use a temp directory + rename for atomicity: if copyDir fails midway,
-  // the original content directory is preserved.
+  // Uses backup-rename pattern: if interrupted, at least one copy always exists.
   const tmpDestDir = `${destContentDir}.sync-tmp-${Date.now()}`
   try {
     await copyDir(branchContentDir, tmpDestDir)
-    await fs.rm(destContentDir, { recursive: true, force: true })
-    await fs.rename(tmpDestDir, destContentDir)
+    await safeReplaceDir(destContentDir, tmpDestDir)
   } catch (err) {
     // Clean up temp dir on failure, preserve original
     await fs.rm(tmpDestDir, { recursive: true, force: true }).catch(() => {})
@@ -365,6 +394,7 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
   if (!branchName) return { pushed: 0, pulled: 0 }
 
   const branchPath = path.join(branchesDir, branchName)
+  assertWithinDir(branchPath, branchesDir, '--branch')
   const wsGit = simpleGit({ baseDir: branchPath })
 
   // Validate source content
@@ -422,8 +452,7 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
   const tmpDir = `${wsContentDir}.sync-tmp-${Date.now()}`
   try {
     await copyDir(srcContentDir, tmpDir)
-    await fs.rm(wsContentDir, { recursive: true, force: true })
-    await fs.rename(tmpDir, wsContentDir)
+    await safeReplaceDir(wsContentDir, tmpDir)
   } catch (err) {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
     // Switch back to workspace branch before re-throwing
@@ -453,9 +482,16 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
 
   try {
     await wsGit.merge([incomingBranch, '--no-edit'])
-  } catch {
+  } catch (mergeError) {
     // Check if it's a merge conflict
-    const mergeStatus = await wsGit.status()
+    let mergeStatus: Awaited<ReturnType<typeof wsGit.status>> | undefined
+    try {
+      mergeStatus = await wsGit.status()
+    } catch {
+      // status() failed — clean up incoming branch and re-throw original error
+      await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
+      throw mergeError
+    }
     if (mergeStatus.conflicted.length > 0) {
       p.log.error('Merge conflicts detected in the following files:')
       for (const file of mergeStatus.conflicted) {
@@ -468,9 +504,9 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
       await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
       return { pushed: 0, pulled: 0 }
     }
-    // Not a conflict — clean up and re-throw
+    // Not a conflict — clean up and re-throw original error
     await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
-    throw mergeStatus
+    throw mergeError
   }
 
   // Clean merge succeeded
@@ -495,6 +531,7 @@ async function syncAbort(options: SyncOptions): Promise<void> {
   if (!branchName) return
 
   const branchPath = path.join(branchesDir, branchName)
+  assertWithinDir(branchPath, branchesDir, '--branch')
   const wsGit = simpleGit({ baseDir: branchPath })
 
   const status = await wsGit.status()

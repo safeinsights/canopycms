@@ -13,9 +13,10 @@ describe('parseArgs', () => {
   })
 
   it('parses boolean flags', () => {
-    const { flags } = parseArgs(['sync', '--push', '--force'])
+    const { flags } = parseArgs(['sync', '--push', '--force', '--abort'])
     expect(flags['push']).toBe(true)
     expect(flags['force']).toBe(true)
+    expect(flags['abort']).toBe(true)
   })
 
   it('parses string flags', () => {
@@ -44,9 +45,8 @@ describe('parseArgs', () => {
     ])
     expect(command).toBe('init')
     expect(flags['non-interactive']).toBe(true)
-    // minimist treats --no-X as a negation: sets ai=false (not no-ai=true)
+    // minimist treats --no-X as a negation: sets ai=false
     expect(flags['ai']).toBe(false)
-    expect(flags['no-ai']).toBe(false)
     expect(flags['app-dir']).toBe('src')
   })
 
