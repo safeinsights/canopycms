@@ -488,33 +488,33 @@ See the [Schema Registry and References](#schema-references-system) section for 
 
 ### Local Development Sync
 
-When working in `dev` mode, your content lives in two places: the working tree of your repo and the `.canopy-dev` local remote that the CMS reads from. The `canopycms sync` command keeps them in sync.
+When working in `dev` mode, your content lives in two places: the working tree of your repo and the branch workspaces inside `.canopy-dev/content-branches/` that the CMS editor reads from. The `canopycms sync` command keeps them in sync.
 
-**Push** (working tree → CMS) -- updates the `.canopy-dev` local remote with your current working-tree content so the CMS sees your latest changes (e.g., after pulling from GitHub or editing files directly):
-
-```bash
-npx canopycms sync --push
-```
-
-**Pull** (CMS → working tree) -- copies content from a CMS branch workspace back into your working tree so you can review, commit, and push the changes yourself:
+**Push** (working tree → branch workspace) -- copies your current working-tree content into a branch workspace and commits it, so the CMS editor sees your latest changes (e.g., after pulling from GitHub or editing files directly):
 
 ```bash
-npx canopycms sync --pull
+npx canopycms sync --direction=push
 ```
 
-If multiple branch workspaces exist, the CLI will prompt you to choose one. You can also specify it directly:
+**Pull** (branch workspace → working tree) -- copies content from a CMS branch workspace back into your working tree so you can review, commit, and push the changes yourself:
 
 ```bash
-npx canopycms sync --pull --branch update-homepage
+npx canopycms sync --direction=pull
 ```
 
-**Both directions:** omit both flags to push and then pull in one step:
+Both push and pull support `--branch` to target a specific workspace. If multiple branch workspaces exist and no `--branch` is given, the CLI will prompt you to choose one:
 
 ```bash
-npx canopycms sync
+npx canopycms sync --direction=pull --branch update-homepage
 ```
 
-The sync command auto-initializes `.canopy-dev/remote.git` if it doesn't exist yet, and handles branch switches gracefully (e.g., if you switch from `main` to `feat/foo`, push will create the new branch in the local remote automatically).
+**Both directions** (3-way merge): merges your working-tree changes with any editor changes using a 3-way git merge, then pulls the merged result back into your working tree:
+
+```bash
+npx canopycms sync --direction=both
+```
+
+This is useful when both you and the editor have made changes to the same branch and you want to reconcile them in one step.
 
 ### Schema Definition
 

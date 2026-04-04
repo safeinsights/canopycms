@@ -968,17 +968,19 @@ This processes pending tasks, refreshes the auth cache, and exits. It simulates 
 
 #### Content Sync CLI
 
-In dev mode, the developer's working tree and the CMS editor operate on separate git structures. The developer edits files in their normal repo, while the editor works through branch workspaces cloned from the local bare remote (`.canopy-dev/remote.git`). These two worlds can drift apart: the developer might update content files directly, or an editor might publish changes through the CMS that the developer wants to pull back into their repo.
+In dev mode, the developer's working tree and the CMS editor operate on separate git structures. The developer edits files in their normal repo, while the editor works through branch workspaces cloned from the local bare remote. These two worlds can drift apart: the developer might update content files directly, or an editor might publish changes through the CMS that the developer wants to pull back into their repo.
 
-The `sync` command bridges this gap with bidirectional content synchronization:
+The `sync` command bridges this gap with bidirectional content synchronization between the developer's working tree and a specific branch workspace:
 
-- **Push** (`npx canopycms sync --push`): Takes the developer's current working-tree content (including uncommitted changes) and updates the local bare remote. It then fetches in all existing branch workspaces so the editor immediately sees the latest content. This is useful after the developer makes direct content edits outside the CMS.
+- **Push** (`npx canopycms sync --push`): Copies the developer's current working-tree content directly into the selected branch workspace and commits it there. This is useful after the developer makes direct content edits outside the CMS. Push does not update the local bare remote; `remote.git` stays current through the normal publish/submit mechanisms.
 
-- **Pull** (`npx canopycms sync --pull`): Copies published content from a branch workspace back into the developer's working tree. The developer can then review the changes with normal git tools and commit when ready. This closes the loop after content is edited through the CMS.
+- **Pull** (`npx canopycms sync --pull`): Copies content from a branch workspace back into the developer's working tree. The developer can then review the changes with normal git tools and commit when ready. This closes the loop after content is edited through the CMS.
 
-- **Both** (`npx canopycms sync`): Runs push followed by pull, synchronizing in both directions.
+- **Both** (`npx canopycms sync`): Performs a proper 3-way git merge between working-tree changes and editor changes. It uses a `canopycms-sync-base` tag (set by each successful sync) as the merge base, creates a temporary branch from that base with the working-tree content, and merges it with the workspace branch. If conflicts arise, the workspace is left in a merge state for manual resolution. On a clean merge, the result is pulled back into the working tree automatically.
 
-**Why a separate sync step?** The CMS editor intentionally does not write directly to the developer's repo. In dev mode, the local bare remote acts as a boundary between the developer's git state and the CMS's branch workspaces. This isolation prevents the CMS from creating unexpected commits or modifying the developer's index. The sync command gives the developer explicit control over when content crosses that boundary.
+**Why a separate sync step?** The CMS editor intentionally does not write directly to the developer's repo. Branch workspaces act as a boundary between the developer's git state and the CMS's editing state. This isolation prevents the CMS from creating unexpected commits or modifying the developer's index. The sync command gives the developer explicit control over when content crosses that boundary.
+
+**Why sync does not touch remote.git:** Earlier designs had push update the local bare remote and fan out fetches to all branch workspaces. This was removed because the sync command's purpose is narrow: move content between the developer's working tree and a single branch workspace. The bare remote is kept current by the existing publish and submit flows, and mixing those responsibilities in sync created confusing semantics (especially for the "both" direction).
 
 ## Context Architecture
 

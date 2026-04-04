@@ -28,8 +28,13 @@ export function parseArgs(rawArgs: string[]) {
   return { argv, flags, command }
 }
 
-/** Resolve sync direction from --push/--pull flags. Exported for testing. */
-export function resolveSyncDirection(push: boolean, pull: boolean): 'push' | 'pull' | 'both' {
+/** Resolve sync direction from --push/--pull/--abort flags. Exported for testing. */
+export function resolveSyncDirection(
+  push: boolean,
+  pull: boolean,
+  abort: boolean,
+): 'push' | 'pull' | 'both' | 'abort' {
+  if (abort) return 'abort'
   return push && !pull ? 'push' : pull && !push ? 'pull' : 'both'
 }
 
@@ -136,7 +141,11 @@ async function main() {
     })
   } else if (command === 'sync') {
     const { sync } = await import('./sync')
-    const direction = resolveSyncDirection(flags['push'] === true, flags['pull'] === true)
+    const direction = resolveSyncDirection(
+      flags['push'] === true,
+      flags['pull'] === true,
+      flags['abort'] === true,
+    )
     await sync({
       projectDir: process.cwd(),
       direction,
@@ -165,11 +174,12 @@ async function main() {
     console.log('    --app-dir <path>      App directory (default: app)')
     console.log('')
     console.log('  sync                    Sync content between working tree and CMS')
-    console.log('    --push                Push working-tree content to the local remote')
-    console.log('    --pull                Pull published content from a branch workspace')
-    console.log('    --branch <name>       Branch workspace to pull from')
+    console.log('    --push                Push working-tree content to a branch workspace')
+    console.log('    --pull                Pull content from a branch workspace')
+    console.log('    --abort               Abort a failed merge in a branch workspace')
+    console.log('    --branch <name>       Target branch workspace')
     console.log('    --content-root <path> Content directory (default: content)')
-    console.log('    --force               Overwrite uncommitted changes without asking')
+    console.log('    --force               Skip confirmation prompts')
     process.exit(0)
   }
 }

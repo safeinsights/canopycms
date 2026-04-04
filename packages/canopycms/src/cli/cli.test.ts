@@ -66,18 +66,27 @@ describe('parseArgs', () => {
 
 describe('resolveSyncDirection', () => {
   it('returns push when only --push is set', () => {
-    expect(resolveSyncDirection(true, false)).toBe('push')
+    expect(resolveSyncDirection(true, false, false)).toBe('push')
   })
 
   it('returns pull when only --pull is set', () => {
-    expect(resolveSyncDirection(false, true)).toBe('pull')
+    expect(resolveSyncDirection(false, true, false)).toBe('pull')
   })
 
   it('returns both when neither flag is set', () => {
-    expect(resolveSyncDirection(false, false)).toBe('both')
+    expect(resolveSyncDirection(false, false, false)).toBe('both')
   })
 
   it('returns both when both flags are set', () => {
-    expect(resolveSyncDirection(true, true)).toBe('both')
+    expect(resolveSyncDirection(true, true, false)).toBe('both')
+  })
+
+  it('returns abort when --abort is set', () => {
+    expect(resolveSyncDirection(false, false, true)).toBe('abort')
+  })
+
+  it('returns abort when --abort takes precedence over other flags', () => {
+    expect(resolveSyncDirection(true, false, true)).toBe('abort')
+    expect(resolveSyncDirection(false, true, true)).toBe('abort')
   })
 })

@@ -1,23 +1,22 @@
 /**
  * CLI command: npx canopycms sync
  *
- * Bidirectional sync between the developer's working repo and the
- * .canopy-dev local remote used by the CMS editor.
+ * Bidirectional sync between the developer's working tree and
+ * CMS branch workspaces in .canopy-dev/content-branches/.
  *
- * - Push: updates the local remote with current working-tree content
- *   (including uncommitted changes), then fetches in all branch workspaces
- *   so the editor sees the latest content.
+ * - Push: copies working-tree content into a branch workspace and commits.
  *
- * - Pull: copies published content from a branch workspace back into the
- *   working repo's content directory so the developer can review and commit.
+ * - Pull: copies content from a branch workspace back into the working tree
+ *   so the developer can review and commit.
+ *
+ * - Both: merges working-tree changes with editor changes in the workspace
+ *   using a 3-way git merge, then pulls the merged result back.
  */
 
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import * as p from '@clack/prompts'
-import { GitManager } from '../git-manager'
-import { detectHeadBranch } from '../utils/git'
 import { filePathExists } from '../utils/fs'
 
 /** Validate that a resolved path stays within the expected parent directory. */
@@ -34,13 +33,15 @@ function assertWithinDir(resolved: string, parent: string, label: string): void 
 
 export interface SyncOptions {
   projectDir: string
-  direction: 'push' | 'pull' | 'both'
-  /** For pull: which branch workspace to pull from */
+  direction: 'push' | 'pull' | 'both' | 'abort'
+  /** Which branch workspace to push to / pull from */
   branch?: string
   contentRoot?: string
   /** Skip confirmation prompts (for testing or scripts). */
   force?: boolean
 }
+
+const SYNC_BASE_TAG = 'canopycms-sync-base'
 
 /** Recursively list all file paths relative to `dir`. Skips .git and symlinks. */
 async function listFilesRecursive(dir: string, prefix = ''): Promise<string[]> {
@@ -82,124 +83,13 @@ async function copyDir(src: string, dest: string): Promise<void> {
 }
 
 /**
- * Push: update the local bare remote (.canopy-dev/remote.git) with the
- * current working-tree content, then fetch in all existing branch workspaces.
- *
- * Uses a temp clone of the bare remote to stage and push content without
- * touching the developer's repo git state at all.
+ * Select a branch workspace. Auto-selects if only one exists, prompts if
+ * multiple, or uses the --branch flag. Returns null if cancelled or not found.
  */
-async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
-  const { projectDir } = options
-  const contentRoot = options.contentRoot || 'content'
-  const remotePath = path.join(projectDir, '.canopy-dev', 'remote.git')
-  const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
-
-  // Detect the current branch in the source repo
-  const baseBranch = await detectHeadBranch(projectDir)
-
-  // Auto-initialize the local remote if it doesn't exist
-  if (!(await filePathExists(remotePath))) {
-    p.log.step('Initializing local remote...')
-    await GitManager.ensureLocalSimulatedRemote({
-      remotePath,
-      sourcePath: projectDir,
-      baseBranch,
-    })
-    p.log.success('Created .canopy-dev/remote.git')
-  }
-
-  p.log.step(`Pushing content to local remote (branch: ${baseBranch})`)
-
-  const srcContentDir = path.join(projectDir, contentRoot)
-  assertWithinDir(srcContentDir, projectDir, '--content-root')
-  if (!(await filePathExists(srcContentDir))) {
-    p.log.warn(`Content directory not found: ${contentRoot}/`)
-    return { fileCount: 0 }
-  }
-
-  // Clone the bare remote into a temp directory.
-  // If the target branch doesn't exist in the remote (e.g., developer switched
-  // git branches since the remote was first seeded), clone the default branch
-  // and create the target branch from it.
-  const tmpDir = path.join(
-    projectDir,
-    '.canopy-dev',
-    `.sync-tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-  )
-  try {
-    let clonedBranch: string
-    try {
-      await simpleGit().clone(remotePath, tmpDir, ['--branch', baseBranch, '--single-branch'])
-      clonedBranch = baseBranch
-    } catch (err) {
-      // Target branch doesn't exist in remote — clone whatever default branch exists
-      const msg = err instanceof Error ? err.message : String(err)
-      p.log.info(`Branch "${baseBranch}" not in remote (${msg}), cloning default branch`)
-      await simpleGit().clone(remotePath, tmpDir)
-      clonedBranch = (
-        await simpleGit({ baseDir: tmpDir }).revparse(['--abbrev-ref', 'HEAD'])
-      ).trim()
-    }
-
-    const tmpGit = simpleGit({ baseDir: tmpDir })
-    await tmpGit.addConfig('user.name', 'CanopyCMS Sync')
-    await tmpGit.addConfig('user.email', 'sync@canopycms.local')
-
-    // If we cloned a different branch, create the target branch
-    if (clonedBranch !== baseBranch) {
-      await tmpGit.checkoutLocalBranch(baseBranch)
-    }
-
-    // Replace content in the temp clone with the working-tree content
-    const dstContentDir = path.join(tmpDir, contentRoot)
-    await fs.rm(dstContentDir, { recursive: true, force: true })
-    await copyDir(srcContentDir, dstContentDir)
-
-    // Stage and check for changes
-    await tmpGit.add('-A')
-    const status = await tmpGit.status()
-
-    if (status.files.length === 0) {
-      p.log.info('Content is already up to date — nothing to push')
-      return { fileCount: 0 }
-    }
-
-    await tmpGit.commit('sync: update content from working tree')
-    await tmpGit.push('origin', `${baseBranch}:${baseBranch}`, ['--set-upstream'])
-
-    p.log.success(`Pushed ${status.files.length} file change(s) to local remote`)
-
-    // Fetch in existing branch workspaces so they see the updated base
-    if (await filePathExists(branchesDir)) {
-      const entries = await fs.readdir(branchesDir, { withFileTypes: true })
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue
-        const branchPath = path.join(branchesDir, entry.name)
-        try {
-          await simpleGit({ baseDir: branchPath }).fetch('origin')
-          p.log.info(`  Fetched in branch workspace: ${entry.name}`)
-        } catch {
-          // Skip branches that can't be fetched (e.g., missing .git)
-        }
-      }
-    }
-
-    return { fileCount: status.files.length }
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true })
-  }
-}
-
-/**
- * Pull: copy published content from a branch workspace back into the
- * working repo's content directory.
- */
-async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
-  const { projectDir } = options
-  const contentRoot = options.contentRoot || 'content'
-  const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
-
-  // List available branch workspaces
+async function selectBranch(
+  options: Pick<SyncOptions, 'branch'>,
+  branchesDir: string,
+): Promise<string | null> {
   let branches: string[] = []
   if (await filePathExists(branchesDir)) {
     const entries = await fs.readdir(branchesDir, { withFileTypes: true })
@@ -208,22 +98,21 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
 
   if (branches.length === 0) {
     p.log.error('No branch workspaces found. Create a branch in the editor first.')
-    return { fileCount: 0 }
+    return null
   }
 
-  // Select which branch to pull from
   let branchName = options.branch
   if (!branchName) {
     if (branches.length === 1) {
       branchName = branches[0]
     } else {
       const result = await p.select({
-        message: 'Which branch to pull content from?',
+        message: 'Which branch?',
         options: branches.map((b) => ({ value: b, label: b })),
       })
       if (p.isCancel(result)) {
         p.cancel('Sync cancelled.')
-        return { fileCount: 0 }
+        return null
       }
       branchName = result
     }
@@ -232,8 +121,125 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
   if (!branches.includes(branchName)) {
     p.log.error(`Branch workspace "${branchName}" not found.`)
     p.log.info(`Available branches: ${branches.join(', ')}`)
+    return null
+  }
+
+  return branchName
+}
+
+/**
+ * Push: copy working-tree content into a branch workspace and commit.
+ * Tags the resulting commit as the sync base for future merges.
+ */
+async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
+  const { projectDir } = options
+  const contentRoot = options.contentRoot || 'content'
+  const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
+
+  const branchName = await selectBranch(options, branchesDir)
+  if (!branchName) return { fileCount: 0 }
+
+  const branchPath = path.join(branchesDir, branchName)
+  const wsGit = simpleGit({ baseDir: branchPath })
+
+  // Validate source content
+  const srcContentDir = path.join(projectDir, contentRoot)
+  assertWithinDir(srcContentDir, projectDir, '--content-root')
+  if (!(await filePathExists(srcContentDir))) {
+    p.log.warn(`Content directory not found: ${contentRoot}/`)
     return { fileCount: 0 }
   }
+
+  // Check workspace health
+  const status = await wsGit.status()
+  if (status.conflicted.length > 0) {
+    p.log.error('Branch workspace has unresolved merge conflicts.')
+    if (!options.force) {
+      const shouldAbort = await p.confirm({
+        message: 'Abort the merge and restore workspace to pre-merge state?',
+        initialValue: false,
+      })
+      if (!p.isCancel(shouldAbort) && shouldAbort) {
+        await wsGit.merge(['--abort'])
+        p.log.success('Merge aborted. Workspace restored to pre-merge state.')
+      }
+    }
+    return { fileCount: 0 }
+  }
+
+  // Warn about uncommitted workspace changes (editor saves)
+  if (status.files.length > 0 && !options.force) {
+    p.log.warn(
+      `Branch workspace has ${status.files.length} uncommitted change(s) that will be committed to history then overwritten:`,
+    )
+    for (const file of status.files.slice(0, 10)) {
+      p.log.warn(`  ${file.path}`)
+    }
+    if (status.files.length > 10) {
+      p.log.warn(`  ... and ${status.files.length - 10} more`)
+    }
+    const confirm = await p.confirm({
+      message: 'Continue? Editor changes will be preserved in git history.',
+      initialValue: false,
+    })
+    if (p.isCancel(confirm) || !confirm) {
+      p.cancel('Push cancelled.')
+      return { fileCount: 0 }
+    }
+  }
+
+  // Auto-commit uncommitted workspace changes to preserve in history
+  if (status.files.length > 0) {
+    await wsGit.add('-A')
+    await wsGit.commit('sync: save editor state before push')
+    p.log.info('Committed editor changes to history before push')
+  }
+
+  p.log.step(`Pushing content to branch workspace: ${branchName}`)
+
+  // Atomic copy: working-tree content → workspace content dir
+  const wsContentDir = path.join(branchPath, contentRoot)
+  assertWithinDir(wsContentDir, branchPath, '--content-root')
+  const tmpDir = `${wsContentDir}.sync-tmp-${Date.now()}`
+  try {
+    await copyDir(srcContentDir, tmpDir)
+    await fs.rm(wsContentDir, { recursive: true, force: true })
+    await fs.rename(tmpDir, wsContentDir)
+  } catch (err) {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    throw err
+  }
+
+  // Stage and check for changes
+  await wsGit.add('-A')
+  const postStatus = await wsGit.status()
+
+  if (postStatus.files.length === 0) {
+    p.log.info('Content is already up to date — nothing to push')
+    // Still tag as sync base — marks this as a known sync point for future merges
+    await wsGit.tag(['-f', SYNC_BASE_TAG])
+    return { fileCount: 0 }
+  }
+
+  await wsGit.commit('sync: update content from working tree')
+
+  // Tag as sync base for future merges
+  await wsGit.tag(['-f', SYNC_BASE_TAG])
+
+  p.log.success(`Pushed ${postStatus.files.length} file change(s) to branch "${branchName}"`)
+  return { fileCount: postStatus.files.length }
+}
+
+/**
+ * Pull: copy content from a branch workspace back into the working tree.
+ */
+async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
+  const { projectDir } = options
+  const contentRoot = options.contentRoot || 'content'
+  const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
+
+  const branchName = await selectBranch(options, branchesDir)
+  if (!branchName) return { fileCount: 0 }
 
   const branchContentDir = path.join(branchesDir, branchName, contentRoot)
   assertWithinDir(branchContentDir, branchesDir, '--content-root')
@@ -344,6 +350,166 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
 }
 
 /**
+ * Both: merge working-tree changes with editor changes in the workspace
+ * using a 3-way git merge, then pull the merged result back.
+ *
+ * Uses a `canopycms-sync-base` tag as the merge base — this tag is set
+ * by push after each successful sync.
+ */
+async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled: number }> {
+  const { projectDir } = options
+  const contentRoot = options.contentRoot || 'content'
+  const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
+
+  const branchName = await selectBranch(options, branchesDir)
+  if (!branchName) return { pushed: 0, pulled: 0 }
+
+  const branchPath = path.join(branchesDir, branchName)
+  const wsGit = simpleGit({ baseDir: branchPath })
+
+  // Validate source content
+  const srcContentDir = path.join(projectDir, contentRoot)
+  assertWithinDir(srcContentDir, projectDir, '--content-root')
+  if (!(await filePathExists(srcContentDir))) {
+    p.log.warn(`Content directory not found: ${contentRoot}/`)
+    return { pushed: 0, pulled: 0 }
+  }
+
+  // Check workspace health
+  const status = await wsGit.status()
+  if (status.conflicted.length > 0) {
+    p.log.error('Branch workspace has unresolved merge conflicts.')
+    if (!options.force) {
+      const shouldAbort = await p.confirm({
+        message: 'Abort the merge and restore workspace to pre-merge state?',
+        initialValue: false,
+      })
+      if (!p.isCancel(shouldAbort) && shouldAbort) {
+        await wsGit.merge(['--abort'])
+        p.log.success('Merge aborted. Workspace restored to pre-merge state.')
+      }
+    }
+    return { pushed: 0, pulled: 0 }
+  }
+
+  // Auto-commit uncommitted workspace changes (preserves editor work for the merge)
+  if (status.files.length > 0) {
+    await wsGit.add('-A')
+    await wsGit.commit('sync: save editor state before merge')
+    p.log.info('Committed editor changes before merge')
+  }
+
+  // Determine merge base
+  let baseRef: string
+  try {
+    await wsGit.raw(['rev-parse', SYNC_BASE_TAG])
+    baseRef = SYNC_BASE_TAG
+  } catch {
+    // First time: no tag exists. Use current HEAD as base.
+    baseRef = 'HEAD'
+  }
+
+  // Remember the current branch to switch back after merge
+  const currentBranch = (await wsGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
+
+  // Create temp branch from the merge base
+  const incomingBranch = `sync-incoming-${Date.now()}`
+  await wsGit.raw(['checkout', '-b', incomingBranch, baseRef])
+
+  // Replace content on temp branch with working-tree content
+  const wsContentDir = path.join(branchPath, contentRoot)
+  assertWithinDir(wsContentDir, branchPath, '--content-root')
+  const tmpDir = `${wsContentDir}.sync-tmp-${Date.now()}`
+  try {
+    await copyDir(srcContentDir, tmpDir)
+    await fs.rm(wsContentDir, { recursive: true, force: true })
+    await fs.rename(tmpDir, wsContentDir)
+  } catch (err) {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+    // Switch back to workspace branch before re-throwing
+    await wsGit.checkout(currentBranch)
+    await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
+    throw err
+  }
+
+  await wsGit.add('-A')
+  const incomingStatus = await wsGit.status()
+
+  // No working-tree changes — skip merge, just pull editor changes
+  if (incomingStatus.files.length === 0) {
+    await wsGit.checkout(currentBranch)
+    await wsGit.raw(['branch', '-D', incomingBranch])
+    p.log.info('No working-tree changes to merge — pulling editor changes only')
+    const pullResult = await syncPull({ ...options, branch: branchName, force: true })
+    return { pushed: 0, pulled: pullResult.fileCount }
+  }
+
+  await wsGit.commit('sync: incoming working-tree changes')
+
+  // Switch back to workspace branch and merge
+  await wsGit.checkout(currentBranch)
+
+  p.log.step('Merging working-tree changes with editor changes...')
+
+  try {
+    await wsGit.merge([incomingBranch, '--no-edit'])
+  } catch {
+    // Check if it's a merge conflict
+    const mergeStatus = await wsGit.status()
+    if (mergeStatus.conflicted.length > 0) {
+      p.log.error('Merge conflicts detected in the following files:')
+      for (const file of mergeStatus.conflicted) {
+        p.log.error(`  ${file}`)
+      }
+      p.log.info('The branch workspace is now in a merge state.')
+      p.log.info('Resolve the conflicts in the workspace, then run: canopycms sync --pull')
+      p.log.info('Or abort the merge with: canopycms sync --abort')
+      // Clean up the incoming branch (leave merge state for user resolution)
+      await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
+      return { pushed: 0, pulled: 0 }
+    }
+    // Not a conflict — clean up and re-throw
+    await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
+    throw mergeStatus
+  }
+
+  // Clean merge succeeded
+  await wsGit.raw(['branch', '-D', incomingBranch])
+  await wsGit.tag(['-f', SYNC_BASE_TAG])
+  p.log.success('Merged working-tree changes with editor changes')
+
+  // Pull merged result back to working tree
+  const pullResult = await syncPull({ ...options, branch: branchName, force: true })
+  return { pushed: incomingStatus.files.length, pulled: pullResult.fileCount }
+}
+
+/**
+ * Abort: cancel a failed merge in a branch workspace by running `git merge --abort`.
+ * Restores the workspace to its pre-merge state.
+ */
+async function syncAbort(options: SyncOptions): Promise<void> {
+  const { projectDir } = options
+  const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
+
+  const branchName = await selectBranch(options, branchesDir)
+  if (!branchName) return
+
+  const branchPath = path.join(branchesDir, branchName)
+  const wsGit = simpleGit({ baseDir: branchPath })
+
+  const status = await wsGit.status()
+  if (status.conflicted.length === 0) {
+    p.log.info(`Branch workspace "${branchName}" is not in a merge state — nothing to abort.`)
+    return
+  }
+
+  await wsGit.merge(['--abort'])
+  p.log.success(
+    `Merge aborted in branch workspace "${branchName}". Workspace restored to pre-merge state.`,
+  )
+}
+
+/**
  * Run the sync command.
  *
  * @returns Summary of what was synced
@@ -354,12 +520,16 @@ export async function sync(options: SyncOptions): Promise<{ pushed: number; pull
   let pushed = 0
   let pulled = 0
 
-  if (options.direction === 'push' || options.direction === 'both') {
+  if (options.direction === 'abort') {
+    await syncAbort(options)
+  } else if (options.direction === 'both') {
+    const result = await syncBoth(options)
+    pushed = result.pushed
+    pulled = result.pulled
+  } else if (options.direction === 'push') {
     const result = await syncPush(options)
     pushed = result.fileCount
-  }
-
-  if (options.direction === 'pull' || options.direction === 'both') {
+  } else {
     const result = await syncPull(options)
     pulled = result.fileCount
   }
