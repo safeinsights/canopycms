@@ -27,13 +27,13 @@ describe('Groups API Integration', () => {
     mockConsole()
   })
 
-  describe('prod-sim mode', () => {
+  describe('dev mode (full)', () => {
     let workspace: TestWorkspace
 
     beforeEach(async () => {
       workspace = await createTestWorkspace({
         schema: BLOG_SCHEMA,
-        mode: 'prod-sim',
+        mode: 'dev',
       })
     })
 
@@ -116,7 +116,7 @@ describe('Groups API Integration', () => {
       expect(result.ok).toBe(true)
 
       // Verify file exists at correct path
-      const strategy = operatingStrategy('prod-sim')
+      const strategy = operatingStrategy('dev')
       const settingsRoot = strategy.getSettingsRoot(workspace.tmpRoot)
       const groupsPath = path.join(settingsRoot, 'groups.json')
 
@@ -345,7 +345,7 @@ describe('Groups API Integration', () => {
     beforeEach(async () => {
       workspace = await createTestWorkspace({
         schema: BLOG_SCHEMA,
-        mode: 'prod-sim',
+        mode: 'dev',
       })
     })
 

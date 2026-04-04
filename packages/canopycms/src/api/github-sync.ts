@@ -127,7 +127,6 @@ async function enqueueGitHubTask(
   task: { action: TaskAction; payload: Record<string, unknown> },
 ): Promise<GitHubSyncResult> {
   const taskDir = getTaskQueueDir(ctx.services.config)
-  if (!taskDir) return {}
 
   try {
     await enqueueTask(taskDir, task)

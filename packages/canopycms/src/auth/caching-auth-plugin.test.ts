@@ -85,6 +85,21 @@ describe('CachingAuthPlugin', () => {
 
       expect(mockVerifier).toHaveBeenCalledWith(context)
     })
+
+    it('returns minimal user info when cache throws', async () => {
+      const failingCache = createMockCache({
+        getUser: vi.fn().mockRejectedValue(new Error('cache corrupt')),
+        getUserExternalGroups: vi.fn().mockRejectedValue(new Error('cache corrupt')),
+      })
+      plugin = new CachingAuthPlugin(mockVerifier, failingCache)
+
+      const result = await plugin.authenticate({})
+
+      expect(result.success).toBe(true)
+      expect(result.user?.userId).toBe('user_1')
+      expect(result.user?.name).toBe('user_1') // falls back to userId
+      expect(result.user?.externalGroups).toEqual([])
+    })
   })
 
   describe('searchUsers', () => {
@@ -114,6 +129,16 @@ describe('CachingAuthPlugin', () => {
       const results = await plugin.searchUsers('nonexistent')
       expect(results).toHaveLength(0)
     })
+
+    it('returns empty array when getAllUsers throws', async () => {
+      const failingCache = createMockCache({
+        getAllUsers: vi.fn().mockRejectedValue(new Error('cache unavailable')),
+      })
+      plugin = new CachingAuthPlugin(mockVerifier, failingCache)
+
+      const results = await plugin.searchUsers('alice')
+      expect(results).toEqual([])
+    })
   })
 
   describe('getUserMetadata', () => {
@@ -124,6 +149,16 @@ describe('CachingAuthPlugin', () => {
 
     it('returns null for unknown user', async () => {
       const user = await plugin.getUserMetadata('unknown')
+      expect(user).toBeNull()
+    })
+
+    it('returns null when cache throws', async () => {
+      const failingCache = createMockCache({
+        getUser: vi.fn().mockRejectedValue(new Error('cache corrupt')),
+      })
+      plugin = new CachingAuthPlugin(mockVerifier, failingCache)
+
+      const user = await plugin.getUserMetadata('user_1')
       expect(user).toBeNull()
     })
   })
@@ -138,6 +173,99 @@ describe('CachingAuthPlugin', () => {
       const group = await plugin.getGroupMetadata('unknown')
       expect(group).toBeNull()
     })
+
+    it('returns null when cache throws', async () => {
+      const failingCache = createMockCache({
+        getGroup: vi.fn().mockRejectedValue(new Error('cache corrupt')),
+      })
+      plugin = new CachingAuthPlugin(mockVerifier, failingCache)
+
+      const group = await plugin.getGroupMetadata('org_1')
+      expect(group).toBeNull()
+    })
+  })
+
+  describe('lazyRefresher', () => {
+    it('calls the lazy refresher on first successful authenticate', async () => {
+      const refresher = vi.fn().mockResolvedValue(undefined)
+      plugin = new CachingAuthPlugin(mockVerifier, mockCache, refresher)
+
+      await plugin.authenticate({})
+
+      expect(refresher).toHaveBeenCalledOnce()
+    })
+
+    it('calls the refresher only once across multiple authenticate calls', async () => {
+      const refresher = vi.fn().mockResolvedValue(undefined)
+      plugin = new CachingAuthPlugin(mockVerifier, mockCache, refresher)
+
+      await plugin.authenticate({})
+      await plugin.authenticate({})
+      await plugin.authenticate({})
+
+      expect(refresher).toHaveBeenCalledOnce()
+    })
+
+    it('does not block authentication when the refresher fails', async () => {
+      const refresher = vi.fn().mockRejectedValue(new Error('network error'))
+      plugin = new CachingAuthPlugin(mockVerifier, mockCache, refresher)
+
+      const result = await plugin.authenticate({})
+
+      expect(result.success).toBe(true)
+      expect(result.user?.userId).toBe('user_1')
+    })
+
+    it('coalesces concurrent authenticate calls into a single refresh', async () => {
+      let resolveRefresh!: () => void
+      const refresher = vi.fn(() => new Promise<void>((resolve) => (resolveRefresh = resolve)))
+      plugin = new CachingAuthPlugin(mockVerifier, mockCache, refresher)
+
+      // Fire 3 concurrent authenticate calls
+      const results = Promise.all([
+        plugin.authenticate({}),
+        plugin.authenticate({}),
+        plugin.authenticate({}),
+      ])
+
+      // Let token verification resolve so the refresher is invoked
+      await vi.waitFor(() => expect(refresher).toHaveBeenCalled())
+
+      // Resolve the single refresh
+      resolveRefresh()
+      const settled = await results
+
+      expect(refresher).toHaveBeenCalledOnce()
+      expect(settled.every((r) => r.success)).toBe(true)
+    })
+
+    it('retries the refresher after a previous failure', async () => {
+      const refresher = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('network error'))
+        .mockResolvedValueOnce(undefined)
+      plugin = new CachingAuthPlugin(mockVerifier, mockCache, refresher)
+
+      // First call — refresher fails but auth still succeeds
+      const result1 = await plugin.authenticate({})
+      expect(result1.success).toBe(true)
+      expect(refresher).toHaveBeenCalledTimes(1)
+
+      // Second call — refresher should be retried (promise was nulled on failure)
+      const result2 = await plugin.authenticate({})
+      expect(result2.success).toBe(true)
+      expect(refresher).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not call the refresher when token verification fails', async () => {
+      const refresher = vi.fn().mockResolvedValue(undefined)
+      mockVerifier = vi.fn(async () => null)
+      plugin = new CachingAuthPlugin(mockVerifier, mockCache, refresher)
+
+      await plugin.authenticate({})
+
+      expect(refresher).not.toHaveBeenCalled()
+    })
   })
 
   describe('listGroups', () => {
@@ -149,6 +277,16 @@ describe('CachingAuthPlugin', () => {
     it('respects limit', async () => {
       const groups = await plugin.listGroups(1)
       expect(groups).toHaveLength(1)
+    })
+
+    it('returns empty array when getAllGroups throws', async () => {
+      const failingCache = createMockCache({
+        getAllGroups: vi.fn().mockRejectedValue(new Error('cache unavailable')),
+      })
+      plugin = new CachingAuthPlugin(mockVerifier, failingCache)
+
+      const groups = await plugin.listGroups()
+      expect(groups).toEqual([])
     })
   })
 })

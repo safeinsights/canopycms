@@ -641,8 +641,8 @@ it('returns correct config for each mode', () => {
   const prodStrategy = operatingStrategy('prod')
   expect(prodStrategy.shouldAutoInitLocal()).toBe(false)
 
-  const localProdSimStrategy = operatingStrategy('prod-sim')
-  expect(localProdSimStrategy.shouldAutoInitLocal()).toBe(true)
+  const devStrategy = operatingStrategy('dev')
+  expect(devStrategy.shouldAutoInitLocal()).toBe(true)
 })
 ```
 
@@ -1201,19 +1201,17 @@ CanopyCMS manages permissions and groups through JSON files. The storage locatio
 
 #### Local Development: `.canopy-dev/` Directory
 
-In `dev` mode (the default for development), CanopyCMS uses **gitignored** files in the `.canopy-dev/` directory:
+In `dev` mode (the default for development), CanopyCMS uses the same orphan branch mechanism as prod for settings, with the workspace at `.canopy-dev/settings/`:
 
-- **Files:**
-  - `.canopy-dev/permissions.json` - path-level permissions
-  - `.canopy-dev/groups.json` - user groups and memberships
+- **Settings storage:** `permissions.json` and `groups.json` on orphan branch `canopycms-settings-{deploymentName}`, cloned into `.canopy-dev/settings/`
 
 - **Purpose:** These files allow you to test different permission scenarios and user roles without polluting the git history or conflicting with other developers.
 
 - **Behavior:**
   - Changes persist across CMS restarts
   - Entire `.canopy-dev/` directory is **automatically gitignored** (via `.canopy*` pattern)
-  - Files are completely separate from production settings (no fallback behavior)
-  - All reads and writes go to `.canopy-dev/` in dev mode
+  - Settings are stored in the local bare remote only — never pushed to GitHub
+  - Dev mode mirrors prod's settings architecture for consistent behavior
 
 **Example workflow:**
 
@@ -1224,71 +1222,27 @@ pnpm dev
 # 1. Login as different test users (e.g., auth-dev, Clerk dev accounts)
 # 2. Add them to groups via the CMS UI
 # 3. Test permission restrictions
-# 4. Changes are saved to .canopy-dev/permissions.json and .canopy-dev/groups.json
+# 4. Changes are committed to the local settings branch in .canopy-dev/
 # 5. Files persist but won't show up in git status
 
 # Verify files are gitignored
 git status  # .canopy-dev/ should not appear
 ```
 
-**Testing different permission scenarios:**
+#### Understanding the Two Modes
 
-```typescript
-// In your local .canopy-dev/permissions.json
-{
-  "version": 1,
-  "updatedAt": "2026-01-12T10:00:00Z",
-  "updatedBy": "test-user",
-  "pathPermissions": [
-    {
-      "path": "content/posts",
-      "groups": {
-        "Editors": ["read", "write"],
-        "Viewers": ["read"]
-      }
-    }
-  ]
-}
-
-// In your local .canopy-dev/groups.json
-{
-  "version": 1,
-  "updatedAt": "2026-01-12T10:00:00Z",
-  "updatedBy": "test-user",
-  "groups": [
-    {
-      "name": "Editors",
-      "userIds": ["auth-dev-user-1", "clerk-test-user"]
-    },
-    {
-      "name": "Viewers",
-      "userIds": ["auth-dev-user-2"]
-    }
-  ]
-}
-```
-
-#### Understanding the Three Modes
-
-| Mode         | Settings Files                                                          | Git Operations                            | Use Case                               |
-| ------------ | ----------------------------------------------------------------------- | ----------------------------------------- | -------------------------------------- |
-| **dev**      | `.canopy-dev/*.json` (gitignored)                                       | None                                      | Local development, testing permissions |
-| **prod-sim** | Orphan branch `canopycms-settings-{deployment}` (gitignored workspaces) | Standard commits to settings branch       | Testing branch workflows locally       |
-| **prod**     | Orphan branch `canopycms-settings-{deployment}` (committed)             | Commits to settings branch + PR to GitHub | Production deployment                  |
+| Mode     | Settings Files                                                      | Git Operations                            | Use Case                                          |
+| -------- | ------------------------------------------------------------------- | ----------------------------------------- | ------------------------------------------------- |
+| **dev**  | Orphan branch `canopycms-settings-{deployment}` (gitignored clones) | Standard commits to settings branch       | Local development with full branching and git ops |
+| **prod** | Orphan branch `canopycms-settings-{deployment}` (committed)         | Commits to settings branch + PR to GitHub | Production deployment                             |
 
 **dev (Default for Development):**
 
-- No git operations
-- Settings in `.canopy-dev/` directory (gitignored)
-- Instant feedback, no branch management overhead
-- Perfect for testing different users and permissions
-
-**prod-sim (Testing Branch Workflows):**
-
-- Full branch simulation with clones in `.canopy-prod-sim/branches/`
+- Full branch support: local bare remote at `.canopy-dev/remote.git`, branch workspaces at `.canopy-dev/content-branches/`
 - Settings on separate orphan branch (deployment-specific)
-- All of `.canopy-prod-sim/` is gitignored
-- Tests branch creation, merging, permission inheritance
+- All of `.canopy-dev/` is gitignored
+- `defaultBaseBranch` auto-detected from current git HEAD if not set in config
+- Tests branch creation, merging, permission inheritance locally
 
 **prod (Production):**
 
@@ -1381,16 +1335,15 @@ git status
 
 # List what would be committed
 git add -n .
-# Should not include .canopy-dev/ or .canopy-prod-sim/
+# Should not include .canopy-dev/
 
 # If you accidentally staged CanopyCMS runtime directories
 git reset HEAD .canopy-dev/
-git reset HEAD .canopy-prod-sim/
 ```
 
-**Common mistake:** Forgetting to add `.canopy*` to .gitignore when setting up a new app.
+**Common mistake:** Forgetting to add `.canopy*/` to `.gitignore` when setting up a new app.
 
-**Fix:** Always add `.canopy*` to your .gitignore pattern. This single pattern covers all CanopyCMS runtime directories (`.canopy-dev/`, `.canopy-prod-sim/`).
+**Fix:** Always add `.canopy*/` to your `.gitignore`. The `npx canopycms init` command does this automatically.
 
 ## Testing
 
@@ -1456,7 +1409,7 @@ describe('my integration test', () => {
   beforeEach(async () => {
     workspace = await createTestWorkspace({
       schema: BLOG_SCHEMA,
-      mode: 'prod-sim',
+      mode: 'dev',
     })
   })
 
@@ -1544,7 +1497,7 @@ import { createMockServices, createMockApiContext } from '../test-utils/api-test
 it('tests some API handler', async () => {
   // Create mock services with entrySchemaRegistry (required!)
   const services = createMockServices({
-    config: { mode: 'prod-sim' },
+    config: { mode: 'dev' },
     entrySchemaRegistry: {}, // Always include this
   })
 
@@ -1618,7 +1571,7 @@ import path from 'node:path'
 it('loads collections from .collection.json files', async () => {
   const workspace = await createTestWorkspace({
     schema: BLOG_SCHEMA, // Base schema
-    mode: 'prod-sim',
+    mode: 'dev',
   })
 
   // Add a .collection.json file
@@ -1679,7 +1632,7 @@ describe('Schema meta file integration', () => {
   let workspace: TestWorkspace
 
   beforeEach(async () => {
-    workspace = await createTestWorkspace({ mode: 'prod-sim' })
+    workspace = await createTestWorkspace({ mode: 'dev' })
   })
 
   afterEach(async () => {
@@ -2296,7 +2249,7 @@ Each auth plugin provides a symmetric pair:
 
 ### Worker CLI
 
-For local development in prod-sim mode:
+For local development in dev mode:
 
 ```bash
 pnpm exec canopycms worker run-once  # Refresh cache, process tasks, exit
@@ -2340,6 +2293,67 @@ execFileAsync(tsxBin, [DIST_BIN, 'init', '--non-interactive', '--force'], { cwd:
 The dist tests will fail if `pnpm build` has not been run first, since they depend on compiled output in `dist/`. The test `beforeAll` hook checks for `dist/cli/init.js` and throws a clear error if it is missing.
 
 **When to update these tests:** If you change the set of files that `canopycms init` creates, update the `expectedFiles` array in both the dist and source test blocks in `init.integration.test.ts`.
+
+### CLI (`canopycms sync`)
+
+The `canopycms sync` command provides bidirectional content sync between the developer's working tree and CMS branch workspaces in `.canopy-dev/content-branches/`. Implementation is in `src/cli/sync.ts`.
+
+**Why this exists:** In dev mode, the CMS works against branch workspaces (`.canopy-dev/content-branches/`). When a developer edits content files directly in their working tree, the CMS does not see those changes. Conversely, when content is edited through the CMS UI, the developer's working tree is not updated. `canopycms sync` bridges this gap.
+
+**Commands:**
+
+```bash
+# 3-way merge: merge working-tree and editor changes, pull result back (default)
+npx canopycms sync
+
+# Push working-tree content into a branch workspace (working tree → CMS)
+npx canopycms sync --push
+
+# Pull content from a branch workspace (CMS → working tree)
+npx canopycms sync --pull
+
+# Abort a failed merge in the branch workspace
+npx canopycms sync --abort
+
+# Target a specific branch workspace
+npx canopycms sync --push --branch my-feature
+
+# Specify a custom content directory (default: content)
+npx canopycms sync --content-root src/content
+```
+
+**Push flow:** Copies the working tree's content directory into the branch workspace, replacing it. Uncommitted editor changes in the workspace are auto-committed to git history before overwriting, so nothing is lost. The resulting commit is tagged `canopycms-sync-base` for future 3-way merges. Uses crash-safe directory replacement (backup-rename pattern) so that if interrupted, at least one copy always exists on disk.
+
+**Pull flow:** Copies content from a branch workspace back into the working tree's content directory. Before overwriting, detects both uncommitted changes and untracked files that would be deleted, and warns with a confirmation prompt. If multiple branch workspaces exist and `--branch` is not specified, an interactive prompt lets you choose. After pulling, review the changes with `git diff` and commit when ready.
+
+**Both (3-way merge) flow:** The default when running `canopycms sync` without flags. Uses a `canopycms-sync-base` git tag as the merge base to perform a proper 3-way merge between working-tree changes and editor changes in the workspace. If the merge produces conflicts, the workspace is left in a merge state with instructions to resolve manually, then run `canopycms sync --pull` or `canopycms sync --abort`.
+
+**Abort flow:** Runs `git merge --abort` in the branch workspace to cancel a failed merge and restore the workspace to its pre-merge state.
+
+**Security: path traversal guards.** The `--branch` and `--content-root` flags are validated with `assertWithinDir()` to prevent path traversal attacks (e.g., `--branch ../../etc`). Every resolved path is checked to ensure it stays within its expected parent directory before any file operations.
+
+**Typical workflow:**
+
+```bash
+# 1. Edit content files directly
+vim content/posts/new-post.mdx
+
+# 2. Push changes so the CMS can see them
+npx canopycms sync --push
+
+# 3. Open the CMS UI, refine content, publish
+
+# 4. Pull the published changes back to your working tree
+npx canopycms sync --pull
+
+# 5. Review and commit
+git diff
+git add content/
+git commit -m "Update posts"
+
+# Or use 3-way merge to handle both directions at once
+npx canopycms sync
+```
 
 ## Quality Checks
 

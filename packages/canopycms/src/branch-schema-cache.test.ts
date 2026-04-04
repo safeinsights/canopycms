@@ -42,9 +42,9 @@ describe('BranchSchemaCache', () => {
     await fs.rm(tempDir, { recursive: true, force: true })
   })
 
-  describe('prod-sim mode', () => {
+  describe('dev mode', () => {
     it('should load schema from .collection.json files on first access (cache miss)', async () => {
-      const registry = new BranchSchemaCache('prod-sim')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -59,7 +59,7 @@ describe('BranchSchemaCache', () => {
     })
 
     it('should use cache on second access (cache hit)', async () => {
-      const registry = new BranchSchemaCache('prod-sim')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -76,12 +76,12 @@ describe('BranchSchemaCache', () => {
       expect(result2.schema).toEqual(result1.schema)
       expect(result2.flatSchema).toEqual(result1.flatSchema)
 
-      // Second access (cache hit) should be very fast (no filesystem I/O)
-      expect(duration2).toBeLessThan(10)
+      // Second access (cache hit via file read) should be fast
+      expect(duration2).toBeLessThan(100)
     })
 
     it('should write cache file to .canopy-meta/schema-cache.json', async () => {
-      const registry = new BranchSchemaCache('prod-sim')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -106,7 +106,7 @@ describe('BranchSchemaCache', () => {
     })
 
     it('should invalidate cache when invalidate() is called', async () => {
-      const registry = new BranchSchemaCache('prod-sim')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -127,7 +127,7 @@ describe('BranchSchemaCache', () => {
     })
 
     it('should regenerate cache when .stale marker exists', async () => {
-      const registry = new BranchSchemaCache('prod-sim')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -159,8 +159,72 @@ describe('BranchSchemaCache', () => {
       expect(staleExists).toBe(false)
     })
 
+    it('should invalidate cache when .collection.json is modified (devMode=true)', async () => {
+      const registry = new BranchSchemaCache('dev')
+      const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
+        pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
+      }
+
+      // First access — populates the cache
+      const result1 = await registry.getSchema(branchRoot, entrySchemaRegistry)
+
+      // Wait so mtime is clearly different
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      // Modify the .collection.json file (simulating a direct edit outside the CMS)
+      const collectionPath = path.join(branchRoot, 'content', '.collection.json')
+      await fs.writeFile(
+        collectionPath,
+        JSON.stringify({
+          label: 'Updated Root',
+          entries: [{ name: 'page', format: 'md', schema: 'pageSchema' }],
+          order: [],
+        }),
+        'utf-8',
+      )
+
+      // Second access with devMode=true — should detect stale cache via mtime
+      const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry)
+
+      // The schema should reflect the updated label
+      expect(result2.schema.label).toBe('Updated Root')
+      // Should be a new object (cache was regenerated)
+      expect(result2).not.toBe(result1)
+    })
+
+    it('should NOT invalidate cache on mtime when devMode=false', async () => {
+      const registry = new BranchSchemaCache('prod')
+      const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
+        pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
+      }
+
+      // First access — populates the cache
+      await registry.getSchema(branchRoot, entrySchemaRegistry)
+
+      // Wait so mtime is clearly different
+      await new Promise((resolve) => setTimeout(resolve, 50))
+
+      // Modify the .collection.json
+      const collectionPath = path.join(branchRoot, 'content', '.collection.json')
+      await fs.writeFile(
+        collectionPath,
+        JSON.stringify({
+          label: 'Updated Root',
+          entries: [{ name: 'page', format: 'md', schema: 'pageSchema' }],
+          order: [],
+        }),
+        'utf-8',
+      )
+
+      // Second access with devMode=false — should use cached version (no mtime check)
+      const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry)
+
+      // Should still have the original label (cache was NOT invalidated)
+      expect(result2.schema.label).toBe('Root')
+    })
+
     it('should handle missing cache file gracefully', async () => {
-      const registry = new BranchSchemaCache('prod-sim')
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
@@ -173,103 +237,26 @@ describe('BranchSchemaCache', () => {
     })
   })
 
-  describe('dev mode', () => {
-    it('should use in-memory cache (no file I/O)', async () => {
-      const registry = new BranchSchemaCache('dev')
+  describe('invalidate', () => {
+    it('should force cache regeneration after invalidate()', async () => {
+      const registry = new BranchSchemaCache()
       const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
         pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
       }
 
-      // Load schema
-      await registry.getSchema(branchRoot, entrySchemaRegistry)
-
-      // No cache file should be created in dev mode
-      const cachePath = path.join(branchRoot, '.canopy-meta', 'schema-cache.json')
-      const cacheExists = await fs
-        .access(cachePath)
-        .then(() => true)
-        .catch(() => false)
-
-      expect(cacheExists).toBe(false)
-    })
-
-    it('should use singleton in-memory cache', async () => {
-      const registry = new BranchSchemaCache('dev')
-      const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
-        pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
-      }
-
-      // First access
+      // Load schema (populates cache)
       const result1 = await registry.getSchema(branchRoot, entrySchemaRegistry)
 
-      // Second access (should use in-memory cache)
-      const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry)
-
-      // Results should be the exact same object (reference equality)
-      expect(result2).toBe(result1)
-    })
-
-    it('should clear in-memory cache when invalidate() is called', async () => {
-      const registry = new BranchSchemaCache('dev')
-      const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
-        pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
-      }
-
-      // Load schema
-      const result1 = await registry.getSchema(branchRoot, entrySchemaRegistry)
-
-      // Invalidate
+      // Invalidate the specific branch
       await registry.invalidate(branchRoot)
 
-      // Load again (should be a new object)
-      const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry)
-
-      // Should not be the same reference (cache was cleared)
-      expect(result2).not.toBe(result1)
-
-      // But content should be the same
-      expect(result2.schema).toEqual(result1.schema)
-    })
-
-    it('should not create .stale marker in dev mode', async () => {
-      const registry = new BranchSchemaCache('dev')
-      const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
-        pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
-      }
-
-      // Load and invalidate
-      await registry.getSchema(branchRoot, entrySchemaRegistry)
-      await registry.invalidate(branchRoot)
-
-      // No .stale marker should exist
-      const stalePath = path.join(branchRoot, '.canopy-meta', 'schema-cache.stale')
-      const staleExists = await fs
-        .access(stalePath)
-        .then(() => true)
-        .catch(() => false)
-
-      expect(staleExists).toBe(false)
-    })
-  })
-
-  describe('clearAll', () => {
-    it('should clear in-memory cache in dev mode', async () => {
-      const registry = new BranchSchemaCache('dev')
-      const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
-        pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
-      }
-
-      // Load schema
-      const result1 = await registry.getSchema(branchRoot, entrySchemaRegistry)
-
-      // Clear all
-      await registry.clearAll()
-
-      // Load again
+      // Load again — should regenerate from disk, producing a new object
       const result2 = await registry.getSchema(branchRoot, entrySchemaRegistry)
 
       // Should not be the same reference
       expect(result2).not.toBe(result1)
+      // But should have the same content
+      expect(result2.schema).toEqual(result1.schema)
     })
   })
 })

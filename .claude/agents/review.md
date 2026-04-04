@@ -22,7 +22,7 @@ Read every changed file. Don't skim.
 For each significant change, trace it through the system:
 
 - **Import chains**: Does this module get pulled into client bundles? Follow the barrel exports (`index.ts` → main package entry → consuming code). Watch for `node:` imports leaking into webpack.
-- **Runtime paths**: What actually happens when this code runs in prod? In dev? In tests? Are there mode-dependent behaviors (`prod` vs `prod-sim` vs `dev`)?
+- **Runtime paths**: What actually happens when this code runs in prod? In dev? In tests? Are there mode-dependent behaviors (`prod` vs `dev`)?
 - **Error paths**: What happens when this fails? Is the error caught, logged, swallowed? Would an operator be able to diagnose the problem from logs?
 - **Data flow**: Where does data come from and where does it go? EFS? Git? GitHub API? Clerk API? Is the source available in all operating modes?
 
@@ -102,7 +102,7 @@ If you're not sure whether something is a bug or intentional, say so. Flag it wi
 
 ### Production Behavior
 
-- Code works in all three modes (`prod`, `prod-sim`, `dev`)
+- Code works in both modes (`prod`, `dev`)
 - Lambda code path has no internet dependency
 - Operations that need internet go through task queue → worker
 - File operations handle concurrent access (multiple Lambda instances share EFS)

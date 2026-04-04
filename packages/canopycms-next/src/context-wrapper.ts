@@ -52,9 +52,9 @@ export interface NextCanopyOptions {
  * Adds React cache() for per-request memoization and API handler.
  * This function is async because it needs to load .collection.json meta files.
  *
- * In prod/prod-sim mode, if the provided authPlugin implements verifyTokenOnly(),
+ * In prod/dev mode, if the provided authPlugin implements verifyTokenOnly(),
  * it is automatically wrapped with CachingAuthPlugin + FileBasedAuthCache so that
- * auth works without network access (Lambda). The cache is populated by the worker daemon.
+ * auth works without network access (Lambda in prod, local in dev). The cache is populated by the worker daemon.
  */
 export async function createNextCanopyContext(options: NextCanopyOptions) {
   // Fail fast: authPlugin is required for server deployments
@@ -74,20 +74,27 @@ export async function createNextCanopyContext(options: NextCanopyOptions) {
     warnedStaticMode = true
   }
 
-  // Resolve the auth plugin: auto-wrap with CachingAuthPlugin for prod/prod-sim when
+  // Resolve the auth plugin: auto-wrap with CachingAuthPlugin for prod/dev when
   // the plugin supports token-only verification. This keeps auth networkless (required for
-  // Lambda) without exposing caching internals to adopters.
+  // Lambda in prod, consistent in dev) without exposing caching internals to adopters.
   // For static deployments, use the stub that returns 401 for all requests.
   const { mode } = options.config
   const authPlugin: AuthPlugin = (() => {
     if (!options.authPlugin) return staticDeployAuthPlugin
-    if ((mode === 'prod' || mode === 'prod-sim') && options.authPlugin.verifyTokenOnly) {
+    if ((mode === 'prod' || mode === 'dev') && options.authPlugin.verifyTokenOnly) {
       const cachePath =
         process.env.CANOPY_AUTH_CACHE_PATH ??
         path.join(operatingStrategy(mode).getWorkspaceRoot(), '.cache')
+      // In dev mode, provide a lazy refresher so the cache is auto-populated
+      // on first request without requiring manual `worker run-once`.
+      const lazyRefresher =
+        mode === 'dev' && options.authPlugin.createCacheRefresher
+          ? options.authPlugin.createCacheRefresher(cachePath)
+          : undefined
       return new CachingAuthPlugin(
         (ctx) => options.authPlugin!.verifyTokenOnly!(ctx),
         new FileBasedAuthCache(cachePath),
+        lazyRefresher,
       )
     }
     return options.authPlugin

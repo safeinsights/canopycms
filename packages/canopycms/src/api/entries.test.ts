@@ -74,6 +74,7 @@ describe('listEntries', () => {
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({
@@ -216,6 +217,7 @@ describe('listEntries', () => {
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({
@@ -347,6 +349,7 @@ describe('listEntries', () => {
       loadPathPermissions: async () => [],
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({
@@ -433,6 +436,7 @@ describe('listEntries', () => {
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({
@@ -537,6 +541,7 @@ describe('listEntries', () => {
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({
@@ -675,6 +680,7 @@ describe('listEntries', () => {
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({
@@ -793,6 +799,7 @@ describe('sortEntriesByOrder', () => {
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({
@@ -888,6 +895,7 @@ describe('sortEntriesByOrder', () => {
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({
@@ -1008,6 +1016,7 @@ describe('dynamic collection discovery', () => {
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({
@@ -1087,6 +1096,7 @@ describe('deleteEntry', () => {
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({
@@ -1177,6 +1187,7 @@ describe('deleteEntry', () => {
       loadPathPermissions: vi.fn().mockResolvedValue(pathRules),
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({
@@ -1249,6 +1260,7 @@ describe('deleteEntry', () => {
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({
@@ -1300,6 +1312,7 @@ describe('deleteEntry', () => {
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
       mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
     })
 
     const ctx = createMockApiContext({

@@ -10,9 +10,9 @@ import { testLogger as log } from '../../../../packages/canopycms/src/utils/debu
 const TEST_APP_ROOT = path.resolve(process.cwd(), 'apps/test-app')
 
 /**
- * Path to the .canopy-prod-sim/content-branches directory where prod-sim mode stores branches.
+ * Path to the .canopy-dev/content-branches directory where dev mode stores branches.
  */
-const BRANCHES_DIR = path.join(TEST_APP_ROOT, '.canopy-prod-sim/content-branches')
+const BRANCHES_DIR = path.join(TEST_APP_ROOT, '.canopy-dev/content-branches')
 
 /**
  * Get the path to the main branch content directory.
@@ -150,7 +150,7 @@ export async function waitForWorkspace(timeoutMs = 30000): Promise<void> {
 export async function verifyWorkspaceReady(): Promise<void> {
   const mainPath = getMainBranchPath()
   const gitPath = path.join(mainPath, '.git')
-  const remotePath = path.join(TEST_APP_ROOT, '.canopy-prod-sim/remote.git')
+  const remotePath = path.join(TEST_APP_ROOT, '.canopy-dev/remote.git')
 
   await Promise.all([
     fs.access(mainPath).catch(() => {
@@ -188,7 +188,7 @@ export async function waitForBranchWorkspace(branchName: string, timeoutMs = 100
       await fs.access(branchPath)
       // Check .git directory exists
       await fs.access(path.join(branchPath, '.git'))
-      // Check branch metadata exists (prod-sim stores metadata in .canopy-meta/)
+      // Check branch metadata exists (dev stores metadata in .canopy-meta/)
       await fs.access(path.join(branchPath, '.canopy-meta', 'branch.json'))
 
       log.debug('workspace', 'Branch workspace ready', {
@@ -277,7 +277,7 @@ export async function deleteBranchViaAPI(
  * @param baseUrl - Base URL of the test app
  * @param userId - User ID to make the request as
  */
-export async function listBranchesViaAPI(baseUrl: string, userId: string): Promise<any[]> {
+export async function listBranchesViaAPI(baseUrl: string, userId: string): Promise<unknown[]> {
   const response = await fetch(`${baseUrl}/api/canopycms/branches`, {
     method: 'GET',
     headers: {

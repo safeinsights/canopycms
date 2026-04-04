@@ -12,6 +12,7 @@ import {
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { isNotFoundError } from './utils/error'
+import { detectHeadBranch } from './utils/git'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
 
@@ -76,7 +77,7 @@ export class GitManager {
   }
 
   /**
-   * Initializes a local bare git repository to simulate a remote for prod-sim mode.
+   * Initializes a local bare git repository to simulate a remote for dev mode.
    *
    * This is idempotent - if the remote already exists, it will not be recreated.
    *
@@ -289,8 +290,7 @@ export class GitManager {
    * 1. Explicit remoteUrl parameter
    * 2. Config defaultRemoteUrl
    * 3. Environment variable (mode-specific)
-   * 4. Auto-initialized local remote (for prod-sim mode)
-   * 5. undefined (for dev mode)
+   * 4. Auto-initialized local remote (for dev mode)
    *
    * Uses strategy flags to determine behavior, GitManager executes the logic.
    *
@@ -360,7 +360,15 @@ export class GitManager {
    * @returns Configured GitManager instance for the workspace
    */
   static async initializeWorkspace(options: InitializeWorkspaceOptions): Promise<GitManager> {
-    const baseBranch = options.baseBranch ?? 'main'
+    // In dev mode, auto-detect the current HEAD branch when baseBranch is not explicitly set
+    let baseBranch = options.baseBranch
+    if (!baseBranch && options.mode === 'dev') {
+      const sourceRoot = options.sourceRoot
+        ? path.resolve(process.cwd(), options.sourceRoot)
+        : process.cwd()
+      baseBranch = await detectHeadBranch(sourceRoot)
+    }
+    baseBranch = baseBranch ?? 'main'
     const remoteName = options.remoteName ?? 'origin'
 
     // 1. Check if git already initialized

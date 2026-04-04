@@ -3,13 +3,16 @@ import path from 'node:path'
 
 import type { RootCollectionConfig } from './config'
 import type { FlatSchemaItem } from './config/types'
-import type { EntrySchemaRegistry } from './schema/types'
 import type { OperatingMode } from './operating-mode'
+import type { EntrySchemaRegistry } from './schema/types'
 import { resolveSchema, isValidSchema } from './schema/resolver'
 import { flattenSchema } from './config/flatten'
 
 /** Bump when BranchSchemaCacheEntry shape changes to auto-invalidate stale caches */
 const SCHEMA_CACHE_VERSION = 2
+
+/** Minimum interval between mtime staleness checks (ms) */
+const MTIME_CHECK_DEBOUNCE_MS = 1000
 
 /**
  * Schema cache structure stored in {branchRoot}/.canopy-meta/schema-cache.json
@@ -22,11 +25,39 @@ export interface BranchSchemaCacheEntry {
 }
 
 /**
+ * In dev mode, check whether any .collection.json file under dir has been
+ * modified more recently than cachedAt. Returns true if stale.
+ *
+ * Uses a single recursive readdir to find all .collection.json files,
+ * then stats only those files.
+ */
+async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
+  let entries: string[]
+  try {
+    entries = await fs.readdir(dir, { recursive: true, encoding: 'utf-8' })
+  } catch {
+    return true
+  }
+  for (const entry of entries) {
+    if (!entry.endsWith('.collection.json')) continue
+    const full = path.join(dir, entry)
+    try {
+      const stat = await fs.stat(full)
+      if (stat.mtimeMs > cachedAt.getTime()) return true
+    } catch {
+      // File may have been deleted between readdir and stat
+      return true
+    }
+  }
+  return false
+}
+
+/**
  * Manages per-branch schema caching with lazy loading and automatic invalidation.
  *
  * Caching Strategy:
- * - Prod/Prod-sim: File-based cache at {branchRoot}/.canopy-meta/schema-cache.json
- * - Dev mode: In-memory singleton (no file I/O)
+ * - File-based cache at {branchRoot}/.canopy-meta/schema-cache.json (no in-memory layer
+ *   — intentional: matches prod behavior and keeps cache coherent across Lambda invocations)
  * - Invalidation: Writers create .stale marker, causing cache regeneration on next access
  *
  * Multi-User Support:
@@ -35,17 +66,19 @@ export interface BranchSchemaCacheEntry {
  * - Atomic file operations prevent corruption during concurrent access
  */
 export class BranchSchemaCache {
-  private devModeCache?: {
-    schema: RootCollectionConfig
-    flatSchema: FlatSchemaItem[]
-  }
+  /** Tracks when we last checked mtimes per contentRoot, to debounce rapid requests */
+  private lastMtimeCheck = new Map<string, number>()
 
-  constructor(private readonly mode: OperatingMode) {}
+  private readonly devMode: boolean
+
+  constructor(mode: OperatingMode = 'prod') {
+    this.devMode = mode === 'dev'
+  }
 
   /**
    * Get schema for a branch (loads from cache or resolves fresh).
    *
-   * @param branchRoot - Root directory of the branch (e.g., .canopy-prod-sim/content-branches/main)
+   * @param branchRoot - Root directory of the branch (e.g., .canopy-dev/content-branches/main)
    * @param entrySchemaRegistry - Map of schema names to field definitions
    * @param contentRootName - Name of content directory (e.g., "content") from config
    * @returns Resolved schema tree and flattened schema
@@ -55,31 +88,6 @@ export class BranchSchemaCache {
     entrySchemaRegistry: EntrySchemaRegistry,
     contentRootName: string = 'content',
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
-    // Dev mode: use in-memory singleton
-    if (this.mode === 'dev') {
-      if (!this.devModeCache) {
-        const contentRoot = path.join(branchRoot, contentRootName)
-        const result = await resolveSchema(contentRoot, entrySchemaRegistry)
-
-        // Validate schema has content
-        if (!isValidSchema(result.schema)) {
-          throw new Error(
-            `No schema found in ${contentRoot}. Create .collection.json files ` +
-              'with references to field schemas defined in your entry schema registry.',
-          )
-        }
-
-        // Use configured contentRoot name as base path for logical paths
-        const flatSchema = flattenSchema(result.schema, contentRootName)
-        this.devModeCache = {
-          schema: result.schema,
-          flatSchema,
-        }
-      }
-      return this.devModeCache
-    }
-
-    // Prod/prod-sim: use file-based cache with stale marker invalidation
     return this.loadFromCacheOrResolve(branchRoot, entrySchemaRegistry, contentRootName)
   }
 
@@ -113,7 +121,21 @@ export class BranchSchemaCache {
     }
 
     if (cacheData && cacheData.version === SCHEMA_CACHE_VERSION) {
-      return { schema: cacheData.schema, flatSchema: cacheData.flatSchema }
+      // In dev mode, also check file mtimes so direct schema edits (outside the CMS) are picked up.
+      // Debounce: skip the walk if we checked this contentRoot within the last second.
+      const now = Date.now()
+      const lastCheck = this.lastMtimeCheck.get(contentRoot) ?? 0
+      if (
+        this.devMode &&
+        now - lastCheck >= MTIME_CHECK_DEBOUNCE_MS &&
+        (await isStaleByMtime(contentRoot, new Date(cacheData.cachedAt)))
+      ) {
+        this.lastMtimeCheck.set(contentRoot, now)
+        cacheData = null
+      } else {
+        if (this.devMode) this.lastMtimeCheck.set(contentRoot, now)
+        return { schema: cacheData.schema, flatSchema: cacheData.flatSchema }
+      }
     }
 
     // Cache miss or stale - regenerate
@@ -160,30 +182,10 @@ export class BranchSchemaCache {
    * @param branchRoot - Root directory of the branch
    */
   async invalidate(branchRoot: string): Promise<void> {
-    if (this.mode === 'dev') {
-      // Clear in-memory cache
-      this.devModeCache = undefined
-      return
-    }
-
-    // Prod/prod-sim: create stale marker (empty file)
     const cacheDir = path.join(branchRoot, '.canopy-meta')
     const stalePath = path.join(cacheDir, 'schema-cache.stale')
 
     await fs.mkdir(cacheDir, { recursive: true })
     await fs.writeFile(stalePath, '', 'utf-8')
-  }
-
-  /**
-   * Clear all caches (for testing).
-   * In dev mode, clears in-memory cache.
-   * In prod/prod-sim modes, this would need to traverse all branch directories.
-   */
-  async clearAll(): Promise<void> {
-    if (this.mode === 'dev') {
-      this.devModeCache = undefined
-    }
-    // For prod/prod-sim, clearing all caches would require knowing all branch roots
-    // For now, just clear dev mode cache. Tests can invalidate specific branches.
   }
 }

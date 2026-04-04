@@ -249,9 +249,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
       <ScrollArea style={{ flex: 1 }} pb="md">
         {branches.length === 0 ? (
           <Text size="sm" c="dimmed" py="md">
-            {!supportsBranching
-              ? 'Branch management is disabled in dev mode.'
-              : 'No branches available.'}
+            {!supportsBranching ? 'Branch management is not available.' : 'No branches available.'}
           </Text>
         ) : (
           <Stack gap="sm">

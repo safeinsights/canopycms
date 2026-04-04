@@ -24,6 +24,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - [AI-Ready Content](#ai-ready-content)
 - [Using the Editor](#using-the-editor)
 - [Adopter Touchpoints Summary](#adopter-touchpoints-summary)
+- [Local Development Sync](#local-development-sync)
 - [Environment Variables](#environment-variables)
 - [Documentation](#documentation)
 
@@ -38,14 +39,14 @@ npx canopycms init
 The CLI will interactively ask for:
 
 - **Auth provider** — `dev` (local development, no real auth) or `clerk` (Clerk authentication). This only affects the post-init instructions; the generated code handles both providers at runtime via the `CANOPY_AUTH_MODE` environment variable.
-- **Operating mode** — `dev` (direct editing in checkout) or `prod-sim` (simulates production with branch clones). This is written into `canopycms.config.ts`.
+- **Operating mode** — `dev` (full local development with branching and git ops) or `prod` (production deployment). This is written into `canopycms.config.ts`.
 - **App directory** — where your Next.js app directory lives (default: `app`, use `src/app` for src-layout projects)
 - **Include AI content endpoint?** — generates route files to serve your content as AI-readable markdown (default: yes). See [AI-Ready Content](#ai-ready-content) for details.
 
 You can also pass flags to skip prompts:
 
 ```bash
-npx canopycms init --auth dev --mode dev --app-dir app
+npx canopycms init --app-dir app
 ```
 
 Use `--non-interactive` for CI (uses defaults), `--force` to overwrite existing files, or `--no-ai` to skip generating the AI content endpoint.
@@ -62,7 +63,7 @@ Use `--non-interactive` for CI (uses defaults), `--force` to overwrite existing 
 | `{appDir}/ai/config.ts`                          | AI content configuration (included unless `--no-ai` is passed) |
 | `{appDir}/ai/[...path]/route.ts`                 | AI content route handler (included unless `--no-ai` is passed) |
 
-It also updates `.gitignore` to exclude CanopyCMS runtime directories (`.canopy-dev/`, `.canopy-prod-sim/`).
+It also updates `.gitignore` to exclude CanopyCMS runtime directories (`.canopy-dev/`).
 
 ### 2. Install dependencies
 
@@ -135,7 +136,7 @@ npm run dev
 
 ### .gitignore
 
-The init command adds `.canopy-prod-sim/` and `.canopy-dev/` to your `.gitignore`. Branch metadata (`.canopy-meta/`) is automatically excluded via git's `info/exclude` inside branch workspaces. In production modes, permissions and groups live on a separate git branch (`canopycms-settings-{deploymentName}`).
+The init command adds `.canopy-dev/` to your `.gitignore`. Branch metadata is automatically excluded via git's `info/exclude` inside branch workspaces. In production mode, permissions and groups live on a separate git branch (`canopycms-settings-{deploymentName}`).
 
 ## Schema Registry and References
 
@@ -284,11 +285,9 @@ function getAuthPlugin(): AuthPlugin {
   const mode = config.server.mode
   const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
 
-  // In prod/prod-sim: use CachingAuthPlugin (networkless JWT + file-based cache)
-  if (mode === 'prod' || mode === 'prod-sim') {
-    const cachePath =
-      process.env.CANOPY_AUTH_CACHE_PATH ??
-      (mode === 'prod-sim' ? '.canopy-prod-sim/.cache' : '/mnt/efs/workspace/.cache')
+  // In prod mode: use CachingAuthPlugin (networkless JWT + file-based cache)
+  if (mode === 'prod') {
+    const cachePath = process.env.CANOPY_AUTH_CACHE_PATH ?? '/mnt/efs/workspace/.cache'
     const tokenVerifier =
       authMode === 'clerk'
         ? createClerkJwtVerifier({ jwtKey: process.env.CLERK_JWT_KEY ?? '' })
@@ -296,7 +295,8 @@ function getAuthPlugin(): AuthPlugin {
     return new CachingAuthPlugin(tokenVerifier, new FileBasedAuthCache(cachePath))
   }
 
-  // In dev mode: use auth plugin directly
+  // In dev mode: use auth plugin directly (CachingAuthPlugin is auto-wrapped
+  // by createNextCanopyContext when the plugin exposes verifyTokenOnly)
   if (authMode === 'clerk') {
     return createClerkAuthPlugin({ useOrganizationsAsGroups: true })
   }
@@ -459,19 +459,19 @@ Available schemas: authorSchema, homeSchema, docSchema
 
 ### `defineCanopyConfig` Options
 
-| Option                | Type                            | Required | Default     | Description                                                                                                                                                                                              |
-| --------------------- | ------------------------------- | -------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema`              | `RootCollectionConfig`          | No\*     | -           | Object with `collections` and `entries` arrays defining your content structure. \*Required unless using `.collection.json` meta files                                                                    |
-| `gitBotAuthorName`    | `string`                        | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                              |
-| `gitBotAuthorEmail`   | `string`                        | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                             |
-| `mode`                | `'dev' \| 'prod-sim' \| 'prod'` | No       | `'dev'`     | Operating mode (see below)                                                                                                                                                                               |
-| `contentRoot`         | `string`                        | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                |
-| `defaultBaseBranch`   | `string`                        | No       | `'main'`    | Default git branch to base edits on                                                                                                                                                                      |
-| `defaultBranchAccess` | `'allow' \| 'deny'`             | No       | `'deny'`    | Default access policy for new branches                                                                                                                                                                   |
-| `defaultPathAccess`   | `'allow' \| 'deny'`             | No       | `'allow'`   | Default access policy for content paths                                                                                                                                                                  |
-| `deployedAs`          | `'server' \| 'static'`          | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced. |
-| `media`               | `MediaConfig`                   | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                          |
-| `editor`              | `EditorConfig`                  | No       | -           | Editor UI customization options                                                                                                                                                                          |
+| Option                | Type                   | Required | Default     | Description                                                                                                                                                                                              |
+| --------------------- | ---------------------- | -------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`              | `RootCollectionConfig` | No\*     | -           | Object with `collections` and `entries` arrays defining your content structure. \*Required unless using `.collection.json` meta files                                                                    |
+| `gitBotAuthorName`    | `string`               | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                              |
+| `gitBotAuthorEmail`   | `string`               | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                             |
+| `mode`                | `'dev' \| 'prod'`      | No       | `'dev'`     | Operating mode (see below)                                                                                                                                                                               |
+| `contentRoot`         | `string`               | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                |
+| `defaultBaseBranch`   | `string`               | No       | `'main'`    | Default git branch to base edits on                                                                                                                                                                      |
+| `defaultBranchAccess` | `'allow' \| 'deny'`    | No       | `'deny'`    | Default access policy for new branches                                                                                                                                                                   |
+| `defaultPathAccess`   | `'allow' \| 'deny'`    | No       | `'allow'`   | Default access policy for content paths                                                                                                                                                                  |
+| `deployedAs`          | `'server' \| 'static'` | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced. |
+| `media`               | `MediaConfig`          | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                          |
+| `editor`              | `EditorConfig`         | No       | -           | Editor UI customization options                                                                                                                                                                          |
 
 **Note**: You must define your schema using at least one of these approaches:
 
@@ -483,9 +483,44 @@ See the [Schema Registry and References](#schema-references-system) section for 
 
 ### Operating Modes
 
-- **`dev`**: Direct file editing in your current checkout. Best for solo development. Settings stored in `.canopy-dev/`.
-- **`prod-sim`**: Simulates production locally with per-branch clones in `.canopy-prod-sim/branches/`. Use for testing branch workflows.
-- **`prod`**: Full production deployment with branch workspaces on persistent storage (e.g., AWS Lambda + EFS).
+- **`dev`**: Full-featured local development with branching and git operations. Uses a local bare remote at `.canopy-dev/remote.git` and branch workspaces at `.canopy-dev/content-branches/`. `defaultBaseBranch` is auto-detected from the current git HEAD if not set. Add `.canopy-dev/` to `.gitignore`.
+- **`prod`**: Production deployment with branch workspaces on persistent storage (e.g., AWS Lambda + EFS). Permissions and groups are tracked in git on an orphan settings branch.
+
+### Local Development Sync
+
+When working in `dev` mode, your content lives in two places: the working tree of your repo and the branch workspaces inside `.canopy-dev/content-branches/` that the CMS editor reads from. The `canopycms sync` command keeps them in sync.
+
+**Push** (working tree → branch workspace) -- copies your current working-tree content into a branch workspace and commits it, so the CMS editor sees your latest changes (e.g., after pulling from GitHub or editing files directly):
+
+```bash
+npx canopycms sync --push
+```
+
+**Pull** (branch workspace → working tree) -- copies content from a CMS branch workspace back into your working tree so you can review, commit, and push the changes yourself:
+
+```bash
+npx canopycms sync --pull
+```
+
+Both push and pull support `--branch` to target a specific workspace. If multiple branch workspaces exist and no `--branch` is given, the CLI will prompt you to choose one:
+
+```bash
+npx canopycms sync --pull --branch update-homepage
+```
+
+**Both directions** (3-way merge) -- when neither `--push` nor `--pull` is given, sync merges your working-tree changes with any editor changes using a 3-way git merge, then pulls the merged result back into your working tree:
+
+```bash
+npx canopycms sync
+```
+
+This is useful when both you and the editor have made changes to the same branch and you want to reconcile them in one step.
+
+**Abort** -- if a merge fails due to conflicts, you can cancel it and restore the branch workspace to its pre-merge state:
+
+```bash
+npx canopycms sync --abort
+```
 
 ### Schema Definition
 
@@ -1275,7 +1310,7 @@ For CanopyCMS:
 ```env
 CANOPY_AUTH_MODE=dev                           # Auth provider: "dev" (default) or "clerk"
 CANOPY_BOOTSTRAP_ADMIN_IDS=user_123,user_456   # Comma-separated user IDs that get auto-admin access
-CANOPY_AUTH_CACHE_PATH=.canopy-prod-sim/.cache  # Override auth cache location (prod/prod-sim only)
+CANOPY_AUTH_CACHE_PATH=/mnt/efs/workspace/.cache  # Override auth cache location (prod mode only)
 ```
 
 For Clerk authentication:

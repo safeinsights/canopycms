@@ -42,7 +42,7 @@ It sits between:
 
 ### Operating Modes
 
-- Changes to dev, prod-sim, or prod modes
+- Changes to dev or prod modes
 - New deployment patterns
 
 ### Permission Model

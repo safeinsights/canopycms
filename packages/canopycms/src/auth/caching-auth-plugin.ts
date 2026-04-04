@@ -32,18 +32,38 @@ export type TokenVerifier = (context: unknown) => Promise<{ userId: CanopyUserId
  * (e.g., Lambda with no internet). JWT verification is done locally,
  * and user/group metadata comes from a cache populated externally
  * (e.g., by an EC2 worker).
+ *
+ * In dev mode, an optional `lazyRefresher` can be provided to auto-populate
+ * the cache on first request, eliminating the need to run `worker run-once` manually.
  */
 export class CachingAuthPlugin implements AuthPlugin {
+  private refreshPromise: Promise<void> | null = null
+
   constructor(
     private readonly verifyToken: TokenVerifier,
     private readonly cache: AuthCacheProvider,
+    private readonly lazyRefresher?: () => Promise<unknown>,
   ) {}
+
+  private async ensureCachePopulated(): Promise<void> {
+    if (!this.lazyRefresher) return
+    // Use a shared promise so concurrent callers coalesce into a single refresh
+    this.refreshPromise ??= this.lazyRefresher()
+      .then(() => log.debug('auth', 'Lazy cache refresh completed'))
+      .catch((err) => {
+        log.debug('auth', 'Lazy cache refresh failed', { error: String(err) })
+        this.refreshPromise = null // allow retry on next call
+      })
+    await this.refreshPromise
+  }
 
   async authenticate(context: unknown): Promise<AuthenticationResult> {
     const identity = await this.verifyToken(context)
     if (!identity) {
       return { success: false, error: 'No valid authentication token' }
     }
+
+    await this.ensureCachePopulated()
 
     try {
       const user = await this.cache.getUser(identity.userId)
@@ -91,11 +111,19 @@ export class CachingAuthPlugin implements AuthPlugin {
   }
 
   async getUserMetadata(userId: CanopyUserId): Promise<UserSearchResult | null> {
-    return this.cache.getUser(userId)
+    try {
+      return await this.cache.getUser(userId)
+    } catch {
+      return null
+    }
   }
 
   async getGroupMetadata(groupId: CanopyGroupId): Promise<GroupMetadata | null> {
-    return this.cache.getGroup(groupId)
+    try {
+      return await this.cache.getGroup(groupId)
+    } catch {
+      return null
+    }
   }
 
   async listGroups(limit = 50): Promise<GroupMetadata[]> {

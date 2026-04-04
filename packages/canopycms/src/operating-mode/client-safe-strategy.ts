@@ -52,69 +52,27 @@ export class ProdClientSafeStrategy implements ClientSafeStrategy {
 }
 
 // ============================================================================
-// Local Production Simulation - Client-Safe Strategy
+// Dev Mode - Client-Safe Strategy
 // ============================================================================
 
-export class LocalProdSimClientSafeStrategy implements ClientSafeStrategy {
-  readonly mode: OperatingMode = 'prod-sim'
-
-  // UI Feature Flags
-  supportsBranching(): boolean {
-    return true
-  }
-
-  supportsStatusBadge(): boolean {
-    return true
-  }
-
-  supportsComments(): boolean {
-    return true
-  }
-
-  supportsPullRequests(): boolean {
-    return false // No real GitHub in simulation
-  }
-
-  // Simple Data
-  getPermissionsFileName(): string {
-    return 'permissions.json'
-  }
-
-  getGroupsFileName(): string {
-    return 'groups.json'
-  }
-
-  shouldCommit(): boolean {
-    return true
-  }
-
-  shouldPush(): boolean {
-    return true
-  }
-}
-
-// ============================================================================
-// Local Simple Mode - Client-Safe Strategy
-// ============================================================================
-
-export class LocalSimpleClientSafeStrategy implements ClientSafeStrategy {
+export class DevClientSafeStrategy implements ClientSafeStrategy {
   readonly mode: OperatingMode = 'dev'
 
   // UI Feature Flags
   supportsBranching(): boolean {
-    return false
+    return true
   }
 
   supportsStatusBadge(): boolean {
-    return false
+    return true
   }
 
   supportsComments(): boolean {
-    return false
+    return true
   }
 
   supportsPullRequests(): boolean {
-    return false
+    return false // No real GitHub in local dev mode
   }
 
   // Simple Data
@@ -127,11 +85,11 @@ export class LocalSimpleClientSafeStrategy implements ClientSafeStrategy {
   }
 
   shouldCommit(): boolean {
-    return false
+    return true
   }
 
   shouldPush(): boolean {
-    return false
+    return true
   }
 }
 
@@ -159,11 +117,8 @@ export function clientOperatingStrategy(mode: OperatingMode): ClientSafeStrategy
     case 'prod':
       strategy = new ProdClientSafeStrategy()
       break
-    case 'prod-sim':
-      strategy = new LocalProdSimClientSafeStrategy()
-      break
     case 'dev':
-      strategy = new LocalSimpleClientSafeStrategy()
+      strategy = new DevClientSafeStrategy()
       break
     default: {
       // Exhaustiveness check - TypeScript will error if a mode is not handled

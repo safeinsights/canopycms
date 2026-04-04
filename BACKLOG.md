@@ -135,14 +135,14 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 
 - **Deployment Infrastructure** ✅
   - Lambda + EFS + EC2 Worker architecture (~$5-9/month, no NAT Gateway)
-  - `remote.git` auto-detection (aligns prod with prod-sim bare repo pattern)
+  - `remote.git` auto-detection (aligns prod with dev bare repo pattern)
   - Auth caching: `CachingAuthPlugin` + `FileBasedAuthCache` for networkless operation
   - Clerk + dev auth both support token verifiers and cache writers
   - Async task queue for GitHub operations (file-based on EFS)
   - `CmsWorker` daemon (auth-agnostic, cloud-agnostic, in canopycms core)
   - CDK constructs: `CanopyCmsService` + `CanopyCmsDistribution`
   - Bootstrapping: `npx canopycms init` + `npx canopycms init-deploy aws`
-  - Worker CLI: `npx canopycms worker run-once` for prod-sim
+  - Worker CLI: `npx canopycms worker run-once` for dev
   - See [docs/deploying-to-aws.md](docs/deploying-to-aws.md)
 
 - **Other Framework Support** ✅

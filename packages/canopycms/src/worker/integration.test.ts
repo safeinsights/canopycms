@@ -220,7 +220,7 @@ describe('Worker integration: task queue + auth cache', () => {
   })
 
   describe('end-to-end: task queue + auth cache together', () => {
-    it('simulates full prod-sim workflow', async () => {
+    it('simulates full dev mode workflow', async () => {
       // 1. Worker initializes auth cache (like run-once)
       await fs.mkdir(cachePath, { recursive: true })
       await fs.writeFile(

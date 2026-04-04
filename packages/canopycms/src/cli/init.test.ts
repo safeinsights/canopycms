@@ -75,13 +75,6 @@ describe('canopycms init', () => {
     expect(config).toContain('defineCanopyConfig')
   })
 
-  it('generates config with correct mode for prod-sim', async () => {
-    await init(defaultOpts(tmpDir, { mode: 'prod-sim' }))
-
-    const config = await fs.readFile(path.join(tmpDir, 'canopycms.config.ts'), 'utf-8')
-    expect(config).toContain("mode: 'prod-sim'")
-  })
-
   it('generates API route with correct handler pattern', async () => {
     await init(defaultOpts(tmpDir))
 
@@ -147,7 +140,7 @@ describe('canopycms init', () => {
     await init(defaultOpts(tmpDir))
 
     const gitignore = await fs.readFile(path.join(tmpDir, '.gitignore'), 'utf-8')
-    expect(gitignore).toContain('.canopy-prod-sim/')
+    expect(gitignore).toContain('.canopy-dev/')
   })
 
   it('creates files in custom app-dir', async () => {

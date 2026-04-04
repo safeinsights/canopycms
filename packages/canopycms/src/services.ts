@@ -1,3 +1,4 @@
+import path from 'node:path'
 import type { CanopyConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
 import { getConfigDefaults } from './config'
@@ -18,6 +19,18 @@ import { operatingStrategy } from './operating-mode'
 import { BranchSchemaCache } from './branch-schema-cache'
 import { enqueueTask } from './worker/task-queue'
 import { getTaskQueueDir } from './worker/task-queue-config'
+import { detectHeadBranch } from './utils/git'
+
+/**
+ * In dev mode, auto-detect the current HEAD branch if defaultBaseBranch is not set.
+ * Eliminates the need to manually update defaultBaseBranch when working on a feature branch.
+ */
+async function detectDevBaseBranch(config: CanopyConfig): Promise<string> {
+  if (config.defaultBaseBranch) return config.defaultBaseBranch
+  if (config.mode !== 'dev') return config.defaultBaseBranch ?? 'main'
+  const repoRoot = config.sourceRoot ? path.resolve(config.sourceRoot) : process.cwd()
+  return detectHeadBranch(repoRoot)
+}
 
 /**
  * Parse bootstrap admin IDs from environment variable.
@@ -94,6 +107,12 @@ export interface CreateCanopyServicesOptions {
    * @internal
    */
   branchSchemaCache?: BranchSchemaCache
+  /**
+   * Test-only: Override for getSettingsBranchRoot.
+   * When provided, bypasses the real git workspace setup for settings.
+   * @internal
+   */
+  getSettingsBranchRoot?: () => Promise<string>
 }
 
 /**
@@ -139,6 +158,12 @@ async function _createCanopyServicesInternal(
   const strategy = operatingStrategy(config.mode)
   strategy.validateConfig(config)
 
+  // In dev mode, auto-detect the current git branch if defaultBaseBranch is not set.
+  // Bake the result into config so all downstream code (BranchWorkspaceManager, GitManager)
+  // uses the same detected value without re-detecting (avoids race if HEAD changes mid-request).
+  const effectiveBaseBranch = await detectDevBaseBranch(config)
+  config = { ...config, defaultBaseBranch: effectiveBaseBranch }
+
   // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
 
@@ -146,37 +171,30 @@ async function _createCanopyServicesInternal(
   const branchSchemaCache = options.branchSchemaCache ?? new BranchSchemaCache(config.mode)
 
   const checkBranchAccess = createCheckBranchAccess(config.defaultBranchAccess ?? 'deny')
-  // Path permissions are loaded dynamically from settings branch or .canopy-dev/permissions.json at request time.
+  // Path permissions are loaded dynamically from the settings branch at request time.
   // At the service level, we bind with empty rules for direct path checks.
   const checkPathAccess = createCheckPathAccess([], config.defaultPathAccess ?? 'deny')
-  // Content access loads permissions dynamically from settings root
-  // In prod/prod-sim modes, permissions are loaded from settings branch (orphan git branch)
-  // In dev mode, permissions are in .canopy-dev/settings/
-  const getSettingsBranchRoot = async (): Promise<string> => {
-    const strategy = operatingStrategy(config.mode)
+  // Content access loads permissions dynamically from the settings branch (orphan git branch)
+  const getSettingsBranchRoot =
+    options.getSettingsBranchRoot ??
+    (async (): Promise<string> => {
+      const strategy = operatingStrategy(config.mode)
 
-    // Only applicable in modes that use separate settings branch
-    if (!strategy.usesSeparateSettingsBranch()) {
-      throw new Error(
-        'getSettingsBranchRoot called in mode that does not use separate settings branch',
-      )
-    }
+      const settingsRoot = strategy.getSettingsRoot()
+      const branchName = strategy.getSettingsBranchName(config)
 
-    const settingsRoot = strategy.getSettingsRoot()
-    const branchName = strategy.getSettingsBranchName(config)
+      // Use SettingsWorkspaceManager to ensure git workspace for settings
+      // This is Lambda-safe because the lock is in-memory per process
+      const manager = new SettingsWorkspaceManager(config)
+      await manager.ensureGitWorkspace({
+        settingsRoot,
+        branchName,
+        mode: config.mode,
+        remoteUrl: config.defaultRemoteUrl,
+      })
 
-    // Use SettingsWorkspaceManager to ensure git workspace for settings
-    // This is Lambda-safe because the lock is in-memory per process
-    const manager = new SettingsWorkspaceManager(config)
-    await manager.ensureGitWorkspace({
-      settingsRoot,
-      branchName,
-      mode: config.mode,
-      remoteUrl: config.defaultRemoteUrl,
+      return settingsRoot
     })
-
-    return settingsRoot
-  }
 
   const checkContentAccess = createCheckContentAccess({
     checkBranchAccess,
@@ -189,7 +207,7 @@ async function _createCanopyServicesInternal(
   const createGitManagerFor = (repoPath: string, opts?: { baseBranch?: string; remote?: string }) =>
     new GitManager({
       repoPath,
-      baseBranch: opts?.baseBranch ?? config.defaultBaseBranch ?? configDefaults.baseBranch,
+      baseBranch: opts?.baseBranch ?? effectiveBaseBranch,
       remote: opts?.remote ?? config.defaultRemoteName ?? configDefaults.remoteName,
     })
 
@@ -316,22 +334,20 @@ async function _createCanopyServicesInternal(
 
         // Async path: queue task for worker (prod Lambda has no internet)
         const taskDir = getTaskQueueDir(config)
-        if (taskDir) {
-          try {
-            await enqueueTask(taskDir, {
-              action: 'push-and-create-or-update-pr',
-              payload: {
-                branch: settingsBranch,
-                baseBranch: config.defaultBaseBranch ?? 'main',
-                title: 'Update permissions and groups',
-                body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
-              },
-            })
-            return { committed: true, pushed: true, syncStatus: 'pending-sync' }
-          } catch (err) {
-            console.warn('Failed to enqueue settings PR task:', err)
-            return { committed: true, pushed: true, syncStatus: 'sync-failed' }
-          }
+        try {
+          await enqueueTask(taskDir, {
+            action: 'push-and-create-or-update-pr',
+            payload: {
+              branch: settingsBranch,
+              baseBranch: config.defaultBaseBranch ?? 'main',
+              title: 'Update permissions and groups',
+              body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
+            },
+          })
+          return { committed: true, pushed: true, syncStatus: 'pending-sync' }
+        } catch (err) {
+          console.warn('Failed to enqueue settings PR task:', err)
+          return { committed: true, pushed: true, syncStatus: 'sync-failed' }
         }
       }
 

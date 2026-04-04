@@ -19,11 +19,11 @@ const TEST_USER_MAP: Record<string, string> = {
  * Extracts userId from X-Test-User header, x-dev-user-id header,
  * or canopy-dev-user cookie — same logic as DevAuthPlugin.authenticate().
  *
- * Used with CachingAuthPlugin in prod-sim mode to simulate the prod
+ * Used with CachingAuthPlugin in dev mode to simulate the prod
  * code path (token verification + cached metadata lookup) using dev users.
  *
  * @deprecated Use `DevAuthPlugin.verifyTokenOnly()` instead. The plugin's method is
- * automatically wired into CachingAuthPlugin by `createNextCanopyContext()` in prod/prod-sim.
+ * automatically wired into CachingAuthPlugin by `createNextCanopyContext()` in prod/dev.
  */
 export function createDevTokenVerifier(options?: { defaultUserId?: string }): TokenVerifier {
   const defaultUserId = options?.defaultUserId ?? DEFAULT_USER_ID

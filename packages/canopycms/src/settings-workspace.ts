@@ -82,8 +82,7 @@ async function releaseFileLock(lockPath: string): Promise<void> {
  * Manages settings filesystem workspace and git operations.
  *
  * Settings are stored separately from content branches:
- * - prod/prod-sim: Orphan git branches (no shared history with content)
- * - dev: Regular directory (no git)
+ * - prod/dev: Orphan git branches (no shared history with content)
  *
  * Unlike BranchWorkspaceManager, this does not:
  * - Create or manage metadata files

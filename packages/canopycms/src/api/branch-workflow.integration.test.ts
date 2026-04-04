@@ -134,7 +134,7 @@ describe('PR Workflow Integration', () => {
 
     // ===== SETUP: Create CanopyCMS config and services =====
     const config = defineCanopyTestConfig({
-      mode: 'prod-sim',
+      mode: 'dev',
       defaultBranchAccess: 'allow',
       defaultBaseBranch: 'main',
       defaultRemoteName: 'origin',
@@ -454,7 +454,7 @@ describe('PR Workflow Integration', () => {
     await seedGit.push('origin', 'main', { '--set-upstream': null })
 
     const config = defineCanopyTestConfig({
-      mode: 'prod-sim',
+      mode: 'dev',
       defaultBranchAccess: 'allow',
       defaultBaseBranch: 'main',
       defaultRemoteUrl: remotePath,

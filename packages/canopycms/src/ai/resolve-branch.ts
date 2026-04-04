@@ -3,34 +3,30 @@
  * Used by both the route handler and build utility.
  */
 
-import { loadBranchContext } from '../branch-metadata'
+import { loadOrCreateBranchContext } from '../branch-workspace'
 import { isDeployedStatic } from '../build-mode'
 import type { CanopyConfig } from '../config'
 
 /**
  * Resolve the branch root directory for reading content.
  *
- * - Dev mode: current working directory (content is in the checkout)
  * - Static deployment: current working directory (content is in the checkout)
- * - Prod/prod-sim server: load the default base branch context
+ * - Server (prod/dev): load or create the default base branch workspace
  */
 export async function resolveBranchRoot(config: CanopyConfig): Promise<string> {
-  if (config.mode === 'dev' || isDeployedStatic(config)) {
+  // Static deployments read content directly from the checkout — no branch workspace needed
+  if (isDeployedStatic(config)) {
     return process.cwd()
   }
 
   const baseBranch = config.defaultBaseBranch ?? 'main'
-  const context = await loadBranchContext({
+  const context = await loadOrCreateBranchContext({
+    config,
     branchName: baseBranch,
     mode: config.mode,
+    createdBy: 'canopycms-ai',
+    remoteUrl: config.defaultRemoteUrl,
   })
-
-  if (!context) {
-    throw new Error(
-      `Could not load branch context for "${baseBranch}". ` +
-        'Ensure the branch exists and has been initialized.',
-    )
-  }
 
   return context.branchRoot
 }

@@ -278,13 +278,13 @@ describe('BranchManager', () => {
     })
   })
 
-  it('hides create form in dev mode', () => {
+  it('shows create form in dev mode (dev supports branching)', () => {
     renderBranchManager({ branches: baseBranches, mode: 'dev' })
 
     const createButton = screen.queryByRole('button', {
       name: /create new branch/i,
     })
-    expect(createButton).toBeNull()
+    expect(createButton).not.toBeNull()
   })
 
   it('calls onRequestChanges when button clicked', async () => {

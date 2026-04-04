@@ -11,6 +11,9 @@ reference
 test-results/
 playwright-report/
 
+# CanopyCMS local workspaces
+.canopy*/
+
 # Claude Code local/personal
 .claude/settings.local.json
 .claude/memory/

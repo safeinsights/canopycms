@@ -209,7 +209,7 @@ export interface CanopyServices {
   checkBranchAccess: (...)                // Branch permission checker
   checkPathAccess: (...)                  // Path permission checker
   checkContentAccess: (...)               // Combined content access checker
-  registry?: BranchRegistry               // Branch cache (undefined in dev mode)
+  registry?: BranchRegistry               // Branch cache (always present in prod and dev modes)
   githubService?: GitHubService           // GitHub API client (if configured)
   createGitManagerFor: (...)              // Factory for git operations
   commitFiles: (...)                      // Helper for committing files
@@ -231,11 +231,12 @@ const services = await createCanopyServices({
 
 This function:
 
-1. Validates and flattens the schema
-2. Creates authorization checkers
-3. Initializes the branch registry (prod/prod-sim modes only)
-4. Sets up GitHub integration (if configured)
-5. Returns an immutable service container
+1. Detects the effective base branch (from config or git HEAD) and bakes it into the config so all downstream code uses a single consistent value
+2. Validates and flattens the schema
+3. Creates authorization checkers
+4. Initializes the branch registry (prod and dev modes)
+5. Sets up GitHub integration (if configured)
+6. Returns an immutable service container
 
 ### Service Access Patterns
 
@@ -375,8 +376,8 @@ CanopyCMS is entirely file system based. There are no external databases, no Red
 - **Branch metadata**: `.canopy-meta/branch.json` per workspace (state, PR references, sync status, conflict tracking, automatically excluded via git info/exclude)
 - **Branch registry**: `branches.json` at branches root (inventory of all branches, gitignored)
 - **Comments**: `.canopy-meta/comments.json` per branch (NOT committed to git, automatically excluded)
-- **Settings (prod/prod-sim)**: `groups.json` and `permissions.json` on orphan branch `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific)
-- **Settings (dev)**: `.canopy-dev/groups.json` and `.canopy-dev/permissions.json` (gitignored, for local development)
+- **Settings (prod)**: `groups.json` and `permissions.json` on orphan branch `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific), workspace at `{workspaceRoot}/settings/`
+- **Settings (dev)**: Same orphan branch mechanism as prod (`canopycms-settings-{deploymentName}`), workspace at `.canopy-dev/settings/` (gitignored, local development only)
 
 **Deployment model**: CanopyCMS is designed to be deployed to a server or serverless function with an attached file system shared by all server processes. On AWS, this could mean Lambda + EFS.
 
@@ -826,15 +827,15 @@ Users can work on main branch too—there's nothing preventing it. The branch mo
 
 ## Operating Modes
 
-CanopyCMS supports three operating modes to fit different environments. The mode is configured in `canopycms.config.ts` and defaults to `'dev'` if not specified. After Zod validation, `config.mode` is always defined and can be used throughout the codebase without fallback checks.
+CanopyCMS supports two operating modes to fit different environments. The mode is configured in `canopycms.config.ts` and defaults to `'dev'` if not specified. After Zod validation, `config.mode` is always defined and can be used throughout the codebase without fallback checks.
 
 ### dev
 
-Direct file editing in the current checkout. No git cloning occurs. Best for solo development where the developer manages their own branch via git commands.
+Full-featured local development with branching and git operations — a local simulation of production behavior. Creates per-branch workspaces in `.canopy-dev/content-branches/` and maintains a local bare git remote at `.canopy-dev/remote.git`. This mode mirrors prod behavior: branch creation, workspace cloning, the settings branch, and the worker CLI all work the same way locally as they do in production.
 
-### prod-sim
+`defaultBaseBranch` is auto-detected from the current git HEAD if not explicitly set in the config; the detected value is baked into the config object at service creation time so that all downstream code uses the same value without re-detecting (avoids races if HEAD changes mid-request). Settings (groups and permissions) use the same orphan branch mechanism as prod (`canopycms-settings-{deploymentName}`, default: `canopycms-settings-local`), with the workspace at `.canopy-dev/settings/`. Commits go to the local bare remote but no PR is created, keeping the workflow lightweight during development. The AI content cache is invalidated on every request in dev mode so content edits are reflected immediately.
 
-Simulates production behavior locally. Creates per-branch clones in `.canopy-prod-sim/branches/` and maintains a local git remote at `.canopy-prod-sim/remote.git`. Use this for testing the full branch workflow without deploying.
+Use `npx canopycms worker run-once` to process queued tasks, refresh the auth cache, and simulate the EC2 worker locally. Use `npx canopycms sync` to synchronize content between the developer's working tree and the CMS editor's branch workspaces (see [Content Sync CLI](#content-sync-cli) below).
 
 ### prod
 
@@ -844,7 +845,7 @@ Settings (groups and permissions) are stored on a separate orphan branch whose n
 
 Settings PR creation follows the same dual-path as content branches: when `githubService` is available the PR is created directly; when it is not (e.g., Lambda with no internet), a `push-and-create-or-update-pr` task is queued for the EC2 worker. Because the same settings branch is updated repeatedly, this task checks for an existing open PR before creating a new one.
 
-**Security**: In prod/prod-sim modes, the system will throw an error if the settings branch cannot be loaded, ensuring permissions are never accidentally read from a content branch. Settings files also include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
+**Security**: In both prod and dev modes, the system will throw an error if the settings branch cannot be loaded, ensuring permissions are never accidentally read from a content branch. Settings files also include a `contentVersion` field for optimistic locking to prevent concurrent admin updates from overwriting each other.
 
 ### Mode Strategy Pattern
 
@@ -858,7 +859,6 @@ Operating modes are implemented using the Strategy pattern, which encapsulates m
 **Workspace root as the single source of truth**: `ClientUnsafeStrategy` requires a `getWorkspaceRoot()` method that returns the mode-specific top-level directory for all CMS state:
 
 - `prod`: `CANOPYCMS_WORKSPACE_ROOT` env var, falling back to `/mnt/efs/workspace`
-- `prod-sim`: `{cwd}/.canopy-prod-sim`
 - `dev`: `{cwd}/.canopy-dev`
 
 All other path methods on `ClientUnsafeStrategy` (`getContentBranchesRoot`, `getSettingsRoot`, etc.) are derived from `getWorkspaceRoot()` internally. This consolidates the single-root principle: there is exactly one place per mode that determines where on disk the CMS writes its state, and all subdirectories fan out from there. The auth metadata cache (`.cache/`) also lives under the workspace root, making the path available automatically without adopter configuration.
@@ -905,9 +905,9 @@ This architecture eliminates NAT Gateway ($32/month) and keeps all secrets on th
 
 #### `remote.git` — Local Bare Repo
 
-Both `prod` and `prod-sim` modes use a local bare git repository as the "remote" for all branch workspace operations. Branch workspaces clone from and push to this bare repo using `file://` URLs.
+Both `prod` and `dev` modes use a local bare git repository as the "remote" for all branch workspace operations. Branch workspaces clone from and push to this bare repo using `file://` URLs.
 
-- **prod-sim**: Auto-created at `.canopy-prod-sim/remote.git` from the local checkout
+- **dev**: Auto-created at `.canopy-dev/remote.git` from the local checkout
 - **prod**: Created by the EC2 worker at `{workspaceRoot}/remote.git`, synced with GitHub
 
 CanopyCMS auto-detects `remote.git` at the workspace root (via `autoDetectRemotePath` in the operating mode strategy). No explicit `CANOPYCMS_REMOTE_URL` env var needed if `remote.git` exists.
@@ -924,9 +924,9 @@ Each auth plugin package provides its own token verifier and cache writer:
 - `canopycms-auth-clerk`: `createClerkJwtVerifier()` + `refreshClerkCache()`
 - `canopycms-auth-dev`: `createDevTokenVerifier()` + `refreshDevCache()`
 
-The cache is populated by the worker daemon (or `npx canopycms worker run-once` in prod-sim). Lambda reads it on every request. Cache invalidation is mtime-based — when the worker writes new cache files, Lambda picks them up on the next request.
+The cache is populated by the worker daemon (or `npx canopycms worker run-once` in dev mode). Lambda reads it on every request. Cache invalidation is mtime-based — when the worker writes new cache files, Lambda picks them up on the next request. In dev mode, `CachingAuthPlugin` accepts an optional lazy refresher callback that auto-populates the cache on first request if it does not yet exist, so developers do not need to run the worker manually before their first login.
 
-**Transparent auto-wrapping via `verifyTokenOnly`**: Auth plugins can declare a `verifyTokenOnly?(context)` method on the `AuthPlugin` interface. This is a lightweight, networkless token verification path — it confirms the JWT signature and extracts a user ID without making any API calls or fetching metadata. When this optional method is present, `createNextCanopyContext` (the Next.js adapter) automatically wraps the plugin with `CachingAuthPlugin` + `FileBasedAuthCache` in `prod` and `prod-sim` modes. Adopters do not need to wire up caching manually; the adapter detects the capability and enables caching transparently.
+**Transparent auto-wrapping via `verifyTokenOnly`**: Auth plugins can declare a `verifyTokenOnly?(context)` method on the `AuthPlugin` interface. This is a lightweight, networkless token verification path — it confirms the JWT signature and extracts a user ID without making any API calls or fetching metadata. When this optional method is present, `createNextCanopyContext` (the Next.js adapter) automatically wraps the plugin with `CachingAuthPlugin` + `FileBasedAuthCache` in `prod` and `dev` modes. Adopters do not need to wire up caching manually; the adapter detects the capability and enables caching transparently.
 
 **Cache path derivation**: The auth cache directory is derived from the workspace root returned by the operating mode strategy: `{workspaceRoot}/.cache`. Adopters can override this with the `CANOPY_AUTH_CACHE_PATH` environment variable. Because the workspace root is already the authoritative base for all mode-specific state, no additional configuration is needed in the common case.
 
@@ -958,13 +958,33 @@ Branch metadata includes a `syncStatus` field (`synced`, `pending-sync`, `sync-f
 
 #### Worker CLI
 
-For local development in `prod-sim` mode, the worker can be triggered manually:
+For local development in `dev` mode, the worker can be triggered manually:
 
 ```bash
 npx canopycms worker run-once
 ```
 
 This processes pending tasks, refreshes the auth cache, and exits. It simulates what the EC2 worker daemon does continuously in production.
+
+#### Content Sync CLI
+
+In dev mode, the developer's working tree and the CMS editor operate on separate git structures. The developer edits files in their normal repo, while the editor works through branch workspaces cloned from the local bare remote. These two worlds can drift apart: the developer might update content files directly, or an editor might publish changes through the CMS that the developer wants to pull back into their repo.
+
+The `sync` command bridges this gap with bidirectional content synchronization between the developer's working tree and a specific branch workspace:
+
+- **Push** (`npx canopycms sync --push`): Copies the developer's current working-tree content directly into the selected branch workspace and commits it there. This is useful after the developer makes direct content edits outside the CMS. Push does not update the local bare remote; `remote.git` stays current through the normal publish/submit mechanisms.
+
+- **Pull** (`npx canopycms sync --pull`): Copies content from a branch workspace back into the developer's working tree. The developer can then review the changes with normal git tools and commit when ready. This closes the loop after content is edited through the CMS.
+
+- **Both** (`npx canopycms sync`): Performs a proper 3-way git merge between working-tree changes and editor changes. It uses a `canopycms-sync-base` tag (set by each successful sync) as the merge base, creates a temporary branch from that base with the working-tree content, and merges it with the workspace branch. If conflicts arise, the workspace is left in a merge state for manual resolution. On a clean merge, the result is pulled back into the working tree automatically.
+
+- **Abort** (`npx canopycms sync --abort`): Cancels a failed merge in a branch workspace by running `git merge --abort`, restoring it to the pre-merge state. This is the recovery path when a "both" sync encounters conflicts the developer does not want to resolve in the workspace.
+
+**Safety guarantees:** Directory replacements during sync use a backup-rename pattern: the old directory is renamed to a timestamped backup, the new directory is renamed into place, and only then is the backup deleted. If the process is interrupted at any point, at least one complete copy of the content always exists on disk. Branch names provided via the `--branch` flag are validated against path traversal (the resolved path must stay within the branches directory), preventing a crafted branch name like `../../etc` from escaping the workspace root.
+
+**Why a separate sync step?** The CMS editor intentionally does not write directly to the developer's repo. Branch workspaces act as a boundary between the developer's git state and the CMS's editing state. This isolation prevents the CMS from creating unexpected commits or modifying the developer's index. The sync command gives the developer explicit control over when content crosses that boundary.
+
+**Why sync does not touch remote.git:** Earlier designs had push update the local bare remote and fan out fetches to all branch workspaces. This was removed because the sync command's purpose is narrow: move content between the developer's working tree and a single branch workspace. The bare remote is kept current by the existing publish and submit flows, and mixing those responsibilities in sync created confusing semantics (especially for the "both" direction).
 
 ## Context Architecture
 
@@ -1095,8 +1115,8 @@ Helper functions (`isAdmin`, `isReviewer`, `isPrivileged`) provide convenient ro
 
 **Where permissions are stored:**
 
-- **Dev mode**: Settings in `.canopy-dev/groups.json` and `.canopy-dev/permissions.json` (gitignored, local development only)
-- **Prod/prod-sim modes**: Settings on orphan branch `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific)
+- **Dev mode**: Settings on orphan branch `canopycms-settings-{deploymentName}`, workspace at `.canopy-dev/settings/` (gitignored, local development only)
+- **Prod mode**: Settings on orphan branch `canopycms-settings-{deploymentName}`, workspace at `{workspaceRoot}/settings/` (version-controlled, deployment-specific)
 - Branch ACLs are stored in each branch's metadata file (`.canopy-meta/branch.json`)
 
 The `permissions/` and `groups/` subdirectories handle file schema definitions and loading logic for these configuration files.
@@ -1207,26 +1227,23 @@ Groups and permissions (collectively "settings") have unique git operation requi
 
 Settings files need different branch handling across modes:
 
-- **dev**: Settings in `.canopy-dev/` (not in git)
-- **prod-sim**: Settings on orphan branch `canopycms-settings-{deploymentName}`, regular git operations
-- **prod**: Settings on orphan branch `canopycms-settings-{deploymentName}`, creates PR for review
+- **dev**: Settings on orphan branch `canopycms-settings-{deploymentName}` (default: `canopycms-settings-local`), commits to local bare remote, no PR created
+- **prod**: Settings on orphan branch `canopycms-settings-{deploymentName}` (default: `canopycms-settings-prod`), creates PR for review
 
-Content operations always work on the current branch. Settings operations need to route to the appropriate branch based on mode.
+Content operations always work on the current branch. Settings operations need to route to the appropriate settings branch based on mode.
 
 **Two core helpers:**
 
 **`getSettingsBranchContext()`**: Determines which branch to use for settings
 
 - Returns appropriate branch context based on operating mode
-- In `prod`/`prod-sim` modes: Uses the branch name computed by the operating mode strategy (`canopycms-settings-{deploymentName}`, default: `canopycms-settings-prod`)
-- In dev mode: Uses `defaultBaseBranch` (default: 'main')
+- In both `prod` and `dev` modes: Uses the branch name computed by the operating mode strategy (`canopycms-settings-{deploymentName}`)
 - Returns both the context and mode for downstream operations
-- **Security**: Throws error if settings branch cannot be loaded in prod/prod-sim modes
+- **Security**: Throws error if settings branch cannot be loaded (both prod and dev modes)
 
 **`commitSettings()`**: Commits and pushes settings changes with mode-specific logic
 
-- **dev**: No-op (no git operations)
-- **prod-sim**: Regular `commitFiles()` call
+- **dev**: Commits to the settings branch in the local bare remote but does not create a PR
 - **prod**: Uses `commitToSettingsBranch()` with dual-path PR creation (direct via `githubService` or queued via task queue)
 - `autoCreateSettingsPR`: Whether to create PR automatically in prod (default: true)
 
@@ -1681,7 +1698,7 @@ Auth plugins implement the `AuthPlugin` interface, which provides:
 
 The interface also has one optional method:
 
-- **`verifyTokenOnly(context)`**: Lightweight, networkless JWT verification that returns just a user ID (no metadata). When implemented, framework adapters automatically enable file-based auth caching in prod/prod-sim modes. This is the recommended path for Lambda deployments that have no internet access.
+- **`verifyTokenOnly(context)`**: Lightweight, networkless JWT verification that returns just a user ID (no metadata). When implemented, framework adapters automatically enable file-based auth caching in prod and dev modes. This is the recommended path for Lambda deployments that have no internet access, and ensures dev mode mirrors prod behavior.
 
 This abstraction means you can use Clerk, Auth0, NextAuth, Supabase Auth, or a custom solution. See `canopycms-auth-clerk` as a reference implementation. Creating a new auth plugin involves implementing the interface and publishing it as a package.
 
@@ -1732,9 +1749,9 @@ Comments are review artifacts, not content. They're ephemeral discussion about c
 
 Unlike comments, groups and permissions are configuration that should be version-controlled. Changes to who can edit what should be reviewable via PR, and you should be able to roll back permission changes if needed.
 
-### Why do settings use a separate branch in prod mode?
+### Why do settings use a separate branch?
 
-In production, permission and group changes are stored on a dedicated orphan settings branch (named `canopycms-settings-{deploymentName}`, default: `canopycms-settings-prod`) rather than on content branches. The branch name is deployment-specific so that multiple deployments sharing the same git repository can maintain independent settings. This design provides several benefits:
+In both prod and dev modes, permission and group changes are stored on a dedicated orphan settings branch (named `canopycms-settings-{deploymentName}`) rather than on content branches. The branch name is deployment-specific so that multiple deployments sharing the same git repository can maintain independent settings. In dev mode, this branch lives in the local bare remote (`.canopy-dev/remote.git`) and is never pushed to GitHub. This design provides several benefits:
 
 **Isolation from content changes:**
 
