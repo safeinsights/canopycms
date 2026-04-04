@@ -37,7 +37,7 @@ function assertWithinDir(resolved: string, parent: string, label: string): void 
  * steps, at least one copy always exists on disk.
  */
 async function safeReplaceDir(oldDir: string, newDir: string): Promise<void> {
-  const backupDir = `${oldDir}.sync-backup-${Date.now()}`
+  const backupDir = `${oldDir}.sync-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   const oldExists = await filePathExists(oldDir)
   if (oldExists) {
     await fs.rename(oldDir, backupDir)
@@ -273,7 +273,7 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
   const branchPath = path.join(branchesDir, branchName)
   assertWithinDir(branchPath, branchesDir, '--branch')
   const branchContentDir = path.join(branchPath, contentRoot)
-  assertWithinDir(branchContentDir, branchesDir, '--content-root')
+  assertWithinDir(branchContentDir, branchPath, '--content-root')
   if (!(await filePathExists(branchContentDir))) {
     p.log.error(`Content directory not found in branch workspace: ${branchName}/${contentRoot}`)
     return { fileCount: 0 }

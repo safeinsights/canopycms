@@ -178,7 +178,7 @@ export const listBranchesHandler = async (
     return {
       ok: false,
       status: 400,
-      error: 'Branch registry not initialized for this operating mode',
+      error: 'Branch registry not initialized — ensure the workspace has been initialized',
     }
   }
 
@@ -315,7 +315,7 @@ export const deleteBranchHandler = async (
     return {
       ok: false,
       status: 400,
-      error: 'Branch registry not initialized for this operating mode',
+      error: 'Branch registry not initialized — ensure the workspace has been initialized',
     }
   }
   await ctx.services.registry.invalidate()
