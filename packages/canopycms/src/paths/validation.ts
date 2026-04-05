@@ -327,26 +327,22 @@ export function parseBranchName(
  * Validates format and length constraints.
  *
  * @param slug - The slug to validate
- * @param type - Whether this is a collection or entry slug
  * @returns Object with success flag and either the typed slug or an error
  *
  * @example
  * ```ts
- * const result = parseSlug(params.slug, 'entry')
+ * const result = parseSlug(params.slug)
  * if (!result.ok) {
  *   return { ok: false, status: 400, error: result.error }
  * }
- * const entrySlug: Slug = result.slug
+ * const slug: Slug = result.slug
  * ```
  */
-export function parseSlug(
-  slug: string,
-  type: 'collection' | 'entry',
-): { ok: true; slug: Slug } | { ok: false; error: string } {
-  if (!slug || typeof slug !== 'string') {
+export function parseSlug(slug: string): { ok: true; slug: Slug } | { ok: false; error: string } {
+  if (!slug) {
     return {
       ok: false,
-      error: `${type === 'collection' ? 'Collection' : 'Entry'} slug is required`,
+      error: 'Slug is required',
     }
   }
 

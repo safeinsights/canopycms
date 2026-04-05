@@ -718,15 +718,15 @@ await ctx.services.submitBranch({ context })
 
 **Location**: packages/canopycms/src/paths/
 
-| File                | Purpose                                                                                                                                        |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| types.ts            | Branded types: LogicalPath, PhysicalPath, BranchName, SanitizedBranchName, ContentId, CollectionSlug, EntrySlug; `ROOT_COLLECTION_ID` sentinel |
-| normalize.ts        | Client-safe normalization; createLogicalPath, createPhysicalPath, unsafeAsLogicalPath, unsafeAsPhysicalPath                                    |
-| normalize-server.ts | Server-only functions (requires Node.js path)                                                                                                  |
-| validation.ts       | Security validation; parseLogicalPath, parsePhysicalPath, parseBranchName, parseContentId, parseSlug, unsafeAsEntrySlug                        |
-| resolve.ts          | resolveLogicalPath for path resolution                                                                                                         |
-| branch.ts           | Branch workspace path resolution                                                                                                               |
-| test-utils.ts       | Test-only casts: unsafeAsBranchName, unsafeAsCollectionSlug (NOT exported from index)                                                          |
+| File                | Purpose                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| types.ts            | Branded types: LogicalPath, PhysicalPath, BranchName, SanitizedBranchName, ContentId, Slug; `ROOT_COLLECTION_ID` sentinel |
+| normalize.ts        | Client-safe normalization; createLogicalPath, createPhysicalPath, unsafeAsLogicalPath, unsafeAsPhysicalPath               |
+| normalize-server.ts | Server-only functions (requires Node.js path)                                                                             |
+| validation.ts       | Security validation; parseLogicalPath, parsePhysicalPath, parseBranchName, parseContentId, parseSlug                      |
+| resolve.ts          | resolveLogicalPath for path resolution                                                                                    |
+| branch.ts           | Branch workspace path resolution                                                                                          |
+| test-utils.ts       | Test-only casts: unsafeAsBranchName, unsafeAsSlug (NOT exported from index)                                               |
 
 **Branded Types** provide type safety for different path semantics:
 
@@ -735,8 +735,7 @@ await ctx.services.submitBranch({ context })
 - `BranchName`: Git branch names (validated against git naming rules)
 - `SanitizedBranchName`: Branch name safe for filesystem use
 - `ContentId`: 12-character Base58-encoded content ID
-- `CollectionSlug`: Single collection path segment (e.g., "posts")
-- `EntrySlug`: Single entry slug (e.g., "my-first-post")
+- `Slug`: Single path segment for collections or entries (e.g., "posts", "my-first-post"); normalized to lowercase
 - `ROOT_COLLECTION_ID`: Sentinel `ContentId` value (`'__rootcoll__'`) for the root content directory, which has no embedded ID in its name. Uses underscores to avoid collision with real Base58 IDs.
 
 Note: `CollectionPath` brand was eliminated; use `LogicalPath` with a `content/` prefix for all collection paths.
@@ -765,16 +764,16 @@ const path = createLogicalPath('content', 'posts', 'my-post')
 
 ```typescript
 import { unsafeAsLogicalPath, unsafeAsPhysicalPath } from '../paths'
-import { unsafeAsEntrySlug } from '../paths'
+import { unsafeAsSlug } from '../paths/test-utils'
 
-// OK: data already validated on write, read from internal storage
+// OK (test-only): data already validated on write, read from internal storage
 const logicalPath = unsafeAsLogicalPath(entry.collection)
 ```
 
 **Test-only casts** (in test-utils.ts, NOT exported from index):
 
 ```typescript
-import { unsafeAsBranchName, unsafeAsCollectionSlug } from '../paths/test-utils'
+import { unsafeAsBranchName, unsafeAsSlug } from '../paths/test-utils'
 ```
 
 ### Zod Validators for API Boundaries
@@ -786,8 +785,7 @@ import { unsafeAsBranchName, unsafeAsCollectionSlug } from '../paths/test-utils'
 | branchNameSchema     | BranchName     | Git naming rules                        |
 | logicalPathSchema    | LogicalPath    | No traversal, not a physical path       |
 | contentIdSchema      | ContentId      | 12-char Base58                          |
-| entrySlugSchema      | EntrySlug      | Lowercase, hyphens, max 64 chars        |
-| collectionSlugSchema | CollectionSlug | Lowercase, hyphens, max 64 chars        |
+| slugSchema           | Slug           | Lowercase, hyphens, max 64 chars        |
 | permissionPathSchema | PermissionPath | No traversal, from authorization module |
 
 ```typescript

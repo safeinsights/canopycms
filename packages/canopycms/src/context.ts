@@ -92,11 +92,11 @@ export function createCanopyContext(options: CanopyContextOptions) {
       const entryPath = createLogicalPath(input.entryPath)
       let slug: Slug | undefined
       if (input.slug) {
-        const slugResult = parseSlug(input.slug, 'entry')
+        const slugResult = parseSlug(input.slug)
         if (!slugResult.ok) {
           throw new Error(`Invalid slug: ${slugResult.error}`)
         }
-        slug = slugResult.slug as Slug
+        slug = slugResult.slug
       }
       const readInput: ReadContentInput = {
         entryPath,

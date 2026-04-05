@@ -127,9 +127,10 @@ describe('API validators', () => {
   })
 
   describe('slugSchema', () => {
-    it('validates and brands valid entry slugs', () => {
-      const result = slugSchema.parse('my-first-post')
-      expect(result).toBe('my-first-post')
+    it('validates and brands valid slugs', () => {
+      expect(slugSchema.parse('my-first-post')).toBe('my-first-post')
+      expect(slugSchema.parse('blog-posts')).toBe('blog-posts')
+      expect(slugSchema.parse('posts')).toBe('posts')
     })
 
     it('accepts slugs starting with numbers', () => {
@@ -143,10 +144,12 @@ describe('API validators', () => {
 
     it('rejects slugs with path separators', () => {
       expect(() => slugSchema.parse('posts/hello')).toThrow('separator')
+      expect(() => slugSchema.parse('posts/items')).toThrow('separator')
     })
 
     it('normalizes mixed-case slugs to lowercase', () => {
       expect(slugSchema.parse('HelloWorld')).toBe('helloworld')
+      expect(slugSchema.parse('Posts')).toBe('posts')
     })
 
     it('rejects slugs not starting with alphanumeric', () => {
@@ -167,23 +170,6 @@ describe('API validators', () => {
           expect(error.errors[0].message).toContain('separator')
         }
       }
-    })
-  })
-
-  describe('slugSchema', () => {
-    it('validates and brands valid collection slugs', () => {
-      const result = slugSchema.parse('blog-posts')
-      expect(result).toBe('blog-posts')
-    })
-
-    it('applies same validation as entry slugs', () => {
-      // Valid
-      expect(slugSchema.parse('posts')).toBe('posts')
-
-      // Invalid
-      expect(() => slugSchema.parse('')).toThrow()
-      expect(() => slugSchema.parse('posts/items')).toThrow('separator')
-      expect(slugSchema.parse('Posts')).toBe('posts')
     })
   })
 

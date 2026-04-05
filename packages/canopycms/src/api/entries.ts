@@ -478,7 +478,7 @@ const deleteEntryHandler = async (
   const contentStore = new ContentStore(branchContext.branchRoot, flatSchema)
   const collectionLogicalPath = collectionPath as LogicalPath
   // Validate slug extracted from the path
-  const slugResult = parseSlug(slug, 'entry')
+  const slugResult = parseSlug(slug)
   if (!slugResult.ok) {
     return {
       ok: false,
@@ -486,7 +486,7 @@ const deleteEntryHandler = async (
       error: `Invalid entry slug: ${slugResult.error}`,
     }
   }
-  const entrySlug = slugResult.slug as Slug
+  const entrySlug = slugResult.slug
 
   // Resolve the real physical path before checking permissions
   let physicalPath: PhysicalPath

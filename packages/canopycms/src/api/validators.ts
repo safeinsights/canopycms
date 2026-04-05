@@ -114,7 +114,7 @@ export const slugSchema = z
   .string()
   .min(1)
   .transform((val, ctx) => {
-    const result = parseSlug(val, 'entry')
+    const result = parseSlug(val)
     if (!result.ok) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

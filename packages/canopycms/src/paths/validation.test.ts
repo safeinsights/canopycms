@@ -365,128 +365,96 @@ describe('path validation utilities', () => {
   })
 
   describe('parseSlug', () => {
-    describe('entry slugs', () => {
-      it('returns typed Slug for valid entry slugs', () => {
-        const result = parseSlug('my-first-post', 'entry')
+    it('returns typed Slug for valid slugs', () => {
+      const result = parseSlug('my-first-post')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.slug).toBe('my-first-post')
+      }
+    })
+
+    it('accepts various valid slugs', () => {
+      const validSlugs = [
+        'hello',
+        'hello-world',
+        'my-first-post',
+        'post123',
+        '2023-update',
+        'posts',
+        'blog-posts',
+        'api-docs',
+        '2023-articles',
+      ]
+      validSlugs.forEach((slug) => {
+        const result = parseSlug(slug)
         expect(result.ok).toBe(true)
-        if (result.ok) {
-          expect(result.slug).toBe('my-first-post')
-        }
-      })
-
-      it('accepts various valid entry slugs', () => {
-        const validSlugs = ['hello', 'hello-world', 'my-first-post', 'post123', '2023-update']
-        validSlugs.forEach((slug) => {
-          const result = parseSlug(slug, 'entry')
-          expect(result.ok).toBe(true)
-        })
-      })
-
-      it('rejects empty slugs', () => {
-        const result = parseSlug('', 'entry')
-        expect(result.ok).toBe(false)
-        if (!result.ok) {
-          expect(result.error).toContain('required')
-        }
-      })
-
-      it('rejects slugs with path separators', () => {
-        let result = parseSlug('posts/hello', 'entry')
-        expect(result.ok).toBe(false)
-
-        result = parseSlug('posts\\hello', 'entry')
-        expect(result.ok).toBe(false)
-        if (!result.ok) {
-          expect(result.error).toContain('separator')
-        }
-      })
-
-      it('rejects slugs not starting with alphanumeric', () => {
-        const result = parseSlug('-hello', 'entry')
-        expect(result.ok).toBe(false)
-        if (!result.ok) {
-          expect(result.error).toContain('start with a letter or number')
-        }
-      })
-
-      it('normalizes mixed-case slugs to lowercase', () => {
-        const result = parseSlug('Hello-World', 'entry')
-        expect(result.ok).toBe(true)
-        if (result.ok) {
-          expect(result.slug).toBe('hello-world')
-        }
-      })
-
-      it('normalizes fully uppercase slugs to lowercase', () => {
-        const result = parseSlug('HELLO', 'entry')
-        expect(result.ok).toBe(true)
-        if (result.ok) {
-          expect(result.slug).toBe('hello')
-        }
-      })
-
-      it('rejects slugs with special characters', () => {
-        const invalidSlugs = ['hello_world', 'hello.world', 'hello world', 'hello@world']
-        invalidSlugs.forEach((slug) => {
-          const result = parseSlug(slug, 'entry')
-          expect(result.ok).toBe(false)
-        })
-      })
-
-      it('accepts slugs at exactly 64 characters', () => {
-        const slug64 = 'a'.repeat(64)
-        const result = parseSlug(slug64, 'entry')
-        expect(result.ok).toBe(true)
-      })
-
-      it('rejects slugs longer than 64 characters', () => {
-        const longSlug = 'a'.repeat(65)
-        const result = parseSlug(longSlug, 'entry')
-        expect(result.ok).toBe(false)
-        if (!result.ok) {
-          expect(result.error).toContain('too long')
-        }
       })
     })
 
-    describe('collection slugs', () => {
-      it('returns typed Slug for valid collection slugs', () => {
-        const result = parseSlug('posts', 'collection')
-        expect(result.ok).toBe(true)
-        if (result.ok) {
-          expect(result.slug).toBe('posts')
-        }
-      })
+    it('rejects empty slugs', () => {
+      const result = parseSlug('')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('required')
+      }
+    })
 
-      it('accepts various valid collection slugs', () => {
-        const validSlugs = ['posts', 'blog-posts', 'api-docs', '2023-articles']
-        validSlugs.forEach((slug) => {
-          const result = parseSlug(slug, 'collection')
-          expect(result.ok).toBe(true)
-        })
-      })
+    it('rejects slugs with path separators', () => {
+      let result = parseSlug('posts/hello')
+      expect(result.ok).toBe(false)
 
-      it('applies same validation rules as entry slugs', () => {
-        // Empty
-        let result = parseSlug('', 'collection')
+      result = parseSlug('posts\\hello')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('separator')
+      }
+    })
+
+    it('rejects slugs not starting with alphanumeric', () => {
+      const result = parseSlug('-hello')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('start with a letter or number')
+      }
+    })
+
+    it('normalizes mixed-case slugs to lowercase', () => {
+      const result = parseSlug('Hello-World')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.slug).toBe('hello-world')
+      }
+    })
+
+    it('normalizes fully uppercase slugs to lowercase', () => {
+      const result = parseSlug('HELLO')
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.slug).toBe('hello')
+      }
+    })
+
+    it('rejects slugs with special characters', () => {
+      const invalidSlugs = ['hello_world', 'hello.world', 'hello world', 'hello@world']
+      invalidSlugs.forEach((slug) => {
+        const result = parseSlug(slug)
         expect(result.ok).toBe(false)
-
-        // With separator
-        result = parseSlug('posts/items', 'collection')
-        expect(result.ok).toBe(false)
-
-        // Not starting with alphanumeric
-        result = parseSlug('-posts', 'collection')
-        expect(result.ok).toBe(false)
       })
+    })
 
-      it('normalizes mixed-case collection slugs to lowercase', () => {
-        const result = parseSlug('Posts', 'collection')
-        expect(result.ok).toBe(true)
-        if (result.ok) {
-          expect(result.slug).toBe('posts')
-        }
-      })
+    it('accepts slugs at exactly 64 characters', () => {
+      const slug64 = 'a'.repeat(64)
+      const result = parseSlug(slug64)
+      expect(result.ok).toBe(true)
+    })
+
+    it('rejects slugs longer than 64 characters', () => {
+      const longSlug = 'a'.repeat(65)
+      const result = parseSlug(longSlug)
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('too long')
+      }
     })
   })
 })
