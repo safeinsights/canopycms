@@ -66,17 +66,12 @@ export const flattenSchema = (root: RootCollectionConfig, basePath = ''): FlatSc
 
   const walkCollection = (collection: CollectionConfig, parentPath: string) => {
     const normalizedPath = normalizePathValue(collection.path)
-    // Build logical path: if we have a parent, join with parent; otherwise use collection path
+    // Build logical path from collection.path (derived from directory names, already lowercased).
+    // collection.path is always a full relative path from content root (e.g., "docs/api/v1").
     let logicalPath: string
-    if (parentPath && parentPath !== base) {
-      // Nested child collection: use only the collection name (leaf segment), not the full path
-      // The full path from collection.path includes parent path segments that are already in parentPath
-      logicalPath = join(parentPath, collection.name)
-    } else if (parentPath === base) {
-      // Root-level collection (direct child of content root): use collection path
+    if (base) {
       logicalPath = join(base, normalizedPath)
     } else {
-      // No parent and no base: use collection path as-is
       logicalPath = normalizedPath
     }
     const normalizedFull = normalizePathValue(logicalPath)

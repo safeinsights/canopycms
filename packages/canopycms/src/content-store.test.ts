@@ -308,7 +308,7 @@ describe('ContentStore', () => {
           collections: [
             {
               name: 'guides',
-              path: 'guides',
+              path: 'docs/guides',
               entries: [
                 {
                   name: 'entry',
@@ -350,7 +350,7 @@ describe('ContentStore', () => {
           collections: [
             {
               name: 'api',
-              path: 'api',
+              path: 'docs/api',
               entries: [
                 {
                   name: 'entry',
@@ -361,7 +361,7 @@ describe('ContentStore', () => {
               collections: [
                 {
                   name: 'v2',
-                  path: 'v2',
+                  path: 'docs/api/v2',
                   entries: [
                     {
                       name: 'entry',
@@ -405,7 +405,7 @@ describe('ContentStore', () => {
           collections: [
             {
               name: 'api',
-              path: 'api',
+              path: 'docs/api',
               entries: [
                 {
                   name: 'entry',
@@ -416,7 +416,7 @@ describe('ContentStore', () => {
               collections: [
                 {
                   name: 'v2',
-                  path: 'v2',
+                  path: 'docs/api/v2',
                   entries: [
                     {
                       name: 'entry',
@@ -427,7 +427,7 @@ describe('ContentStore', () => {
                   collections: [
                     {
                       name: 'endpoints',
-                      path: 'endpoints',
+                      path: 'docs/api/v2/endpoints',
                       entries: [
                         {
                           name: 'entry',
@@ -473,7 +473,7 @@ describe('ContentStore', () => {
           collections: [
             {
               name: 'api',
-              path: 'api',
+              path: 'docs/api',
               entries: [
                 {
                   name: 'entry',
@@ -484,7 +484,7 @@ describe('ContentStore', () => {
               collections: [
                 {
                   name: 'v2',
-                  path: 'v2',
+                  path: 'docs/api/v2',
                   entries: [
                     {
                       name: 'entry',
