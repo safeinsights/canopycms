@@ -21,8 +21,8 @@ function findTitleValue(
       const value = data[field.name]
       return typeof value === 'string' ? value : undefined
     }
-    // Recurse into object fields
-    if (field.type === 'object' && 'fields' in field && field.fields) {
+    // Recurse into non-list object fields (list objects can't provide a single title value)
+    if (field.type === 'object' && 'fields' in field && field.fields && !field.list) {
       const nested = data[field.name]
       if (nested != null && typeof nested === 'object' && !Array.isArray(nested)) {
         const result = findTitleValue(field.fields, nested as Record<string, unknown>)

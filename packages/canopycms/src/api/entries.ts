@@ -208,6 +208,7 @@ const listEntriesHandler = async (
 
   const maxLimit = 200
   const limit = Math.min(Math.max(params.limit ?? 50, 1), maxLimit)
+  // Offset-based pagination: items may be skipped or duplicated if content changes between pages.
   const offset = Number.isFinite(Number(params.cursor)) ? Number(params.cursor) : 0
   const search = params.q?.toLowerCase()
   const recursive = params.recursive ?? false

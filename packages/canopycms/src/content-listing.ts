@@ -74,6 +74,7 @@ export const readEntryData = async (
     }
     return data
   } catch (err: unknown) {
+    if (isNotFoundError(err)) return {}
     log.warn('readEntryData', `Failed to read entry data from ${filePath}: ${getErrorMessage(err)}`)
     return {}
   }
@@ -260,6 +261,8 @@ export async function listEntries<T = Record<string, unknown>>(
  * Sort items by a content ID order array.
  * Items in the order array come first (in order), items not in the array come at the end
  * sorted by the provided fallback key.
+ *
+ * Note: sorts the array in-place and returns it.
  */
 export const sortByOrder = <T extends { contentId?: ContentId }>(
   items: T[],
@@ -364,7 +367,7 @@ export const listCollectionEntries = async (
         collectionPath: collection.logicalPath,
         collectionName: collection.name,
         format,
-        entryType: entryTypeName || 'default',
+        entryType: entryTypeName,
         physicalPath: relativePath as PhysicalPath,
         data,
         updatedAt: stats.mtime.toISOString(),
