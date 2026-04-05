@@ -92,7 +92,7 @@ export const parseTypedFilename = (
     if (matchingType) {
       const id = parts[parts.length - 1]
       if (!isValidId(id)) return null
-      const slug = parts.slice(1, -1).join('.')
+      const slug = parts.slice(1, -1).join('.').toLowerCase()
       return {
         type: potentialType,
         slug: slug as EntrySlug,

@@ -231,7 +231,7 @@ export class ContentStore {
           // Extract entry type from filename to check slug properly
           const fileEntryType = extractEntryTypeFromFilename(entry.name)
           const existingSlug = extractSlugFromFilename(entry.name, fileEntryType || undefined)
-          return existingSlug === safeSlug
+          return existingSlug.toLowerCase() === safeSlug
         })
 
         if (existingFile) {
@@ -587,7 +587,7 @@ export class ContentStore {
 
         // Extract slug from filename using the same pattern
         const existingSlug = extractSlugFromFilename(entry.name, entryTypeName)
-        if (existingSlug === safeNewSlug) {
+        if (existingSlug.toLowerCase() === safeNewSlug) {
           throw new ContentStoreError(
             `Entry with slug "${safeNewSlug}" already exists in collection "${collectionPath}"`,
           )

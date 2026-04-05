@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { defineCanopyTestConfig } from './config-test'
 import { flattenSchema } from './config'
 import { ContentStore, ContentStoreError } from './content-store'
+import { generateId } from './id'
 import { unsafeAsLogicalPath, unsafeAsEntrySlug } from './paths/test-utils'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
@@ -1121,6 +1122,99 @@ describe('ContentStore', () => {
       // Verify body survived
       expect(doc.body).toContain('# Hello World')
       expect(doc.body).toContain('Some **bold** text')
+    })
+  })
+
+  describe('case-insensitive slug matching', () => {
+    it('reads an entry whose physical filename has a mixed-case slug', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'docs',
+            path: 'docs',
+            entries: [
+              {
+                name: 'doc',
+                format: 'mdx' as const,
+                schema: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Create the collection directory and a mixed-case file directly on disk
+      // (simulating pre-existing content from before CanopyCMS adoption)
+      const collectionDir = path.join(root, 'content', 'docs')
+      await fs.mkdir(collectionDir, { recursive: true })
+
+      const id = generateId()
+      await fs.writeFile(
+        path.join(collectionDir, `doc.Onboarding-Checklist.${id}.mdx`),
+        '---\ntitle: Onboarding\n---\nChecklist content',
+      )
+
+      // Read using lowercase slug — should find the mixed-case file
+      const doc = await store.read(
+        unsafeAsLogicalPath('content/docs'),
+        unsafeAsEntrySlug('onboarding-checklist'),
+      )
+      if (doc.format === 'json') throw new Error('expected mdx')
+      expect(doc.data.title).toBe('Onboarding')
+      expect(doc.body).toContain('Checklist content')
+    })
+
+    it('detects slug conflict with different casing on rename', async () => {
+      const root = await tmpDir()
+      const schema = {
+        collections: [
+          {
+            name: 'posts',
+            path: 'posts',
+            entries: [
+              {
+                name: 'post',
+                format: 'md' as const,
+                schema: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
+          },
+        ],
+      } as const
+
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Create the collection directory with both entries directly on disk
+      const collectionDir = path.join(root, 'content', 'posts')
+      await fs.mkdir(collectionDir, { recursive: true })
+
+      // Create my-post via the store (so renameEntry can find it)
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('my-post'), {
+        format: 'md',
+        data: { title: 'My Post' },
+        body: 'Content',
+      })
+
+      // Manually create a file with a mixed-case slug
+      const id = generateId()
+      await fs.writeFile(
+        path.join(collectionDir, `post.Hello-World.${id}.md`),
+        '---\ntitle: Hello\n---\nBody',
+      )
+
+      // Try to rename my-post to hello-world — should conflict with the mixed-case file
+      await expect(
+        store.renameEntry(
+          unsafeAsLogicalPath('content/posts'),
+          unsafeAsEntrySlug('my-post'),
+          unsafeAsEntrySlug('hello-world'),
+        ),
+      ).rejects.toThrow('already exists')
     })
   })
 })

@@ -104,7 +104,7 @@ export class ReferenceResolver {
           // before passing to store.read() to avoid double-prefixing.
           // Use extractSlugFromFilename to properly extract just the slug part.
           const filename = path.basename(entry.relativePath)
-          const normalizedSlug = extractSlugFromFilename(filename)
+          const normalizedSlug = extractSlugFromFilename(filename).toLowerCase()
 
           const doc = await this.store.read(entry.collection, normalizedSlug as EntrySlug)
           const label = String(doc.data[displayField] || doc.data.title || normalizedSlug)
