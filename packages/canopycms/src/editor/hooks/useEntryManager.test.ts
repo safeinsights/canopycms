@@ -13,7 +13,7 @@ import {
   unsafeAsLogicalPath,
   unsafeAsPhysicalPath,
   unsafeAsContentId,
-  unsafeAsEntrySlug,
+  unsafeAsSlug,
 } from '../../paths/test-utils'
 
 // Mock the API client module
@@ -52,7 +52,7 @@ describe('useEntryManager', () => {
   const mockCollectionItem = {
     logicalPath: unsafeAsLogicalPath('entry1'),
     contentId: unsafeAsContentId('abc123XYZ789'),
-    slug: unsafeAsEntrySlug('test'),
+    slug: unsafeAsSlug('test'),
     collectionPath: unsafeAsLogicalPath('posts'),
     collectionName: 'posts',
     format: 'mdx' as const,
@@ -202,7 +202,7 @@ describe('useEntryManager', () => {
       {
         ...mockCollectionItem,
         id: 'entry2',
-        slug: unsafeAsEntrySlug('test2'),
+        slug: unsafeAsSlug('test2'),
         logicalPath: unsafeAsLogicalPath('/content/posts/test2'),
       },
     ]
@@ -241,7 +241,7 @@ describe('useEntryManager', () => {
     const newEntry = {
       ...mockCollectionItem,
       logicalPath: unsafeAsLogicalPath('new-entry'),
-      slug: unsafeAsEntrySlug('new'),
+      slug: unsafeAsSlug('new'),
       physicalPath: unsafeAsPhysicalPath('/content/posts/new'),
     }
     // First call is from useEffect on mount, second is from manual call
@@ -313,7 +313,7 @@ describe('useEntryManager', () => {
           {
             ...mockCollectionItem,
             logicalPath: unsafeAsLogicalPath('new-post'),
-            slug: unsafeAsEntrySlug('new-post'),
+            slug: unsafeAsSlug('new-post'),
             physicalPath: unsafeAsPhysicalPath('/content/posts/new-post'),
           },
         ],

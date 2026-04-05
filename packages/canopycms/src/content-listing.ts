@@ -16,7 +16,7 @@ import { resolveCollectionPath } from './content-id-index'
 import { validateAndNormalizePath } from './paths'
 import { isNotFoundError } from './utils/error'
 import { isValidId } from './id'
-import type { LogicalPath, PhysicalPath, EntrySlug, ContentId } from './paths/types'
+import type { LogicalPath, PhysicalPath, Slug, ContentId } from './paths/types'
 import { ContentStoreError } from './content-store'
 
 /**
@@ -26,7 +26,7 @@ import { ContentStoreError } from './content-store'
 export interface CollectionListItem {
   logicalPath: LogicalPath
   contentId: ContentId
-  slug: EntrySlug
+  slug: Slug
   collectionPath: LogicalPath
   collectionName: string
   format: ContentFormat
@@ -77,7 +77,7 @@ export const readEntryData = async (
 export const parseTypedFilename = (
   filename: string,
   entryTypes: readonly EntryTypeConfig[],
-): { type: string; slug: EntrySlug; id: ContentId } | null => {
+): { type: string; slug: Slug; id: ContentId } | null => {
   // Remove extension
   const lastDot = filename.lastIndexOf('.')
   if (lastDot === -1) return null
@@ -95,7 +95,7 @@ export const parseTypedFilename = (
       const slug = parts.slice(1, -1).join('.').toLowerCase()
       return {
         type: potentialType,
-        slug: slug as EntrySlug,
+        slug: slug as Slug,
         id: id as ContentId,
       }
     }

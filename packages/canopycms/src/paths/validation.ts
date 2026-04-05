@@ -5,14 +5,7 @@
  */
 
 import { normalizeFilesystemPath, hasTraversalSequence } from './normalize'
-import type {
-  LogicalPath,
-  PhysicalPath,
-  ContentId,
-  BranchName,
-  EntrySlug,
-  CollectionSlug,
-} from './types'
+import type { LogicalPath, PhysicalPath, ContentId, BranchName, Slug } from './types'
 
 /**
  * Base58 alphabet used for content IDs (excludes ambiguous: 0, O, I, l)
@@ -343,13 +336,13 @@ export function parseBranchName(
  * if (!result.ok) {
  *   return { ok: false, status: 400, error: result.error }
  * }
- * const entrySlug: EntrySlug = result.slug
+ * const entrySlug: Slug = result.slug
  * ```
  */
 export function parseSlug(
   slug: string,
   type: 'collection' | 'entry',
-): { ok: true; slug: CollectionSlug | EntrySlug } | { ok: false; error: string } {
+): { ok: true; slug: Slug } | { ok: false; error: string } {
   if (!slug || typeof slug !== 'string') {
     return {
       ok: false,
@@ -386,6 +379,5 @@ export function parseSlug(
     }
   }
 
-  // Cast to appropriate branded type
-  return { ok: true, slug: slug as CollectionSlug | EntrySlug }
+  return { ok: true, slug: slug as Slug }
 }

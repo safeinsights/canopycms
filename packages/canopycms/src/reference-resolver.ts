@@ -3,14 +3,14 @@ import path from 'node:path'
 import type { ContentStore } from './content-store'
 import type { ContentIdIndex } from './content-id-index'
 import { extractSlugFromFilename } from './content-id-index'
-import type { LogicalPath, PhysicalPath, EntrySlug } from './paths'
+import type { LogicalPath, PhysicalPath, Slug } from './paths'
 
 export interface ResolvedReference {
   id: string
   exists: boolean
   displayValue: string
   collection?: LogicalPath
-  slug?: EntrySlug
+  slug?: Slug
 }
 
 export interface ReferenceOption {
@@ -104,9 +104,9 @@ export class ReferenceResolver {
           // before passing to store.read() to avoid double-prefixing.
           // Use extractSlugFromFilename to properly extract just the slug part.
           const filename = path.basename(entry.relativePath)
-          const normalizedSlug = extractSlugFromFilename(filename).toLowerCase()
+          const normalizedSlug = extractSlugFromFilename(filename)
 
-          const doc = await this.store.read(entry.collection, normalizedSlug as EntrySlug)
+          const doc = await this.store.read(entry.collection, normalizedSlug)
           const label = String(doc.data[displayField] || doc.data.title || normalizedSlug)
 
           // Apply search filter if provided
@@ -141,7 +141,7 @@ export class ReferenceResolver {
     Array<{
       relativePath: PhysicalPath
       collection: LogicalPath
-      slug: EntrySlug
+      slug: Slug
     }>
   > {
     return this.store.listCollectionEntries(collectionPath)

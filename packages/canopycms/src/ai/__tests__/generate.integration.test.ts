@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { defineCanopyTestConfig } from '../../config-test'
 import { flattenSchema } from '../../config'
 import { ContentStore } from '../../content-store'
-import { unsafeAsLogicalPath, unsafeAsEntrySlug } from '../../paths/test-utils'
+import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
 import { generateAIContent } from '../generate'
 import type { AIContentConfig, AIManifest } from '../types'
 
@@ -99,7 +99,7 @@ async function setupContentTree(root: string, flatSchema: ReturnType<typeof flat
   // Root-level entry
   await store.write(
     unsafeAsLogicalPath('content'),
-    unsafeAsEntrySlug('home'),
+    unsafeAsSlug('home'),
     {
       format: 'md',
       data: { title: 'Home' },
@@ -109,40 +109,40 @@ async function setupContentTree(root: string, flatSchema: ReturnType<typeof flat
   )
 
   // Posts
-  await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('hello-world'), {
+  await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('hello-world'), {
     format: 'md',
     data: { title: 'Hello World', published: true },
     body: '# Hello\n\nFirst post.',
   })
 
-  await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('second-post'), {
+  await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('second-post'), {
     format: 'md',
     data: { title: 'Second Post', published: false },
     body: '# Second\n\nAnother post.',
   })
 
   // Settings (JSON)
-  await store.write(unsafeAsLogicalPath('content/settings'), unsafeAsEntrySlug('site'), {
+  await store.write(unsafeAsLogicalPath('content/settings'), unsafeAsSlug('site'), {
     format: 'json',
     data: { siteName: 'TestSite', logo: '/images/logo.png' },
   })
 
   // Docs
-  await store.write(unsafeAsLogicalPath('content/docs'), unsafeAsEntrySlug('overview'), {
+  await store.write(unsafeAsLogicalPath('content/docs'), unsafeAsSlug('overview'), {
     format: 'md',
     data: { title: 'Overview' },
     body: 'Documentation overview.',
   })
 
   // Docs > API (subcollection)
-  await store.write(unsafeAsLogicalPath('content/docs/api'), unsafeAsEntrySlug('authentication'), {
+  await store.write(unsafeAsLogicalPath('content/docs/api'), unsafeAsSlug('authentication'), {
     format: 'md',
     data: { title: 'Authentication' },
     body: 'Auth docs.',
   })
 
   // Drafts (will be excluded in some tests)
-  await store.write(unsafeAsLogicalPath('content/drafts'), unsafeAsEntrySlug('wip'), {
+  await store.write(unsafeAsLogicalPath('content/drafts'), unsafeAsSlug('wip'), {
     format: 'md',
     data: { title: 'Work in Progress' },
     body: 'Draft content.',

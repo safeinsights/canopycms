@@ -1,7 +1,7 @@
 import { flattenSchema } from 'canopycms'
 import { ContentStore, resolveSchema } from 'canopycms/server'
 import { createLogicalPath, createPhysicalPath } from 'canopycms/paths'
-import type { EntrySlug } from 'canopycms/paths'
+import type { Slug } from 'canopycms/paths'
 import path from 'path'
 import config from '../canopycms.config'
 
@@ -19,23 +19,23 @@ async function generateIds() {
     type: 'entry',
     relativePath: createPhysicalPath('content/authors/alice.json'),
     collection: createLogicalPath('authors'),
-    slug: 'alice' as EntrySlug,
+    slug: 'alice' as Slug,
   })
 
   await idIndex.add({
     type: 'entry',
     relativePath: createPhysicalPath('content/authors/bob.json'),
     collection: createLogicalPath('authors'),
-    slug: 'bob' as EntrySlug,
+    slug: 'bob' as Slug,
   })
 
   // Get the generated IDs
   const aliceId = idIndex.findByPath(createPhysicalPath('content/authors/alice.json'))
   const bobId = idIndex.findByPath(createPhysicalPath('content/authors/bob.json'))
 
-  console.log('IDs generated successfully:')
-  console.log(`Alice ID: ${aliceId}`)
-  console.log(`Bob ID: ${bobId}`)
+  console.info('IDs generated successfully:')
+  console.info(`Alice ID: ${aliceId}`)
+  console.info(`Bob ID: ${bobId}`)
 }
 
 generateIds().catch(console.error)

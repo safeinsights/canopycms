@@ -29,8 +29,7 @@ import {
   type BranchName,
   type LogicalPath,
   type ContentId,
-  type EntrySlug,
-  type CollectionSlug,
+  type Slug,
 } from '../paths'
 import { parsePermissionPath, type PermissionPath } from '../authorization'
 
@@ -103,7 +102,7 @@ export const contentIdSchema = z.string().transform((val, ctx) => {
 }) as unknown as z.ZodType<ContentId>
 
 /**
- * Zod schema for EntrySlug - validates entry slugs.
+ * Zod schema for Slug - validates entry and collection slugs.
  *
  * Validates:
  * - No path separators (/ or \)
@@ -111,7 +110,7 @@ export const contentIdSchema = z.string().transform((val, ctx) => {
  * - Only lowercase letters, numbers, and hyphens
  * - Max 64 characters
  */
-export const entrySlugSchema = z
+export const slugSchema = z
   .string()
   .min(1)
   .transform((val, ctx) => {
@@ -123,32 +122,8 @@ export const entrySlugSchema = z
       })
       return z.NEVER
     }
-    return result.slug as EntrySlug
-  }) as unknown as z.ZodType<EntrySlug>
-
-/**
- * Zod schema for CollectionSlug - validates collection slugs.
- *
- * Validates:
- * - No path separators (/ or \)
- * - Starts with lowercase letter or number
- * - Only lowercase letters, numbers, and hyphens
- * - Max 64 characters
- */
-export const collectionSlugSchema = z
-  .string()
-  .min(1)
-  .transform((val, ctx) => {
-    const result = parseSlug(val, 'collection')
-    if (!result.ok) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: result.error,
-      })
-      return z.NEVER
-    }
-    return result.slug as CollectionSlug
-  }) as unknown as z.ZodType<CollectionSlug>
+    return result.slug
+  }) as unknown as z.ZodType<Slug>
 
 /**
  * Zod schema for PermissionPath - validates permission rule paths.

@@ -1,6 +1,6 @@
 import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
-import { resolveBranchPaths, type LogicalPath, type PhysicalPath, type EntrySlug } from './paths'
+import { resolveBranchPaths, type LogicalPath, type PhysicalPath, type Slug } from './paths'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
@@ -20,7 +20,7 @@ export interface ContentReaderOptions {
 export interface ReadContentInput {
   /** Resolved schema path (e.g., content/posts or content/home). */
   entryPath: LogicalPath
-  slug?: EntrySlug
+  slug?: Slug
   branch?: string
   /** User making the request. Required - use ANONYMOUS_USER for public access. */
   user: CanopyUser

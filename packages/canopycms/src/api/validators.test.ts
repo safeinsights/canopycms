@@ -4,8 +4,7 @@ import {
   branchNameSchema,
   logicalPathSchema,
   contentIdSchema,
-  entrySlugSchema,
-  collectionSlugSchema,
+  slugSchema,
   permissionPathSchema,
 } from './validators'
 
@@ -127,41 +126,41 @@ describe('API validators', () => {
     })
   })
 
-  describe('entrySlugSchema', () => {
+  describe('slugSchema', () => {
     it('validates and brands valid entry slugs', () => {
-      const result = entrySlugSchema.parse('my-first-post')
+      const result = slugSchema.parse('my-first-post')
       expect(result).toBe('my-first-post')
     })
 
     it('accepts slugs starting with numbers', () => {
-      const result = entrySlugSchema.parse('2023-update')
+      const result = slugSchema.parse('2023-update')
       expect(result).toBe('2023-update')
     })
 
     it('rejects empty slugs', () => {
-      expect(() => entrySlugSchema.parse('')).toThrow()
+      expect(() => slugSchema.parse('')).toThrow()
     })
 
     it('rejects slugs with path separators', () => {
-      expect(() => entrySlugSchema.parse('posts/hello')).toThrow('separator')
+      expect(() => slugSchema.parse('posts/hello')).toThrow('separator')
     })
 
     it('rejects slugs with uppercase', () => {
-      expect(() => entrySlugSchema.parse('HelloWorld')).toThrow('lowercase')
+      expect(() => slugSchema.parse('HelloWorld')).toThrow('lowercase')
     })
 
     it('rejects slugs not starting with alphanumeric', () => {
-      expect(() => entrySlugSchema.parse('-hello')).toThrow('start with a letter or number')
+      expect(() => slugSchema.parse('-hello')).toThrow('start with a letter or number')
     })
 
     it('rejects slugs longer than 64 characters', () => {
       const longSlug = 'a'.repeat(65)
-      expect(() => entrySlugSchema.parse(longSlug)).toThrow('too long')
+      expect(() => slugSchema.parse(longSlug)).toThrow('too long')
     })
 
     it('provides clear error messages', () => {
       try {
-        entrySlugSchema.parse('posts/hello')
+        slugSchema.parse('posts/hello')
       } catch (error) {
         expect(error).toBeInstanceOf(z.ZodError)
         if (error instanceof z.ZodError) {
@@ -171,20 +170,20 @@ describe('API validators', () => {
     })
   })
 
-  describe('collectionSlugSchema', () => {
+  describe('slugSchema', () => {
     it('validates and brands valid collection slugs', () => {
-      const result = collectionSlugSchema.parse('blog-posts')
+      const result = slugSchema.parse('blog-posts')
       expect(result).toBe('blog-posts')
     })
 
     it('applies same validation as entry slugs', () => {
       // Valid
-      expect(collectionSlugSchema.parse('posts')).toBe('posts')
+      expect(slugSchema.parse('posts')).toBe('posts')
 
       // Invalid
-      expect(() => collectionSlugSchema.parse('')).toThrow()
-      expect(() => collectionSlugSchema.parse('posts/items')).toThrow('separator')
-      expect(() => collectionSlugSchema.parse('Posts')).toThrow('lowercase')
+      expect(() => slugSchema.parse('')).toThrow()
+      expect(() => slugSchema.parse('posts/items')).toThrow('separator')
+      expect(() => slugSchema.parse('Posts')).toThrow('lowercase')
     })
   })
 
@@ -238,7 +237,7 @@ describe('API validators', () => {
       const schema = z.object({
         branch: branchNameSchema,
         path: logicalPathSchema,
-        slug: entrySlugSchema,
+        slug: slugSchema,
       })
 
       const result = schema.parse({

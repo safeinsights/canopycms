@@ -1,13 +1,13 @@
 import type { ContentStore } from '../content-store'
 import type { ContentIdIndex } from '../content-id-index'
 import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig } from '../config'
-import { type LogicalPath, type EntrySlug, type PhysicalPath } from '../paths'
+import { type LogicalPath, type Slug, type PhysicalPath } from '../paths'
 
 export interface ReferenceInfo {
   entryPath: string
   entryTitle?: string
   collection: LogicalPath
-  slug: EntrySlug
+  slug: Slug
   fields: string[] // Field paths where the reference was found
 }
 
@@ -202,12 +202,12 @@ export class DeletionChecker {
   private listEntriesInCollection(collectionPath: LogicalPath): Array<{
     relativePath: PhysicalPath
     collection: LogicalPath
-    slug: EntrySlug
+    slug: Slug
   }> {
     const entries: Array<{
       relativePath: PhysicalPath
       collection: LogicalPath
-      slug: EntrySlug
+      slug: Slug
     }> = []
 
     // Get all locations from the index

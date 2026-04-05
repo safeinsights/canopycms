@@ -5,8 +5,8 @@ import { ContentStore, ContentStoreError } from '../content-store'
 import type { EntrySchema, EntryTypeConfig, FlatSchemaItem } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
-import { branchNameSchema, logicalPathSchema, entrySlugSchema } from './validators'
-import type { EntrySlug, PhysicalPath } from '../paths'
+import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
+import type { Slug, PhysicalPath } from '../paths'
 import type { BranchContextWithSchema } from '../types'
 
 /** Response type for content read operations */
@@ -93,7 +93,7 @@ const renameEntryParamsSchema = z.object({
 })
 
 const renameEntryBodySchema = z.object({
-  newSlug: entrySlugSchema,
+  newSlug: slugSchema,
 })
 
 const readContentHandler = async (
@@ -116,7 +116,7 @@ const readContentHandler = async (
 
   // Use trivial path resolution
   let schemaItem: FlatSchemaItem
-  let slug: EntrySlug
+  let slug: Slug
   let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
@@ -165,7 +165,7 @@ const writeContentHandler = async (
 
   // Use trivial path resolution
   let schemaItem: FlatSchemaItem
-  let slug: EntrySlug
+  let slug: Slug
   let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)
@@ -326,7 +326,7 @@ const renameEntryHandler = async (
 
   // Resolve to collection and slug
   let schemaItem: FlatSchemaItem
-  let currentSlug: EntrySlug
+  let currentSlug: Slug
   let relativePath: PhysicalPath
   try {
     const resolved = store.resolvePath(logicalPathSegments)

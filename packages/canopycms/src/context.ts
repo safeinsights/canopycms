@@ -3,7 +3,7 @@ import type { CanopyServices } from './services'
 import type { ReadContentInput } from './content-reader'
 import { isDeployedStatic, isBuildMode, STATIC_DEPLOY_USER } from './build-mode'
 import { createContentReader } from './content-reader'
-import { createLogicalPath, parseSlug, resolveBranchPaths, type EntrySlug } from './paths'
+import { createLogicalPath, parseSlug, resolveBranchPaths, type Slug } from './paths'
 import { loadOrCreateBranchContext } from './branch-workspace'
 import {
   buildContentTree as buildContentTreeImpl,
@@ -90,13 +90,13 @@ export function createCanopyContext(options: CanopyContextOptions) {
       resolveReferences?: boolean
     }) => {
       const entryPath = createLogicalPath(input.entryPath)
-      let slug: EntrySlug | undefined
+      let slug: Slug | undefined
       if (input.slug) {
         const slugResult = parseSlug(input.slug, 'entry')
         if (!slugResult.ok) {
           throw new Error(`Invalid slug: ${slugResult.error}`)
         }
-        slug = slugResult.slug as EntrySlug
+        slug = slugResult.slug as Slug
       }
       const readInput: ReadContentInput = {
         entryPath,

@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 import { defineCanopyTestConfig } from '../../config-test'
 import { flattenSchema, type RootCollectionConfig } from '../../config'
 import { ContentStore } from '../../content-store'
-import { unsafeAsLogicalPath, unsafeAsEntrySlug } from '../../paths/test-utils'
+import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
 import { generateAIContentFiles } from '../../build/generate-ai-content'
 import type { AIManifest } from '../types'
 
@@ -49,19 +49,19 @@ async function setupContent(root: string, schema: RootCollectionConfig) {
   const flat = flattenSchema(schema, config.contentRoot)
   const store = new ContentStore(root, flat)
 
-  await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('hello-world'), {
+  await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('hello-world'), {
     format: 'md',
     data: { title: 'Hello World', published: true },
     body: '# Hello\n\nFirst post.',
   })
 
-  await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('second'), {
+  await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('second'), {
     format: 'md',
     data: { title: 'Second', published: false },
     body: 'Second post.',
   })
 
-  await store.write(unsafeAsLogicalPath('content/settings'), unsafeAsEntrySlug('site'), {
+  await store.write(unsafeAsLogicalPath('content/settings'), unsafeAsSlug('site'), {
     format: 'json',
     data: { siteName: 'TestSite' },
   })

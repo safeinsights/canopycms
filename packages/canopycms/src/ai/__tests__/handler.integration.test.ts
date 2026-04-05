@@ -8,7 +8,7 @@ import { mockConsole } from '../../test-utils/console-spy'
 import { defineCanopyTestConfig } from '../../config-test'
 import { flattenSchema, type RootCollectionConfig } from '../../config'
 import { ContentStore } from '../../content-store'
-import { unsafeAsLogicalPath, unsafeAsEntrySlug } from '../../paths/test-utils'
+import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
 import { createAIContentHandler } from '../handler'
 import type { AIManifest } from '../types'
 
@@ -39,13 +39,13 @@ async function setupContent(root: string, schema: RootCollectionConfig) {
   const flat = flattenSchema(schema, config.contentRoot)
   const store = new ContentStore(root, flat)
 
-  await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('hello-world'), {
+  await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('hello-world'), {
     format: 'md',
     data: { title: 'Hello World', published: true },
     body: '# Hello\n\nFirst post.',
   })
 
-  await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsEntrySlug('second'), {
+  await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('second'), {
     format: 'md',
     data: { title: 'Second Post', published: false },
     body: '# Second\n\nAnother post.',

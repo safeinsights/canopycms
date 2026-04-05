@@ -10,7 +10,7 @@
  */
 
 import type { FlatSchemaItem, ContentFormat } from './config'
-import type { LogicalPath, ContentId, EntrySlug } from './paths/types'
+import type { LogicalPath, ContentId, Slug } from './paths/types'
 import { listCollectionEntries, sortByOrder, type CollectionListItem } from './content-listing'
 
 // ---------------------------------------------------------------------------
@@ -33,7 +33,7 @@ export interface ContentTreeNode<T = unknown> {
   }
   /** Entry metadata — present when kind === 'entry' */
   entry?: {
-    slug: EntrySlug
+    slug: Slug
     entryType: string
     format: ContentFormat
     /** Raw entry data (frontmatter for md/mdx, parsed JSON for json). */

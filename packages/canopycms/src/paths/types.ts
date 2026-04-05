@@ -47,16 +47,10 @@ export type ContentId = string & { readonly __brand: 'ContentId' }
 export const ROOT_COLLECTION_ID = '__rootcoll__' as ContentId
 
 /**
- * A collection slug (validated segment of a collection path).
- * Example: "posts" or "api-docs"
+ * A validated, lowercase slug used for collections and entries.
+ * Example: "posts", "my-first-post", "getting-started"
  */
-export type CollectionSlug = string & { readonly __brand: 'CollectionSlug' }
-
-/**
- * An entry slug (last segment of an entry path, used in URLs and filenames).
- * Example: "my-first-post" or "getting-started"
- */
-export type EntrySlug = string & { readonly __brand: 'EntrySlug' }
+export type Slug = string & { readonly __brand: 'Slug' }
 
 /**
  * Path validation result.

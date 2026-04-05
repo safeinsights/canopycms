@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { ContentIdIndex, extractIdFromFilename, extractSlugFromFilename } from './content-id-index'
 import {
   unsafeAsLogicalPath,
-  unsafeAsEntrySlug,
+  unsafeAsSlug,
   unsafeAsPhysicalPath,
   unsafeAsContentId,
 } from './paths/test-utils'
@@ -182,7 +182,7 @@ describe('ContentIdIndex', () => {
         type: 'entry',
         relativePath: unsafeAsPhysicalPath(`content/new.${testId}.json`),
         collection: unsafeAsLogicalPath('content'),
-        slug: unsafeAsEntrySlug('new'),
+        slug: unsafeAsSlug('new'),
       })
 
       // Verify index updated
@@ -197,7 +197,7 @@ describe('ContentIdIndex', () => {
         type: 'entry',
         relativePath: unsafeAsPhysicalPath(`content/file1.${testId}.json`),
         collection: unsafeAsLogicalPath('content'),
-        slug: unsafeAsEntrySlug('file1'),
+        slug: unsafeAsSlug('file1'),
       })
 
       // Attempt to add duplicate ID
@@ -206,7 +206,7 @@ describe('ContentIdIndex', () => {
           type: 'entry',
           relativePath: unsafeAsPhysicalPath(`content/file2.${testId}.json`),
           collection: unsafeAsLogicalPath('content'),
-          slug: unsafeAsEntrySlug('file2'),
+          slug: unsafeAsSlug('file2'),
         }),
       ).toThrow('ID collision')
     })
@@ -217,7 +217,7 @@ describe('ContentIdIndex', () => {
           type: 'entry',
           relativePath: unsafeAsPhysicalPath('content/no-id.json'),
           collection: unsafeAsLogicalPath('content'),
-          slug: unsafeAsEntrySlug('no-id'),
+          slug: unsafeAsSlug('no-id'),
         }),
       ).toThrow('Cannot add location without ID')
     })
@@ -243,7 +243,7 @@ describe('ContentIdIndex', () => {
         type: 'entry',
         relativePath: unsafeAsPhysicalPath(`content/test.${testId}.json`),
         collection: unsafeAsLogicalPath('content'),
-        slug: unsafeAsEntrySlug('test'),
+        slug: unsafeAsSlug('test'),
       })
 
       // Remove
@@ -266,7 +266,7 @@ describe('ContentIdIndex', () => {
         type: 'entry',
         relativePath: unsafeAsPhysicalPath(`content/old.${testId}.json`),
         collection: unsafeAsLogicalPath('content'),
-        slug: unsafeAsEntrySlug('old'),
+        slug: unsafeAsSlug('old'),
       })
 
       // Update path
@@ -354,7 +354,7 @@ describe('ContentIdIndex', () => {
         type: 'entry',
         relativePath: unsafeAsPhysicalPath(`content/posts/post.new.${entryId}.json`),
         collection: unsafeAsLogicalPath('content/posts'),
-        slug: unsafeAsEntrySlug('new'),
+        slug: unsafeAsSlug('new'),
       })
 
       const entries = index.getEntriesInCollection(unsafeAsLogicalPath('content/posts'))
@@ -370,13 +370,13 @@ describe('ContentIdIndex', () => {
         type: 'entry',
         relativePath: unsafeAsPhysicalPath(`content/posts/post.first.${entry1Id}.json`),
         collection: unsafeAsLogicalPath('content/posts'),
-        slug: unsafeAsEntrySlug('first'),
+        slug: unsafeAsSlug('first'),
       })
       index.add({
         type: 'entry',
         relativePath: unsafeAsPhysicalPath(`content/posts/post.second.${entry2Id}.json`),
         collection: unsafeAsLogicalPath('content/posts'),
-        slug: unsafeAsEntrySlug('second'),
+        slug: unsafeAsSlug('second'),
       })
 
       index.remove(unsafeAsContentId(entry1Id))
@@ -393,7 +393,7 @@ describe('ContentIdIndex', () => {
         type: 'entry',
         relativePath: unsafeAsPhysicalPath(`content/posts/post.only.${entryId}.json`),
         collection: unsafeAsLogicalPath('content/posts'),
-        slug: unsafeAsEntrySlug('only'),
+        slug: unsafeAsSlug('only'),
       })
 
       index.remove(unsafeAsContentId(entryId))
@@ -410,7 +410,7 @@ describe('ContentIdIndex', () => {
         type: 'entry',
         relativePath: unsafeAsPhysicalPath(`content/posts/post.article.${entryId}.json`),
         collection: unsafeAsLogicalPath('content/posts'),
-        slug: unsafeAsEntrySlug('article'),
+        slug: unsafeAsSlug('article'),
       })
 
       // Move to different collection
@@ -508,5 +508,16 @@ describe('extractSlugFromFilename', () => {
   it('extracts slug from 3-part filenames (name.id.ext)', () => {
     // 3-part files: name.{id}.ext → the name portion before the ID
     expect(extractSlugFromFilename('home.a1b2c3d4e5f6.json')).toBe('home')
+  })
+
+  it('normalizes mixed-case slugs to lowercase', () => {
+    expect(extractSlugFromFilename('Hello-World.a1b2c3d4e5f6.json')).toBe('hello-world')
+    expect(extractSlugFromFilename('doc.Onboarding-Checklist.a1b2c3d4e5f6.mdx')).toBe(
+      'onboarding-checklist',
+    )
+    // Directories
+    expect(extractSlugFromFilename('Posts.a1b2c3d4e5f6')).toBe('posts')
+    // Files without IDs
+    expect(extractSlugFromFilename('README.json')).toBe('readme')
   })
 })

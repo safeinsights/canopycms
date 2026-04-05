@@ -366,7 +366,7 @@ describe('path validation utilities', () => {
 
   describe('parseSlug', () => {
     describe('entry slugs', () => {
-      it('returns typed EntrySlug for valid slugs', () => {
+      it('returns typed Slug for valid entry slugs', () => {
         const result = parseSlug('my-first-post', 'entry')
         expect(result.ok).toBe(true)
         if (result.ok) {
@@ -442,7 +442,7 @@ describe('path validation utilities', () => {
     })
 
     describe('collection slugs', () => {
-      it('returns typed CollectionSlug for valid slugs', () => {
+      it('returns typed Slug for valid collection slugs', () => {
         const result = parseSlug('posts', 'collection')
         expect(result.ok).toBe(true)
         if (result.ok) {

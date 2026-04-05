@@ -3,7 +3,7 @@ import path from 'node:path'
 
 import { isValidId } from './id'
 import { isNotFoundError } from './utils/error'
-import { type LogicalPath, type PhysicalPath, type EntrySlug, type ContentId } from './paths'
+import { type LogicalPath, type PhysicalPath, type Slug, type ContentId } from './paths'
 
 /** Logical path representing entries stored at the branch root (no parent collection). Rare in practice. */
 const EMPTY_LOGICAL_PATH = '' as LogicalPath
@@ -27,7 +27,7 @@ export interface IdLocation {
   type: 'entry' | 'collection'
   relativePath: PhysicalPath // e.g. 'content/posts/dune.a1b2c3d4e5f6.json'
   collection?: LogicalPath // e.g. 'content/posts' (for entries only) — always logical, never physical
-  slug?: EntrySlug // e.g. 'dune' (for entries only)
+  slug?: Slug // e.g. 'dune' (for entries only)
 }
 
 /**
@@ -115,12 +115,12 @@ export class ContentIdIndex {
 
           // Extract slug and collection for entries
           if (!entry.isDirectory()) {
-            const slug = extractSlugFromFilename(entry.name).toLowerCase()
+            const slug = extractSlugFromFilename(entry.name)
             // Convert physical collection path to logical by stripping embedded IDs from each segment
             // e.g., "content/posts.a1b2c3d4e5f6" → "content/posts"
             const physicalCollection = path.dirname(fullRelativePath)
             const collectionPath = toLogicalCollectionPath(physicalCollection)
-            location.slug = slug as EntrySlug // slug extracted from validated filename, normalized to lowercase
+            location.slug = slug
             location.collection = collectionPath
 
             // Add to collection index
@@ -274,9 +274,7 @@ export class ContentIdIndex {
     // Update slug and collection for entries
     if (location.type === 'entry') {
       const oldCollection = location.collection
-      location.slug = extractSlugFromFilename(
-        path.basename(newRelativePath),
-      ).toLowerCase() as EntrySlug // from validated filename, normalized to lowercase
+      location.slug = extractSlugFromFilename(path.basename(newRelativePath))
       const physicalCollection = path.dirname(newRelativePath)
       location.collection = toLogicalCollectionPath(physicalCollection)
 
@@ -377,7 +375,7 @@ export async function resolveCollectionPath(
         if (!entry.isDirectory()) return false
         // Extract logical name from directory (strips embedded ID)
         const logicalName = extractSlugFromFilename(entry.name)
-        return logicalName.toLowerCase() === segment.toLowerCase()
+        return logicalName === segment.toLowerCase()
       })
 
       if (matchingDir) {
@@ -440,7 +438,7 @@ export function extractEntryTypeFromFilename(filename: string): string | null {
  * @param entryTypeName - Optional entry type name for explicit type matching (e.g., "post")
  *                        If provided and matches first part, strips it from slug
  */
-export function extractSlugFromFilename(filename: string, entryTypeName?: string): string {
+export function extractSlugFromFilename(filename: string, entryTypeName?: string): Slug {
   const parts = filename.split('.')
 
   // Files: type.slug.id.ext (at least 3 parts)
@@ -460,7 +458,7 @@ export function extractSlugFromFilename(filename: string, entryTypeName?: string
         slugParts = slugParts.slice(1)
       }
 
-      return slugParts.join('.')
+      return slugParts.join('.').toLowerCase() as Slug
     }
   }
 
@@ -468,14 +466,14 @@ export function extractSlugFromFilename(filename: string, entryTypeName?: string
   if (parts.length === 2) {
     const possibleId = parts[parts.length - 1]
     if (isValidId(possibleId)) {
-      return parts[0]
+      return parts[0].toLowerCase() as Slug
     }
   }
 
   // No ID found, remove extension and return filename without extension
   if (parts.length > 1) {
-    return parts.slice(0, -1).join('.')
+    return parts.slice(0, -1).join('.').toLowerCase() as Slug
   }
 
-  return filename
+  return filename.toLowerCase() as Slug
 }

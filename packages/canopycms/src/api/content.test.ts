@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { CONTENT_ROUTES } from './content'
 import type { ApiContext } from './types'
-import { unsafeAsBranchName, unsafeAsLogicalPath, unsafeAsEntrySlug } from '../paths/test-utils'
+import { unsafeAsBranchName, unsafeAsLogicalPath, unsafeAsSlug } from '../paths/test-utils'
 
 // Extract handlers for testing
 const readContent = CONTENT_ROUTES.read.handler
@@ -167,7 +167,7 @@ describe('content api', () => {
           branch: unsafeAsBranchName('feature/x'),
           path: unsafeAsLogicalPath('posts/old-slug'),
         },
-        { newSlug: unsafeAsEntrySlug('new-slug') },
+        { newSlug: unsafeAsSlug('new-slug') },
       )
       expect(res.ok).toBe(true)
       if (res.ok && res.data) {
@@ -219,7 +219,7 @@ describe('content api', () => {
           branch: unsafeAsBranchName('feature/x'),
           path: unsafeAsLogicalPath('posts/old-slug'),
         },
-        { newSlug: unsafeAsEntrySlug('new-slug') },
+        { newSlug: unsafeAsSlug('new-slug') },
       )
       expect(res.status).toBe(403)
       expect(res.ok).toBe(false)
@@ -257,7 +257,7 @@ describe('content api', () => {
           branch: unsafeAsBranchName('nonexistent'),
           path: unsafeAsLogicalPath('posts/old-slug'),
         },
-        { newSlug: unsafeAsEntrySlug('new-slug') },
+        { newSlug: unsafeAsSlug('new-slug') },
       )
       expect(res.status).toBe(404)
       expect(res.ok).toBe(false)
@@ -291,7 +291,7 @@ describe('content api', () => {
           branch: unsafeAsBranchName('feature/x'),
           path: unsafeAsLogicalPath('posts/nonexistent'),
         },
-        { newSlug: unsafeAsEntrySlug('new-slug') },
+        { newSlug: unsafeAsSlug('new-slug') },
       )
       expect(res.status).toBe(400)
       expect(res.ok).toBe(false)
@@ -329,7 +329,7 @@ describe('content api', () => {
           branch: unsafeAsBranchName('feature/x'),
           path: unsafeAsLogicalPath('posts/old-slug'),
         },
-        { newSlug: unsafeAsEntrySlug('existing-slug') },
+        { newSlug: unsafeAsSlug('existing-slug') },
       )
       expect(res.status).toBe(400)
       expect(res.ok).toBe(false)
