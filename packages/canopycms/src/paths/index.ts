@@ -21,8 +21,7 @@ export type {
   SanitizedBranchName,
   BranchName,
   ContentId,
-  CollectionSlug,
-  EntrySlug,
+  Slug,
   PathValidationResult,
 } from './types'
 

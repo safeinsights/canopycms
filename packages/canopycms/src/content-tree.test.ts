@@ -538,6 +538,37 @@ describe('buildContentTree', () => {
     expect(slugs).toEqual(['beta', 'gamma', 'alpha'])
   })
 
+  it('normalizes mixed-case entry slugs to lowercase in tree output', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    await createEntry(postsDir, 'post', 'Hello-World', 'md', { title: 'Hello World' })
+    await createEntry(postsDir, 'post', 'Getting-Started', 'md', { title: 'Getting Started' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const tree = await buildContentTree(tempDir, flat, 'content')
+
+    expect(tree[0].children).toHaveLength(2)
+    // Slugs should be lowercase despite mixed-case filenames
+    const slugs = tree[0].children!.map((c: ContentTreeNode) => c.entry?.slug).sort()
+    expect(slugs).toEqual(['getting-started', 'hello-world'])
+    // Logical paths should also use lowercase slugs
+    const paths = tree[0].children!.map((c: ContentTreeNode) => c.logicalPath).sort()
+    expect(paths[0]).toBe('content/posts/getting-started')
+    expect(paths[1]).toBe('content/posts/hello-world')
+  })
+
   it('collection nodes have collection metadata from schema', async () => {
     const contentDir = path.join(tempDir, 'content')
     await fs.mkdir(contentDir)

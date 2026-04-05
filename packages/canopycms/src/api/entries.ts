@@ -19,7 +19,7 @@ import {
   parseLogicalPath,
 } from '../paths'
 import { isNotFoundError } from '../utils/error'
-import type { LogicalPath, PhysicalPath, EntrySlug, ContentId } from '../paths/types'
+import type { LogicalPath, PhysicalPath, Slug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema } from './validators'
 import { SchemaOps } from '../schema/schema-store'
 import { parseTypedFilename, sortByOrder } from '../content-listing'
@@ -39,7 +39,7 @@ export interface EntryTypeSummary {
 export interface CollectionItem {
   logicalPath: LogicalPath
   contentId: ContentId // 12-char content ID
-  slug: EntrySlug
+  slug: Slug
   collectionPath: LogicalPath
   collectionName: string
   format: ContentFormat
@@ -194,7 +194,7 @@ const listCollectionEntries = async (
       ])
 
       const item: CollectionItem = {
-        // Safe: both collection.logicalPath (LogicalPath) and slug (EntrySlug) are branded
+        // Safe: both collection.logicalPath (LogicalPath) and slug (Slug) are branded
         logicalPath: `${collection.logicalPath}/${slug}` as LogicalPath,
         contentId, // 12-char content ID extracted from filename
         slug,
@@ -478,7 +478,7 @@ const deleteEntryHandler = async (
   const contentStore = new ContentStore(branchContext.branchRoot, flatSchema)
   const collectionLogicalPath = collectionPath as LogicalPath
   // Validate slug extracted from the path
-  const slugResult = parseSlug(slug, 'entry')
+  const slugResult = parseSlug(slug)
   if (!slugResult.ok) {
     return {
       ok: false,
@@ -486,7 +486,7 @@ const deleteEntryHandler = async (
       error: `Invalid entry slug: ${slugResult.error}`,
     }
   }
-  const entrySlug = slugResult.slug as EntrySlug
+  const entrySlug = slugResult.slug
 
   // Resolve the real physical path before checking permissions
   let physicalPath: PhysicalPath

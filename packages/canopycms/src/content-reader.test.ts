@@ -11,7 +11,7 @@ import { defineCanopyTestConfig } from './config-test'
 import { ANONYMOUS_USER } from './user'
 import type { BranchContext } from './types'
 import { ContentStoreError } from './content-store'
-import { unsafeAsLogicalPath, unsafeAsEntrySlug } from './paths/test-utils'
+import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-content-reader-'))
 
@@ -93,7 +93,7 @@ describe('createContentReader', () => {
 
     const home = await reader.read<{ hero: { title: string } }>({
       entryPath: unsafeAsLogicalPath('content/pages'),
-      slug: unsafeAsEntrySlug('home'),
+      slug: unsafeAsSlug('home'),
       branch: 'main',
       user: ANONYMOUS_USER,
     })
@@ -103,7 +103,7 @@ describe('createContentReader', () => {
     await expect(
       reader.read({
         entryPath: unsafeAsLogicalPath('content/posts'),
-        slug: unsafeAsEntrySlug('missing'),
+        slug: unsafeAsSlug('missing'),
         user: ANONYMOUS_USER,
       }),
     ).rejects.toBeInstanceOf(ContentStoreError)
@@ -168,7 +168,7 @@ describe('createContentReader', () => {
 
     const { data } = await reader.read<{ hero: { title: string } }>({
       entryPath: unsafeAsLogicalPath('content/pages'),
-      slug: unsafeAsEntrySlug('home'),
+      slug: unsafeAsSlug('home'),
       user: ANONYMOUS_USER,
     })
     expect(data.hero.title).toBe('Hello')
@@ -176,7 +176,7 @@ describe('createContentReader', () => {
     await expect(
       reader.read({
         entryPath: unsafeAsLogicalPath('content/posts'),
-        slug: unsafeAsEntrySlug('missing'),
+        slug: unsafeAsSlug('missing'),
         user: ANONYMOUS_USER,
       }),
     ).rejects.toBeInstanceOf(ContentStoreError)
@@ -218,7 +218,7 @@ describe('createContentReader', () => {
     await expect(
       reader.read({
         entryPath: unsafeAsLogicalPath('content/pages'),
-        slug: unsafeAsEntrySlug('home'),
+        slug: unsafeAsSlug('home'),
         user: { type: 'authenticated', userId: 'anon', groups: [] },
       }),
     ).rejects.toBeInstanceOf(ContentStoreError)
@@ -287,7 +287,7 @@ describe('createContentReader', () => {
 
     const post = await reader.read<{ title: string }>({
       entryPath: unsafeAsLogicalPath('content/posts'),
-      slug: unsafeAsEntrySlug('first'),
+      slug: unsafeAsSlug('first'),
       user: ANONYMOUS_USER,
     })
     expect(post.data.title).toBe('Hello world')
@@ -295,7 +295,7 @@ describe('createContentReader', () => {
 
     const page = await reader.read<{ title: string }>({
       entryPath: unsafeAsLogicalPath('content/pages'),
-      slug: unsafeAsEntrySlug('home'),
+      slug: unsafeAsSlug('home'),
       branch: 'feature/foo',
       user: ANONYMOUS_USER,
     })
@@ -357,7 +357,7 @@ describe('createContentReader', () => {
       })
       const doc = await reader.read<{ hero: { title: string } }>({
         entryPath: unsafeAsLogicalPath('content/pages'),
-        slug: unsafeAsEntrySlug('home'),
+        slug: unsafeAsSlug('home'),
         user: ANONYMOUS_USER,
       })
       expect(doc.path).toBe('/pages/home?branch=main')
@@ -424,7 +424,7 @@ describe('createContentReader', () => {
       body: string
     }>({
       entryPath: unsafeAsLogicalPath('content/posts'),
-      slug: unsafeAsEntrySlug('hello'),
+      slug: unsafeAsSlug('hello'),
       user: ANONYMOUS_USER,
     })
 
@@ -481,7 +481,7 @@ describe('createContentReader', () => {
     await expect(
       reader.read({
         entryPath: unsafeAsLogicalPath('content/pages'),
-        slug: unsafeAsEntrySlug('home'),
+        slug: unsafeAsSlug('home'),
         user: { type: 'authenticated', userId: 'unauthorized', groups: [] },
       }),
     ).rejects.toThrow(/Forbidden/)

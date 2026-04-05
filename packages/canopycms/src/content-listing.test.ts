@@ -122,4 +122,22 @@ describe('parseTypedFilename', () => {
     const result = parseTypedFilename('post.slug.INVALID!!!.md', entryTypes)
     expect(result).toBeNull()
   })
+
+  it('normalizes mixed-case slug to lowercase', () => {
+    const result = parseTypedFilename('doc.Onboarding-Checklist.aB3cD4eF5gH6.mdx', entryTypes)
+    expect(result).toEqual({
+      type: 'doc',
+      slug: 'onboarding-checklist',
+      id: 'aB3cD4eF5gH6',
+    })
+  })
+
+  it('normalizes mixed-case dotted slug to lowercase', () => {
+    const result = parseTypedFilename('doc.Getting.Started.aB3cD4eF5gH6.mdx', entryTypes)
+    expect(result).toEqual({
+      type: 'doc',
+      slug: 'getting.started',
+      id: 'aB3cD4eF5gH6',
+    })
+  })
 })

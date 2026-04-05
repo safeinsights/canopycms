@@ -19,7 +19,7 @@ import {
   unsafeAsLogicalPath,
   unsafeAsPhysicalPath,
   unsafeAsContentId,
-  unsafeAsEntrySlug,
+  unsafeAsSlug,
 } from '../paths/test-utils'
 
 describe('buildPreviewSrc', () => {
@@ -185,7 +185,7 @@ describe('buildEntriesFromListResponse', () => {
       {
         logicalPath: unsafeAsLogicalPath('posts/hello'),
         contentId: unsafeAsContentId('ghi789RST345'),
-        slug: unsafeAsEntrySlug('hello world'),
+        slug: unsafeAsSlug('hello world'),
         collectionPath: unsafeAsLogicalPath('posts'),
         collectionName: 'Posts',
         format: 'mdx',
@@ -197,7 +197,7 @@ describe('buildEntriesFromListResponse', () => {
       {
         logicalPath: unsafeAsLogicalPath('pages/home'),
         contentId: unsafeAsContentId('jkl012MNO678'),
-        slug: unsafeAsEntrySlug('home'),
+        slug: unsafeAsSlug('home'),
         collectionPath: unsafeAsLogicalPath('pages'),
         collectionName: 'Pages',
         format: 'json',
@@ -267,7 +267,7 @@ describe('buildEntriesFromListResponse', () => {
           {
             logicalPath: unsafeAsLogicalPath('posts/unknown'),
             contentId: unsafeAsContentId('abc123def456'),
-            slug: unsafeAsEntrySlug('unknown'),
+            slug: unsafeAsSlug('unknown'),
             collectionPath: unsafeAsLogicalPath('posts'),
             collectionName: 'Posts',
             format: 'mdx',

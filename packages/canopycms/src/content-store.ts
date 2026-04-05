@@ -25,7 +25,7 @@ import {
   normalizeFilesystemPath,
   type LogicalPath,
   type PhysicalPath,
-  type EntrySlug,
+  type Slug,
   type ContentId,
 } from './paths'
 
@@ -177,7 +177,7 @@ export class ContentStore {
 
     // Collection entries: {type}.{slug}.{id}.{ext}
     if (schemaItem.type === 'collection') {
-      const safeSlug = slug.replace(/^\/+/, '')
+      const safeSlug = slug.replace(/^\/+/, '').toLowerCase()
       if (!safeSlug) {
         throw new ContentStoreError('Slug is required for collection entries')
       }
@@ -249,8 +249,8 @@ export class ContentStore {
 
       // Build filename: use existing filename if found, or generate new one with ID
       let filename: string
-      if (existingFilename && !id) {
-        // Legacy file without embedded ID - use original filename
+      if (existingFilename) {
+        // Existing file found - use its original filename to preserve on-disk casing
         filename = existingFilename
       } else {
         // Generate new ID if needed
@@ -287,7 +287,7 @@ export class ContentStore {
    */
   resolvePath(pathSegments: string[]): {
     schemaItem: FlatSchemaItem
-    slug: EntrySlug
+    slug: Slug
   } {
     if (pathSegments.length === 0) {
       throw new ContentStoreError('Empty path')
@@ -296,8 +296,8 @@ export class ContentStore {
     const logicalPath = pathSegments.join('/')
 
     // Try as collection + slug
-    // Last segment of an API-validated LogicalPath; safe to cast (no slashes, no traversal)
-    const slug = pathSegments[pathSegments.length - 1] as EntrySlug
+    // Last segment of an API-validated LogicalPath; normalize to lowercase
+    const slug = pathSegments[pathSegments.length - 1].toLowerCase() as Slug
     const collectionPath = pathSegments.slice(0, -1).join('/')
     const normalizedCollection = normalizeFilesystemPath(collectionPath)
     const collection = this.schemaIndex.get(normalizedCollection)
@@ -319,7 +319,7 @@ export class ContentStore {
 
   async read(
     collectionPath: LogicalPath,
-    slug: EntrySlug | '' = '',
+    slug: Slug | '' = '',
     options: { resolveReferences?: boolean } = {},
   ): Promise<ContentDocument> {
     const schemaItem = this.assertSchemaItem(collectionPath)
@@ -374,7 +374,7 @@ export class ContentStore {
 
   async write(
     collectionPath: LogicalPath,
-    slug: EntrySlug | '' = '',
+    slug: Slug | '' = '',
     input: WriteInput,
     entryTypeName?: string,
   ): Promise<ContentDocument> {
@@ -488,7 +488,7 @@ export class ContentStore {
    * Get the ID for an entry given its collection and slug.
    * Returns null if no ID exists yet.
    */
-  async getIdForEntry(collectionPath: LogicalPath, slug: EntrySlug): Promise<ContentId | null> {
+  async getIdForEntry(collectionPath: LogicalPath, slug: Slug): Promise<ContentId | null> {
     const idIndex = await this.idIndex()
     const { relativePath } = await this.buildPaths(this.assertCollection(collectionPath), slug)
     return idIndex.findByPath(relativePath)
@@ -497,7 +497,7 @@ export class ContentStore {
   /**
    * Delete an entry and remove it from the index.
    */
-  async delete(collectionPath: LogicalPath, slug: EntrySlug): Promise<void> {
+  async delete(collectionPath: LogicalPath, slug: Slug): Promise<void> {
     const idIndex = await this.idIndex()
     const collection = this.assertCollection(collectionPath)
     const { absolutePath, relativePath } = await this.buildPaths(collection, slug)
@@ -526,22 +526,17 @@ export class ContentStore {
    */
   async renameEntry(
     collectionPath: LogicalPath,
-    currentSlug: EntrySlug,
-    newSlug: EntrySlug,
+    currentSlug: Slug,
+    newSlug: Slug,
   ): Promise<{ newPath: LogicalPath }> {
     const idIndex = await this.idIndex()
     const collection = this.assertCollection(collectionPath)
 
-    // Validate new slug format
+    // Validate new slug format (Slug branded type guarantees lowercase alphanumeric+hyphens via parseSlug)
     validateSlug(newSlug)
     const safeNewSlug = newSlug.replace(/^\/+/, '')
     if (!safeNewSlug) {
       throw new ContentStoreError('New slug cannot be empty')
-    }
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(safeNewSlug)) {
-      throw new ContentStoreError(
-        'Slug must start with a letter or number and contain only lowercase letters, numbers, and hyphens',
-      )
     }
 
     // Get current file path
@@ -625,7 +620,7 @@ export class ContentStore {
     Array<{
       relativePath: PhysicalPath
       collection: LogicalPath
-      slug: EntrySlug
+      slug: Slug
     }>
   > {
     const idIndex = await this.idIndex()
@@ -665,7 +660,7 @@ export class ContentStore {
     const entries: Array<{
       relativePath: PhysicalPath
       collection: LogicalPath
-      slug: EntrySlug
+      slug: Slug
     }> = []
 
     for (const location of baseEntries) {
