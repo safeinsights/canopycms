@@ -1,6 +1,23 @@
-import type { EntrySchema } from './config'
+import type { EntrySchema, FieldConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
-import { countTitleFields } from './utils/title-field'
+import { countTitleFields, findInvalidTitleFields } from './utils/title-field'
+
+/** Look up a field's type by dotted path (e.g., "meta.order"). */
+function findFieldType(fields: readonly FieldConfig[], dottedPath: string): string {
+  const parts = dottedPath.split('.')
+  let current: readonly FieldConfig[] = fields
+  for (let i = 0; i < parts.length; i++) {
+    const field = current.find((f) => f.name === parts[i])
+    if (!field) return 'unknown'
+    if (i === parts.length - 1) return field.type
+    if (field.type === 'object' && 'fields' in field && field.fields) {
+      current = field.fields
+    } else {
+      return 'unknown'
+    }
+  }
+  return 'unknown'
+}
 
 /**
  * Creates a type-safe entry schema registry with runtime validation.
@@ -46,6 +63,12 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
     if (titleCount > 1) {
       throw new Error(
         `Entry schema registry entry "${key}" has ${titleCount} fields with isTitle: true, but at most one is allowed`,
+      )
+    }
+    const invalidTitleFields = findInvalidTitleFields(schema)
+    if (invalidTitleFields.length > 0) {
+      throw new Error(
+        `Entry schema registry entry "${key}": field "${invalidTitleFields[0]}" has isTitle: true but is type "${findFieldType(schema, invalidTitleFields[0])}" — isTitle is only valid on string fields`,
       )
     }
   }

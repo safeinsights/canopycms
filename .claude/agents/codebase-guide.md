@@ -29,23 +29,23 @@ The codebase uses a modular structure with clear separation:
 
 **Core Modules** (packages/canopycms/src/):
 
-| Module          | Location            | Purpose                                                                                                |
-| --------------- | ------------------- | ------------------------------------------------------------------------------------------------------ |
-| authorization/  | src/authorization/  | Unified access control (branch + path permissions, groups)                                             |
-| config/         | src/config/         | Configuration types, Zod schemas, validation                                                           |
-| schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                                 |
-| paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                                          |
-| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, dev)                                                                  |
-| api/            | src/api/            | API handlers, middleware, route builder                                                                |
-| http/           | src/http/           | HTTP request handling (router, types)                                                                  |
-| editor/         | src/editor/         | React editor components, contexts, hooks                                                               |
-| validation/     | src/validation/     | Validation utilities (field traversal, references)                                                     |
-| utils/          | src/utils/          | Shared utilities (error handling, debug logging, title-field extraction)                               |
-| auth/           | src/auth/           | Authentication plugin interface and cache system                                                       |
-| worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                 |
-| task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                      |
-| cli/            | src/cli/            | CLI bootstrapping (`pnpm exec canopycms init`, `init-deploy aws`, `worker run-once`, `sync`)           |
-| test-utils/     | src/test-utils/     | Shared test utilities (mock factories, console spy, git repo init); exported as `canopycms/test-utils` |
+| Module          | Location            | Purpose                                                                                                  |
+| --------------- | ------------------- | -------------------------------------------------------------------------------------------------------- |
+| authorization/  | src/authorization/  | Unified access control (branch + path permissions, groups)                                               |
+| config/         | src/config/         | Configuration types, Zod schemas, validation                                                             |
+| schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                                   |
+| paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                                            |
+| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, dev)                                                                    |
+| api/            | src/api/            | API handlers, middleware, route builder                                                                  |
+| http/           | src/http/           | HTTP request handling (router, types)                                                                    |
+| editor/         | src/editor/         | React editor components, contexts, hooks                                                                 |
+| validation/     | src/validation/     | Validation utilities (field traversal, references)                                                       |
+| utils/          | src/utils/          | Shared utilities (error handling, debug logging, title-field: resolveEntryTitle, findInvalidTitleFields) |
+| auth/           | src/auth/           | Authentication plugin interface and cache system                                                         |
+| worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                   |
+| task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                        |
+| cli/            | src/cli/            | CLI bootstrapping (`pnpm exec canopycms init`, `init-deploy aws`, `worker run-once`, `sync`)             |
+| test-utils/     | src/test-utils/     | Shared test utilities (mock factories, console spy, git repo init); exported as `canopycms/test-utils`   |
 
 **Top-level files** (intentionally not modularized):
 
@@ -66,7 +66,7 @@ The codebase uses a modular structure with clear separation:
 | content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs)                                         |
 | content-id-index.ts      | Content ID indexing                                                                                           |
 | entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                             |
-| entry-schema-registry.ts | Entry schema registry for reusable field definitions                                                          |
+| entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle only on string fields                 |
 | git-manager.ts           | Git operations wrapper                                                                                        |
 | github-service.ts        | GitHub API integration                                                                                        |
 | comment-store.ts         | Comment persistence                                                                                           |
@@ -405,21 +405,21 @@ Next.js-specific adapter layer. Provides the catch-all API handler, context crea
 
 ### Key Files
 
-| File                     | Purpose                                                           |
-| ------------------------ | ----------------------------------------------------------------- |
-| content-store.ts         | Content persistence (write operations)                            |
-| content-reader.ts        | Content reading                                                   |
-| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema) |
-| entry-schema-registry.ts | Entry schema registry for reusable field definitions              |
-| content-id-index.ts      | Content ID indexing for lookups                                   |
-| reference-resolver.ts    | Reference field resolution                                        |
+| File                     | Purpose                                                                                       |
+| ------------------------ | --------------------------------------------------------------------------------------------- |
+| content-store.ts         | Content persistence (write operations)                                                        |
+| content-reader.ts        | Content reading                                                                               |
+| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                             |
+| entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle only on string fields |
+| content-id-index.ts      | Content ID indexing for lookups                                                               |
+| reference-resolver.ts    | Reference field resolution                                                                    |
 
 ### Content Model
 
 - **Collections**: Containers for entries (posts, authors)
 - **Entry Types**: Define content structure within collections; `maxItems: 1` for single-instance entries
 - **Fields**: text, select, reference, object, code, block, markdown
-- **Field flags**: `isTitle` (marks one field per schema as the display title; used by `extractTitleFromSchema` in `utils/title-field.ts`)
+- **Field flags**: `isTitle` (marks one string-type field per schema as the display title; validated at registry load time; used by `resolveEntryTitle` fallback chain in `utils/title-field.ts`)
 - **Format**: MD/MDX/JSON with frontmatter (gray-matter)
 
 ## Content Tree
@@ -430,10 +430,10 @@ Builds a tree of content nodes from the schema and filesystem for adopter use ca
 
 ### Key Files
 
-| File               | Purpose                                                                                    |
-| ------------------ | ------------------------------------------------------------------------------------------ |
-| content-tree.ts    | `buildContentTree()` function and `ContentTreeNode` / options types                        |
-| content-listing.ts | `listEntries()`, `listCollectionEntries()`, `sortByOrder()`, `parseTypedFilename()` shared |
+| File               | Purpose                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------- |
+| content-tree.ts    | `buildContentTree()` function and `ContentTreeNode` / options types                                           |
+| content-listing.ts | `listEntries()`, `listCollectionEntries()`, `sortByOrder()`, `parseTypedFilename()`, `readEntryData()` shared |
 
 ### BuildContentTreeOptions<T>
 
@@ -456,16 +456,16 @@ Without `sort`: children are ordered by the collection's `order` array first, th
 
 ### ListEntriesOptions\<T\>
 
-| Option   | Default             | Description                                           |
-| -------- | ------------------- | ----------------------------------------------------- |
-| extract  | none (full raw)     | Transform raw data; for md/mdx, raw.body has markdown |
-| filter   | none                | Exclude entries (runs after extract)                  |
-| rootPath | contentRoot name    | Starting collection path (skips out-of-scope entries) |
-| sort     | none (insert order) | Custom sort comparator                                |
+| Option   | Default          | Description                                           |
+| -------- | ---------------- | ----------------------------------------------------- |
+| extract  | none (full raw)  | Transform raw data; for md/mdx, raw.body has markdown |
+| filter   | none             | Exclude entries (runs after extract)                  |
+| rootPath | contentRoot name | Starting collection path (skips out-of-scope entries) |
+| sort     | entryPath alpha  | Custom sort comparator; default sorts by entryPath    |
 
 **Access patterns**: standalone function from `canopycms/server`, method on `CanopyContext`, types from `canopycms`.
 
-**Note**: `readEntryData()` now includes markdown body content in `data.body` for md/mdx entries.
+**Note**: `readEntryData()` now includes markdown body content in `data.body` for md/mdx entries. Logs a warning on read/parse failure instead of silently returning `{}`.
 
 ## Configuration Module
 

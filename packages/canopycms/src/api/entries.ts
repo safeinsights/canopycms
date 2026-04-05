@@ -7,7 +7,7 @@ import type { BranchContextWithSchema } from '../types'
 import { defineEndpoint } from './route-builder'
 import { normalizeFilesystemPath, parseSlug, parseLogicalPath } from '../paths'
 import { isNotFoundError } from '../utils/error'
-import { extractTitleFromSchema, humanizeSlug } from '../utils/title-field'
+import { resolveEntryTitle } from '../utils/title-field'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema } from './validators'
 import { SchemaOps } from '../schema/schema-store'
@@ -78,25 +78,17 @@ const listEntriesParamsSchema = z.object({
   recursive: z.boolean().optional(),
 })
 
-/** Extract a display title from entry data using the isTitle field, conventions, or fallbacks. */
+/** Extract a display title from entry data using the centralized fallback chain. */
 const extractTitle = (
   data: Record<string, unknown>,
   entryType?: EntryTypeConfig,
   slug?: string,
-): string => {
-  // 1. Schema-marked isTitle field
-  if (entryType?.schema) {
-    const schemaTitle = extractTitleFromSchema(entryType.schema, data)
-    if (schemaTitle) return schemaTitle
-  }
-  // 2. Convention: data.title or data.name
-  const title = data.title ?? data.name
-  if (typeof title === 'string') return title
-  // 3. Entry type label
-  if (entryType?.label) return entryType.label
-  // 4. Humanized slug
-  return slug ? humanizeSlug(slug) : 'Untitled'
-}
+): string =>
+  resolveEntryTitle(data, {
+    schema: entryType?.schema,
+    entryTypeLabel: entryType?.label,
+    slug,
+  })
 
 /** Map a CollectionListItem to the API's CollectionItem type. */
 const toCollectionItem = (
@@ -153,6 +145,41 @@ const listCollectionEntriesRecursive = async (
   return results.flat()
 }
 
+/** Apply access control and search filtering to a list of entries. */
+const filterWithAccessControl = async (
+  items: CollectionItem[],
+  branchContext: BranchContextWithSchema,
+  root: string,
+  ctx: ApiContext,
+  req: ApiRequest,
+  search: string | undefined,
+): Promise<CollectionItem[]> => {
+  const results: CollectionItem[] = []
+  for (const item of items) {
+    const readAccess = await ctx.services.checkContentAccess(
+      branchContext,
+      root,
+      item.physicalPath,
+      req.user,
+      'read',
+    )
+    if (!readAccess.allowed) continue
+    const editAccess = await ctx.services.checkContentAccess(
+      branchContext,
+      root,
+      item.physicalPath,
+      req.user,
+      'edit',
+    )
+    if (search) {
+      const haystack = `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
+      if (!haystack.includes(search)) continue
+    }
+    results.push({ ...item, canEdit: editAccess.allowed })
+  }
+  return results
+}
+
 const listEntriesHandler = async (
   gc: { branchContext: BranchContextWithSchema },
   ctx: ApiContext,
@@ -185,7 +212,7 @@ const listEntriesHandler = async (
   const search = params.q?.toLowerCase()
   const recursive = params.recursive ?? false
 
-  const entries: CollectionItem[] = []
+  let entries: CollectionItem[] = []
 
   if (recursive && targetPath) {
     // Recursive mode: list entries from target collection and all its children
@@ -194,32 +221,7 @@ const listEntriesHandler = async (
       // For recursive mode, we can't easily apply per-collection ordering
       // Sort alphabetically for now (ordering is collection-specific)
       items.sort((a, b) => a.slug.localeCompare(b.slug))
-      for (const item of items) {
-        // Use the physicalPath for access control
-        const readAccess = await ctx.services.checkContentAccess(
-          branchContext,
-          root,
-          item.physicalPath,
-          req.user,
-          'read',
-        )
-        if (!readAccess.allowed) continue
-        const editAccess = await ctx.services.checkContentAccess(
-          branchContext,
-          root,
-          item.physicalPath,
-          req.user,
-          'edit',
-        )
-        if (search) {
-          const haystack =
-            `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
-          if (!haystack.includes(search)) {
-            continue
-          }
-        }
-        entries.push({ ...item, canEdit: editAccess.allowed })
-      }
+      entries = await filterWithAccessControl(items, branchContext, root, ctx, req, search)
     } catch (err) {
       if (err instanceof ContentStoreError) {
         return { ok: false, status: 400, error: err.message }
@@ -236,32 +238,8 @@ const listEntriesHandler = async (
         const items = await listCollectionEntries(root, item)
         // Sort by collection's order array (items in order first, then alphabetically)
         sortByOrder(items, item.order, (i) => i.slug)
-        for (const entry of items) {
-          // Use the physicalPath for access control
-          const readAccess = await ctx.services.checkContentAccess(
-            branchContext,
-            root,
-            entry.physicalPath,
-            req.user,
-            'read',
-          )
-          if (!readAccess.allowed) continue
-          const editAccess = await ctx.services.checkContentAccess(
-            branchContext,
-            root,
-            entry.physicalPath,
-            req.user,
-            'edit',
-          )
-          if (search) {
-            const haystack =
-              `${entry.slug} ${entry.title ?? ''} ${entry.collectionName ?? ''}`.toLowerCase()
-            if (!haystack.includes(search)) {
-              continue
-            }
-          }
-          entries.push({ ...entry, canEdit: editAccess.allowed })
-        }
+        const filtered = await filterWithAccessControl(items, branchContext, root, ctx, req, search)
+        entries.push(...filtered)
       } catch (err) {
         if (err instanceof ContentStoreError) {
           return { ok: false, status: 400, error: err.message }

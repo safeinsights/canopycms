@@ -42,6 +42,36 @@ export function humanizeSlug(slug: string): string {
 }
 
 /**
+ * Resolve a display title for an entry using the full fallback chain:
+ * 1. Schema-marked isTitle field (if schema provided)
+ * 2. Convention: data.title or data.name
+ * 3. Entry type label (if provided)
+ * 4. Humanized slug (if provided)
+ * 5. "Untitled"
+ */
+export function resolveEntryTitle(
+  data: Record<string, unknown>,
+  options?: {
+    schema?: readonly FieldConfig[]
+    entryTypeLabel?: string
+    slug?: string
+  },
+): string {
+  // 1. Schema-marked isTitle field
+  if (options?.schema) {
+    const schemaTitle = extractTitleFromSchema(options.schema, data)
+    if (schemaTitle) return schemaTitle
+  }
+  // 2. Convention: data.title or data.name
+  const title = data.title ?? data.name
+  if (typeof title === 'string') return title
+  // 3. Entry type label
+  if (options?.entryTypeLabel) return options.entryTypeLabel
+  // 4. Humanized slug
+  return options?.slug ? humanizeSlug(options.slug) : 'Untitled'
+}
+
+/**
  * Count the number of fields marked `isTitle: true` in a schema, recursing into objects.
  * Used for validation — at most one field per schema should be marked.
  */
@@ -54,4 +84,25 @@ export function countTitleFields(fields: readonly FieldConfig[]): number {
     }
   }
   return count
+}
+
+/**
+ * Validate that all isTitle fields in a schema are string type.
+ * Returns an array of field names that have isTitle on a non-string type.
+ */
+export function findInvalidTitleFields(
+  fields: readonly FieldConfig[],
+  parentPath?: string,
+): string[] {
+  const invalid: string[] = []
+  for (const field of fields) {
+    const fieldPath = parentPath ? `${parentPath}.${field.name}` : field.name
+    if (field.isTitle && field.type !== 'string') {
+      invalid.push(fieldPath)
+    }
+    if (field.type === 'object' && 'fields' in field && field.fields) {
+      invalid.push(...findInvalidTitleFields(field.fields, fieldPath))
+    }
+  }
+  return invalid
 }

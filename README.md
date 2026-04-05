@@ -1047,7 +1047,7 @@ export async function generateStaticParams() {
 | ---------------- | ---------- | ----------------------------------------------------------------- |
 | `pathSegments`   | `string[]` | URL path segments (e.g., `['researchers', 'guides', 'glossary']`) |
 | `slug`           | `string`   | Entry slug within its collection                                  |
-| `logicalPath`    | `string`   | Full CMS logical path                                             |
+| `entryPath`      | `string`   | Full CMS logical path                                             |
 | `entryId`        | `string`   | 12-char Base58 content ID from the filename                       |
 | `collectionId`   | `string?`  | Collection content ID (if present)                                |
 | `collectionPath` | `string`   | Logical path of the parent collection                             |

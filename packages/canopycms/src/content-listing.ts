@@ -14,8 +14,11 @@ import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from './config'
 import { getFormatExtension } from './utils/format'
 import { resolveCollectionPath } from './content-id-index'
 import { validateAndNormalizePath } from './paths'
-import { isNotFoundError } from './utils/error'
+import { isNotFoundError, getErrorMessage } from './utils/error'
+import { createDebugLogger } from './utils/debug'
 import { isValidId } from './id'
+
+const log = createDebugLogger({ prefix: 'ContentListing' })
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from './paths/types'
 import { ContentStoreError } from './content-store'
 
@@ -70,7 +73,8 @@ export const readEntryData = async (
       data.body = parsed.content
     }
     return data
-  } catch {
+  } catch (err: unknown) {
+    log.warn('readEntryData', `Failed to read entry data from ${filePath}: ${getErrorMessage(err)}`)
     return {}
   }
 }
@@ -122,8 +126,8 @@ export interface ListEntriesItem<T = Record<string, unknown>> {
   pathSegments: string[]
   /** Entry slug within its collection */
   slug: Slug
-  /** Logical CMS path */
-  logicalPath: LogicalPath
+  /** Logical CMS path for this entry */
+  entryPath: LogicalPath
   /** Entry's content ID (12-char Base58 from filename) */
   entryId: ContentId
   /** Collection's content ID (12-char Base58 from directory name) */
@@ -149,7 +153,7 @@ export interface ListEntriesOptions<T = Record<string, unknown>> {
    */
   extract?: (
     raw: Record<string, unknown>,
-    meta: { logicalPath: LogicalPath; entryType: string; format: ContentFormat },
+    meta: { entryPath: LogicalPath; entryType: string; format: ContentFormat },
   ) => T
   /**
    * Filter entries. Return false to exclude.
@@ -215,7 +219,7 @@ export async function listEntries<T = Record<string, unknown>>(
 
       const raw = entry.data
       const meta = {
-        logicalPath: entry.logicalPath,
+        entryPath: entry.logicalPath,
         entryType: entry.entryType,
         format: entry.format,
       }
@@ -224,7 +228,7 @@ export async function listEntries<T = Record<string, unknown>>(
       const item: ListEntriesItem<T> = {
         pathSegments,
         slug: entry.slug,
-        logicalPath: entry.logicalPath,
+        entryPath: entry.logicalPath,
         entryId: entry.contentId,
         collectionId: collection.contentId,
         collectionPath: entry.collectionPath,
@@ -240,6 +244,9 @@ export async function listEntries<T = Record<string, unknown>>(
 
   if (customSort) {
     items.sort(customSort)
+  } else {
+    // Default: sort by entryPath for deterministic output across runs
+    items.sort((a, b) => a.entryPath.localeCompare(b.entryPath))
   }
 
   return items
@@ -334,7 +341,8 @@ export const listCollectionEntries = async (
 
       const parsed = parseTypedFilename(file.name, entryTypes)
       if (!parsed) {
-        console.warn(
+        log.warn(
+          'listCollectionEntries',
           `Skipping file with unrecognized filename format: ${file.name} (expected {type}.{slug}.{id}.{ext} with a known entry type and valid 12-char Base58 ID)`,
         )
         return null

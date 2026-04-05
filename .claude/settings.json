@@ -33,7 +33,8 @@
       "WebFetch(domain:clerk.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:registry.npmjs.org)",
-      "mcp__playwright__browser_navigate"
+      "mcp__playwright__browser_navigate",
+      "Edit(.claude/agents/codebase-guide.md)"
     ],
     "additionalDirectories": ["/tmp"]
   }
