@@ -61,6 +61,8 @@ export interface BaseFieldConfig {
   description?: string
   required?: boolean
   list?: boolean
+  /** Mark this field as the display title for entries using this schema. At most one field per schema. */
+  isTitle?: boolean
 }
 
 export interface PrimitiveFieldConfig extends BaseFieldConfig {

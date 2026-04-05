@@ -616,7 +616,7 @@ export class ContentStore {
    * Returns array of entry metadata (relativePath, collection, slug).
    * Returns empty array if the collection doesn't exist.
    */
-  async listCollectionEntries(collectionPath: LogicalPath): Promise<
+  async getCollectionEntryPaths(collectionPath: LogicalPath): Promise<
     Array<{
       relativePath: PhysicalPath
       collection: LogicalPath

@@ -20,6 +20,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - [Content Identification and References](#content-identification--references)
 - [Integration Guide](#integration-guide)
 - [Content Tree Builder](#content-tree-builder)
+- [Listing Entries](#listing-entries)
 - [Features](#features)
 - [AI-Ready Content](#ai-ready-content)
 - [Using the Editor](#using-the-editor)
@@ -651,6 +652,7 @@ const config = defineCanopyConfig({
   label: 'Field Label',   // Optional: display label (defaults to name)
   required: true,         // Optional: validation requirement
   list: true,             // Optional: allow multiple values
+  isTitle: true,          // Optional: use this field as the display title in the editor sidebar
 }
 ```
 
@@ -658,7 +660,7 @@ const config = defineCanopyConfig({
 
 ```typescript
 const schema = defineEntrySchema([
-  { name: 'title', type: 'string', label: 'Title', required: true },
+  { name: 'title', type: 'string', label: 'Title', required: true, isTitle: true },
   { name: 'body', type: 'markdown', label: 'Content' },
   {
     name: 'author',
@@ -682,7 +684,7 @@ const schema = defineEntrySchema([
 
 ```typescript
 const schema = defineEntrySchema([
-  { name: 'title', type: 'string', label: 'Title', required: true },
+  { name: 'title', type: 'string', label: 'Title', required: true, isTitle: true },
   { name: 'views', type: 'number', label: 'View Count' },
   { name: 'published', type: 'boolean', label: 'Published' },
   { name: 'publishDate', type: 'datetime', label: 'Publish Date' },
@@ -860,6 +862,7 @@ export default async function PostPage({ params, searchParams }) {
 
 - `read()`: Read content with automatic auth and branch resolution
 - `buildContentTree()`: Build a typed content tree for navigation, sitemaps, etc. (see [Content Tree Builder](#content-tree-builder))
+- `listEntries()`: Get a flat array of all entries for `generateStaticParams`, search indexes, sitemaps (see [Listing Entries](#listing-entries))
 - `user`: Current authenticated user (with bootstrap admin groups applied)
 - `services`: Underlying CanopyCMS services for advanced use cases
 
@@ -1016,6 +1019,108 @@ const tree = await canopy.buildContentTree(options)
 
 // Raw function (advanced — requires branchRoot, flatSchema, contentRootName)
 import { buildContentTree } from 'canopycms/server'
+```
+
+## Listing Entries
+
+`listEntries()` returns a flat array of every content entry in your site. It is designed for `generateStaticParams`, search indexing, sitemaps, and any other case where you need to iterate over all content without the tree hierarchy.
+
+### Basic Usage
+
+```typescript
+// app/posts/[...slug]/page.tsx
+import { getCanopy } from '../../lib/canopy'
+
+export async function generateStaticParams() {
+  const canopy = await getCanopy()
+  const entries = await canopy.listEntries()
+
+  return entries.map((entry) => ({
+    slug: entry.pathSegments,
+  }))
+}
+```
+
+### Each Entry Includes
+
+| Field            | Type       | Description                                                       |
+| ---------------- | ---------- | ----------------------------------------------------------------- |
+| `pathSegments`   | `string[]` | URL path segments (e.g., `['researchers', 'guides', 'glossary']`) |
+| `slug`           | `string`   | Entry slug within its collection                                  |
+| `entryPath`      | `string`   | Full CMS logical path                                             |
+| `entryId`        | `string`   | 12-char Base58 content ID from the filename                       |
+| `collectionId`   | `string?`  | Collection content ID (if present)                                |
+| `collectionPath` | `string`   | Logical path of the parent collection                             |
+| `entryType`      | `string`   | Entry type name                                                   |
+| `format`         | `string`   | Content format (`json`, `md`, or `mdx`)                           |
+| `data`           | `T`        | Entry data (frontmatter + body for md/mdx, JSON fields for json)  |
+
+For md/mdx entries, `data.body` contains the raw markdown content.
+
+### Extracting Custom Data
+
+Use the `extract` callback to control what ends up in `data`. This is useful for dropping large fields (like body) from memory when you only need metadata:
+
+```typescript
+interface PostMeta {
+  title: string
+  publishDate: string
+}
+
+const entries = await canopy.listEntries<PostMeta>({
+  extract: (raw) => ({
+    title: (raw.title as string) ?? '',
+    publishDate: (raw.publishDate as string) ?? '',
+  }),
+})
+
+// entries[0].data.title is typed as string
+```
+
+### Filtering and Sorting
+
+```typescript
+const entries = await canopy.listEntries<PostMeta>({
+  extract: (raw) => ({
+    title: (raw.title as string) ?? '',
+    publishDate: (raw.publishDate as string) ?? '',
+  }),
+  filter: (entry) => entry.entryType === 'post',
+  sort: (a, b) => b.data.publishDate.localeCompare(a.data.publishDate),
+})
+```
+
+### Scoping to a Subtree
+
+Use `rootPath` to only load entries under a specific collection path, skipping everything else:
+
+```typescript
+const guideEntries = await canopy.listEntries({
+  rootPath: 'content/docs/guides',
+})
+```
+
+### Options Reference
+
+| Option     | Type                                                       | Default      | Description                                       |
+| ---------- | ---------------------------------------------------------- | ------------ | ------------------------------------------------- |
+| `extract`  | `(raw, meta) => T`                                         | -            | Transform raw data; controls what `data` contains |
+| `filter`   | `(entry: ListEntriesItem<T>) => boolean`                   | -            | Return false to exclude an entry                  |
+| `rootPath` | `string`                                                   | Content root | Scope to a subtree (e.g., `"content/docs"`)       |
+| `sort`     | `(a: ListEntriesItem<T>, b: ListEntriesItem<T>) => number` | -            | Custom sort comparator                            |
+
+### Imports
+
+```typescript
+// Types (for use in your components)
+import type { ListEntriesItem, ListEntriesOptions } from 'canopycms'
+
+// Via CanopyContext (recommended)
+const canopy = await getCanopy()
+const entries = await canopy.listEntries(options)
+
+// Raw function (advanced -- requires branchRoot, flatSchema, contentRootName)
+import { listEntries } from 'canopycms/server'
 ```
 
 ## Features

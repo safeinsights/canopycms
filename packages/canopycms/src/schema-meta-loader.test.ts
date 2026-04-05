@@ -443,5 +443,71 @@ describe('schema-meta-loader', () => {
 
       expect(result.collections).toBeUndefined()
     })
+
+    it('should throw error when md/mdx schema has a field named "body"', () => {
+      const registryWithBody = {
+        ...mockSchemaRegistry,
+        bodySchema: [
+          { name: 'title', label: 'Title', type: 'string' as const },
+          { name: 'body', label: 'Body', type: 'string' as const },
+        ],
+      } satisfies Record<string, readonly FieldConfig[]>
+
+      const metaFiles = {
+        root: null,
+        collections: [
+          {
+            name: 'posts',
+            label: 'Posts',
+            path: 'posts',
+            entries: [
+              {
+                name: 'post',
+                format: 'md' as const,
+                schema: 'bodySchema',
+              },
+            ],
+            order: [],
+          },
+        ],
+      }
+
+      expect(() => {
+        resolveCollectionReferences(metaFiles, registryWithBody)
+      }).toThrow('"body" is reserved for markdown content')
+    })
+
+    it('should allow "body" field name in json format schemas', () => {
+      const registryWithBody = {
+        ...mockSchemaRegistry,
+        bodySchema: [
+          { name: 'title', label: 'Title', type: 'string' as const },
+          { name: 'body', label: 'Body', type: 'string' as const },
+        ],
+      } satisfies Record<string, readonly FieldConfig[]>
+
+      const metaFiles = {
+        root: null,
+        collections: [
+          {
+            name: 'products',
+            label: 'Products',
+            path: 'products',
+            entries: [
+              {
+                name: 'product',
+                format: 'json' as const,
+                schema: 'bodySchema',
+              },
+            ],
+            order: [],
+          },
+        ],
+      }
+
+      // Should not throw for json format
+      const result = resolveCollectionReferences(metaFiles, registryWithBody)
+      expect(result.collections).toHaveLength(1)
+    })
   })
 })

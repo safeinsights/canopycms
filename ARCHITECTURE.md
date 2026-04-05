@@ -155,7 +155,7 @@ Some files remain at the source root because they represent core domain concepts
 **Content:**
 
 - Content ID index (bidirectional ID-to-path mapping)
-- Content listing (shared entry-listing utilities: filename parsing, entry data reading, ordering)
+- Content listing (shared entry-listing utilities: filename parsing, entry data reading, ordering, flat entry listing)
 - Content reader (authenticated content access)
 - Content store (file-based content persistence)
 - Content tree (build-time content tree builder for adopter navigation, sitemaps, etc.)
@@ -487,6 +487,12 @@ The schema is defined as a `RootCollectionConfig` with two optional properties:
 - **default**: Whether this is the default type for "Add" button
 
 **Collections** contain entry types and can nest other collections. The root itself is a collection (the content root), creating a uniform model where every collection behaves identically.
+
+**Field flags**: Individual fields within an entry type can carry behavioral flags:
+
+- **isTitle**: Marks a field as the human-readable title for entries of this type. The editor UI, content listings, and tree builders use this to display meaningful labels instead of raw slugs. Only one field per entry type may be marked `isTitle`. The field must be a scalar (string-like) value that can be resolved at runtime, so `isTitle` is rejected on fields nested inside `list: true` object fields where the system cannot determine which array element to use.
+
+**Reserved field names**: For md/mdx entry types, the field name "body" is reserved. The system uses `body` to carry the markdown content itself (everything below the frontmatter). Schema validation rejects md/mdx entry types that define a frontmatter field named "body" to prevent collisions with the content body. JSON entry types have no such restriction since they have no separate body concept.
 
 **Key design principle**: Entry types are schema metadata, not navigable tree nodes. A collection with `entries: [{ name: 'post', ... }]` defines that entries of type "post" can be created in that collection. The entry type itself doesn't appear in navigation—only the collection does.
 
@@ -1010,6 +1016,7 @@ Calling `getContext()` returns a `CanopyContext` with:
 
 - **read()**: Content reader with user already injected, no need to pass user manually
 - **buildContentTree()**: Build-time content tree builder (see [Content Tree Builder](#content-tree-builder) below)
+- **listEntries()**: Flat content listing for static params, search indexes, sitemaps, etc. (see [Content Entry Listing](#content-entry-listing) below)
 - **services**: Access to underlying services if needed
 - **user**: Current authenticated user (with bootstrap admin groups applied)
 
@@ -1668,21 +1675,48 @@ The generic `<T>` parameter flows through the entire tree, so adopters get full 
 
 ### Shared Content Listing Layer
 
-The content tree builder and the entries API endpoint both need to list entries in a collection directory. To avoid duplication, a shared content-listing module provides the common operations: filename parsing (extracting type, slug, and ID from the `type.slug.id.ext` pattern), entry data reading (frontmatter or JSON), and ordering by a collection's order array. This extraction ensures that entry-listing behavior is consistent between the API (which returns entries for the editor UI) and the tree builder (which returns entries for build-time consumption).
+The content tree builder, the flat entry listing, and the entries API endpoint all need to list entries in a collection directory. To avoid duplication, a shared content-listing module provides the common operations: filename parsing (extracting type, slug, and ID from the `type.slug.id.ext` pattern), entry data reading (frontmatter fields plus markdown body for md/mdx, or parsed JSON), and ordering by a collection's order array. This single source of truth ensures that entry-listing behavior is consistent across the API (editor UI), the tree builder (navigation/sitemaps), and the flat listing (static params/search indexes).
 
 ### Export Strategy
 
-The `buildContentTree()` function and its types are exported from `canopycms/server` for direct use. Types only (`ContentTreeNode`, `BuildContentTreeOptions`) are also exported from the root `canopycms` entrypoint for use in adopter type definitions without importing server-side code.
+The `buildContentTree()` and `listEntries()` functions and their types are exported from `canopycms/server` for direct use. Types only (`ContentTreeNode`, `BuildContentTreeOptions`, `ListEntriesItem`, `ListEntriesOptions`) are also exported from the root `canopycms` entrypoint for use in adopter type definitions without importing server-side code.
 
-The primary access path for adopters is through the context object: `canopy.buildContentTree(options)`. This handles branch resolution (reading from the default branch) and schema setup automatically, so adopters do not need to manage branch contexts or flattened schemas themselves.
+The primary access path for adopters is through the context object: `canopy.buildContentTree(options)` and `canopy.listEntries(options)`. These handle branch resolution (reading from the default branch) and schema setup automatically, so adopters do not need to manage branch contexts or flattened schemas themselves.
 
 ### Design Rationale
 
-**Why a tree rather than a flat list?** Content in CanopyCMS is inherently hierarchical (collections contain entries and subcollections). A tree preserves this structure, which adopters need for nested navigation, breadcrumbs, and sitemap generation. Adopters can flatten the tree if they need a list.
+**Why both a tree and a flat list?** Content in CanopyCMS is inherently hierarchical (collections contain entries and subcollections). The tree preserves this structure for navigation, breadcrumbs, and sitemap generation. However, many common use cases (static params generation, search indexing, RSS feeds) naturally work with flat arrays. Rather than forcing adopters to flatten the tree themselves, `listEntries()` provides a purpose-built flat listing that is simpler and more efficient for those use cases.
 
 **Why separate from the AI content generator?** The AI content generator produces markdown files optimized for LLM consumption, with schema-aware field rendering and bundle rollups. The content tree builder returns structured data optimized for programmatic use (navigation, search indexes, routing). They serve different audiences and have different output formats, even though both walk the schema and filesystem.
 
 **Why on the context object?** Placing `buildContentTree()` on `CanopyContext` means adopters use the same `canopy` object for both content reading and tree building. The context handles branch resolution and schema access internally, keeping the adopter API surface minimal.
+
+## Content Entry Listing
+
+CanopyCMS provides a flat entry listing function (`listEntries()`) that returns all content entries as a flat array. While `buildContentTree()` produces a hierarchical tree suited for navigation and breadcrumbs, `listEntries()` is optimized for use cases where a flat collection of entries is more natural: `generateStaticParams`, search indexing, sitemaps, RSS feeds, and similar build-time concerns.
+
+### How It Works
+
+The listing function walks the flattened schema to discover all collections, reads entries from each in parallel, and returns a flat array of entry items. Each item includes structural metadata (path segments, slug, logical path, content ID, collection path, entry type, format) plus the entry's data.
+
+For md/mdx entries, the raw data includes both frontmatter fields and the markdown body content (as `data.body`). For JSON entries, it includes all parsed fields. This means adopters can access the full content of each entry without additional read calls.
+
+### Adopter Customization
+
+The listing supports the same customization pattern as the content tree builder:
+
+- **extract**: Transform raw entry data into typed custom fields. Receives the full raw data (including body for md/mdx) and entry metadata.
+- **filter**: Exclude entries from results. Runs after extract, so transformed fields are available for filtering.
+- **rootPath**: Scope the listing to a specific collection subtree for efficiency (skips loading entries outside the scope).
+- **sort**: Custom comparator for ordering results.
+
+The generic `<T>` parameter flows through, giving adopters type safety on extracted fields.
+
+### Relationship to Content Tree Builder
+
+Both `listEntries()` and `buildContentTree()` share the same underlying content listing layer for entry discovery, filename parsing, and data reading. They differ in output shape: the tree builder produces a nested hierarchy preserving parent-child relationships, while `listEntries()` produces a flat array with path segments for adopters who need to reconstruct structure themselves or do not need hierarchy at all.
+
+Both are available on the `CanopyContext` object, using the same `canopy` instance that handles branch resolution and schema access.
 
 ## Extensibility Points
 
