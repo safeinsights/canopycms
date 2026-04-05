@@ -249,8 +249,8 @@ export class ContentStore {
 
       // Build filename: use existing filename if found, or generate new one with ID
       let filename: string
-      if (existingFilename && !id) {
-        // Legacy file without embedded ID - use original filename
+      if (existingFilename) {
+        // Existing file found - use its original filename to preserve on-disk casing
         filename = existingFilename
       } else {
         // Generate new ID if needed
