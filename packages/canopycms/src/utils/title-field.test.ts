@@ -6,6 +6,7 @@ import {
   countTitleFields,
   resolveEntryTitle,
   findInvalidTitleFields,
+  findTitleFieldsInLists,
 } from './title-field'
 
 describe('extractTitleFromSchema', () => {
@@ -129,6 +130,20 @@ describe('countTitleFields', () => {
     ]
     expect(countTitleFields(fields)).toBe(2)
   })
+
+  it('skips isTitle fields inside list:true objects', () => {
+    const fields: FieldConfig[] = [
+      { name: 'heading', type: 'string', isTitle: true },
+      {
+        name: 'items',
+        type: 'object',
+        list: true,
+        fields: [{ name: 'title', type: 'string', isTitle: true }],
+      },
+    ]
+    // Only counts the top-level heading, not the one inside the list object
+    expect(countTitleFields(fields)).toBe(1)
+  })
 })
 
 describe('resolveEntryTitle', () => {
@@ -202,5 +217,69 @@ describe('findInvalidTitleFields', () => {
       },
     ]
     expect(findInvalidTitleFields(fields)).toEqual(['meta.order'])
+  })
+
+  it('skips list:true object fields', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'items',
+        type: 'object',
+        list: true,
+        fields: [{ name: 'label', type: 'number', isTitle: true }],
+      },
+    ]
+    // findInvalidTitleFields skips list objects — findTitleFieldsInLists handles those
+    expect(findInvalidTitleFields(fields)).toEqual([])
+  })
+})
+
+describe('findTitleFieldsInLists', () => {
+  it('returns empty array when no list objects exist', () => {
+    const fields: FieldConfig[] = [
+      { name: 'title', type: 'string', isTitle: true },
+      { name: 'body', type: 'markdown' },
+    ]
+    expect(findTitleFieldsInLists(fields)).toEqual([])
+  })
+
+  it('finds isTitle inside a list:true object', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'items',
+        type: 'object',
+        list: true,
+        fields: [{ name: 'title', type: 'string', isTitle: true }],
+      },
+    ]
+    expect(findTitleFieldsInLists(fields)).toEqual(['items.title'])
+  })
+
+  it('does not flag isTitle inside a non-list object', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'hero',
+        type: 'object',
+        fields: [{ name: 'title', type: 'string', isTitle: true }],
+      },
+    ]
+    expect(findTitleFieldsInLists(fields)).toEqual([])
+  })
+
+  it('finds deeply nested isTitle inside list object', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'sections',
+        type: 'object',
+        list: true,
+        fields: [
+          {
+            name: 'header',
+            type: 'object',
+            fields: [{ name: 'heading', type: 'string', isTitle: true }],
+          },
+        ],
+      },
+    ]
+    expect(findTitleFieldsInLists(fields)).toEqual(['sections.header.heading'])
   })
 })

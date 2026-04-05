@@ -73,13 +73,14 @@ export function resolveEntryTitle(
 
 /**
  * Count the number of fields marked `isTitle: true` in a schema, recursing into objects.
+ * Skips `list: true` objects since runtime title extraction cannot resolve array values.
  * Used for validation — at most one field per schema should be marked.
  */
 export function countTitleFields(fields: readonly FieldConfig[]): number {
   let count = 0
   for (const field of fields) {
     if (field.isTitle) count++
-    if (field.type === 'object' && 'fields' in field && field.fields) {
+    if (field.type === 'object' && 'fields' in field && field.fields && !field.list) {
       count += countTitleFields(field.fields)
     }
   }
@@ -88,6 +89,7 @@ export function countTitleFields(fields: readonly FieldConfig[]): number {
 
 /**
  * Validate that all isTitle fields in a schema are string type.
+ * Skips `list: true` objects (those are caught by findTitleFieldsInLists).
  * Returns an array of field names that have isTitle on a non-string type.
  */
 export function findInvalidTitleFields(
@@ -100,9 +102,45 @@ export function findInvalidTitleFields(
     if (field.isTitle && field.type !== 'string') {
       invalid.push(fieldPath)
     }
-    if (field.type === 'object' && 'fields' in field && field.fields) {
+    if (field.type === 'object' && 'fields' in field && field.fields && !field.list) {
       invalid.push(...findInvalidTitleFields(field.fields, fieldPath))
     }
   }
   return invalid
+}
+
+/**
+ * Find isTitle fields inside `list: true` object fields, where they can never resolve.
+ * Returns dotted paths of such fields.
+ */
+export function findTitleFieldsInLists(
+  fields: readonly FieldConfig[],
+  parentPath?: string,
+): string[] {
+  const found: string[] = []
+  for (const field of fields) {
+    const fieldPath = parentPath ? `${parentPath}.${field.name}` : field.name
+    if (field.type === 'object' && 'fields' in field && field.fields) {
+      if (field.list) {
+        // Any isTitle inside a list object is invalid — collect them
+        found.push(...collectAllTitleFields(field.fields, fieldPath))
+      } else {
+        found.push(...findTitleFieldsInLists(field.fields, fieldPath))
+      }
+    }
+  }
+  return found
+}
+
+/** Collect all isTitle fields recursively (used inside list context). */
+function collectAllTitleFields(fields: readonly FieldConfig[], parentPath: string): string[] {
+  const found: string[] = []
+  for (const field of fields) {
+    const fieldPath = `${parentPath}.${field.name}`
+    if (field.isTitle) found.push(fieldPath)
+    if (field.type === 'object' && 'fields' in field && field.fields) {
+      found.push(...collectAllTitleFields(field.fields, fieldPath))
+    }
+  }
+  return found
 }

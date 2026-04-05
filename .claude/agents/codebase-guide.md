@@ -29,52 +29,52 @@ The codebase uses a modular structure with clear separation:
 
 **Core Modules** (packages/canopycms/src/):
 
-| Module          | Location            | Purpose                                                                                                  |
-| --------------- | ------------------- | -------------------------------------------------------------------------------------------------------- |
-| authorization/  | src/authorization/  | Unified access control (branch + path permissions, groups)                                               |
-| config/         | src/config/         | Configuration types, Zod schemas, validation                                                             |
-| schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                                   |
-| paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                                            |
-| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, dev)                                                                    |
-| api/            | src/api/            | API handlers, middleware, route builder                                                                  |
-| http/           | src/http/           | HTTP request handling (router, types)                                                                    |
-| editor/         | src/editor/         | React editor components, contexts, hooks                                                                 |
-| validation/     | src/validation/     | Validation utilities (field traversal, references)                                                       |
-| utils/          | src/utils/          | Shared utilities (error handling, debug logging, title-field: resolveEntryTitle, findInvalidTitleFields) |
-| auth/           | src/auth/           | Authentication plugin interface and cache system                                                         |
-| worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                   |
-| task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                        |
-| cli/            | src/cli/            | CLI bootstrapping (`pnpm exec canopycms init`, `init-deploy aws`, `worker run-once`, `sync`)             |
-| test-utils/     | src/test-utils/     | Shared test utilities (mock factories, console spy, git repo init); exported as `canopycms/test-utils`   |
+| Module          | Location            | Purpose                                                                                                                          |
+| --------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| authorization/  | src/authorization/  | Unified access control (branch + path permissions, groups)                                                                       |
+| config/         | src/config/         | Configuration types, Zod schemas, validation                                                                                     |
+| schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                                                           |
+| paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                                                                    |
+| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, dev)                                                                                            |
+| api/            | src/api/            | API handlers, middleware, route builder                                                                                          |
+| http/           | src/http/           | HTTP request handling (router, types)                                                                                            |
+| editor/         | src/editor/         | React editor components, contexts, hooks                                                                                         |
+| validation/     | src/validation/     | Validation utilities (field traversal, references)                                                                               |
+| utils/          | src/utils/          | Shared utilities (error handling, debug logging, title-field: resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists) |
+| auth/           | src/auth/           | Authentication plugin interface and cache system                                                                                 |
+| worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                                           |
+| task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                                                |
+| cli/            | src/cli/            | CLI bootstrapping (`pnpm exec canopycms init`, `init-deploy aws`, `worker run-once`, `sync`)                                     |
+| test-utils/     | src/test-utils/     | Shared test utilities (mock factories, console spy, git repo init); exported as `canopycms/test-utils`                           |
 
 **Top-level files** (intentionally not modularized):
 
-| File                     | Purpose                                                                                                       |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------- |
-| services.ts              | CanopyServices factory with git operations                                                                    |
-| context.ts               | Context creation and management (CanopyContext: read, buildContentTree, listEntries)                          |
-| types.ts                 | Core types (BranchContext, BranchContextWithSchema, BranchMetadata, SyncStatus, ConflictStatus)               |
-| branch-metadata.ts       | Branch metadata persistence                                                                                   |
-| branch-registry.ts       | Branch tracking and listing                                                                                   |
-| branch-workspace.ts      | Branch workspace management                                                                                   |
-| branch-schema-cache.ts   | Per-branch schema caching (always file-based; no in-memory path)                                              |
-| settings-workspace.ts    | Settings branch workspace                                                                                     |
-| settings-branch-utils.ts | Settings branch utility helpers                                                                               |
-| content-store.ts         | Content persistence (getCollectionEntryPaths for index-based minimal metadata)                                |
-| content-reader.ts        | Content reading                                                                                               |
-| content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading, batch listing via listEntries) |
-| content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs)                                         |
-| content-id-index.ts      | Content ID indexing                                                                                           |
-| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                             |
-| entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle only on string fields                 |
-| git-manager.ts           | Git operations wrapper                                                                                        |
-| github-service.ts        | GitHub API integration                                                                                        |
-| comment-store.ts         | Comment persistence                                                                                           |
-| reference-resolver.ts    | Reference resolution                                                                                          |
-| asset-store.ts           | Asset storage                                                                                                 |
-| build-mode.ts            | Static deploy detection (`isDeployedStatic`), build-phase safety net (`isBuildMode`), `STATIC_DEPLOY_USER`    |
-| user.ts                  | User utilities                                                                                                |
-| server.ts                | Server entrypoint exports                                                                                     |
+| File                     | Purpose                                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| services.ts              | CanopyServices factory with git operations                                                                                |
+| context.ts               | Context creation and management (CanopyContext: read, buildContentTree, listEntries; schema resolution memoized per call) |
+| types.ts                 | Core types (BranchContext, BranchContextWithSchema, BranchMetadata, SyncStatus, ConflictStatus)                           |
+| branch-metadata.ts       | Branch metadata persistence                                                                                               |
+| branch-registry.ts       | Branch tracking and listing                                                                                               |
+| branch-workspace.ts      | Branch workspace management                                                                                               |
+| branch-schema-cache.ts   | Per-branch schema caching (always file-based; no in-memory path)                                                          |
+| settings-workspace.ts    | Settings branch workspace                                                                                                 |
+| settings-branch-utils.ts | Settings branch utility helpers                                                                                           |
+| content-store.ts         | Content persistence (getCollectionEntryPaths for index-based minimal metadata)                                            |
+| content-reader.ts        | Content reading                                                                                                           |
+| content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading, batch listing via listEntries)             |
+| content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs)                                                     |
+| content-id-index.ts      | Content ID indexing                                                                                                       |
+| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                                         |
+| entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle only on string fields                             |
+| git-manager.ts           | Git operations wrapper                                                                                                    |
+| github-service.ts        | GitHub API integration                                                                                                    |
+| comment-store.ts         | Comment persistence                                                                                                       |
+| reference-resolver.ts    | Reference resolution                                                                                                      |
+| asset-store.ts           | Asset storage                                                                                                             |
+| build-mode.ts            | Static deploy detection (`isDeployedStatic`), build-phase safety net (`isBuildMode`), `STATIC_DEPLOY_USER`                |
+| user.ts                  | User utilities                                                                                                            |
+| server.ts                | Server entrypoint exports                                                                                                 |
 
 ## API Layer
 
@@ -509,13 +509,13 @@ Checked via `isDeployedStatic(config)` in `context.ts`, `content-reader.ts`, `br
 
 **Location**: packages/canopycms/src/schema/
 
-| File                  | Purpose                                                                              |
-| --------------------- | ------------------------------------------------------------------------------------ |
-| meta-loader.ts        | Load .collection.json files from filesystem; extracts ContentId from directory names |
-| resolver.ts           | High-level schema resolution API                                                     |
-| schema-store.ts       | SchemaOps class - CRUD for collections, entry types, ordering                        |
-| schema-store-types.ts | Types for schema store operations                                                    |
-| types.ts              | EntrySchemaRegistry, SchemaResolutionResult types                                    |
+| File                  | Purpose                                                                                                                           |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| meta-loader.ts        | Load .collection.json files from filesystem; extracts ContentId from directory names; rejects "body" field name in md/mdx schemas |
+| resolver.ts           | High-level schema resolution API                                                                                                  |
+| schema-store.ts       | SchemaOps class - CRUD for collections, entry types, ordering                                                                     |
+| schema-store-types.ts | Types for schema store operations                                                                                                 |
+| types.ts              | EntrySchemaRegistry, SchemaResolutionResult types                                                                                 |
 
 **Pattern**: Schema structure comes from .collection.json files (single source of truth), field schemas come from an entry schema registry for reusability.
 

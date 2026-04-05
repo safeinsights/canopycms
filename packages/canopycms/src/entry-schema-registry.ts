@@ -1,6 +1,10 @@
 import type { EntrySchema, FieldConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
-import { countTitleFields, findInvalidTitleFields } from './utils/title-field'
+import {
+  countTitleFields,
+  findInvalidTitleFields,
+  findTitleFieldsInLists,
+} from './utils/title-field'
 
 /** Look up a field's type by dotted path (e.g., "meta.order"). */
 function findFieldType(fields: readonly FieldConfig[], dottedPath: string): string {
@@ -69,6 +73,12 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
     if (invalidTitleFields.length > 0) {
       throw new Error(
         `Entry schema registry entry "${key}": field "${invalidTitleFields[0]}" has isTitle: true but is type "${findFieldType(schema, invalidTitleFields[0])}" — isTitle is only valid on string fields`,
+      )
+    }
+    const listTitleFields = findTitleFieldsInLists(schema)
+    if (listTitleFields.length > 0) {
+      throw new Error(
+        `Entry schema registry entry "${key}": field "${listTitleFields[0]}" has isTitle: true but is inside a list field — isTitle cannot resolve inside list fields`,
       )
     }
   }

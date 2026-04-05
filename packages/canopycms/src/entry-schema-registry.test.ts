@@ -45,6 +45,56 @@ describe('createEntrySchemaRegistry', () => {
       }),
     ).toThrow('Entry schema registry entry "postSchema" cannot be empty')
   })
+
+  it('throws error for multiple isTitle fields', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        postSchema: [
+          { type: 'string', name: 'heading', isTitle: true },
+          { type: 'string', name: 'subtitle', isTitle: true },
+        ],
+      }),
+    ).toThrow('has 2 fields with isTitle: true, but at most one is allowed')
+  })
+
+  it('throws error for isTitle on non-string field', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        postSchema: [
+          { type: 'number', name: 'order', isTitle: true },
+          { type: 'string', name: 'title' },
+        ],
+      }),
+    ).toThrow('isTitle is only valid on string fields')
+  })
+
+  it('throws error for isTitle inside a list object field', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        postSchema: [
+          {
+            type: 'object',
+            name: 'items',
+            list: true,
+            fields: [{ type: 'string', name: 'title', isTitle: true }],
+          },
+        ],
+      }),
+    ).toThrow('isTitle cannot resolve inside list fields')
+  })
+
+  it('accepts isTitle inside a non-list object field', () => {
+    const registry = createEntrySchemaRegistry({
+      postSchema: [
+        {
+          type: 'object',
+          name: 'hero',
+          fields: [{ type: 'string', name: 'heading', isTitle: true }],
+        },
+      ],
+    })
+    expect(registry).toBeDefined()
+  })
 })
 
 describe('validateEntrySchemaRegistry', () => {

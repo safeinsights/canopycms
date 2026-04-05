@@ -118,8 +118,9 @@ export function createCanopyContext(options: CanopyContextOptions) {
       return baseReader.read<T>(readInput)
     }
 
-    /** Resolve branch workspace and schema — shared by buildContentTree and listEntries. */
-    const resolveSchemaContext = async () => {
+    /** Resolve branch workspace and schema — shared by buildContentTree and listEntries. Memoized per getContext call. */
+    let schemaContextPromise: ReturnType<typeof resolveSchemaContextImpl> | null = null
+    const resolveSchemaContextImpl = async () => {
       const operatingMode = services.config.mode
       const defaultBranch = services.config.defaultBaseBranch ?? 'main'
       const branchContext = await loadOrCreateBranchContext({
@@ -137,6 +138,12 @@ export function createCanopyContext(options: CanopyContextOptions) {
         contentRootName,
       )
       return { branchRoot, flatSchema, contentRootName }
+    }
+    const resolveSchemaContext = () => {
+      if (!schemaContextPromise) {
+        schemaContextPromise = resolveSchemaContextImpl()
+      }
+      return schemaContextPromise
     }
 
     const buildContentTree: CanopyContext['buildContentTree'] = async <T = unknown>(

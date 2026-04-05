@@ -17,10 +17,10 @@ import { validateAndNormalizePath } from './paths'
 import { isNotFoundError, getErrorMessage } from './utils/error'
 import { createDebugLogger } from './utils/debug'
 import { isValidId } from './id'
-
-const log = createDebugLogger({ prefix: 'ContentListing' })
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from './paths/types'
 import { ContentStoreError } from './content-store'
+
+const log = createDebugLogger({ prefix: 'ContentListing' })
 
 /**
  * An entry listing item with raw data from the filesystem.
@@ -35,7 +35,7 @@ export interface CollectionListItem {
   format: ContentFormat
   entryType: string
   physicalPath: PhysicalPath
-  /** Raw entry data (frontmatter for md/mdx, parsed JSON for json) */
+  /** Raw entry data (frontmatter + body for md/mdx, parsed JSON for json) */
   data: Record<string, unknown>
   updatedAt?: string
 }
