@@ -31,7 +31,12 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Update npm (trusted publishers require recent npm)
-        run: npm install -g npm@11
+        run: |
+          # The pre-installed npm on Node 22.22.x has a broken module tree
+          # (missing promise-retry), so bootstrap npm@11 without using npm.
+          curl -sL https://registry.npmjs.org/npm/-/npm-11.4.1.tgz -o /tmp/npm.tgz
+          mkdir -p /tmp/npm-bootstrap && tar xzf /tmp/npm.tgz -C /tmp/npm-bootstrap
+          node /tmp/npm-bootstrap/package/bin/npm-cli.js install -g npm@11
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
