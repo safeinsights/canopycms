@@ -144,7 +144,7 @@ export class ReferenceResolver {
       slug: Slug
     }>
   > {
-    return this.store.listCollectionEntries(collectionPath)
+    return this.store.getCollectionEntryPaths(collectionPath)
   }
 
   /**

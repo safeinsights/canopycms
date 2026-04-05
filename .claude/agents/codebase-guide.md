@@ -49,32 +49,32 @@ The codebase uses a modular structure with clear separation:
 
 **Top-level files** (intentionally not modularized):
 
-| File                     | Purpose                                                                                                    |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| services.ts              | CanopyServices factory with git operations                                                                 |
-| context.ts               | Context creation and management                                                                            |
-| types.ts                 | Core types (BranchContext, BranchContextWithSchema, BranchMetadata, SyncStatus, ConflictStatus)            |
-| branch-metadata.ts       | Branch metadata persistence                                                                                |
-| branch-registry.ts       | Branch tracking and listing                                                                                |
-| branch-workspace.ts      | Branch workspace management                                                                                |
-| branch-schema-cache.ts   | Per-branch schema caching (always file-based; no in-memory path)                                           |
-| settings-workspace.ts    | Settings branch workspace                                                                                  |
-| settings-branch-utils.ts | Settings branch utility helpers                                                                            |
-| content-store.ts         | Content persistence                                                                                        |
-| content-reader.ts        | Content reading                                                                                            |
-| content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading)                             |
-| content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs)                                      |
-| content-id-index.ts      | Content ID indexing                                                                                        |
-| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                          |
-| entry-schema-registry.ts | Entry schema registry for reusable field definitions                                                       |
-| git-manager.ts           | Git operations wrapper                                                                                     |
-| github-service.ts        | GitHub API integration                                                                                     |
-| comment-store.ts         | Comment persistence                                                                                        |
-| reference-resolver.ts    | Reference resolution                                                                                       |
-| asset-store.ts           | Asset storage                                                                                              |
-| build-mode.ts            | Static deploy detection (`isDeployedStatic`), build-phase safety net (`isBuildMode`), `STATIC_DEPLOY_USER` |
-| user.ts                  | User utilities                                                                                             |
-| server.ts                | Server entrypoint exports                                                                                  |
+| File                     | Purpose                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| services.ts              | CanopyServices factory with git operations                                                                    |
+| context.ts               | Context creation and management (CanopyContext: read, buildContentTree, listEntries)                          |
+| types.ts                 | Core types (BranchContext, BranchContextWithSchema, BranchMetadata, SyncStatus, ConflictStatus)               |
+| branch-metadata.ts       | Branch metadata persistence                                                                                   |
+| branch-registry.ts       | Branch tracking and listing                                                                                   |
+| branch-workspace.ts      | Branch workspace management                                                                                   |
+| branch-schema-cache.ts   | Per-branch schema caching (always file-based; no in-memory path)                                              |
+| settings-workspace.ts    | Settings branch workspace                                                                                     |
+| settings-branch-utils.ts | Settings branch utility helpers                                                                               |
+| content-store.ts         | Content persistence (getCollectionEntryPaths for index-based minimal metadata)                                |
+| content-reader.ts        | Content reading                                                                                               |
+| content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading, batch listing via listEntries) |
+| content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs)                                         |
+| content-id-index.ts      | Content ID indexing                                                                                           |
+| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                             |
+| entry-schema-registry.ts | Entry schema registry for reusable field definitions                                                          |
+| git-manager.ts           | Git operations wrapper                                                                                        |
+| github-service.ts        | GitHub API integration                                                                                        |
+| comment-store.ts         | Comment persistence                                                                                           |
+| reference-resolver.ts    | Reference resolution                                                                                          |
+| asset-store.ts           | Asset storage                                                                                                 |
+| build-mode.ts            | Static deploy detection (`isDeployedStatic`), build-phase safety net (`isBuildMode`), `STATIC_DEPLOY_USER`    |
+| user.ts                  | User utilities                                                                                                |
+| server.ts                | Server entrypoint exports                                                                                     |
 
 ## API Layer
 
@@ -429,10 +429,10 @@ Builds a tree of content nodes from the schema and filesystem for adopter use ca
 
 ### Key Files
 
-| File               | Purpose                                                                   |
-| ------------------ | ------------------------------------------------------------------------- |
-| content-tree.ts    | `buildContentTree()` function and `ContentTreeNode` / options types       |
-| content-listing.ts | `listCollectionEntries()`, `sortByOrder()`, `parseTypedFilename()` shared |
+| File               | Purpose                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------ |
+| content-tree.ts    | `buildContentTree()` function and `ContentTreeNode` / options types                        |
+| content-listing.ts | `listEntries()`, `listCollectionEntries()`, `sortByOrder()`, `parseTypedFilename()` shared |
 
 ### BuildContentTreeOptions<T>
 
@@ -446,6 +446,25 @@ Builds a tree of content nodes from the schema and filesystem for adopter use ca
 | maxDepth  | unlimited                                | Max traversal depth                                                 |
 
 Without `sort`: children are ordered by the collection's `order` array first, then remaining items alphabetically. With `sort`: the comparator fully replaces the default sort. It runs after `extract` and `filter`, so `fields` is available.
+
+## Content Listing (Batch)
+
+**Location**: packages/canopycms/src/content-listing.ts
+
+`listEntries()` returns a flat array of all content entries across collections. Designed for `generateStaticParams`, search indexing, sitemaps, and similar batch use cases.
+
+### ListEntriesOptions\<T\>
+
+| Option   | Default             | Description                                           |
+| -------- | ------------------- | ----------------------------------------------------- |
+| extract  | none (full raw)     | Transform raw data; for md/mdx, raw.body has markdown |
+| filter   | none                | Exclude entries (runs after extract)                  |
+| rootPath | contentRoot name    | Starting collection path (skips out-of-scope entries) |
+| sort     | none (insert order) | Custom sort comparator                                |
+
+**Access patterns**: standalone function from `canopycms/server`, method on `CanopyContext`, types from `canopycms`.
+
+**Note**: `readEntryData()` now includes markdown body content in `data.body` for md/mdx entries.
 
 ## Configuration Module
 

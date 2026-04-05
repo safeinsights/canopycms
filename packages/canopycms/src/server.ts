@@ -16,4 +16,10 @@ export type { CollectionMeta, RootCollectionMeta } from './schema'
 export { createEntrySchemaRegistry, validateEntrySchemaRegistry } from './entry-schema-registry'
 export { generateId, isValidId } from './id'
 export { buildContentTree } from './content-tree'
-export type { ContentTreeNode, BuildContentTreeOptions } from './content-tree'
+export type {
+  ContentTreeNode,
+  BuildContentTreeOptions,
+  ContentTreeExtractMeta,
+} from './content-tree'
+export { listEntries } from './content-listing'
+export type { ListEntriesItem, ListEntriesOptions } from './content-listing'

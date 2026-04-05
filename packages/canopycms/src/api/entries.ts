@@ -1,28 +1,20 @@
-import fs from 'node:fs/promises'
-import type { Dirent } from 'node:fs'
-import path from 'node:path'
 import { z } from 'zod'
 
-import matter from 'gray-matter'
-
-import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from '../config'
+import type { ContentFormat, FlatSchemaItem } from '../config'
 import { ContentStore, ContentStoreError } from '../content-store'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContextWithSchema } from '../types'
 import { defineEndpoint } from './route-builder'
-import { getFormatExtension } from '../utils/format'
-import { resolveCollectionPath } from '../content-id-index'
-import {
-  validateAndNormalizePath,
-  normalizeFilesystemPath,
-  parseSlug,
-  parseLogicalPath,
-} from '../paths'
+import { normalizeFilesystemPath, parseSlug, parseLogicalPath } from '../paths'
 import { isNotFoundError } from '../utils/error'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema } from './validators'
 import { SchemaOps } from '../schema/schema-store'
-import { parseTypedFilename, sortByOrder } from '../content-listing'
+import {
+  listCollectionEntries as listCollectionEntriesShared,
+  sortByOrder,
+  type CollectionListItem,
+} from '../content-listing'
 
 /**
  * Summary of an entry type for client display.
@@ -85,134 +77,46 @@ const listEntriesParamsSchema = z.object({
   recursive: z.boolean().optional(),
 })
 
-/**
- * Validate and normalize a path relative to root.
- * Throws ContentStoreError on traversal attempt.
- */
-const normalizePath = (root: string, target: string): string => {
-  const result = validateAndNormalizePath(root, target)
-  if (!result.valid) {
-    throw new ContentStoreError(result.error || 'Path traversal detected')
-  }
-  return result.normalizedPath!
+/** Extract a display title from entry data. Falls back to entry type label. */
+const extractTitle = (
+  data: Record<string, unknown>,
+  entryTypeLabel?: string,
+): string | undefined => {
+  const title = data.title ?? data.name
+  return typeof title === 'string' ? title : entryTypeLabel
 }
 
-const readTitle = async (filePath: string, format: ContentFormat): Promise<string | undefined> => {
-  try {
-    const raw = await fs.readFile(filePath, 'utf8')
-    if (format === 'json') {
-      const parsed = JSON.parse(raw) as Record<string, unknown>
-      const title = parsed.title ?? parsed.name
-      return typeof title === 'string' ? title : undefined
-    }
-    const parsed = matter(raw)
-    const frontmatterTitle =
-      (parsed.data as Record<string, unknown>)?.title ??
-      (parsed.data as Record<string, unknown>)?.name
-    return typeof frontmatterTitle === 'string' ? frontmatterTitle : undefined
-  } catch {
-    return undefined
+/** Map a CollectionListItem to the API's CollectionItem type. */
+const toCollectionItem = (
+  entry: CollectionListItem,
+  collection: FlatSchemaItem,
+): CollectionItem => {
+  const entryTypeLabel =
+    collection.type === 'collection'
+      ? collection.entries?.find((e) => e.name === entry.entryType)?.label
+      : undefined
+  return {
+    logicalPath: entry.logicalPath,
+    contentId: entry.contentId,
+    slug: entry.slug,
+    collectionPath: entry.collectionPath,
+    collectionName: entry.collectionName,
+    format: entry.format,
+    entryType: entry.entryType,
+    physicalPath: entry.physicalPath,
+    title: extractTitle(entry.data, entryTypeLabel),
+    updatedAt: entry.updatedAt,
+    exists: true,
   }
 }
 
+/** List entries in a single collection, mapped to API CollectionItem type. */
 const listCollectionEntries = async (
   root: string,
   collection: FlatSchemaItem,
 ): Promise<CollectionItem[]> => {
-  // Only collections with entries can be listed
-  if (collection.type !== 'collection' || !collection.entries) {
-    return []
-  }
-
-  const entryTypes = collection.entries as readonly EntryTypeConfig[]
-
-  // Build a map of extension to entry types for efficient lookup
-  const extToTypes = new Map<string, EntryTypeConfig[]>()
-  for (const entryType of entryTypes) {
-    const ext = getFormatExtension(entryType.format)
-    const existing = extToTypes.get(ext) || []
-    existing.push(entryType)
-    extToTypes.set(ext, existing)
-  }
-
-  // Get all valid extensions for this collection
-  const validExts = Array.from(extToTypes.keys())
-
-  // Resolve the full collection path with embedded IDs
-  // e.g., "content/docs/api" → "content/docs.bChqT78gcaLd/api.meiuwxTSo7UN"
-  const collectionRoot = await resolveCollectionPath(root, collection.logicalPath)
-
-  if (!collectionRoot) {
-    // Collection directory doesn't exist yet
-    return []
-  }
-
-  normalizePath(root, collectionRoot)
-  let dirents: Dirent[]
-  try {
-    dirents = await fs.readdir(collectionRoot, { withFileTypes: true })
-  } catch (err: unknown) {
-    if (isNotFoundError(err)) return []
-    throw err
-  }
-
-  // Filter to files with valid extensions
-  const files = dirents
-    .filter(
-      (d) =>
-        d.isFile() &&
-        validExts.some((ext) => d.name.endsWith(ext)) &&
-        d.name !== '.collection.json',
-    )
-    .sort((a, b) => a.name.localeCompare(b.name))
-
-  // Parallelize file stats and title reads for better performance
-  const entries = await Promise.all(
-    files.map(async (file) => {
-      const absolutePath = path.join(collectionRoot, file.name)
-      const relativePath = normalizePath(root, absolutePath)
-
-      // Parse the filename to extract type, slug, and id
-      const parsed = parseTypedFilename(file.name, entryTypes)
-      if (!parsed) {
-        console.warn(
-          `Skipping file with unrecognized filename format: ${file.name} (expected {type}.{slug}.{id}.{ext} with a known entry type and valid 12-char Base58 ID)`,
-        )
-        return null
-      }
-
-      const { type: entryTypeName, slug, id: contentId } = parsed
-
-      // Determine the entry type and format
-      // Type is always in filename now
-      const entryType = entryTypes.find((e) => e.name === entryTypeName)
-      const format: ContentFormat = entryType?.format || 'json'
-
-      const [stats, title] = await Promise.all([
-        fs.stat(absolutePath),
-        readTitle(absolutePath, format),
-      ])
-
-      const item: CollectionItem = {
-        // Safe: both collection.logicalPath (LogicalPath) and slug (Slug) are branded
-        logicalPath: `${collection.logicalPath}/${slug}` as LogicalPath,
-        contentId, // 12-char content ID extracted from filename
-        slug,
-        collectionPath: collection.logicalPath,
-        collectionName: collection.name,
-        format,
-        entryType: entryTypeName || 'default',
-        physicalPath: relativePath as PhysicalPath,
-        title: title ?? entryType?.label, // Fall back to entry type label if no title in content
-        updatedAt: stats.mtime.toISOString(),
-        exists: true,
-      }
-      return item
-    }),
-  )
-
-  // Filter out nulls from failed parses
-  return entries.filter((e): e is CollectionItem => e !== null)
+  const entries = await listCollectionEntriesShared(root, collection)
+  return entries.map((entry) => toCollectionItem(entry, collection))
 }
 
 /**
@@ -223,12 +127,10 @@ const listCollectionEntriesRecursive = async (
   targetPath: string,
   flatCollections: FlatSchemaItem[],
 ): Promise<CollectionItem[]> => {
-  // Find all collections that are descendants of the target path
   const descendants = flatCollections.filter((item) => {
     return item.logicalPath === targetPath || item.logicalPath.startsWith(`${targetPath}/`)
   })
 
-  // Parallelize listing entries from all descendant collections
   const collectionsWithEntries = descendants.filter(
     (item) => item.type === 'collection' && item.entries,
   )

@@ -1,9 +1,14 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import os from 'node:os'
 
 import type { ContentId } from './paths/types'
 
-import { sortByOrder, parseTypedFilename } from './content-listing'
-import type { EntryTypeConfig } from './config'
+import { sortByOrder, parseTypedFilename, listEntries } from './content-listing'
+import { flattenSchema } from './config/flatten'
+import { generateId } from './id'
+import type { EntryTypeConfig, RootCollectionConfig } from './config'
 
 // ---------------------------------------------------------------------------
 // sortByOrder
@@ -139,5 +144,420 @@ describe('parseTypedFilename', () => {
       slug: 'getting.started',
       id: 'aB3cD4eF5gH6',
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// listEntries
+// ---------------------------------------------------------------------------
+
+describe('listEntries', () => {
+  let tempDir: string
+
+  beforeEach(async () => {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-listing-test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tempDir, { recursive: true, force: true })
+  })
+
+  /** Create a collection directory with .collection.json and embedded ID. */
+  async function createCollection(
+    parentDir: string,
+    name: string,
+    meta?: { label?: string; order?: string[] },
+  ): Promise<{ dir: string; id: string }> {
+    const id = generateId()
+    const dirName = `${name}.${id}`
+    const dir = path.join(parentDir, dirName)
+    await fs.mkdir(dir, { recursive: true })
+    const collectionJson: Record<string, unknown> = { name }
+    if (meta?.label) collectionJson.label = meta.label
+    if (meta?.order) collectionJson.order = meta.order
+    await fs.writeFile(path.join(dir, '.collection.json'), JSON.stringify(collectionJson))
+    return { dir, id }
+  }
+
+  /** Create an entry file: {type}.{slug}.{id}.{ext} */
+  async function createEntry(
+    collectionDir: string,
+    entryType: string,
+    slug: string,
+    format: 'md' | 'mdx' | 'json',
+    data: Record<string, unknown>,
+    body?: string,
+  ): Promise<string> {
+    const id = generateId()
+    const ext = format === 'json' ? '.json' : `.${format}`
+    const filename = `${entryType}.${slug}.${id}${ext}`
+    const filePath = path.join(collectionDir, filename)
+
+    if (format === 'json') {
+      await fs.writeFile(filePath, JSON.stringify(data))
+    } else {
+      const frontmatter = Object.entries(data)
+        .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)
+        .join('\n')
+      await fs.writeFile(filePath, `---\n${frontmatter}\n---\n${body ?? 'Default body content'}`)
+    }
+    return id
+  }
+
+  it('lists entries across nested collections as a flat array', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    const { dir: docsDir } = await createCollection(contentDir, 'docs')
+    await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+    await createEntry(postsDir, 'post', 'world', 'md', { title: 'World' })
+    await createEntry(docsDir, 'doc', 'getting-started', 'mdx', { title: 'Getting Started' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+        {
+          name: 'docs',
+          path: 'docs',
+          entries: [{ name: 'doc', format: 'mdx', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+
+    expect(entries).toHaveLength(3)
+    const slugs = entries.map((e) => e.slug).sort()
+    expect(slugs).toEqual(['getting-started', 'hello', 'world'])
+  })
+
+  it('pathSegments has correct URL segments with content root stripped', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: docsDir } = await createCollection(contentDir, 'docs')
+    const { dir: apiDir } = await createCollection(docsDir, 'api')
+    await createEntry(apiDir, 'doc', 'auth', 'md', { title: 'Auth API' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          entries: [{ name: 'doc', format: 'md', schema: [] }],
+          collections: [
+            {
+              name: 'api',
+              path: 'docs/api',
+              entries: [{ name: 'doc', format: 'md', schema: [] }],
+            },
+          ],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+
+    const apiEntry = entries.find((e) => e.slug === 'auth')
+    expect(apiEntry).toBeDefined()
+    expect(apiEntry!.pathSegments).toEqual(['docs', 'api', 'auth'])
+  })
+
+  it('includes body in data for md/mdx entries', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    await createEntry(
+      postsDir,
+      'post',
+      'hello',
+      'md',
+      { title: 'Hello' },
+      '# Hello World\n\nSome content here.',
+    )
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].data.title).toBe('Hello')
+    expect(entries[0].data.body).toBe('# Hello World\n\nSome content here.')
+  })
+
+  it('JSON entries have no body field unless it exists in the data', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: productsDir } = await createCollection(contentDir, 'products')
+    await createEntry(productsDir, 'product', 'widget', 'json', {
+      name: 'Widget',
+      price: 9.99,
+    })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'products',
+          path: 'products',
+          entries: [{ name: 'product', format: 'json', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].data.name).toBe('Widget')
+    expect(entries[0].data.price).toBe(9.99)
+    expect(entries[0].data.body).toBeUndefined()
+  })
+
+  it('extract callback transforms data and drops body from memory', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' }, 'Long body content...')
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    interface TitleOnly {
+      title: string
+    }
+
+    const entries = await listEntries<TitleOnly>(tempDir, flat, 'content', {
+      extract: (raw) => ({ title: raw.title as string }),
+    })
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].data).toEqual({ title: 'Hello' })
+    // Body is not in data because extract didn't include it
+    expect((entries[0].data as unknown as Record<string, unknown>).body).toBeUndefined()
+  })
+
+  it('filter excludes entries using raw data', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    await createEntry(postsDir, 'post', 'published', 'md', { title: 'Published', draft: false })
+    await createEntry(postsDir, 'post', 'draft-post', 'md', { title: 'Draft', draft: true })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content', {
+      filter: (entry) => entry.data.draft !== true,
+    })
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].slug).toBe('published')
+  })
+
+  it('filter can use extracted data', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    await createEntry(postsDir, 'post', 'published', 'md', { title: 'Published', draft: false })
+    await createEntry(postsDir, 'post', 'draft-post', 'md', { title: 'Draft', draft: true })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    interface PostData {
+      title: string
+      draft: boolean
+    }
+
+    const entries = await listEntries<PostData>(tempDir, flat, 'content', {
+      extract: (raw) => ({
+        title: raw.title as string,
+        draft: raw.draft === true,
+      }),
+      filter: (entry) => !entry.data.draft,
+    })
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].data.title).toBe('Published')
+  })
+
+  it('empty collections return empty array', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+    await createCollection(contentDir, 'posts')
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+    expect(entries).toHaveLength(0)
+  })
+
+  it('rootPath scopes to subtree and returns all entries in that scope', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    const { dir: docsDir } = await createCollection(contentDir, 'docs')
+    const { dir: apiDir } = await createCollection(docsDir, 'api')
+    await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+    await createEntry(docsDir, 'doc', 'intro', 'md', { title: 'Intro' })
+    await createEntry(docsDir, 'doc', 'overview', 'md', { title: 'Overview' })
+    await createEntry(apiDir, 'doc', 'auth', 'md', { title: 'Auth API' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+        {
+          name: 'docs',
+          path: 'docs',
+          entries: [{ name: 'doc', format: 'md', schema: [] }],
+          collections: [
+            {
+              name: 'api',
+              path: 'docs/api',
+              entries: [{ name: 'doc', format: 'md', schema: [] }],
+            },
+          ],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content', {
+      rootPath: 'content/docs',
+    })
+
+    // Should include docs entries and nested api entries, but not posts
+    expect(entries).toHaveLength(3)
+    const slugs = entries.map((e) => e.slug).sort()
+    expect(slugs).toEqual(['auth', 'intro', 'overview'])
+  })
+
+  it('sort orders the results', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    await createEntry(postsDir, 'post', 'alpha', 'md', { title: 'Alpha', order: 3 })
+    await createEntry(postsDir, 'post', 'beta', 'md', { title: 'Beta', order: 1 })
+    await createEntry(postsDir, 'post', 'gamma', 'md', { title: 'Gamma', order: 2 })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content', {
+      sort: (a, b) => (a.data.order as number) - (b.data.order as number),
+    })
+
+    expect(entries.map((e) => e.slug)).toEqual(['beta', 'gamma', 'alpha'])
+  })
+
+  it('includes entryId and collectionId', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir, id: collectionId } = await createCollection(contentDir, 'posts')
+    await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          contentId: collectionId as ContentId,
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].entryId).toBeDefined()
+    expect(entries[0].entryId).toHaveLength(12)
+    expect(entries[0].collectionId).toBe(collectionId)
+  })
+
+  it('returns empty array when content directory does not exist', async () => {
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+    expect(entries).toHaveLength(0)
   })
 })

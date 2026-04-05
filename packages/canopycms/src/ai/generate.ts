@@ -167,7 +167,7 @@ async function processCollection(
   const manifestEntries: AIManifestEntry[] = []
 
   // Read entries directly in this collection (not subcollections)
-  const listed = await store.listCollectionEntries(collection.logicalPath)
+  const listed = await store.getCollectionEntryPaths(collection.logicalPath)
 
   // Filter to only entries in this exact collection (not subcollections)
   const directEntries = listed.filter((e) => e.collection === collection.logicalPath)
@@ -273,7 +273,7 @@ async function processRootEntries(
   const entries: AIEntry[] = []
   const manifestEntries: AIManifestEntry[] = []
 
-  const listed = await store.listCollectionEntries(rootCollection.logicalPath)
+  const listed = await store.getCollectionEntryPaths(rootCollection.logicalPath)
   // Only direct entries in root (not in subcollections)
   const directEntries = listed.filter((e) => e.collection === rootCollection.logicalPath)
 

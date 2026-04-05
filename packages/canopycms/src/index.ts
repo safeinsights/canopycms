@@ -24,4 +24,9 @@ export {
   validateAuthContext,
 } from './auth/context-helpers'
 export type { HeadersLike } from './auth/context-helpers'
-export type { ContentTreeNode, BuildContentTreeOptions } from './content-tree'
+export type {
+  ContentTreeNode,
+  BuildContentTreeOptions,
+  ContentTreeExtractMeta,
+} from './content-tree'
+export type { ListEntriesItem, ListEntriesOptions } from './content-listing'

@@ -10,6 +10,16 @@
  */
 
 import type { FlatSchemaItem, ContentFormat } from './config'
+
+/** Metadata passed to the extract callback. */
+export interface ContentTreeExtractMeta {
+  kind: 'collection' | 'entry'
+  logicalPath: LogicalPath
+  /** Entry type name — present when kind is 'entry'. */
+  entryType?: string
+  /** Content format — present when kind is 'entry'. */
+  format?: ContentFormat
+}
 import type { LogicalPath, ContentId, Slug } from './paths/types'
 import { listCollectionEntries, sortByOrder, type CollectionListItem } from './content-listing'
 
@@ -50,13 +60,10 @@ export interface BuildContentTreeOptions<T = unknown> {
   rootPath?: string
   /**
    * Extract typed custom fields from each node's raw data.
-   * For entries: data is frontmatter (md/mdx) or parsed JSON.
+   * For entries: data is frontmatter + body (md/mdx) or parsed JSON.
    * For collections: data is `{ name, label }` from the schema.
    */
-  extract?: (
-    data: Record<string, unknown>,
-    node: { kind: 'collection' | 'entry'; logicalPath: LogicalPath },
-  ) => T
+  extract?: (data: Record<string, unknown>, meta: ContentTreeExtractMeta) => T
   /**
    * Filter: return false to exclude a node and its descendants.
    * Runs after extract, so `fields` is available.
@@ -240,6 +247,8 @@ function buildEntryNode<T>(
     node.fields = extract(entry.data, {
       kind: 'entry',
       logicalPath: entry.logicalPath,
+      entryType: entry.entryType,
+      format: entry.format,
     })
   }
   return node

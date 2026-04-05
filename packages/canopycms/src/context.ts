@@ -10,6 +10,11 @@ import {
   type BuildContentTreeOptions,
   type ContentTreeNode,
 } from './content-tree'
+import {
+  listEntries as listEntriesImpl,
+  type ListEntriesOptions,
+  type ListEntriesItem,
+} from './content-listing'
 
 export interface CanopyContextOptions {
   services: CanopyServices
@@ -35,6 +40,11 @@ export interface CanopyContext {
   buildContentTree: <T = unknown>(
     options?: BuildContentTreeOptions<T>,
   ) => Promise<ContentTreeNode<T>[]>
+
+  /** List all content entries as a flat array. */
+  listEntries: <T = Record<string, unknown>>(
+    options?: ListEntriesOptions<T>,
+  ) => Promise<ListEntriesItem<T>[]>
 
   /** Underlying services */
   services: CanopyServices
@@ -108,9 +118,8 @@ export function createCanopyContext(options: CanopyContextOptions) {
       return baseReader.read<T>(readInput)
     }
 
-    const buildContentTree: CanopyContext['buildContentTree'] = async <T = unknown>(
-      options?: BuildContentTreeOptions<T>,
-    ) => {
+    /** Resolve branch workspace and schema — shared by buildContentTree and listEntries. */
+    const resolveSchemaContext = async () => {
       const operatingMode = services.config.mode
       const defaultBranch = services.config.defaultBaseBranch ?? 'main'
       const branchContext = await loadOrCreateBranchContext({
@@ -127,12 +136,27 @@ export function createCanopyContext(options: CanopyContextOptions) {
         services.entrySchemaRegistry,
         contentRootName,
       )
+      return { branchRoot, flatSchema, contentRootName }
+    }
+
+    const buildContentTree: CanopyContext['buildContentTree'] = async <T = unknown>(
+      options?: BuildContentTreeOptions<T>,
+    ) => {
+      const { branchRoot, flatSchema, contentRootName } = await resolveSchemaContext()
       return buildContentTreeImpl<T>(branchRoot, flatSchema, contentRootName, options)
+    }
+
+    const listEntries: CanopyContext['listEntries'] = async <T = Record<string, unknown>>(
+      options?: ListEntriesOptions<T>,
+    ) => {
+      const { branchRoot, flatSchema, contentRootName } = await resolveSchemaContext()
+      return listEntriesImpl<T>(branchRoot, flatSchema, contentRootName, options)
     }
 
     return {
       read,
       buildContentTree,
+      listEntries,
       services,
       user,
     }
