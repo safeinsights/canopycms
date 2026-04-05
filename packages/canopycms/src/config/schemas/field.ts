@@ -14,6 +14,7 @@ export const fieldBaseSchema = z.object({
   description: z.string().optional(),
   required: z.boolean().optional(),
   list: z.boolean().optional(),
+  isTitle: z.boolean().optional(),
 })
 
 // Select option schema

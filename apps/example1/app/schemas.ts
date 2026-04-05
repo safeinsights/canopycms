@@ -7,7 +7,7 @@ export const homeSchema = defineEntrySchema([
     type: 'object',
     label: 'Hero',
     fields: [
-      { name: 'title', type: 'string', label: 'Title' },
+      { name: 'title', type: 'string', label: 'Title', isTitle: true },
       { name: 'body', type: 'markdown', label: 'Body' },
     ],
   },

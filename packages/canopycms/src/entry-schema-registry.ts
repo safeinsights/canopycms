@@ -1,5 +1,6 @@
 import type { EntrySchema } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
+import { countTitleFields } from './utils/title-field'
 
 /**
  * Creates a type-safe entry schema registry with runtime validation.
@@ -40,6 +41,12 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
     }
     if (schema.length === 0) {
       throw new Error(`Entry schema registry entry "${key}" cannot be empty`)
+    }
+    const titleCount = countTitleFields(schema)
+    if (titleCount > 1) {
+      throw new Error(
+        `Entry schema registry entry "${key}" has ${titleCount} fields with isTitle: true, but at most one is allowed`,
+      )
     }
   }
 

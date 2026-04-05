@@ -1,12 +1,13 @@
 import { z } from 'zod'
 
-import type { ContentFormat, FlatSchemaItem } from '../config'
+import type { ContentFormat, EntryTypeConfig, FlatSchemaItem } from '../config'
 import { ContentStore, ContentStoreError } from '../content-store'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContextWithSchema } from '../types'
 import { defineEndpoint } from './route-builder'
 import { normalizeFilesystemPath, parseSlug, parseLogicalPath } from '../paths'
 import { isNotFoundError } from '../utils/error'
+import { extractTitleFromSchema, humanizeSlug } from '../utils/title-field'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema } from './validators'
 import { SchemaOps } from '../schema/schema-store'
@@ -77,13 +78,24 @@ const listEntriesParamsSchema = z.object({
   recursive: z.boolean().optional(),
 })
 
-/** Extract a display title from entry data. Falls back to entry type label. */
+/** Extract a display title from entry data using the isTitle field, conventions, or fallbacks. */
 const extractTitle = (
   data: Record<string, unknown>,
-  entryTypeLabel?: string,
-): string | undefined => {
+  entryType?: EntryTypeConfig,
+  slug?: string,
+): string => {
+  // 1. Schema-marked isTitle field
+  if (entryType?.schema) {
+    const schemaTitle = extractTitleFromSchema(entryType.schema, data)
+    if (schemaTitle) return schemaTitle
+  }
+  // 2. Convention: data.title or data.name
   const title = data.title ?? data.name
-  return typeof title === 'string' ? title : entryTypeLabel
+  if (typeof title === 'string') return title
+  // 3. Entry type label
+  if (entryType?.label) return entryType.label
+  // 4. Humanized slug
+  return slug ? humanizeSlug(slug) : 'Untitled'
 }
 
 /** Map a CollectionListItem to the API's CollectionItem type. */
@@ -91,9 +103,9 @@ const toCollectionItem = (
   entry: CollectionListItem,
   collection: FlatSchemaItem,
 ): CollectionItem => {
-  const entryTypeLabel =
+  const entryType =
     collection.type === 'collection'
-      ? collection.entries?.find((e) => e.name === entry.entryType)?.label
+      ? collection.entries?.find((e) => e.name === entry.entryType)
       : undefined
   return {
     logicalPath: entry.logicalPath,
@@ -104,7 +116,7 @@ const toCollectionItem = (
     format: entry.format,
     entryType: entry.entryType,
     physicalPath: entry.physicalPath,
-    title: extractTitle(entry.data, entryTypeLabel),
+    title: extractTitle(entry.data, entryType, entry.slug),
     updatedAt: entry.updatedAt,
     exists: true,
   }

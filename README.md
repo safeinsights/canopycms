@@ -652,6 +652,7 @@ const config = defineCanopyConfig({
   label: 'Field Label',   // Optional: display label (defaults to name)
   required: true,         // Optional: validation requirement
   list: true,             // Optional: allow multiple values
+  isTitle: true,          // Optional: use this field as the display title in the editor sidebar
 }
 ```
 
@@ -659,7 +660,7 @@ const config = defineCanopyConfig({
 
 ```typescript
 const schema = defineEntrySchema([
-  { name: 'title', type: 'string', label: 'Title', required: true },
+  { name: 'title', type: 'string', label: 'Title', required: true, isTitle: true },
   { name: 'body', type: 'markdown', label: 'Content' },
   {
     name: 'author',
@@ -683,7 +684,7 @@ const schema = defineEntrySchema([
 
 ```typescript
 const schema = defineEntrySchema([
-  { name: 'title', type: 'string', label: 'Title', required: true },
+  { name: 'title', type: 'string', label: 'Title', required: true, isTitle: true },
   { name: 'views', type: 'number', label: 'View Count' },
   { name: 'published', type: 'boolean', label: 'Published' },
   { name: 'publishDate', type: 'datetime', label: 'Publish Date' },

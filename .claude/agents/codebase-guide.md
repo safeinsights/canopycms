@@ -40,7 +40,7 @@ The codebase uses a modular structure with clear separation:
 | http/           | src/http/           | HTTP request handling (router, types)                                                                  |
 | editor/         | src/editor/         | React editor components, contexts, hooks                                                               |
 | validation/     | src/validation/     | Validation utilities (field traversal, references)                                                     |
-| utils/          | src/utils/          | Shared utilities (error handling, debug logging)                                                       |
+| utils/          | src/utils/          | Shared utilities (error handling, debug logging, title-field extraction)                               |
 | auth/           | src/auth/           | Authentication plugin interface and cache system                                                       |
 | worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                 |
 | task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                      |
@@ -419,6 +419,7 @@ Next.js-specific adapter layer. Provides the catch-all API handler, context crea
 - **Collections**: Containers for entries (posts, authors)
 - **Entry Types**: Define content structure within collections; `maxItems: 1` for single-instance entries
 - **Fields**: text, select, reference, object, code, block, markdown
+- **Field flags**: `isTitle` (marks one field per schema as the display title; used by `extractTitleFromSchema` in `utils/title-field.ts`)
 - **Format**: MD/MDX/JSON with frontmatter (gray-matter)
 
 ## Content Tree
