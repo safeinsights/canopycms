@@ -179,7 +179,7 @@ describe('listEntries', () => {
           collections: [
             {
               name: 'api',
-              path: 'api',
+              path: 'docs/api',
               entries: [
                 {
                   name: 'entry',
@@ -190,7 +190,7 @@ describe('listEntries', () => {
               collections: [
                 {
                   name: 'v2',
-                  path: 'v2',
+                  path: 'docs/api/v2',
                   entries: [
                     {
                       name: 'entry',

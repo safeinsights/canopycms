@@ -32,7 +32,7 @@ const baseConfig = {
         collections: [
           {
             name: 'child',
-            path: 'child',
+            path: 'nested/child',
             entries: [
               {
                 name: 'entry',
@@ -113,7 +113,7 @@ describe('editor-config helpers', () => {
             collections: [
               {
                 name: 'api',
-                path: 'api',
+                path: 'docs/api',
                 entries: [
                   {
                     name: 'doc',

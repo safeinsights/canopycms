@@ -109,7 +109,7 @@ describe('config validation', () => {
           collections: [
             {
               name: 'pages',
-              path: 'pages',
+              path: 'content/pages', // Full path from content root (as produced by meta-loader)
               entries: [
                 {
                   name: 'entry',
@@ -155,7 +155,7 @@ describe('config validation', () => {
           collections: [
             {
               name: 'api',
-              path: 'api',
+              path: 'docs/api', // Full path from content root (as produced by meta-loader)
               entries: [
                 {
                   name: 'entry',
@@ -166,7 +166,7 @@ describe('config validation', () => {
               collections: [
                 {
                   name: 'v2',
-                  path: 'v2',
+                  path: 'docs/api/v2', // Full path from content root (as produced by meta-loader)
                   entries: [
                     {
                       name: 'entry',
@@ -220,7 +220,7 @@ describe('config validation', () => {
           collections: [
             {
               name: 'api',
-              path: 'api',
+              path: 'docs/api', // Full path from content root (as produced by meta-loader)
               entries: [
                 {
                   name: 'entry',
@@ -231,7 +231,7 @@ describe('config validation', () => {
               collections: [
                 {
                   name: 'v1',
-                  path: 'v1',
+                  path: 'docs/api/v1', // Full path from content root (as produced by meta-loader)
                   entries: [
                     {
                       name: 'entry',
@@ -509,5 +509,51 @@ describe('config validation', () => {
 
     expect(pages).toBeDefined()
     expect(pages?.type === 'collection' && pages.contentId).toBeUndefined()
+  })
+
+  it('uses collection.path (not collection.name) for nested collection logical paths', () => {
+    // Regression: collection.name from .collection.json can be mixed-case (e.g., "EdPlus-Learning-at-Scale")
+    // but collection.path is derived from directory names via extractSlugFromFilename (always lowercase).
+    // The logical path must use collection.path so lookups via lowercase slugs match.
+    const schema = {
+      collections: [
+        {
+          name: 'data-catalog',
+          path: 'data-catalog',
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+          collections: [
+            {
+              name: 'EdPlus-Learning-at-Scale', // Mixed-case name from .collection.json
+              path: 'data-catalog/edplus-learning-at-scale', // Lowercase path from directory name
+              entries: [
+                {
+                  name: 'doc',
+                  format: 'mdx' as const,
+                  schema: [{ name: 'title', type: 'string' as const }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const flat = flattenSchema(schema, 'content')
+
+    const nested = flat.find(
+      (item) => item.type === 'collection' && item.name === 'EdPlus-Learning-at-Scale',
+    )
+    expect(nested).toBeDefined()
+    // Logical path uses collection.path (lowercase), not collection.name (mixed-case)
+    expect(nested?.logicalPath).toBe('content/data-catalog/edplus-learning-at-scale')
+    // Display name preserved as-is
+    expect(nested?.name).toBe('EdPlus-Learning-at-Scale')
+    expect(nested?.parentPath).toBe('content/data-catalog')
   })
 })
