@@ -8,7 +8,7 @@ You are a documentation specialist for CanopyCMS. Your job is to keep the codeba
 
 ## Target File
 
-`.claude/agents/codebase-guide.md`
+`CODEBASE_GUIDE.md` (project root). This file contains the knowledge base used by the `codebase-guide` agent. The agent file itself (`.claude/agents/codebase-guide.md`) should not be edited — only update `CODEBASE_GUIDE.md`.
 
 ## What to Track
 
@@ -69,7 +69,7 @@ You are a documentation specialist for CanopyCMS. Your job is to keep the codeba
 
 2. Read relevant source files to understand changes
 
-3. Update codebase-guide.md sections:
+3. Update CODEBASE_GUIDE.md sections:
    - Add new endpoints/components to tables
    - Update file paths if moved
    - Add new subsystems if created
