@@ -370,8 +370,10 @@ export function parseSlug(
     }
   }
 
-  // Validation from ContentStore.renameEntry
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(slug)) {
+  // Normalize to lowercase for case-insensitive matching
+  const normalized = slug.toLowerCase()
+
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(normalized)) {
     return {
       ok: false,
       error:
@@ -379,5 +381,5 @@ export function parseSlug(
     }
   }
 
-  return { ok: true, slug: slug as Slug }
+  return { ok: true, slug: normalized as Slug }
 }

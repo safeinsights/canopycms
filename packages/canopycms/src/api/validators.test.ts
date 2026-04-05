@@ -145,8 +145,8 @@ describe('API validators', () => {
       expect(() => slugSchema.parse('posts/hello')).toThrow('separator')
     })
 
-    it('rejects slugs with uppercase', () => {
-      expect(() => slugSchema.parse('HelloWorld')).toThrow('lowercase')
+    it('normalizes mixed-case slugs to lowercase', () => {
+      expect(slugSchema.parse('HelloWorld')).toBe('helloworld')
     })
 
     it('rejects slugs not starting with alphanumeric', () => {
@@ -183,7 +183,7 @@ describe('API validators', () => {
       // Invalid
       expect(() => slugSchema.parse('')).toThrow()
       expect(() => slugSchema.parse('posts/items')).toThrow('separator')
-      expect(() => slugSchema.parse('Posts')).toThrow('lowercase')
+      expect(slugSchema.parse('Posts')).toBe('posts')
     })
   })
 

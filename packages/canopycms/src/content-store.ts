@@ -532,16 +532,11 @@ export class ContentStore {
     const idIndex = await this.idIndex()
     const collection = this.assertCollection(collectionPath)
 
-    // Validate new slug format
+    // Validate new slug format (Slug branded type guarantees lowercase alphanumeric+hyphens via parseSlug)
     validateSlug(newSlug)
     const safeNewSlug = newSlug.replace(/^\/+/, '')
     if (!safeNewSlug) {
       throw new ContentStoreError('New slug cannot be empty')
-    }
-    if (!/^[a-z0-9][a-z0-9-]*$/.test(safeNewSlug)) {
-      throw new ContentStoreError(
-        'Slug must start with a letter or number and contain only lowercase letters, numbers, and hyphens',
-      )
     }
 
     // Get current file path

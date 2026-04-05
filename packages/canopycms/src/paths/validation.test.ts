@@ -409,11 +409,19 @@ describe('path validation utilities', () => {
         }
       })
 
-      it('rejects slugs with uppercase letters', () => {
-        const result = parseSlug('HelloWorld', 'entry')
-        expect(result.ok).toBe(false)
-        if (!result.ok) {
-          expect(result.error).toContain('lowercase')
+      it('normalizes mixed-case slugs to lowercase', () => {
+        const result = parseSlug('Hello-World', 'entry')
+        expect(result.ok).toBe(true)
+        if (result.ok) {
+          expect(result.slug).toBe('hello-world')
+        }
+      })
+
+      it('normalizes fully uppercase slugs to lowercase', () => {
+        const result = parseSlug('HELLO', 'entry')
+        expect(result.ok).toBe(true)
+        if (result.ok) {
+          expect(result.slug).toBe('hello')
         }
       })
 
@@ -470,10 +478,14 @@ describe('path validation utilities', () => {
         // Not starting with alphanumeric
         result = parseSlug('-posts', 'collection')
         expect(result.ok).toBe(false)
+      })
 
-        // Uppercase
-        result = parseSlug('Posts', 'collection')
-        expect(result.ok).toBe(false)
+      it('normalizes mixed-case collection slugs to lowercase', () => {
+        const result = parseSlug('Posts', 'collection')
+        expect(result.ok).toBe(true)
+        if (result.ok) {
+          expect(result.slug).toBe('posts')
+        }
       })
     })
   })

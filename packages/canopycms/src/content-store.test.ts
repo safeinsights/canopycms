@@ -664,14 +664,8 @@ describe('ContentStore', () => {
         ),
       ).rejects.toThrow('cannot contain forward slashes')
 
-      // Try invalid slug with uppercase
-      await expect(
-        store.renameEntry(
-          unsafeAsLogicalPath('content/posts'),
-          unsafeAsSlug('test-post'),
-          unsafeAsSlug('Invalid-Slug'),
-        ),
-      ).rejects.toThrow('must start with a letter or number')
+      // Uppercase slugs are normalized by parseSlug at the API boundary,
+      // so renameEntry receives already-validated Slug branded types
     })
 
     it('handles no-op when slug is unchanged', async () => {
