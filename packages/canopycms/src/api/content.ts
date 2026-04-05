@@ -8,6 +8,7 @@ import { ReferenceValidator } from '../validation/reference-validator'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
 import type { Slug, PhysicalPath } from '../paths'
 import type { BranchContextWithSchema } from '../types'
+import { isNotFoundError } from '../utils/error'
 
 /** Response type for content read operations */
 export type ContentReadResponse = ApiResponse<{
@@ -140,8 +141,15 @@ const readContentHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
-  const doc = await store.read(schemaItem.logicalPath, slug)
-  return { ok: true, status: 200, data: doc }
+  try {
+    const doc = await store.read(schemaItem.logicalPath, slug)
+    return { ok: true, status: 200, data: doc }
+  } catch (err: unknown) {
+    if (isNotFoundError(err)) {
+      return { ok: false, status: 404, error: 'Content not found' }
+    }
+    throw err
+  }
 }
 
 const writeContentHandler = async (
