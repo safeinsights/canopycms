@@ -103,7 +103,12 @@ export function createPhysicalPath(...segments: string[]): PhysicalPath {
  * trimSlashes('///multi///') // 'multi'
  */
 export function trimSlashes(path: string): string {
-  return path.replace(/^\/+/, '').replace(/\/+$/, '')
+  // Linear scan instead of regex to avoid polynomial ReDoS on repeated '/' chars
+  let start = 0
+  let end = path.length
+  while (start < end && path[start] === '/') start++
+  while (end > start && path[end - 1] === '/') end--
+  return path.slice(start, end)
 }
 
 /**
