@@ -24,23 +24,23 @@ The codebase uses a modular structure with clear separation:
 
 **Core Modules** (packages/canopycms/src/):
 
-| Module          | Location            | Purpose                                                                                                                                                                              |
-| --------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| authorization/  | src/authorization/  | Unified access control (branch + path permissions, groups)                                                                                                                           |
-| config/         | src/config/         | Configuration types, Zod schemas, validation                                                                                                                                         |
-| schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                                                                                                               |
-| paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                                                                                                                        |
-| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, dev)                                                                                                                                                |
-| api/            | src/api/            | API handlers, middleware, route builder                                                                                                                                              |
-| http/           | src/http/           | HTTP request handling (router, types)                                                                                                                                                |
-| editor/         | src/editor/         | React editor components, contexts, hooks                                                                                                                                             |
-| validation/     | src/validation/     | Validation utilities (field traversal, references)                                                                                                                                   |
-| utils/          | src/utils/          | Shared utilities (error handling, debug logging, title-field: resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists; body-field: countBodyFields, findInvalidBodyFields) |
-| auth/           | src/auth/           | Authentication plugin interface and cache system                                                                                                                                     |
-| worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                                                                                               |
-| task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                                                                                                    |
-| cli/            | src/cli/            | CLI bootstrapping (`pnpm exec canopycms init`, `init-deploy aws`, `worker run-once`, `sync`)                                                                                         |
-| test-utils/     | src/test-utils/     | Shared test utilities (mock factories, console spy, git repo init); exported as `canopycms/test-utils`                                                                               |
+| Module          | Location            | Purpose                                                                                                                                                                                                           |
+| --------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| authorization/  | src/authorization/  | Unified access control (branch + path permissions, groups)                                                                                                                                                        |
+| config/         | src/config/         | Configuration types, Zod schemas, validation                                                                                                                                                                      |
+| schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                                                                                                                                            |
+| paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                                                                                                                                                     |
+| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, dev)                                                                                                                                                                             |
+| api/            | src/api/            | API handlers, middleware, route builder                                                                                                                                                                           |
+| http/           | src/http/           | HTTP request handling (router, types)                                                                                                                                                                             |
+| editor/         | src/editor/         | React editor components, contexts, hooks                                                                                                                                                                          |
+| validation/     | src/validation/     | Validation utilities (field traversal, references)                                                                                                                                                                |
+| utils/          | src/utils/          | Shared utilities (error handling, debug logging, title-field: resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists; body-field: countBodyFields, findInvalidBodyFields; sanitize-href: sanitizeHref) |
+| auth/           | src/auth/           | Authentication plugin interface and cache system                                                                                                                                                                  |
+| worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                                                                                                                            |
+| task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                                                                                                                                 |
+| cli/            | src/cli/            | CLI bootstrapping (`pnpm exec canopycms init`, `init-deploy aws`, `worker run-once`, `sync`)                                                                                                                      |
+| test-utils/     | src/test-utils/     | Shared test utilities (mock factories, console spy, git repo init); exported as `canopycms/test-utils`                                                                                                            |
 
 **Top-level files** (intentionally not modularized):
 
@@ -869,13 +869,14 @@ const refs = findFieldsByType(schema, data, 'reference')
 
 **Location**: packages/canopycms/src/utils/
 
-| File            | Purpose                                                                                     |
-| --------------- | ------------------------------------------------------------------------------------------- |
-| error.ts        | Type-safe error handling (getErrorMessage, isNodeError, isNotFoundError, isFileExistsError) |
-| debug.ts        | Debug logging utilities (createDebugLogger)                                                 |
-| format.ts       | Formatting utilities                                                                        |
-| atomic-write.ts | Atomic file writes via temp-file + rename (prevents corruption on NFS/EFS)                  |
-| body-field.ts   | Body field validation (countBodyFields, findInvalidBodyFields) for isBody schema flag       |
+| File             | Purpose                                                                                      |
+| ---------------- | -------------------------------------------------------------------------------------------- |
+| error.ts         | Type-safe error handling (getErrorMessage, isNodeError, isNotFoundError, isFileExistsError)  |
+| debug.ts         | Debug logging utilities (createDebugLogger)                                                  |
+| format.ts        | Formatting utilities                                                                         |
+| atomic-write.ts  | Atomic file writes via temp-file + rename (prevents corruption on NFS/EFS)                   |
+| body-field.ts    | Body field validation (countBodyFields, findInvalidBodyFields) for isBody schema flag        |
+| sanitize-href.ts | Sanitize untrusted URLs for href attributes; allows only http/https protocols (sanitizeHref) |
 
 **Error Handling Pattern**:
 

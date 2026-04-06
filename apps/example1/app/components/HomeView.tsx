@@ -2,6 +2,7 @@
 
 import React from 'react'
 
+import { sanitizeHref } from 'canopycms'
 import { useCanopyPreview } from 'canopycms/client'
 
 import type { HomeContent } from '../schemas'
@@ -14,6 +15,7 @@ export const HomeView: React.FC<{ data: HomeContent }> = ({ data }) => {
   const hero = liveData?.hero ?? { title: '', body: '' }
   const features = liveData?.features ?? []
   const cta = liveData?.cta ?? { text: '', link: '#' }
+  const ctaHref = sanitizeHref(cta.link)
 
   return (
     <div className="space-y-6">
@@ -28,7 +30,7 @@ export const HomeView: React.FC<{ data: HomeContent }> = ({ data }) => {
           {hero.body}
         </p>
         <a
-          href={/^https?:\/\//.test(cta.link) ? cta.link : '#'}
+          href={ctaHref}
           {...fieldProps('cta')}
           className="mt-5 inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-indigo-700"
         >

@@ -19,6 +19,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - [Configuration Reference](#configuration-reference)
 - [Content Identification and References](#content-identification--references)
 - [Integration Guide](#integration-guide)
+- [Sanitizing URLs from CMS Content](#sanitizing-urls-from-cms-content)
 - [Content Tree Builder](#content-tree-builder)
 - [Listing Entries](#listing-entries)
 - [Features](#features)
@@ -954,6 +955,41 @@ const { data } = await reader.read({
   user: ANONYMOUS_USER, // Explicit user required
 })
 ```
+
+### Sanitizing URLs from CMS Content
+
+When rendering links from CMS-managed content, user-provided URLs may contain dangerous schemes like `javascript:` or `data:`. CanopyCMS exports a `sanitizeHref` utility that parses untrusted URLs and only allows `http:` and `https:` protocols, returning a safe fallback for anything else.
+
+```typescript
+import { sanitizeHref } from 'canopycms'
+```
+
+**Basic usage:**
+
+```tsx
+// In your component that renders CMS content
+<a href={sanitizeHref(entry.data.link)}>{entry.data.linkText}</a>
+```
+
+**With a custom fallback:**
+
+```tsx
+// Returns '/fallback-page' instead of '#' for invalid URLs
+<a href={sanitizeHref(entry.data.link, '/fallback-page')}>Click here</a>
+```
+
+**Behavior:**
+
+| Input                           | Output                       |
+| ------------------------------- | ---------------------------- |
+| `"https://example.com/page"`    | `"https://example.com/page"` |
+| `"http://example.com"`          | `"http://example.com"`       |
+| `"javascript:alert(1)"`         | `"#"` (blocked scheme)       |
+| `"data:text/html,<h1>bad</h1>"` | `"#"` (blocked scheme)       |
+| `"not a url"`                   | `"#"` (invalid URL)          |
+| `""`                            | `"#"` (invalid URL)          |
+
+Use `sanitizeHref` anywhere you render an `href` attribute with a value that comes from CMS content -- call-to-action links, navigation URLs, author website fields, etc. It constructs a fresh string from the parsed URL rather than passing the original input through, which also satisfies static analysis tools (e.g., CodeQL taint tracking).
 
 ### Media Configuration
 

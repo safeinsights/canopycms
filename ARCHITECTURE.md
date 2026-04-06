@@ -140,6 +140,7 @@ The core package organizes code into focused modules, each with a single respons
 - Type-safe error handling patterns
 - Debug logging utilities
 - Formatting helpers
+- URL sanitization for safe rendering of CMS-sourced links
 
 ### Top-Level Files
 
@@ -2136,6 +2137,16 @@ These are nominal types (string with a brand) that the compiler tracks separatel
 - Need to maintain type guards and conversion functions
 
 The safety benefits outweigh the verbosity cost, especially for security-sensitive path operations where a bug could lead to path traversal vulnerabilities.
+
+### Why a URL sanitization utility in core?
+
+CMS content is user-authored, so URLs entered in link fields, CTAs, and rich text blocks are untrusted input. A malicious or accidental `javascript:` or `data:` URL rendered into an `href` attribute creates a cross-site scripting vector, and an unchecked redirect URL can be used for phishing.
+
+Rather than expecting every adopter to independently solve this, the core package provides a `sanitizeHref` utility that parses a URL with the standard `URL` constructor and only allows `http:` and `https:` protocols. The function returns a new string derived from the parsed URL object rather than the original input, which breaks static-analysis taint chains (CodeQL, Semgrep, etc.) and gives adopters a single, auditable point for URL safety.
+
+**Why protocol allowlisting instead of denylisting?** Blocking known-bad schemes (`javascript:`, `vbscript:`, `data:`) is fragile because new schemes or parser quirks can bypass the list. Allowlisting only `http:` and `https:` is a closed set that cannot be bypassed by novel scheme names.
+
+**Why in core rather than in a separate security package?** URL sanitization is needed wherever CMS content is rendered, which is the adopter's site. Shipping it in the core package means adopters get it as a zero-cost import with no extra dependency, and the utility evolves alongside the content model it protects.
 
 ### Why filename-embedded content IDs?
 
