@@ -1,6 +1,6 @@
 {
   "name": "canopycms-monorepo",
-  "version": "0.0.19",
+  "version": "0.0.20",
   "private": true,
   "packageManager": "pnpm@10.12.1",
   "repository": {
