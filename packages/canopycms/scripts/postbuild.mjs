@@ -1,10 +1,51 @@
-import { rm, cp, rename, readFile, writeFile } from 'node:fs/promises'
-import { resolve, dirname } from 'node:path'
+import { rm, cp, rename, readFile, writeFile, readdir } from 'node:fs/promises'
+import { resolve, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { existsSync, statSync } from 'node:fs'
 import { build } from 'esbuild'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = resolve(__dirname, '..')
+const distDir = resolve(root, 'dist')
+
+// ---------------------------------------------------------------------------
+// 1. Rewrite extensionless relative imports in dist to include .js extensions.
+//    tsc with moduleResolution:"Bundler" preserves bare specifiers verbatim,
+//    which breaks Node's native ESM resolver.
+// ---------------------------------------------------------------------------
+
+const RELATIVE_IMPORT_RE = /(from\s+['"]|import\s*\(\s*['"]|import\s+['"])(\.\.?\/[^'"]+)(['"])/g
+
+async function addJsExtensions(dir) {
+  const entries = await readdir(dir, { withFileTypes: true, recursive: true })
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith('.js')) continue
+    const filePath = join(entry.parentPath ?? entry.path, entry.name)
+    const original = await readFile(filePath, 'utf8')
+
+    const rewritten = original.replace(RELATIVE_IMPORT_RE, (match, prefix, specifier, quote) => {
+      // Already has a file extension — leave it alone
+      if (/\.[cm]?[jt]sx?$/.test(specifier)) return match
+
+      const base = resolve(dirname(filePath), specifier)
+
+      // If specifier points to a directory with an index.js, expand it
+      if (existsSync(base) && statSync(base).isDirectory()) {
+        return `${prefix}${specifier}/index.js${quote}`
+      }
+
+      // Otherwise append .js
+      return `${prefix}${specifier}.js${quote}`
+    })
+
+    if (rewritten !== original) {
+      await writeFile(filePath, rewritten)
+    }
+  }
+}
+
+await addJsExtensions(distDir)
 
 // Copy template files — rm first to prevent nested dirs on repeated builds
 await rm(resolve(root, 'dist/cli/template-files'), { recursive: true, force: true })
