@@ -87,13 +87,13 @@ These are not bundled with `canopycms-auth-clerk` so you control the Clerk SDK v
 
 ### 3. Next.js configuration (auto-generated)
 
-The `init` command creates a `next.config.ts` that wraps your config with `withCanopy()` from `canopycms-next`. You do not need to set this up manually.
+The `init` command creates a `next.config.ts` that wraps your config with `withCanopy()` from `canopycms-next/config`. You do not need to set this up manually.
 
 If you already have a `next.config.ts`, the init command will ask before overwriting. To add the wrapper to an existing config, merge it like this:
 
 ```typescript
 // next.config.ts
-import { withCanopy } from 'canopycms-next'
+import { withCanopy } from 'canopycms-next/config'
 
 export default withCanopy({
   // ...your existing Next.js config
@@ -118,7 +118,7 @@ If you deploy both a **static public site** and a **separate CMS server** from t
 
 ```typescript
 // next.config.ts
-import { withCanopy } from 'canopycms-next'
+import { withCanopy } from 'canopycms-next/config'
 
 const isCmsBuild = process.env.CANOPY_BUILD === 'cms'
 

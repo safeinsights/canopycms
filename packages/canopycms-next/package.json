@@ -14,7 +14,8 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./src/client.tsx"
+    "./client": "./src/client.tsx",
+    "./config": "./src/config.ts"
   },
   "files": [
     "dist"
@@ -28,11 +29,16 @@
       "./client": {
         "import": "./dist/client.js",
         "types": "./dist/client.d.ts"
+      },
+      "./config": {
+        "require": "./dist/config.cjs",
+        "import": "./dist/config.js",
+        "types": "./dist/config.d.ts"
       }
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && esbuild src/config.ts --bundle --format=cjs --platform=node --outfile=dist/config.cjs --external:next --packages=external",
     "lint": "eslint src/",
     "test": "vitest run --reporter=dot",
     "typecheck": "tsc --noEmit"
@@ -47,6 +53,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "esbuild": "^0.24.2",
     "@types/react": "^18.3.12",
     "canopycms": "workspace:*",
     "next": "^14.2.25",

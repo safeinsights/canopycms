@@ -74,7 +74,7 @@ describe('canopycms init', () => {
 
     const config = await fs.readFile(path.join(tmpDir, 'next.config.ts'), 'utf-8')
     expect(config).toContain('withCanopy')
-    expect(config).toContain("from 'canopycms-next'")
+    expect(config).toContain("from 'canopycms-next/config'")
   })
 
   it('generates config with correct mode for dev', async () => {
