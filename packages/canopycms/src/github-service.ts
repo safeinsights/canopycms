@@ -238,7 +238,7 @@ export class GitHubService {
     }
 
     // Try SSH format
-    const sshMatch = urlWithoutGit.match(/git@github\.com:([^/]+)\/(.+)/)
+    const sshMatch = urlWithoutGit.match(/git@github\.com:([^/]+)\/([^/]+)/)
     if (sshMatch) {
       return {
         owner: sshMatch[1],
