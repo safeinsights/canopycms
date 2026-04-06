@@ -136,54 +136,92 @@ export type PostContent = TypeFromEntrySchema<typeof postSchema>
 
 _TODO_ show how schemas can be defined across multiple files. Show all the configuration options for schemas.
 
-2. **Add API routes** with the Next adapter
+2. **Set up the shared Canopy helper and API routes**
+
+Create a shared helper that provides both the Canopy context (for reading content in pages) and the API handler (for the editor):
+
+```ts
+// app/lib/canopy.ts
+import { createNextCanopyContext } from 'canopycms-next'
+import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
+import config from '../../canopycms.config'
+
+const canopyContextPromise = createNextCanopyContext({
+  config: config.server,
+  authPlugin: createClerkAuthPlugin({ useOrganizationsAsGroups: true }),
+})
+
+// For server component pages
+export const getCanopy = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopy()
+}
+
+// For API routes
+export const getHandler = async () => {
+  const context = await canopyContextPromise
+  return context.handler
+}
+```
+
+Then wire up the catch-all API route:
 
 ```ts
 // app/api/canopycms/[...canopycms]/route.ts
-import config from '../../../canopycms.config' // adjust path as needed
-import { createCanopyHandler } from 'canopycms/next'
-import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
+import { getHandler } from '../../../lib/canopy'
+import type { NextRequest } from 'next/server'
 
-const handler = createCanopyHandler({
-  config,
-  authPlugin: createClerkAuthPlugin({
-    secretKey: process.env.CLERK_SECRET_KEY,
-    useOrganizationsAsGroups: true, // Map Clerk organizations to CMS groups
-  }),
-})
+const handler = getHandler()
 
-export const GET = handler
-export const POST = handler
-export const PUT = handler
-export const DELETE = handler
+type RouteContext = { params: Promise<Record<string, string | string[]>> }
+
+export const GET = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)
+export const POST = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)
+export const PUT = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)
+export const DELETE = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)
 ```
 
 The `authPlugin` is required and handles authentication for all API requests. See [canopycms-auth-clerk](../canopycms-auth-clerk) for Clerk integration or create your own plugin implementing the `AuthPlugin` interface.
 
-The `[collection]` segment should receive the collection `path` (the id). If your ids include `/`, encode them (`encodeURIComponent`) when building URLs to keep them as a single path segment.
-
 Host styling is framework-agnostic: your public app can use Tailwind (the included example does) or anything else; Mantine is only required inside the CanopyCMS editor UI.
 
-3. **Load content in your pages** with the Next helper
+3. **Load content in your pages**
+
+Use `readByUrlPath` to resolve a URL path to content automatically. It tries a direct entry match first (last segment = slug), then falls back to an index entry. Returns `null` if nothing matches.
 
 ```ts
-// app/page.tsx (server component)
-import { createContentReader } from 'canopycms'
-import config from '../canopycms.config'
-import type { PostContent } from '../schemas' // TypeFromEntrySchema-derived type
+// app/docs/[[...slug]]/page.tsx (catch-all server component)
+import { notFound } from 'next/navigation'
+import { getCanopy } from '../../lib/canopy'
+import type { DocContent } from '../../schemas'
+import DocView from '../../components/DocView'
 
-const reader = createContentReader({ config })
+export default async function DocPage({ params }: { params: { slug?: string[] } }) {
+  const canopy = await getCanopy()
+  const urlPath = `/docs/${(params.slug || []).join('/')}`
 
-export default async function Page({ searchParams }: { searchParams?: { branch?: string } }) {
-  const { data } = await reader.read<PostContent>({
-    entryPath: 'content/posts/hello',
-    branch: searchParams?.branch,
-  })
-  // render using data; preview hooks can infer the entry id from the current URL
+  const result = await canopy.readByUrlPath<DocContent>(urlPath)
+  if (!result) notFound()
+
+  return <DocView data={result.data} />
 }
 ```
 
-`read` returns `{ data, path }` and throws if the content is missing. In preview pages, `useCanopyPreview` can infer the entry id from `window.location` so you can usually ignore `path`. Pass a `branch` when you want branch-specific data; otherwise it defaults to your configured base branch. The helper enforces the same branch/path access rules as the API handlers.
+For known, fixed paths you can still use `read` directly:
+
+```ts
+// app/page.tsx (server component)
+import { getCanopy } from './lib/canopy'
+import type { HomeContent } from './schemas'
+
+export default async function Page() {
+  const canopy = await getCanopy()
+  const { data } = await canopy.read<HomeContent>({ entryPath: 'content/home' })
+  return <HomeView data={data} />
+}
+```
+
+Both methods return `{ data, path }`. `read` throws if the content is missing; `readByUrlPath` returns `null` instead. Pass a `branch` option when you want branch-specific data (e.g., for preview); otherwise it defaults to your configured base branch. Both enforce the same branch/path access rules as the API handlers.
 
 4. **Wire auth**
    Provide an `authPlugin` in `createCanopyHandler` (e.g., Clerk) so branch/path permissions can be enforced.

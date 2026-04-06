@@ -44,32 +44,33 @@ The codebase uses a modular structure with clear separation:
 
 **Top-level files** (intentionally not modularized):
 
-| File                     | Purpose                                                                                                                           |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| services.ts              | CanopyServices factory with git operations                                                                                        |
-| context.ts               | Context creation and management (CanopyContext: read, buildContentTree, listEntries; schema resolution memoized per call)         |
-| types.ts                 | Core types (BranchContext, BranchContextWithSchema, BranchMetadata, SyncStatus, ConflictStatus)                                   |
-| branch-metadata.ts       | Branch metadata persistence                                                                                                       |
-| branch-registry.ts       | Branch tracking and listing                                                                                                       |
-| branch-workspace.ts      | Branch workspace management                                                                                                       |
-| branch-schema-cache.ts   | Per-branch schema caching (always file-based; no in-memory path)                                                                  |
-| settings-workspace.ts    | Settings branch workspace                                                                                                         |
-| settings-branch-utils.ts | Settings branch utility helpers                                                                                                   |
-| content-store.ts         | Content persistence (getCollectionEntryPaths for index-based minimal metadata)                                                    |
-| content-reader.ts        | Content reading                                                                                                                   |
-| content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading, batch listing via listEntries)                     |
-| content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs)                                                             |
-| content-id-index.ts      | Content ID indexing                                                                                                               |
-| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                                                 |
-| entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle (string only) and isBody (at most one, markdown/mdx only) |
-| git-manager.ts           | Git operations wrapper                                                                                                            |
-| github-service.ts        | GitHub API integration                                                                                                            |
-| comment-store.ts         | Comment persistence                                                                                                               |
-| reference-resolver.ts    | Reference resolution                                                                                                              |
-| asset-store.ts           | Asset storage                                                                                                                     |
-| build-mode.ts            | Static deploy detection (`isDeployedStatic`), build-phase safety net (`isBuildMode`), `STATIC_DEPLOY_USER`                        |
-| user.ts                  | User utilities                                                                                                                    |
-| server.ts                | Server entrypoint exports                                                                                                         |
+| File                     | Purpose                                                                                                                                  |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| services.ts              | CanopyServices factory with git operations                                                                                               |
+| context.ts               | Context creation and management (CanopyContext: read, readByUrlPath, buildContentTree, listEntries; schema resolution memoized per call) |
+| types.ts                 | Core types (BranchContext, BranchContextWithSchema, BranchMetadata, SyncStatus, ConflictStatus)                                          |
+| branch-metadata.ts       | Branch metadata persistence                                                                                                              |
+| branch-registry.ts       | Branch tracking and listing                                                                                                              |
+| branch-workspace.ts      | Branch workspace management                                                                                                              |
+| branch-schema-cache.ts   | Per-branch schema caching (always file-based; no in-memory path)                                                                         |
+| settings-workspace.ts    | Settings branch workspace                                                                                                                |
+| settings-branch-utils.ts | Settings branch utility helpers                                                                                                          |
+| content-store.ts         | Content persistence (getCollectionEntryPaths for index-based minimal metadata)                                                           |
+| content-reader.ts        | Content reading                                                                                                                          |
+| content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading, batch listing via listEntries)                            |
+| content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs)                                                                    |
+| content-id-index.ts      | Content ID indexing                                                                                                                      |
+| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                                                        |
+| entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle (string only) and isBody (at most one, markdown/mdx only)        |
+| git-manager.ts           | Git operations wrapper                                                                                                                   |
+| github-service.ts        | GitHub API integration                                                                                                                   |
+| comment-store.ts         | Comment persistence                                                                                                                      |
+| url-path-resolver.ts     | URL path to content resolution (resolveUrlPathCandidates: decomposes URL path into ordered entryPath/slug candidates)                    |
+| reference-resolver.ts    | Reference resolution                                                                                                                     |
+| asset-store.ts           | Asset storage                                                                                                                            |
+| build-mode.ts            | Static deploy detection (`isDeployedStatic`), build-phase safety net (`isBuildMode`), `STATIC_DEPLOY_USER`                               |
+| user.ts                  | User utilities                                                                                                                           |
+| server.ts                | Server entrypoint exports                                                                                                                |
 
 ## API Layer
 
