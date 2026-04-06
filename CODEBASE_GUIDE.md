@@ -380,14 +380,14 @@ Next.js-specific adapter layer. Provides the catch-all API handler, context crea
 | adapter.ts         | `createCanopyCatchAllHandler()`, `wrapNextRequest()` for Next.js catch-all API route                                                                                                                                                                                                                                                                                                                 |
 | context-wrapper.ts | `createNextCanopyContext()` returns `NextCanopyContextResult` with: `getCanopy` (request-scoped via React `cache()` + `headers()`), `getCanopyForBuild` (returns `CanopyBuildContext` — narrower type with only buildContentTree, listEntries, services; uses `STATIC_DEPLOY_USER`, memoized per process, safe for `generateStaticParams`/`generateMetadata`), `handler` (API catch-all), `services` |
 | client.tsx         | `NextCanopyEditorPage` - client component that reads URL search params automatically                                                                                                                                                                                                                                                                                                                 |
-| config.ts          | CJS-compatible entry point re-exporting `withCanopy` and `WithCanopyOptions` from `with-canopy.ts`; published as both ESM (`dist/config.js`) and CJS (`dist/config.cjs` via esbuild bundle) for Next.js 13/14 config loading compatibility. Import path: `canopycms-next/config`                                                                                                                     |
+| config.ts          | CJS-compatible entry point re-exporting `withCanopy` and `WithCanopyOptions` from `with-canopy.ts`; bundled via esbuild into both ESM (`dist/config.mjs`) and CJS (`dist/config.cjs`) for Next.js 13/14 config loading compatibility. Always uses bundled output (dev and published). Import path: `canopycms-next/config`                                                                           |
 | test-utils.ts      | `createMockAuthPlugin()`, `createRejectingAuthPlugin()` for tests                                                                                                                                                                                                                                                                                                                                    |
 
 **Entry Points**:
 
 | Import path             | Format  | Purpose                                                                   |
 | ----------------------- | ------- | ------------------------------------------------------------------------- |
-| `canopycms-next`        | ESM     | Main exports (adapter, context wrapper, test utils, withCanopy)           |
+| `canopycms-next`        | ESM     | Main exports (adapter, context wrapper, test utils)                       |
 | `canopycms-next/client` | ESM     | Client components (`NextCanopyEditorPage`)                                |
 | `canopycms-next/config` | ESM+CJS | `withCanopy` only -- CJS-compatible for `next.config.ts` in Next.js 13/14 |
 
@@ -968,6 +968,7 @@ Lightweight, read-only AI content serving. Does not require auth or the editor A
 6. app/ai/config.ts - AI content configuration
 7. app/ai/[...path]/route.ts - AI content endpoint
 8. middleware.ts - Auth route protection
+9. next.config.mjs - Uses `withCanopy` from `canopycms-next/config`
 
 ### Expected Structure
 
@@ -984,6 +985,7 @@ apps/example1/
   content/                                  # Content files
   canopycms.config.ts                      # Config
   middleware.ts                             # Auth protection
+  next.config.mjs                          # Next.js config (withCanopy)
 ```
 
 ## Test Organization
