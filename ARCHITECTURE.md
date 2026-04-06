@@ -645,10 +645,16 @@ const canopyContextPromise = createNextCanopyContext({
   entrySchemaRegistry,
 })
 
-// Export getters that await the promise
+// Request-scoped: uses headers() + React cache()
 export const getCanopy = async () => {
   const context = await canopyContextPromise
   return context.getCanopy()
+}
+
+// Build-scoped: no request context needed
+export const getCanopyForBuild = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopyForBuild()
 }
 ```
 
@@ -658,6 +664,7 @@ export const getCanopy = async () => {
 - **Shared services**: All requests use the same services instance with cached schemas
 - **Lambda-safe**: In serverless environments, the promise resolves once per container lifecycle
 - **Type safety**: Async await ensures services are fully initialized before use
+- **Explicit scope**: `getCanopy()` for request-scoped contexts, `getCanopyForBuild()` for build-time contexts like `generateStaticParams`
 
 ### Watch System for Meta Files
 
@@ -1076,18 +1083,18 @@ Setup is a one-time operation in a central file (e.g., `app/lib/canopy.ts`):
 
 ```typescript
 // One-time setup
-const { getCanopy, handler, services } = createNextCanopyContext({
+const { getCanopy, getCanopyForBuild, handler, services } = createNextCanopyContext({
   config: canopyConfig,
   authPlugin: clerkAuthPlugin,
 })
 
-export { getCanopy, handler, services }
+export { getCanopy, getCanopyForBuild, handler, services }
 ```
 
 Then in pages and API routes:
 
 ```typescript
-// In a page/component
+// In a page/component (request-scoped)
 const canopy = await getCanopy()
 const { data } = await canopy.read({
   entryPath: 'content/posts',
@@ -1096,6 +1103,13 @@ const { data } = await canopy.read({
 ```
 
 No manual user management, no config imports, no auth logic. The context handles everything.
+
+**Two context functions serve different scopes:**
+
+- **`getCanopy()`** is request-scoped. It calls `headers()` to authenticate the current user and is wrapped with React `cache()` for per-request memoization. Use it in server components and route handlers.
+- **`getCanopyForBuild()`** is process-scoped. It uses a synthetic admin user with no auth, making it safe to call from `generateStaticParams`, `generateMetadata`, and other non-request-scoped contexts where `headers()` is unavailable. It is memoized for the process lifetime.
+
+This dual-context pattern replaces the need for `isBuildMode()` environment detection in most cases. Instead of the framework guessing whether auth is available, adopters explicitly choose the right context for each call site.
 
 ## The Permission Model
 
@@ -1996,7 +2010,7 @@ The old approach used `isBuildMode()` and a `BUILD_USER` to detect and handle st
 
 **The `deployedAs: 'static'` config field** makes this explicit. It is a stable, config-driven declaration that applies across the entire lifecycle of a static deployment. This is the primary mechanism for static sites.
 
-**`isBuildMode()` remains as a safety net** for server deployments. During `next build` of a server-deployed site, functions like `generateStaticParams` call `getCanopy()` without a request context. Build mode detection catches this edge case.
+**`isBuildMode()` remains as a safety net** for server deployments. During `next build` of a server-deployed site, functions like `generateStaticParams` run without a request context. The preferred solution is for adopters to use `getCanopyForBuild()` instead of `getCanopy()` in these contexts, which explicitly provides a non-request-scoped context with a synthetic admin user. Build mode detection remains as a fallback for cases where `getCanopy()` is called without a request context.
 
 **Why two checks instead of one?**
 
@@ -2301,10 +2315,16 @@ const canopyContextPromise = createNextCanopyContext({
   entrySchemaRegistry,
 })
 
-// Export getters that await the promise
+// Request-scoped: uses headers() + React cache()
 export const getCanopy = async () => {
   const context = await canopyContextPromise
   return context.getCanopy()
+}
+
+// Build-scoped: no request context needed (generateStaticParams, etc.)
+export const getCanopyForBuild = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopyForBuild()
 }
 ```
 
@@ -2315,6 +2335,7 @@ export const getCanopy = async () => {
 - **Lambda optimization**: In serverless, the promise resolves once per container and is reused
 - **Error handling**: Initialization errors are thrown once, not on every request
 - **Type safety**: TypeScript enforces await at call sites
+- **Explicit scope**: Adopters choose request-scoped or build-scoped context at each call site, avoiding implicit environment detection
 
 **Performance characteristics:**
 

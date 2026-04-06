@@ -319,7 +319,7 @@ Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prom
 | sync.ts                | Bidirectional content sync between working tree and branch workspaces; push copies+commits to workspace, pull copies back, both does 3-way git merge via canopycms-sync-base tag, abort cancels a failed merge; includes `assertWithinDir` path-traversal guard, `safeReplaceDir` crash-safe directory replacement, `selectBranch` interactive branch picker |
 | generate-ai-content.ts | AI content generation CLI command                                                                                                                                                                                                                                                                                                                            |
 | templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}}); includes `middleware()` export                                                                                                                                                                                                                          |
-| template-files/        | Template files for scaffolding (config, route, edit page, middleware, next.config.ts, AI content endpoint, Dockerfile, CI workflow)                                                                                                                                                                                                                          |
+| template-files/        | Template files for scaffolding (config, route, edit page, middleware, next.config.ts, AI content endpoint, Dockerfile, CI workflow); canopy.ts.template exports `getCanopy`, `getCanopyForBuild`, `getHandler`                                                                                                                                               |
 
 **Commands**:
 
@@ -949,7 +949,7 @@ Lightweight, read-only AI content serving. Does not require auth or the editor A
 1. canopycms.config.ts - Schema definition
 2. app/api/canopycms/[...canopycms]/route.ts - Catch-all API handler
 3. app/edit/page.tsx - Editor component embedding
-4. app/lib/canopy.ts - Canopy context setup (auth plugin wiring)
+4. app/lib/canopy.ts - Canopy context setup (exports `getCanopy`, `getCanopyForBuild`, `getHandler`)
 5. app/schemas.ts - Entry schema definitions
 6. app/ai/config.ts - AI content configuration
 7. app/ai/[...path]/route.ts - AI content endpoint

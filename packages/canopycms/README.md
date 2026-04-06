@@ -138,17 +138,23 @@ _TODO_ show how schemas can be defined across multiple files. Show all the confi
 
 2. **Set up the shared Canopy helper and API routes**
 
-Create a shared helper that provides both the Canopy context (for reading content in pages) and the API handler (for the editor):
+The `npx canopycms init` command generates a shared helper that provides the Canopy context (for reading content in pages) and the API handler (for the editor). If you need to create it manually:
 
 ```ts
 // app/lib/canopy.ts
 import { createNextCanopyContext } from 'canopycms-next'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
+import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import config from '../../canopycms.config'
+import { entrySchemaRegistry } from '../schemas'
 
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
-  authPlugin: createClerkAuthPlugin({ useOrganizationsAsGroups: true }),
+  authPlugin:
+    process.env.CANOPY_AUTH_MODE === 'clerk'
+      ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })
+      : createDevAuthPlugin(),
+  entrySchemaRegistry,
 })
 
 // For server component pages
@@ -157,12 +163,24 @@ export const getCanopy = async () => {
   return context.getCanopy()
 }
 
+// For build-time functions (generateStaticParams, generateMetadata)
+export const getCanopyForBuild = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopyForBuild()
+}
+
 // For API routes
 export const getHandler = async () => {
   const context = await canopyContextPromise
   return context.handler
 }
 ```
+
+This is the same code that `npx canopycms init` generates. It exports three helpers:
+
+- `getCanopy()` -- request-scoped context with auth from the current user
+- `getCanopyForBuild()` -- non-request-scoped context with full admin privileges (for `generateStaticParams`, `generateMetadata`, build scripts)
+- `getHandler()` -- the API route handler
 
 Then wire up the catch-all API route:
 
@@ -192,14 +210,26 @@ Use `readByUrlPath` to resolve a URL path to content automatically. It tries a d
 ```ts
 // app/docs/[[...slug]]/page.tsx (catch-all server component)
 import { notFound } from 'next/navigation'
-import { getCanopy } from '../../lib/canopy'
+import { getCanopy, getCanopyForBuild } from '../../lib/canopy'
 import type { DocContent } from '../../schemas'
 import DocView from '../../components/DocView'
 
-export default async function DocPage({ params }: { params: { slug?: string[] } }) {
-  const canopy = await getCanopy()
-  const urlPath = `/docs/${(params.slug || []).join('/')}`
+// Build-time: use getCanopyForBuild() (no request scope needed)
+export async function generateStaticParams() {
+  const canopy = await getCanopyForBuild()
+  const entries = await canopy.listEntries({ rootPath: 'content/docs' })
+  return entries.map((entry) => ({ slug: entry.pathSegments }))
+}
 
+export default async function DocPage({ params }: { params: { slug?: string[] } }) {
+  const slugParts = params.slug || []
+  if (slugParts.length === 0) {
+    return <div>Docs landing page</div>
+  }
+
+  // Request-time: use getCanopy() for auth-aware reads
+  const canopy = await getCanopy()
+  const urlPath = `/docs/${slugParts.join('/')}`
   const result = await canopy.readByUrlPath<DocContent>(urlPath)
   if (!result) notFound()
 
@@ -222,6 +252,8 @@ export default async function Page() {
 ```
 
 Both methods return `{ data, path }`. `read` throws if the content is missing; `readByUrlPath` returns `null` instead. Pass a `branch` option when you want branch-specific data (e.g., for preview); otherwise it defaults to your configured base branch. Both enforce the same branch/path access rules as the API handlers.
+
+> **Note:** `readByUrlPath` resolves to **entries** only, not collections. Passing `'/'` returns `null`. For collection-level data (navigation, sitemaps), use `buildContentTree` or `listEntries` instead.
 
 4. **Wire auth**
    Provide an `authPlugin` in `createCanopyHandler` (e.g., Clerk) so branch/path permissions can be enforced.

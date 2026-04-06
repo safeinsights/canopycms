@@ -57,7 +57,7 @@ Use `--non-interactive` for CI (uses defaults), `--force` to overwrite existing 
 | File                                             | Purpose                                                                                                    |
 | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | `canopycms.config.ts`                            | Main configuration (mode, editor settings)                                                                 |
-| `{appDir}/lib/canopy.ts`                         | Server-side context setup with auth plugin selection                                                       |
+| `{appDir}/lib/canopy.ts`                         | Server-side context setup; exports `getCanopy`, `getCanopyForBuild`, and `getHandler`                      |
 | `{appDir}/schemas.ts`                            | Entry schema definitions and registry                                                                      |
 | `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all API route handler                                                                         |
 | `{appDir}/edit/page.tsx`                         | Editor page component                                                                                      |
@@ -310,64 +310,44 @@ Then create nested collections in subfolders (e.g., `content/docs/guides/.collec
 
 ### Connecting the Schema Registry
 
-Pass your schema registry to `createNextCanopyContext` in `app/lib/canopy.ts`. The generated template handles auth provider selection at runtime:
+Pass your schema registry to `createNextCanopyContext` in `app/lib/canopy.ts`. The `npx canopycms init` command generates this file automatically:
 
 ```typescript
 import { createNextCanopyContext } from 'canopycms-next'
-import { createClerkAuthPlugin, createClerkJwtVerifier } from 'canopycms-auth-clerk'
-import { createDevAuthPlugin, createDevTokenVerifier } from 'canopycms-auth-dev'
-import type { AuthPlugin } from 'canopycms/auth'
-import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth/cache'
+import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
+import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import config from '../../canopycms.config'
 import { entrySchemaRegistry } from '../schemas'
 
-function getAuthPlugin(): AuthPlugin {
-  const mode = config.server.mode
-  const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
-
-  // In prod mode: use CachingAuthPlugin (networkless JWT + file-based cache)
-  if (mode === 'prod') {
-    const cachePath = process.env.CANOPY_AUTH_CACHE_PATH ?? '/mnt/efs/workspace/.cache'
-    const tokenVerifier =
-      authMode === 'clerk'
-        ? createClerkJwtVerifier({ jwtKey: process.env.CLERK_JWT_KEY ?? '' })
-        : createDevTokenVerifier()
-    return new CachingAuthPlugin(tokenVerifier, new FileBasedAuthCache(cachePath))
-  }
-
-  // In dev mode: use auth plugin directly (CachingAuthPlugin is auto-wrapped
-  // by createNextCanopyContext when the plugin exposes verifyTokenOnly)
-  if (authMode === 'clerk') {
-    return createClerkAuthPlugin({ useOrganizationsAsGroups: true })
-  }
-  return createDevAuthPlugin()
-}
-
-// Static deployments don't need auth — no HTTP requests, no users.
-// Server deployments should provide authPlugin for authenticated reads.
-const isStaticDeploy = config.server.deployedAs === 'static'
-
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
-  ...(!isStaticDeploy ? { authPlugin: getAuthPlugin() } : {}),
+  authPlugin:
+    process.env.CANOPY_AUTH_MODE === 'clerk'
+      ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })
+      : createDevAuthPlugin(),
   entrySchemaRegistry, // Enable .collection.json file support
 })
 
+// For server component pages (request-scoped, auth-aware)
 export const getCanopy = async () => {
   const context = await canopyContextPromise
   return context.getCanopy()
 }
 
+// For build-time functions (no request scope needed, full admin privileges)
 export const getCanopyForBuild = async () => {
   const context = await canopyContextPromise
   return context.getCanopyForBuild()
 }
 
+// For API routes
 export const getHandler = async () => {
   const context = await canopyContextPromise
   return context.handler
 }
 ```
+
+For production deployments that need networkless JWT verification (e.g., AWS Lambda without internet access), you can replace the auth setup with `CachingAuthPlugin` and `createClerkJwtVerifier`. See the [ARCHITECTURE.md](ARCHITECTURE.md) deployment section for details.
 
 ### Meta File Format Reference
 
@@ -947,10 +927,10 @@ export default async function PostPage({ params }) {
 
 **When to use which:**
 
-| Function              | Auth            | Request scope needed | Use for                                                   |
-| --------------------- | --------------- | -------------------- | --------------------------------------------------------- |
-| `getCanopy()`         | Current user    | Yes                  | Server components, route handlers                         |
-| `getCanopyForBuild()` | Admin (no auth) | No                   | `generateStaticParams`, `generateMetadata`, build scripts |
+| Function              | Auth                                       | Request scope needed | Use for                                                   |
+| --------------------- | ------------------------------------------ | -------------------- | --------------------------------------------------------- |
+| `getCanopy()`         | Current user                               | Yes                  | Server components, route handlers                         |
+| `getCanopyForBuild()` | Full admin (bypasses all auth/permissions) | No                   | `generateStaticParams`, `generateMetadata`, build scripts |
 
 ### Advanced: Using createContentReader Directly
 
