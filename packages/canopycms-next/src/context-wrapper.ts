@@ -4,6 +4,7 @@ import { headers } from 'next/headers'
 import {
   createCanopyContext,
   type CanopyContext,
+  type CanopyBuildContext,
   type CanopyServices,
   createCanopyServices,
   operatingStrategy,
@@ -57,11 +58,15 @@ export interface NextCanopyContextResult {
    * Safe to call from generateStaticParams, generateMetadata, and other non-request-scoped contexts.
    * Memoized for the process lifetime — multiple calls return the same context.
    *
+   * Returns a narrower type than getCanopy() — only buildContentTree and listEntries are
+   * available. read/readByUrlPath are excluded because build-time code should not perform
+   * per-user content reads.
+   *
    * **Security note:** This context bypasses all branch and path ACLs. It runs as a
    * synthetic admin user with unrestricted read access. Only use it in build-time
    * code paths that are not exposed to end users (e.g., static generation).
    */
-  getCanopyForBuild: () => Promise<CanopyContext>
+  getCanopyForBuild: () => Promise<CanopyBuildContext>
   /** API catch-all route handler */
   handler: ReturnType<typeof createCanopyCatchAllHandler>
   /** Underlying services (rarely needed directly) */
@@ -182,13 +187,22 @@ export async function createNextCanopyContext(
     extractUser: async () => STATIC_DEPLOY_USER,
   })
 
-  let buildContextPromise: Promise<CanopyContext> | null = null
-  const getCanopyForBuild = (): Promise<CanopyContext> => {
+  let buildContextPromise: Promise<CanopyBuildContext> | null = null
+  const getCanopyForBuild = (): Promise<CanopyBuildContext> => {
     if (!buildContextPromise) {
-      buildContextPromise = buildContext.getContext().catch((err) => {
-        buildContextPromise = null
-        throw err
-      })
+      buildContextPromise = buildContext
+        .getContext()
+        .then(
+          ({ buildContentTree, listEntries, services }): CanopyBuildContext => ({
+            buildContentTree,
+            listEntries,
+            services,
+          }),
+        )
+        .catch((err) => {
+          buildContextPromise = null
+          throw err
+        })
     }
     return buildContextPromise
   }

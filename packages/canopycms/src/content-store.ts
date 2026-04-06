@@ -134,7 +134,7 @@ export class ContentStore {
   private assertCollection(collectionPath: LogicalPath): FlatSchemaItem & { type: 'collection' } {
     const item = this.assertSchemaItem(collectionPath)
     if (item.type !== 'collection') {
-      throw new ContentStoreError(`Path is not a collection: ${collectionPath}`)
+      throw new ContentStoreError(`Path is not a collection: ${collectionPath}`, 'NO_SCHEMA_ITEM')
     }
     return item
   }

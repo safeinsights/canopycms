@@ -34,7 +34,27 @@ export interface CanopyContextOptions {
   extractUser: () => Promise<CanopyUser>
 }
 
-export interface CanopyContext {
+/**
+ * Build-time context with only listing/tree operations.
+ * Does NOT include read/readByUrlPath since those require request-scoped auth.
+ * Use getCanopyForBuild() to obtain this; use getCanopy() for request-scoped access.
+ */
+export interface CanopyBuildContext {
+  /** Build a content tree from the schema and filesystem entries. */
+  buildContentTree: <T = unknown>(
+    options?: BuildContentTreeOptions<T>,
+  ) => Promise<ContentTreeNode<T>[]>
+
+  /** List all content entries as a flat array. */
+  listEntries: <T = Record<string, unknown>>(
+    options?: ListEntriesOptions<T>,
+  ) => Promise<ListEntriesItem<T>[]>
+
+  /** Underlying services */
+  services: CanopyServices
+}
+
+export interface CanopyContext extends CanopyBuildContext {
   /** Content reader with automatic auth context */
   read: <T = unknown>(input: {
     entryPath: string
@@ -64,19 +84,6 @@ export interface CanopyContext {
     urlPath: string,
     options?: { branch?: string; resolveReferences?: boolean },
   ) => Promise<{ data: T; path: string } | null>
-
-  /** Build a content tree from the schema and filesystem entries. */
-  buildContentTree: <T = unknown>(
-    options?: BuildContentTreeOptions<T>,
-  ) => Promise<ContentTreeNode<T>[]>
-
-  /** List all content entries as a flat array. */
-  listEntries: <T = Record<string, unknown>>(
-    options?: ListEntriesOptions<T>,
-  ) => Promise<ListEntriesItem<T>[]>
-
-  /** Underlying services */
-  services: CanopyServices
 
   /** Current authenticated user */
   user: CanopyUser

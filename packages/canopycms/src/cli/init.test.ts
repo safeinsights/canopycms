@@ -17,7 +17,7 @@ vi.mock('@clack/prompts', () => ({
     info: vi.fn(),
   },
   confirm: vi.fn().mockResolvedValue(false),
-  select: vi.fn(),
+  select: vi.fn().mockResolvedValue('dev'),
   text: vi.fn(),
   isCancel: vi.fn().mockReturnValue(false),
   cancel: vi.fn(),
@@ -99,14 +99,82 @@ describe('canopycms init', () => {
     expect(route).toContain('RouteContext')
   })
 
-  it('generates edit page with auth support', async () => {
+  it('generates dev-only edit page by default (non-interactive)', async () => {
     await init(defaultOpts(tmpDir))
 
     const page = await fs.readFile(path.join(tmpDir, 'app/edit/page.tsx'), 'utf-8')
     expect(page).toContain("'use client'")
+    expect(page).toContain('useDevAuthConfig')
+    expect(page).toContain('NextCanopyEditorPage')
+    expect(page).not.toContain('useClerkAuthConfig')
+  })
+
+  it('generates clerk+dev edit page when authProvider is clerk', async () => {
+    await init(defaultOpts(tmpDir, { authProvider: 'clerk' }))
+
+    const page = await fs.readFile(path.join(tmpDir, 'app/edit/page.tsx'), 'utf-8')
     expect(page).toContain('useClerkAuthConfig')
     expect(page).toContain('useDevAuthConfig')
     expect(page).toContain('NextCanopyEditorPage')
+  })
+
+  it('generates dev-only canopy.ts by default (non-interactive)', async () => {
+    await init(defaultOpts(tmpDir))
+
+    const canopy = await fs.readFile(path.join(tmpDir, 'app/lib/canopy.ts'), 'utf-8')
+    expect(canopy).toContain('createDevAuthPlugin')
+    expect(canopy).not.toContain('createClerkAuthPlugin')
+  })
+
+  it('generates clerk+dev canopy.ts when authProvider is clerk', async () => {
+    await init(defaultOpts(tmpDir, { authProvider: 'clerk' }))
+
+    const canopy = await fs.readFile(path.join(tmpDir, 'app/lib/canopy.ts'), 'utf-8')
+    expect(canopy).toContain('createClerkAuthPlugin')
+    expect(canopy).toContain('createDevAuthPlugin')
+  })
+
+  it('generates passthrough middleware by default', async () => {
+    await init(defaultOpts(tmpDir))
+
+    const mw = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
+    expect(mw).toContain('NextResponse.next()')
+    // Clerk middleware appears in comments as a guide, but not as active code
+    expect(mw).toContain('export default function middleware()')
+  })
+
+  it('generates clerk middleware when authProvider is clerk', async () => {
+    await init(defaultOpts(tmpDir, { authProvider: 'clerk' }))
+
+    const mw = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
+    expect(mw).toContain('clerkMiddleware')
+    expect(mw).toContain('isProtectedRoute')
+  })
+
+  it('generates dual-build next.config when staticBuild is true', async () => {
+    await init(defaultOpts(tmpDir, { staticBuild: true }))
+
+    const config = await fs.readFile(path.join(tmpDir, 'next.config.ts'), 'utf-8')
+    expect(config).toContain('CANOPY_BUILD')
+    expect(config).toContain('staticBuild')
+  })
+
+  it('uses .server extensions for CMS-only files when staticBuild is true', async () => {
+    await init(defaultOpts(tmpDir, { staticBuild: true }))
+
+    const editPage = path.join(tmpDir, 'app/edit/page.server.tsx')
+    const stat = await fs.stat(editPage)
+    expect(stat.isFile()).toBe(true)
+
+    const apiRoute = path.join(tmpDir, 'app/api/canopycms/[...canopycms]/route.server.ts')
+    const routeStat = await fs.stat(apiRoute)
+    expect(routeStat.isFile()).toBe(true)
+
+    // Regular extensions should NOT exist
+    await expect(fs.stat(path.join(tmpDir, 'app/edit/page.tsx'))).rejects.toThrow()
+    await expect(
+      fs.stat(path.join(tmpDir, 'app/api/canopycms/[...canopycms]/route.ts')),
+    ).rejects.toThrow()
   })
 
   it('skips existing files in non-interactive mode', async () => {
@@ -132,7 +200,8 @@ describe('canopycms init', () => {
 
   it('prompts for overwrite when interactive and file exists', async () => {
     const { confirm } = await import('@clack/prompts')
-    vi.mocked(confirm).mockResolvedValueOnce(true)
+    // First confirm call = static build prompt (false), second = overwrite prompt (true)
+    vi.mocked(confirm).mockResolvedValueOnce(false).mockResolvedValueOnce(true)
 
     const configPath = path.join(tmpDir, 'canopycms.config.ts')
     await fs.writeFile(configPath, 'existing content', 'utf-8')

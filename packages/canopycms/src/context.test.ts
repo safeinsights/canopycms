@@ -86,6 +86,45 @@ const testSchema = {
   ],
 }
 
+describe('createCanopyContext - build context', () => {
+  let root: string
+
+  beforeEach(async () => {
+    root = await tmpDir()
+    testBranchContext = buildBranchContext(root)
+  })
+
+  afterEach(async () => {
+    await fs.rm(root, { recursive: true, force: true })
+  })
+
+  it('getContext returns a working context with STATIC_DEPLOY_USER', async () => {
+    const docsDir = path.join(root, 'content/docs')
+    await fs.mkdir(docsDir, { recursive: true })
+    await fs.writeFile(path.join(docsDir, 'intro.json'), JSON.stringify({ title: 'Intro' }))
+
+    const services = await createTestServices(
+      {
+        defaultBranchAccess: 'allow',
+        defaultPathAccess: 'allow',
+        schema: testSchema,
+      },
+      { getSettingsBranchRoot: () => Promise.resolve(root) },
+    )
+    const canopyCtx = createCanopyContext({
+      services,
+      extractUser: async () => STATIC_DEPLOY_USER,
+    })
+    const ctx = await canopyCtx.getContext()
+
+    expect(ctx.user).toBe(STATIC_DEPLOY_USER)
+
+    // read should work with the synthetic admin user
+    const result = await ctx.read<{ title: string }>({ entryPath: 'content/docs', slug: 'intro' })
+    expect(result.data.title).toBe('Intro')
+  })
+})
+
 describe('readByUrlPath', () => {
   let root: string
 
@@ -199,6 +238,18 @@ describe('readByUrlPath', () => {
 
     const ctx = await canopyCtx.getContext()
     await expect(ctx.readByUrlPath('/docs/secret')).rejects.toThrow(ContentStoreError)
+  })
+
+  it('falls through when first candidate resolves to a non-collection schema item', async () => {
+    // URL /docs/doc/overview generates candidates:
+    //   1. { entryPath: 'content/docs/doc', slug: 'overview' } — 'content/docs/doc' is an entry-type, not a collection
+    //   2. { entryPath: 'content/docs/doc/overview', slug: 'index' } — not in schema
+    // Both should fall through gracefully, returning null (not throwing)
+    await fs.mkdir(path.join(root, 'content/docs'), { recursive: true })
+
+    const ctx = await createContext()
+    const result = await ctx.readByUrlPath('/docs/doc/overview')
+    expect(result).toBeNull()
   })
 
   describe('case sensitivity', () => {

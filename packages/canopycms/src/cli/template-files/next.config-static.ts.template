@@ -1,0 +1,10 @@
+import { withCanopy } from 'canopycms-next'
+
+const isCmsBuild = process.env.CANOPY_BUILD === 'cms'
+
+export default withCanopy(
+  {
+    output: isCmsBuild ? 'standalone' : 'export',
+  },
+  { staticBuild: !isCmsBuild },
+)

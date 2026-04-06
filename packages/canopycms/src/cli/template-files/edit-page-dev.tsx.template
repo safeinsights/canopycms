@@ -1,0 +1,12 @@
+'use client'
+
+import { useDevAuthConfig } from 'canopycms-auth-dev/client'
+import { NextCanopyEditorPage } from 'canopycms-next/client'
+import config from '{{CONFIG_IMPORT}}'
+
+export default function EditPage() {
+  const authConfig = useDevAuthConfig()
+  const clientConfig = config.client(authConfig)
+  const EditorPage = NextCanopyEditorPage(clientConfig)
+  return <EditorPage />
+}
