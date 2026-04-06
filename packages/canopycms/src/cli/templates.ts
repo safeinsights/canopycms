@@ -22,7 +22,6 @@ export async function canopyCmsConfig(options: { mode: string }): Promise<string
 export async function canopyContext(options: {
   configImport: string
   authProvider: 'clerk' | 'dev'
-  staticBuild: boolean
 }): Promise<string> {
   const template = await readTemplate('canopy.ts.template')
 
@@ -54,7 +53,6 @@ export async function apiRoute(options: { canopyImport: string }): Promise<strin
 export async function editPage(options: {
   configImport: string
   authProvider: 'clerk' | 'dev'
-  staticBuild: boolean
 }): Promise<string> {
   const templateName =
     options.authProvider === 'dev' ? 'edit-page-dev.tsx.template' : 'edit-page.tsx.template'
@@ -71,19 +69,13 @@ export async function aiRoute(options: { configImport: string }): Promise<string
   return template.replace('{{CONFIG_IMPORT}}', options.configImport)
 }
 
-export async function middleware(options: {
-  authProvider: 'clerk' | 'dev'
-  staticBuild: boolean
-}): Promise<string> {
+export async function middleware(options: { authProvider: 'clerk' | 'dev' }): Promise<string> {
   const templateName =
     options.authProvider === 'clerk' ? 'middleware-clerk.ts.template' : 'middleware.ts.template'
   return readTemplate(templateName)
 }
 
-export async function nextConfig(options: {
-  authProvider: 'clerk' | 'dev'
-  staticBuild: boolean
-}): Promise<string> {
+export async function nextConfig(options: { staticBuild: boolean }): Promise<string> {
   const templateName = options.staticBuild
     ? 'next.config-static.ts.template'
     : 'next.config.ts.template'

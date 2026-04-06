@@ -133,8 +133,6 @@ export async function init(options: InitOptions): Promise<void> {
     staticBuild = choice
   }
 
-  const templateOpts = { authProvider, staticBuild }
-
   // CMS-only files use .server.tsx/.server.ts when static build is enabled
   const serverPageExt = staticBuild ? 'page.server.tsx' : 'page.tsx'
   const serverRouteExt = staticBuild ? 'route.server.ts' : 'route.ts'
@@ -147,7 +145,7 @@ export async function init(options: InitOptions): Promise<void> {
   )
   await writeFile(
     path.join(projectDir, appDir, 'lib/canopy.ts'),
-    await canopyContext({ configImport: configImportPath(appDir, 1), ...templateOpts }),
+    await canopyContext({ configImport: configImportPath(appDir, 1), authProvider }),
     writeOpts,
   )
   await writeFile(path.join(projectDir, appDir, 'schemas.ts'), await schemasTemplate(), writeOpts)
@@ -160,7 +158,7 @@ export async function init(options: InitOptions): Promise<void> {
   )
   await writeFile(
     path.join(projectDir, appDir, `edit/${serverPageExt}`),
-    await editPage({ configImport: configImportPath(appDir, 1), ...templateOpts }),
+    await editPage({ configImport: configImportPath(appDir, 1), authProvider }),
     writeOpts,
   )
   if (ai) {
@@ -173,10 +171,14 @@ export async function init(options: InitOptions): Promise<void> {
   }
   await writeFile(
     path.join(projectDir, 'next.config.ts'),
-    await nextConfig(templateOpts),
+    await nextConfig({ staticBuild }),
     writeOpts,
   )
-  await writeFile(path.join(projectDir, 'middleware.ts'), await middleware(templateOpts), writeOpts)
+  await writeFile(
+    path.join(projectDir, 'middleware.ts'),
+    await middleware({ authProvider }),
+    writeOpts,
+  )
 
   // Update .gitignore
   const gitignorePath = path.join(projectDir, '.gitignore')
