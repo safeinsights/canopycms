@@ -1,6 +1,7 @@
 import js from '@eslint/js'
 import reactPlugin from 'eslint-plugin-react'
 import reactHooksPlugin from 'eslint-plugin-react-hooks'
+import securityPlugin from 'eslint-plugin-security'
 import typescriptEslint from 'typescript-eslint'
 import eslintConfigPrettier from 'eslint-config-prettier'
 
@@ -24,6 +25,17 @@ const eslintConfig = [
   js.configs.recommended,
   // TypeScript recommended rules
   ...typescriptEslint.configs.recommended,
+  // Security rules (ReDoS, injection, eval, etc.)
+  {
+    ...securityPlugin.configs.recommended,
+    rules: {
+      ...securityPlugin.configs.recommended.rules,
+      // A CMS reads/writes files by design — non-literal fs paths are expected
+      'security/detect-non-literal-fs-filename': 'off',
+      // Object bracket access with variables is normal TS — too noisy
+      'security/detect-object-injection': 'off',
+    },
+  },
   // React configuration (for packages and apps with JSX)
   {
     files: ['**/*.{jsx,tsx}'],
