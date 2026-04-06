@@ -15,7 +15,11 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.tsx",
-    "./config": "./src/config.ts"
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "require": "./dist/config.cjs",
+      "import": "./dist/config.mjs"
+    }
   },
   "files": [
     "dist"
@@ -33,12 +37,12 @@
       "./config": {
         "types": "./dist/config.d.ts",
         "require": "./dist/config.cjs",
-        "import": "./dist/config.js"
+        "import": "./dist/config.mjs"
       }
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json && esbuild src/config.ts --bundle --format=cjs --platform=node --outfile=dist/config.cjs --external:next --packages=external",
+    "build": "tsc -p tsconfig.build.json && esbuild src/config.ts --bundle --platform=node --packages=external --external:next --format=cjs --outfile=dist/config.cjs && esbuild src/config.ts --bundle --platform=node --packages=external --external:next --format=esm --outfile=dist/config.mjs",
     "lint": "eslint src/",
     "test": "vitest run --reporter=dot",
     "typecheck": "tsc --noEmit"
