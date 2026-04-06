@@ -318,17 +318,17 @@ Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prom
 | sync.ts                | Bidirectional content sync between working tree and branch workspaces; push copies+commits to workspace, pull copies back, both does 3-way git merge via canopycms-sync-base tag, abort cancels a failed merge; includes `assertWithinDir` path-traversal guard, `safeReplaceDir` crash-safe directory replacement, `selectBranch` interactive branch picker |
 | generate-ai-content.ts | AI content generation CLI command                                                                                                                                                                                                                                                                                                                            |
 | templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}})                                                                                                                                                                                                                                                          |
-| template-files/        | Template files for scaffolding (config, route, edit page, AI content endpoint, Dockerfile, CI workflow)                                                                                                                                                                                                                                                      |
+| template-files/        | Template files for scaffolding (config, route, edit page, next.config.ts, AI content endpoint, Dockerfile, CI workflow)                                                                                                                                                                                                                                      |
 
 **Commands**:
 
-| Command                         | Purpose                                                                                            |
-| ------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `canopycms init`                | Scaffold CanopyCMS into a Next.js app (config, API route, edit page, schemas, AI content endpoint) |
-| `canopycms init-deploy aws`     | Generate AWS deployment artifacts (Dockerfile.cms, GitHub Actions workflow)                        |
-| `canopycms worker run-once`     | Process pending tasks, refresh auth cache, then exit                                               |
-| `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)                                 |
-| `canopycms sync`                | Bidirectional content sync between working tree and branch workspaces                              |
+| Command                         | Purpose                                                                                                                                |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `canopycms init`                | Scaffold CanopyCMS into a Next.js app (config, API route, edit page, schemas, AI content endpoint, next.config.ts with `withCanopy()`) |
+| `canopycms init-deploy aws`     | Generate AWS deployment artifacts (Dockerfile.cms, GitHub Actions workflow)                                                            |
+| `canopycms worker run-once`     | Process pending tasks, refresh auth cache, then exit                                                                                   |
+| `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)                                                                     |
+| `canopycms sync`                | Bidirectional content sync between working tree and branch workspaces                                                                  |
 
 **`init` flags**: `--app-dir <path>`, `--no-ai`, `--force`, `--non-interactive`
 
@@ -368,13 +368,13 @@ AWS CDK constructs for deploying CanopyCMS to AWS.
 
 Next.js-specific adapter layer. Provides the catch-all API handler, context creation, a Next.js config wrapper, client components, and test utilities.
 
-| File               | Purpose                                                                                              |
-| ------------------ | ---------------------------------------------------------------------------------------------------- |
-| with-canopy.ts     | `withCanopy()` Next.js config wrapper: transpilePackages + React dedup aliases (webpack & Turbopack) |
-| adapter.ts         | `createCanopyCatchAllHandler()`, `wrapNextRequest()` for Next.js catch-all API route                 |
-| context-wrapper.ts | `createNextCanopyContext()` - React-cached Canopy context creation with Next.js headers              |
-| client.tsx         | `NextCanopyEditorPage` - client component that reads URL search params automatically                 |
-| test-utils.ts      | `createMockAuthPlugin()`, `createRejectingAuthPlugin()` for tests                                    |
+| File               | Purpose                                                                                                                                                                                                                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| with-canopy.ts     | `withCanopy()` Next.js config wrapper: auto-detects installed Canopy packages via `require.resolve` (only `canopycms` required; optional packages like `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, `canopycms-cdk` added only if installed), transpilePackages + React dedup aliases (webpack) |
+| adapter.ts         | `createCanopyCatchAllHandler()`, `wrapNextRequest()` for Next.js catch-all API route                                                                                                                                                                                                                               |
+| context-wrapper.ts | `createNextCanopyContext()` - React-cached Canopy context creation with Next.js headers                                                                                                                                                                                                                            |
+| client.tsx         | `NextCanopyEditorPage` - client component that reads URL search params automatically                                                                                                                                                                                                                               |
+| test-utils.ts      | `createMockAuthPlugin()`, `createRejectingAuthPlugin()` for tests                                                                                                                                                                                                                                                  |
 
 ## Comment System
 

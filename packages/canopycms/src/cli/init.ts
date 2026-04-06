@@ -73,8 +73,16 @@ function configImportPath(appDir: string, subdirs: number): string {
 export async function init(options: InitOptions): Promise<void> {
   const { projectDir, mode, appDir, ai, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
-  const { canopyCmsConfig, canopyContext, schemasTemplate, apiRoute, editPage, aiConfig, aiRoute } =
-    await import('./templates')
+  const {
+    canopyCmsConfig,
+    canopyContext,
+    schemasTemplate,
+    apiRoute,
+    editPage,
+    aiConfig,
+    aiRoute,
+    nextConfig,
+  } = await import('./templates')
 
   p.intro('CanopyCMS init')
 
@@ -110,6 +118,7 @@ export async function init(options: InitOptions): Promise<void> {
       writeOpts,
     )
   }
+  await writeFile(path.join(projectDir, 'next.config.ts'), await nextConfig(), writeOpts)
 
   // Update .gitignore
   const gitignorePath = path.join(projectDir, '.gitignore')
@@ -126,14 +135,10 @@ export async function init(options: InitOptions): Promise<void> {
       '1. Install dependencies:',
       `   npm install canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev`,
       '',
-      '2. Wrap your Next.js config:',
-      "   import { withCanopy } from 'canopycms-next'",
-      '   export default withCanopy({ /* your config */ })',
+      '2. Customize ' + appDir + '/schemas.ts with your content schema',
       '',
-      '3. Customize ' + appDir + '/schemas.ts with your content schema',
-      '',
-      '4. Run: npm run dev',
-      '5. Visit: http://localhost:3000/edit',
+      '3. Run: npm run dev',
+      '4. Visit: http://localhost:3000/edit',
     ].join('\n'),
     'Next steps',
   )

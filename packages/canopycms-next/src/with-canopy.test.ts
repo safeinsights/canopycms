@@ -1,11 +1,19 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import type { NextConfig } from 'next'
+
+// Track which packages should be "uninstalled" for each test
+let unresolvablePackages: string[] = []
 
 // Mock node:module so we can control what require.resolve returns
 vi.mock('node:module', () => ({
-  createRequire: () => ({
-    resolve: (id: string) => `/mock/node_modules/${id.replace(/\//g, '_')}/index.js`,
-  }),
+  createRequire: vi.fn(() => ({
+    resolve: (id: string) => {
+      if (unresolvablePackages.includes(id)) {
+        throw new Error(`Cannot find module '${id}'`)
+      }
+      return `/mock/node_modules/${id.replace(/\//g, '_')}/index.js`
+    },
+  })),
 }))
 
 import { withCanopy } from './with-canopy'
@@ -17,13 +25,32 @@ function invokeWebpack(config: NextConfig, webpackConfig: unknown) {
 }
 
 describe('withCanopy', () => {
+  beforeEach(() => {
+    unresolvablePackages = []
+  })
+
   describe('transpilePackages', () => {
-    it('includes all canopy packages', () => {
+    it('includes required canopy packages', () => {
       const result = withCanopy({})
       expect(result.transpilePackages).toContain('canopycms')
+    })
+
+    it('auto-detects installed optional packages', () => {
+      // The mock resolves all packages successfully, so all optional packages are detected
+      const result = withCanopy({})
       expect(result.transpilePackages).toContain('canopycms-next')
       expect(result.transpilePackages).toContain('canopycms-auth-clerk')
       expect(result.transpilePackages).toContain('canopycms-auth-dev')
+      expect(result.transpilePackages).toContain('canopycms-cdk')
+    })
+
+    it('excludes optional packages that are not installed', () => {
+      unresolvablePackages = ['canopycms-cdk', 'canopycms-auth-clerk']
+      const result = withCanopy({})
+      expect(result.transpilePackages).not.toContain('canopycms-cdk')
+      expect(result.transpilePackages).not.toContain('canopycms-auth-clerk')
+      expect(result.transpilePackages).toContain('canopycms-auth-dev')
+      expect(result.transpilePackages).toContain('canopycms')
     })
 
     it('merges with existing transpilePackages', () => {

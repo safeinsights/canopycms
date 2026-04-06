@@ -47,6 +47,10 @@ export async function aiRoute(options: { configImport: string }): Promise<string
   return template.replace('{{CONFIG_IMPORT}}', options.configImport)
 }
 
+export async function nextConfig(): Promise<string> {
+  return readTemplate('next.config.ts.template')
+}
+
 export async function dockerfileCms(): Promise<string> {
   return readTemplate('Dockerfile.cms.template')
 }

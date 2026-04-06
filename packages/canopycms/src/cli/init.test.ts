@@ -52,6 +52,7 @@ describe('canopycms init', () => {
 
     const expectedFiles = [
       'canopycms.config.ts',
+      'next.config.ts',
       'app/lib/canopy.ts',
       'app/schemas.ts',
       'app/api/canopycms/[...canopycms]/route.ts',
@@ -65,6 +66,14 @@ describe('canopycms init', () => {
       const stat = await fs.stat(filePath)
       expect(stat.isFile(), `Expected ${file} to exist`).toBe(true)
     }
+  })
+
+  it('generates next.config.ts with withCanopy wrapper', async () => {
+    await init(defaultOpts(tmpDir))
+
+    const config = await fs.readFile(path.join(tmpDir, 'next.config.ts'), 'utf-8')
+    expect(config).toContain('withCanopy')
+    expect(config).toContain("from 'canopycms-next'")
   })
 
   it('generates config with correct mode for dev', async () => {
@@ -148,6 +157,7 @@ describe('canopycms init', () => {
 
     const expectedFiles = [
       'canopycms.config.ts',
+      'next.config.ts',
       'src/app/lib/canopy.ts',
       'src/app/schemas.ts',
       'src/app/api/canopycms/[...canopycms]/route.ts',

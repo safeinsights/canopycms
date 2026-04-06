@@ -1751,10 +1751,10 @@ The `canopycms-next` adapter is ~10 lines for user extraction plus the request/r
 
 The `canopycms-next` package also provides a `withCanopy()` function that wraps the adopter's Next.js config to handle two build-tooling concerns:
 
-- **Module transpilation**: CanopyCMS packages export raw TypeScript. `withCanopy()` adds all Canopy packages to `transpilePackages` so the Next.js bundler compiles them.
-- **React deduplication**: When consuming Canopy packages via `workspace:` references or linked packages during local development, the bundler can follow symlinks into the linked package's `node_modules` and resolve a second copy of React. Dual React instances cause "Invalid hook call" crashes. `withCanopy()` resolves React modules from the consumer's project root and disables symlink following, ensuring a single React instance.
+- **Module transpilation**: CanopyCMS packages export raw TypeScript. `withCanopy()` auto-detects which Canopy packages are installed (via `require.resolve`) and adds only those to `transpilePackages`. The core `canopycms` package is always included; optional packages like `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, and `canopycms-cdk` are included only if found in the consumer's `node_modules`. This avoids Next.js build errors from listing uninstalled packages.
+- **React deduplication**: When consuming Canopy packages via `file:` references or linked packages during local development, the bundler can follow symlinks into the linked package's `node_modules` and resolve a second copy of React. Dual React instances cause "Invalid hook call" crashes. `withCanopy()` resolves React modules from the consumer's project root via scoped Webpack aliases (applied only to canopycms source files), ensuring a single React instance without interfering with Next.js internals.
 
-The wrapper handles both Webpack and Turbopack configurations. When installed from npm (not symlinked), the React aliases are harmless—they resolve to the same React the project already uses.
+When installed from npm (not symlinked), the React aliases are harmless -- they resolve to the same React the project already uses. Note that Turbopack does not currently support the absolute-path aliases used for React deduplication, so consumers using `file:` symlinks for local development must use `next dev --webpack`; Turbopack works fine when packages are installed from npm.
 
 **Creating a new adapter**:
 
@@ -2065,10 +2065,8 @@ Symlinks create a subtle problem: when the bundler follows a symlink into the li
 
 The `withCanopy()` wrapper in `canopycms-next` solves both problems in one call:
 
-- Adds all Canopy packages to `transpilePackages`
-- Resolves React (and react-dom, jsx-runtime) from the consumer's project root via `createRequire()`
-- Disables Webpack symlink following so resolution happens from the symlink location, not the target
-- Configures equivalent Turbopack aliases for projects using the Turbopack bundler
+- Auto-detects installed Canopy packages (via `require.resolve`) and adds only those to `transpilePackages`, avoiding build errors from uninstalled optional packages
+- Resolves React (and react-dom) from the consumer's project root via `createRequire()`, using scoped Webpack aliases that apply only to canopycms source files so they don't interfere with Next.js internals
 
 **Why solve this in the adapter package?** The dual-React problem is specific to how Next.js resolves modules through symlinks. It is a build-tooling concern, not business logic. Placing it in the adapter keeps the core package clean and makes the fix discoverable for Next.js adopters in the package they already import. Other framework adapters would handle their bundler's equivalent quirks in their own way.
 

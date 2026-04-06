@@ -1,0 +1,5 @@
+import { withCanopy } from 'canopycms-next'
+
+export default withCanopy({
+  // Your Next.js config here
+})

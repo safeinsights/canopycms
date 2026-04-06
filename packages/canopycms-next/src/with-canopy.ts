@@ -2,14 +2,20 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import type { NextConfig } from 'next'
 
+/** The core package — always required when using withCanopy. */
+const REQUIRED_PACKAGES = ['canopycms']
+
 /**
- * Canopy packages that need transpilation (they export raw TypeScript).
+ * Canopy packages that need transpilation when installed.
+ * Not every adopter installs all of these (e.g., only one auth plugin,
+ * CDK only for AWS deployments). Including an uninstalled package in
+ * `transpilePackages` causes Next.js build errors, so we auto-detect.
  */
-const CANOPY_PACKAGES = [
-  'canopycms',
+const OPTIONAL_PACKAGES = [
   'canopycms-next',
   'canopycms-auth-clerk',
   'canopycms-auth-dev',
+  'canopycms-cdk',
 ]
 
 export interface WithCanopyOptions {
@@ -46,7 +52,9 @@ function resolveReactAliases(): Record<string, string> | null {
  * resolution for CanopyCMS packages.
  *
  * **What it does:**
- * - Adds all Canopy packages to `transpilePackages` (they export raw TypeScript)
+ * - Auto-detects installed Canopy packages and adds them to `transpilePackages`
+ *   (they export raw TypeScript). Only packages found in your node_modules are
+ *   added, so you don't need to worry about optional packages you haven't installed.
  * - Resolves React to a single copy from your project root, preventing
  *   dual-instance crashes when using `file:` symlinks for local development
  *
@@ -77,10 +85,25 @@ export function withCanopy(
   nextConfig: NextConfig = {},
   options: WithCanopyOptions = {},
 ): NextConfig {
+  const resolve = createRequire(path.join(process.cwd(), 'noop.js')).resolve
+  const installedOptional = OPTIONAL_PACKAGES.filter((pkg) => {
+    try {
+      resolve(pkg)
+      return true
+    } catch {
+      return false
+    }
+  })
+
   // Merge transpilePackages (deduped)
   const existingPackages = nextConfig.transpilePackages ?? []
   const allPackages = [
-    ...new Set([...existingPackages, ...CANOPY_PACKAGES, ...(options.packages ?? [])]),
+    ...new Set([
+      ...existingPackages,
+      ...REQUIRED_PACKAGES,
+      ...installedOptional,
+      ...(options.packages ?? []),
+    ]),
   ]
 
   const reactAlias = resolveReactAliases()
