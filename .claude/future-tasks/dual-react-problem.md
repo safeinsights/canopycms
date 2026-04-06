@@ -31,7 +31,7 @@ Add a config wrapper that consumers use in their `next.config.ts`:
 
 ```ts
 // consumer's next.config.ts
-import { withCanopy } from 'canopycms-next'
+import { withCanopy } from 'canopycms-next/config'
 
 export default withCanopy({
   // their normal Next.js config
