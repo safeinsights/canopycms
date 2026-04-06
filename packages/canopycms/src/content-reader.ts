@@ -1,6 +1,7 @@
 import { loadBranchContext, loadOrCreateBranchContext } from './branch-workspace'
 import { ContentStore, ContentStoreError } from './content-store'
 import { resolveBranchPaths, type LogicalPath, type PhysicalPath, type Slug } from './paths'
+import { trimSlashes } from './paths/normalize'
 import { type OperatingMode } from './operating-mode'
 import type { CanopyServices } from './services'
 import type { BranchContext } from './types'
@@ -71,7 +72,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       mode: operatingMode,
       basePathOverride,
     })
-    if (!existing) throw new ContentStoreError(`Branch not found: ${branchName}`)
+    if (!existing) throw new ContentStoreError(`Branch not found: ${branchName}`, 'NOT_FOUND')
     return existing
   }
 
@@ -98,7 +99,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const resolveTarget = (input: ReadContentInput) => {
     const entryPath = input.entryPath
     if (!entryPath) {
-      throw new ContentStoreError('entryPath is required')
+      throw new ContentStoreError('entryPath is required', 'VALIDATION')
     }
     const branchName = input.branch ?? defaultBranch
     return { entryPath, slug: input.slug, branchName, user: input.user }
@@ -112,7 +113,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       .join('/')
 
   // Build preview paths using simple path construction
-  const contentRoot = (services.config.contentRoot ?? 'content').replace(/^\/+|\/+$/g, '')
+  const contentRoot = trimSlashes(services.config.contentRoot ?? 'content')
   const stripRoot = (val: string) =>
     contentRoot && val.startsWith(`${contentRoot}/`) ? val.slice(contentRoot.length + 1) : val
 
@@ -146,7 +147,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       relativePath = resolved.relativePath
     } catch (err) {
       const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
-      const code = err instanceof ContentStoreError ? err.code : undefined
+      const code = err instanceof ContentStoreError ? err.code : 'VALIDATION'
       throw new ContentStoreError(message, code)
     }
 

@@ -1,5 +1,7 @@
 'use client'
 
+import { useMemo } from 'react'
+import type { CanopyClientConfig } from 'canopycms'
 import { useDevAuthConfig } from 'canopycms-auth-dev/client'
 import { useClerkAuthConfig } from 'canopycms-auth-clerk/client'
 import { NextCanopyEditorPage } from 'canopycms-next/client'
@@ -7,22 +9,18 @@ import config from '{{CONFIG_IMPORT}}'
 
 const authMode = process.env.NEXT_PUBLIC_CANOPY_AUTH_MODE || 'dev'
 
-// Each component calls its auth hook unconditionally, avoiding
-// conditional hook calls that violate React's rules of hooks.
-// The module-scope selection ensures only one is rendered.
-
-function DevEditPage() {
-  const authConfig = useDevAuthConfig()
+function EditPageWithAuth({ authConfig }: { authConfig: Pick<CanopyClientConfig, 'editor'> }) {
   const clientConfig = config.client(authConfig)
-  const EditorPage = NextCanopyEditorPage(clientConfig)
+  const EditorPage = useMemo(() => NextCanopyEditorPage(clientConfig), [clientConfig])
   return <EditorPage />
 }
 
+function DevEditPage() {
+  return <EditPageWithAuth authConfig={useDevAuthConfig()} />
+}
+
 function ClerkEditPage() {
-  const authConfig = useClerkAuthConfig()
-  const clientConfig = config.client(authConfig)
-  const EditorPage = NextCanopyEditorPage(clientConfig)
-  return <EditorPage />
+  return <EditPageWithAuth authConfig={useClerkAuthConfig()} />
 }
 
 export default authMode === 'clerk' ? ClerkEditPage : DevEditPage

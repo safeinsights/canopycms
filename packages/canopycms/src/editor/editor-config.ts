@@ -1,9 +1,9 @@
 import type { CanopyConfig, FlatSchemaItem } from '../config'
 import type { EditorCollection, EditorEntryType } from './Editor'
+import { trimSlashes } from '../paths/normalize'
 
 const normalizeContentRoot = (value?: string): string => {
-  const trimmed = (value ?? 'content').replace(/^\/+|\/+$/g, '')
-  return trimmed
+  return trimSlashes(value ?? 'content')
 }
 
 const stripContentRoot = (logicalPath: string, contentRoot: string): string => {

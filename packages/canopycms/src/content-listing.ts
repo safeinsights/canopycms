@@ -48,7 +48,7 @@ export interface CollectionListItem {
 const normalizePath = (root: string, target: string): string => {
   const result = validateAndNormalizePath(root, target)
   if (!result.valid) {
-    throw new ContentStoreError(result.error || 'Path traversal detected')
+    throw new ContentStoreError(result.error || 'Path traversal detected', 'VALIDATION')
   }
   return result.normalizedPath!
 }

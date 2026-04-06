@@ -1,34 +1,26 @@
 'use client'
 
+import { useMemo } from 'react'
+import type { CanopyClientConfig } from 'canopycms'
 import { useClerkAuthConfig } from 'canopycms-auth-clerk/client'
 import { useDevAuthConfig } from 'canopycms-auth-dev/client'
 import { NextCanopyEditorPage } from 'canopycms-next/client'
 import config from '../../canopycms.config'
 
-/**
- * Select auth config hook based on CANOPY_AUTH_MODE environment variable.
- * This must match the server-side auth plugin selection.
- */
-function useAuthConfig() {
-  const authMode = process.env.NEXT_PUBLIC_CANOPY_AUTH_MODE || 'dev'
+const authMode = process.env.NEXT_PUBLIC_CANOPY_AUTH_MODE || 'dev'
 
-  if (authMode === 'dev') {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    return useDevAuthConfig()
-  }
-
-  if (authMode === 'clerk') {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    return useClerkAuthConfig()
-  }
-
-  throw new Error(`Invalid NEXT_PUBLIC_CANOPY_AUTH_MODE: "${authMode}". Must be "dev" or "clerk".`)
-}
-
-export default function EditPage() {
-  const authConfig = useAuthConfig()
+function EditPageWithAuth({ authConfig }: { authConfig: Pick<CanopyClientConfig, 'editor'> }) {
   const clientConfig = config.client(authConfig)
-
-  const EditorPage = NextCanopyEditorPage(clientConfig)
+  const EditorPage = useMemo(() => NextCanopyEditorPage(clientConfig), [clientConfig])
   return <EditorPage />
 }
+
+function DevEditPage() {
+  return <EditPageWithAuth authConfig={useDevAuthConfig()} />
+}
+
+function ClerkEditPage() {
+  return <EditPageWithAuth authConfig={useClerkAuthConfig()} />
+}
+
+export default authMode === 'clerk' ? ClerkEditPage : DevEditPage

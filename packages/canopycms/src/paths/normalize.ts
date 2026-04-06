@@ -96,6 +96,17 @@ export function createPhysicalPath(...segments: string[]): PhysicalPath {
 }
 
 /**
+ * Strip leading and trailing slashes from a path or URL segment.
+ *
+ * @example
+ * trimSlashes('/docs/guides/') // 'docs/guides'
+ * trimSlashes('///multi///') // 'multi'
+ */
+export function trimSlashes(path: string): string {
+  return path.replace(/^\/+|\/+$/g, '')
+}
+
+/**
  * Join path segments with forward slashes.
  * Does not validate - use createLogicalPath/createPhysicalPath for validation.
  */

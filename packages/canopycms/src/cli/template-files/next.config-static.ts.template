@@ -2,6 +2,9 @@ import { withCanopy } from 'canopycms-next'
 
 const isCmsBuild = process.env.CANOPY_BUILD === 'cms'
 
+// Dual-build: static export for the public site, standalone Node.js server for the CMS.
+// If deploying the CMS build to Vercel or another platform that doesn't use standalone,
+// change 'standalone' to the appropriate output mode for your platform.
 export default withCanopy(
   {
     output: isCmsBuild ? 'standalone' : 'export',

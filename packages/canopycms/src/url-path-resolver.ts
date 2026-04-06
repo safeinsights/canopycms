@@ -1,3 +1,5 @@
+import { trimSlashes } from './paths/normalize'
+
 /**
  * Resolves a URL path to candidate entryPath/slug pairs for content lookup.
  *
@@ -13,7 +15,7 @@ export function resolveUrlPathCandidates(
   urlPath: string,
   contentRoot: string,
 ): Array<{ entryPath: string; slug: string }> {
-  const normalized = urlPath.replace(/^\/+|\/+$/g, '')
+  const normalized = trimSlashes(urlPath)
   const segments = normalized.split('/').filter(Boolean)
   if (segments.length === 0) return []
 

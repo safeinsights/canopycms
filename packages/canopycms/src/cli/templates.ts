@@ -24,10 +24,22 @@ export async function canopyContext(options: {
   authProvider: 'clerk' | 'dev'
   staticBuild: boolean
 }): Promise<string> {
-  const templateName =
-    options.authProvider === 'dev' ? 'canopy-dev.ts.template' : 'canopy.ts.template'
-  const template = await readTemplate(templateName)
-  return template.replace('{{CONFIG_IMPORT}}', options.configImport)
+  const template = await readTemplate('canopy.ts.template')
+
+  const authImports =
+    options.authProvider === 'clerk'
+      ? "import { createClerkAuthPlugin } from 'canopycms-auth-clerk'\nimport { createDevAuthPlugin } from 'canopycms-auth-dev'"
+      : "import { createDevAuthPlugin } from 'canopycms-auth-dev'"
+
+  const authPlugin =
+    options.authProvider === 'clerk'
+      ? "process.env.CANOPY_AUTH_MODE === 'clerk'\n      ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })\n      : createDevAuthPlugin()"
+      : 'createDevAuthPlugin()'
+
+  return template
+    .replace('{{AUTH_IMPORTS}}', authImports)
+    .replace('{{AUTH_PLUGIN}}', authPlugin)
+    .replace('{{CONFIG_IMPORT}}', options.configImport)
 }
 
 export async function schemasTemplate(): Promise<string> {
