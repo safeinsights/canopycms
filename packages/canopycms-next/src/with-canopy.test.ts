@@ -120,6 +120,35 @@ describe('withCanopy', () => {
     })
   })
 
+  describe('pageExtensions (dual-build)', () => {
+    it('adds CMS page extensions by default', () => {
+      const result = withCanopy({})
+      expect(result.pageExtensions).toContain('server.ts')
+      expect(result.pageExtensions).toContain('server.tsx')
+      // Also includes the default Next.js extensions
+      expect(result.pageExtensions).toContain('tsx')
+      expect(result.pageExtensions).toContain('ts')
+    })
+
+    it('merges with existing pageExtensions', () => {
+      const result = withCanopy({ pageExtensions: ['tsx', 'ts', 'mdx'] })
+      expect(result.pageExtensions).toContain('mdx')
+      expect(result.pageExtensions).toContain('server.ts')
+      expect(result.pageExtensions).toContain('server.tsx')
+    })
+
+    it('excludes CMS extensions when staticBuild is true', () => {
+      const result = withCanopy({}, { staticBuild: true })
+      expect(result.pageExtensions).toBeUndefined()
+    })
+
+    it('preserves existing pageExtensions when staticBuild is true', () => {
+      const result = withCanopy({ pageExtensions: ['tsx', 'ts', 'mdx'] }, { staticBuild: true })
+      expect(result.pageExtensions).toEqual(['tsx', 'ts', 'mdx'])
+      expect(result.pageExtensions).not.toContain('server.ts')
+    })
+  })
+
   describe('config passthrough', () => {
     it('preserves other nextConfig properties', () => {
       const result = withCanopy({ reactStrictMode: true, distDir: 'build' })

@@ -1045,7 +1045,7 @@ This covers situations like `getCanopy()` being called from `generateStaticParam
 
 **Combined check**: The content reader and context factory use `isDeployedStatic(config) || isBuildMode()` to determine when to bypass auth. The static deployment check is config-driven (stable, explicit); the build mode check is environment-driven (dynamic, safety net).
 
-**Two-deployment model**: A single codebase can produce both a static export and a CMS server build. The `deployedAs` field in each build's config controls which deployment type is active. This enables patterns like a public-facing static site alongside a separate CMS editor deployment, both reading from the same content repository.
+**Two-deployment model**: A single codebase can produce both a static export and a CMS server build. The `deployedAs` field in each build's config controls which deployment type is active. This enables patterns like a public-facing static site alongside a separate CMS editor deployment, both reading from the same content repository. At the build-tooling level, the `withCanopy()` Next.js config wrapper supports this via its `staticBuild` option, which controls whether CMS-only files (using the `.server.ts`/`.server.tsx` convention) are included in `pageExtensions`. See [Framework Adapters](#framework-adapters) for details.
 
 This means you can use the same `read()` calls in both authenticated pages and static generation—the context handles the difference automatically.
 
@@ -1487,7 +1487,7 @@ The comment system supports asynchronous review workflows.
 
 The editor provides a rich editing experience with schema-driven forms, block-based page building, and live preview.
 
-**Bundle separation**: Public sites can be built without any editor code. The editor is exported from `canopycms/client` and can be imported only where needed. This means your production site visitors never download editor JavaScript.
+**Bundle separation**: Public sites can be built without any editor code. The editor is exported from `canopycms/client` and can be imported only where needed. This means your production site visitors never download editor JavaScript. At the file level, CMS-only routes (API handlers, editor pages) use the `.server.ts`/`.server.tsx` extension convention. The `withCanopy()` config wrapper controls whether Next.js processes these files, so static builds exclude them entirely rather than relying on tree-shaking alone.
 
 **Integration options:**
 
@@ -1749,10 +1749,11 @@ The `canopycms-next` adapter is ~10 lines for user extraction plus the request/r
 
 **Next.js Config Wrapper (`withCanopy`)**:
 
-The `canopycms-next` package also provides a `withCanopy()` function that wraps the adopter's Next.js config to handle two build-tooling concerns:
+The `canopycms-next` package also provides a `withCanopy()` function that wraps the adopter's Next.js config to handle three build-tooling concerns:
 
 - **Module transpilation**: CanopyCMS packages export raw TypeScript. `withCanopy()` auto-detects which Canopy packages are installed (via `require.resolve`) and adds only those to `transpilePackages`. The core `canopycms` package is always included; optional packages like `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, and `canopycms-cdk` are included only if found in the consumer's `node_modules`. This avoids Next.js build errors from listing uninstalled packages.
 - **React deduplication**: When consuming Canopy packages via `file:` references or linked packages during local development, the bundler can follow symlinks into the linked package's `node_modules` and resolve a second copy of React. Dual React instances cause "Invalid hook call" crashes. `withCanopy()` resolves React modules from the consumer's project root via scoped Webpack aliases (applied only to canopycms source files), ensuring a single React instance without interfering with Next.js internals.
+- **Dual-build page extensions**: `withCanopy()` supports a `staticBuild` option that controls whether CMS-only files are included in the Next.js build. By convention, CMS-only routes (API handlers, editor pages) use `.server.ts` or `.server.tsx` file extensions. In dev and CMS builds (default), `withCanopy()` adds `server.ts` and `server.tsx` to Next.js `pageExtensions` so these files are processed normally. When `staticBuild: true` is set, these extensions are omitted, causing Next.js to ignore the CMS-only files entirely. This is the build-tooling mechanism that enables the two-deployment model described above -- a single codebase produces both a public static export (no editor code) and a CMS server build (with editor routes), controlled by a build-time flag rather than runtime checks.
 
 When installed from npm (not symlinked), the React aliases are harmless -- they resolve to the same React the project already uses. Note that Turbopack does not currently support the absolute-path aliases used for React deduplication, so consumers using `file:` symlinks for local development must use `next dev --webpack`; Turbopack works fine when packages are installed from npm.
 

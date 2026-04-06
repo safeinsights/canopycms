@@ -53,6 +53,7 @@ describe('canopycms init', () => {
     const expectedFiles = [
       'canopycms.config.ts',
       'next.config.ts',
+      'middleware.ts',
       'app/lib/canopy.ts',
       'app/schemas.ts',
       'app/api/canopycms/[...canopycms]/route.ts',

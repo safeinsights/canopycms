@@ -318,18 +318,18 @@ Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prom
 | init.ts                | Library functions: `init()`, `initDeployAws()`, `workerRunOnce()` (no CLI logic, imported by cli.ts)                                                                                                                                                                                                                                                         |
 | sync.ts                | Bidirectional content sync between working tree and branch workspaces; push copies+commits to workspace, pull copies back, both does 3-way git merge via canopycms-sync-base tag, abort cancels a failed merge; includes `assertWithinDir` path-traversal guard, `safeReplaceDir` crash-safe directory replacement, `selectBranch` interactive branch picker |
 | generate-ai-content.ts | AI content generation CLI command                                                                                                                                                                                                                                                                                                                            |
-| templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}})                                                                                                                                                                                                                                                          |
-| template-files/        | Template files for scaffolding (config, route, edit page, next.config.ts, AI content endpoint, Dockerfile, CI workflow)                                                                                                                                                                                                                                      |
+| templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}}); includes `middleware()` export                                                                                                                                                                                                                          |
+| template-files/        | Template files for scaffolding (config, route, edit page, middleware, next.config.ts, AI content endpoint, Dockerfile, CI workflow)                                                                                                                                                                                                                          |
 
 **Commands**:
 
-| Command                         | Purpose                                                                                                                                |
-| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `canopycms init`                | Scaffold CanopyCMS into a Next.js app (config, API route, edit page, schemas, AI content endpoint, next.config.ts with `withCanopy()`) |
-| `canopycms init-deploy aws`     | Generate AWS deployment artifacts (Dockerfile.cms, GitHub Actions workflow)                                                            |
-| `canopycms worker run-once`     | Process pending tasks, refresh auth cache, then exit                                                                                   |
-| `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)                                                                     |
-| `canopycms sync`                | Bidirectional content sync between working tree and branch workspaces                                                                  |
+| Command                         | Purpose                                                                                                                                            |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `canopycms init`                | Scaffold CanopyCMS into a Next.js app (config, API route, edit page, middleware, schemas, AI content endpoint, next.config.ts with `withCanopy()`) |
+| `canopycms init-deploy aws`     | Generate AWS deployment artifacts (Dockerfile.cms, GitHub Actions workflow)                                                                        |
+| `canopycms worker run-once`     | Process pending tasks, refresh auth cache, then exit                                                                                               |
+| `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)                                                                                 |
+| `canopycms sync`                | Bidirectional content sync between working tree and branch workspaces                                                                              |
 
 **`init` flags**: `--app-dir <path>`, `--no-ai`, `--force`, `--non-interactive`
 
@@ -369,13 +369,33 @@ AWS CDK constructs for deploying CanopyCMS to AWS.
 
 Next.js-specific adapter layer. Provides the catch-all API handler, context creation, a Next.js config wrapper, client components, and test utilities.
 
-| File               | Purpose                                                                                                                                                                                                                                                                                                            |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| with-canopy.ts     | `withCanopy()` Next.js config wrapper: auto-detects installed Canopy packages via `require.resolve` (only `canopycms` required; optional packages like `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, `canopycms-cdk` added only if installed), transpilePackages + React dedup aliases (webpack) |
-| adapter.ts         | `createCanopyCatchAllHandler()`, `wrapNextRequest()` for Next.js catch-all API route                                                                                                                                                                                                                               |
-| context-wrapper.ts | `createNextCanopyContext()` - React-cached Canopy context creation with Next.js headers                                                                                                                                                                                                                            |
-| client.tsx         | `NextCanopyEditorPage` - client component that reads URL search params automatically                                                                                                                                                                                                                               |
-| test-utils.ts      | `createMockAuthPlugin()`, `createRejectingAuthPlugin()` for tests                                                                                                                                                                                                                                                  |
+| File               | Purpose                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| with-canopy.ts     | `withCanopy()` Next.js config wrapper: auto-detects installed Canopy packages via `require.resolve` (only `canopycms` required; optional packages like `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, `canopycms-cdk` added only if installed), transpilePackages + React dedup aliases (webpack) + dual-build page extensions (see below) |
+| adapter.ts         | `createCanopyCatchAllHandler()`, `wrapNextRequest()` for Next.js catch-all API route                                                                                                                                                                                                                                                                        |
+| context-wrapper.ts | `createNextCanopyContext()` - React-cached Canopy context creation with Next.js headers                                                                                                                                                                                                                                                                     |
+| client.tsx         | `NextCanopyEditorPage` - client component that reads URL search params automatically                                                                                                                                                                                                                                                                        |
+| test-utils.ts      | `createMockAuthPlugin()`, `createRejectingAuthPlugin()` for tests                                                                                                                                                                                                                                                                                           |
+
+### Dual-Build Support (`withCanopy` staticBuild option)
+
+`withCanopy()` supports a dual-build convention where CMS-only files use `.server.ts` / `.server.tsx` extensions (e.g., `route.server.ts`, `page.server.tsx`).
+
+| `staticBuild` value | Behavior                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `false` (default)   | Adds `server.ts` and `server.tsx` to Next.js `pageExtensions`, so `.server.ts`/`.server.tsx` files are processed (API routes, editor page) |
+| `true`              | Excludes CMS page extensions, so Next.js ignores `.server.ts` files during static export                                                   |
+
+**Convention**: CMS-only routes (catch-all API handler, editor page) use `.server.ts`/`.server.tsx` extensions. This lets a single repo produce two build outputs: a full CMS build (dev/server) and a static export with zero editor code.
+
+```typescript
+export default withCanopy(
+  {},
+  {
+    staticBuild: process.env.CANOPY_BUILD === 'static',
+  },
+)
+```
 
 ## Comment System
 
@@ -433,14 +453,14 @@ Builds a tree of content nodes from the schema and filesystem for adopter use ca
 
 ### BuildContentTreeOptions<T>
 
-| Option    | Default                                  | Description                                                         |
-| --------- | ---------------------------------------- | ------------------------------------------------------------------- |
-| rootPath  | contentRoot name                         | Starting collection path                                            |
-| extract   | none                                     | Extract typed custom fields from raw data                           |
-| filter    | none                                     | Exclude nodes (and descendants); runs after extract                 |
-| buildPath | strips content root prefix, prepends `/` | Custom URL path builder                                             |
-| sort      | order array then alphabetical            | Custom sort for children at each level; fully replaces default sort |
-| maxDepth  | unlimited                                | Max traversal depth                                                 |
+| Option    | Default                                              | Description                                                         |
+| --------- | ---------------------------------------------------- | ------------------------------------------------------------------- |
+| rootPath  | contentRoot name                                     | Starting collection path                                            |
+| extract   | none                                                 | Extract typed custom fields from raw data                           |
+| filter    | none                                                 | Exclude nodes (and descendants); runs after extract                 |
+| buildPath | strips content root prefix, lowercases, prepends `/` | Custom URL path builder                                             |
+| sort      | order array then alphabetical                        | Custom sort for children at each level; fully replaces default sort |
+| maxDepth  | unlimited                                            | Max traversal depth                                                 |
 
 Without `sort`: children are ordered by the collection's `order` array first, then remaining items alphabetically. With `sort`: the comparator fully replaces the default sort. It runs after `extract` and `filter`, so `fields` is available.
 

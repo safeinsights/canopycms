@@ -18,9 +18,32 @@ const OPTIONAL_PACKAGES = [
   'canopycms-cdk',
 ]
 
+/**
+ * CMS-only page extensions used by the dual-build convention.
+ * Files with these extensions (e.g., `route.server.ts`, `page.server.tsx`)
+ * are included in dev/CMS builds but excluded from static export builds.
+ */
+const CMS_PAGE_EXTENSIONS = ['server.ts', 'server.tsx']
+
 export interface WithCanopyOptions {
   /** Additional packages to transpile beyond the Canopy defaults. */
   packages?: string[]
+  /**
+   * Set to `true` for static export builds to exclude CMS-only pages.
+   *
+   * When `false` (default): adds `server.ts` and `server.tsx` to `pageExtensions`,
+   * so Next.js processes `.server.ts` and `.server.tsx` files (API routes, editor page).
+   *
+   * When `true`: leaves them out, so Next.js ignores CMS-only files during static export.
+   *
+   * @example
+   * ```ts
+   * export default withCanopy({}, {
+   *   staticBuild: process.env.CANOPY_BUILD === 'static',
+   * })
+   * ```
+   */
+  staticBuild?: boolean
 }
 
 /**
@@ -55,6 +78,9 @@ function resolveReactAliases(): Record<string, string> | null {
  * - Auto-detects installed Canopy packages and adds them to `transpilePackages`
  *   (they export raw TypeScript). Only packages found in your node_modules are
  *   added, so you don't need to worry about optional packages you haven't installed.
+ * - Adds `server.ts`/`server.tsx` to `pageExtensions` for dual-build support.
+ *   CMS-only files (e.g., `route.server.ts`) are included in dev/CMS builds
+ *   but excluded when `staticBuild: true` is set.
  * - Resolves React to a single copy from your project root, preventing
  *   dual-instance crashes when using `file:` symlinks for local development
  *
@@ -140,9 +166,17 @@ export function withCanopy(
   // file: symlinks must use `next dev --webpack` for local development.
   // Turbopack works fine when canopycms is installed from npm (no symlinks).
 
+  // Dual-build support: include CMS-only page extensions unless this is a static build.
+  // Files like `route.server.ts` and `page.server.tsx` are only processed when
+  // CMS_PAGE_EXTENSIONS are in pageExtensions.
+  const pageExtensions = options.staticBuild
+    ? nextConfig.pageExtensions // static build: don't add CMS extensions
+    : [...(nextConfig.pageExtensions ?? ['tsx', 'ts', 'jsx', 'js']), ...CMS_PAGE_EXTENSIONS]
+
   return {
     ...nextConfig,
     transpilePackages: allPackages,
+    ...(pageExtensions ? { pageExtensions } : {}),
     webpack,
   }
 }

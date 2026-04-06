@@ -82,6 +82,7 @@ export async function init(options: InitOptions): Promise<void> {
     aiConfig,
     aiRoute,
     nextConfig,
+    middleware,
   } = await import('./templates')
 
   p.intro('CanopyCMS init')
@@ -119,6 +120,7 @@ export async function init(options: InitOptions): Promise<void> {
     )
   }
   await writeFile(path.join(projectDir, 'next.config.ts'), await nextConfig(), writeOpts)
+  await writeFile(path.join(projectDir, 'middleware.ts'), await middleware(), writeOpts)
 
   // Update .gitignore
   const gitignorePath = path.join(projectDir, '.gitignore')

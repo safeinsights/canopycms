@@ -54,16 +54,17 @@ Use `--non-interactive` for CI (uses defaults), `--force` to overwrite existing 
 
 ### What it creates
 
-| File                                             | Purpose                                                        |
-| ------------------------------------------------ | -------------------------------------------------------------- |
-| `canopycms.config.ts`                            | Main configuration (mode, editor settings)                     |
-| `{appDir}/lib/canopy.ts`                         | Server-side context setup with auth plugin selection           |
-| `{appDir}/schemas.ts`                            | Entry schema definitions and registry                          |
-| `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all API route handler                             |
-| `{appDir}/edit/page.tsx`                         | Editor page component                                          |
-| `{appDir}/ai/config.ts`                          | AI content configuration (included unless `--no-ai` is passed) |
-| `{appDir}/ai/[...path]/route.ts`                 | AI content route handler (included unless `--no-ai` is passed) |
-| `next.config.ts`                                 | Next.js config wrapped with `withCanopy()` for transpilation   |
+| File                                             | Purpose                                                                                                    |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `canopycms.config.ts`                            | Main configuration (mode, editor settings)                                                                 |
+| `{appDir}/lib/canopy.ts`                         | Server-side context setup with auth plugin selection                                                       |
+| `{appDir}/schemas.ts`                            | Entry schema definitions and registry                                                                      |
+| `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all API route handler                                                                         |
+| `{appDir}/edit/page.tsx`                         | Editor page component                                                                                      |
+| `{appDir}/ai/config.ts`                          | AI content configuration (included unless `--no-ai` is passed)                                             |
+| `{appDir}/ai/[...path]/route.ts`                 | AI content route handler (included unless `--no-ai` is passed)                                             |
+| `middleware.ts`                                  | Route protection for `/edit` and `/api/canopycms` (passthrough by default; commented Clerk example inside) |
+| `next.config.ts`                                 | Next.js config wrapped with `withCanopy()` for transpilation and dual-build support                        |
 
 It also updates `.gitignore` to exclude CanopyCMS runtime directories (`.canopy-dev/`).
 
@@ -98,20 +99,57 @@ export default withCanopy({
 })
 ```
 
-`withCanopy()` handles two things:
+`withCanopy()` handles three things:
 
 - **Transpilation** — Canopy packages export raw TypeScript; the wrapper auto-detects which Canopy packages are installed and adds only those to `transpilePackages`. You never need to maintain this list manually.
 - **React deduplication** — When developing locally with `file:` references or linked packages (`npm link`, `pnpm link`, etc.), the bundler can follow symlinks and load a second copy of React from the linked package's `node_modules`, causing "Invalid hook call" crashes. The wrapper adds module aliases so React always resolves to your project's copy.
+- **Dual-build page extensions** — By default, adds `server.ts` and `server.tsx` to Next.js `pageExtensions`, enabling the dual-build convention (see below).
 
 The React aliases are harmless when not strictly needed (e.g., when installing from npm), so `withCanopy()` is the recommended configuration for all adopters.
+
+#### Dual-Build Sites (Static Export + CMS Server)
+
+If you deploy both a **static public site** and a **separate CMS server** from the same Next.js app, use the `staticBuild` option and the `.server.ts`/`.server.tsx` file extension convention:
+
+1. **Name CMS-only files** with `.server.ts` or `.server.tsx` extensions (e.g., `route.server.ts`, `page.server.tsx`). These files contain your API route handler and editor page -- things the static site does not need.
+
+2. **Toggle the build** using an environment variable:
+
+```typescript
+// next.config.ts
+import { withCanopy } from 'canopycms-next'
+
+export default withCanopy(
+  {
+    // ...your existing Next.js config
+  },
+  {
+    staticBuild: process.env.CANOPY_BUILD === 'static',
+  },
+)
+```
+
+When `staticBuild` is `false` (the default), `withCanopy()` adds `server.ts` and `server.tsx` to `pageExtensions`, so Next.js processes your CMS-only files normally. When `staticBuild` is `true`, those extensions are excluded, making CMS-only files invisible to the static export build.
+
+3. **Build each target** separately in your CI:
+
+```bash
+# Static public site (no CMS code included)
+CANOPY_BUILD=static next build
+
+# CMS server (includes editor + API routes)
+next build
+```
+
+If you are not doing dual-build deployment (most setups), you can ignore this option entirely -- the default behavior works for both development and single-build production.
 
 ### 4. Customize your schemas
 
 Edit `{appDir}/schemas.ts` with your content types. See [Schema Registry and References](#schema-references-system) for details.
 
-### 5. Protect editor routes (Clerk only)
+### 5. Protect editor routes
 
-If using Clerk auth, add `middleware.ts` to protect editor routes:
+The `init` command generates a `middleware.ts` that matches `/edit` and `/api/canopycms` routes. By default it is a passthrough (suitable for dev auth mode). For Clerk auth, replace the file contents with the commented example inside, or use this:
 
 ```typescript
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
@@ -125,9 +163,7 @@ export default clerkMiddleware(async (auth, req) => {
 })
 
 export const config = {
-  matcher: [
-    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
-  ],
+  matcher: ['/edit(.*)', '/api/canopycms(.*)'],
 }
 ```
 
@@ -937,7 +973,7 @@ export default async function RootLayout({ children }) {
 
 Each node in the tree has:
 
-- `path` -- URL path (e.g., `"/docs/getting-started"`)
+- `path` -- URL path, lowercased by default (e.g., `"/docs/getting-started"`)
 - `logicalPath` -- CMS logical path
 - `kind` -- `"collection"` or `"entry"`
 - `collection` -- collection metadata (name, label) when `kind === "collection"`
@@ -1001,14 +1037,14 @@ const tree = await canopy.buildContentTree<NavItem>({
 
 ### Options Reference
 
-| Option      | Type                                                       | Default                       | Description                                                     |
-| ----------- | ---------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------- |
-| `rootPath`  | `string`                                                   | Content root                  | Starting collection path (e.g., `"content/docs"` for a subtree) |
-| `extract`   | `(data, node) => T`                                        | -                             | Extract typed custom fields from raw entry/collection data      |
-| `filter`    | `(node: ContentTreeNode<T>) => boolean`                    | -                             | Return false to exclude a node and its descendants              |
-| `buildPath` | `(logicalPath, kind) => string`                            | Strips content root           | Custom URL path builder                                         |
-| `sort`      | `(a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number` | Order array then alphabetical | Custom sort for children at each level (replaces default sort)  |
-| `maxDepth`  | `number`                                                   | Unlimited                     | Maximum depth to traverse                                       |
+| Option      | Type                                                       | Default                         | Description                                                     |
+| ----------- | ---------------------------------------------------------- | ------------------------------- | --------------------------------------------------------------- |
+| `rootPath`  | `string`                                                   | Content root                    | Starting collection path (e.g., `"content/docs"` for a subtree) |
+| `extract`   | `(data, node) => T`                                        | -                               | Extract typed custom fields from raw entry/collection data      |
+| `filter`    | `(node: ContentTreeNode<T>) => boolean`                    | -                               | Return false to exclude a node and its descendants              |
+| `buildPath` | `(logicalPath, kind) => string`                            | Strips content root, lowercases | Custom URL path builder (default lowercases all paths)          |
+| `sort`      | `(a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number` | Order array then alphabetical   | Custom sort for children at each level (replaces default sort)  |
+| `maxDepth`  | `number`                                                   | Unlimited                       | Maximum depth to traverse                                       |
 
 ### Imports
 
@@ -1392,15 +1428,15 @@ Admins can configure access control:
 
 CanopyCMS is designed for minimal integration effort. Run `npx canopycms init` to generate all required files, or create them manually. Use `--app-dir` to customize the app directory path (default: `app`).
 
-| Touchpoint       | File                                             | Purpose                                                      |
-| ---------------- | ------------------------------------------------ | ------------------------------------------------------------ |
-| **Config**       | `canopycms.config.ts`                            | Define settings and operating mode                           |
-| **Next.js wrap** | `next.config.ts`                                 | Auto-generated by `init`; wraps config with `withCanopy()`   |
-| **Schemas**      | `{appDir}/schemas.ts`                            | Field schemas and registry (for `.collection.json` approach) |
-| **Context**      | `{appDir}/lib/canopy.ts`                         | One-time async setup with auth plugin                        |
-| **API Route**    | `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all handler                                     |
-| **Editor Page**  | `{appDir}/edit/page.tsx`                         | Embed the editor component                                   |
-| **Middleware**   | `middleware.ts`                                  | Protect editor routes with authentication (Clerk only)       |
+| Touchpoint       | File                                             | Purpose                                                                                                   |
+| ---------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| **Config**       | `canopycms.config.ts`                            | Define settings and operating mode                                                                        |
+| **Next.js wrap** | `next.config.ts`                                 | Auto-generated by `init`; wraps config with `withCanopy()` (supports `staticBuild` for dual-build sites)  |
+| **Schemas**      | `{appDir}/schemas.ts`                            | Field schemas and registry (for `.collection.json` approach)                                              |
+| **Context**      | `{appDir}/lib/canopy.ts`                         | One-time async setup with auth plugin                                                                     |
+| **API Route**    | `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all handler                                                                                  |
+| **Editor Page**  | `{appDir}/edit/page.tsx`                         | Embed the editor component                                                                                |
+| **Middleware**   | `middleware.ts`                                  | Auto-generated by `init`; passthrough for dev auth, replace contents with Clerk middleware for production |
 
 **Optional touchpoints:**
 
