@@ -279,7 +279,7 @@ describe('content api', () => {
         resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/nonexistent' }),
         renameEntry: vi
           .fn()
-          .mockRejectedValue(new ContentStoreError('Entry not found: nonexistent')),
+          .mockRejectedValue(new ContentStoreError('Entry not found: nonexistent', 'NOT_FOUND')),
       }
 
       vi.mocked(ContentStore).mockImplementationOnce(() => mockStore as any)
@@ -316,6 +316,7 @@ describe('content api', () => {
           .mockRejectedValue(
             new ContentStoreError(
               'Entry with slug "existing-slug" already exists in collection "content/posts"',
+              'VALIDATION',
             ),
           ),
       }

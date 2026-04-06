@@ -1,11 +1,19 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import type { NextConfig } from 'next'
+
+// Track which packages should be "uninstalled" for each test
+let unresolvablePackages: string[] = []
 
 // Mock node:module so we can control what require.resolve returns
 vi.mock('node:module', () => ({
-  createRequire: () => ({
-    resolve: (id: string) => `/mock/node_modules/${id.replace(/\//g, '_')}/index.js`,
-  }),
+  createRequire: vi.fn(() => ({
+    resolve: (id: string) => {
+      if (unresolvablePackages.includes(id)) {
+        throw new Error(`Cannot find module '${id}'`)
+      }
+      return `/mock/node_modules/${id.replace(/\//g, '_')}/index.js`
+    },
+  })),
 }))
 
 import { withCanopy } from './with-canopy'
@@ -17,13 +25,32 @@ function invokeWebpack(config: NextConfig, webpackConfig: unknown) {
 }
 
 describe('withCanopy', () => {
+  beforeEach(() => {
+    unresolvablePackages = []
+  })
+
   describe('transpilePackages', () => {
-    it('includes all canopy packages', () => {
+    it('includes required canopy packages', () => {
       const result = withCanopy({})
       expect(result.transpilePackages).toContain('canopycms')
+    })
+
+    it('auto-detects installed optional packages', () => {
+      // The mock resolves all packages successfully, so all optional packages are detected
+      const result = withCanopy({})
       expect(result.transpilePackages).toContain('canopycms-next')
       expect(result.transpilePackages).toContain('canopycms-auth-clerk')
       expect(result.transpilePackages).toContain('canopycms-auth-dev')
+      expect(result.transpilePackages).toContain('canopycms-cdk')
+    })
+
+    it('excludes optional packages that are not installed', () => {
+      unresolvablePackages = ['canopycms-cdk', 'canopycms-auth-clerk']
+      const result = withCanopy({})
+      expect(result.transpilePackages).not.toContain('canopycms-cdk')
+      expect(result.transpilePackages).not.toContain('canopycms-auth-clerk')
+      expect(result.transpilePackages).toContain('canopycms-auth-dev')
+      expect(result.transpilePackages).toContain('canopycms')
     })
 
     it('merges with existing transpilePackages', () => {
@@ -90,6 +117,35 @@ describe('withCanopy', () => {
       const result = withCanopy({}) as any
       expect(result.turbopack).toBeUndefined()
       expect(result.experimental?.turbo).toBeUndefined()
+    })
+  })
+
+  describe('pageExtensions (dual-build)', () => {
+    it('adds CMS page extensions by default', () => {
+      const result = withCanopy({})
+      expect(result.pageExtensions).toContain('server.ts')
+      expect(result.pageExtensions).toContain('server.tsx')
+      // Also includes the default Next.js extensions
+      expect(result.pageExtensions).toContain('tsx')
+      expect(result.pageExtensions).toContain('ts')
+    })
+
+    it('merges with existing pageExtensions', () => {
+      const result = withCanopy({ pageExtensions: ['tsx', 'ts', 'mdx'] })
+      expect(result.pageExtensions).toContain('mdx')
+      expect(result.pageExtensions).toContain('server.ts')
+      expect(result.pageExtensions).toContain('server.tsx')
+    })
+
+    it('excludes CMS extensions when staticBuild is true', () => {
+      const result = withCanopy({}, { staticBuild: true })
+      expect(result.pageExtensions).toBeUndefined()
+    })
+
+    it('preserves existing pageExtensions when staticBuild is true', () => {
+      const result = withCanopy({ pageExtensions: ['tsx', 'ts', 'mdx'] }, { staticBuild: true })
+      expect(result.pageExtensions).toEqual(['tsx', 'ts', 'mdx'])
+      expect(result.pageExtensions).not.toContain('server.ts')
     })
   })
 

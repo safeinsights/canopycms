@@ -1,0 +1,30 @@
+import { NextResponse } from 'next/server'
+
+// Protect CMS routes from unauthenticated access.
+//
+// For dev auth mode, no middleware protection is needed — this file is a passthrough.
+// If you don't need auth protection, you can delete this file entirely.
+//
+// For Clerk auth, replace this file's contents with:
+//
+//   import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
+//
+//   const isProtectedRoute = createRouteMatcher(['/edit(.*)', '/api/canopycms(.*)'])
+//
+//   export default clerkMiddleware(async (auth, req) => {
+//     if (isProtectedRoute(req)) {
+//       await auth.protect()
+//     }
+//   })
+//
+//   export const config = {
+//     matcher: ['/edit(.*)', '/api/canopycms(.*)'],
+//   }
+
+export default function middleware() {
+  return NextResponse.next()
+}
+
+export const config = {
+  matcher: ['/edit(.*)', '/api/canopycms(.*)'],
+}

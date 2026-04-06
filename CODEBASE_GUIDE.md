@@ -24,52 +24,53 @@ The codebase uses a modular structure with clear separation:
 
 **Core Modules** (packages/canopycms/src/):
 
-| Module          | Location            | Purpose                                                                                                                          |
-| --------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| authorization/  | src/authorization/  | Unified access control (branch + path permissions, groups)                                                                       |
-| config/         | src/config/         | Configuration types, Zod schemas, validation                                                                                     |
-| schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                                                           |
-| paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                                                                    |
-| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, dev)                                                                                            |
-| api/            | src/api/            | API handlers, middleware, route builder                                                                                          |
-| http/           | src/http/           | HTTP request handling (router, types)                                                                                            |
-| editor/         | src/editor/         | React editor components, contexts, hooks                                                                                         |
-| validation/     | src/validation/     | Validation utilities (field traversal, references)                                                                               |
-| utils/          | src/utils/          | Shared utilities (error handling, debug logging, title-field: resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists) |
-| auth/           | src/auth/           | Authentication plugin interface and cache system                                                                                 |
-| worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                                           |
-| task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                                                |
-| cli/            | src/cli/            | CLI bootstrapping (`pnpm exec canopycms init`, `init-deploy aws`, `worker run-once`, `sync`)                                     |
-| test-utils/     | src/test-utils/     | Shared test utilities (mock factories, console spy, git repo init); exported as `canopycms/test-utils`                           |
+| Module          | Location            | Purpose                                                                                                                                                                                                           |
+| --------------- | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| authorization/  | src/authorization/  | Unified access control (branch + path permissions, groups)                                                                                                                                                        |
+| config/         | src/config/         | Configuration types, Zod schemas, validation                                                                                                                                                                      |
+| schema/         | src/schema/         | Schema loading, resolution, and CRUD (SchemaOps) from .collection.json                                                                                                                                            |
+| paths/          | src/paths/          | Path utilities with branded types (LogicalPath, PhysicalPath)                                                                                                                                                     |
+| operating-mode/ | src/operating-mode/ | Operating mode strategies (prod, dev)                                                                                                                                                                             |
+| api/            | src/api/            | API handlers, middleware, route builder                                                                                                                                                                           |
+| http/           | src/http/           | HTTP request handling (router, types)                                                                                                                                                                             |
+| editor/         | src/editor/         | React editor components, contexts, hooks                                                                                                                                                                          |
+| validation/     | src/validation/     | Validation utilities (field traversal, references)                                                                                                                                                                |
+| utils/          | src/utils/          | Shared utilities (error handling, debug logging, title-field: resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists; body-field: countBodyFields, findInvalidBodyFields; sanitize-href: sanitizeHref) |
+| auth/           | src/auth/           | Authentication plugin interface and cache system                                                                                                                                                                  |
+| worker/         | src/worker/         | CMS Worker daemon for background tasks (git sync, task processing, auth cache refresh)                                                                                                                            |
+| task-queue/     | src/task-queue/     | Generic file-based persistent task queue (zero Canopy dependencies; EFS/NFS-safe)                                                                                                                                 |
+| cli/            | src/cli/            | CLI bootstrapping (`pnpm exec canopycms init`, `init-deploy aws`, `worker run-once`, `sync`)                                                                                                                      |
+| test-utils/     | src/test-utils/     | Shared test utilities (mock factories, console spy, git repo init); exported as `canopycms/test-utils`                                                                                                            |
 
 **Top-level files** (intentionally not modularized):
 
-| File                     | Purpose                                                                                                                   |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
-| services.ts              | CanopyServices factory with git operations                                                                                |
-| context.ts               | Context creation and management (CanopyContext: read, buildContentTree, listEntries; schema resolution memoized per call) |
-| types.ts                 | Core types (BranchContext, BranchContextWithSchema, BranchMetadata, SyncStatus, ConflictStatus)                           |
-| branch-metadata.ts       | Branch metadata persistence                                                                                               |
-| branch-registry.ts       | Branch tracking and listing                                                                                               |
-| branch-workspace.ts      | Branch workspace management                                                                                               |
-| branch-schema-cache.ts   | Per-branch schema caching (always file-based; no in-memory path)                                                          |
-| settings-workspace.ts    | Settings branch workspace                                                                                                 |
-| settings-branch-utils.ts | Settings branch utility helpers                                                                                           |
-| content-store.ts         | Content persistence (getCollectionEntryPaths for index-based minimal metadata)                                            |
-| content-reader.ts        | Content reading                                                                                                           |
-| content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading, batch listing via listEntries)             |
-| content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs)                                                     |
-| content-id-index.ts      | Content ID indexing                                                                                                       |
-| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                                         |
-| entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle only on string fields                             |
-| git-manager.ts           | Git operations wrapper                                                                                                    |
-| github-service.ts        | GitHub API integration                                                                                                    |
-| comment-store.ts         | Comment persistence                                                                                                       |
-| reference-resolver.ts    | Reference resolution                                                                                                      |
-| asset-store.ts           | Asset storage                                                                                                             |
-| build-mode.ts            | Static deploy detection (`isDeployedStatic`), build-phase safety net (`isBuildMode`), `STATIC_DEPLOY_USER`                |
-| user.ts                  | User utilities                                                                                                            |
-| server.ts                | Server entrypoint exports                                                                                                 |
+| File                     | Purpose                                                                                                                                                                                                                                                                                                                           |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| services.ts              | CanopyServices factory with git operations                                                                                                                                                                                                                                                                                        |
+| context.ts               | Context creation and management; exports `CanopyBuildContext` (build-time: buildContentTree, listEntries, services) and `CanopyContext extends CanopyBuildContext` (adds read, readByUrlPath, user); schema resolution memoized per call; readByUrlPath uses ContentStoreError.code for probing instead of regex message matching |
+| types.ts                 | Core types (BranchContext, BranchContextWithSchema, BranchMetadata, SyncStatus, ConflictStatus)                                                                                                                                                                                                                                   |
+| branch-metadata.ts       | Branch metadata persistence                                                                                                                                                                                                                                                                                                       |
+| branch-registry.ts       | Branch tracking and listing                                                                                                                                                                                                                                                                                                       |
+| branch-workspace.ts      | Branch workspace management                                                                                                                                                                                                                                                                                                       |
+| branch-schema-cache.ts   | Per-branch schema caching (always file-based; no in-memory path)                                                                                                                                                                                                                                                                  |
+| settings-workspace.ts    | Settings branch workspace                                                                                                                                                                                                                                                                                                         |
+| settings-branch-utils.ts | Settings branch utility helpers                                                                                                                                                                                                                                                                                                   |
+| content-store.ts         | Content persistence (getCollectionEntryPaths for index-based minimal metadata); ContentStoreError with typed codes (ContentStoreErrorCode: NOT_FOUND, NO_SCHEMA_ITEM, FORBIDDEN, VALIDATION) for structural error matching; all internal assertion helpers (e.g. assertCollection) propagate error codes                          |
+| content-reader.ts        | Content reading                                                                                                                                                                                                                                                                                                                   |
+| content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading, batch listing via listEntries)                                                                                                                                                                                                                     |
+| content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs)                                                                                                                                                                                                                                                             |
+| content-id-index.ts      | Content ID indexing                                                                                                                                                                                                                                                                                                               |
+| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                                                                                                                                                                                                                                                 |
+| entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle (string only) and isBody (at most one, markdown/mdx only)                                                                                                                                                                                                 |
+| git-manager.ts           | Git operations wrapper                                                                                                                                                                                                                                                                                                            |
+| github-service.ts        | GitHub API integration                                                                                                                                                                                                                                                                                                            |
+| comment-store.ts         | Comment persistence                                                                                                                                                                                                                                                                                                               |
+| url-path-resolver.ts     | URL path to content resolution (resolveUrlPathCandidates: decomposes URL path into ordered entryPath/slug candidates)                                                                                                                                                                                                             |
+| reference-resolver.ts    | Reference resolution                                                                                                                                                                                                                                                                                                              |
+| asset-store.ts           | Asset storage                                                                                                                                                                                                                                                                                                                     |
+| build-mode.ts            | Static deploy detection (`isDeployedStatic`), build-phase safety net (`isBuildMode`), `STATIC_DEPLOY_USER`                                                                                                                                                                                                                        |
+| user.ts                  | User utilities                                                                                                                                                                                                                                                                                                                    |
+| server.ts                | Server entrypoint exports                                                                                                                                                                                                                                                                                                         |
 
 ## API Layer
 
@@ -314,23 +315,28 @@ Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prom
 | File                   | Purpose                                                                                                                                                                                                                                                                                                                                                      |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | cli.ts                 | CLI entrypoint: minimist-based flag parsing, command routing, `isDirectRun` guard; dynamically imports command modules                                                                                                                                                                                                                                       |
-| init.ts                | Library functions: `init()`, `initDeployAws()`, `workerRunOnce()` (no CLI logic, imported by cli.ts)                                                                                                                                                                                                                                                         |
+| init.ts                | Library functions: `init()`, `initDeployAws()`, `workerRunOnce()` (no CLI logic, imported by cli.ts); exports `AuthProvider` type (`'clerk' \| 'dev'`), `InitOptions` (includes `authProvider?`, `staticBuild?` for non-interactive use)                                                                                                                     |
 | sync.ts                | Bidirectional content sync between working tree and branch workspaces; push copies+commits to workspace, pull copies back, both does 3-way git merge via canopycms-sync-base tag, abort cancels a failed merge; includes `assertWithinDir` path-traversal guard, `safeReplaceDir` crash-safe directory replacement, `selectBranch` interactive branch picker |
 | generate-ai-content.ts | AI content generation CLI command                                                                                                                                                                                                                                                                                                                            |
-| templates.ts           | Template file loader with placeholder substitution ({{MODE}}, {{CONFIG_IMPORT}}, {{CANOPY_IMPORT}})                                                                                                                                                                                                                                                          |
-| template-files/        | Template files for scaffolding (config, route, edit page, AI content endpoint, Dockerfile, CI workflow)                                                                                                                                                                                                                                                      |
+| templates.ts           | Template generators with auth-provider-specific and static-build-specific output; templates accept `{ authProvider, staticBuild }` options to tailor canopy context, edit page, next.config, and middleware files; includes `middleware()` export                                                                                                            |
+| template-files/        | Template files for scaffolding (config, route, edit page, middleware, next.config.ts, AI content endpoint, Dockerfile, CI workflow); canopy.ts template exports `getCanopy`, `getCanopyForBuild`, `getHandler`; templates generated dynamically based on `authProvider` and `staticBuild` options                                                            |
 
 **Commands**:
 
-| Command                         | Purpose                                                                                            |
-| ------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `canopycms init`                | Scaffold CanopyCMS into a Next.js app (config, API route, edit page, schemas, AI content endpoint) |
-| `canopycms init-deploy aws`     | Generate AWS deployment artifacts (Dockerfile.cms, GitHub Actions workflow)                        |
-| `canopycms worker run-once`     | Process pending tasks, refresh auth cache, then exit                                               |
-| `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)                                 |
-| `canopycms sync`                | Bidirectional content sync between working tree and branch workspaces                              |
+| Command                         | Purpose                                                                                                                                            |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `canopycms init`                | Scaffold CanopyCMS into a Next.js app (config, API route, edit page, middleware, schemas, AI content endpoint, next.config.ts with `withCanopy()`) |
+| `canopycms init-deploy aws`     | Generate AWS deployment artifacts (Dockerfile.cms, GitHub Actions workflow)                                                                        |
+| `canopycms worker run-once`     | Process pending tasks, refresh auth cache, then exit                                                                                               |
+| `canopycms generate-ai-content` | Generate static AI-ready content files (default output: public/ai)                                                                                 |
+| `canopycms sync`                | Bidirectional content sync between working tree and branch workspaces                                                                              |
 
-**`init` flags**: `--app-dir <path>`, `--no-ai`, `--force`, `--non-interactive`
+**`init` flags**: `--app-dir <path>`, `--no-ai`, `--force`, `--non-interactive`, `--auth-provider <clerk|dev>`, `--static-build`
+
+**`init` interactive prompts** (skipped with flags or `--non-interactive`):
+
+1. Auth provider selection (Clerk + dev auth, or dev-only)
+2. Dual-build / static build support (yes/no)
 
 **`generate-ai-content` flags**: `--output <dir>`, `--config <path>`, `--app-dir <path>` (locates schemas.ts; default: `app`)
 
@@ -368,13 +374,32 @@ AWS CDK constructs for deploying CanopyCMS to AWS.
 
 Next.js-specific adapter layer. Provides the catch-all API handler, context creation, a Next.js config wrapper, client components, and test utilities.
 
-| File               | Purpose                                                                                              |
-| ------------------ | ---------------------------------------------------------------------------------------------------- |
-| with-canopy.ts     | `withCanopy()` Next.js config wrapper: transpilePackages + React dedup aliases (webpack & Turbopack) |
-| adapter.ts         | `createCanopyCatchAllHandler()`, `wrapNextRequest()` for Next.js catch-all API route                 |
-| context-wrapper.ts | `createNextCanopyContext()` - React-cached Canopy context creation with Next.js headers              |
-| client.tsx         | `NextCanopyEditorPage` - client component that reads URL search params automatically                 |
-| test-utils.ts      | `createMockAuthPlugin()`, `createRejectingAuthPlugin()` for tests                                    |
+| File               | Purpose                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| with-canopy.ts     | `withCanopy()` Next.js config wrapper: auto-detects installed Canopy packages via `require.resolve` (only `canopycms` required; optional packages like `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, `canopycms-cdk` added only if installed), transpilePackages + React dedup aliases (webpack) + dual-build page extensions (see below)                                          |
+| adapter.ts         | `createCanopyCatchAllHandler()`, `wrapNextRequest()` for Next.js catch-all API route                                                                                                                                                                                                                                                                                                                 |
+| context-wrapper.ts | `createNextCanopyContext()` returns `NextCanopyContextResult` with: `getCanopy` (request-scoped via React `cache()` + `headers()`), `getCanopyForBuild` (returns `CanopyBuildContext` — narrower type with only buildContentTree, listEntries, services; uses `STATIC_DEPLOY_USER`, memoized per process, safe for `generateStaticParams`/`generateMetadata`), `handler` (API catch-all), `services` |
+| client.tsx         | `NextCanopyEditorPage` - client component that reads URL search params automatically                                                                                                                                                                                                                                                                                                                 |
+| test-utils.ts      | `createMockAuthPlugin()`, `createRejectingAuthPlugin()` for tests                                                                                                                                                                                                                                                                                                                                    |
+
+### Dual-Build Support (`withCanopy` staticBuild option)
+
+`withCanopy()` supports a dual-build convention where CMS-only files use `.server.ts` / `.server.tsx` extensions (e.g., `route.server.ts`, `page.server.tsx`).
+
+| `staticBuild` value | Behavior                                                                                                                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `false` (default)   | Adds `server.ts` and `server.tsx` to Next.js `pageExtensions`, so `.server.ts`/`.server.tsx` files are processed (API routes, editor page) |
+| `true`              | Excludes CMS page extensions, so Next.js ignores `.server.ts` files during static export                                                   |
+
+**Convention**: CMS-only routes (catch-all API handler, editor page) use `.server.ts`/`.server.tsx` extensions. This lets a single repo produce two build outputs: a full CMS build (dev/server) and a static export with zero editor code.
+
+```typescript
+const isCmsBuild = process.env.CANOPY_BUILD === 'cms'
+export default withCanopy(
+  { output: isCmsBuild ? 'standalone' : 'export' },
+  { staticBuild: !isCmsBuild },
+)
+```
 
 ## Comment System
 
@@ -400,21 +425,21 @@ Next.js-specific adapter layer. Provides the catch-all API handler, context crea
 
 ### Key Files
 
-| File                     | Purpose                                                                                       |
-| ------------------------ | --------------------------------------------------------------------------------------------- |
-| content-store.ts         | Content persistence (write operations)                                                        |
-| content-reader.ts        | Content reading                                                                               |
-| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                             |
-| entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle only on string fields |
-| content-id-index.ts      | Content ID indexing for lookups                                                               |
-| reference-resolver.ts    | Reference field resolution                                                                    |
+| File                     | Purpose                                                                                                                           |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| content-store.ts         | Content persistence (write operations); ContentStoreError with typed error codes for structural matching                          |
+| content-reader.ts        | Content reading                                                                                                                   |
+| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                                                 |
+| entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle (string only) and isBody (at most one, markdown/mdx only) |
+| content-id-index.ts      | Content ID indexing for lookups                                                                                                   |
+| reference-resolver.ts    | Reference field resolution                                                                                                        |
 
 ### Content Model
 
 - **Collections**: Containers for entries (posts, authors)
 - **Entry Types**: Define content structure within collections; `maxItems: 1` for single-instance entries
 - **Fields**: text, select, reference, object, code, block, markdown
-- **Field flags**: `isTitle` (marks one string-type field per schema as the display title; validated at registry load time; used by `resolveEntryTitle` fallback chain in `utils/title-field.ts`)
+- **Field flags**: `isTitle` (marks one string-type field per schema as the display title; validated at registry load time; used by `resolveEntryTitle` fallback chain in `utils/title-field.ts`), `isBody` (marks one markdown/mdx field per schema as the file's body content; at most one per schema; validated at registry load time via `utils/body-field.ts`)
 - **Format**: MD/MDX/JSON with frontmatter (gray-matter)
 
 ## Content Tree
@@ -432,14 +457,14 @@ Builds a tree of content nodes from the schema and filesystem for adopter use ca
 
 ### BuildContentTreeOptions<T>
 
-| Option    | Default                                  | Description                                                         |
-| --------- | ---------------------------------------- | ------------------------------------------------------------------- |
-| rootPath  | contentRoot name                         | Starting collection path                                            |
-| extract   | none                                     | Extract typed custom fields from raw data                           |
-| filter    | none                                     | Exclude nodes (and descendants); runs after extract                 |
-| buildPath | strips content root prefix, prepends `/` | Custom URL path builder                                             |
-| sort      | order array then alphabetical            | Custom sort for children at each level; fully replaces default sort |
-| maxDepth  | unlimited                                | Max traversal depth                                                 |
+| Option    | Default                                              | Description                                                         |
+| --------- | ---------------------------------------------------- | ------------------------------------------------------------------- |
+| rootPath  | contentRoot name                                     | Starting collection path                                            |
+| extract   | none                                                 | Extract typed custom fields from raw data                           |
+| filter    | none                                                 | Exclude nodes (and descendants); runs after extract                 |
+| buildPath | strips content root prefix, lowercases, prepends `/` | Custom URL path builder                                             |
+| sort      | order array then alphabetical                        | Custom sort for children at each level; fully replaces default sort |
+| maxDepth  | unlimited                                            | Max traversal depth                                                 |
 
 Without `sort`: children are ordered by the collection's `order` array first, then remaining items alphabetically. With `sort`: the comparator fully replaces the default sort. It runs after `extract` and `filter`, so `fields` is available.
 
@@ -844,12 +869,14 @@ const refs = findFieldsByType(schema, data, 'reference')
 
 **Location**: packages/canopycms/src/utils/
 
-| File            | Purpose                                                                                     |
-| --------------- | ------------------------------------------------------------------------------------------- |
-| error.ts        | Type-safe error handling (getErrorMessage, isNodeError, isNotFoundError, isFileExistsError) |
-| debug.ts        | Debug logging utilities (createDebugLogger)                                                 |
-| format.ts       | Formatting utilities                                                                        |
-| atomic-write.ts | Atomic file writes via temp-file + rename (prevents corruption on NFS/EFS)                  |
+| File             | Purpose                                                                                      |
+| ---------------- | -------------------------------------------------------------------------------------------- |
+| error.ts         | Type-safe error handling (getErrorMessage, isNodeError, isNotFoundError, isFileExistsError)  |
+| debug.ts         | Debug logging utilities (createDebugLogger)                                                  |
+| format.ts        | Formatting utilities                                                                         |
+| atomic-write.ts  | Atomic file writes via temp-file + rename (prevents corruption on NFS/EFS)                   |
+| body-field.ts    | Body field validation (countBodyFields, findInvalidBodyFields) for isBody schema flag        |
+| sanitize-href.ts | Sanitize untrusted URLs for href attributes; allows only http/https protocols (sanitizeHref) |
 
 **Error Handling Pattern**:
 
@@ -927,7 +954,7 @@ Lightweight, read-only AI content serving. Does not require auth or the editor A
 1. canopycms.config.ts - Schema definition
 2. app/api/canopycms/[...canopycms]/route.ts - Catch-all API handler
 3. app/edit/page.tsx - Editor component embedding
-4. app/lib/canopy.ts - Canopy context setup (auth plugin wiring)
+4. app/lib/canopy.ts - Canopy context setup (exports `getCanopy`, `getCanopyForBuild`, `getHandler`)
 5. app/schemas.ts - Entry schema definitions
 6. app/ai/config.ts - AI content configuration
 7. app/ai/[...path]/route.ts - AI content endpoint

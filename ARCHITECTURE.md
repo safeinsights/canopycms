@@ -140,6 +140,7 @@ The core package organizes code into focused modules, each with a single respons
 - Type-safe error handling patterns
 - Debug logging utilities
 - Formatting helpers
+- URL sanitization for safe rendering of CMS-sourced links
 
 ### Top-Level Files
 
@@ -462,6 +463,24 @@ The index is NOT thread-safe, but the system is designed for eventual consistenc
 
 In most CMS use cases (where editors work at human speeds), race conditions are rare and eventual consistency is sufficient.
 
+## Case Sensitivity
+
+Content directories and filenames may have mixed casing (e.g., `content/docs/API-Reference/`), but URL-facing paths are lowercased. Here is where case sensitivity matters and where it does not:
+
+**Case-insensitive (safe with mixed-case content on disk):**
+
+- **Collection path resolution** (`resolveCollectionPath` in `content-id-index.ts`): Reads actual directory entries from disk and matches via `extractSlugFromFilename()`, which lowercases. A request for `content/docs/api-reference` resolves correctly even if the directory is `API-Reference.bChqT78gcaLd`.
+- **Entry slug matching** (`content-store.ts`): Slugs are lowercased before comparison, so a query for slug `getting-started` finds a file named `doc.Getting-Started.a1b2c3d4e5f6.md`.
+- **Content tree paths** (`content-tree.ts`): The default `buildPath` lowercases all URL paths, so `content/docs/API-Reference` produces `/docs/api-reference`.
+- **`readByUrlPath`** (`context.ts`): Because it calls `read()` which flows through the case-insensitive store lookups above, lowercased URL paths resolve to mixed-case filesystem paths.
+
+**Case-sensitive (filesystem-dependent):**
+
+- **Direct `fs.readFile` / `fs.readdir` calls**: If code constructs a path string without going through `resolveCollectionPath`, the lookup is case-sensitive on Linux/EFS. This only affects the fallback path in `buildPaths` when a collection directory does not yet exist on disk.
+- **macOS vs Linux**: macOS filesystems are case-insensitive by default; Linux and EFS are case-sensitive. Always test path resolution on a case-sensitive filesystem if your content has mixed casing.
+
+**Rule of thumb**: Content paths are case-insensitive for reads (thanks to directory scanning), but always use lowercase for new content directories to avoid platform-dependent behavior.
+
 ## Schema-Driven Content Model
 
 CanopyCMS uses a schema model based on **collections** and **entry types**. Schemas can be defined in two ways:
@@ -645,10 +664,16 @@ const canopyContextPromise = createNextCanopyContext({
   entrySchemaRegistry,
 })
 
-// Export getters that await the promise
+// Request-scoped: uses headers() + React cache()
 export const getCanopy = async () => {
   const context = await canopyContextPromise
   return context.getCanopy()
+}
+
+// Build-scoped: no request context needed
+export const getCanopyForBuild = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopyForBuild()
 }
 ```
 
@@ -658,6 +683,7 @@ export const getCanopy = async () => {
 - **Shared services**: All requests use the same services instance with cached schemas
 - **Lambda-safe**: In serverless environments, the promise resolves once per container lifecycle
 - **Type safety**: Async await ensures services are fully initialized before use
+- **Explicit scope**: `getCanopy()` for request-scoped contexts, `getCanopyForBuild()` for build-time contexts like `generateStaticParams`
 
 ### Watch System for Meta Files
 
@@ -724,6 +750,10 @@ The `ContentStore` uses the flat schema index for O(1) path resolution:
 - `maxItems` is enforced as a schema constraint, not a filename difference
 
 The API works uniformly across all entry types regardless of cardinality constraints.
+
+**Structured error codes**:
+
+The content store uses typed error codes (`NOT_FOUND`, `NO_SCHEMA_ITEM`, `FORBIDDEN`, `VALIDATION`) on its domain error class rather than encoding failure reasons in message strings. This lets callers branch on `err.code` with exhaustive checks instead of fragile regex matching against error messages. For example, the URL-to-content resolution layer needs to distinguish "this path doesn't exist in the schema" from "the entry file is missing on disk" so it can probe multiple candidate paths without treating a missing file as a fatal error. Structured codes make that distinction reliable and refactor-safe.
 
 ### API Layer
 
@@ -1045,7 +1075,7 @@ This covers situations like `getCanopy()` being called from `generateStaticParam
 
 **Combined check**: The content reader and context factory use `isDeployedStatic(config) || isBuildMode()` to determine when to bypass auth. The static deployment check is config-driven (stable, explicit); the build mode check is environment-driven (dynamic, safety net).
 
-**Two-deployment model**: A single codebase can produce both a static export and a CMS server build. The `deployedAs` field in each build's config controls which deployment type is active. This enables patterns like a public-facing static site alongside a separate CMS editor deployment, both reading from the same content repository.
+**Two-deployment model**: A single codebase can produce both a static export and a CMS server build. The `deployedAs` field in each build's config controls which deployment type is active. This enables patterns like a public-facing static site alongside a separate CMS editor deployment, both reading from the same content repository. At the build-tooling level, the `withCanopy()` Next.js config wrapper supports this via its `staticBuild` option, which controls whether CMS-only files (using the `.server.ts`/`.server.tsx` convention) are included in `pageExtensions`. See [Framework Adapters](#framework-adapters) for details.
 
 This means you can use the same `read()` calls in both authenticated pages and static generation—the context handles the difference automatically.
 
@@ -1076,18 +1106,18 @@ Setup is a one-time operation in a central file (e.g., `app/lib/canopy.ts`):
 
 ```typescript
 // One-time setup
-const { getCanopy, handler, services } = createNextCanopyContext({
+const { getCanopy, getCanopyForBuild, handler, services } = createNextCanopyContext({
   config: canopyConfig,
   authPlugin: clerkAuthPlugin,
 })
 
-export { getCanopy, handler, services }
+export { getCanopy, getCanopyForBuild, handler, services }
 ```
 
 Then in pages and API routes:
 
 ```typescript
-// In a page/component
+// In a page/component (request-scoped)
 const canopy = await getCanopy()
 const { data } = await canopy.read({
   entryPath: 'content/posts',
@@ -1096,6 +1126,13 @@ const { data } = await canopy.read({
 ```
 
 No manual user management, no config imports, no auth logic. The context handles everything.
+
+**Two context functions serve different scopes:**
+
+- **`getCanopy()`** is request-scoped. It calls `headers()` to authenticate the current user and is wrapped with React `cache()` for per-request memoization. Use it in server components and route handlers.
+- **`getCanopyForBuild()`** is process-scoped. It uses a synthetic admin user with no auth, making it safe to call from `generateStaticParams`, `generateMetadata`, and other non-request-scoped contexts where `headers()` is unavailable. It is memoized for the process lifetime. **Security note:** this context bypasses all branch and path ACLs — only use it in build-time code paths that are not exposed to end users at request time.
+
+This dual-context pattern replaces the need for `isBuildMode()` environment detection in most cases. Instead of the framework guessing whether auth is available, adopters explicitly choose the right context for each call site.
 
 ## The Permission Model
 
@@ -1487,7 +1524,7 @@ The comment system supports asynchronous review workflows.
 
 The editor provides a rich editing experience with schema-driven forms, block-based page building, and live preview.
 
-**Bundle separation**: Public sites can be built without any editor code. The editor is exported from `canopycms/client` and can be imported only where needed. This means your production site visitors never download editor JavaScript.
+**Bundle separation**: Public sites can be built without any editor code. The editor is exported from `canopycms/client` and can be imported only where needed. This means your production site visitors never download editor JavaScript. At the file level, CMS-only routes (API handlers, editor pages) use the `.server.ts`/`.server.tsx` extension convention. The `withCanopy()` config wrapper controls whether Next.js processes these files, so static builds exclude them entirely rather than relying on tree-shaking alone.
 
 **Integration options:**
 
@@ -1749,12 +1786,13 @@ The `canopycms-next` adapter is ~10 lines for user extraction plus the request/r
 
 **Next.js Config Wrapper (`withCanopy`)**:
 
-The `canopycms-next` package also provides a `withCanopy()` function that wraps the adopter's Next.js config to handle two build-tooling concerns:
+The `canopycms-next` package also provides a `withCanopy()` function that wraps the adopter's Next.js config to handle three build-tooling concerns:
 
-- **Module transpilation**: CanopyCMS packages export raw TypeScript. `withCanopy()` adds all Canopy packages to `transpilePackages` so the Next.js bundler compiles them.
-- **React deduplication**: When consuming Canopy packages via `workspace:` references or linked packages during local development, the bundler can follow symlinks into the linked package's `node_modules` and resolve a second copy of React. Dual React instances cause "Invalid hook call" crashes. `withCanopy()` resolves React modules from the consumer's project root and disables symlink following, ensuring a single React instance.
+- **Module transpilation**: CanopyCMS packages export raw TypeScript. `withCanopy()` auto-detects which Canopy packages are installed (via `require.resolve`) and adds only those to `transpilePackages`. The core `canopycms` package is always included; optional packages like `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, and `canopycms-cdk` are included only if found in the consumer's `node_modules`. This avoids Next.js build errors from listing uninstalled packages.
+- **React deduplication**: When consuming Canopy packages via `file:` references or linked packages during local development, the bundler can follow symlinks into the linked package's `node_modules` and resolve a second copy of React. Dual React instances cause "Invalid hook call" crashes. `withCanopy()` resolves React modules from the consumer's project root via scoped Webpack aliases (applied only to canopycms source files), ensuring a single React instance without interfering with Next.js internals.
+- **Dual-build page extensions**: `withCanopy()` supports a `staticBuild` option that controls whether CMS-only files are included in the Next.js build. By convention, CMS-only routes (API handlers, editor pages) use `.server.ts` or `.server.tsx` file extensions. In dev and CMS builds (default), `withCanopy()` adds `server.ts` and `server.tsx` to Next.js `pageExtensions` so these files are processed normally. When `staticBuild: true` is set, these extensions are omitted, causing Next.js to ignore the CMS-only files entirely. This is the build-tooling mechanism that enables the two-deployment model described above -- a single codebase produces both a public static export (no editor code) and a CMS server build (with editor routes), controlled by a build-time flag rather than runtime checks.
 
-The wrapper handles both Webpack and Turbopack configurations. When installed from npm (not symlinked), the React aliases are harmless—they resolve to the same React the project already uses.
+When installed from npm (not symlinked), the React aliases are harmless -- they resolve to the same React the project already uses. Note that Turbopack does not currently support the absolute-path aliases used for React deduplication, so consumers using `file:` symlinks for local development must use `next dev --webpack`; Turbopack works fine when packages are installed from npm.
 
 **Creating a new adapter**:
 
@@ -1995,7 +2033,7 @@ The old approach used `isBuildMode()` and a `BUILD_USER` to detect and handle st
 
 **The `deployedAs: 'static'` config field** makes this explicit. It is a stable, config-driven declaration that applies across the entire lifecycle of a static deployment. This is the primary mechanism for static sites.
 
-**`isBuildMode()` remains as a safety net** for server deployments. During `next build` of a server-deployed site, functions like `generateStaticParams` call `getCanopy()` without a request context. Build mode detection catches this edge case.
+**`isBuildMode()` remains as a safety net** for server deployments. During `next build` of a server-deployed site, functions like `generateStaticParams` run without a request context. The preferred solution is for adopters to use `getCanopyForBuild()` instead of `getCanopy()` in these contexts, which explicitly provides a non-request-scoped context with a synthetic admin user. Build mode detection remains as a fallback for cases where `getCanopy()` is called without a request context.
 
 **Why two checks instead of one?**
 
@@ -2065,10 +2103,8 @@ Symlinks create a subtle problem: when the bundler follows a symlink into the li
 
 The `withCanopy()` wrapper in `canopycms-next` solves both problems in one call:
 
-- Adds all Canopy packages to `transpilePackages`
-- Resolves React (and react-dom, jsx-runtime) from the consumer's project root via `createRequire()`
-- Disables Webpack symlink following so resolution happens from the symlink location, not the target
-- Configures equivalent Turbopack aliases for projects using the Turbopack bundler
+- Auto-detects installed Canopy packages (via `require.resolve`) and adds only those to `transpilePackages`, avoiding build errors from uninstalled optional packages
+- Resolves React (and react-dom) from the consumer's project root via `createRequire()`, using scoped Webpack aliases that apply only to canopycms source files so they don't interfere with Next.js internals
 
 **Why solve this in the adapter package?** The dual-React problem is specific to how Next.js resolves modules through symlinks. It is a build-tooling concern, not business logic. Placing it in the adapter keeps the core package clean and makes the fix discoverable for Next.js adopters in the package they already import. Other framework adapters would handle their bundler's equivalent quirks in their own way.
 
@@ -2101,6 +2137,16 @@ These are nominal types (string with a brand) that the compiler tracks separatel
 - Need to maintain type guards and conversion functions
 
 The safety benefits outweigh the verbosity cost, especially for security-sensitive path operations where a bug could lead to path traversal vulnerabilities.
+
+### Why a URL sanitization utility in core?
+
+CMS content is user-authored, so URLs entered in link fields, CTAs, and rich text blocks are untrusted input. A malicious or accidental `javascript:` or `data:` URL rendered into an `href` attribute creates a cross-site scripting vector, and an unchecked redirect URL can be used for phishing.
+
+Rather than expecting every adopter to independently solve this, the core package provides a `sanitizeHref` utility that parses a URL with the standard `URL` constructor and only allows `http:` and `https:` protocols. The function returns a new string derived from the parsed URL object rather than the original input, which breaks static-analysis taint chains (CodeQL, Semgrep, etc.) and gives adopters a single, auditable point for URL safety.
+
+**Why protocol allowlisting instead of denylisting?** Blocking known-bad schemes (`javascript:`, `vbscript:`, `data:`) is fragile because new schemes or parser quirks can bypass the list. Allowlisting only `http:` and `https:` is a closed set that cannot be bypassed by novel scheme names.
+
+**Why in core rather than in a separate security package?** URL sanitization is needed wherever CMS content is rendered, which is the adopter's site. Shipping it in the core package means adopters get it as a zero-cost import with no extra dependency, and the utility evolves alongside the content model it protects.
 
 ### Why filename-embedded content IDs?
 
@@ -2302,10 +2348,16 @@ const canopyContextPromise = createNextCanopyContext({
   entrySchemaRegistry,
 })
 
-// Export getters that await the promise
+// Request-scoped: uses headers() + React cache()
 export const getCanopy = async () => {
   const context = await canopyContextPromise
   return context.getCanopy()
+}
+
+// Build-scoped: no request context needed (generateStaticParams, etc.)
+export const getCanopyForBuild = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopyForBuild()
 }
 ```
 
@@ -2316,6 +2368,7 @@ export const getCanopy = async () => {
 - **Lambda optimization**: In serverless, the promise resolves once per container and is reused
 - **Error handling**: Initialization errors are thrown once, not on every request
 - **Type safety**: TypeScript enforces await at call sites
+- **Explicit scope**: Adopters choose request-scoped or build-scoped context at each call site, avoiding implicit environment detection
 
 **Performance characteristics:**
 

@@ -3,7 +3,9 @@ import type { CanopyServices } from './services'
 import type { ReadContentInput } from './content-reader'
 import { isDeployedStatic, isBuildMode, STATIC_DEPLOY_USER } from './build-mode'
 import { createContentReader } from './content-reader'
+import { ContentStoreError } from './content-store'
 import { createLogicalPath, parseSlug, resolveBranchPaths, type Slug } from './paths'
+import { resolveUrlPathCandidates } from './url-path-resolver'
 import { loadOrCreateBranchContext } from './branch-workspace'
 import {
   buildContentTree as buildContentTreeImpl,
@@ -16,6 +18,11 @@ import {
   type ListEntriesItem,
 } from './content-listing'
 
+/** True when a ContentStoreError indicates a path/entry wasn't found (expected during candidate probing). */
+function isLookupFailure(err: ContentStoreError): boolean {
+  return err.code === 'NOT_FOUND' || err.code === 'NO_SCHEMA_ITEM'
+}
+
 export interface CanopyContextOptions {
   services: CanopyServices
   /**
@@ -27,15 +34,12 @@ export interface CanopyContextOptions {
   extractUser: () => Promise<CanopyUser>
 }
 
-export interface CanopyContext {
-  /** Content reader with automatic auth context */
-  read: <T = unknown>(input: {
-    entryPath: string
-    slug?: string
-    branch?: string
-    resolveReferences?: boolean
-  }) => Promise<{ data: T; path: string }>
-
+/**
+ * Build-time context with only listing/tree operations.
+ * Does NOT include read/readByUrlPath since those require request-scoped auth.
+ * Use getCanopyForBuild() to obtain this; use getCanopy() for request-scoped access.
+ */
+export interface CanopyBuildContext {
   /** Build a content tree from the schema and filesystem entries. */
   buildContentTree: <T = unknown>(
     options?: BuildContentTreeOptions<T>,
@@ -48,6 +52,38 @@ export interface CanopyContext {
 
   /** Underlying services */
   services: CanopyServices
+}
+
+export interface CanopyContext extends CanopyBuildContext {
+  /** Content reader with automatic auth context */
+  read: <T = unknown>(input: {
+    entryPath: string
+    slug?: string
+    branch?: string
+    resolveReferences?: boolean
+  }) => Promise<{ data: T; path: string }>
+
+  /**
+   * Read content by URL path, resolving the collection/entry split automatically.
+   *
+   * Tries direct entry match first (last segment = slug, rest = collection path),
+   * then falls back to index entry (full path = collection, slug = 'index').
+   * Returns null if no content matches the path.
+   *
+   * @example
+   * ```ts
+   * // URL /docs/guides/getting-started → reads content/docs/guides + slug "getting-started"
+   * // URL /docs/guides → reads content/docs/guides + slug "index"
+   * const result = await canopy.readByUrlPath<DocContent>('/docs/guides/getting-started')
+   * if (result) {
+   *   const { data, path } = result
+   * }
+   * ```
+   */
+  readByUrlPath: <T = unknown>(
+    urlPath: string,
+    options?: { branch?: string; resolveReferences?: boolean },
+  ) => Promise<{ data: T; path: string } | null>
 
   /** Current authenticated user */
   user: CanopyUser
@@ -118,6 +154,35 @@ export function createCanopyContext(options: CanopyContextOptions) {
       return baseReader.read<T>(readInput)
     }
 
+    const readByUrlPath: CanopyContext['readByUrlPath'] = async <T = unknown>(
+      urlPath: string,
+      options?: { branch?: string; resolveReferences?: boolean },
+    ) => {
+      const contentRoot = services.config.contentRoot || 'content'
+      const candidates = resolveUrlPathCandidates(urlPath, contentRoot)
+      if (candidates.length === 0) return null
+
+      const { branch, resolveReferences } = options ?? {}
+
+      for (const candidate of candidates) {
+        try {
+          return await read<T>({
+            entryPath: candidate.entryPath,
+            slug: candidate.slug,
+            branch,
+            resolveReferences,
+          })
+        } catch (err) {
+          // Only swallow "not found" errors from trying candidate paths.
+          // Re-throw real errors (path traversal, permission, corruption).
+          if (err instanceof ContentStoreError && isLookupFailure(err)) continue
+          throw err
+        }
+      }
+
+      return null
+    }
+
     /** Resolve branch workspace and schema — shared by buildContentTree and listEntries. Memoized per getContext call. */
     let schemaContextPromise: ReturnType<typeof resolveSchemaContextImpl> | null = null
     const resolveSchemaContextImpl = async () => {
@@ -162,6 +227,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
 
     return {
       read,
+      readByUrlPath,
       buildContentTree,
       listEntries,
       services,

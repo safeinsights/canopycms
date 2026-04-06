@@ -1,23 +1,27 @@
 import { createNextCanopyContext } from 'canopycms-next'
-import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
-import { createDevAuthPlugin } from 'canopycms-auth-dev'
+{{AUTH_IMPORTS}}
 import config from '{{CONFIG_IMPORT}}'
 import { entrySchemaRegistry } from '../schemas'
 
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
-  authPlugin:
-    process.env.CANOPY_AUTH_MODE === 'clerk'
-      ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })
-      : createDevAuthPlugin(),
+  authPlugin: {{AUTH_PLUGIN}},
   entrySchemaRegistry,
 })
 
+// Export for server component pages
 export const getCanopy = async () => {
   const context = await canopyContextPromise
   return context.getCanopy()
 }
 
+// Export for build-time functions (generateStaticParams, generateMetadata)
+export const getCanopyForBuild = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopyForBuild()
+}
+
+// Export for API routes
 export const getHandler = async () => {
   const context = await canopyContextPromise
   return context.handler

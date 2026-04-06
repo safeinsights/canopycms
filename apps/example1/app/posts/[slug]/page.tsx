@@ -1,7 +1,7 @@
 import React from 'react'
 import PostView from '../../components/PostView'
 import type { PostContent } from '../../schemas'
-import { getCanopy } from '../../lib/canopy'
+import { getCanopy, getCanopyForBuild } from '../../lib/canopy'
 
 interface Params {
   slug: string
@@ -10,7 +10,9 @@ interface Params {
 export const dynamicParams = true
 
 export const generateStaticParams = async (): Promise<Params[]> => {
-  return []
+  const canopy = await getCanopyForBuild()
+  const entries = await canopy.listEntries({ rootPath: 'content/posts' })
+  return entries.map((entry) => ({ slug: entry.slug }))
 }
 
 const PostPage = async ({ params }: { params: Params }) => {

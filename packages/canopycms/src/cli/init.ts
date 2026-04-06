@@ -5,6 +5,8 @@ import { operatingStrategy } from '../operating-mode'
 import type { AuthPlugin } from '../auth/plugin'
 import { filePathExists } from '../utils/fs'
 
+export type AuthProvider = 'clerk' | 'dev'
+
 export interface InitOptions {
   mode: 'dev'
   appDir: string
@@ -12,6 +14,10 @@ export interface InitOptions {
   force: boolean
   nonInteractive: boolean
   ai: boolean
+  /** Pre-set auth provider (skips prompt). */
+  authProvider?: AuthProvider
+  /** Pre-set static build choice (skips prompt). */
+  staticBuild?: boolean
 }
 
 interface InitDeployOptions {
@@ -73,10 +79,63 @@ function configImportPath(appDir: string, subdirs: number): string {
 export async function init(options: InitOptions): Promise<void> {
   const { projectDir, mode, appDir, ai, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
-  const { canopyCmsConfig, canopyContext, schemasTemplate, apiRoute, editPage, aiConfig, aiRoute } =
-    await import('./templates')
+  const {
+    canopyCmsConfig,
+    canopyContext,
+    schemasTemplate,
+    apiRoute,
+    editPage,
+    aiConfig,
+    aiRoute,
+    nextConfig,
+    middleware,
+  } = await import('./templates')
 
   p.intro('CanopyCMS init')
+
+  // Prompt for auth provider
+  let authProvider: AuthProvider
+  if (options.authProvider) {
+    authProvider = options.authProvider
+  } else if (nonInteractive) {
+    authProvider = 'dev'
+  } else {
+    const choice = await p.select({
+      message: 'Which auth provider will you use in production?',
+      options: [
+        { value: 'clerk', label: 'Clerk (+ dev auth for local development)' },
+        { value: 'dev', label: 'Dev auth only' },
+      ],
+      initialValue: 'dev' as AuthProvider,
+    })
+    if (p.isCancel(choice)) {
+      p.cancel('Init cancelled')
+      return
+    }
+    authProvider = choice
+  }
+
+  // Prompt for static build
+  let staticBuild: boolean
+  if (options.staticBuild !== undefined) {
+    staticBuild = options.staticBuild
+  } else if (nonInteractive) {
+    staticBuild = false
+  } else {
+    const choice = await p.confirm({
+      message: 'Will you use dual-build (static public site + server CMS build)?',
+      initialValue: false,
+    })
+    if (p.isCancel(choice)) {
+      p.cancel('Init cancelled')
+      return
+    }
+    staticBuild = choice
+  }
+
+  // CMS-only files use .server.tsx/.server.ts when static build is enabled
+  const serverPageExt = staticBuild ? 'page.server.tsx' : 'page.tsx'
+  const serverRouteExt = staticBuild ? 'route.server.ts' : 'route.ts'
 
   // Generate files
   await writeFile(
@@ -86,20 +145,20 @@ export async function init(options: InitOptions): Promise<void> {
   )
   await writeFile(
     path.join(projectDir, appDir, 'lib/canopy.ts'),
-    await canopyContext({ configImport: configImportPath(appDir, 1) }),
+    await canopyContext({ configImport: configImportPath(appDir, 1), authProvider }),
     writeOpts,
   )
   await writeFile(path.join(projectDir, appDir, 'schemas.ts'), await schemasTemplate(), writeOpts)
   await writeFile(
-    path.join(projectDir, appDir, 'api/canopycms/[...canopycms]/route.ts'),
+    path.join(projectDir, appDir, `api/canopycms/[...canopycms]/${serverRouteExt}`),
     await apiRoute({
       canopyImport: '../'.repeat(3) + 'lib/canopy',
     }),
     writeOpts,
   )
   await writeFile(
-    path.join(projectDir, appDir, 'edit/page.tsx'),
-    await editPage({ configImport: configImportPath(appDir, 1) }),
+    path.join(projectDir, appDir, `edit/${serverPageExt}`),
+    await editPage({ configImport: configImportPath(appDir, 1), authProvider }),
     writeOpts,
   )
   if (ai) {
@@ -110,6 +169,16 @@ export async function init(options: InitOptions): Promise<void> {
       writeOpts,
     )
   }
+  await writeFile(
+    path.join(projectDir, 'next.config.ts'),
+    await nextConfig({ staticBuild }),
+    writeOpts,
+  )
+  await writeFile(
+    path.join(projectDir, 'middleware.ts'),
+    await middleware({ authProvider }),
+    writeOpts,
+  )
 
   // Update .gitignore
   const gitignorePath = path.join(projectDir, '.gitignore')
@@ -121,19 +190,20 @@ export async function init(options: InitOptions): Promise<void> {
     }
   }
 
+  const packages =
+    authProvider === 'clerk'
+      ? 'canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev'
+      : 'canopycms canopycms-next canopycms-auth-dev'
+
   p.note(
     [
       '1. Install dependencies:',
-      `   npm install canopycms canopycms-next canopycms-auth-clerk canopycms-auth-dev`,
+      `   npm install ${packages}`,
       '',
-      '2. Wrap your Next.js config:',
-      "   import { withCanopy } from 'canopycms-next'",
-      '   export default withCanopy({ /* your config */ })',
+      '2. Customize ' + appDir + '/schemas.ts with your content schema',
       '',
-      '3. Customize ' + appDir + '/schemas.ts with your content schema',
-      '',
-      '4. Run: npm run dev',
-      '5. Visit: http://localhost:3000/edit',
+      '3. Run: npm run dev',
+      '4. Visit: http://localhost:3000/edit',
     ].join('\n'),
     'Next steps',
   )

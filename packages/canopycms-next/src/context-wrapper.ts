@@ -4,10 +4,13 @@ import { headers } from 'next/headers'
 import {
   createCanopyContext,
   type CanopyContext,
+  type CanopyBuildContext,
+  type CanopyServices,
   createCanopyServices,
   operatingStrategy,
   loadInternalGroups,
   loadBranchContext,
+  STATIC_DEPLOY_USER,
 } from 'canopycms/server'
 import type { CanopyConfig, AuthPlugin, CanopyUser, FieldConfig } from 'canopycms'
 import { authResultToCanopyUser } from 'canopycms'
@@ -47,6 +50,29 @@ export interface NextCanopyOptions {
   entrySchemaRegistry: Record<string, readonly FieldConfig[]>
 }
 
+export interface NextCanopyContextResult {
+  /** Request-scoped context. Uses headers() + React cache(). Call from server components and route handlers. */
+  getCanopy: () => Promise<CanopyContext>
+  /**
+   * Build-time context. Uses STATIC_DEPLOY_USER (full admin, no auth), no request scope needed.
+   * Safe to call from generateStaticParams, generateMetadata, and other non-request-scoped contexts.
+   * Memoized for the process lifetime — multiple calls return the same context.
+   *
+   * Returns a narrower type than getCanopy() — only buildContentTree and listEntries are
+   * available. read/readByUrlPath are excluded because build-time code should not perform
+   * per-user content reads.
+   *
+   * **Security note:** This context bypasses all branch and path ACLs. It runs as a
+   * synthetic admin user with unrestricted read access. Only use it in build-time
+   * code paths that are not exposed to end users (e.g., static generation).
+   */
+  getCanopyForBuild: () => Promise<CanopyBuildContext>
+  /** API catch-all route handler */
+  handler: ReturnType<typeof createCanopyCatchAllHandler>
+  /** Underlying services (rarely needed directly) */
+  services: CanopyServices
+}
+
 /**
  * Create Next.js-specific wrapper around core context.
  * Adds React cache() for per-request memoization and API handler.
@@ -56,7 +82,9 @@ export interface NextCanopyOptions {
  * it is automatically wrapped with CachingAuthPlugin + FileBasedAuthCache so that
  * auth works without network access (Lambda in prod, local in dev). The cache is populated by the worker daemon.
  */
-export async function createNextCanopyContext(options: NextCanopyOptions) {
+export async function createNextCanopyContext(
+  options: NextCanopyOptions,
+): Promise<NextCanopyContextResult> {
   // Fail fast: authPlugin is required for server deployments
   if (options.config.deployedAs !== 'static' && !options.authPlugin) {
     throw new Error(
@@ -152,6 +180,33 @@ export async function createNextCanopyContext(options: NextCanopyOptions) {
     return coreContext.getContext()
   })
 
+  // Build-time context: uses STATIC_DEPLOY_USER, no headers() call.
+  // Safe for generateStaticParams, generateMetadata, and other non-request-scoped contexts.
+  const buildContext = createCanopyContext({
+    services,
+    extractUser: async () => STATIC_DEPLOY_USER,
+  })
+
+  let buildContextPromise: Promise<CanopyBuildContext> | null = null
+  const getCanopyForBuild = (): Promise<CanopyBuildContext> => {
+    if (!buildContextPromise) {
+      buildContextPromise = buildContext
+        .getContext()
+        .then(
+          ({ buildContentTree, listEntries, services }): CanopyBuildContext => ({
+            buildContentTree,
+            listEntries,
+            services,
+          }),
+        )
+        .catch((err) => {
+          buildContextPromise = null
+          throw err
+        })
+    }
+    return buildContextPromise
+  }
+
   // Create API handler using same services
   const handler = createCanopyCatchAllHandler({
     ...options,
@@ -161,6 +216,7 @@ export async function createNextCanopyContext(options: NextCanopyOptions) {
 
   return {
     getCanopy,
+    getCanopyForBuild,
     handler,
     services,
   }

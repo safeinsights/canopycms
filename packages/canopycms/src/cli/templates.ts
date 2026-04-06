@@ -19,9 +19,26 @@ export async function canopyCmsConfig(options: { mode: string }): Promise<string
   return template.replace('{{MODE}}', options.mode)
 }
 
-export async function canopyContext(options: { configImport: string }): Promise<string> {
+export async function canopyContext(options: {
+  configImport: string
+  authProvider: 'clerk' | 'dev'
+}): Promise<string> {
   const template = await readTemplate('canopy.ts.template')
-  return template.replace('{{CONFIG_IMPORT}}', options.configImport)
+
+  const authImports =
+    options.authProvider === 'clerk'
+      ? "import { createClerkAuthPlugin } from 'canopycms-auth-clerk'\nimport { createDevAuthPlugin } from 'canopycms-auth-dev'"
+      : "import { createDevAuthPlugin } from 'canopycms-auth-dev'"
+
+  const authPlugin =
+    options.authProvider === 'clerk'
+      ? "process.env.CANOPY_AUTH_MODE === 'clerk'\n      ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })\n      : createDevAuthPlugin()"
+      : 'createDevAuthPlugin()'
+
+  return template
+    .replace('{{AUTH_IMPORTS}}', authImports)
+    .replace('{{AUTH_PLUGIN}}', authPlugin)
+    .replace('{{CONFIG_IMPORT}}', options.configImport)
 }
 
 export async function schemasTemplate(): Promise<string> {
@@ -33,8 +50,13 @@ export async function apiRoute(options: { canopyImport: string }): Promise<strin
   return template.replace('{{CANOPY_IMPORT}}', options.canopyImport)
 }
 
-export async function editPage(options: { configImport: string }): Promise<string> {
-  const template = await readTemplate('edit-page.tsx.template')
+export async function editPage(options: {
+  configImport: string
+  authProvider: 'clerk' | 'dev'
+}): Promise<string> {
+  const templateName =
+    options.authProvider === 'dev' ? 'edit-page-dev.tsx.template' : 'edit-page.tsx.template'
+  const template = await readTemplate(templateName)
   return template.replace('{{CONFIG_IMPORT}}', options.configImport)
 }
 
@@ -45,6 +67,19 @@ export async function aiConfig(): Promise<string> {
 export async function aiRoute(options: { configImport: string }): Promise<string> {
   const template = await readTemplate('ai-route.ts.template')
   return template.replace('{{CONFIG_IMPORT}}', options.configImport)
+}
+
+export async function middleware(options: { authProvider: 'clerk' | 'dev' }): Promise<string> {
+  const templateName =
+    options.authProvider === 'clerk' ? 'middleware-clerk.ts.template' : 'middleware.ts.template'
+  return readTemplate(templateName)
+}
+
+export async function nextConfig(options: { staticBuild: boolean }): Promise<string> {
+  const templateName = options.staticBuild
+    ? 'next.config-static.ts.template'
+    : 'next.config.ts.template'
+  return readTemplate(templateName)
 }
 
 export async function dockerfileCms(): Promise<string> {

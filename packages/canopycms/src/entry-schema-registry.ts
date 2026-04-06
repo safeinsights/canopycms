@@ -5,6 +5,7 @@ import {
   findInvalidTitleFields,
   findTitleFieldsInLists,
 } from './utils/title-field'
+import { countBodyFields, findInvalidBodyFields } from './utils/body-field'
 
 /** Look up a field's type by dotted path (e.g., "meta.order"). */
 function findFieldType(fields: readonly FieldConfig[], dottedPath: string): string {
@@ -79,6 +80,18 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
     if (listTitleFields.length > 0) {
       throw new Error(
         `Entry schema registry entry "${key}": field "${listTitleFields[0]}" has isTitle: true but is inside a list field — isTitle cannot resolve inside list fields`,
+      )
+    }
+    const bodyCount = countBodyFields(schema)
+    if (bodyCount > 1) {
+      throw new Error(
+        `Entry schema registry entry "${key}" has ${bodyCount} fields with isBody: true, but at most one is allowed`,
+      )
+    }
+    const invalidBodyFields = findInvalidBodyFields(schema)
+    if (invalidBodyFields.length > 0) {
+      throw new Error(
+        `Entry schema registry entry "${key}": field "${invalidBodyFields[0]}" has isBody: true but is type "${findFieldType(schema, invalidBodyFields[0])}" — isBody is only valid on markdown or mdx fields`,
       )
     }
   }

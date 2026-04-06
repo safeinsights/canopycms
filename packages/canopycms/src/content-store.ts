@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import matter from 'gray-matter'
 import { atomicWriteFile } from './utils/atomic-write'
+import { findBodyFieldName } from './utils/body-field'
 
 import type {
   BlockFieldConfig,
@@ -33,6 +34,8 @@ export type MarkdownDocument = {
   format: 'md' | 'mdx'
   data: Record<string, unknown>
   body: string
+  /** The schema field name that this body maps to (from `isBody: true`, defaults to `'body'`). */
+  bodyFieldName: string
 }
 
 export type JsonDocument = {
@@ -51,7 +54,15 @@ export type WriteInput =
   | { format: 'md' | 'mdx'; data?: Record<string, unknown>; body: string }
   | { format: 'json'; data: Record<string, unknown> }
 
-export class ContentStoreError extends Error {}
+export type ContentStoreErrorCode = 'NOT_FOUND' | 'NO_SCHEMA_ITEM' | 'FORBIDDEN' | 'VALIDATION'
+
+export class ContentStoreError extends Error {
+  code: ContentStoreErrorCode
+  constructor(message: string, code: ContentStoreErrorCode) {
+    super(message)
+    this.code = code
+  }
+}
 
 /**
  * Get the default entry type from a collection's entries array.
@@ -72,10 +83,14 @@ function validateSlug(slug: string): void {
   if (slug.includes('/')) {
     throw new ContentStoreError(
       'Slugs cannot contain forward slashes. Use nested collections instead.',
+      'VALIDATION',
     )
   }
   if (slug.includes('\\')) {
-    throw new ContentStoreError('Slugs cannot contain backslashes. Use nested collections instead.')
+    throw new ContentStoreError(
+      'Slugs cannot contain backslashes. Use nested collections instead.',
+      'VALIDATION',
+    )
   }
 }
 
@@ -115,7 +130,7 @@ export class ContentStore {
     const normalized = normalizeFilesystemPath(path)
     const item = this.schemaIndex.get(normalized)
     if (!item) {
-      throw new ContentStoreError(`Unknown schema item: ${path}`)
+      throw new ContentStoreError(`Unknown schema item: ${path}`, 'NO_SCHEMA_ITEM')
     }
     return item
   }
@@ -123,7 +138,7 @@ export class ContentStore {
   private assertCollection(collectionPath: LogicalPath): FlatSchemaItem & { type: 'collection' } {
     const item = this.assertSchemaItem(collectionPath)
     if (item.type !== 'collection') {
-      throw new ContentStoreError(`Path is not a collection: ${collectionPath}`)
+      throw new ContentStoreError(`Path is not a collection: ${collectionPath}`, 'NO_SCHEMA_ITEM')
     }
     return item
   }
@@ -165,6 +180,7 @@ export class ContentStore {
       if (!parentCollection || parentCollection.type !== 'collection') {
         throw new ContentStoreError(
           `Parent collection not found for entry type: ${schemaItem.name}`,
+          'NO_SCHEMA_ITEM',
         )
       }
       // Use provided slug, falling back to entry type name
@@ -179,7 +195,7 @@ export class ContentStore {
     if (schemaItem.type === 'collection') {
       const safeSlug = slug.replace(/^\/+/, '').toLowerCase()
       if (!safeSlug) {
-        throw new ContentStoreError('Slug is required for collection entries')
+        throw new ContentStoreError('Slug is required for collection entries', 'VALIDATION')
       }
       // Security: Validate slug format (prevents ../../../etc/passwd)
       validateSlug(safeSlug)
@@ -192,6 +208,7 @@ export class ContentStore {
         if (!entryTypeConfig) {
           throw new ContentStoreError(
             `Entry type '${options.entryTypeName}' not found in collection`,
+            'NO_SCHEMA_ITEM',
           )
         }
       } else {
@@ -215,7 +232,7 @@ export class ContentStore {
 
       // Security: Prevent path traversal at collection level
       if (!collectionRoot.startsWith(rootWithSep)) {
-        throw new ContentStoreError('Path traversal detected')
+        throw new ContentStoreError('Path traversal detected', 'VALIDATION')
       }
 
       // Check if file already exists (editing case)
@@ -268,7 +285,7 @@ export class ContentStore {
 
       // Security: Prevent path traversal at entry level
       if (!resolved.startsWith(collectionRootWithSep)) {
-        throw new ContentStoreError('Path traversal detected')
+        throw new ContentStoreError('Path traversal detected', 'VALIDATION')
       }
 
       return {
@@ -278,7 +295,7 @@ export class ContentStore {
       }
     }
 
-    throw new ContentStoreError('Invalid schema item type')
+    throw new ContentStoreError('Invalid schema item type', 'VALIDATION')
   }
 
   /**
@@ -290,7 +307,7 @@ export class ContentStore {
     slug: Slug
   } {
     if (pathSegments.length === 0) {
-      throw new ContentStoreError('Empty path')
+      throw new ContentStoreError('Empty path', 'VALIDATION')
     }
 
     const logicalPath = pathSegments.join('/')
@@ -309,7 +326,7 @@ export class ContentStore {
       }
     }
 
-    throw new ContentStoreError(`No schema item found for path: ${logicalPath}`)
+    throw new ContentStoreError(`No schema item found for path: ${logicalPath}`, 'NO_SCHEMA_ITEM')
   }
 
   async resolveDocumentPath(schemaPath: LogicalPath, slug = '') {
@@ -359,6 +376,7 @@ export class ContentStore {
         format: format,
         data: (parsed.data as Record<string, unknown>) ?? {},
         body: parsed.content,
+        bodyFieldName: findBodyFieldName(fields),
         relativePath,
         absolutePath,
       }
@@ -381,26 +399,35 @@ export class ContentStore {
     const idIndex = await this.idIndex()
     const schemaItem = this.assertSchemaItem(collectionPath)
 
-    // Determine expected format based on entry type
+    // Determine expected format and fields based on entry type
     let expectedFormat: ContentFormat
+    let fields: EntrySchema = []
     if (schemaItem.type === 'entry-type') {
       expectedFormat = schemaItem.format
+      fields = schemaItem.schema
     } else {
       // For collections, determine format from specified or default entry type
       let entryTypeConfig: EntryTypeConfig | undefined
       if (entryTypeName) {
         entryTypeConfig = schemaItem.entries?.find((e) => e.name === entryTypeName)
         if (!entryTypeConfig) {
-          throw new ContentStoreError(`Entry type '${entryTypeName}' not found in collection`)
+          throw new ContentStoreError(
+            `Entry type '${entryTypeName}' not found in collection`,
+            'NO_SCHEMA_ITEM',
+          )
         }
       } else {
         entryTypeConfig = getDefaultEntryType(schemaItem.entries)
       }
       expectedFormat = entryTypeConfig?.format || 'json'
+      fields = entryTypeConfig?.schema || []
     }
 
     if (expectedFormat !== input.format) {
-      throw new ContentStoreError(`Format mismatch: expects ${expectedFormat}, got ${input.format}`)
+      throw new ContentStoreError(
+        `Format mismatch: expects ${expectedFormat}, got ${input.format}`,
+        'VALIDATION',
+      )
     }
     const { absolutePath, relativePath, id } = await this.buildPaths(schemaItem, slug, {
       entryTypeName,
@@ -468,6 +495,7 @@ export class ContentStore {
       format: input.format,
       data: input.data ?? {},
       body: input.body,
+      bodyFieldName: findBodyFieldName(fields),
       relativePath,
       absolutePath,
     }
@@ -536,7 +564,7 @@ export class ContentStore {
     validateSlug(newSlug)
     const safeNewSlug = newSlug.replace(/^\/+/, '')
     if (!safeNewSlug) {
-      throw new ContentStoreError('New slug cannot be empty')
+      throw new ContentStoreError('New slug cannot be empty', 'VALIDATION')
     }
 
     // Get current file path
@@ -549,7 +577,7 @@ export class ContentStore {
     try {
       await fs.access(currentPath)
     } catch {
-      throw new ContentStoreError(`Entry not found: ${currentSlug}`)
+      throw new ContentStoreError(`Entry not found: ${currentSlug}`, 'NOT_FOUND')
     }
 
     // If slugs are the same, no-op
@@ -561,7 +589,7 @@ export class ContentStore {
     const currentFilename = path.basename(currentPath)
     const parts = currentFilename.split('.')
     if (parts.length < 4) {
-      throw new ContentStoreError(`Invalid entry filename format: ${currentFilename}`)
+      throw new ContentStoreError(`Invalid entry filename format: ${currentFilename}`, 'VALIDATION')
     }
 
     const entryTypeName = parts[0]
@@ -585,6 +613,7 @@ export class ContentStore {
         if (existingSlug === safeNewSlug) {
           throw new ContentStoreError(
             `Entry with slug "${safeNewSlug}" already exists in collection "${collectionPath}"`,
+            'VALIDATION',
           )
         }
       }

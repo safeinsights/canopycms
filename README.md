@@ -19,6 +19,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - [Configuration Reference](#configuration-reference)
 - [Content Identification and References](#content-identification--references)
 - [Integration Guide](#integration-guide)
+- [Sanitizing URLs from CMS Content](#sanitizing-urls-from-cms-content)
 - [Content Tree Builder](#content-tree-builder)
 - [Listing Entries](#listing-entries)
 - [Features](#features)
@@ -54,15 +55,17 @@ Use `--non-interactive` for CI (uses defaults), `--force` to overwrite existing 
 
 ### What it creates
 
-| File                                             | Purpose                                                        |
-| ------------------------------------------------ | -------------------------------------------------------------- |
-| `canopycms.config.ts`                            | Main configuration (mode, editor settings)                     |
-| `{appDir}/lib/canopy.ts`                         | Server-side context setup with auth plugin selection           |
-| `{appDir}/schemas.ts`                            | Entry schema definitions and registry                          |
-| `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all API route handler                             |
-| `{appDir}/edit/page.tsx`                         | Editor page component                                          |
-| `{appDir}/ai/config.ts`                          | AI content configuration (included unless `--no-ai` is passed) |
-| `{appDir}/ai/[...path]/route.ts`                 | AI content route handler (included unless `--no-ai` is passed) |
+| File                                             | Purpose                                                                                                    |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `canopycms.config.ts`                            | Main configuration (mode, editor settings)                                                                 |
+| `{appDir}/lib/canopy.ts`                         | Server-side context setup; exports `getCanopy`, `getCanopyForBuild`, and `getHandler`                      |
+| `{appDir}/schemas.ts`                            | Entry schema definitions and registry                                                                      |
+| `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all API route handler                                                                         |
+| `{appDir}/edit/page.tsx`                         | Editor page component                                                                                      |
+| `{appDir}/ai/config.ts`                          | AI content configuration (included unless `--no-ai` is passed)                                             |
+| `{appDir}/ai/[...path]/route.ts`                 | AI content route handler (included unless `--no-ai` is passed)                                             |
+| `middleware.ts`                                  | Route protection for `/edit` and `/api/canopycms` (passthrough by default; commented Clerk example inside) |
+| `next.config.ts`                                 | Next.js config wrapped with `withCanopy()` for transpilation and dual-build support                        |
 
 It also updates `.gitignore` to exclude CanopyCMS runtime directories (`.canopy-dev/`).
 
@@ -82,9 +85,11 @@ npm install @clerk/nextjs @clerk/backend
 
 These are not bundled with `canopycms-auth-clerk` so you control the Clerk SDK versions in your project. If you only use dev auth (the default), you can skip this step -- the Clerk peer dependency warnings are harmless when `CANOPY_AUTH_MODE=dev`.
 
-### 3. Configure Next.js
+### 3. Next.js configuration (auto-generated)
 
-Wrap your Next.js config with `withCanopy()`:
+The `init` command creates a `next.config.ts` that wraps your config with `withCanopy()` from `canopycms-next`. You do not need to set this up manually.
+
+If you already have a `next.config.ts`, the init command will ask before overwriting. To add the wrapper to an existing config, merge it like this:
 
 ```typescript
 // next.config.ts
@@ -95,20 +100,59 @@ export default withCanopy({
 })
 ```
 
-`withCanopy()` handles two things:
+`withCanopy()` handles three things:
 
-- **Transpilation** — Canopy packages export raw TypeScript; the wrapper adds them to `transpilePackages` automatically.
+- **Transpilation** — Canopy packages export raw TypeScript; the wrapper auto-detects which Canopy packages are installed and adds only those to `transpilePackages`. You never need to maintain this list manually.
 - **React deduplication** — When developing locally with `file:` references or linked packages (`npm link`, `pnpm link`, etc.), the bundler can follow symlinks and load a second copy of React from the linked package's `node_modules`, causing "Invalid hook call" crashes. The wrapper adds module aliases so React always resolves to your project's copy.
+- **Dual-build page extensions** — By default, adds `server.ts` and `server.tsx` to Next.js `pageExtensions`, enabling the dual-build convention (see below).
 
 The React aliases are harmless when not strictly needed (e.g., when installing from npm), so `withCanopy()` is the recommended configuration for all adopters.
+
+#### Dual-Build Sites (Static Export + CMS Server)
+
+If you deploy both a **static public site** and a **separate CMS server** from the same Next.js app, use the `staticBuild` option and the `.server.ts`/`.server.tsx` file extension convention:
+
+1. **Name CMS-only files** with `.server.ts` or `.server.tsx` extensions (e.g., `route.server.ts`, `page.server.tsx`). These files contain your API route handler and editor page -- things the static site does not need.
+
+2. **Toggle the build** using an environment variable:
+
+```typescript
+// next.config.ts
+import { withCanopy } from 'canopycms-next'
+
+const isCmsBuild = process.env.CANOPY_BUILD === 'cms'
+
+export default withCanopy(
+  {
+    output: isCmsBuild ? 'standalone' : 'export',
+  },
+  { staticBuild: !isCmsBuild },
+)
+```
+
+When `staticBuild` is `true` (the default when `CANOPY_BUILD` is not set), CMS-only `.server.ts`/`.server.tsx` files are excluded, making them invisible to the static export build. When `staticBuild` is `false` (CMS build), `withCanopy()` adds those extensions to `pageExtensions` so Next.js processes them.
+
+3. **Build each target** separately in your CI:
+
+```bash
+# Static public site (default -- no CMS code included)
+next build
+
+# CMS server (includes editor + API routes)
+CANOPY_BUILD=cms next build
+```
+
+If you are not doing dual-build deployment (most setups), you can ignore this option entirely -- the default behavior works for both development and single-build production.
+
+> **Note:** `withCanopy()` adds `server.ts` and `server.tsx` to Next.js `pageExtensions` by default. If you already have files ending in `.server.ts` or `.server.tsx` inside your app directory for non-CMS purposes, they will be treated as pages/routes by Next.js. Rename them or use a different naming convention to avoid conflicts.
 
 ### 4. Customize your schemas
 
 Edit `{appDir}/schemas.ts` with your content types. See [Schema Registry and References](#schema-references-system) for details.
 
-### 5. Protect editor routes (Clerk only)
+### 5. Protect editor routes
 
-If using Clerk auth, add `middleware.ts` to protect editor routes:
+The `init` command generates a `middleware.ts` that matches `/edit` and `/api/canopycms` routes. By default it is a passthrough (suitable for dev auth mode). For Clerk auth, replace the file contents with the commented example inside, or use this:
 
 ```typescript
 import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server'
@@ -122,9 +166,7 @@ export default clerkMiddleware(async (auth, req) => {
 })
 
 export const config = {
-  matcher: [
-    '/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)',
-  ],
+  matcher: ['/edit(.*)', '/api/canopycms(.*)'],
 }
 ```
 
@@ -271,59 +313,44 @@ Then create nested collections in subfolders (e.g., `content/docs/guides/.collec
 
 ### Connecting the Schema Registry
 
-Pass your schema registry to `createNextCanopyContext` in `app/lib/canopy.ts`. The generated template handles auth provider selection at runtime:
+Pass your schema registry to `createNextCanopyContext` in `app/lib/canopy.ts`. The `npx canopycms init` command generates this file automatically:
 
 ```typescript
 import { createNextCanopyContext } from 'canopycms-next'
-import { createClerkAuthPlugin, createClerkJwtVerifier } from 'canopycms-auth-clerk'
-import { createDevAuthPlugin, createDevTokenVerifier } from 'canopycms-auth-dev'
-import type { AuthPlugin } from 'canopycms/auth'
-import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth/cache'
+import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
+import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import config from '../../canopycms.config'
 import { entrySchemaRegistry } from '../schemas'
 
-function getAuthPlugin(): AuthPlugin {
-  const mode = config.server.mode
-  const authMode = process.env.CANOPY_AUTH_MODE || 'dev'
-
-  // In prod mode: use CachingAuthPlugin (networkless JWT + file-based cache)
-  if (mode === 'prod') {
-    const cachePath = process.env.CANOPY_AUTH_CACHE_PATH ?? '/mnt/efs/workspace/.cache'
-    const tokenVerifier =
-      authMode === 'clerk'
-        ? createClerkJwtVerifier({ jwtKey: process.env.CLERK_JWT_KEY ?? '' })
-        : createDevTokenVerifier()
-    return new CachingAuthPlugin(tokenVerifier, new FileBasedAuthCache(cachePath))
-  }
-
-  // In dev mode: use auth plugin directly (CachingAuthPlugin is auto-wrapped
-  // by createNextCanopyContext when the plugin exposes verifyTokenOnly)
-  if (authMode === 'clerk') {
-    return createClerkAuthPlugin({ useOrganizationsAsGroups: true })
-  }
-  return createDevAuthPlugin()
-}
-
-// Static deployments don't need auth — no HTTP requests, no users.
-// Server deployments should provide authPlugin for authenticated reads.
-const isStaticDeploy = config.server.deployedAs === 'static'
-
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
-  ...(!isStaticDeploy ? { authPlugin: getAuthPlugin() } : {}),
+  authPlugin:
+    process.env.CANOPY_AUTH_MODE === 'clerk'
+      ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })
+      : createDevAuthPlugin(),
   entrySchemaRegistry, // Enable .collection.json file support
 })
 
+// For server component pages (request-scoped, auth-aware)
 export const getCanopy = async () => {
   const context = await canopyContextPromise
   return context.getCanopy()
 }
 
+// For build-time functions (no request scope needed, full admin privileges)
+export const getCanopyForBuild = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopyForBuild()
+}
+
+// For API routes
 export const getHandler = async () => {
   const context = await canopyContextPromise
   return context.handler
 }
 ```
+
+For production deployments that need networkless JWT verification (e.g., AWS Lambda without internet access), you can replace the auth setup with `CachingAuthPlugin` and `createClerkJwtVerifier`. See the [ARCHITECTURE.md](ARCHITECTURE.md) deployment section for details.
 
 ### Meta File Format Reference
 
@@ -866,6 +893,50 @@ export default async function PostPage({ params, searchParams }) {
 - `user`: Current authenticated user (with bootstrap admin groups applied)
 - `services`: Underlying CanopyCMS services for advanced use cases
 
+### Reading Content at Build Time
+
+`getCanopyForBuild()` provides a context that does not depend on request headers. Use it in `generateStaticParams`, `generateMetadata`, and any other build-time function where Next.js does not have a live request:
+
+```typescript
+// app/posts/[slug]/page.tsx
+import { getCanopyForBuild, getCanopy } from '../lib/canopy'
+
+// Build-time: no request scope available
+export async function generateStaticParams() {
+  const canopy = await getCanopyForBuild()
+  const entries = await canopy.listEntries()
+  return entries.map((entry) => ({ slug: entry.slug }))
+}
+
+export async function generateMetadata({ params }) {
+  const canopy = await getCanopyForBuild()
+  const { data } = await canopy.read({
+    entryPath: 'content/posts',
+    slug: params.slug,
+  })
+  return { title: data.title }
+}
+
+// Request-time: use getCanopy() for auth-aware reads
+export default async function PostPage({ params }) {
+  const canopy = await getCanopy()
+  const { data } = await canopy.read({
+    entryPath: 'content/posts',
+    slug: params.slug,
+  })
+  return <PostView post={data} />
+}
+```
+
+**When to use which:**
+
+| Function              | Auth                                       | Request scope needed | Use for                                                   |
+| --------------------- | ------------------------------------------ | -------------------- | --------------------------------------------------------- |
+| `getCanopy()`         | Current user                               | Yes                  | Server components, route handlers                         |
+| `getCanopyForBuild()` | Full admin (bypasses all auth/permissions) | No                   | `generateStaticParams`, `generateMetadata`, build scripts |
+
+> **Security note:** `getCanopyForBuild()` runs as a synthetic admin user with unrestricted read access, bypassing all branch and path ACLs. Only use it in build-time code paths (static generation, metadata) that are not exposed to end users at request time.
+
 ### Advanced: Using createContentReader Directly
 
 For cases where you need more control (e.g., reading as a specific user or in non-request contexts), you can use the lower-level `createContentReader`:
@@ -884,6 +955,41 @@ const { data } = await reader.read({
   user: ANONYMOUS_USER, // Explicit user required
 })
 ```
+
+### Sanitizing URLs from CMS Content
+
+When rendering links from CMS-managed content, user-provided URLs may contain dangerous schemes like `javascript:` or `data:`. CanopyCMS exports a `sanitizeHref` utility that parses untrusted URLs and only allows `http:` and `https:` protocols, returning a safe fallback for anything else.
+
+```typescript
+import { sanitizeHref } from 'canopycms'
+```
+
+**Basic usage:**
+
+```tsx
+// In your component that renders CMS content
+<a href={sanitizeHref(entry.data.link)}>{entry.data.linkText}</a>
+```
+
+**With a custom fallback:**
+
+```tsx
+// Returns '/fallback-page' instead of '#' for invalid URLs
+<a href={sanitizeHref(entry.data.link, '/fallback-page')}>Click here</a>
+```
+
+**Behavior:**
+
+| Input                           | Output                       |
+| ------------------------------- | ---------------------------- |
+| `"https://example.com/page"`    | `"https://example.com/page"` |
+| `"http://example.com"`          | `"http://example.com"`       |
+| `"javascript:alert(1)"`         | `"#"` (blocked scheme)       |
+| `"data:text/html,<h1>bad</h1>"` | `"#"` (blocked scheme)       |
+| `"not a url"`                   | `"#"` (invalid URL)          |
+| `""`                            | `"#"` (invalid URL)          |
+
+Use `sanitizeHref` anywhere you render an `href` attribute with a value that comes from CMS content -- call-to-action links, navigation URLs, author website fields, etc. It constructs a fresh string from the parsed URL rather than passing the original input through, which also satisfies static analysis tools (e.g., CodeQL taint tracking).
 
 ### Media Configuration
 
@@ -934,7 +1040,7 @@ export default async function RootLayout({ children }) {
 
 Each node in the tree has:
 
-- `path` -- URL path (e.g., `"/docs/getting-started"`)
+- `path` -- URL path, lowercased by default (e.g., `"/docs/getting-started"`)
 - `logicalPath` -- CMS logical path
 - `kind` -- `"collection"` or `"entry"`
 - `collection` -- collection metadata (name, label) when `kind === "collection"`
@@ -998,14 +1104,14 @@ const tree = await canopy.buildContentTree<NavItem>({
 
 ### Options Reference
 
-| Option      | Type                                                       | Default                       | Description                                                     |
-| ----------- | ---------------------------------------------------------- | ----------------------------- | --------------------------------------------------------------- |
-| `rootPath`  | `string`                                                   | Content root                  | Starting collection path (e.g., `"content/docs"` for a subtree) |
-| `extract`   | `(data, node) => T`                                        | -                             | Extract typed custom fields from raw entry/collection data      |
-| `filter`    | `(node: ContentTreeNode<T>) => boolean`                    | -                             | Return false to exclude a node and its descendants              |
-| `buildPath` | `(logicalPath, kind) => string`                            | Strips content root           | Custom URL path builder                                         |
-| `sort`      | `(a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number` | Order array then alphabetical | Custom sort for children at each level (replaces default sort)  |
-| `maxDepth`  | `number`                                                   | Unlimited                     | Maximum depth to traverse                                       |
+| Option      | Type                                                       | Default                         | Description                                                     |
+| ----------- | ---------------------------------------------------------- | ------------------------------- | --------------------------------------------------------------- |
+| `rootPath`  | `string`                                                   | Content root                    | Starting collection path (e.g., `"content/docs"` for a subtree) |
+| `extract`   | `(data, node) => T`                                        | -                               | Extract typed custom fields from raw entry/collection data      |
+| `filter`    | `(node: ContentTreeNode<T>) => boolean`                    | -                               | Return false to exclude a node and its descendants              |
+| `buildPath` | `(logicalPath, kind) => string`                            | Strips content root, lowercases | Custom URL path builder (default lowercases all paths)          |
+| `sort`      | `(a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number` | Order array then alphabetical   | Custom sort for children at each level (replaces default sort)  |
+| `maxDepth`  | `number`                                                   | Unlimited                       | Maximum depth to traverse                                       |
 
 ### Imports
 
@@ -1029,10 +1135,10 @@ import { buildContentTree } from 'canopycms/server'
 
 ```typescript
 // app/posts/[...slug]/page.tsx
-import { getCanopy } from '../../lib/canopy'
+import { getCanopyForBuild } from '../../lib/canopy'
 
 export async function generateStaticParams() {
-  const canopy = await getCanopy()
+  const canopy = await getCanopyForBuild()
   const entries = await canopy.listEntries()
 
   return entries.map((entry) => ({
@@ -1157,7 +1263,7 @@ Access control uses three layers:
 
 **Bootstrap admin groups**: When using `getCanopy()`, users with IDs matching the `bootstrapAdminIds` configuration automatically receive the `admins` group membership, even before groups are set up in the repository. This makes initial setup easier.
 
-**Build mode bypass**: During `next build`, all permission checks are bypassed to allow static generation of all content, regardless of auth configuration.
+**Build mode bypass**: During `next build`, all permission checks are bypassed to allow static generation of all content, regardless of auth configuration. Use `getCanopyForBuild()` in build-time functions like `generateStaticParams` and `generateMetadata` to avoid request-scope errors.
 
 ### Live Preview
 
@@ -1389,19 +1495,19 @@ Admins can configure access control:
 
 CanopyCMS is designed for minimal integration effort. Run `npx canopycms init` to generate all required files, or create them manually. Use `--app-dir` to customize the app directory path (default: `app`).
 
-| Touchpoint       | File                                             | Purpose                                                      |
-| ---------------- | ------------------------------------------------ | ------------------------------------------------------------ |
-| **Config**       | `canopycms.config.ts`                            | Define settings and operating mode                           |
-| **Next.js wrap** | `next.config.ts`                                 | Wrap with `withCanopy()` from `canopycms-next`               |
-| **Schemas**      | `{appDir}/schemas.ts`                            | Field schemas and registry (for `.collection.json` approach) |
-| **Context**      | `{appDir}/lib/canopy.ts`                         | One-time async setup with auth plugin                        |
-| **API Route**    | `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all handler                                     |
-| **Editor Page**  | `{appDir}/edit/page.tsx`                         | Embed the editor component                                   |
-| **Middleware**   | `middleware.ts`                                  | Protect editor routes with authentication (Clerk only)       |
+| Touchpoint       | File                                             | Purpose                                                                                                   |
+| ---------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| **Config**       | `canopycms.config.ts`                            | Define settings and operating mode                                                                        |
+| **Next.js wrap** | `next.config.ts`                                 | Auto-generated by `init`; wraps config with `withCanopy()` (supports `staticBuild` for dual-build sites)  |
+| **Schemas**      | `{appDir}/schemas.ts`                            | Field schemas and registry (for `.collection.json` approach)                                              |
+| **Context**      | `{appDir}/lib/canopy.ts`                         | One-time async setup with auth plugin                                                                     |
+| **API Route**    | `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all handler                                                                                  |
+| **Editor Page**  | `{appDir}/edit/page.tsx`                         | Embed the editor component                                                                                |
+| **Middleware**   | `middleware.ts`                                  | Auto-generated by `init`; passthrough for dev auth, replace contents with Clerk middleware for production |
 
 **Optional touchpoints:**
 
-- **Server components**: Use `await getCanopy()` to read draft content with automatic auth
+- **Server components**: Use `await getCanopy()` to read draft content with automatic auth; use `await getCanopyForBuild()` in `generateStaticParams` and `generateMetadata` (no request scope needed)
 - **AI content route**: `{appDir}/ai/[...path]/route.ts` -- serve content as AI-readable markdown; generated by default during `init` (see [AI-Ready Content](#ai-ready-content))
 
 To switch between auth providers, set the `CANOPY_AUTH_MODE` environment variable (`dev` or `clerk`). The generated code handles both providers without regenerating files.

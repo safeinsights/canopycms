@@ -6,7 +6,7 @@ export const postSchema = defineEntrySchema([
   { name: 'author', type: 'string', label: 'Author' },
   { name: 'date', type: 'string', label: 'Date' },
   { name: 'tags', type: 'string', list: true, label: 'Tags' },
-  { name: 'body', type: 'mdx', label: 'Body' },
+  { name: 'body', type: 'mdx', label: 'Body', isBody: true },
 ] as const)
 
 export const homeSchema = defineEntrySchema([

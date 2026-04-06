@@ -63,6 +63,13 @@ export interface BaseFieldConfig {
   list?: boolean
   /** Mark this field as the display title for entries using this schema. At most one field per schema. */
   isTitle?: boolean
+  /**
+   * Mark this field as the body content for md/mdx entries.
+   * The field must be type 'markdown' or 'mdx'. At most one per schema.
+   * When present, the file's markdown content is mapped to this field,
+   * making TypeFromEntrySchema include it without manual `& { body: string }`.
+   */
+  isBody?: boolean
 }
 
 export interface PrimitiveFieldConfig extends BaseFieldConfig {

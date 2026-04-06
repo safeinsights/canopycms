@@ -33,6 +33,7 @@ export {
   createLogicalPath,
   createPhysicalPath,
   joinPath,
+  trimSlashes,
 } from './normalize'
 
 // Normalization utilities (server-only, requires Node.js path module)

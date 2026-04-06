@@ -1,3 +1,4 @@
+export { sanitizeHref } from './utils/sanitize-href'
 export * from './config'
 export * from './entry-schema'
 export * from './types'

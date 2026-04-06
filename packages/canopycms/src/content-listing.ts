@@ -11,6 +11,7 @@ import path from 'node:path'
 import matter from 'gray-matter'
 
 import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from './config'
+import { findBodyFieldName } from './utils/body-field'
 import { getFormatExtension } from './utils/format'
 import { resolveCollectionPath } from './content-id-index'
 import { validateAndNormalizePath } from './paths'
@@ -47,20 +48,22 @@ export interface CollectionListItem {
 const normalizePath = (root: string, target: string): string => {
   const result = validateAndNormalizePath(root, target)
   if (!result.valid) {
-    throw new ContentStoreError(result.error || 'Path traversal detected')
+    throw new ContentStoreError(result.error || 'Path traversal detected', 'VALIDATION')
   }
   return result.normalizedPath!
 }
 
 /**
  * Read entry data from a file.
- * For md/mdx: returns frontmatter fields plus `body` (the markdown content).
+ * For md/mdx: returns frontmatter fields plus the body content (mapped to the
+ * field name specified by `bodyFieldName`, which defaults to `'body'`).
  * For json: returns the parsed JSON object.
  * Returns an empty object on read/parse failure.
  */
 export const readEntryData = async (
   filePath: string,
   format: ContentFormat,
+  bodyFieldName = 'body',
 ): Promise<Record<string, unknown>> => {
   try {
     const raw = await fs.readFile(filePath, 'utf8')
@@ -70,7 +73,7 @@ export const readEntryData = async (
     const parsed = matter(raw)
     const data = (parsed.data as Record<string, unknown>) ?? {}
     if (parsed.content) {
-      data.body = parsed.content
+      data[bodyFieldName] = parsed.content
     }
     return data
   } catch (err: unknown) {
@@ -354,10 +357,11 @@ export const listCollectionEntries = async (
       const { type: entryTypeName, slug, id: contentId } = parsed
       const entryType = entryTypes.find((e) => e.name === entryTypeName)
       const format: ContentFormat = entryType?.format || 'json'
+      const bodyField = entryType?.schema ? findBodyFieldName(entryType.schema) : 'body'
 
       const [stats, data] = await Promise.all([
         fs.stat(absolutePath),
-        readEntryData(absolutePath, format),
+        readEntryData(absolutePath, format, bodyField),
       ])
 
       const item: CollectionListItem = {

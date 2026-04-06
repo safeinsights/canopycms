@@ -76,7 +76,7 @@ export default defineCanopyConfig({
             default: true,
             fields: [
               { name: 'title', type: 'string', required: true },
-              { name: 'body', type: 'mdx', required: true },
+              { name: 'body', type: 'mdx', required: true, isBody: true },
             ],
           },
         ],
@@ -90,7 +90,7 @@ export default defineCanopyConfig({
                 format: 'mdx',
                 fields: [
                   { name: 'title', type: 'string' },
-                  { name: 'body', type: 'mdx' },
+                  { name: 'body', type: 'mdx', isBody: true },
                 ],
               },
             ],
@@ -118,60 +118,146 @@ export default defineCanopyConfig({
 
 The `schema` object has two top-level keys: `collections` (nested collections with their own entry types) and `entries` (entry types at the root level). Collections can contain other collections via `collections` and define their allowed content via `entries`. Use `maxItems: 1` on an entry type to restrict it to a single instance (like a singleton). `contentRoot` (default `content`) is prefixed when resolving filesystem paths and ids, so a `path` of `posts` becomes `content/posts`. Use the collection’s resolved `path` (id) when calling APIs or building editor URLs.
 
+**Body fields:**
+
+Mark exactly one markdown/MDX field per entry type with `isBody: true` to designate it as the body field. When reading a markdown or MDX file, the content after the frontmatter is mapped to the field with `isBody: true`. This lets you name the body field whatever makes sense for your schema (e.g., `content`, `body`, `text`) rather than relying on a hardcoded `body` key:
+
+```ts
+import { defineEntrySchema, type TypeFromEntrySchema } from 'canopycms'
+
+export const postSchema = defineEntrySchema([
+  { name: 'title', type: 'string', label: 'Title' },
+  { name: 'body', type: 'mdx', label: 'Body', isBody: true },
+])
+
+export type PostContent = TypeFromEntrySchema<typeof postSchema>
+```
+
+If no field has `isBody: true`, the markdown content defaults to a field named `body`. The `isBody` flag is validated at schema registry load time: at most one per schema, and only on `markdown` or `mdx` fields.
+
 _TODO_ show how schemas can be defined across multiple files. Show all the configuration options for schemas.
 
-2. **Add API routes** with the Next adapter
+2. **Set up the shared Canopy helper and API routes**
+
+The `npx canopycms init` command generates a shared helper that provides the Canopy context (for reading content in pages) and the API handler (for the editor). If you need to create it manually:
+
+```ts
+// app/lib/canopy.ts
+import { createNextCanopyContext } from 'canopycms-next'
+import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
+import { createDevAuthPlugin } from 'canopycms-auth-dev'
+import config from '../../canopycms.config'
+import { entrySchemaRegistry } from '../schemas'
+
+const canopyContextPromise = createNextCanopyContext({
+  config: config.server,
+  authPlugin:
+    process.env.CANOPY_AUTH_MODE === 'clerk'
+      ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })
+      : createDevAuthPlugin(),
+  entrySchemaRegistry,
+})
+
+// For server component pages
+export const getCanopy = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopy()
+}
+
+// For build-time functions (generateStaticParams, generateMetadata)
+export const getCanopyForBuild = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopyForBuild()
+}
+
+// For API routes
+export const getHandler = async () => {
+  const context = await canopyContextPromise
+  return context.handler
+}
+```
+
+This is the same code that `npx canopycms init` generates. It exports three helpers:
+
+- `getCanopy()` -- request-scoped context with auth from the current user
+- `getCanopyForBuild()` -- non-request-scoped context with full admin privileges (for `generateStaticParams`, `generateMetadata`, build scripts)
+- `getHandler()` -- the API route handler
+
+Then wire up the catch-all API route:
 
 ```ts
 // app/api/canopycms/[...canopycms]/route.ts
-import config from '../../../canopycms.config' // adjust path as needed
-import { createCanopyHandler } from 'canopycms/next'
-import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
+import { getHandler } from '../../../lib/canopy'
+import type { NextRequest } from 'next/server'
 
-const handler = createCanopyHandler({
-  config,
-  authPlugin: createClerkAuthPlugin({
-    secretKey: process.env.CLERK_SECRET_KEY,
-    useOrganizationsAsGroups: true, // Map Clerk organizations to CMS groups
-  }),
-})
+const handler = getHandler()
 
-export const GET = handler
-export const POST = handler
-export const PUT = handler
-export const DELETE = handler
+type RouteContext = { params: Promise<Record<string, string | string[]>> }
+
+export const GET = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)
+export const POST = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)
+export const PUT = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)
+export const DELETE = async (req: NextRequest, ctx: RouteContext) => (await handler)(req, ctx)
 ```
 
 The `authPlugin` is required and handles authentication for all API requests. See [canopycms-auth-clerk](../canopycms-auth-clerk) for Clerk integration or create your own plugin implementing the `AuthPlugin` interface.
 
-The `[collection]` segment should receive the collection `path` (the id). If your ids include `/`, encode them (`encodeURIComponent`) when building URLs to keep them as a single path segment.
-
 Host styling is framework-agnostic: your public app can use Tailwind (the included example does) or anything else; Mantine is only required inside the CanopyCMS editor UI.
 
-3. **Load content in your pages** with the Next helper
+3. **Load content in your pages**
+
+Use `readByUrlPath` to resolve a URL path to content automatically. It tries a direct entry match first (last segment = slug), then falls back to an index entry. Returns `null` if nothing matches.
 
 ```ts
-// app/page.tsx (server component)
-import { createContentReader } from 'canopycms'
-import config from '../canopycms.config'
+// app/docs/[[...slug]]/page.tsx (catch-all server component)
+import { notFound } from 'next/navigation'
+import { getCanopy, getCanopyForBuild } from '../../lib/canopy'
+import type { DocContent } from '../../schemas'
+import DocView from '../../components/DocView'
 
-const reader = createContentReader({ config })
+// Build-time: use getCanopyForBuild() (no request scope needed)
+export async function generateStaticParams() {
+  const canopy = await getCanopyForBuild()
+  const entries = await canopy.listEntries({ rootPath: 'content/docs' })
+  return entries.map((entry) => ({ slug: entry.pathSegments }))
+}
 
-export default async function Page({ searchParams }: { searchParams?: { branch?: string } }) {
-  const { data } = await reader.read<{
-    /* your data shape */
-  }>({
-    entryPath: 'content/home',
-    branch: searchParams?.branch,
-  })
-  // render using data; preview hooks can infer the entry id from the current URL
+export default async function DocPage({ params }: { params: { slug?: string[] } }) {
+  const slugParts = params.slug || []
+  if (slugParts.length === 0) {
+    return <div>Docs landing page</div>
+  }
+
+  // Request-time: use getCanopy() for auth-aware reads
+  const canopy = await getCanopy()
+  const urlPath = `/docs/${slugParts.join('/')}`
+  const result = await canopy.readByUrlPath<DocContent>(urlPath)
+  if (!result) return notFound()
+
+  return <DocView data={result.data} />
 }
 ```
 
-`read` returns `{ data, path }` and throws if the content is missing. In preview pages, `useCanopyPreview` can infer the entry id from `window.location` so you can usually ignore `path`. Pass a `branch` when you want branch-specific data; otherwise it defaults to your configured base branch. The helper enforces the same branch/path access rules as the API handlers.
+For known, fixed paths you can still use `read` directly:
+
+```ts
+// app/page.tsx (server component)
+import { getCanopy } from './lib/canopy'
+import type { HomeContent } from './schemas'
+
+export default async function Page() {
+  const canopy = await getCanopy()
+  const { data } = await canopy.read<HomeContent>({ entryPath: 'content/home' })
+  return <HomeView data={data} />
+}
+```
+
+Both methods return `{ data, path }`. `read` throws if the content is missing; `readByUrlPath` returns `null` instead. Pass a `branch` option when you want branch-specific data (e.g., for preview); otherwise it defaults to your configured base branch. Both enforce the same branch/path access rules as the API handlers.
+
+> **Note:** `readByUrlPath` resolves to **entries** only, not collections. Passing `'/'` returns `null`. For collection-level data (navigation, sitemaps), use `buildContentTree` or `listEntries` instead.
 
 4. **Wire auth**
-   Provide an `authPlugin` in `createCanopyHandler` (e.g., Clerk) so branch/path permissions can be enforced.
+   Provide an `authPlugin` in `createNextCanopyContext` (e.g., Clerk) so branch/path permissions can be enforced.
 
 **Permission Model:**
 

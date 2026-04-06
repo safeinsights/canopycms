@@ -19,6 +19,12 @@ export const getCanopy = async () => {
   return context.getCanopy()
 }
 
+// Export for build-time functions (generateStaticParams, generateMetadata)
+export const getCanopyForBuild = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopyForBuild()
+}
+
 // Export for API routes
 export const getHandler = async () => {
   const context = await canopyContextPromise

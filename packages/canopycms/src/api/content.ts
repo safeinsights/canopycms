@@ -10,6 +10,15 @@ import type { Slug, PhysicalPath } from '../paths'
 import type { BranchContextWithSchema } from '../types'
 import { isNotFoundError } from '../utils/error'
 
+/**
+ * Parse an API path into logical path segments, prepending the content root if needed.
+ * Shared by all content API handlers.
+ */
+function parseApiPath(apiPath: string, contentRoot: string): string[] {
+  const segments = apiPath.split('/').filter(Boolean)
+  return segments[0] === contentRoot ? segments : [contentRoot, ...segments]
+}
+
 /** Response type for content read operations */
 export type ContentReadResponse = ApiResponse<{
   format: string
@@ -109,11 +118,7 @@ const readContentHandler = async (
 
   // Parse path segments: params.path is like "content/posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
-  const pathSegments = params.path.split('/').filter(Boolean)
-
-  // Prepend contentRoot if not already present
-  const logicalPathSegments =
-    pathSegments[0] === contentRoot ? pathSegments : [contentRoot, ...pathSegments]
+  const logicalPathSegments = parseApiPath(params.path, contentRoot)
 
   // Use trivial path resolution
   let schemaItem: FlatSchemaItem
@@ -165,11 +170,7 @@ const writeContentHandler = async (
 
   // Parse path segments: params.path is like "content/posts/hello" or "posts/hello"
   const contentRoot = ctx.services.config.contentRoot || 'content'
-  const pathSegments = params.path.split('/').filter(Boolean)
-
-  // Prepend contentRoot if not already present
-  const logicalPathSegments =
-    pathSegments[0] === contentRoot ? pathSegments : [contentRoot, ...pathSegments]
+  const logicalPathSegments = parseApiPath(params.path, contentRoot)
 
   // Use trivial path resolution
   let schemaItem: FlatSchemaItem
@@ -240,10 +241,7 @@ const validateReferencesHandler = async (
 
   // Parse path segments to get collection/schema info
   const contentRoot = ctx.services.config.contentRoot || 'content'
-  const pathSegments = params.path.split('/').filter(Boolean)
-
-  const logicalPathSegments =
-    pathSegments[0] === contentRoot ? pathSegments : [contentRoot, ...pathSegments]
+  const logicalPathSegments = parseApiPath(params.path, contentRoot)
 
   let schemaItem: FlatSchemaItem
   let relativePath: PhysicalPath
@@ -326,11 +324,7 @@ const renameEntryHandler = async (
 
   // Parse path segments
   const contentRoot = ctx.services.config.contentRoot || 'content'
-  const pathSegments = params.path.split('/').filter(Boolean)
-
-  // Prepend contentRoot if not already present
-  const logicalPathSegments =
-    pathSegments[0] === contentRoot ? pathSegments : [contentRoot, ...pathSegments]
+  const logicalPathSegments = parseApiPath(params.path, contentRoot)
 
   // Resolve to collection and slug
   let schemaItem: FlatSchemaItem

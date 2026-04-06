@@ -237,12 +237,16 @@ export class GitHubService {
       }
     }
 
-    // Try SSH format
-    const sshMatch = urlWithoutGit.match(/git@github\.com:([^/]+)\/(.+)/)
-    if (sshMatch) {
-      return {
-        owner: sshMatch[1],
-        repo: sshMatch[2],
+    // String parsing instead of regex to avoid polynomial ReDoS on crafted inputs
+    const sshPrefix = 'git@github.com:'
+    if (urlWithoutGit.startsWith(sshPrefix)) {
+      const ownerRepo = urlWithoutGit.slice(sshPrefix.length)
+      const slashIdx = ownerRepo.indexOf('/')
+      if (slashIdx > 0) {
+        return {
+          owner: ownerRepo.slice(0, slashIdx),
+          repo: ownerRepo.slice(slashIdx + 1),
+        }
       }
     }
 
