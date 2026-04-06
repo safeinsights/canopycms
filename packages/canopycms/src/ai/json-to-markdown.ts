@@ -418,7 +418,7 @@ function formatInlineValue(field: FieldConfig, value: unknown): string {
  */
 function yamlValue(value: string): string {
   if (/[:#{}[\],&*?|>!%@`]/.test(value) || value.includes('\n')) {
-    return `"${value.replace(/"/g, '\\"')}"`
+    return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
   }
   return value
 }

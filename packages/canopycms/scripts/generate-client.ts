@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+/* eslint-disable no-console */
 /**
  * Generate typed API client methods from route registry.
  *
@@ -179,7 +180,6 @@ function generateResponseTypeImports(namespaces: NamespaceRoutes[]): string {
     if (!typesByModule.has(moduleName)) {
       typesByModule.set(moduleName, new Set())
     }
-    const types = typesByModule.get(moduleName)!
     for (const route of ns.routes) {
       // Collect response types
       const responseTypeName = route.responseTypeName
@@ -452,7 +452,7 @@ export function ${funcName}(): ${responseType} {
   // Generate imports grouped by module
   const responseTypeImports = generateResponseTypeImports(namespaces)
     .split('\n')
-    .map((line) => line.replace(/^import type/, 'import type').replace(/from '\.\//g, "from '../"))
+    .map((line) => line.replace(/from '\.\//g, "from '../"))
     .join('\n')
 
   return `/**

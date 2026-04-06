@@ -28,7 +28,7 @@ export const HomeView: React.FC<{ data: HomeContent }> = ({ data }) => {
           {hero.body}
         </p>
         <a
-          href={cta.link || '#'}
+          href={/^https?:\/\//.test(cta.link) ? cta.link : '#'}
           {...fieldProps('cta')}
           className="mt-5 inline-flex items-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow transition hover:bg-indigo-700"
         >
