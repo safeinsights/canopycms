@@ -23,17 +23,17 @@
   "publishConfig": {
     "exports": {
       ".": {
-        "import": "./dist/index.js",
-        "types": "./dist/index.d.ts"
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
       },
       "./client": {
-        "import": "./dist/client.js",
-        "types": "./dist/client.d.ts"
+        "types": "./dist/client.d.ts",
+        "import": "./dist/client.js"
       },
       "./config": {
+        "types": "./dist/config.d.ts",
         "require": "./dist/config.cjs",
-        "import": "./dist/config.js",
-        "types": "./dist/config.d.ts"
+        "import": "./dist/config.js"
       }
     }
   },
