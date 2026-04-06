@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 // Protect CMS routes from unauthenticated access.
 //
 // For dev auth mode, no middleware protection is needed — this file is a passthrough.
+// If you don't need auth protection, you can delete this file entirely.
 //
 // For Clerk auth, replace this file's contents with:
 //

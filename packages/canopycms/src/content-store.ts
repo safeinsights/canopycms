@@ -54,7 +54,15 @@ export type WriteInput =
   | { format: 'md' | 'mdx'; data?: Record<string, unknown>; body: string }
   | { format: 'json'; data: Record<string, unknown> }
 
-export class ContentStoreError extends Error {}
+export type ContentStoreErrorCode = 'NOT_FOUND' | 'NO_SCHEMA_ITEM' | 'FORBIDDEN' | 'VALIDATION'
+
+export class ContentStoreError extends Error {
+  code?: ContentStoreErrorCode
+  constructor(message: string, code?: ContentStoreErrorCode) {
+    super(message)
+    this.code = code
+  }
+}
 
 /**
  * Get the default entry type from a collection's entries array.
@@ -118,7 +126,7 @@ export class ContentStore {
     const normalized = normalizeFilesystemPath(path)
     const item = this.schemaIndex.get(normalized)
     if (!item) {
-      throw new ContentStoreError(`Unknown schema item: ${path}`)
+      throw new ContentStoreError(`Unknown schema item: ${path}`, 'NO_SCHEMA_ITEM')
     }
     return item
   }
@@ -312,7 +320,7 @@ export class ContentStore {
       }
     }
 
-    throw new ContentStoreError(`No schema item found for path: ${logicalPath}`)
+    throw new ContentStoreError(`No schema item found for path: ${logicalPath}`, 'NO_SCHEMA_ITEM')
   }
 
   async resolveDocumentPath(schemaPath: LogicalPath, slug = '') {
@@ -557,7 +565,7 @@ export class ContentStore {
     try {
       await fs.access(currentPath)
     } catch {
-      throw new ContentStoreError(`Entry not found: ${currentSlug}`)
+      throw new ContentStoreError(`Entry not found: ${currentSlug}`, 'NOT_FOUND')
     }
 
     // If slugs are the same, no-op

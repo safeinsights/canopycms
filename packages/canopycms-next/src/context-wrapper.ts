@@ -56,6 +56,10 @@ export interface NextCanopyContextResult {
    * Build-time context. Uses STATIC_DEPLOY_USER (full admin, no auth), no request scope needed.
    * Safe to call from generateStaticParams, generateMetadata, and other non-request-scoped contexts.
    * Memoized for the process lifetime — multiple calls return the same context.
+   *
+   * **Security note:** This context bypasses all branch and path ACLs. It runs as a
+   * synthetic admin user with unrestricted read access. Only use it in build-time
+   * code paths that are not exposed to end users (e.g., static generation).
    */
   getCanopyForBuild: () => Promise<CanopyContext>
   /** API catch-all route handler */
@@ -181,7 +185,10 @@ export async function createNextCanopyContext(
   let buildContextPromise: Promise<CanopyContext> | null = null
   const getCanopyForBuild = (): Promise<CanopyContext> => {
     if (!buildContextPromise) {
-      buildContextPromise = buildContext.getContext()
+      buildContextPromise = buildContext.getContext().catch((err) => {
+        buildContextPromise = null
+        throw err
+      })
     }
     return buildContextPromise
   }

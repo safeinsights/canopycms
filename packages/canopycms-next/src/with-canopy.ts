@@ -25,6 +25,14 @@ const OPTIONAL_PACKAGES = [
  */
 const CMS_PAGE_EXTENSIONS = ['server.ts', 'server.tsx']
 
+/**
+ * Next.js default pageExtensions. Not exported as a public API by Next.js
+ * (only available via internal `next/dist/server/config-shared`), so we
+ * mirror them here. Must be kept in sync manually if Next.js changes defaults.
+ * As of Next.js 15.x these are: tsx, ts, jsx, js.
+ */
+const NEXTJS_DEFAULT_PAGE_EXTENSIONS = ['tsx', 'ts', 'jsx', 'js']
+
 export interface WithCanopyOptions {
   /** Additional packages to transpile beyond the Canopy defaults. */
   packages?: string[]
@@ -52,9 +60,8 @@ export interface WithCanopyOptions {
  * via `file:` symlinks — without it, `require.resolve('react')` would walk
  * up from the symlink target and find a different React copy.
  */
-function resolveReactAliases(): Record<string, string> | null {
+function resolveReactAliases(resolve: NodeRequire['resolve']): Record<string, string> | null {
   try {
-    const resolve = createRequire(path.join(process.cwd(), 'noop.js')).resolve
     // Alias to DIRECTORIES, not files. Webpack uses prefix matching, so
     // aliasing `react` to a directory lets `react/jsx-runtime` resolve
     // to `<dir>/jsx-runtime` naturally. Pointing to a file (index.js)
@@ -132,7 +139,7 @@ export function withCanopy(
     ]),
   ]
 
-  const reactAlias = resolveReactAliases()
+  const reactAlias = resolveReactAliases(resolve)
 
   // Scope React aliases to only canopycms files using module.rules[].resolve.
   // A global resolve.alias would also override Next.js's own internal React
@@ -171,7 +178,7 @@ export function withCanopy(
   // CMS_PAGE_EXTENSIONS are in pageExtensions.
   const pageExtensions = options.staticBuild
     ? nextConfig.pageExtensions // static build: don't add CMS extensions
-    : [...(nextConfig.pageExtensions ?? ['tsx', 'ts', 'jsx', 'js']), ...CMS_PAGE_EXTENSIONS]
+    : [...(nextConfig.pageExtensions ?? NEXTJS_DEFAULT_PAGE_EXTENSIONS), ...CMS_PAGE_EXTENSIONS]
 
   return {
     ...nextConfig,

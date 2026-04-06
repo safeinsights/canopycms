@@ -143,6 +143,8 @@ next build
 
 If you are not doing dual-build deployment (most setups), you can ignore this option entirely -- the default behavior works for both development and single-build production.
 
+> **Note:** `withCanopy()` adds `server.ts` and `server.tsx` to Next.js `pageExtensions` by default. If you already have files ending in `.server.ts` or `.server.tsx` inside your app directory for non-CMS purposes, they will be treated as pages/routes by Next.js. Rename them or use a different naming convention to avoid conflicts.
+
 ### 4. Customize your schemas
 
 Edit `{appDir}/schemas.ts` with your content types. See [Schema Registry and References](#schema-references-system) for details.
@@ -931,6 +933,8 @@ export default async function PostPage({ params }) {
 | --------------------- | ------------------------------------------ | -------------------- | --------------------------------------------------------- |
 | `getCanopy()`         | Current user                               | Yes                  | Server components, route handlers                         |
 | `getCanopyForBuild()` | Full admin (bypasses all auth/permissions) | No                   | `generateStaticParams`, `generateMetadata`, build scripts |
+
+> **Security note:** `getCanopyForBuild()` runs as a synthetic admin user with unrestricted read access, bypassing all branch and path ACLs. Only use it in build-time code paths (static generation, metadata) that are not exposed to end users at request time.
 
 ### Advanced: Using createContentReader Directly
 

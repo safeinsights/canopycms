@@ -750,6 +750,10 @@ The `ContentStore` uses the flat schema index for O(1) path resolution:
 
 The API works uniformly across all entry types regardless of cardinality constraints.
 
+**Structured error codes**:
+
+The content store uses typed error codes (`NOT_FOUND`, `NO_SCHEMA_ITEM`, `FORBIDDEN`, `VALIDATION`) on its domain error class rather than encoding failure reasons in message strings. This lets callers branch on `err.code` with exhaustive checks instead of fragile regex matching against error messages. For example, the URL-to-content resolution layer needs to distinguish "this path doesn't exist in the schema" from "the entry file is missing on disk" so it can probe multiple candidate paths without treating a missing file as a fatal error. Structured codes make that distinction reliable and refactor-safe.
+
 ### API Layer
 
 The API exposes collections through a unified interface:
@@ -1125,7 +1129,7 @@ No manual user management, no config imports, no auth logic. The context handles
 **Two context functions serve different scopes:**
 
 - **`getCanopy()`** is request-scoped. It calls `headers()` to authenticate the current user and is wrapped with React `cache()` for per-request memoization. Use it in server components and route handlers.
-- **`getCanopyForBuild()`** is process-scoped. It uses a synthetic admin user with no auth, making it safe to call from `generateStaticParams`, `generateMetadata`, and other non-request-scoped contexts where `headers()` is unavailable. It is memoized for the process lifetime.
+- **`getCanopyForBuild()`** is process-scoped. It uses a synthetic admin user with no auth, making it safe to call from `generateStaticParams`, `generateMetadata`, and other non-request-scoped contexts where `headers()` is unavailable. It is memoized for the process lifetime. **Security note:** this context bypasses all branch and path ACLs — only use it in build-time code paths that are not exposed to end users at request time.
 
 This dual-context pattern replaces the need for `isBuildMode()` environment detection in most cases. Instead of the framework guessing whether auth is available, adopters explicitly choose the right context for each call site.
 

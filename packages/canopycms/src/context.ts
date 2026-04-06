@@ -19,9 +19,8 @@ import {
 } from './content-listing'
 
 /** True when a ContentStoreError indicates a path/entry wasn't found (expected during candidate probing). */
-const LOOKUP_FAILURE_PATTERNS = [/content not found/i, /no schema item found/i]
 function isLookupFailure(err: ContentStoreError): boolean {
-  return LOOKUP_FAILURE_PATTERNS.some((p) => p.test(err.message))
+  return err.code === 'NOT_FOUND' || err.code === 'NO_SCHEMA_ITEM'
 }
 
 export interface CanopyContextOptions {

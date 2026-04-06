@@ -146,7 +146,8 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       relativePath = resolved.relativePath
     } catch (err) {
       const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
-      throw new ContentStoreError(message)
+      const code = err instanceof ContentStoreError ? err.code : undefined
+      throw new ContentStoreError(message, code)
     }
 
     // Check permissions BEFORE reading the file (security)
@@ -173,9 +174,9 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
             user.groups.length === 0
               ? ' (user has no group memberships — is CANOPY_BOOTSTRAP_ADMIN_IDS configured?)'
               : ''
-          throw new ContentStoreError(`Forbidden${detail}${groupsHint}`)
+          throw new ContentStoreError(`Forbidden${detail}${groupsHint}`, 'FORBIDDEN')
         }
-        throw new ContentStoreError('Forbidden')
+        throw new ContentStoreError('Forbidden', 'FORBIDDEN')
       }
     }
 
@@ -198,7 +199,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     const doc = await readDocument(input)
     if (!doc || typeof doc !== 'object' || !('data' in doc)) {
       const defaultMessage = `Content not found for ${entryPath}${slug ? `/${slug}` : ''} on branch ${branchName}`
-      throw new ContentStoreError(message ?? defaultMessage)
+      throw new ContentStoreError(message ?? defaultMessage, 'NOT_FOUND')
     }
     // For md/mdx format, merge the body into the data so callers get a complete object.
     // The field name comes from the schema's isBody flag (defaults to 'body').
