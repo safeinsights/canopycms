@@ -105,7 +105,7 @@ function resolveReactAliases(resolve: NodeRequire['resolve']): Record<string, st
  * @example
  * ```ts
  * // next.config.ts
- * import { withCanopy } from 'canopycms-next'
+ * import { withCanopy } from 'canopycms-next/config'
  *
  * export default withCanopy({
  *   reactStrictMode: true,

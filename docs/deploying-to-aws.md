@@ -59,7 +59,7 @@ This creates:
 Your `next.config.ts` needs to support two build modes:
 
 ```typescript
-import { withCanopy } from 'canopycms-next'
+import { withCanopy } from 'canopycms-next/config'
 
 export default withCanopy({
   output: process.env.CANOPY_BUILD === 'cms' ? 'standalone' : 'export',

@@ -410,6 +410,9 @@ importers:
       canopycms:
         specifier: workspace:*
         version: link:../canopycms
+      esbuild:
+        specifier: ^0.24.2
+        version: 0.24.2
       next:
         specifier: ^14.2.25
         version: 14.2.25(@babel/core@7.29.0)(@playwright/test@1.58.2)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)

@@ -1,4 +1,4 @@
-import { withCanopy } from 'canopycms-next'
+import { withCanopy } from 'canopycms-next/config'
 
 const isCmsBuild = process.env.CANOPY_BUILD === 'cms'
 

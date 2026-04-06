@@ -14,7 +14,12 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./src/client.tsx"
+    "./client": "./src/client.tsx",
+    "./config": {
+      "types": "./dist/config.d.ts",
+      "require": "./dist/config.cjs",
+      "import": "./dist/config.mjs"
+    }
   },
   "files": [
     "dist"
@@ -22,17 +27,22 @@
   "publishConfig": {
     "exports": {
       ".": {
-        "import": "./dist/index.js",
-        "types": "./dist/index.d.ts"
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
       },
       "./client": {
-        "import": "./dist/client.js",
-        "types": "./dist/client.d.ts"
+        "types": "./dist/client.d.ts",
+        "import": "./dist/client.js"
+      },
+      "./config": {
+        "types": "./dist/config.d.ts",
+        "require": "./dist/config.cjs",
+        "import": "./dist/config.mjs"
       }
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && esbuild src/config.ts --bundle --platform=node --packages=external --external:next --format=cjs --outfile=dist/config.cjs && esbuild src/config.ts --bundle --platform=node --packages=external --external:next --format=esm --outfile=dist/config.mjs",
     "lint": "eslint src/",
     "test": "vitest run --reporter=dot",
     "typecheck": "tsc --noEmit"
@@ -47,6 +57,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "esbuild": "^0.24.2",
     "@types/react": "^18.3.12",
     "canopycms": "workspace:*",
     "next": "^14.2.25",

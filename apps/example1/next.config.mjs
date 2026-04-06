@@ -1,7 +1,5 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  transpilePackages: ['canopycms'],
-  reactStrictMode: true,
-}
+import { withCanopy } from 'canopycms-next/config'
 
-export default nextConfig
+export default withCanopy({
+  reactStrictMode: true,
+})

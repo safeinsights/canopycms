@@ -312,14 +312,14 @@ Generic file-based persistent task queue with zero Canopy dependencies.
 
 Bootstrapping scripts run via `pnpm exec canopycms <command>`. Uses `@clack/prompts` for interactive CLI experience.
 
-| File                   | Purpose                                                                                                                                                                                                                                                                                                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| cli.ts                 | CLI entrypoint: minimist-based flag parsing, command routing, `isDirectRun` guard; dynamically imports command modules                                                                                                                                                                                                                                       |
-| init.ts                | Library functions: `init()`, `initDeployAws()`, `workerRunOnce()` (no CLI logic, imported by cli.ts); exports `AuthProvider` type (`'clerk' \| 'dev'`), `InitOptions` (includes `authProvider?`, `staticBuild?` for non-interactive use)                                                                                                                     |
-| sync.ts                | Bidirectional content sync between working tree and branch workspaces; push copies+commits to workspace, pull copies back, both does 3-way git merge via canopycms-sync-base tag, abort cancels a failed merge; includes `assertWithinDir` path-traversal guard, `safeReplaceDir` crash-safe directory replacement, `selectBranch` interactive branch picker |
-| generate-ai-content.ts | AI content generation CLI command                                                                                                                                                                                                                                                                                                                            |
-| templates.ts           | Template generators with auth-provider-specific and static-build-specific output; templates accept `{ authProvider, staticBuild }` options to tailor canopy context, edit page, next.config, and middleware files; includes `middleware()` export                                                                                                            |
-| template-files/        | Template files for scaffolding (config, route, edit page, middleware, next.config.ts, AI content endpoint, Dockerfile, CI workflow); canopy.ts template exports `getCanopy`, `getCanopyForBuild`, `getHandler`; templates generated dynamically based on `authProvider` and `staticBuild` options                                                            |
+| File                   | Purpose                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| cli.ts                 | CLI entrypoint: minimist-based flag parsing, command routing, `isDirectRun` guard; dynamically imports command modules                                                                                                                                                                                                                                                                                 |
+| init.ts                | Library functions: `init()`, `initDeployAws()`, `workerRunOnce()` (no CLI logic, imported by cli.ts); exports `AuthProvider` type (`'clerk' \| 'dev'`), `InitOptions` (includes `authProvider?`, `staticBuild?` for non-interactive use)                                                                                                                                                               |
+| sync.ts                | Bidirectional content sync between working tree and branch workspaces; push copies+commits to workspace, pull copies back, both does 3-way git merge via canopycms-sync-base tag, abort cancels a failed merge; includes `assertWithinDir` path-traversal guard, `safeReplaceDir` crash-safe directory replacement, `selectBranch` interactive branch picker                                           |
+| generate-ai-content.ts | AI content generation CLI command                                                                                                                                                                                                                                                                                                                                                                      |
+| templates.ts           | Template generators with auth-provider-specific and static-build-specific output; templates accept `{ authProvider, staticBuild }` options to tailor canopy context, edit page, next.config, and middleware files; includes `middleware()` export                                                                                                                                                      |
+| template-files/        | Template files for scaffolding (config, route, edit page, middleware, next.config.ts, AI content endpoint, Dockerfile, CI workflow); canopy.ts template exports `getCanopy`, `getCanopyForBuild`, `getHandler`; next.config templates import `withCanopy` from `canopycms-next/config` (CJS-compatible entry point); templates generated dynamically based on `authProvider` and `staticBuild` options |
 
 **Commands**:
 
@@ -380,7 +380,16 @@ Next.js-specific adapter layer. Provides the catch-all API handler, context crea
 | adapter.ts         | `createCanopyCatchAllHandler()`, `wrapNextRequest()` for Next.js catch-all API route                                                                                                                                                                                                                                                                                                                 |
 | context-wrapper.ts | `createNextCanopyContext()` returns `NextCanopyContextResult` with: `getCanopy` (request-scoped via React `cache()` + `headers()`), `getCanopyForBuild` (returns `CanopyBuildContext` — narrower type with only buildContentTree, listEntries, services; uses `STATIC_DEPLOY_USER`, memoized per process, safe for `generateStaticParams`/`generateMetadata`), `handler` (API catch-all), `services` |
 | client.tsx         | `NextCanopyEditorPage` - client component that reads URL search params automatically                                                                                                                                                                                                                                                                                                                 |
+| config.ts          | CJS-compatible entry point re-exporting `withCanopy` and `WithCanopyOptions` from `with-canopy.ts`; bundled via esbuild into both ESM (`dist/config.mjs`) and CJS (`dist/config.cjs`) for Next.js 13/14 config loading compatibility. Always uses bundled output (dev and published). Import path: `canopycms-next/config`                                                                           |
 | test-utils.ts      | `createMockAuthPlugin()`, `createRejectingAuthPlugin()` for tests                                                                                                                                                                                                                                                                                                                                    |
+
+**Entry Points**:
+
+| Import path             | Format  | Purpose                                                                   |
+| ----------------------- | ------- | ------------------------------------------------------------------------- |
+| `canopycms-next`        | ESM     | Main exports (adapter, context wrapper, test utils)                       |
+| `canopycms-next/client` | ESM     | Client components (`NextCanopyEditorPage`)                                |
+| `canopycms-next/config` | ESM+CJS | `withCanopy` only -- CJS-compatible for `next.config.ts` in Next.js 13/14 |
 
 ### Dual-Build Support (`withCanopy` staticBuild option)
 
@@ -959,6 +968,7 @@ Lightweight, read-only AI content serving. Does not require auth or the editor A
 6. app/ai/config.ts - AI content configuration
 7. app/ai/[...path]/route.ts - AI content endpoint
 8. middleware.ts - Auth route protection
+9. next.config.mjs - Uses `withCanopy` from `canopycms-next/config`
 
 ### Expected Structure
 
@@ -975,6 +985,7 @@ apps/example1/
   content/                                  # Content files
   canopycms.config.ts                      # Config
   middleware.ts                             # Auth protection
+  next.config.mjs                          # Next.js config (withCanopy)
 ```
 
 ## Test Organization

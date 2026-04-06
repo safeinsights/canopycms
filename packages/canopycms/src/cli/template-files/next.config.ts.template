@@ -1,4 +1,4 @@
-import { withCanopy } from 'canopycms-next'
+import { withCanopy } from 'canopycms-next/config'
 
 export default withCanopy({
   // Your Next.js config here
