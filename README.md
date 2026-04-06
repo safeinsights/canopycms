@@ -119,26 +119,26 @@ If you deploy both a **static public site** and a **separate CMS server** from t
 // next.config.ts
 import { withCanopy } from 'canopycms-next'
 
+const isCmsBuild = process.env.CANOPY_BUILD === 'cms'
+
 export default withCanopy(
   {
-    // ...your existing Next.js config
+    output: isCmsBuild ? 'standalone' : 'export',
   },
-  {
-    staticBuild: process.env.CANOPY_BUILD === 'static',
-  },
+  { staticBuild: !isCmsBuild },
 )
 ```
 
-When `staticBuild` is `false` (the default), `withCanopy()` adds `server.ts` and `server.tsx` to `pageExtensions`, so Next.js processes your CMS-only files normally. When `staticBuild` is `true`, those extensions are excluded, making CMS-only files invisible to the static export build.
+When `staticBuild` is `true` (the default when `CANOPY_BUILD` is not set), CMS-only `.server.ts`/`.server.tsx` files are excluded, making them invisible to the static export build. When `staticBuild` is `false` (CMS build), `withCanopy()` adds those extensions to `pageExtensions` so Next.js processes them.
 
 3. **Build each target** separately in your CI:
 
 ```bash
-# Static public site (no CMS code included)
-CANOPY_BUILD=static next build
+# Static public site (default -- no CMS code included)
+next build
 
 # CMS server (includes editor + API routes)
-next build
+CANOPY_BUILD=cms next build
 ```
 
 If you are not doing dual-build deployment (most setups), you can ignore this option entirely -- the default behavior works for both development and single-build production.

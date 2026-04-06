@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useState } from 'react'
 import type { CanopyClientConfig } from 'canopycms'
 import { useDevAuthConfig } from 'canopycms-auth-dev/client'
 import { useClerkAuthConfig } from 'canopycms-auth-clerk/client'
@@ -10,8 +10,7 @@ import config from '{{CONFIG_IMPORT}}'
 const authMode = process.env.NEXT_PUBLIC_CANOPY_AUTH_MODE || 'dev'
 
 function EditPageWithAuth({ authConfig }: { authConfig: Pick<CanopyClientConfig, 'editor'> }) {
-  const clientConfig = config.client(authConfig)
-  const EditorPage = useMemo(() => NextCanopyEditorPage(clientConfig), [clientConfig])
+  const [EditorPage] = useState(() => NextCanopyEditorPage(config.client(authConfig)))
   return <EditorPage />
 }
 

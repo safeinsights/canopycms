@@ -394,11 +394,10 @@ Next.js-specific adapter layer. Provides the catch-all API handler, context crea
 **Convention**: CMS-only routes (catch-all API handler, editor page) use `.server.ts`/`.server.tsx` extensions. This lets a single repo produce two build outputs: a full CMS build (dev/server) and a static export with zero editor code.
 
 ```typescript
+const isCmsBuild = process.env.CANOPY_BUILD === 'cms'
 export default withCanopy(
-  {},
-  {
-    staticBuild: process.env.CANOPY_BUILD === 'static',
-  },
+  { output: isCmsBuild ? 'standalone' : 'export' },
+  { staticBuild: !isCmsBuild },
 )
 ```
 

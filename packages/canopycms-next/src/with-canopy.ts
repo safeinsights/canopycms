@@ -46,9 +46,8 @@ export interface WithCanopyOptions {
    *
    * @example
    * ```ts
-   * export default withCanopy({}, {
-   *   staticBuild: process.env.CANOPY_BUILD === 'static',
-   * })
+   * const isCmsBuild = process.env.CANOPY_BUILD === 'cms'
+   * export default withCanopy({}, { staticBuild: !isCmsBuild })
    * ```
    */
   staticBuild?: boolean
