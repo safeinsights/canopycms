@@ -136,6 +136,8 @@ export class SettingsWorkspaceManager {
               remoteUrl: options.remoteUrl,
               remoteName: this.config.defaultRemoteName,
               branchType: 'orphan', // Key difference: orphan branch for settings
+              gitBotAuthorName: this.config.gitBotAuthorName,
+              gitBotAuthorEmail: this.config.gitBotAuthorEmail,
             })
           } finally {
             if (acquired) {

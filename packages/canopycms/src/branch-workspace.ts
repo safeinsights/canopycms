@@ -67,6 +67,8 @@ export class BranchWorkspaceManager {
             remoteUrl: options.remoteUrl,
             remoteName: this.config.defaultRemoteName,
             branchType: 'content',
+            gitBotAuthorName: this.config.gitBotAuthorName,
+            gitBotAuthorEmail: this.config.gitBotAuthorEmail,
           })
         } finally {
           // Always clean up the lock when done (success or failure)

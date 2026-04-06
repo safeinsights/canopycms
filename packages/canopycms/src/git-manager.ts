@@ -46,6 +46,10 @@ export interface InitializeWorkspaceOptions {
   remoteUrl?: string
   remoteName?: string
   branchType: 'content' | 'orphan' // Determines checkout vs createOrphan
+  /** Git author name for internal commits (e.g., orphan branch init). */
+  gitBotAuthorName: string
+  /** Git author email for internal commits (e.g., orphan branch init). */
+  gitBotAuthorEmail: string
 }
 
 export class GitManager {
@@ -59,6 +63,10 @@ export class GitManager {
     this.baseBranch = options.baseBranch ?? 'main'
     this.remote = options.remote ?? 'origin'
     this.git = simpleGit({ baseDir: this.repoPath, ...gitOptions })
+    // Prevent git from traversing above repoPath to find a parent .git directory.
+    // If the workspace's .git is corrupt/missing, git should fail rather than
+    // silently operating on the host repo above.
+    this.git.env('GIT_CEILING_DIRECTORIES', path.dirname(this.repoPath))
   }
 
   static async cloneRepo(
@@ -371,14 +379,28 @@ export class GitManager {
     baseBranch = baseBranch ?? 'main'
     const remoteName = options.remoteName ?? 'origin'
 
-    // 1. Check if git already initialized
+    // 1. Check if git already initialized (with traversal protection)
     let repoExists = false
     try {
-      const stat = await fs.stat(path.join(options.workspacePath, '.git'))
-      repoExists = stat.isDirectory()
-    } catch (err: unknown) {
-      if (!isNotFoundError(err)) throw err
-      // ENOENT means repo doesn't exist, continue to clone
+      const checkGit = simpleGit({ baseDir: options.workspacePath })
+      // Ceiling prevents git from traversing to a parent repo if .git is corrupt
+      checkGit.env('GIT_CEILING_DIRECTORIES', path.dirname(options.workspacePath))
+      await checkGit.raw(['rev-parse', '--git-dir'])
+      repoExists = true
+    } catch {
+      // Not a valid git repo — clean up corrupt .git if present so clone can proceed
+      const gitPath = path.join(options.workspacePath, '.git')
+      try {
+        const stat = await fs.stat(gitPath)
+        if (stat.isDirectory()) {
+          log.debug('git', 'Removing corrupt .git directory', {
+            workspacePath: options.workspacePath,
+          })
+          await fs.rm(gitPath, { recursive: true })
+        }
+      } catch (cleanupErr: unknown) {
+        if (!isNotFoundError(cleanupErr)) throw cleanupErr
+      }
     }
 
     // 2. Clone if needed
@@ -403,6 +425,16 @@ export class GitManager {
       // Clone repository (automatically configures 'origin' remote)
       await GitManager.cloneRepo(remoteUrl, options.workspacePath, baseBranch)
       justCloned = true
+
+      // Mark as managed immediately after clone so ensureRemote guard works.
+      // Also set a fallback author identity — GIT_CEILING_DIRECTORIES blocks
+      // global gitconfig, and internal commits (e.g., orphan branch init) need one.
+      // The real bot author is set later via ensureAuthor() before user-facing commits.
+      const freshGit = simpleGit({ baseDir: options.workspacePath })
+      freshGit.env('GIT_CEILING_DIRECTORIES', path.dirname(options.workspacePath))
+      await freshGit.addConfig('canopycms.managed', 'true')
+      await freshGit.addConfig('user.name', options.gitBotAuthorName)
+      await freshGit.addConfig('user.email', options.gitBotAuthorEmail)
     }
 
     // 3. Create GitManager instance
@@ -412,7 +444,18 @@ export class GitManager {
       remote: remoteName,
     })
 
-    // 4. Configure git remote only if we didn't just clone
+    // 4. Ensure managed marker and fallback identity.
+    // Must happen before ensureRemote (which checks the marker) and before
+    // createOrphanSettingsBranch (which commits and needs an author).
+    // Idempotent — may already be set from the clone step above.
+    await git.git.addConfig('canopycms.managed', 'true')
+    await git.git.addConfig('user.name', options.gitBotAuthorName)
+    await git.git.addConfig('user.email', options.gitBotAuthorEmail)
+    log.debug('git', 'Marked workspace as CanopyCMS-managed', {
+      workspacePath: options.workspacePath,
+    })
+
+    // 5. Configure git remote only if we didn't just clone
     // (clone already sets up the 'origin' remote)
     if (!justCloned) {
       const remoteUrl = await GitManager.resolveRemoteUrl({
@@ -427,18 +470,12 @@ export class GitManager {
       }
     }
 
-    // 5. Checkout or create branch based on type
+    // 6. Checkout or create branch based on type
     if (options.branchType === 'orphan') {
       await git.createOrphanSettingsBranch(options.branchName, {})
     } else {
       await git.checkoutBranch(options.branchName)
     }
-
-    // 6. Mark this as a CanopyCMS-managed workspace
-    await git.git.addConfig('canopycms.managed', 'true')
-    log.debug('git', 'Marked workspace as CanopyCMS-managed', {
-      workspacePath: options.workspacePath,
-    })
 
     return git
   }
@@ -538,6 +575,19 @@ export class GitManager {
   }
 
   async ensureRemote(remoteUrl: string): Promise<void> {
+    // Safety: verify this is a managed workspace before modifying remotes.
+    // Prevents accidentally overwriting the host repo's origin if git
+    // traversed up from a corrupt workspace .git directory.
+    const config = (await this.git.listConfig()) as ConfigListSummary
+    const isManaged = config.all['canopycms.managed'] === 'true'
+    if (!isManaged) {
+      throw new Error(
+        `Cannot modify remote in non-managed repository (${this.repoPath}). ` +
+          `This likely means git traversed to a parent repository. ` +
+          `Expected a CanopyCMS workspace.`,
+      )
+    }
+
     const remotes = await this.git.getRemotes(true)
     const existing = remotes.find((r) => r.name === this.remote)
     if (!existing) {

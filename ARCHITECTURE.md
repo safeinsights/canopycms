@@ -1212,6 +1212,20 @@ if (config.shouldAutoInitLocal) {
 
 This separation ensures strategies remain simple value objects while GitManager handles complex git operations.
 
+### Workspace Safety
+
+CanopyCMS creates many independent git clones (one per branch workspace, plus settings workspaces). Because these clones live as subdirectories of the adopter's project, there is a critical safety concern: if a workspace's `.git` directory becomes corrupt or is accidentally deleted, git will traverse upward and silently find the host repository's `.git` directory. This could lead to CanopyCMS overwriting the host repo's remote configuration or committing with its bot identity to the wrong repository.
+
+Three defense-in-depth mechanisms prevent this:
+
+- **Directory ceiling**: Every GitManager instance sets `GIT_CEILING_DIRECTORIES` to the parent of its workspace path. This tells git to stop traversing before it could reach a parent repository. If the workspace's `.git` is missing or corrupt, git fails with an error instead of silently operating on the host repo.
+
+- **Managed workspace marker**: Before modifying sensitive git configuration (remotes, author identity), GitManager checks for a `canopycms.managed` config flag. This marker is set when CanopyCMS creates or clones a workspace. If the marker is absent, the operation throws an error. This catches cases where git somehow resolved to an unmanaged repository despite the ceiling guard.
+
+- **Corrupt workspace recovery**: During workspace initialization, if a `.git` directory exists but is not a functional git repository, it is automatically cleaned up so a fresh clone can proceed. This prevents workspaces from getting stuck in a broken state after crashes or incomplete operations.
+
+**Why defense-in-depth?** Any single mechanism could fail in edge cases (environment variable not propagated, race condition during initialization). The combination of filesystem-level traversal prevention, application-level identity verification, and self-healing initialization makes accidental host repo modification extremely unlikely.
+
 ### Design Rationale
 
 **Why separate primitives from business logic?**

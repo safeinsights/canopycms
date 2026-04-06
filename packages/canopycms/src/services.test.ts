@@ -9,50 +9,73 @@ import type { InternalGroup } from './authorization'
 import { unsafeAsPhysicalPath } from './paths/test-utils'
 import { mockConsole } from './test-utils/console-spy'
 
-vi.mock('simple-git', () => {
-  const stub = vi.fn(() => ({
-    status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'main' }),
-    branch: vi.fn().mockResolvedValue({ all: ['main'] }),
-    checkout: vi.fn(),
-    checkoutBranch: vi.fn(),
-    fetch: vi.fn(),
-    merge: vi.fn(),
-    rebase: vi.fn(),
-    add: vi.fn(),
-    commit: vi.fn(),
-    push: vi.fn(),
+vi.mock('simple-git', () => ({
+  simpleGit: vi.fn(() => ({})),
+}))
+
+/** Create a mock git instance with sensible defaults and optional overrides. */
+function createMockGitInstance(overrides?: {
+  currentBranch?: string
+  branches?: string[]
+  fetch?: ReturnType<typeof vi.fn>
+  push?: ReturnType<typeof vi.fn>
+  /** Extra properties merged into the mock (e.g., addConfig, listConfig). */
+  extra?: Record<string, unknown>
+}) {
+  const branch = overrides?.currentBranch ?? 'main'
+  const instance: Record<string, unknown> = {
+    status: vi.fn().mockResolvedValue({ files: [], ahead: 0, behind: 0, current: branch }),
+    branch: vi.fn().mockResolvedValue({ all: overrides?.branches ?? [branch], current: branch }),
+    checkout: vi.fn().mockResolvedValue(undefined),
+    checkoutBranch: vi.fn().mockResolvedValue(undefined),
+    fetch: overrides?.fetch ?? vi.fn(),
+    merge: vi.fn().mockResolvedValue(undefined),
+    rebase: vi.fn().mockResolvedValue(undefined),
+    add: vi.fn().mockResolvedValue(undefined),
+    commit: vi.fn().mockResolvedValue(undefined),
+    push: overrides?.push ?? vi.fn(),
     revparse: vi.fn().mockResolvedValue('main'),
-  }))
-  return { simpleGit: stub }
-})
+    ...overrides?.extra,
+  }
+  instance.env = vi.fn().mockReturnValue(instance)
+  return instance
+}
+
+/** Install a mock git instance for the current test. */
+async function installMockGit(instance: Record<string, unknown>) {
+  const { simpleGit } = await import('simple-git')
+  vi.mocked(simpleGit).mockReturnValue(instance as any)
+}
+
+const testSchema = {
+  collections: [
+    {
+      name: 'pages',
+      path: 'pages',
+      entries: [
+        {
+          name: 'page',
+          format: 'md' as const,
+          schema: [{ name: 'title', type: 'string' as const }],
+        },
+      ],
+    },
+  ],
+}
 
 describe('createCanopyServices', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     mockConsole()
+    await installMockGit(createMockGitInstance())
   })
 
   it('creates helpers with defaults and reuses config', async () => {
-    const schema = {
-      collections: [
-        {
-          name: 'pages',
-          path: 'pages',
-          entries: [
-            {
-              name: 'page',
-              format: 'md' as const,
-              schema: [{ name: 'title', type: 'string' as const }],
-            },
-          ],
-        },
-      ],
-    }
     const cfg = defineCanopyTestConfig({
-      schema,
+      schema: testSchema,
       defaultBranchAccess: 'deny',
     })
 
-    const services = await createTestServices({ ...cfg, schema })
+    const services = await createTestServices({ ...cfg, schema: testSchema })
 
     // Path permissions are now loaded from JSON file at runtime, not from config
     // Service creates checkPathAccess with empty rules (default deny)
@@ -83,27 +106,12 @@ describe('createCanopyServices', () => {
   })
 
   it('creates git manager using defaults', async () => {
-    const schema = {
-      collections: [
-        {
-          name: 'pages',
-          path: 'pages',
-          entries: [
-            {
-              name: 'page',
-              format: 'md' as const,
-              schema: [{ name: 'title', type: 'string' as const }],
-            },
-          ],
-        },
-      ],
-    }
     const cfg = defineCanopyTestConfig({
-      schema,
+      schema: testSchema,
       defaultBaseBranch: 'main',
       defaultRemoteName: 'origin',
     })
-    const services = await createTestServices({ ...cfg, schema })
+    const services = await createTestServices({ ...cfg, schema: testSchema })
     const gm = services.createGitManagerFor('/tmp/repo')
     const status = await gm.status()
     expect(status.current).toBe('main')
@@ -363,57 +371,15 @@ describe('commitToSettingsBranch', () => {
   })
 
   it('should default to strategy-computed branch name when settingsBranch not configured', async () => {
-    // In prod mode, the strategy computes 'canopycms-settings-{deploymentName}' (default: 'canopycms-settings-prod')
-    const branchMock = vi.fn().mockResolvedValue({
-      all: ['canopycms-settings-prod'],
-      current: 'canopycms-settings-prod',
-    })
     const fetchMock = vi.fn()
-    const mockGitInstance = {
-      status: vi.fn().mockResolvedValue({
-        files: [],
-        ahead: 0,
-        behind: 0,
-        current: 'canopycms-settings-prod',
-      }),
-      branch: branchMock,
-      checkout: vi.fn(),
-      checkoutBranch: vi.fn(),
+    const mock = createMockGitInstance({
+      currentBranch: 'canopycms-settings-prod',
       fetch: fetchMock,
-      merge: vi.fn(),
-      rebase: vi.fn(),
-      add: vi.fn(),
-      commit: vi.fn(),
-      push: vi.fn(),
-      revparse: vi.fn().mockResolvedValue('main'),
-    }
-
-    const { simpleGit } = await import('simple-git')
-    const mockGit = vi.mocked(simpleGit)
-    mockGit.mockReturnValue(mockGitInstance as any)
-
-    const schema = {
-      collections: [
-        {
-          name: 'pages',
-          path: 'pages',
-          entries: [
-            {
-              name: 'page',
-              format: 'md' as const,
-              schema: [{ name: 'title', type: 'string' as const }],
-            },
-          ],
-        },
-      ],
-    }
-    const cfg = defineCanopyTestConfig({
-      schema,
-      mode: 'prod',
-      // settingsBranch not specified - strategy computes 'canopycms-settings-prod'
     })
+    await installMockGit(mock)
 
-    const services = await createTestServices({ ...cfg, schema })
+    const cfg = defineCanopyTestConfig({ schema: testSchema, mode: 'prod' })
+    const services = await createTestServices({ ...cfg, schema: testSchema })
 
     await services.commitToSettingsBranch({
       branchRoot: '/tmp/repo',
@@ -421,58 +387,20 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    // Should attempt to pull from the strategy-computed settings branch
     expect(fetchMock).toHaveBeenCalledWith('origin', 'canopycms-settings-prod')
   })
 
   it('should pull from the correct settings branch', async () => {
-    const branchMock = vi.fn().mockResolvedValue({ all: ['my-settings'], current: 'my-settings' })
     const fetchMock = vi.fn()
-    const mockGitInstance = {
-      status: vi.fn().mockResolvedValue({
-        files: [],
-        ahead: 0,
-        behind: 0,
-        current: 'my-settings',
-      }),
-      branch: branchMock,
-      checkout: vi.fn(),
-      checkoutBranch: vi.fn(),
-      fetch: fetchMock,
-      merge: vi.fn(),
-      rebase: vi.fn(),
-      add: vi.fn(),
-      commit: vi.fn(),
-      push: vi.fn(),
-      revparse: vi.fn().mockResolvedValue('main'),
-    }
+    const mock = createMockGitInstance({ currentBranch: 'my-settings', fetch: fetchMock })
+    await installMockGit(mock)
 
-    const { simpleGit } = await import('simple-git')
-    const mockGit = vi.mocked(simpleGit)
-    mockGit.mockReturnValue(mockGitInstance as any)
-
-    const schema = {
-      collections: [
-        {
-          name: 'pages',
-          path: 'pages',
-          entries: [
-            {
-              name: 'page',
-              format: 'md' as const,
-              schema: [{ name: 'title', type: 'string' as const }],
-            },
-          ],
-        },
-      ],
-    }
     const cfg = defineCanopyTestConfig({
-      schema,
+      schema: testSchema,
       mode: 'prod',
       settingsBranch: 'my-settings',
     })
-
-    const services = await createTestServices({ ...cfg, schema })
+    const services = await createTestServices({ ...cfg, schema: testSchema })
 
     await services.commitToSettingsBranch({
       branchRoot: '/tmp/repo',
@@ -480,70 +408,35 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    // Should pull from the settings branch (not base branch)
     expect(fetchMock).toHaveBeenCalledWith('origin', 'my-settings')
   })
 
   it('should use configured settingsBranch value', async () => {
-    const branchMock = vi.fn().mockResolvedValue({
-      all: ['custom-settings-branch'],
-      current: 'custom-settings-branch',
-    })
     const fetchMock = vi.fn().mockResolvedValue(undefined)
     const pushMock = vi.fn().mockResolvedValue(undefined)
-    const mockGitInstance = {
-      status: vi.fn().mockResolvedValue({
-        files: [],
-        ahead: 0,
-        behind: 0,
-        current: 'custom-settings-branch',
-      }),
-      branch: branchMock,
-      checkout: vi.fn().mockResolvedValue(undefined),
-      checkoutBranch: vi.fn().mockResolvedValue(undefined),
+    const mock = createMockGitInstance({
+      currentBranch: 'custom-settings-branch',
       fetch: fetchMock,
-      merge: vi.fn().mockResolvedValue(undefined),
-      rebase: vi.fn().mockResolvedValue(undefined),
-      add: vi.fn().mockResolvedValue(undefined),
-      commit: vi.fn().mockResolvedValue(undefined),
       push: pushMock,
-      revparse: vi.fn().mockResolvedValue('main'),
-      addConfig: vi.fn().mockResolvedValue(undefined),
-      listConfig: vi.fn().mockResolvedValue({
-        all: {
-          'canopycms.managed': 'true',
-          'user.name': 'Test Bot',
-          'user.email': 'bot@test.com',
-        },
-      }),
-    }
+      extra: {
+        addConfig: vi.fn().mockResolvedValue(undefined),
+        listConfig: vi.fn().mockResolvedValue({
+          all: {
+            'canopycms.managed': 'true',
+            'user.name': 'Test Bot',
+            'user.email': 'bot@test.com',
+          },
+        }),
+      },
+    })
+    await installMockGit(mock)
 
-    const { simpleGit } = await import('simple-git')
-    const mockGit = vi.mocked(simpleGit)
-    mockGit.mockReturnValue(mockGitInstance as any)
-
-    const schema = {
-      collections: [
-        {
-          name: 'pages',
-          path: 'pages',
-          entries: [
-            {
-              name: 'page',
-              format: 'md' as const,
-              schema: [{ name: 'title', type: 'string' as const }],
-            },
-          ],
-        },
-      ],
-    }
     const cfg = defineCanopyTestConfig({
-      schema,
+      schema: testSchema,
       mode: 'prod',
       settingsBranch: 'custom-settings-branch',
     })
-
-    const services = await createTestServices({ ...cfg, schema })
+    const services = await createTestServices({ ...cfg, schema: testSchema })
 
     await services.commitToSettingsBranch({
       branchRoot: '/tmp/repo',
@@ -551,9 +444,7 @@ describe('commitToSettingsBranch', () => {
       message: 'Update permissions',
     })
 
-    // Should pull from the settings branch (not base branch)
     expect(fetchMock).toHaveBeenCalledWith('origin', 'custom-settings-branch')
-    // Should push current branch (workspace is already on the settings branch)
     expect(pushMock).toHaveBeenCalled()
   })
 })

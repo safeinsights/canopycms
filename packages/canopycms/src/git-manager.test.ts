@@ -541,3 +541,118 @@ describe('GitManager.ensureAuthor', () => {
     expect(addConfigSpy).not.toHaveBeenCalled()
   })
 })
+
+describe('GitManager.ensureRemote', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-git-test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('throws error when trying to modify remote in non-managed repository', async () => {
+    // Setup: create repo WITHOUT canopycms.managed marker
+    const git = simpleGit({ baseDir: tmpDir })
+    await git.init()
+    await git.addConfig('user.name', 'Test')
+    await git.addConfig('user.email', 'test@test.com')
+
+    const manager = new GitManager({ repoPath: tmpDir })
+    await expect(manager.ensureRemote('https://example.com/repo.git')).rejects.toThrow(
+      /Cannot modify remote in non-managed repository/,
+    )
+
+    // Verify no remote was added
+    const remotes = await git.getRemotes()
+    expect(remotes).toHaveLength(0)
+  })
+
+  it('allows modifying remote in managed repository', async () => {
+    const git = await initTestRepo(tmpDir)
+
+    const manager = new GitManager({ repoPath: tmpDir })
+    await manager.ensureRemote('https://example.com/repo.git')
+
+    const remotes = await git.getRemotes(true)
+    const origin = remotes.find((r) => r.name === 'origin')
+    expect(origin).toBeDefined()
+    expect(origin!.refs.fetch).toBe('https://example.com/repo.git')
+  })
+})
+
+describe('GitManager traversal protection', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-git-test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('GIT_CEILING_DIRECTORIES prevents traversal to parent repo', async () => {
+    // Setup: create a parent git repo
+    const parentGit = simpleGit({ baseDir: tmpDir })
+    await parentGit.init()
+    await parentGit.addConfig('user.name', 'Parent')
+    await parentGit.addConfig('user.email', 'parent@test.com')
+    await fs.writeFile(path.join(tmpDir, 'parent.txt'), 'parent', 'utf8')
+    await parentGit.add(['.'])
+    await parentGit.commit('parent commit')
+
+    // Create a child directory with a corrupt .git (empty directory)
+    const childDir = path.join(tmpDir, 'child-workspace')
+    await fs.mkdir(path.join(childDir, '.git'), { recursive: true })
+
+    // GitManager should fail, NOT traverse to parent
+    const manager = new GitManager({ repoPath: childDir })
+    await expect(manager.status()).rejects.toThrow()
+
+    // Verify parent repo was not touched
+    const parentRemotes = await parentGit.getRemotes()
+    expect(parentRemotes).toHaveLength(0)
+  })
+
+  it('initializeWorkspace cleans up corrupt .git and re-clones', async () => {
+    // Setup: create a source repo to clone from
+    const sourceDir = path.join(tmpDir, 'source')
+    await fs.mkdir(sourceDir, { recursive: true })
+    const sourceGit = await initTestRepo(sourceDir)
+    await sourceGit.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(sourceDir, 'content.txt'), 'hello', 'utf8')
+    await sourceGit.add(['.'])
+    await sourceGit.commit('initial commit')
+
+    // Create a bare remote from source
+    const remotePath = path.join(tmpDir, 'remote.git')
+    await simpleGit().raw(['clone', '--bare', sourceDir, remotePath])
+
+    // Create workspace with corrupt .git
+    const workspacePath = path.join(tmpDir, 'workspace')
+    await fs.mkdir(path.join(workspacePath, '.git'), { recursive: true })
+
+    // initializeWorkspace should recover by re-cloning
+    const git = await GitManager.initializeWorkspace({
+      workspacePath,
+      branchName: 'main',
+      mode: 'dev',
+      baseBranch: 'main',
+      remoteUrl: remotePath,
+      branchType: 'content',
+      gitBotAuthorName: 'Test Bot',
+      gitBotAuthorEmail: 'test@canopycms.test',
+    })
+
+    // Verify workspace was properly initialized
+    const status = await git.status()
+    expect(status.current).toBe('main')
+
+    // Verify content was cloned
+    const content = await fs.readFile(path.join(workspacePath, 'content.txt'), 'utf8')
+    expect(content).toBe('hello')
+  })
+})
