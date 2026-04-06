@@ -1,4 +1,4 @@
-import { defineEntrySchema } from 'canopycms'
+import { defineEntrySchema, type TypeFromEntrySchema } from 'canopycms'
 import { createEntrySchemaRegistry } from 'canopycms/server'
 
 // Define your entry schemas here.
@@ -8,8 +8,10 @@ import { createEntrySchemaRegistry } from 'canopycms/server'
 export const pageSchema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title' },
   { name: 'description', type: 'string', label: 'Description' },
-  { name: 'body', type: 'markdown', label: 'Body' },
+  { name: 'body', type: 'markdown', label: 'Body', isBody: true },
 ])
+
+export type PageContent = TypeFromEntrySchema<typeof pageSchema>
 
 export const entrySchemaRegistry = createEntrySchemaRegistry({
   pageSchema,

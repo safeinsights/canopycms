@@ -95,6 +95,48 @@ describe('createEntrySchemaRegistry', () => {
     })
     expect(registry).toBeDefined()
   })
+
+  it('accepts a single isBody field with markdown type', () => {
+    const registry = createEntrySchemaRegistry({
+      postSchema: [
+        { type: 'string', name: 'title' },
+        { type: 'markdown', name: 'body', isBody: true },
+      ],
+    })
+    expect(registry).toBeDefined()
+  })
+
+  it('accepts a single isBody field with mdx type', () => {
+    const registry = createEntrySchemaRegistry({
+      postSchema: [
+        { type: 'string', name: 'title' },
+        { type: 'mdx', name: 'content', isBody: true },
+      ],
+    })
+    expect(registry).toBeDefined()
+  })
+
+  it('throws error for multiple isBody fields', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        postSchema: [
+          { type: 'markdown', name: 'body', isBody: true },
+          { type: 'markdown', name: 'content', isBody: true },
+        ],
+      }),
+    ).toThrow('has 2 fields with isBody: true, but at most one is allowed')
+  })
+
+  it('throws error for isBody on non-markdown field', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        postSchema: [
+          { type: 'string', name: 'body', isBody: true },
+          { type: 'string', name: 'title' },
+        ],
+      }),
+    ).toThrow('isBody is only valid on markdown or mdx fields')
+  })
 })
 
 describe('validateEntrySchemaRegistry', () => {

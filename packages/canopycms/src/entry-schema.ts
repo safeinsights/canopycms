@@ -4,6 +4,7 @@ type InferableField = {
   required?: boolean
   list?: boolean
   isTitle?: boolean
+  isBody?: boolean
   fields?: readonly InferableField[]
   templates?: ReadonlyArray<{ name: string; fields: readonly InferableField[] }>
 }

@@ -76,7 +76,7 @@ export default defineCanopyConfig({
             default: true,
             fields: [
               { name: 'title', type: 'string', required: true },
-              { name: 'body', type: 'mdx', required: true },
+              { name: 'body', type: 'mdx', required: true, isBody: true },
             ],
           },
         ],
@@ -90,7 +90,7 @@ export default defineCanopyConfig({
                 format: 'mdx',
                 fields: [
                   { name: 'title', type: 'string' },
-                  { name: 'body', type: 'mdx' },
+                  { name: 'body', type: 'mdx', isBody: true },
                 ],
               },
             ],
@@ -117,6 +117,22 @@ export default defineCanopyConfig({
 ```
 
 The `schema` object has two top-level keys: `collections` (nested collections with their own entry types) and `entries` (entry types at the root level). Collections can contain other collections via `collections` and define their allowed content via `entries`. Use `maxItems: 1` on an entry type to restrict it to a single instance (like a singleton). `contentRoot` (default `content`) is prefixed when resolving filesystem paths and ids, so a `path` of `posts` becomes `content/posts`. Use the collection’s resolved `path` (id) when calling APIs or building editor URLs.
+
+**Body fields and type inference:**
+
+Mark exactly one field per entry type with `isBody: true` to designate it as the body field. For markdown/MDX entries, this maps the file's markdown content to that field. The `TypeFromEntrySchema` utility type then includes the body field automatically, so you do not need to manually intersect `& { body: string }` onto your content types:
+
+```ts
+import { defineEntrySchema, type TypeFromEntrySchema } from 'canopycms'
+
+export const postSchema = defineEntrySchema([
+  { name: 'title', type: 'string', label: 'Title' },
+  { name: 'body', type: 'mdx', label: 'Body', isBody: true },
+])
+
+// Includes both `title` and `body` - no manual type augmentation needed
+export type PostContent = TypeFromEntrySchema<typeof postSchema>
+```
 
 _TODO_ show how schemas can be defined across multiple files. Show all the configuration options for schemas.
 
@@ -154,14 +170,13 @@ Host styling is framework-agnostic: your public app can use Tailwind (the includ
 // app/page.tsx (server component)
 import { createContentReader } from 'canopycms'
 import config from '../canopycms.config'
+import type { PostContent } from '../schemas' // TypeFromEntrySchema-derived type
 
 const reader = createContentReader({ config })
 
 export default async function Page({ searchParams }: { searchParams?: { branch?: string } }) {
-  const { data } = await reader.read<{
-    /* your data shape */
-  }>({
-    entryPath: 'content/home',
+  const { data } = await reader.read<PostContent>({
+    entryPath: 'content/posts/hello',
     branch: searchParams?.branch,
   })
   // render using data; preview hooks can infer the entry id from the current URL

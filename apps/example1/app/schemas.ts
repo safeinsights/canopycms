@@ -58,7 +58,7 @@ export const postSchema = defineEntrySchema([
     options: ['typed', 'fast', 'diagram', 'mdx'],
   },
   { name: 'published', type: 'boolean', label: 'Published' },
-  { name: 'body', type: 'markdown', label: 'Body' },
+  { name: 'body', type: 'markdown', label: 'Body', isBody: true },
   {
     name: 'blocks',
     type: 'block',
@@ -91,7 +91,7 @@ export type PostContent = TypeFromEntrySchema<typeof postSchema> & {
 export const docSchema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title' },
   { name: 'description', type: 'string', label: 'Description' },
-  { name: 'body', type: 'markdown', label: 'Body' },
+  { name: 'body', type: 'markdown', label: 'Body', isBody: true },
 ])
 
 export type DocContent = TypeFromEntrySchema<typeof docSchema> & {
