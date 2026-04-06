@@ -424,6 +424,7 @@ export class GitManager {
 
       // Mark as managed immediately after clone so ensureRemote guard works
       const freshGit = simpleGit({ baseDir: options.workspacePath })
+      freshGit.env('GIT_CEILING_DIRECTORIES', path.dirname(options.workspacePath))
       await freshGit.addConfig('canopycms.managed', 'true')
     }
 
