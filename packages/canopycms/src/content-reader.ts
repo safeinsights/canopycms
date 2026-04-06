@@ -200,11 +200,13 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       const defaultMessage = `Content not found for ${entryPath}${slug ? `/${slug}` : ''} on branch ${branchName}`
       throw new ContentStoreError(message ?? defaultMessage)
     }
-    // For md/mdx format, merge the body into the data so callers get a complete object
+    // For md/mdx format, merge the body into the data so callers get a complete object.
+    // The field name comes from the schema's isBody flag (defaults to 'body').
     const docRecord = doc as Record<string, unknown>
     const rawData = docRecord.data as Record<string, unknown>
     const body = docRecord.body as string | undefined
-    const data = (body != null ? { ...rawData, body } : rawData) as T
+    const bodyFieldName = (docRecord.bodyFieldName as string | undefined) ?? 'body'
+    const data = (body != null ? { ...rawData, [bodyFieldName]: body } : rawData) as T
     const path = buildEntryPath({
       collectionPath: entryPath,
       slug,

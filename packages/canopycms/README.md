@@ -118,9 +118,9 @@ export default defineCanopyConfig({
 
 The `schema` object has two top-level keys: `collections` (nested collections with their own entry types) and `entries` (entry types at the root level). Collections can contain other collections via `collections` and define their allowed content via `entries`. Use `maxItems: 1` on an entry type to restrict it to a single instance (like a singleton). `contentRoot` (default `content`) is prefixed when resolving filesystem paths and ids, so a `path` of `posts` becomes `content/posts`. Use the collection’s resolved `path` (id) when calling APIs or building editor URLs.
 
-**Body fields and type inference:**
+**Body fields:**
 
-Mark exactly one field per entry type with `isBody: true` to designate it as the body field. For markdown/MDX entries, this maps the file's markdown content to that field. The `TypeFromEntrySchema` utility type then includes the body field automatically, so you do not need to manually intersect `& { body: string }` onto your content types:
+Mark exactly one markdown/MDX field per entry type with `isBody: true` to designate it as the body field. When reading a markdown or MDX file, the content after the frontmatter is mapped to the field with `isBody: true`. This lets you name the body field whatever makes sense for your schema (e.g., `content`, `body`, `text`) rather than relying on a hardcoded `body` key:
 
 ```ts
 import { defineEntrySchema, type TypeFromEntrySchema } from 'canopycms'
@@ -130,9 +130,10 @@ export const postSchema = defineEntrySchema([
   { name: 'body', type: 'mdx', label: 'Body', isBody: true },
 ])
 
-// Includes both `title` and `body` - no manual type augmentation needed
 export type PostContent = TypeFromEntrySchema<typeof postSchema>
 ```
+
+If no field has `isBody: true`, the markdown content defaults to a field named `body`. The `isBody` flag is validated at schema registry load time: at most one per schema, and only on `markdown` or `mdx` fields.
 
 _TODO_ show how schemas can be defined across multiple files. Show all the configuration options for schemas.
 
@@ -231,7 +232,7 @@ export default async function DocPage({ params }: { params: { slug?: string[] } 
   const canopy = await getCanopy()
   const urlPath = `/docs/${slugParts.join('/')}`
   const result = await canopy.readByUrlPath<DocContent>(urlPath)
-  if (!result) notFound()
+  if (!result) return notFound()
 
   return <DocView data={result.data} />
 }
@@ -256,7 +257,7 @@ Both methods return `{ data, path }`. `read` throws if the content is missing; `
 > **Note:** `readByUrlPath` resolves to **entries** only, not collections. Passing `'/'` returns `null`. For collection-level data (navigation, sitemaps), use `buildContentTree` or `listEntries` instead.
 
 4. **Wire auth**
-   Provide an `authPlugin` in `createCanopyHandler` (e.g., Clerk) so branch/path permissions can be enforced.
+   Provide an `authPlugin` in `createNextCanopyContext` (e.g., Clerk) so branch/path permissions can be enforced.
 
 **Permission Model:**
 

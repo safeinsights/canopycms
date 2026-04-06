@@ -18,6 +18,12 @@ import {
   type ListEntriesItem,
 } from './content-listing'
 
+/** True when a ContentStoreError indicates a path/entry wasn't found (expected during candidate probing). */
+const LOOKUP_FAILURE_PATTERNS = [/content not found/i, /no schema item found/i]
+function isLookupFailure(err: ContentStoreError): boolean {
+  return LOOKUP_FAILURE_PATTERNS.some((p) => p.test(err.message))
+}
+
 export interface CanopyContextOptions {
   services: CanopyServices
   /**
@@ -161,7 +167,10 @@ export function createCanopyContext(options: CanopyContextOptions) {
             resolveReferences,
           })
         } catch (err) {
-          if (!(err instanceof ContentStoreError)) throw err
+          // Only swallow "not found" errors from trying candidate paths.
+          // Re-throw real errors (path traversal, permission, corruption).
+          if (err instanceof ContentStoreError && isLookupFailure(err)) continue
+          throw err
         }
       }
 

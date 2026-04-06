@@ -462,6 +462,24 @@ The index is NOT thread-safe, but the system is designed for eventual consistenc
 
 In most CMS use cases (where editors work at human speeds), race conditions are rare and eventual consistency is sufficient.
 
+## Case Sensitivity
+
+Content directories and filenames may have mixed casing (e.g., `content/docs/API-Reference/`), but URL-facing paths are lowercased. Here is where case sensitivity matters and where it does not:
+
+**Case-insensitive (safe with mixed-case content on disk):**
+
+- **Collection path resolution** (`resolveCollectionPath` in `content-id-index.ts`): Reads actual directory entries from disk and matches via `extractSlugFromFilename()`, which lowercases. A request for `content/docs/api-reference` resolves correctly even if the directory is `API-Reference.bChqT78gcaLd`.
+- **Entry slug matching** (`content-store.ts`): Slugs are lowercased before comparison, so a query for slug `getting-started` finds a file named `doc.Getting-Started.a1b2c3d4e5f6.md`.
+- **Content tree paths** (`content-tree.ts`): The default `buildPath` lowercases all URL paths, so `content/docs/API-Reference` produces `/docs/api-reference`.
+- **`readByUrlPath`** (`context.ts`): Because it calls `read()` which flows through the case-insensitive store lookups above, lowercased URL paths resolve to mixed-case filesystem paths.
+
+**Case-sensitive (filesystem-dependent):**
+
+- **Direct `fs.readFile` / `fs.readdir` calls**: If code constructs a path string without going through `resolveCollectionPath`, the lookup is case-sensitive on Linux/EFS. This only affects the fallback path in `buildPaths` when a collection directory does not yet exist on disk.
+- **macOS vs Linux**: macOS filesystems are case-insensitive by default; Linux and EFS are case-sensitive. Always test path resolution on a case-sensitive filesystem if your content has mixed casing.
+
+**Rule of thumb**: Content paths are case-insensitive for reads (thanks to directory scanning), but always use lowercase for new content directories to avoid platform-dependent behavior.
+
 ## Schema-Driven Content Model
 
 CanopyCMS uses a schema model based on **collections** and **entry types**. Schemas can be defined in two ways:

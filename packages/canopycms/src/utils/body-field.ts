@@ -16,6 +16,17 @@ export function countBodyFields(fields: readonly FieldConfig[]): number {
 }
 
 /**
+ * Find the name of the field marked `isBody: true`, or `'body'` as the default.
+ * Used at read time to map the markdown file's content to the correct data field.
+ */
+export function findBodyFieldName(fields: readonly FieldConfig[]): string {
+  for (const field of fields) {
+    if ('isBody' in field && field.isBody) return field.name
+  }
+  return 'body'
+}
+
+/**
  * Find isBody fields that have an invalid type (not 'markdown' or 'mdx').
  * Returns field names that fail validation.
  */

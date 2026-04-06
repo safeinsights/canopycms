@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import matter from 'gray-matter'
 import { atomicWriteFile } from './utils/atomic-write'
+import { findBodyFieldName } from './utils/body-field'
 
 import type {
   BlockFieldConfig,
@@ -33,6 +34,8 @@ export type MarkdownDocument = {
   format: 'md' | 'mdx'
   data: Record<string, unknown>
   body: string
+  /** The schema field name that this body maps to (from `isBody: true`, defaults to `'body'`). */
+  bodyFieldName: string
 }
 
 export type JsonDocument = {
@@ -359,6 +362,7 @@ export class ContentStore {
         format: format,
         data: (parsed.data as Record<string, unknown>) ?? {},
         body: parsed.content,
+        bodyFieldName: findBodyFieldName(fields),
         relativePath,
         absolutePath,
       }
@@ -381,10 +385,12 @@ export class ContentStore {
     const idIndex = await this.idIndex()
     const schemaItem = this.assertSchemaItem(collectionPath)
 
-    // Determine expected format based on entry type
+    // Determine expected format and fields based on entry type
     let expectedFormat: ContentFormat
+    let fields: EntrySchema = []
     if (schemaItem.type === 'entry-type') {
       expectedFormat = schemaItem.format
+      fields = schemaItem.schema
     } else {
       // For collections, determine format from specified or default entry type
       let entryTypeConfig: EntryTypeConfig | undefined
@@ -397,6 +403,7 @@ export class ContentStore {
         entryTypeConfig = getDefaultEntryType(schemaItem.entries)
       }
       expectedFormat = entryTypeConfig?.format || 'json'
+      fields = entryTypeConfig?.schema || []
     }
 
     if (expectedFormat !== input.format) {
@@ -468,6 +475,7 @@ export class ContentStore {
       format: input.format,
       data: input.data ?? {},
       body: input.body,
+      bodyFieldName: findBodyFieldName(fields),
       relativePath,
       absolutePath,
     }
