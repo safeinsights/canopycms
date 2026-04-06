@@ -643,6 +643,8 @@ describe('GitManager traversal protection', () => {
       baseBranch: 'main',
       remoteUrl: remotePath,
       branchType: 'content',
+      gitBotAuthorName: 'Test Bot',
+      gitBotAuthorEmail: 'test@canopycms.test',
     })
 
     // Verify workspace was properly initialized

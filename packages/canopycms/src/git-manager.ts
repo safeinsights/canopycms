@@ -46,6 +46,10 @@ export interface InitializeWorkspaceOptions {
   remoteUrl?: string
   remoteName?: string
   branchType: 'content' | 'orphan' // Determines checkout vs createOrphan
+  /** Git author name for internal commits (e.g., orphan branch init). */
+  gitBotAuthorName: string
+  /** Git author email for internal commits (e.g., orphan branch init). */
+  gitBotAuthorEmail: string
 }
 
 export class GitManager {
@@ -422,10 +426,15 @@ export class GitManager {
       await GitManager.cloneRepo(remoteUrl, options.workspacePath, baseBranch)
       justCloned = true
 
-      // Mark as managed immediately after clone so ensureRemote guard works
+      // Mark as managed immediately after clone so ensureRemote guard works.
+      // Also set a fallback author identity — GIT_CEILING_DIRECTORIES blocks
+      // global gitconfig, and internal commits (e.g., orphan branch init) need one.
+      // The real bot author is set later via ensureAuthor() before user-facing commits.
       const freshGit = simpleGit({ baseDir: options.workspacePath })
       freshGit.env('GIT_CEILING_DIRECTORIES', path.dirname(options.workspacePath))
       await freshGit.addConfig('canopycms.managed', 'true')
+      await freshGit.addConfig('user.name', options.gitBotAuthorName)
+      await freshGit.addConfig('user.email', options.gitBotAuthorEmail)
     }
 
     // 3. Create GitManager instance
@@ -435,7 +444,18 @@ export class GitManager {
       remote: remoteName,
     })
 
-    // 4. Configure git remote only if we didn't just clone
+    // 4. Ensure managed marker and fallback identity.
+    // Must happen before ensureRemote (which checks the marker) and before
+    // createOrphanSettingsBranch (which commits and needs an author).
+    // Idempotent — may already be set from the clone step above.
+    await git.git.addConfig('canopycms.managed', 'true')
+    await git.git.addConfig('user.name', options.gitBotAuthorName)
+    await git.git.addConfig('user.email', options.gitBotAuthorEmail)
+    log.debug('git', 'Marked workspace as CanopyCMS-managed', {
+      workspacePath: options.workspacePath,
+    })
+
+    // 5. Configure git remote only if we didn't just clone
     // (clone already sets up the 'origin' remote)
     if (!justCloned) {
       const remoteUrl = await GitManager.resolveRemoteUrl({
@@ -450,18 +470,12 @@ export class GitManager {
       }
     }
 
-    // 5. Checkout or create branch based on type
+    // 6. Checkout or create branch based on type
     if (options.branchType === 'orphan') {
       await git.createOrphanSettingsBranch(options.branchName, {})
     } else {
       await git.checkoutBranch(options.branchName)
     }
-
-    // 6. Ensure managed marker (idempotent — may already be set from clone step)
-    await git.git.addConfig('canopycms.managed', 'true')
-    log.debug('git', 'Marked workspace as CanopyCMS-managed', {
-      workspacePath: options.workspacePath,
-    })
 
     return git
   }
