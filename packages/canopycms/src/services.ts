@@ -1,4 +1,3 @@
-import path from 'node:path'
 import type { CanopyConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
 import { getConfigDefaults } from './config'
@@ -40,8 +39,9 @@ async function detectDefaultActiveBranch(config: CanopyConfig): Promise<string> 
       return _activeBranchCache.value
     }
     try {
-      const repoRoot = config.sourceRoot ? path.resolve(config.sourceRoot) : process.cwd()
-      const branch = await detectHeadBranch(repoRoot)
+      // Always use cwd for branch detection — git walks up to find .git.
+      // sourceRoot is about content location, not the repo root.
+      const branch = await detectHeadBranch(process.cwd())
       _activeBranchCache = { value: branch, expiresAt: now + 5000 }
       return branch
     } catch {

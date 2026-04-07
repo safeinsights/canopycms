@@ -240,18 +240,9 @@ function resolveEntryTypes(
       )
     }
 
-    // "body" is reserved for markdown content in md/mdx formats
-    if (entryType.format === 'md' || entryType.format === 'mdx') {
-      const hasBodyField = resolvedSchema.some((field) => field.name === 'body')
-      if (hasBodyField) {
-        throw new Error(
-          `Entry type "${entryType.name}" in ${contextName} has format "${entryType.format}" ` +
-            `but schema "${entryType.schema}" contains a field named "body". ` +
-            `"body" is reserved for markdown content in md/mdx formats. ` +
-            `Rename the field or use format "json".`,
-        )
-      }
-    }
+    // Note: "body" field name validation for md/mdx formats is handled by the
+    // entry schema registry (isBody constraints). Not checked here because
+    // resolvedSchema includes nested object fields where "body" is a valid name.
 
     return {
       name: entryType.name,
