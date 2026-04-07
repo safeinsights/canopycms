@@ -103,12 +103,21 @@ const groupByParent = (flat: FlatSchemaItem[]): Map<string | undefined, Collecti
  * Default path builder: strips the content root prefix, lowercases, and prepends /.
  * All URL paths are lowercased unconditionally for consistency with slug normalization.
  * Adopters with case-sensitive slugs (e.g., "API-Reference") will get lowercased URLs.
+ *
+ * Index entries (slug 'index') are collapsed to their parent collection path,
+ * matching the URL convention used by readByUrlPath and listEntries.
  */
 const defaultBuildPath = (logicalPath: LogicalPath, contentRootName: string): string => {
   const prefix = contentRootName ? `${contentRootName}/` : ''
   const stripped =
     prefix && logicalPath.startsWith(prefix) ? logicalPath.slice(prefix.length) : logicalPath
-  const urlPath = stripped ? `/${stripped}` : '/'
+  // Collapse index entries: content/guides/index → /guides (not /guides/index)
+  const collapsed = stripped.endsWith('/index')
+    ? stripped.slice(0, -6)
+    : stripped === 'index'
+      ? ''
+      : stripped
+  const urlPath = collapsed ? `/${collapsed}` : '/'
   return urlPath.toLowerCase()
 }
 

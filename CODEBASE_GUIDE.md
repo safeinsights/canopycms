@@ -57,15 +57,15 @@ The codebase uses a modular structure with clear separation:
 | settings-branch-utils.ts | Settings branch utility helpers                                                                                                                                                                                                                                                                                                   |
 | content-store.ts         | Content persistence (getCollectionEntryPaths for index-based minimal metadata); ContentStoreError with typed codes (ContentStoreErrorCode: NOT_FOUND, NO_SCHEMA_ITEM, FORBIDDEN, VALIDATION) for structural error matching; all internal assertion helpers (e.g. assertCollection) propagate error codes                          |
 | content-reader.ts        | Content reading                                                                                                                                                                                                                                                                                                                   |
-| content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading, batch listing via listEntries)                                                                                                                                                                                                                     |
-| content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs)                                                                                                                                                                                                                                                             |
+| content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading, batch listing via listEntries); `ListEntriesItem` includes `urlPath` with index entries collapsed (e.g., `/guides` not `/guides/index`; root index returns `/`)                                                                                    |
+| content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs); `defaultBuildPath` collapses index entries to parent collection URL path                                                                                                                                                                                   |
 | content-id-index.ts      | Content ID indexing                                                                                                                                                                                                                                                                                                               |
 | entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                                                                                                                                                                                                                                                 |
 | entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle (string only) and isBody (at most one, markdown/mdx only)                                                                                                                                                                                                 |
 | git-manager.ts           | Git operations wrapper                                                                                                                                                                                                                                                                                                            |
 | github-service.ts        | GitHub API integration                                                                                                                                                                                                                                                                                                            |
 | comment-store.ts         | Comment persistence                                                                                                                                                                                                                                                                                                               |
-| url-path-resolver.ts     | URL path to content resolution (resolveUrlPathCandidates: decomposes URL path into ordered entryPath/slug candidates)                                                                                                                                                                                                             |
+| url-path-resolver.ts     | URL path to content resolution (resolveUrlPathCandidates: decomposes URL path into ordered entryPath/slug candidates; root path `/` returns `{ entryPath: contentRoot, slug: 'index' }`)                                                                                                                                          |
 | reference-resolver.ts    | Reference resolution                                                                                                                                                                                                                                                                                                              |
 | asset-store.ts           | Asset storage                                                                                                                                                                                                                                                                                                                     |
 | build-mode.ts            | Static deploy detection (`isDeployedStatic`), build-phase safety net (`isBuildMode`), `STATIC_DEPLOY_USER`                                                                                                                                                                                                                        |
@@ -466,14 +466,14 @@ Builds a tree of content nodes from the schema and filesystem for adopter use ca
 
 ### BuildContentTreeOptions<T>
 
-| Option    | Default                                              | Description                                                         |
-| --------- | ---------------------------------------------------- | ------------------------------------------------------------------- |
-| rootPath  | contentRoot name                                     | Starting collection path                                            |
-| extract   | none                                                 | Extract typed custom fields from raw data                           |
-| filter    | none                                                 | Exclude nodes (and descendants); runs after extract                 |
-| buildPath | strips content root prefix, lowercases, prepends `/` | Custom URL path builder                                             |
-| sort      | order array then alphabetical                        | Custom sort for children at each level; fully replaces default sort |
-| maxDepth  | unlimited                                            | Max traversal depth                                                 |
+| Option    | Default                                                                | Description                                                         |
+| --------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| rootPath  | contentRoot name                                                       | Starting collection path                                            |
+| extract   | none                                                                   | Extract typed custom fields from raw data                           |
+| filter    | none                                                                   | Exclude nodes (and descendants); runs after extract                 |
+| buildPath | strips content root, collapses index entries, lowercases, prepends `/` | Custom URL path builder; default collapses index to parent path     |
+| sort      | order array then alphabetical                                          | Custom sort for children at each level; fully replaces default sort |
+| maxDepth  | unlimited                                                              | Max traversal depth                                                 |
 
 Without `sort`: children are ordered by the collection's `order` array first, then remaining items alphabetically. With `sort`: the comparator fully replaces the default sort. It runs after `extract` and `filter`, so `fields` is available.
 
@@ -482,6 +482,18 @@ Without `sort`: children are ordered by the collection's `order` array first, th
 **Location**: packages/canopycms/src/content-listing.ts
 
 `listEntries()` returns a flat array of all content entries across collections. Designed for `generateStaticParams`, search indexing, sitemaps, and similar batch use cases.
+
+### ListEntriesItem\<T\> Key Fields
+
+| Field        | Type        | Description                                                                                                                        |
+| ------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| pathSegments | string[]    | URL path segments (content root stripped)                                                                                          |
+| urlPath      | string      | URL-ready path with index entries collapsed (`/guides` not `/guides/index`; root index is `/`). Round-trip safe with readByUrlPath |
+| slug         | Slug        | Entry slug within its collection                                                                                                   |
+| entryPath    | LogicalPath | Logical CMS path                                                                                                                   |
+| entryId      | ContentId   | 12-char Base58 from filename                                                                                                       |
+| collectionId | ContentId?  | Collection's content ID                                                                                                            |
+| data         | T           | Entry data (full raw or extract-transformed)                                                                                       |
 
 ### ListEntriesOptions\<T\>
 

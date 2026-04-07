@@ -545,6 +545,93 @@ describe('listEntries', () => {
     expect(entries[0].collectionId).toBe(collectionId)
   })
 
+  it('urlPath collapses index entries to parent collection path', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: docsDir } = await createCollection(contentDir, 'docs')
+    const { dir: guidesDir } = await createCollection(docsDir, 'guides')
+    await createEntry(guidesDir, 'doc', 'index', 'md', { title: 'Guides Landing' })
+    await createEntry(guidesDir, 'doc', 'getting-started', 'md', { title: 'Getting Started' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          collections: [
+            {
+              name: 'guides',
+              path: 'docs/guides',
+              entries: [{ name: 'doc', format: 'md', schema: [] }],
+            },
+          ],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+
+    const indexEntry = entries.find((e) => e.slug === 'index')
+    const regularEntry = entries.find((e) => e.slug === 'getting-started')
+
+    expect(indexEntry).toBeDefined()
+    expect(indexEntry!.urlPath).toBe('/docs/guides')
+    expect(indexEntry!.pathSegments).toEqual(['docs', 'guides', 'index'])
+
+    expect(regularEntry).toBeDefined()
+    expect(regularEntry!.urlPath).toBe('/docs/guides/getting-started')
+  })
+
+  it('urlPath is collection path for a top-level index entry', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: homeDir } = await createCollection(contentDir, 'home')
+    await createEntry(homeDir, 'page', 'index', 'md', { title: 'Home' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'home',
+          path: 'home',
+          entries: [{ name: 'page', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].slug).toBe('index')
+    // Index entry collapses to the collection path, not /home/index
+    expect(entries[0].urlPath).toBe('/home')
+    expect(entries[0].pathSegments).toEqual(['home', 'index'])
+  })
+
+  it('urlPath is "/" for an index entry in the content root collection', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    // Create an entry directly in the content root (the root collection has entries)
+    await createEntry(contentDir, 'page', 'index', 'md', { title: 'Home' })
+
+    const schema: RootCollectionConfig = {
+      entries: [{ name: 'page', format: 'md', schema: [] }],
+      collections: [],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+
+    expect(entries).toHaveLength(1)
+    expect(entries[0].slug).toBe('index')
+    expect(entries[0].urlPath).toBe('/')
+    expect(entries[0].pathSegments).toEqual(['index'])
+  })
+
   it('returns empty array when content directory does not exist', async () => {
     const schema: RootCollectionConfig = {
       collections: [

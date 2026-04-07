@@ -515,6 +515,8 @@ The schema is defined as a `RootCollectionConfig` with two optional properties:
 
 **Key design principle**: Entry types are schema metadata, not navigable tree nodes. A collection with `entries: [{ name: 'post', ... }]` defines that entries of type "post" can be created in that collection. The entry type itself doesn't appear in navigation—only the collection does.
 
+**Index entries**: An entry with the slug "index" represents the collection itself rather than a child page. This is a convention borrowed from filesystem-based routing (like `index.html`). For example, a `docs` collection might have an index entry that serves as the landing page for `/docs`. CanopyCMS collapses index entries in URL paths consistently across the entire content API surface: `readByUrlPath('/docs')` resolves to the index entry in the docs collection, `listEntries()` reports its `urlPath` as `/docs` (not `/docs/index`), and `buildContentTree()` generates a path of `/docs` for the node. The root content directory's index entry resolves to `/`. This collapsing convention means adopters can use URL paths directly from the content APIs for routing and linking without needing to special-case index entries.
+
 ### Schema Registry and References
 
 The schema registry is a centralized location for field definitions that can be referenced by collection meta files:
@@ -1045,6 +1047,7 @@ This factory is framework-agnostic—it doesn't know about Next.js, Express, or 
 Calling `getContext()` returns a `CanopyContext` with:
 
 - **read()**: Content reader with user already injected, no need to pass user manually
+- **readByUrlPath()**: URL-path-based content reader that resolves URL paths to entries (tries direct slug match first, then falls back to index entry lookup; root path '/' resolves to the content root's index entry)
 - **buildContentTree()**: Build-time content tree builder (see [Content Tree Builder](#content-tree-builder) below)
 - **listEntries()**: Flat content listing for static params, search indexes, sitemaps, etc. (see [Content Entry Listing](#content-entry-listing) below)
 - **services**: Access to underlying services if needed
@@ -1719,7 +1722,7 @@ The builder supports several options that let adopters shape the tree to their n
 - **extract**: A callback that receives each node's raw data and returns typed custom fields. This is how adopters pull specific frontmatter fields (like `title`, `description`, `publishDate`) into the tree without the builder needing to know about adopter-specific schemas.
 - **filter**: A callback that excludes nodes (and their descendants) from the tree. Runs after `extract`, so adopter-extracted fields are available for filtering decisions.
 - **sort**: A custom comparator that fully replaces the default child ordering (order array followed by alphabetical) at each level. Runs after `extract` and `filter`, so adopter-extracted fields are available for sorting decisions. This is useful when adopters need to sort by a frontmatter field like `publishDate` or `weight` rather than relying on the schema's order array.
-- **buildPath**: A callback that controls URL path generation. The default strips the content root prefix and joins segments with `/`. Adopters can override this for custom URL structures.
+- **buildPath**: A callback that controls URL path generation. The default strips the content root prefix, joins segments with `/`, lowercases the result, and collapses index entries to their parent collection path (matching the index entry convention used by `readByUrlPath` and `listEntries`). Adopters can override this for custom URL structures.
 - **maxDepth**: Limits traversal depth for performance or to build shallow navigation trees.
 
 The generic `<T>` parameter flows through the entire tree, so adopters get full type safety on their extracted fields.
@@ -1748,7 +1751,7 @@ CanopyCMS provides a flat entry listing function (`listEntries()`) that returns 
 
 ### How It Works
 
-The listing function walks the flattened schema to discover all collections, reads entries from each in parallel, and returns a flat array of entry items. Each item includes structural metadata (path segments, slug, logical path, content ID, collection path, entry type, format) plus the entry's data.
+The listing function walks the flattened schema to discover all collections, reads entries from each in parallel, and returns a flat array of entry items. Each item includes structural metadata (path segments, slug, logical path, content ID, collection path, entry type, format, URL path) plus the entry's data. The URL path is computed with index entry collapsing applied, so adopters can use it directly for routing and linking.
 
 For md/mdx entries, the raw data includes both frontmatter fields and the markdown body content (as `data.body`). For JSON entries, it includes all parsed fields. This means adopters can access the full content of each entry without additional read calls.
 

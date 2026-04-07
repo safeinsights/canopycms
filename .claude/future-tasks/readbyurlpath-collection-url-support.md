@@ -1,33 +1,73 @@
-# Support collection URLs and root path in readByUrlPath
+# URL path handling: listEntries urlPath + readByUrlPath root support
 
-## Problem
+## Problem 1: listEntries doesn't provide URL-ready paths
 
-`readByUrlPath` currently only resolves to **entries** (individual content files). It returns `null` for:
+`listEntries` returns raw `pathSegments` that include `'index'` for collection index entries:
+
+```
+pathSegments: ['data-catalog', 'openstax', 'index']  // raw from filesystem
+```
+
+Every consumer that builds URLs must independently collapse index entries:
+
+```ts
+// This pattern is duplicated in every adopter codebase:
+const segments = entry.slug === 'index' ? entry.pathSegments.slice(0, -1) : entry.pathSegments
+```
+
+docs-site-proto currently does this in three places:
+
+- `generateStaticParams` (page.tsx)
+- Search index builder (build-search-index.ts)
+- Navigation tree builder (canopy-helpers.ts `buildPath`)
+
+Canopy already knows which entries are index entries — the slug comes from the filename `doc.index.{id}.mdx`. This collapsing logic should live in Canopy, not in every consumer.
+
+### Proposed fix
+
+Add a `urlPath` field to `ListEntriesItem` that provides the collapsed, URL-ready path:
+
+```ts
+interface ListEntriesItem<T> {
+  pathSegments: string[] // ['data-catalog', 'openstax', 'index'] — raw, as today
+  urlPath: string // '/data-catalog/openstax' — collapsed, ready for URLs
+  slug: Slug // 'index'
+  // ... rest unchanged
+}
+```
+
+Rules:
+
+- If `slug === 'index'`, strip the last segment from `urlPath`
+- Otherwise, `urlPath` = `'/' + pathSegments.join('/')`
+
+This is backward-compatible — `pathSegments` stays unchanged for consumers that need the raw structure.
+
+### Affected files
+
+- `packages/canopycms/src/content-listing.ts` — add `urlPath` to `ListEntriesItem`, compute in `listEntries()`
+- `packages/canopycms/src/content-listing.test.ts` — test index collapsing
+
+## Problem 2: readByUrlPath doesn't handle root path
+
+`readByUrlPath` returns `null` for:
 
 - Root path `/` — `resolveUrlPathCandidates` returns `[]` for empty segments
-- Collection paths like `/docs/` — tries to find a `docs` entry or `index` under root, not the collection itself
 
-This means adopters can't use `readByUrlPath` as a one-stop resolver for all URL patterns. They must use `buildContentTree` or `listEntries` separately for collection-level pages.
+This means adopters can't use `readByUrlPath('/')` to read a root index entry. They must special-case it with `canopy.read({ entryPath: 'content', slug: 'index' })`.
 
-## Design Options
+Note: collection paths like `/data-catalog/openstax` already work — the existing candidate logic tries `{ entryPath: 'content/data-catalog/openstax', slug: 'index' }` as a fallback. Only the root path is missing.
 
-### Option 1: Keep entry-only, document the boundary
+### Proposed fix (Option 2 from original design)
 
-Keep `readByUrlPath` focused on entries. Document that `/` and collection-level URLs need `buildContentTree` or `listEntries`. This is the simplest approach and avoids API complexity.
+Make `readByUrlPath('/')` try `{ entryPath: contentRoot, slug: 'index' }` as a candidate. Small, backward-compatible change.
 
-### Option 2: Add root index fallback
+### Design alternatives considered
 
-Make `readByUrlPath('/')` try `{ entryPath: contentRoot, slug: 'index' }` as a candidate. This handles the common case of a root index entry without changing the return type. Collection paths would still return `null`.
+- **Option 1: Keep entry-only, document the boundary** — Keep `readByUrlPath` focused on entries. Document that `/` needs special handling. Simplest but pushes work to adopters.
+- **Option 3: Return a discriminated union** — Return `{ kind: 'entry', data } | { kind: 'collection', entries }` for collection-level URLs. Significantly complicates the API surface. Evaluate only if adopters report needing collection-level resolution frequently.
 
-### Option 3: Return a discriminated union
-
-Return `{ kind: 'entry', data } | { kind: 'collection', entries }` for collection-level URLs. This would let adopters use `readByUrlPath` everywhere but significantly complicates the API surface and return type.
-
-## Recommendation
-
-Start with Option 2 (root index fallback) — it's a small, backward-compatible change that handles the most common gap. Evaluate Option 3 only if adopters report needing collection-level resolution frequently.
-
-## Affected Files
+### Affected files
 
 - `packages/canopycms/src/url-path-resolver.ts` — add root path candidate
 - `packages/canopycms/src/url-path-resolver.test.ts` — update tests

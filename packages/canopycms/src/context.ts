@@ -68,12 +68,15 @@ export interface CanopyContext extends CanopyBuildContext {
    *
    * Tries direct entry match first (last segment = slug, rest = collection path),
    * then falls back to index entry (full path = collection, slug = 'index').
-   * Returns null if no content matches the path.
+   * Root path '/' resolves to the content root's index entry.
+   * Returns null if no content matches the path (including collection URLs
+   * that have no index entry — use buildContentTree for those).
    *
    * @example
    * ```ts
    * // URL /docs/guides/getting-started → reads content/docs/guides + slug "getting-started"
    * // URL /docs/guides → reads content/docs/guides + slug "index"
+   * // URL / → reads content root + slug "index"
    * const result = await canopy.readByUrlPath<DocContent>('/docs/guides/getting-started')
    * if (result) {
    *   const { data, path } = result
