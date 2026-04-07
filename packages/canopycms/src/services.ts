@@ -22,14 +22,38 @@ import { getTaskQueueDir } from './worker/task-queue-config'
 import { detectHeadBranch } from './utils/git'
 
 /**
- * In dev mode, auto-detect the current HEAD branch if defaultBaseBranch is not set.
- * Eliminates the need to manually update defaultBaseBranch when working on a feature branch.
+ * Detect the default active branch — the workspace to serve content from.
+ *
+ * - If explicitly configured, use that value (both modes).
+ * - In dev mode, auto-detect from the current git HEAD branch.
+ * - In prod mode, fall back to defaultBaseBranch ?? 'main'.
+ *
+ * Results are cached for 5 seconds to avoid shelling out on every request.
  */
-async function detectDevBaseBranch(config: CanopyConfig): Promise<string> {
-  if (config.defaultBaseBranch) return config.defaultBaseBranch
-  if (config.mode !== 'dev') return config.defaultBaseBranch ?? 'main'
-  const repoRoot = config.sourceRoot ? path.resolve(config.sourceRoot) : process.cwd()
-  return detectHeadBranch(repoRoot)
+let _activeBranchCache: { value: string; expiresAt: number } | null = null
+
+async function detectDefaultActiveBranch(config: CanopyConfig): Promise<string> {
+  if (config.defaultActiveBranch) return config.defaultActiveBranch
+  if (config.mode === 'dev') {
+    const now = Date.now()
+    if (_activeBranchCache && now < _activeBranchCache.expiresAt) {
+      return _activeBranchCache.value
+    }
+    try {
+      const repoRoot = config.sourceRoot ? path.resolve(config.sourceRoot) : process.cwd()
+      const branch = await detectHeadBranch(repoRoot)
+      _activeBranchCache = { value: branch, expiresAt: now + 5000 }
+      return branch
+    } catch {
+      // Detached HEAD or no git repo — fall through to base branch
+    }
+  }
+  return config.defaultBaseBranch ?? 'main'
+}
+
+/** Exported for testing. */
+export function _resetActiveBranchCache(): void {
+  _activeBranchCache = null
 }
 
 /**
@@ -49,6 +73,12 @@ export const getBootstrapAdminIds = (): Set<string> => {
 
 export interface CanopyServices {
   config: CanopyConfig
+  /**
+   * Re-detect the active branch from git HEAD (dev mode only, cached 5s).
+   * Logs a warning if the branch changed since startup.
+   * Call at the start of each request to stay in sync with the developer's working tree.
+   */
+  refreshActiveBranch: () => Promise<void>
   /** Entry schema registry mapping entry schema names to field definitions */
   entrySchemaRegistry: EntrySchemaRegistry
   /** Per-branch schema cache */
@@ -158,11 +188,11 @@ async function _createCanopyServicesInternal(
   const strategy = operatingStrategy(config.mode)
   strategy.validateConfig(config)
 
-  // In dev mode, auto-detect the current git branch if defaultBaseBranch is not set.
-  // Bake the result into config so all downstream code (BranchWorkspaceManager, GitManager)
-  // uses the same detected value without re-detecting (avoids race if HEAD changes mid-request).
-  const effectiveBaseBranch = await detectDevBaseBranch(config)
-  config = { ...config, defaultBaseBranch: effectiveBaseBranch }
+  // Detect the active branch (which workspace to serve from).
+  // In dev mode this is the current git HEAD; in prod it's defaultBaseBranch.
+  // Bake into config so all downstream code uses the same value.
+  const defaultActiveBranch = await detectDefaultActiveBranch(config)
+  config = { ...config, defaultActiveBranch }
 
   // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
@@ -207,7 +237,7 @@ async function _createCanopyServicesInternal(
   const createGitManagerFor = (repoPath: string, opts?: { baseBranch?: string; remote?: string }) =>
     new GitManager({
       repoPath,
-      baseBranch: opts?.baseBranch ?? effectiveBaseBranch,
+      baseBranch: opts?.baseBranch ?? config.defaultBaseBranch ?? 'main',
       remote: opts?.remote ?? config.defaultRemoteName ?? configDefaults.remoteName,
     })
 
@@ -370,7 +400,7 @@ async function _createCanopyServicesInternal(
     ? new BranchRegistry(getDefaultBranchBase(operatingMode))
     : undefined
 
-  return {
+  const services: CanopyServices = {
     config,
     entrySchemaRegistry: options.entrySchemaRegistry ?? {},
     branchSchemaCache,
@@ -385,5 +415,21 @@ async function _createCanopyServicesInternal(
     submitBranch,
     commitToSettingsBranch,
     getSettingsBranchRoot,
+    refreshActiveBranch: async () => {
+      if (services.config.mode !== 'dev') return
+      const fresh = await detectDefaultActiveBranch({
+        ...services.config,
+        defaultActiveBranch: undefined,
+      })
+      if (fresh !== services.config.defaultActiveBranch) {
+        console.warn(
+          `[CanopyCMS] Active branch changed: "${services.config.defaultActiveBranch}" → "${fresh}". ` +
+            'Content will now be served from the new branch.',
+        )
+        services.config = { ...services.config, defaultActiveBranch: fresh }
+      }
+    },
   }
+
+  return services
 }

@@ -37,6 +37,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
   }
   const operatingMode = services.config.mode
   const baseBranch = services.config.defaultBaseBranch ?? 'main'
+  const activeBranch = services.config.defaultActiveBranch ?? baseBranch
   const settingsBranch = services.config.settingsBranch ?? 'canopycms-settings'
 
   const getBranchContext =
@@ -64,7 +65,7 @@ const buildContext = async (options: CanopyHandlerOptions): Promise<ApiContext> 
       // In modes that support branching, auto-create system branches if they don't exist
       const shouldAutoCreate =
         clientOperatingStrategy(operatingMode).supportsBranching() &&
-        (branch === baseBranch || branch === settingsBranch)
+        (branch === baseBranch || branch === activeBranch || branch === settingsBranch)
 
       if (shouldAutoCreate) {
         const manager = new BranchWorkspaceManager(services.config)
@@ -170,6 +171,9 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
 
     // Get cached context
     const apiCtx = await getContext()
+
+    // In dev mode, re-check if the developer switched git branches
+    await apiCtx.services.refreshActiveBranch()
 
     // Authenticate and convert to CanopyUser
     const authResult = await options.authPlugin.authenticate(req)

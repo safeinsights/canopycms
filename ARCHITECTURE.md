@@ -232,7 +232,7 @@ const services = await createCanopyServices({
 
 This function:
 
-1. Detects the effective base branch (from config or git HEAD) and bakes it into the config so all downstream code uses a single consistent value
+1. Detects the effective active branch (see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)) and bakes it into the config so all downstream code uses a single consistent value
 2. Validates and flattens the schema
 3. Creates authorization checkers
 4. Initializes the branch registry (prod and dev modes)
@@ -863,6 +863,25 @@ Branches have a lifecycle with several states:
 
 Users can work on main branch too—there's nothing preventing it. The branch model provides isolation for team collaboration but doesn't mandate it.
 
+### Branch Identity: defaultBaseBranch vs defaultActiveBranch
+
+CanopyCMS distinguishes between two branch concepts that serve different purposes:
+
+- **`defaultBaseBranch`** is the fork point for CMS content branches. When a user creates a new editing branch, it is forked from this branch. It is always the repository's primary branch (typically `main`). Git operations like rebasing editing branches use this as the upstream target.
+
+- **`defaultActiveBranch`** is the workspace from which content is served by default — the branch the editor opens when no branch is specified, the branch used for content reading APIs, AI content generation, and the content tree builder. It answers the question "which branch should I look at right now?"
+
+**Why they are separate:** In dev mode, a developer is often working on a feature branch (e.g., `redesign-nav`). They want the CMS editor to show content from that branch, not from `main`. But new CMS editing branches should still fork from `main`, because the feature branch is temporary. Conflating these two concepts would force developers to either serve stale `main` content or fork editing branches from an unstable feature branch.
+
+**Detection behavior:**
+
+- If explicitly configured, the configured value is used in both modes
+- In dev mode, `defaultActiveBranch` is auto-detected from the current git HEAD (the branch the developer has checked out)
+- In prod mode, `defaultActiveBranch` falls back to `defaultBaseBranch` (typically `main`)
+- The detected value is baked into the config at service creation time so all downstream code uses a single consistent value without re-detecting
+
+**Fallback chain:** Throughout the system, content-serving code resolves the active branch as `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. The handler also auto-creates a workspace for `defaultActiveBranch` at startup, ensuring the active branch is always ready to serve content.
+
 ## Operating Modes
 
 CanopyCMS supports two operating modes to fit different environments. The mode is configured in `canopycms.config.ts` and defaults to `'dev'` if not specified. After Zod validation, `config.mode` is always defined and can be used throughout the codebase without fallback checks.
@@ -871,7 +890,7 @@ CanopyCMS supports two operating modes to fit different environments. The mode i
 
 Full-featured local development with branching and git operations — a local simulation of production behavior. Creates per-branch workspaces in `.canopy-dev/content-branches/` and maintains a local bare git remote at `.canopy-dev/remote.git`. This mode mirrors prod behavior: branch creation, workspace cloning, the settings branch, and the worker CLI all work the same way locally as they do in production.
 
-`defaultBaseBranch` is auto-detected from the current git HEAD if not explicitly set in the config; the detected value is baked into the config object at service creation time so that all downstream code uses the same value without re-detecting (avoids races if HEAD changes mid-request). Settings (groups and permissions) use the same orphan branch mechanism as prod (`canopycms-settings-{deploymentName}`, default: `canopycms-settings-local`), with the workspace at `.canopy-dev/settings/`. Commits go to the local bare remote but no PR is created, keeping the workflow lightweight during development. The AI content cache is invalidated on every request in dev mode so content edits are reflected immediately.
+`defaultActiveBranch` is auto-detected from the current git HEAD if not explicitly set in the config (see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)). The detected value is baked into the config object at service creation time so that all downstream code uses the same value without re-detecting (avoids races if HEAD changes mid-request). Settings (groups and permissions) use the same orphan branch mechanism as prod (`canopycms-settings-{deploymentName}`, default: `canopycms-settings-local`), with the workspace at `.canopy-dev/settings/`. Commits go to the local bare remote but no PR is created, keeping the workflow lightweight during development. The AI content cache is invalidated on every request in dev mode so content edits are reflected immediately.
 
 Use `npx canopycms worker run-once` to process queued tasks, refresh the auth cache, and simulate the EC2 worker locally. Use `npx canopycms sync` to synchronize content between the developer's working tree and the CMS editor's branch workspaces (see [Content Sync CLI](#content-sync-cli) below).
 
@@ -1008,7 +1027,7 @@ This processes pending tasks, refreshes the auth cache, and exits. It simulates 
 
 In dev mode, the developer's working tree and the CMS editor operate on separate git structures. The developer edits files in their normal repo, while the editor works through branch workspaces cloned from the local bare remote. These two worlds can drift apart: the developer might update content files directly, or an editor might publish changes through the CMS that the developer wants to pull back into their repo.
 
-The `sync` command bridges this gap with bidirectional content synchronization between the developer's working tree and a specific branch workspace:
+The `sync` command bridges this gap with bidirectional content synchronization between the developer's working tree and a specific branch workspace. If no `--branch` flag is provided, sync auto-detects the current git branch from HEAD and targets that workspace. If the workspace does not yet exist for push operations, sync auto-creates it (cloning from the local bare remote), so developers can immediately push content into a new branch without manual workspace setup.
 
 - **Push** (`npx canopycms sync --push`): Copies the developer's current working-tree content directly into the selected branch workspace and commits it there. This is useful after the developer makes direct content edits outside the CMS. Push does not update the local bare remote; `remote.git` stays current through the normal publish/submit mechanisms.
 

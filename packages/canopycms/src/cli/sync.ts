@@ -107,12 +107,21 @@ async function copyDir(src: string, dest: string): Promise<void> {
   }
 }
 
+/** Detect the current git branch name from the working tree. */
+async function detectCurrentBranch(projectDir: string): Promise<string> {
+  const git = simpleGit({ baseDir: projectDir })
+  const branch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim()
+  if (branch === 'HEAD') throw new Error('Detached HEAD — use --branch to specify a branch name')
+  return branch
+}
+
 /**
  * Select a branch workspace. Auto-selects if only one exists, prompts if
- * multiple, or uses the --branch flag. Returns null if cancelled or not found.
+ * multiple, or uses the --branch flag (defaulting to the current git branch).
+ * When autoCreate is true, creates a new workspace if the branch doesn't exist.
  */
 async function selectBranch(
-  options: Pick<SyncOptions, 'branch'>,
+  options: Pick<SyncOptions, 'branch' | 'force'> & { projectDir: string; autoCreate?: boolean },
   branchesDir: string,
 ): Promise<string | null> {
   let branches: string[] = []
@@ -121,13 +130,23 @@ async function selectBranch(
     branches = entries.filter((e) => e.isDirectory()).map((e) => e.name)
   }
 
-  if (branches.length === 0) {
-    p.log.error('No branch workspaces found. Create a branch in the editor first.')
-    return null
-  }
-
   let branchName = options.branch
   if (!branchName) {
+    // Default to current git branch
+    try {
+      branchName = await detectCurrentBranch(options.projectDir)
+    } catch {
+      // Can't detect — fall back to existing selection behavior
+    }
+  }
+
+  if (!branchName) {
+    if (branches.length === 0) {
+      p.log.error(
+        'No branch workspaces found and could not detect current git branch. Use --branch to specify.',
+      )
+      return null
+    }
     if (branches.length === 1) {
       branchName = branches[0]
     } else {
@@ -148,9 +167,21 @@ async function selectBranch(
   assertWithinDir(branchPath, branchesDir, '--branch')
 
   if (!branches.includes(branchName)) {
-    p.log.error(`Branch workspace "${branchName}" not found.`)
-    p.log.info(`Available branches: ${branches.join(', ')}`)
-    return null
+    if (options.autoCreate) {
+      // Auto-create workspace: git init + initial commit so push can work
+      await fs.mkdir(branchPath, { recursive: true })
+      const wsGit = simpleGit({ baseDir: branchPath })
+      await wsGit.init()
+      await wsGit.checkoutLocalBranch(branchName)
+      await wsGit.raw(['commit', '--allow-empty', '-m', 'init: workspace created by sync'])
+      p.log.info(`Created branch workspace: ${branchName}`)
+    } else {
+      p.log.error(`Branch workspace "${branchName}" not found.`)
+      if (branches.length > 0) {
+        p.log.info(`Available branches: ${branches.join(', ')}`)
+      }
+      return null
+    }
   }
 
   return branchName
@@ -165,7 +196,7 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
   const contentRoot = options.contentRoot || 'content'
   const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
 
-  const branchName = await selectBranch(options, branchesDir)
+  const branchName = await selectBranch({ ...options, projectDir, autoCreate: true }, branchesDir)
   if (!branchName) return { fileCount: 0 }
 
   const branchPath = path.join(branchesDir, branchName)
@@ -267,7 +298,7 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
   const contentRoot = options.contentRoot || 'content'
   const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
 
-  const branchName = await selectBranch(options, branchesDir)
+  const branchName = await selectBranch({ ...options, projectDir }, branchesDir)
   if (!branchName) return { fileCount: 0 }
 
   const branchPath = path.join(branchesDir, branchName)
@@ -390,7 +421,7 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
   const contentRoot = options.contentRoot || 'content'
   const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
 
-  const branchName = await selectBranch(options, branchesDir)
+  const branchName = await selectBranch({ ...options, projectDir, autoCreate: true }, branchesDir)
   if (!branchName) return { pushed: 0, pulled: 0 }
 
   const branchPath = path.join(branchesDir, branchName)
@@ -527,7 +558,7 @@ async function syncAbort(options: SyncOptions): Promise<void> {
   const { projectDir } = options
   const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
 
-  const branchName = await selectBranch(options, branchesDir)
+  const branchName = await selectBranch({ ...options, projectDir }, branchesDir)
   if (!branchName) return
 
   const branchPath = path.join(branchesDir, branchName)

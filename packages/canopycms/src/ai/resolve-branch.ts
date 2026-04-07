@@ -19,10 +19,10 @@ export async function resolveBranchRoot(config: CanopyConfig): Promise<string> {
     return process.cwd()
   }
 
-  const baseBranch = config.defaultBaseBranch ?? 'main'
+  const activeBranch = config.defaultActiveBranch ?? config.defaultBaseBranch ?? 'main'
   const context = await loadOrCreateBranchContext({
     config,
-    branchName: baseBranch,
+    branchName: activeBranch,
     mode: config.mode,
     createdBy: 'canopycms-ai',
     remoteUrl: config.defaultRemoteUrl,

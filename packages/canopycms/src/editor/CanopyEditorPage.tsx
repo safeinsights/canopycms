@@ -7,7 +7,8 @@ export const CanopyEditorPage = (config: CanopyClientConfig) => {
   }: {
     searchParams?: { branch?: string; entry?: string }
   }) => {
-    const branchName = searchParams?.branch ?? config.defaultBaseBranch ?? 'main'
+    const branchName =
+      searchParams?.branch ?? config.defaultActiveBranch ?? config.defaultBaseBranch ?? 'main'
     const initialSelectedId = searchParams?.entry
     return (
       <CanopyEditor

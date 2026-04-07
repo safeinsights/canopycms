@@ -133,20 +133,24 @@ describe('canopycms sync', () => {
       expect(log.latest?.message).toContain('sync: update content from working tree')
     })
 
-    it('auto-selects sole branch workspace', async () => {
+    it('defaults to current git branch and auto-creates workspace', async () => {
       const workspace = await setupTestWorkspace()
       projectDir = workspace.projectDir
 
       await fs.writeFile(path.join(projectDir, 'content', 'index.md'), '# Hello\n\nUpdated!\n')
 
-      // Don't pass --branch; should auto-select the only branch
+      // Don't pass --branch; should detect "main" from git HEAD and auto-create workspace
       const result = await sync({
         projectDir,
         direction: 'push',
         force: true,
       })
 
-      expect(result.pushed).toBe(1)
+      expect(result.pushed).toBeGreaterThan(0)
+      // Verify workspace was created for the detected branch (main)
+      const mainWsPath = path.join(projectDir, '.canopy-dev', 'content-branches', 'main')
+      const stat = await fs.stat(mainWsPath)
+      expect(stat.isDirectory()).toBe(true)
     })
 
     it('reports no changes when content is already up to date', async () => {
@@ -377,17 +381,28 @@ describe('canopycms sync', () => {
       expect(content).toBe('# Hello\n\nEdited in CMS.\n')
     })
 
-    it('uses the sole branch when only one exists', async () => {
+    it('pulls from branch matching current git HEAD', async () => {
       const workspace = await setupTestWorkspace()
       projectDir = workspace.projectDir
 
-      // Modify content in the only branch workspace
+      // Create a workspace matching the source repo's HEAD branch (main)
+      const mainBranchPath = path.join(projectDir, '.canopy-dev', 'content-branches', 'main')
+      await simpleGit().clone(workspace.remotePath, mainBranchPath, [
+        '--branch',
+        'main',
+        '--single-branch',
+      ])
+      const mainGit = simpleGit({ baseDir: mainBranchPath })
+      await mainGit.addConfig('user.name', 'CMS Bot')
+      await mainGit.addConfig('user.email', 'bot@canopycms.local')
+
+      // Modify content in the main branch workspace
       await fs.writeFile(
-        path.join(workspace.branchPath, 'content', 'about.md'),
+        path.join(mainBranchPath, 'content', 'about.md'),
         '# About\n\nUpdated about.\n',
       )
 
-      // Don't pass --branch; should auto-select the only branch
+      // Don't pass --branch; should detect "main" from git HEAD
       const result = await sync({
         projectDir,
         direction: 'pull',

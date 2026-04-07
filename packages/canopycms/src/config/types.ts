@@ -230,6 +230,8 @@ export interface CanopyConfig {
   defaultBranchAccess?: DefaultBranchAccess
   defaultPathAccess?: DefaultPathAccess
   defaultBaseBranch?: DefaultBaseBranch
+  /** Which workspace to serve content from by default. Auto-detected from git HEAD in dev mode. */
+  defaultActiveBranch?: string
   defaultRemoteName?: DefaultRemoteName
   defaultRemoteUrl?: DefaultRemoteUrl
   gitBotAuthorName: GitBotAuthorName
@@ -255,6 +257,8 @@ export interface CanopyConfigInput {
   defaultBranchAccess?: DefaultBranchAccess
   defaultPathAccess?: DefaultPathAccess
   defaultBaseBranch?: string
+  /** Which workspace to serve content from by default. Auto-detected from git HEAD in dev mode. */
+  defaultActiveBranch?: string
   defaultRemoteName?: string
   defaultRemoteUrl?: string
   gitBotAuthorName: string
@@ -320,7 +324,7 @@ export type FlatSchemaItem =
  */
 export type CanopyClientConfig = Pick<
   CanopyConfig,
-  'defaultBaseBranch' | 'contentRoot' | 'editor' | 'mode'
+  'defaultBaseBranch' | 'defaultActiveBranch' | 'contentRoot' | 'editor' | 'mode'
 > & {
   flatSchema: FlatSchemaItem[]
 }

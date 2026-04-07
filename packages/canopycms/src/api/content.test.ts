@@ -67,6 +67,7 @@ const allowedCtx = (): ApiContext => ({
     submitBranch: vi.fn(),
     commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
     getSettingsBranchRoot: vi.fn().mockResolvedValue('/mock/settings'),
+    refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
   },
   getBranchContext: vi.fn().mockResolvedValue({
     baseRoot: '/tmp/base',
@@ -103,6 +104,7 @@ describe('content api', () => {
         submitBranch: vi.fn(),
         commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
         getSettingsBranchRoot: vi.fn().mockResolvedValue('/tmp/settings'),
+        refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
       },
       getBranchContext: vi.fn().mockResolvedValue({
         baseRoot: '/tmp/base',
@@ -197,6 +199,7 @@ describe('content api', () => {
           submitBranch: vi.fn(),
           commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
           getSettingsBranchRoot: vi.fn().mockResolvedValue('/tmp/settings'),
+          refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
         },
         getBranchContext: vi.fn().mockResolvedValue({
           baseRoot: '/tmp/base',
@@ -247,6 +250,7 @@ describe('content api', () => {
           submitBranch: vi.fn(),
           commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
           getSettingsBranchRoot: vi.fn().mockResolvedValue('/tmp/settings'),
+          refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
         },
         getBranchContext: vi.fn().mockResolvedValue(null),
       }
