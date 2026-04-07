@@ -1184,13 +1184,14 @@ export async function generateStaticParams() {
   const canopy = await getCanopyForBuild()
   const entries = await canopy.listEntries()
 
+  // urlPath has index collapsing applied — preferred for URL generation
   return entries.map((entry) => ({
-    slug: entry.pathSegments,
+    slug: entry.urlPath.split('/').filter(Boolean),
   }))
 }
 ```
 
-Each entry also includes `urlPath` -- a URL-ready string with index entries collapsed to their parent path (e.g., `'/guides'` instead of `'/guides/index'`, `'/'` for root index entries). This is round-trip safe with `readByUrlPath()`: calling `readByUrlPath(entry.urlPath)` resolves to the same entry.
+Each entry includes `urlPath` -- a URL-ready string with index entries collapsed to their parent path (e.g., `'/guides'` instead of `'/guides/index'`, `'/'` for root index entries). This is round-trip safe with `readByUrlPath()`: calling `readByUrlPath(entry.urlPath)` resolves to the same entry. The raw `pathSegments` array is also available for consumers that need the unmodified filesystem structure.
 
 ### Each Entry Includes
 

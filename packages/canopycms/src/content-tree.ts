@@ -69,7 +69,7 @@ export interface BuildContentTreeOptions<T = unknown> {
    * Runs after extract, so `fields` is available.
    */
   filter?: (node: ContentTreeNode<T>) => boolean
-  /** Custom URL path builder. Default: strips content root prefix, joins with /. */
+  /** Custom URL path builder. Default: strips content root prefix, collapses index entries to parent path, lowercases. */
   buildPath?: (logicalPath: LogicalPath, kind: 'collection' | 'entry') => string
   /**
    * Custom sort for children at each level.
