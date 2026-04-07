@@ -190,7 +190,8 @@ export function createCanopyContext(options: CanopyContextOptions) {
     let schemaContextPromise: ReturnType<typeof resolveSchemaContextImpl> | null = null
     const resolveSchemaContextImpl = async () => {
       const operatingMode = services.config.mode
-      const defaultBranch = services.config.defaultBaseBranch ?? 'main'
+      const defaultBranch =
+        services.config.defaultActiveBranch ?? services.config.defaultBaseBranch ?? 'main'
       const branchContext = await loadOrCreateBranchContext({
         config: services.config,
         branchName: defaultBranch,

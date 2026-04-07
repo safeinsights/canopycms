@@ -41,7 +41,8 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
     }),
     [config],
   )
-  const resolvedBranchName = branchName ?? config.defaultBaseBranch ?? 'main'
+  const resolvedBranchName =
+    branchName ?? config.defaultActiveBranch ?? config.defaultBaseBranch ?? 'main'
   const resolvedTitle = config.editor?.title ?? 'CanopyCMS Editor'
   const resolvedSubtitle = config.editor?.subtitle
   const resolvedTheme = (config.editor?.theme as EditorProps['themeOptions']) ?? undefined

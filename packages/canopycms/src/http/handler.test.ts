@@ -96,6 +96,7 @@ const createMockServices = () => ({
     list: vi.fn().mockResolvedValue([]),
   },
   bootstrapAdminIds: new Set<string>(),
+  refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
 })
 
 describe('createCanopyRequestHandler', () => {

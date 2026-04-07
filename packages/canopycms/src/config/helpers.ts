@@ -53,9 +53,10 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
     // Client config helper - extracts safe subset and merges overrides
     // Note: flatSchema is loaded dynamically by the editor via API (from .collection.json files)
     client: (clientOverrides?: ClientOnlyFields): CanopyClientConfig => {
-      const { defaultBaseBranch, contentRoot, editor, mode } = validated
+      const { defaultBaseBranch, defaultActiveBranch, contentRoot, editor, mode } = validated
       const clientConfig: CanopyClientConfig = {
         defaultBaseBranch,
+        defaultActiveBranch,
         contentRoot,
         editor,
         mode,
@@ -100,6 +101,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
   let defaultBranchAccess: DefaultBranchAccess | undefined
   let defaultPathAccess: DefaultPathAccess | undefined
   let defaultBaseBranch: DefaultBaseBranch | undefined
+  let defaultActiveBranch: string | undefined
   let defaultRemoteName: DefaultRemoteName | undefined
   let defaultRemoteUrl: DefaultRemoteUrl | undefined
   let gitBotAuthorName: GitBotAuthorName | undefined
@@ -125,6 +127,9 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     }
     if (fragment.defaultBaseBranch) {
       defaultBaseBranch = fragment.defaultBaseBranch
+    }
+    if (fragment.defaultActiveBranch) {
+      defaultActiveBranch = fragment.defaultActiveBranch
     }
     if (fragment.defaultRemoteName) {
       defaultRemoteName = fragment.defaultRemoteName
@@ -155,6 +160,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     ...(defaultBranchAccess ? { defaultBranchAccess } : {}),
     ...(defaultPathAccess ? { defaultPathAccess } : {}),
     ...(defaultBaseBranch ? { defaultBaseBranch } : {}),
+    ...(defaultActiveBranch ? { defaultActiveBranch } : {}),
     ...(defaultRemoteName ? { defaultRemoteName } : {}),
     ...(defaultRemoteUrl ? { defaultRemoteUrl } : {}),
     ...(gitBotAuthorName ? { gitBotAuthorName } : {}),

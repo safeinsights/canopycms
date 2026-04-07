@@ -492,6 +492,52 @@ it('bypasses permissions during Next.js build phase', async () => {
 })
 ```
 
+### Branch Config: defaultBaseBranch vs defaultActiveBranch
+
+CanopyCMS distinguishes between two branch config fields:
+
+- **`defaultBaseBranch`** -- The fork point for new CMS branches. When the editor creates a branch, it forks from this branch (typically `main`). Used by `GitManager`, `BranchWorkspace`, and `GitHubService` for rebase targets and PR base branches.
+
+- **`defaultActiveBranch`** -- Which workspace to serve content from by default. This is the branch the dev server, editor UI, content reader, and AI content resolver use when no branch is explicitly requested.
+
+**Auto-detection in dev mode:**
+
+`defaultActiveBranch` is auto-detected from the current git HEAD at service initialization (`detectDefaultActiveBranch()` in `services.ts`) and refreshed per-request via `refreshActiveBranch()` (with a 5-second cache). This means if you switch from `main` to `my-feature` while the dev server is running, the CMS silently starts serving content from the `my-feature` workspace — no restart needed. The workspace is lazily created on the first content request if it doesn't exist.
+
+This only affects non-editor content serving (public site, `getCanopy()`, AI content). The editor is pinned to its own branch via URL params and stores drafts per-branch in localStorage.
+
+The detection priority is:
+
+1. Explicit `defaultActiveBranch` in config (both modes)
+2. Current git HEAD branch (dev mode only)
+3. `defaultBaseBranch` from config
+4. `'main'` as final fallback
+
+**Where `defaultActiveBranch` is consumed:**
+
+Content-serving code uses the pattern `config.defaultActiveBranch ?? config.defaultBaseBranch ?? 'main'`:
+
+- `context.ts` -- determines the branch for `getContext()`
+- `http/handler.ts` -- determines the branch for API requests without an explicit branch parameter
+- `CanopyEditorPage.tsx` -- determines the initial branch for the editor UI
+- `ai/resolve-branch.ts` -- determines the branch for AI content generation
+- `content-reader.ts` -- determines the branch for `createContentReader()`
+
+**Impact on sync CLI:**
+
+The `canopycms sync` command defaults to the current git branch (via `detectCurrentBranch()`) and auto-creates workspaces on push with `selectBranch({ autoCreate: true })`. This means `sync --push` on a new branch will create a workspace automatically, matching the `defaultActiveBranch` auto-detection behavior.
+
+**In tests:**
+
+Most test configs set `defaultBaseBranch: 'main'` and do not set `defaultActiveBranch`. This is correct -- the auto-detection only runs in `createCanopyServices()`, so mock services skip it. If your test needs a specific active branch, set it explicitly:
+
+```typescript
+const services = createMockServices({
+  config: { defaultBaseBranch: 'main', defaultActiveBranch: 'my-feature' },
+  entrySchemaRegistry: {},
+})
+```
+
 ### Adding a New Framework Adapter
 
 To add support for a new framework (Express, Fastify, SvelteKit, etc.):
@@ -1241,7 +1287,7 @@ git status  # .canopy-dev/ should not appear
 - Full branch support: local bare remote at `.canopy-dev/remote.git`, branch workspaces at `.canopy-dev/content-branches/`
 - Settings on separate orphan branch (deployment-specific)
 - All of `.canopy-dev/` is gitignored
-- `defaultBaseBranch` auto-detected from current git HEAD if not set in config
+- `defaultActiveBranch` auto-detected from current git HEAD if not set in config (see [Branch Config: defaultBaseBranch vs defaultActiveBranch](#branch-config-defaultbasebranch-vs-defaultactivebranch))
 - Tests branch creation, merging, permission inheritance locally
 
 **prod (Production):**

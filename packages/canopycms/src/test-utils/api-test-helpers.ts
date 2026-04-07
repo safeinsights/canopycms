@@ -200,6 +200,7 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
       vi.fn().mockResolvedValue({ committed: true, pushed: true }),
     getSettingsBranchRoot:
       options.getSettingsBranchRoot ?? vi.fn().mockResolvedValue('/mock/settings'),
+    refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
   }
 }
 

@@ -1,4 +1,3 @@
-import path from 'node:path'
 import type { CanopyConfig } from './config'
 import type { EntrySchemaRegistry } from './schema/types'
 import { getConfigDefaults } from './config'
@@ -22,14 +21,35 @@ import { getTaskQueueDir } from './worker/task-queue-config'
 import { detectHeadBranch } from './utils/git'
 
 /**
- * In dev mode, auto-detect the current HEAD branch if defaultBaseBranch is not set.
- * Eliminates the need to manually update defaultBaseBranch when working on a feature branch.
+ * Create a per-instance active branch detector with its own 5-second TTL cache.
+ *
+ * Detection priority:
+ * - If explicitly configured, use that value (both modes).
+ * - In dev mode, auto-detect from the current git HEAD branch.
+ * - In prod mode, fall back to defaultBaseBranch ?? 'main'.
  */
-async function detectDevBaseBranch(config: CanopyConfig): Promise<string> {
-  if (config.defaultBaseBranch) return config.defaultBaseBranch
-  if (config.mode !== 'dev') return config.defaultBaseBranch ?? 'main'
-  const repoRoot = config.sourceRoot ? path.resolve(config.sourceRoot) : process.cwd()
-  return detectHeadBranch(repoRoot)
+function createActiveBranchDetector() {
+  let cache: { value: string; expiresAt: number } | null = null
+
+  return async (config: CanopyConfig): Promise<string> => {
+    if (config.defaultActiveBranch) return config.defaultActiveBranch
+    if (config.mode === 'dev') {
+      const now = Date.now()
+      if (cache && now < cache.expiresAt) {
+        return cache.value
+      }
+      try {
+        // Always use cwd for branch detection — git walks up to find .git.
+        // sourceRoot is about content location, not the repo root.
+        const branch = await detectHeadBranch(process.cwd())
+        cache = { value: branch, expiresAt: now + 5000 }
+        return branch
+      } catch {
+        // Detached HEAD or no git repo — fall through to base branch
+      }
+    }
+    return config.defaultBaseBranch ?? 'main'
+  }
 }
 
 /**
@@ -49,6 +69,12 @@ export const getBootstrapAdminIds = (): Set<string> => {
 
 export interface CanopyServices {
   config: CanopyConfig
+  /**
+   * Re-detect the active branch from git HEAD (dev mode only, cached 5s).
+   * Silently updates config if the branch changed — only affects non-editor
+   * content serving since the editor is pinned to its own branch via URL params.
+   */
+  refreshActiveBranch: () => Promise<void>
   /** Entry schema registry mapping entry schema names to field definitions */
   entrySchemaRegistry: EntrySchemaRegistry
   /** Per-branch schema cache */
@@ -143,7 +169,13 @@ export const createTestCanopyServices = async (
   config: CanopyConfig,
   options: CreateCanopyServicesOptions = {},
 ): Promise<CanopyServices> => {
-  return _createCanopyServicesInternal(config, options)
+  // In tests, default active branch to base branch to avoid auto-detecting
+  // from git HEAD (which varies depending on the developer's working branch).
+  const testConfig = {
+    ...config,
+    defaultActiveBranch: config.defaultActiveBranch ?? config.defaultBaseBranch ?? 'main',
+  }
+  return _createCanopyServicesInternal(testConfig, options)
 }
 
 /**
@@ -158,11 +190,14 @@ async function _createCanopyServicesInternal(
   const strategy = operatingStrategy(config.mode)
   strategy.validateConfig(config)
 
-  // In dev mode, auto-detect the current git branch if defaultBaseBranch is not set.
-  // Bake the result into config so all downstream code (BranchWorkspaceManager, GitManager)
-  // uses the same detected value without re-detecting (avoids race if HEAD changes mid-request).
-  const effectiveBaseBranch = await detectDevBaseBranch(config)
-  config = { ...config, defaultBaseBranch: effectiveBaseBranch }
+  // Detect the active branch (which workspace to serve from).
+  // In dev mode this is the current git HEAD; in prod it's defaultBaseBranch.
+  // Bake into config so all downstream code uses the same value.
+  // The detector has its own per-instance 5s TTL cache for git HEAD checks.
+  const detectActiveBranch = createActiveBranchDetector()
+  const explicitActiveBranch = config.defaultActiveBranch
+  const defaultActiveBranch = await detectActiveBranch(config)
+  config = { ...config, defaultActiveBranch }
 
   // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
@@ -207,7 +242,7 @@ async function _createCanopyServicesInternal(
   const createGitManagerFor = (repoPath: string, opts?: { baseBranch?: string; remote?: string }) =>
     new GitManager({
       repoPath,
-      baseBranch: opts?.baseBranch ?? effectiveBaseBranch,
+      baseBranch: opts?.baseBranch ?? config.defaultBaseBranch ?? 'main',
       remote: opts?.remote ?? config.defaultRemoteName ?? configDefaults.remoteName,
     })
 
@@ -370,7 +405,7 @@ async function _createCanopyServicesInternal(
     ? new BranchRegistry(getDefaultBranchBase(operatingMode))
     : undefined
 
-  return {
+  const services: CanopyServices = {
     config,
     entrySchemaRegistry: options.entrySchemaRegistry ?? {},
     branchSchemaCache,
@@ -385,5 +420,28 @@ async function _createCanopyServicesInternal(
     submitBranch,
     commitToSettingsBranch,
     getSettingsBranchRoot,
+    refreshActiveBranch: async () => {
+      if (services.config.mode !== 'dev') return
+      // If the adopter explicitly configured defaultActiveBranch, respect it —
+      // don't override with git HEAD detection.
+      if (explicitActiveBranch) return
+      // Re-detect from git HEAD (5s TTL cache prevents excessive shell-outs).
+      // Silently switch — the public dev site should reflect the current branch
+      // just like code hot-reloads. The editor is pinned to its own branch via
+      // URL params, so this only affects non-editor content serving.
+      const fresh = await detectActiveBranch({
+        ...services.config,
+        defaultActiveBranch: undefined,
+      })
+      if (fresh !== services.config.defaultActiveBranch) {
+        // Note: closures in this function (getSettingsBranchRoot, checkContentAccess,
+        // createGitManagerFor, etc.) capture the original `config` local variable.
+        // Only defaultActiveBranch is expected to change here — those closures don't
+        // read it. Consumers that need the fresh value must read services.config.
+        services.config = { ...services.config, defaultActiveBranch: fresh }
+      }
+    },
   }
+
+  return services
 }

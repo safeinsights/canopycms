@@ -496,7 +496,8 @@ Available schemas: authorSchema, homeSchema, docSchema
 | `gitBotAuthorEmail`   | `string`               | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                             |
 | `mode`                | `'dev' \| 'prod'`      | No       | `'dev'`     | Operating mode (see below)                                                                                                                                                                               |
 | `contentRoot`         | `string`               | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                |
-| `defaultBaseBranch`   | `string`               | No       | `'main'`    | Default git branch to base edits on                                                                                                                                                                      |
+| `defaultBaseBranch`   | `string`               | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`)                                                                                                                            |
+| `defaultActiveBranch` | `string`               | No       | (see below) | Which workspace the dev server serves content from and which branch the editor opens by default. In dev mode, auto-detected from the current git branch. In prod mode, falls back to `defaultBaseBranch` |
 | `defaultBranchAccess` | `'allow' \| 'deny'`    | No       | `'deny'`    | Default access policy for new branches                                                                                                                                                                   |
 | `defaultPathAccess`   | `'allow' \| 'deny'`    | No       | `'allow'`   | Default access policy for content paths                                                                                                                                                                  |
 | `deployedAs`          | `'server' \| 'static'` | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced. |
@@ -513,14 +514,14 @@ See the [Schema Registry and References](#schema-references-system) section for 
 
 ### Operating Modes
 
-- **`dev`**: Full-featured local development with branching and git operations. Uses a local bare remote at `.canopy-dev/remote.git` and branch workspaces at `.canopy-dev/content-branches/`. `defaultBaseBranch` is auto-detected from the current git HEAD if not set. Add `.canopy-dev/` to `.gitignore`.
-- **`prod`**: Production deployment with branch workspaces on persistent storage (e.g., AWS Lambda + EFS). Permissions and groups are tracked in git on an orphan settings branch.
+- **`dev`**: Full-featured local development with branching and git operations. Uses a local bare remote at `.canopy-dev/remote.git` and branch workspaces at `.canopy-dev/content-branches/`. `defaultActiveBranch` is auto-detected from the current git branch (e.g., if you are on `feat-bar`, the dev server and editor default to that branch). The dev server silently follows branch switches — no restart needed. Add `.canopy-dev/` to `.gitignore`.
+- **`prod`**: Production deployment with branch workspaces on persistent storage (e.g., AWS Lambda + EFS). `defaultActiveBranch` falls back to `defaultBaseBranch` (usually `main`) but can be explicitly configured (e.g., to a staging branch). Permissions and groups are tracked in git on an orphan settings branch.
 
 ### Local Development Sync
 
 When working in `dev` mode, your content lives in two places: the working tree of your repo and the branch workspaces inside `.canopy-dev/content-branches/` that the CMS editor reads from. The `canopycms sync` command keeps them in sync.
 
-**Push** (working tree → branch workspace) -- copies your current working-tree content into a branch workspace and commits it, so the CMS editor sees your latest changes (e.g., after pulling from GitHub or editing files directly):
+**Push** (working tree → branch workspace) -- copies your current working-tree content into a branch workspace and commits it, so the CMS editor sees your latest changes (e.g., after pulling from GitHub or editing files directly). By default, targets the workspace matching your current git branch (auto-creating it if needed):
 
 ```bash
 npx canopycms sync --push

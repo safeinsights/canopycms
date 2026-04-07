@@ -44,7 +44,11 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const services = options.services
   const operatingMode: OperatingMode = services.config.mode
   const basePathOverride = options.basePathOverride
-  const defaultBranch = options.defaultBranch ?? services.config.defaultBaseBranch ?? 'main'
+  const defaultBranch =
+    options.defaultBranch ??
+    services.config.defaultActiveBranch ??
+    services.config.defaultBaseBranch ??
+    'main'
   const allowCreateBranch = options.allowCreateBranch ?? true
   const createdBy = options.createdBy ?? 'canopycms-content-reader'
 
