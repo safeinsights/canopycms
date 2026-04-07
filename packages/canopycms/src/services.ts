@@ -197,6 +197,7 @@ async function _createCanopyServicesInternal(
   // Detect the active branch (which workspace to serve from).
   // In dev mode this is the current git HEAD; in prod it's defaultBaseBranch.
   // Bake into config so all downstream code uses the same value.
+  const explicitActiveBranch = config.defaultActiveBranch
   const defaultActiveBranch = await detectDefaultActiveBranch(config)
   config = { ...config, defaultActiveBranch }
 
@@ -423,6 +424,9 @@ async function _createCanopyServicesInternal(
     getSettingsBranchRoot,
     refreshActiveBranch: async () => {
       if (services.config.mode !== 'dev') return
+      // If the adopter explicitly configured defaultActiveBranch, respect it —
+      // don't override with git HEAD detection.
+      if (explicitActiveBranch) return
       // Re-detect from git HEAD (5s TTL cache prevents excessive shell-outs).
       // Silently switch — the public dev site should reflect the current branch
       // just like code hot-reloads. The editor is pinned to its own branch via

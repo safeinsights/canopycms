@@ -101,6 +101,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
   let defaultBranchAccess: DefaultBranchAccess | undefined
   let defaultPathAccess: DefaultPathAccess | undefined
   let defaultBaseBranch: DefaultBaseBranch | undefined
+  let defaultActiveBranch: string | undefined
   let defaultRemoteName: DefaultRemoteName | undefined
   let defaultRemoteUrl: DefaultRemoteUrl | undefined
   let gitBotAuthorName: GitBotAuthorName | undefined
@@ -126,6 +127,9 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     }
     if (fragment.defaultBaseBranch) {
       defaultBaseBranch = fragment.defaultBaseBranch
+    }
+    if (fragment.defaultActiveBranch) {
+      defaultActiveBranch = fragment.defaultActiveBranch
     }
     if (fragment.defaultRemoteName) {
       defaultRemoteName = fragment.defaultRemoteName
@@ -156,6 +160,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     ...(defaultBranchAccess ? { defaultBranchAccess } : {}),
     ...(defaultPathAccess ? { defaultPathAccess } : {}),
     ...(defaultBaseBranch ? { defaultBaseBranch } : {}),
+    ...(defaultActiveBranch ? { defaultActiveBranch } : {}),
     ...(defaultRemoteName ? { defaultRemoteName } : {}),
     ...(defaultRemoteUrl ? { defaultRemoteUrl } : {}),
     ...(gitBotAuthorName ? { gitBotAuthorName } : {}),
