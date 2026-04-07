@@ -128,6 +128,15 @@ export const parseTypedFilename = (
 export interface ListEntriesItem<T = Record<string, unknown>> {
   /** URL path segments, e.g., ['researchers', 'guides', 'glossary-of-terms'] */
   pathSegments: string[]
+  /**
+   * URL-ready path with index entries collapsed to their parent collection path.
+   * For index entries: '/guides' instead of '/guides/index'.
+   * For regular entries: '/guides/glossary-of-terms'.
+   * For a root index entry: '/'.
+   *
+   * Round-trip safe: `readByUrlPath(item.urlPath)` resolves to the same entry.
+   */
+  urlPath: string
   /** Entry slug within its collection */
   slug: Slug
   /** Logical CMS path for this entry */
@@ -221,6 +230,10 @@ export async function listEntries<T = Record<string, unknown>>(
         : entry.logicalPath
       const pathSegments = pathWithoutRoot.split('/').filter(Boolean)
 
+      // Compute urlPath: collapse index entries to parent collection path
+      const urlSegments = entry.slug === 'index' ? pathSegments.slice(0, -1) : pathSegments
+      const urlPath = urlSegments.length > 0 ? `/${urlSegments.join('/')}`.toLowerCase() : '/'
+
       const raw = entry.data
       const meta = {
         entryPath: entry.logicalPath,
@@ -231,6 +244,7 @@ export async function listEntries<T = Record<string, unknown>>(
 
       const item: ListEntriesItem<T> = {
         pathSegments,
+        urlPath,
         slug: entry.slug,
         entryPath: entry.logicalPath,
         entryId: entry.contentId,

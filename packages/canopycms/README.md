@@ -219,14 +219,14 @@ import DocView from '../../components/DocView'
 export async function generateStaticParams() {
   const canopy = await getCanopyForBuild()
   const entries = await canopy.listEntries({ rootPath: 'content/docs' })
-  return entries.map((entry) => ({ slug: entry.pathSegments }))
+  // urlPath has index collapsing applied — strip the route prefix for Next.js params
+  return entries.map((entry) => ({
+    slug: entry.urlPath.replace(/^\/docs\/?/, '').split('/').filter(Boolean),
+  }))
 }
 
 export default async function DocPage({ params }: { params: { slug?: string[] } }) {
   const slugParts = params.slug || []
-  if (slugParts.length === 0) {
-    return <div>Docs landing page</div>
-  }
 
   // Request-time: use getCanopy() for auth-aware reads
   const canopy = await getCanopy()
@@ -254,7 +254,37 @@ export default async function Page() {
 
 Both methods return `{ data, path }`. `read` throws if the content is missing; `readByUrlPath` returns `null` instead. Pass a `branch` option when you want branch-specific data (e.g., for preview); otherwise it defaults to your configured base branch. Both enforce the same branch/path access rules as the API handlers.
 
-> **Note:** `readByUrlPath` resolves to **entries** only, not collections. Passing `'/'` returns `null`. For collection-level data (navigation, sitemaps), use `buildContentTree` or `listEntries` instead.
+**Index entries and URL resolution**
+
+Canopy uses an **index entry convention** for collection landing pages, similar to `index.html` in a web server:
+
+- An entry with slug `index` (filename `{type}.index.{id}.{ext}`) acts as the landing page for its collection
+- The URL for an index entry is the **collection's URL**, not `{collection}/index`. For example, an entry at `content/guides/index` has URL `/guides`, not `/guides/index`
+- `readByUrlPath('/')` resolves to the content root's index entry (if one exists)
+- Not all collections need an index entry — some are just organizational groupings
+
+This convention is applied consistently across the API:
+
+| API                | Index handling                                                                                                                           |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `listEntries`      | Each item includes a `urlPath` field with index collapsing applied. `pathSegments` retains the raw structure for consumers that need it. |
+| `readByUrlPath`    | Automatically tries `slug: 'index'` as a fallback when the direct entry doesn't match. Works for all paths including `/`.                |
+| `buildContentTree` | Default `buildPath` collapses index entries so tree node paths match the URLs consumers would use.                                       |
+
+The round-trip property holds: for every item from `listEntries`, `readByUrlPath(item.urlPath)` resolves to the same entry.
+
+**Collections without index entries:** `readByUrlPath` returns `null` for URLs that map to collections with no index entry. This is by design — Canopy resolves content, not routes. For collection-level pages, use the content tree:
+
+```ts
+const entry = await canopy.readByUrlPath(urlPath)
+if (entry) return renderEntry(entry)
+
+// No entry at this URL — check if it's a collection
+const node = findInTree(contentTree, urlPath)
+if (node?.kind === 'collection') return renderCollectionListing(node)
+
+return notFound()
+```
 
 4. **Wire auth**
    Provide an `authPlugin` in `createNextCanopyContext` (e.g., Clerk) so branch/path permissions can be enforced.

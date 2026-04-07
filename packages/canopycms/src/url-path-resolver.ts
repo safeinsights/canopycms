@@ -17,7 +17,7 @@ export function resolveUrlPathCandidates(
 ): Array<{ entryPath: string; slug: string }> {
   const normalized = trimSlashes(urlPath)
   const segments = normalized.split('/').filter(Boolean)
-  if (segments.length === 0) return []
+  if (segments.length === 0) return [{ entryPath: contentRoot, slug: 'index' }]
 
   const candidates: Array<{ entryPath: string; slug: string }> = []
 

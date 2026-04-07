@@ -19,6 +19,8 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - [Configuration Reference](#configuration-reference)
 - [Content Identification and References](#content-identification--references)
 - [Integration Guide](#integration-guide)
+  - [Load Content by URL Path](#load-content-by-url-path)
+  - [Index Entries and URL Resolution](#index-entries-and-url-resolution)
 - [Sanitizing URLs from CMS Content](#sanitizing-urls-from-cms-content)
 - [Content Tree Builder](#content-tree-builder)
 - [Listing Entries](#listing-entries)
@@ -888,10 +890,51 @@ export default async function PostPage({ params, searchParams }) {
 **The context object provides:**
 
 - `read()`: Read content with automatic auth and branch resolution
+- `readByUrlPath()`: Read content by URL path, resolving the collection/entry split automatically (see below)
 - `buildContentTree()`: Build a typed content tree for navigation, sitemaps, etc. (see [Content Tree Builder](#content-tree-builder))
 - `listEntries()`: Get a flat array of all entries for `generateStaticParams`, search indexes, sitemaps (see [Listing Entries](#listing-entries))
 - `user`: Current authenticated user (with bootstrap admin groups applied)
 - `services`: Underlying CanopyCMS services for advanced use cases
+
+### Load Content by URL Path
+
+`readByUrlPath()` maps a URL path directly to a content entry, handling the collection/slug split and index entry resolution automatically. This is the simplest way to load content when your routes mirror your content structure:
+
+```typescript
+// app/[...slug]/page.tsx
+import { notFound } from 'next/navigation'
+import { getCanopy } from '../lib/canopy'
+
+export default async function Page({ params }) {
+  const canopy = await getCanopy()
+  const urlPath = '/' + (params.slug?.join('/') ?? '')
+
+  const result = await canopy.readByUrlPath<{ title: string; body: string }>(urlPath)
+  if (!result) return notFound()
+
+  return <Article title={result.data.title} body={result.data.body} />
+}
+```
+
+**Resolution order:**
+
+1. `/docs/getting-started` -- tries `content/docs` + slug `"getting-started"` (direct entry match)
+2. If that fails, tries `content/docs/getting-started` + slug `"index"` (index entry fallback)
+3. `/docs/guides` -- resolves to the index entry of the `guides` collection (if one exists)
+4. `/` -- resolves to the root index entry at the content root (if one exists)
+
+Returns `null` when no content matches the path. Throws on permission errors.
+
+### Index Entries and URL Resolution
+
+Index entries (entries with slug `"index"`) represent the default content for a collection URL. All three content APIs -- `readByUrlPath`, `listEntries`, and `buildContentTree` -- treat index entries consistently:
+
+- **`readByUrlPath('/guides')`** resolves to the index entry in the `guides` collection
+- **`readByUrlPath('/')`** resolves to the index entry at the content root
+- **`listEntries()`** returns `urlPath: '/guides'` (not `'/guides/index'`) for index entries, and `urlPath: '/'` for a root index entry
+- **`buildContentTree()`** generates `path: '/guides'` (not `'/guides/index'`) for index entries by default
+
+This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry.
 
 ### Reading Content at Build Time
 
@@ -1104,14 +1147,14 @@ const tree = await canopy.buildContentTree<NavItem>({
 
 ### Options Reference
 
-| Option      | Type                                                       | Default                         | Description                                                     |
-| ----------- | ---------------------------------------------------------- | ------------------------------- | --------------------------------------------------------------- |
-| `rootPath`  | `string`                                                   | Content root                    | Starting collection path (e.g., `"content/docs"` for a subtree) |
-| `extract`   | `(data, node) => T`                                        | -                               | Extract typed custom fields from raw entry/collection data      |
-| `filter`    | `(node: ContentTreeNode<T>) => boolean`                    | -                               | Return false to exclude a node and its descendants              |
-| `buildPath` | `(logicalPath, kind) => string`                            | Strips content root, lowercases | Custom URL path builder (default lowercases all paths)          |
-| `sort`      | `(a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number` | Order array then alphabetical   | Custom sort for children at each level (replaces default sort)  |
-| `maxDepth`  | `number`                                                   | Unlimited                       | Maximum depth to traverse                                       |
+| Option      | Type                                                       | Default                                                  | Description                                                                             |
+| ----------- | ---------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| `rootPath`  | `string`                                                   | Content root                                             | Starting collection path (e.g., `"content/docs"` for a subtree)                         |
+| `extract`   | `(data, node) => T`                                        | -                                                        | Extract typed custom fields from raw entry/collection data                              |
+| `filter`    | `(node: ContentTreeNode<T>) => boolean`                    | -                                                        | Return false to exclude a node and its descendants                                      |
+| `buildPath` | `(logicalPath, kind) => string`                            | Strips content root, lowercases, collapses index entries | Custom URL path builder (default collapses index entries to parent path and lowercases) |
+| `sort`      | `(a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number` | Order array then alphabetical                            | Custom sort for children at each level (replaces default sort)                          |
+| `maxDepth`  | `number`                                                   | Unlimited                                                | Maximum depth to traverse                                                               |
 
 ### Imports
 
@@ -1141,25 +1184,29 @@ export async function generateStaticParams() {
   const canopy = await getCanopyForBuild()
   const entries = await canopy.listEntries()
 
+  // urlPath has index collapsing applied — preferred for URL generation
   return entries.map((entry) => ({
-    slug: entry.pathSegments,
+    slug: entry.urlPath.split('/').filter(Boolean),
   }))
 }
 ```
 
+Each entry includes `urlPath` -- a URL-ready string with index entries collapsed to their parent path (e.g., `'/guides'` instead of `'/guides/index'`, `'/'` for root index entries). This is round-trip safe with `readByUrlPath()`: calling `readByUrlPath(entry.urlPath)` resolves to the same entry. The raw `pathSegments` array is also available for consumers that need the unmodified filesystem structure.
+
 ### Each Entry Includes
 
-| Field            | Type       | Description                                                       |
-| ---------------- | ---------- | ----------------------------------------------------------------- |
-| `pathSegments`   | `string[]` | URL path segments (e.g., `['researchers', 'guides', 'glossary']`) |
-| `slug`           | `string`   | Entry slug within its collection                                  |
-| `entryPath`      | `string`   | Full CMS logical path                                             |
-| `entryId`        | `string`   | 12-char Base58 content ID from the filename                       |
-| `collectionId`   | `string?`  | Collection content ID (if present)                                |
-| `collectionPath` | `string`   | Logical path of the parent collection                             |
-| `entryType`      | `string`   | Entry type name                                                   |
-| `format`         | `string`   | Content format (`json`, `md`, or `mdx`)                           |
-| `data`           | `T`        | Entry data (frontmatter + body for md/mdx, JSON fields for json)  |
+| Field            | Type       | Description                                                                                                        |
+| ---------------- | ---------- | ------------------------------------------------------------------------------------------------------------------ |
+| `pathSegments`   | `string[]` | URL path segments (e.g., `['researchers', 'guides', 'glossary']`)                                                  |
+| `urlPath`        | `string`   | URL-ready path with index entries collapsed (e.g., `'/guides'` instead of `'/guides/index'`; `'/'` for root index) |
+| `slug`           | `string`   | Entry slug within its collection                                                                                   |
+| `entryPath`      | `string`   | Full CMS logical path                                                                                              |
+| `entryId`        | `string`   | 12-char Base58 content ID from the filename                                                                        |
+| `collectionId`   | `string?`  | Collection content ID (if present)                                                                                 |
+| `collectionPath` | `string`   | Logical path of the parent collection                                                                              |
+| `entryType`      | `string`   | Entry type name                                                                                                    |
+| `format`         | `string`   | Content format (`json`, `md`, or `mdx`)                                                                            |
+| `data`           | `T`        | Entry data (frontmatter + body for md/mdx, JSON fields for json)                                                   |
 
 For md/mdx entries, `data.body` contains the raw markdown content.
 

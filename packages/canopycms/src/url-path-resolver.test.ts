@@ -42,10 +42,16 @@ describe('resolveUrlPathCandidates', () => {
     ])
   })
 
-  it('returns empty array for empty path', () => {
-    expect(resolveUrlPathCandidates('', 'content')).toEqual([])
-    expect(resolveUrlPathCandidates('/', 'content')).toEqual([])
-    expect(resolveUrlPathCandidates('///', 'content')).toEqual([])
+  it('resolves root path to index candidate', () => {
+    expect(resolveUrlPathCandidates('', 'content')).toEqual([
+      { entryPath: 'content', slug: 'index' },
+    ])
+    expect(resolveUrlPathCandidates('/', 'content')).toEqual([
+      { entryPath: 'content', slug: 'index' },
+    ])
+    expect(resolveUrlPathCandidates('///', 'content')).toEqual([
+      { entryPath: 'content', slug: 'index' },
+    ])
   })
 
   it('uses custom content root', () => {

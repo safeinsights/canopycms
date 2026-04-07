@@ -569,6 +569,42 @@ describe('buildContentTree', () => {
     expect(paths[1]).toBe('content/posts/hello-world')
   })
 
+  it('default buildPath collapses index entries to parent collection path', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: docsDir } = await createCollection(contentDir, 'docs')
+    await createEntry(docsDir, 'doc', 'index', 'md', { title: 'Docs Landing' })
+    await createEntry(docsDir, 'doc', 'getting-started', 'md', { title: 'Getting Started' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'docs',
+          path: 'docs',
+          entries: [{ name: 'doc', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const tree = await buildContentTree(tempDir, flat, 'content')
+
+    const docsNode = tree[0]
+    expect(docsNode.path).toBe('/docs')
+    expect(docsNode.kind).toBe('collection')
+
+    const indexEntry = docsNode.children!.find((n: ContentTreeNode) => n.entry?.slug === 'index')
+    const regularEntry = docsNode.children!.find(
+      (n: ContentTreeNode) => n.entry?.slug === 'getting-started',
+    )
+
+    // Index entry path collapses to the collection path
+    expect(indexEntry?.path).toBe('/docs')
+    // Regular entry path is unchanged
+    expect(regularEntry?.path).toBe('/docs/getting-started')
+  })
+
   it('collection nodes have collection metadata from schema', async () => {
     const contentDir = path.join(tempDir, 'content')
     await fs.mkdir(contentDir)

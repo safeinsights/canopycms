@@ -69,7 +69,7 @@ export interface BuildContentTreeOptions<T = unknown> {
    * Runs after extract, so `fields` is available.
    */
   filter?: (node: ContentTreeNode<T>) => boolean
-  /** Custom URL path builder. Default: strips content root prefix, joins with /. */
+  /** Custom URL path builder. Default: strips content root prefix, collapses index entries to parent path, lowercases. */
   buildPath?: (logicalPath: LogicalPath, kind: 'collection' | 'entry') => string
   /**
    * Custom sort for children at each level.
@@ -103,12 +103,27 @@ const groupByParent = (flat: FlatSchemaItem[]): Map<string | undefined, Collecti
  * Default path builder: strips the content root prefix, lowercases, and prepends /.
  * All URL paths are lowercased unconditionally for consistency with slug normalization.
  * Adopters with case-sensitive slugs (e.g., "API-Reference") will get lowercased URLs.
+ *
+ * Index entries (slug 'index') are collapsed to their parent collection path,
+ * matching the URL convention used by readByUrlPath and listEntries.
  */
-const defaultBuildPath = (logicalPath: LogicalPath, contentRootName: string): string => {
+const defaultBuildPath = (
+  logicalPath: LogicalPath,
+  contentRootName: string,
+  kind: 'collection' | 'entry',
+): string => {
   const prefix = contentRootName ? `${contentRootName}/` : ''
   const stripped =
     prefix && logicalPath.startsWith(prefix) ? logicalPath.slice(prefix.length) : logicalPath
-  const urlPath = stripped ? `/${stripped}` : '/'
+  // Collapse index entries: content/guides/index → /guides (not /guides/index)
+  // Only for entries — a collection named "index" should keep its path.
+  const collapsed =
+    kind === 'entry' && stripped.endsWith('/index')
+      ? stripped.slice(0, -6)
+      : kind === 'entry' && stripped === 'index'
+        ? ''
+        : stripped
+  const urlPath = collapsed ? `/${collapsed}` : '/'
   return urlPath.toLowerCase()
 }
 
@@ -134,7 +149,7 @@ export async function buildContentTree<T = unknown>(
   const extract = options?.extract
   const filter = options?.filter
   const buildPath =
-    options?.buildPath ?? ((lp: LogicalPath) => defaultBuildPath(lp, contentRootName))
+    options?.buildPath ?? ((lp: LogicalPath, kind) => defaultBuildPath(lp, contentRootName, kind))
   const customSort = options?.sort
   const maxDepth = options?.maxDepth
 
