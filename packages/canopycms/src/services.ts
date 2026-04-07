@@ -75,8 +75,8 @@ export interface CanopyServices {
   config: CanopyConfig
   /**
    * Re-detect the active branch from git HEAD (dev mode only, cached 5s).
-   * Logs a warning if the branch changed since startup.
-   * Call at the start of each request to stay in sync with the developer's working tree.
+   * Silently updates config if the branch changed — only affects non-editor
+   * content serving since the editor is pinned to its own branch via URL params.
    */
   refreshActiveBranch: () => Promise<void>
   /** Entry schema registry mapping entry schema names to field definitions */
@@ -423,18 +423,15 @@ async function _createCanopyServicesInternal(
     getSettingsBranchRoot,
     refreshActiveBranch: async () => {
       if (services.config.mode !== 'dev') return
-      // Pass defaultActiveBranch: undefined to force re-detection from git HEAD.
-      // The 5-second TTL cache inside detectDefaultActiveBranch prevents
-      // excessive shell-outs even though this runs on every request.
+      // Re-detect from git HEAD (5s TTL cache prevents excessive shell-outs).
+      // Silently switch — the public dev site should reflect the current branch
+      // just like code hot-reloads. The editor is pinned to its own branch via
+      // URL params, so this only affects non-editor content serving.
       const fresh = await detectDefaultActiveBranch({
         ...services.config,
         defaultActiveBranch: undefined,
       })
       if (fresh !== services.config.defaultActiveBranch) {
-        console.warn(
-          `[CanopyCMS] Active branch changed: "${services.config.defaultActiveBranch}" → "${fresh}". ` +
-            'Content will now be served from the new branch.',
-        )
         services.config = { ...services.config, defaultActiveBranch: fresh }
       }
     },

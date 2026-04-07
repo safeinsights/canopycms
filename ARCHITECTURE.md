@@ -878,9 +878,11 @@ CanopyCMS distinguishes between two branch concepts that serve different purpose
 - If explicitly configured, the configured value is used in both modes
 - In dev mode, `defaultActiveBranch` is auto-detected from the current git HEAD (the branch the developer has checked out)
 - In prod mode, `defaultActiveBranch` falls back to `defaultBaseBranch` (typically `main`)
-- The detected value is baked into the config at service creation time so all downstream code uses a single consistent value without re-detecting
+- The detected value is set in the config at service creation time, and refreshed per-request via `refreshActiveBranch()` (dev mode only, with a 5-second cache to avoid excessive git calls)
 
-**Fallback chain:** Throughout the system, content-serving code resolves the active branch as `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. The handler also auto-creates a workspace for `defaultActiveBranch` at startup, ensuring the active branch is always ready to serve content.
+**Per-request branch tracking:** In dev mode, the handler calls `refreshActiveBranch()` on every request. If the developer switches git branches, the active branch silently updates — no server restart needed. The workspace for the new branch is lazily created on the first content request via the handler's auto-create path (`BranchWorkspaceManager.openOrCreateBranch`). This only affects non-editor content serving (the public dev site, `getCanopy()`, AI content); the editor is pinned to its own branch via URL params and has branch-specific drafts in localStorage.
+
+**Fallback chain:** Throughout the system, content-serving code resolves the active branch as `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. The handler auto-creates workspaces for `defaultActiveBranch` on demand, ensuring the active branch is always ready to serve content.
 
 ## Operating Modes
 

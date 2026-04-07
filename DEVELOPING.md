@@ -502,7 +502,9 @@ CanopyCMS distinguishes between two branch config fields:
 
 **Auto-detection in dev mode:**
 
-`defaultActiveBranch` is auto-detected from the current git HEAD at service initialization (`detectDefaultActiveBranch()` in `services.ts`). This means if you are on branch `my-feature`, the CMS automatically serves content from that branch's workspace without any config change.
+`defaultActiveBranch` is auto-detected from the current git HEAD at service initialization (`detectDefaultActiveBranch()` in `services.ts`) and refreshed per-request via `refreshActiveBranch()` (with a 5-second cache). This means if you switch from `main` to `my-feature` while the dev server is running, the CMS silently starts serving content from the `my-feature` workspace — no restart needed. The workspace is lazily created on the first content request if it doesn't exist.
+
+This only affects non-editor content serving (public site, `getCanopy()`, AI content). The editor is pinned to its own branch via URL params and stores drafts per-branch in localStorage.
 
 The detection priority is:
 
