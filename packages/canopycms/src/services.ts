@@ -173,7 +173,13 @@ export const createTestCanopyServices = async (
   config: CanopyConfig,
   options: CreateCanopyServicesOptions = {},
 ): Promise<CanopyServices> => {
-  return _createCanopyServicesInternal(config, options)
+  // In tests, default active branch to base branch to avoid auto-detecting
+  // from git HEAD (which varies depending on the developer's working branch).
+  const testConfig = {
+    ...config,
+    defaultActiveBranch: config.defaultActiveBranch ?? config.defaultBaseBranch ?? 'main',
+  }
+  return _createCanopyServicesInternal(testConfig, options)
 }
 
 /**
