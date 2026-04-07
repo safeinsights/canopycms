@@ -423,6 +423,9 @@ async function _createCanopyServicesInternal(
     getSettingsBranchRoot,
     refreshActiveBranch: async () => {
       if (services.config.mode !== 'dev') return
+      // Pass defaultActiveBranch: undefined to force re-detection from git HEAD.
+      // The 5-second TTL cache inside detectDefaultActiveBranch prevents
+      // excessive shell-outs even though this runs on every request.
       const fresh = await detectDefaultActiveBranch({
         ...services.config,
         defaultActiveBranch: undefined,

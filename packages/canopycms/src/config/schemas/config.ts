@@ -43,7 +43,7 @@ export const CanopyConfigSchema = z.object({
   defaultBranchAccess: defaultBranchAccessSchema.optional(),
   defaultPathAccess: defaultPathAccessSchema.optional(),
   defaultBaseBranch: defaultBaseBranchSchema.optional(),
-  defaultActiveBranch: z.string().optional(),
+  defaultActiveBranch: z.string().min(1).optional(),
   defaultRemoteName: defaultRemoteNameSchema.optional(),
   defaultRemoteUrl: defaultRemoteUrlSchema.optional(),
   gitBotAuthorName: gitBotAuthorNameSchema,

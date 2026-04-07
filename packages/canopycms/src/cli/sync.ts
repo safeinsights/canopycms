@@ -168,7 +168,9 @@ async function selectBranch(
 
   if (!branches.includes(branchName)) {
     if (options.autoCreate) {
-      // Auto-create workspace: git init + initial commit so push can work
+      // Auto-create a minimal workspace (git init + empty commit) so push can
+      // copy content in. This is lighter than BranchWorkspaceManager's clone-based
+      // setup — no remote config or content structure — but sufficient for sync.
       await fs.mkdir(branchPath, { recursive: true })
       const wsGit = simpleGit({ baseDir: branchPath })
       await wsGit.init()
