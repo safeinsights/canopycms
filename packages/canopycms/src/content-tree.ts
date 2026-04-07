@@ -107,16 +107,22 @@ const groupByParent = (flat: FlatSchemaItem[]): Map<string | undefined, Collecti
  * Index entries (slug 'index') are collapsed to their parent collection path,
  * matching the URL convention used by readByUrlPath and listEntries.
  */
-const defaultBuildPath = (logicalPath: LogicalPath, contentRootName: string): string => {
+const defaultBuildPath = (
+  logicalPath: LogicalPath,
+  contentRootName: string,
+  kind: 'collection' | 'entry',
+): string => {
   const prefix = contentRootName ? `${contentRootName}/` : ''
   const stripped =
     prefix && logicalPath.startsWith(prefix) ? logicalPath.slice(prefix.length) : logicalPath
   // Collapse index entries: content/guides/index → /guides (not /guides/index)
-  const collapsed = stripped.endsWith('/index')
-    ? stripped.slice(0, -6)
-    : stripped === 'index'
-      ? ''
-      : stripped
+  // Only for entries — a collection named "index" should keep its path.
+  const collapsed =
+    kind === 'entry' && stripped.endsWith('/index')
+      ? stripped.slice(0, -6)
+      : kind === 'entry' && stripped === 'index'
+        ? ''
+        : stripped
   const urlPath = collapsed ? `/${collapsed}` : '/'
   return urlPath.toLowerCase()
 }
@@ -143,7 +149,7 @@ export async function buildContentTree<T = unknown>(
   const extract = options?.extract
   const filter = options?.filter
   const buildPath =
-    options?.buildPath ?? ((lp: LogicalPath) => defaultBuildPath(lp, contentRootName))
+    options?.buildPath ?? ((lp: LogicalPath, kind) => defaultBuildPath(lp, contentRootName, kind))
   const customSort = options?.sort
   const maxDepth = options?.maxDepth
 

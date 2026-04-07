@@ -219,8 +219,10 @@ import DocView from '../../components/DocView'
 export async function generateStaticParams() {
   const canopy = await getCanopyForBuild()
   const entries = await canopy.listEntries({ rootPath: 'content/docs' })
-  // urlPath is already collapsed for index entries — use it directly
-  return entries.map((entry) => ({ slug: entry.urlPath.split('/').filter(Boolean) }))
+  // urlPath has index collapsing applied — strip the route prefix for Next.js params
+  return entries.map((entry) => ({
+    slug: entry.urlPath.replace(/^\/docs\/?/, '').split('/').filter(Boolean),
+  }))
 }
 
 export default async function DocPage({ params }: { params: { slug?: string[] } }) {
