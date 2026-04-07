@@ -21,39 +21,35 @@ import { getTaskQueueDir } from './worker/task-queue-config'
 import { detectHeadBranch } from './utils/git'
 
 /**
- * Detect the default active branch — the workspace to serve content from.
+ * Create a per-instance active branch detector with its own 5-second TTL cache.
  *
+ * Detection priority:
  * - If explicitly configured, use that value (both modes).
  * - In dev mode, auto-detect from the current git HEAD branch.
  * - In prod mode, fall back to defaultBaseBranch ?? 'main'.
- *
- * Results are cached for 5 seconds to avoid shelling out on every request.
  */
-let _activeBranchCache: { value: string; expiresAt: number } | null = null
+function createActiveBranchDetector() {
+  let cache: { value: string; expiresAt: number } | null = null
 
-async function detectDefaultActiveBranch(config: CanopyConfig): Promise<string> {
-  if (config.defaultActiveBranch) return config.defaultActiveBranch
-  if (config.mode === 'dev') {
-    const now = Date.now()
-    if (_activeBranchCache && now < _activeBranchCache.expiresAt) {
-      return _activeBranchCache.value
+  return async (config: CanopyConfig): Promise<string> => {
+    if (config.defaultActiveBranch) return config.defaultActiveBranch
+    if (config.mode === 'dev') {
+      const now = Date.now()
+      if (cache && now < cache.expiresAt) {
+        return cache.value
+      }
+      try {
+        // Always use cwd for branch detection — git walks up to find .git.
+        // sourceRoot is about content location, not the repo root.
+        const branch = await detectHeadBranch(process.cwd())
+        cache = { value: branch, expiresAt: now + 5000 }
+        return branch
+      } catch {
+        // Detached HEAD or no git repo — fall through to base branch
+      }
     }
-    try {
-      // Always use cwd for branch detection — git walks up to find .git.
-      // sourceRoot is about content location, not the repo root.
-      const branch = await detectHeadBranch(process.cwd())
-      _activeBranchCache = { value: branch, expiresAt: now + 5000 }
-      return branch
-    } catch {
-      // Detached HEAD or no git repo — fall through to base branch
-    }
+    return config.defaultBaseBranch ?? 'main'
   }
-  return config.defaultBaseBranch ?? 'main'
-}
-
-/** Exported for testing. */
-export function _resetActiveBranchCache(): void {
-  _activeBranchCache = null
 }
 
 /**
@@ -197,8 +193,10 @@ async function _createCanopyServicesInternal(
   // Detect the active branch (which workspace to serve from).
   // In dev mode this is the current git HEAD; in prod it's defaultBaseBranch.
   // Bake into config so all downstream code uses the same value.
+  // The detector has its own per-instance 5s TTL cache for git HEAD checks.
+  const detectActiveBranch = createActiveBranchDetector()
   const explicitActiveBranch = config.defaultActiveBranch
-  const defaultActiveBranch = await detectDefaultActiveBranch(config)
+  const defaultActiveBranch = await detectActiveBranch(config)
   config = { ...config, defaultActiveBranch }
 
   // Load bootstrap admin IDs from environment
@@ -431,11 +429,15 @@ async function _createCanopyServicesInternal(
       // Silently switch — the public dev site should reflect the current branch
       // just like code hot-reloads. The editor is pinned to its own branch via
       // URL params, so this only affects non-editor content serving.
-      const fresh = await detectDefaultActiveBranch({
+      const fresh = await detectActiveBranch({
         ...services.config,
         defaultActiveBranch: undefined,
       })
       if (fresh !== services.config.defaultActiveBranch) {
+        // Note: closures in this function (getSettingsBranchRoot, checkContentAccess,
+        // createGitManagerFor, etc.) capture the original `config` local variable.
+        // Only defaultActiveBranch is expected to change here — those closures don't
+        // read it. Consumers that need the fresh value must read services.config.
         services.config = { ...services.config, defaultActiveBranch: fresh }
       }
     },
