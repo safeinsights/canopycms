@@ -6,6 +6,7 @@
  */
 
 import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig, SelectFieldConfig } from '../config'
+import { stripMdxImports } from './strip-mdx'
 import type { AIEntry, AIContentConfig } from './types'
 
 /**
@@ -80,9 +81,10 @@ function renderMarkdownEntry(
     parts.push('')
   }
 
-  // Append body verbatim
+  // Append body — strip import/export statements for MDX entries
   if (entry.body) {
-    parts.push(entry.body.trim())
+    const body = entry.format === 'mdx' ? stripMdxImports(entry.body) : entry.body
+    parts.push(body.trim())
     parts.push('')
   }
 

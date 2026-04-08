@@ -890,14 +890,17 @@ const refs = findFieldsByType(schema, data, 'reference')
 
 **Location**: packages/canopycms/src/utils/
 
-| File             | Purpose                                                                                      |
-| ---------------- | -------------------------------------------------------------------------------------------- |
-| error.ts         | Type-safe error handling (getErrorMessage, isNodeError, isNotFoundError, isFileExistsError)  |
-| debug.ts         | Debug logging utilities (createDebugLogger)                                                  |
-| format.ts        | Formatting utilities                                                                         |
-| atomic-write.ts  | Atomic file writes via temp-file + rename (prevents corruption on NFS/EFS)                   |
-| body-field.ts    | Body field validation (countBodyFields, findInvalidBodyFields) for isBody schema flag        |
-| sanitize-href.ts | Sanitize untrusted URLs for href attributes; allows only http/https protocols (sanitizeHref) |
+| File             | Purpose                                                                                                             |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------- |
+| error.ts         | Type-safe error handling (getErrorMessage, isNodeError, isNotFoundError, isFileExistsError)                         |
+| debug.ts         | Debug logging utilities (createDebugLogger)                                                                         |
+| format.ts        | Formatting utilities                                                                                                |
+| atomic-write.ts  | Atomic file writes via temp-file + rename (prevents corruption on NFS/EFS)                                          |
+| body-field.ts    | Body field validation (countBodyFields, findInvalidBodyFields) for isBody schema flag                               |
+| title-field.ts   | Title field utilities (resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists) for isTitle schema flag   |
+| git.ts           | `detectHeadBranch()` — detect current HEAD branch name via simple-git; used by services.ts and ai/resolve-branch.ts |
+| fs.ts            | Filesystem helpers (filePathExists)                                                                                 |
+| sanitize-href.ts | Sanitize untrusted URLs for href attributes; allows only http/https protocols (sanitizeHref)                        |
 
 **Error Handling Pattern**:
 
@@ -926,12 +929,14 @@ await atomicWriteFile(filePath, JSON.stringify(data, null, 2) + '\n')
 
 Lightweight, read-only AI content serving. Does not require auth or the editor API.
 
-| File              | Purpose                                                               |
-| ----------------- | --------------------------------------------------------------------- |
-| handler.ts        | `createAIContentHandler()` — Next.js GET handler for AI-ready content |
-| generate.ts       | `generateAIContent()` — converts entries to AI-ready markdown         |
-| resolve-branch.ts | `resolveBranchRoot()` — resolves branch root for AI handler           |
-| types.ts          | `AIContentConfig` type                                                |
+| File                | Purpose                                                                                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| handler.ts          | `createAIContentHandler()` — Next.js GET handler for AI-ready content                                                                                     |
+| generate.ts         | `generateAIContent()` — converts entries to AI-ready markdown                                                                                             |
+| json-to-markdown.ts | Schema-driven entry-to-markdown converter; applies `stripMdxImports` for MDX entries before appending body                                                |
+| resolve-branch.ts   | `resolveBranchRoot()` — resolves branch root for AI handler; mirrors `createActiveBranchDetector` priority (explicit config > git HEAD in dev > fallback) |
+| strip-mdx.ts        | `stripMdxImports()` — removes import/export statements from MDX body content for clean AI consumption                                                     |
+| types.ts            | `AIContentConfig` type                                                                                                                                    |
 
 **Caching strategy in `createAIContentHandler()`**:
 
