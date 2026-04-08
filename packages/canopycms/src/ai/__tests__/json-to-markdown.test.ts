@@ -550,4 +550,41 @@ describe('entryToMarkdown', () => {
       expect(md).toContain('Original')
     })
   })
+
+  describe('MDX import stripping', () => {
+    it('strips import statements from MDX entry body', () => {
+      const entry = makeEntry({
+        format: 'mdx',
+        fields: [{ name: 'title', type: 'string' }],
+        data: { title: 'Hello' },
+        body: "import { Callout } from '../components'\n\n# Hello\n\nSome content.",
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).not.toContain('import')
+      expect(md).toContain('# Hello')
+      expect(md).toContain('Some content.')
+    })
+
+    it('preserves JSX components in MDX body', () => {
+      const entry = makeEntry({
+        format: 'mdx',
+        fields: [{ name: 'title', type: 'string' }],
+        data: { title: 'Hello' },
+        body: '<Callout type="warning">Important</Callout>',
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('<Callout type="warning">Important</Callout>')
+    })
+
+    it('does not strip imports from plain MD entries', () => {
+      const entry = makeEntry({
+        format: 'md',
+        fields: [{ name: 'title', type: 'string' }],
+        data: { title: 'Hello' },
+        body: 'import something\n\n# Hello',
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('import something')
+    })
+  })
 })
