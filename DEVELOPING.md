@@ -525,7 +525,7 @@ Content-serving code uses the pattern `config.defaultActiveBranch ?? config.defa
 
 **Impact on sync CLI:**
 
-The `canopycms sync` command defaults to the current git branch (via `detectCurrentBranch()`) and auto-creates workspaces on push with `selectBranch({ autoCreate: true })`. This means `sync --push` on a new branch will create a workspace automatically, matching the `defaultActiveBranch` auto-detection behavior.
+The `canopycms sync` command defaults to the current git branch (via `detectCurrentBranch()`) and auto-creates workspaces on push with `selectBranch({ autoCreate: true })`. This means `sync push` on a new branch will create a workspace automatically, matching the `defaultActiveBranch` auto-detection behavior.
 
 **In tests:**
 
@@ -2349,30 +2349,30 @@ The `canopycms sync` command provides bidirectional content sync between the dev
 **Commands:**
 
 ```bash
-# 3-way merge: merge working-tree and editor changes, pull result back (default)
-npx canopycms sync
-
 # Push working-tree content into a branch workspace (working tree → CMS)
-npx canopycms sync --push
+npx canopycms sync push
 
 # Pull content from a branch workspace (CMS → working tree)
-npx canopycms sync --pull
+npx canopycms sync pull
+
+# 3-way merge: merge working-tree and editor changes, pull result back
+npx canopycms sync both
 
 # Abort a failed merge in the branch workspace
-npx canopycms sync --abort
+npx canopycms sync abort
 
 # Target a specific branch workspace
-npx canopycms sync --push --branch my-feature
+npx canopycms sync push --branch my-feature
 
 # Specify a custom content directory (default: content)
-npx canopycms sync --content-root src/content
+npx canopycms sync push --content-root src/content
 ```
 
 **Push flow:** Copies the working tree's content directory into the branch workspace, replacing it. Uncommitted editor changes in the workspace are auto-committed to git history before overwriting, so nothing is lost. The resulting commit is tagged `canopycms-sync-base` for future 3-way merges. Uses crash-safe directory replacement (backup-rename pattern) so that if interrupted, at least one copy always exists on disk.
 
 **Pull flow:** Copies content from a branch workspace back into the working tree's content directory. Before overwriting, detects both uncommitted changes and untracked files that would be deleted, and warns with a confirmation prompt. If multiple branch workspaces exist and `--branch` is not specified, an interactive prompt lets you choose. After pulling, review the changes with `git diff` and commit when ready.
 
-**Both (3-way merge) flow:** The default when running `canopycms sync` without flags. Uses a `canopycms-sync-base` git tag as the merge base to perform a proper 3-way merge between working-tree changes and editor changes in the workspace. If the merge produces conflicts, the workspace is left in a merge state with instructions to resolve manually, then run `canopycms sync --pull` or `canopycms sync --abort`.
+**Both (3-way merge) flow:** Invoked via `canopycms sync both`. Uses a `canopycms-sync-base` git tag as the merge base to perform a proper 3-way merge between working-tree changes and editor changes in the workspace. If the merge produces conflicts, the workspace is left in a merge state with instructions to resolve manually, then run `canopycms sync pull` or `canopycms sync abort`.
 
 **Abort flow:** Runs `git merge --abort` in the branch workspace to cancel a failed merge and restore the workspace to its pre-merge state.
 
@@ -2385,12 +2385,12 @@ npx canopycms sync --content-root src/content
 vim content/posts/new-post.mdx
 
 # 2. Push changes so the CMS can see them
-npx canopycms sync --push
+npx canopycms sync push
 
 # 3. Open the CMS UI, refine content, publish
 
 # 4. Pull the published changes back to your working tree
-npx canopycms sync --pull
+npx canopycms sync pull
 
 # 5. Review and commit
 git diff
@@ -2398,7 +2398,7 @@ git add content/
 git commit -m "Update posts"
 
 # Or use 3-way merge to handle both directions at once
-npx canopycms sync
+npx canopycms sync both
 ```
 
 ## Quality Checks

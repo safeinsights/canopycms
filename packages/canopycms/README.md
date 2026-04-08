@@ -420,7 +420,7 @@ The `isLoading` object mirrors your data structure:
 - **`dev`** (default): Full-featured local development with branching and git ops. Uses `.canopy-dev/content-branches/` for per-branch clones.
   - **Auto-initialization**: If no `defaultRemoteUrl` is configured, CanopyCMS automatically creates a local remote at `.canopy-dev/remote.git` and seeds it with your current `baseBranch` (e.g., `main`). This allows fully local testing of branching and submission workflows without requiring an external GitHub remote.
   - **Manual remote**: You can still provide an explicit `defaultRemoteUrl` to use a real remote or custom local path.
-  - Use `npx canopycms sync` to push/pull content between your working tree and the CMS.
+  - Use `npx canopycms sync push` / `npx canopycms sync pull` to sync content between your working tree and the CMS.
 - **`prod`**: EFS-backed roots under `$CANOPYCMS_WORKSPACE_ROOT` (default: `/mnt/efs/workspace`). Requires `defaultRemoteUrl`.
 
 Branch metadata lives in `.canopy-meta/branch.json`; registry in `branches.json` at the branches root. Content APIs resolve the workspace root from branch state + mode instead of relying on `process.cwd()`.
