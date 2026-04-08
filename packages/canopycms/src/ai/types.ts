@@ -87,6 +87,57 @@ export type FieldTransformFn = (value: unknown, fieldConfig: FieldConfig) => str
 export type FieldTransforms = Record<string, Record<string, FieldTransformFn>>
 
 /**
+ * Parsed props from a JSX component tag.
+ * Values are always strings (parsed from attribute syntax).
+ * Boolean attributes (no value) are represented as `"true"`.
+ */
+export type ComponentProps = Record<string, string>
+
+/**
+ * Transform function for a specific MDX component.
+ * Return `undefined` to keep the original JSX unchanged.
+ *
+ * @param props - Parsed props from the JSX tag
+ * @param children - Inner content between open/close tags (empty string for self-closing)
+ * @returns Markdown string to replace the component, or `undefined` to keep original
+ */
+export type ComponentTransformFn = (props: ComponentProps, children: string) => string | undefined
+
+/**
+ * Component transform overrides, keyed by PascalCase component name.
+ * Applied to all MD/MDX entry types — component names are global to a project.
+ *
+ * @example
+ * ```ts
+ * {
+ *   Callout: (props, children) => `> **${props.type ?? 'Note'}:** ${children}`,
+ *   Spacer: () => '',
+ *   ChecklistItem: (props, children) =>
+ *     `- [ ] ${props.label ? `**${props.label}:** ` : ''}${children}`,
+ * }
+ * ```
+ */
+export type ComponentTransforms = Record<string, ComponentTransformFn>
+
+/**
+ * Body transform function for MD/MDX entry bodies.
+ * Receives the body after stripMdxImports and componentTransforms have been applied.
+ */
+export type BodyTransformFn = (body: string, entry: AIEntryMeta) => string
+
+/**
+ * Body transform overrides, keyed by entry type name.
+ *
+ * @example
+ * ```ts
+ * {
+ *   guideline: (body) => body.replace(/\s*\|\|[^\n]+/g, ''),
+ * }
+ * ```
+ */
+export type BodyTransforms = Record<string, BodyTransformFn>
+
+/**
  * Main AI content configuration. Shared by route handler and build utility.
  */
 export interface AIContentConfig {
@@ -96,6 +147,10 @@ export interface AIContentConfig {
   bundles?: BundleConfig[]
   /** Per-entry-type, per-field markdown overrides */
   fieldTransforms?: FieldTransforms
+  /** Per-component MDX transforms (applied before bodyTransforms) */
+  componentTransforms?: ComponentTransforms
+  /** Per-entry-type body transforms (applied after componentTransforms) */
+  bodyTransforms?: BodyTransforms
 }
 
 /**
