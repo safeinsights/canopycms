@@ -7,6 +7,7 @@ import type { OperatingMode } from './operating-mode'
 import type { EntrySchemaRegistry } from './schema/types'
 import { resolveSchema, isValidSchema } from './schema/resolver'
 import { flattenSchema } from './config/flatten'
+import { isBuildMode } from './build-mode'
 
 /** Bump when BranchSchemaCacheEntry shape changes to auto-invalidate stale caches */
 const SCHEMA_CACHE_VERSION = 2
@@ -100,45 +101,52 @@ export class BranchSchemaCache {
     contentRootName: string,
   ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
     const contentRoot = path.join(branchRoot, contentRootName)
-    const cacheDir = path.join(branchRoot, '.canopy-meta')
-    const cachePath = path.join(cacheDir, 'schema-cache.json')
-    const stalePath = path.join(cacheDir, 'schema-cache.stale')
 
-    // Check if cache exists and is not marked stale
-    let cacheData: BranchSchemaCacheEntry | null = null
-    try {
-      const staleExists = await fs
-        .access(stalePath)
-        .then(() => true)
-        .catch(() => false)
-      if (!staleExists) {
-        const cacheContent = await fs.readFile(cachePath, 'utf-8')
-        cacheData = JSON.parse(cacheContent) as BranchSchemaCacheEntry
-      }
-    } catch {
-      // Cache doesn't exist or can't be read
-      cacheData = null
-    }
+    // In static/build mode, branchRoot is process.cwd() (the project root).
+    // Skip disk cache to avoid creating .canopy-meta/ at the project root.
+    const skipDiskCache = isBuildMode()
 
-    if (cacheData && cacheData.version === SCHEMA_CACHE_VERSION) {
-      // In dev mode, also check file mtimes so direct schema edits (outside the CMS) are picked up.
-      // Debounce: skip the walk if we checked this contentRoot within the last second.
-      const now = Date.now()
-      const lastCheck = this.lastMtimeCheck.get(contentRoot) ?? 0
-      if (
-        this.devMode &&
-        now - lastCheck >= MTIME_CHECK_DEBOUNCE_MS &&
-        (await isStaleByMtime(contentRoot, new Date(cacheData.cachedAt)))
-      ) {
-        this.lastMtimeCheck.set(contentRoot, now)
+    if (!skipDiskCache) {
+      const cacheDir = path.join(branchRoot, '.canopy-meta')
+      const cachePath = path.join(cacheDir, 'schema-cache.json')
+      const stalePath = path.join(cacheDir, 'schema-cache.stale')
+
+      // Check if cache exists and is not marked stale
+      let cacheData: BranchSchemaCacheEntry | null = null
+      try {
+        const staleExists = await fs
+          .access(stalePath)
+          .then(() => true)
+          .catch(() => false)
+        if (!staleExists) {
+          const cacheContent = await fs.readFile(cachePath, 'utf-8')
+          cacheData = JSON.parse(cacheContent) as BranchSchemaCacheEntry
+        }
+      } catch {
+        // Cache doesn't exist or can't be read
         cacheData = null
-      } else {
-        if (this.devMode) this.lastMtimeCheck.set(contentRoot, now)
-        return { schema: cacheData.schema, flatSchema: cacheData.flatSchema }
+      }
+
+      if (cacheData && cacheData.version === SCHEMA_CACHE_VERSION) {
+        // In dev mode, also check file mtimes so direct schema edits (outside the CMS) are picked up.
+        // Debounce: skip the walk if we checked this contentRoot within the last second.
+        const now = Date.now()
+        const lastCheck = this.lastMtimeCheck.get(contentRoot) ?? 0
+        if (
+          this.devMode &&
+          now - lastCheck >= MTIME_CHECK_DEBOUNCE_MS &&
+          (await isStaleByMtime(contentRoot, new Date(cacheData.cachedAt)))
+        ) {
+          this.lastMtimeCheck.set(contentRoot, now)
+          cacheData = null
+        } else {
+          if (this.devMode) this.lastMtimeCheck.set(contentRoot, now)
+          return { schema: cacheData.schema, flatSchema: cacheData.flatSchema }
+        }
       }
     }
 
-    // Cache miss or stale - regenerate
+    // Cache miss, stale, or build mode - resolve fresh
     const result = await resolveSchema(contentRoot, entrySchemaRegistry)
 
     // Validate schema has content
@@ -152,25 +160,31 @@ export class BranchSchemaCache {
     // Use configured contentRoot name as base path for logical paths
     const flatSchema = flattenSchema(result.schema, contentRootName)
 
-    // Save to cache
-    await fs.mkdir(cacheDir, { recursive: true })
-    const newCache: BranchSchemaCacheEntry = {
-      version: SCHEMA_CACHE_VERSION,
-      schema: result.schema,
-      flatSchema,
-      cachedAt: new Date().toISOString(),
-    }
+    if (!skipDiskCache) {
+      const cacheDir = path.join(branchRoot, '.canopy-meta')
+      const cachePath = path.join(cacheDir, 'schema-cache.json')
+      const stalePath = path.join(cacheDir, 'schema-cache.stale')
 
-    // Atomic write: write to temp file, then rename
-    const tmpPath = path.join(cacheDir, `schema-cache.tmp.${Date.now()}.${Math.random()}.json`)
-    await fs.writeFile(tmpPath, JSON.stringify(newCache, null, 2), 'utf-8')
-    await fs.rename(tmpPath, cachePath)
+      // Save to cache
+      await fs.mkdir(cacheDir, { recursive: true })
+      const newCache: BranchSchemaCacheEntry = {
+        version: SCHEMA_CACHE_VERSION,
+        schema: result.schema,
+        flatSchema,
+        cachedAt: new Date().toISOString(),
+      }
 
-    // Remove stale marker if exists
-    try {
-      await fs.unlink(stalePath)
-    } catch {
-      // Stale marker may not exist - that's fine
+      // Atomic write: write to temp file, then rename
+      const tmpPath = path.join(cacheDir, `schema-cache.tmp.${Date.now()}.${Math.random()}.json`)
+      await fs.writeFile(tmpPath, JSON.stringify(newCache, null, 2), 'utf-8')
+      await fs.rename(tmpPath, cachePath)
+
+      // Remove stale marker if exists
+      try {
+        await fs.unlink(stalePath)
+      } catch {
+        // Stale marker may not exist - that's fine
+      }
     }
 
     return { schema: result.schema, flatSchema }
@@ -182,6 +196,8 @@ export class BranchSchemaCache {
    * @param branchRoot - Root directory of the branch
    */
   async invalidate(branchRoot: string): Promise<void> {
+    if (isBuildMode()) return
+
     const cacheDir = path.join(branchRoot, '.canopy-meta')
     const stalePath = path.join(cacheDir, 'schema-cache.stale')
 
