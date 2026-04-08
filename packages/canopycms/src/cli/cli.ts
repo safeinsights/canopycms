@@ -19,7 +19,7 @@ import type { AuthPlugin } from '../auth/plugin'
 /** Parse raw CLI args into structured flags and positional command. Exported for testing. */
 export function parseArgs(rawArgs: string[]) {
   const argv = minimist(rawArgs, {
-    boolean: ['force', 'non-interactive', 'push', 'pull', 'abort'],
+    boolean: ['force', 'non-interactive'],
     string: ['app-dir', 'branch', 'content-root', 'output', 'config'],
     alias: { f: 'force' },
   })
@@ -28,14 +28,13 @@ export function parseArgs(rawArgs: string[]) {
   return { argv, flags, command }
 }
 
-/** Resolve sync direction from --push/--pull/--abort flags. Exported for testing. */
-export function resolveSyncDirection(
-  push: boolean,
-  pull: boolean,
-  abort: boolean,
-): 'push' | 'pull' | 'both' | 'abort' {
-  if (abort) return 'abort'
-  return push && !pull ? 'push' : pull && !push ? 'pull' : 'both'
+const SYNC_SUBCOMMANDS = ['push', 'pull', 'both', 'abort'] as const
+type SyncSubcommand = (typeof SYNC_SUBCOMMANDS)[number]
+
+/** Resolve sync subcommand from positional arg. Returns null if missing or invalid. Exported for testing. */
+export function resolveSyncSubcommand(sub: string | undefined): SyncSubcommand | null {
+  if (sub && (SYNC_SUBCOMMANDS as readonly string[]).includes(sub)) return sub as SyncSubcommand
+  return null
 }
 
 // CLI entrypoint
@@ -140,12 +139,23 @@ async function main() {
       appDir: typeof flags['app-dir'] === 'string' ? flags['app-dir'] : undefined,
     })
   } else if (command === 'sync') {
+    const direction = resolveSyncSubcommand(argv._[1] as string | undefined)
+    if (!direction) {
+      console.log('Usage: canopycms sync <command> [options]')
+      console.log('')
+      console.log('Commands:')
+      console.log('  push    Push working-tree content to a branch workspace')
+      console.log('  pull    Pull content from a branch workspace')
+      console.log('  both    3-way merge between working tree and workspace')
+      console.log('  abort   Abort a failed merge in a branch workspace')
+      console.log('')
+      console.log('Options:')
+      console.log('  --branch <name>       Target branch workspace')
+      console.log('  --content-root <path> Content directory (default: content)')
+      console.log('  --force               Skip confirmation prompts')
+      process.exit(argv._[1] ? 1 : 0)
+    }
     const { sync } = await import('./sync')
-    const direction = resolveSyncDirection(
-      flags['push'] === true,
-      flags['pull'] === true,
-      flags['abort'] === true,
-    )
     await sync({
       projectDir: process.cwd(),
       direction,
@@ -173,13 +183,11 @@ async function main() {
     console.log('    --config <path>       Path to AI content config file')
     console.log('    --app-dir <path>      App directory (default: app)')
     console.log('')
-    console.log('  sync                    Sync content between working tree and CMS')
-    console.log('    --push                Push working-tree content to a branch workspace')
-    console.log('    --pull                Pull content from a branch workspace')
-    console.log('    --abort               Abort a failed merge in a branch workspace')
-    console.log('    --branch <name>       Target branch workspace')
-    console.log('    --content-root <path> Content directory (default: content)')
-    console.log('    --force               Skip confirmation prompts')
+    console.log('  sync <command>          Sync content between working tree and CMS')
+    console.log('    push                  Push working-tree content to a branch workspace')
+    console.log('    pull                  Pull content from a branch workspace')
+    console.log('    both                  3-way merge between working tree and workspace')
+    console.log('    abort                 Abort a failed merge in a branch workspace')
     process.exit(0)
   }
 }

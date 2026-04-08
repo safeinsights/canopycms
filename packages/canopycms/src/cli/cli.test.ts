@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseArgs, resolveSyncDirection } from './cli'
+import { parseArgs, resolveSyncSubcommand } from './cli'
 
 describe('parseArgs', () => {
   it('parses command as first positional arg', () => {
@@ -13,10 +13,14 @@ describe('parseArgs', () => {
   })
 
   it('parses boolean flags', () => {
-    const { flags } = parseArgs(['sync', '--push', '--force', '--abort'])
-    expect(flags['push']).toBe(true)
+    const { flags } = parseArgs(['sync', 'push', '--force'])
     expect(flags['force']).toBe(true)
-    expect(flags['abort']).toBe(true)
+  })
+
+  it('parses sync subcommands as positional args', () => {
+    const { argv } = parseArgs(['sync', 'push'])
+    expect(argv._[0]).toBe('sync')
+    expect(argv._[1]).toBe('push')
   })
 
   it('parses string flags', () => {
@@ -64,29 +68,28 @@ describe('parseArgs', () => {
   })
 })
 
-describe('resolveSyncDirection', () => {
-  it('returns push when only --push is set', () => {
-    expect(resolveSyncDirection(true, false, false)).toBe('push')
+describe('resolveSyncSubcommand', () => {
+  it('returns push for "push"', () => {
+    expect(resolveSyncSubcommand('push')).toBe('push')
   })
 
-  it('returns pull when only --pull is set', () => {
-    expect(resolveSyncDirection(false, true, false)).toBe('pull')
+  it('returns pull for "pull"', () => {
+    expect(resolveSyncSubcommand('pull')).toBe('pull')
   })
 
-  it('returns both when neither flag is set', () => {
-    expect(resolveSyncDirection(false, false, false)).toBe('both')
+  it('returns both for "both"', () => {
+    expect(resolveSyncSubcommand('both')).toBe('both')
   })
 
-  it('returns both when both flags are set', () => {
-    expect(resolveSyncDirection(true, true, false)).toBe('both')
+  it('returns abort for "abort"', () => {
+    expect(resolveSyncSubcommand('abort')).toBe('abort')
   })
 
-  it('returns abort when --abort is set', () => {
-    expect(resolveSyncDirection(false, false, true)).toBe('abort')
+  it('returns null for undefined', () => {
+    expect(resolveSyncSubcommand(undefined)).toBeNull()
   })
 
-  it('returns abort when --abort takes precedence over other flags', () => {
-    expect(resolveSyncDirection(true, false, true)).toBe('abort')
-    expect(resolveSyncDirection(false, true, true)).toBe('abort')
+  it('returns null for unrecognized subcommand', () => {
+    expect(resolveSyncSubcommand('foo')).toBeNull()
   })
 })

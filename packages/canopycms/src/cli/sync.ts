@@ -531,8 +531,8 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
         p.log.error(`  ${file}`)
       }
       p.log.info('The branch workspace is now in a merge state.')
-      p.log.info('Resolve the conflicts in the workspace, then run: canopycms sync --pull')
-      p.log.info('Or abort the merge with: canopycms sync --abort')
+      p.log.info('Resolve the conflicts in the workspace, then run: canopycms sync pull')
+      p.log.info('Or abort the merge with: canopycms sync abort')
       // Clean up the incoming branch (leave merge state for user resolution)
       await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
       return { pushed: 0, pulled: 0 }

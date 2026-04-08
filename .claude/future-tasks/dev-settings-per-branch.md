@@ -26,7 +26,7 @@ settings from one development line can leak into another.
    - Option B: Single workspace directory, switch the checked-out settings branch on startup
 
 3. **Should these settings ever be pushed to GitHub?**
-   - Currently: local-only (never pushed by `sync --push`)
+   - Currently: local-only (never pushed by `sync push`)
    - Per-branch isolation might benefit from persistence if multiple developers share branches
 
 4. **Migration**: Existing `.canopy-dev/settings/` data would need to be handled
