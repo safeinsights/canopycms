@@ -163,6 +163,40 @@ describe('applyComponentTransforms', () => {
     })
   })
 
+  describe('props containing > character', () => {
+    it('handles > in double-quoted prop value on self-closing tag', () => {
+      const transforms: ComponentTransforms = {
+        Callout: (props) => `> ${props.title}`,
+      }
+      const input = '<Callout title="a > b" />'
+      expect(applyComponentTransforms(input, transforms)).toBe('> a > b')
+    })
+
+    it('handles > in double-quoted prop value on tag with children', () => {
+      const transforms: ComponentTransforms = {
+        Callout: (props, children) => `> **${props.title}:** ${children.trim()}`,
+      }
+      const input = '<Callout title="a > b">Content here</Callout>'
+      expect(applyComponentTransforms(input, transforms)).toBe('> **a > b:** Content here')
+    })
+
+    it('handles > in single-quoted prop value', () => {
+      const transforms: ComponentTransforms = {
+        Callout: (props) => `> ${props.title}`,
+      }
+      const input = "<Callout title='x > y' />"
+      expect(applyComponentTransforms(input, transforms)).toBe('> x > y')
+    })
+
+    it('handles nested same-name components with > in props', () => {
+      const transforms: ComponentTransforms = {
+        Box: (props, children) => `[${props.label ?? ''}${children.trim()}]`,
+      }
+      const input = '<Box label="a > b">outer <Box label="c > d">inner</Box> end</Box>'
+      expect(applyComponentTransforms(input, transforms)).toBe('[a > bouter [c > dinner] end]')
+    })
+  })
+
   describe('code block preservation', () => {
     it('does not transform components inside fenced code blocks', () => {
       const transforms: ComponentTransforms = {
@@ -193,6 +227,41 @@ describe('applyComponentTransforms', () => {
       const result = applyComponentTransforms(input, transforms)
       expect(result).toContain('> Transform me')
       expect(result).toContain('<Callout>Keep me</Callout>')
+    })
+
+    it('does not transform components inside inline code spans', () => {
+      const transforms: ComponentTransforms = {
+        Callout: (_, children) => `> ${children.trim()}`,
+      }
+      const input = 'Use `<Callout>text</Callout>` for callouts.'
+      expect(applyComponentTransforms(input, transforms)).toBe(input)
+    })
+
+    it('does not transform components inside double-backtick code spans', () => {
+      const transforms: ComponentTransforms = {
+        Callout: (_, children) => `> ${children.trim()}`,
+      }
+      const input = 'Use ``<Callout>text</Callout>`` for callouts.'
+      expect(applyComponentTransforms(input, transforms)).toBe(input)
+    })
+
+    it('transforms components outside inline code while preserving inside', () => {
+      const transforms: ComponentTransforms = {
+        Callout: (_, children) => `> ${children.trim()}`,
+      }
+      const input =
+        '<Callout>Transform me</Callout>\n\nSee `<Callout>Keep me</Callout>` for syntax.'
+      const result = applyComponentTransforms(input, transforms)
+      expect(result).toContain('> Transform me')
+      expect(result).toContain('`<Callout>Keep me</Callout>`')
+    })
+
+    it('does not transform self-closing tags inside inline code', () => {
+      const transforms: ComponentTransforms = {
+        Spacer: () => '',
+      }
+      const input = 'Use `<Spacer />` to add space.'
+      expect(applyComponentTransforms(input, transforms)).toBe(input)
     })
   })
 

@@ -40,20 +40,47 @@ export function parseComponentProps(attrString: string): ComponentProps {
  * Mask fenced code blocks so component transforms don't touch them.
  * Returns the masked string and a restore function.
  */
+/** Regex fragment matching JSX attribute content, skipping quoted strings containing '>'. */
+const ATTR_CONTENT = `(?:[^>"']|"[^"]*"|'[^']*')*`
+
 const BLOCK_PREFIX = '<<CODEBLOCK'
 const BLOCK_SUFFIX = '>>'
 const BLOCK_RESTORE_RE = /<<CODEBLOCK(\d+)>>/g
 
+const INLINE_PREFIX = '<<INLINECODE'
+const INLINE_SUFFIX = '>>'
+const INLINE_RESTORE_RE = /<<INLINECODE(\d+)>>/g
+
+/**
+ * Mask fenced code blocks and inline code spans so component transforms
+ * don't touch them. Returns the masked string and a restore function.
+ */
 function maskCodeBlocks(body: string): { masked: string; restore: (s: string) => string } {
-  const placeholders: string[] = []
-  const masked = body.replace(/^(```|~~~).*\n[\s\S]*?\n\1\s*$/gm, (block) => {
-    const idx = placeholders.length
-    placeholders.push(block)
+  const blocks: string[] = []
+  const inlines: string[] = []
+
+  // 1. Mask fenced code blocks
+  let masked = body.replace(/^(```|~~~).*\n[\s\S]*?\n\1\s*$/gm, (block) => {
+    const idx = blocks.length
+    blocks.push(block)
     return `${BLOCK_PREFIX}${idx}${BLOCK_SUFFIX}`
   })
+
+  // 2. Mask inline code spans (double-backtick first, then single-backtick)
+  masked = masked.replace(/``[^`]+``|`[^`]+`/g, (span) => {
+    const idx = inlines.length
+    inlines.push(span)
+    return `${INLINE_PREFIX}${idx}${INLINE_SUFFIX}`
+  })
+
   return {
     masked,
-    restore: (s: string) => s.replace(BLOCK_RESTORE_RE, (_, i) => placeholders[Number(i)]),
+    restore: (s: string) => {
+      // Restore in reverse order: inline first, then blocks
+      s = s.replace(INLINE_RESTORE_RE, (_, i) => inlines[Number(i)])
+      s = s.replace(BLOCK_RESTORE_RE, (_, i) => blocks[Number(i)])
+      return s
+    },
   }
 }
 
@@ -82,7 +109,7 @@ export function applyComponentTransforms(body: string, transforms: ComponentTran
 
       // Match self-closing tags: <Name ... />
       // eslint-disable-next-line security/detect-non-literal-regexp
-      const selfClosingRegex = new RegExp(`<${escapeRegex(name)}(\\s[^>]*?)?\\s*/>`, 'g')
+      const selfClosingRegex = new RegExp(`<${escapeRegex(name)}(\\s${ATTR_CONTENT}?)?\\s*/>`, 'g')
       result = result.replace(selfClosingRegex, (raw, attrStr) => {
         const props = parseComponentProps(attrStr?.trim() ?? '')
         const replacement = transform(props, '')
@@ -94,7 +121,7 @@ export function applyComponentTransforms(body: string, transforms: ComponentTran
       // Match opening + closing tag pairs: <Name ...>children</Name>
       // Search from an advancing offset to handle undefined (passthrough) returns
       // eslint-disable-next-line security/detect-non-literal-regexp
-      const openRegex = new RegExp(`<${escapeRegex(name)}(\\s[^>]*)?>`, 'g')
+      const openRegex = new RegExp(`<${escapeRegex(name)}(\\s${ATTR_CONTENT})?>`, 'g')
       let openMatch: RegExpExecArray | null
 
       while ((openMatch = openRegex.exec(result)) !== null) {
@@ -147,7 +174,7 @@ function findMatchingClose(
   // Regex to find either an opening or closing tag for this component
   // eslint-disable-next-line security/detect-non-literal-regexp
   const tagRegex = new RegExp(
-    `<${escapeRegex(name)}(?:\\s[^>]*)?>|<${escapeRegex(name)}(?:\\s[^>]*)?\\s*/>|${escapeRegex(closeTag)}`,
+    `<${escapeRegex(name)}(?:\\s${ATTR_CONTENT})?>|<${escapeRegex(name)}(?:\\s${ATTR_CONTENT})?\\s*/>|${escapeRegex(closeTag)}`,
     'g',
   )
   tagRegex.lastIndex = pos
