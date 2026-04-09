@@ -10,10 +10,11 @@
 import { useMemo } from 'react'
 import type { EditorEntry } from '../Editor'
 import { computeEntryUrl } from '../../utils/entry-url'
-import type { EntryLinkUrlResolver } from '../../entry-link-resolver'
-
-const BASE58_CHAR = '[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]'
-const ENTRY_LINK_PATTERN = new RegExp(`entry:(${BASE58_CHAR}{12})(#[^\\s)>"']*)?`, 'g')
+import {
+  ENTRY_LINK_PATTERN,
+  ENTRY_LINK_QUICK_CHECK,
+  type EntryLinkUrlResolver,
+} from '../../entry-link-resolver'
 
 /**
  * Build a Map from content IDs to URL info from the editor entries list.
@@ -40,14 +41,13 @@ function buildEntryUrlMap(
   return map
 }
 
-/** Quick-check for early bail-out — avoids regex overhead on strings without entry links. */
-const ENTRY_LINK_QUICK_CHECK =
-  /entry:[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{12}/
-
 /**
  * Replace entry:ID patterns in text using the provided URL map.
- * Lightweight client-side version (no code-block skipping needed since
- * the preview renderer handles code blocks independently).
+ * Lightweight client-side version — does not skip code blocks since the
+ * preview renderer handles code blocks independently. This means entry:ID
+ * inside code blocks will resolve in preview but not in published output
+ * (where the server-side resolver skips code blocks). Acceptable trade-off
+ * for keeping the client bundle small.
  */
 function resolveEntryLinksClient(text: string, urlMap: Map<string, string>): string {
   return text.replace(ENTRY_LINK_PATTERN, (_match, id: string, anchor?: string) => {

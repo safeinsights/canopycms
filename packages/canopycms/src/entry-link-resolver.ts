@@ -23,13 +23,14 @@ const log = createDebugLogger({ prefix: 'EntryLinks' })
  * Base58 alphabet pattern (matches content IDs).
  * Excludes ambiguous characters: 0, O, I, l
  */
-const BASE58_CHAR = '[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]'
+/** Base58 alphabet character class (excludes ambiguous: 0, O, I, l). */
+export const BASE58_CHAR = '[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]'
 
 /**
  * Pattern matching `entry:CONTENT_ID` with optional anchor fragment.
- * Used for replacement in text.
+ * Uses the `g` flag — safe to share when used only with `.replace()`.
  */
-const ENTRY_LINK_PATTERN = new RegExp(`entry:(${BASE58_CHAR}{12})(#[^\\s)>"']*)?`, 'g')
+export const ENTRY_LINK_PATTERN = new RegExp(`entry:(${BASE58_CHAR}{12})(#[^\\s)>"']*)?`, 'g')
 
 /** Custom URL resolver callback type */
 export type EntryLinkUrlResolver = (entry: {
@@ -95,8 +96,8 @@ export function resolveEntryLinksInText(
     .join('')
 }
 
-/** Quick-check pattern for early bail-out (no code-block awareness needed). */
-const ENTRY_LINK_QUICK_CHECK =
+/** Quick-check pattern for early bail-out (no `g` flag, safe for `.test()`). */
+export const ENTRY_LINK_QUICK_CHECK =
   /entry:[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{12}/
 
 /**
