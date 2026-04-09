@@ -173,6 +173,7 @@ export class ContentStore {
     absolutePath: string
     relativePath: PhysicalPath
     id?: string
+    entryTypeName?: string
   }> {
     const rootWithSep = this.root.endsWith(path.sep) ? this.root : `${this.root}${path.sep}`
 
@@ -299,6 +300,7 @@ export class ContentStore {
         absolutePath: resolved,
         relativePath: path.relative(this.root, resolved) as PhysicalPath,
         id,
+        entryTypeName: finalEntryTypeName,
       }
     }
 
@@ -347,7 +349,11 @@ export class ContentStore {
     options: { resolveReferences?: boolean } = {},
   ): Promise<ContentDocument> {
     const schemaItem = this.assertSchemaItem(collectionPath)
-    const { absolutePath, relativePath } = await this.buildPaths(schemaItem, slug)
+    const {
+      absolutePath,
+      relativePath,
+      entryTypeName: resolvedEntryTypeName,
+    } = await this.buildPaths(schemaItem, slug)
     const raw = await fs.readFile(absolutePath, 'utf8')
 
     let doc: ContentDocument
@@ -359,10 +365,18 @@ export class ContentStore {
       format = schemaItem.format
       fields = schemaItem.schema
     } else {
-      // Collection entry
-      const defaultEntry = getDefaultEntryType(schemaItem.entries)
-      format = defaultEntry?.format || 'json'
-      fields = defaultEntry?.schema || []
+      // Collection entry — use actual entry type from filename, fall back to default
+      let entryTypeConfig: EntryTypeConfig | undefined
+      if (resolvedEntryTypeName && schemaItem.entries) {
+        entryTypeConfig = (schemaItem.entries as readonly EntryTypeConfig[]).find(
+          (e) => e.name === resolvedEntryTypeName,
+        )
+      }
+      if (!entryTypeConfig) {
+        entryTypeConfig = getDefaultEntryType(schemaItem.entries)
+      }
+      format = entryTypeConfig?.format || 'json'
+      fields = entryTypeConfig?.schema || []
     }
 
     if (format === 'json') {
