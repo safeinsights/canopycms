@@ -132,6 +132,7 @@ The core package organizes code into focused modules, each with a single respons
 **Validation** - Content validation utilities:
 
 - Reference validator for checking content references
+- Entry link validator for checking inline entry:ID links in body content
 - Deletion checker for referential integrity
 - Field traversal utilities for schema-aware content inspection
 
@@ -161,6 +162,7 @@ Some files remain at the source root because they represent core domain concepts
 - Content store (file-based content persistence)
 - Content tree (build-time content tree builder for adopter navigation, sitemaps, etc.)
 - Content types (content data structures)
+- Entry link resolver (inline entry:ID link resolution for body content)
 
 **Git:**
 
@@ -1542,6 +1544,39 @@ This prevents orphaned references and keeps the content relationship graph intac
 - Returns: Validation result with any errors found
 - Provides real-time feedback in the editor
 
+### Entry Links (Inline Content Links)
+
+Reference fields work well for structured data (e.g., "this post's author is Alice"), but content authors also need to link to other entries from within prose. Entry links extend the reference-by-ID pattern from structured fields to inline links in markdown body content.
+
+**Syntax**: Entry links use a markdown link with the `entry:` protocol and a 12-character content ID:
+
+```markdown
+See the [Getting Started guide](entry:vh2WdhwAFiSL) for setup instructions.
+You can also jump to the [API section](entry:a1b2c3d4e5f6#authentication).
+```
+
+This reuses the same immutable content IDs already used for reference fields, so entry links survive renames and moves just like reference fields do. The optional anchor fragment (`#section`) is preserved through resolution.
+
+**Why a custom protocol instead of file paths?** File paths break when content is renamed or reorganized. Content IDs are stable identifiers embedded in filenames that persist across slug changes, collection moves, and restructuring. By using the `entry:` protocol, authors get links that never go stale as long as the target entry exists.
+
+**Resolution at read time**: Entry links are resolved in `ContentReader.read()`, parallel to existing reference resolution. The resolver scans body content for `entry:ID` patterns, looks up each ID in the bidirectional content ID index, computes the URL path from the entry's location in the content tree, and replaces the `entry:ID` with the resolved URL. This happens server-side at read time, so adopters receive fully-resolved URLs without any changes to their rendering pipeline. Resolution is enabled by default and can be disabled per-read via the `resolveEntryLinks` option.
+
+**Code-block protection**: The resolver skips fenced code blocks and inline code spans to avoid corrupting code examples that mention the `entry:` syntax.
+
+**Missing targets**: If a referenced entry no longer exists, the link is replaced with `#` (a dead anchor) and a warning is logged. This graceful degradation ensures pages still render even with broken links.
+
+**Custom URL schemes**: Adopters can provide an `entryLinkUrl` callback in the config to override the default URL computation. This supports cases where the site's URL structure doesn't match the content tree layout (e.g., localized paths, custom routing).
+
+**Live preview**: The editor resolves entry links client-side for the live preview iframe. A React hook builds a lookup map from content IDs to URL paths using the editor's loaded entry list, then transforms body content before it reaches the preview frame. This is a lightweight, synchronous resolution that avoids API calls during preview updates.
+
+**Editor UI**: The markdown editor toolbar includes an "Insert Entry Link" button that opens a searchable modal. Entries are grouped by collection and filterable by name, slug, or collection. Selecting an entry inserts `[Entry Title](entry:CONTENT_ID)` into the editor at the cursor position.
+
+**Validation**: On save, the system scans body content and markdown/MDX fields for `entry:ID` patterns and checks that each referenced ID exists. Broken entry links produce warnings, not errors -- saves are never blocked by missing link targets. This parallels reference validation but uses a softer stance because inline links in prose are less structurally critical than typed reference fields.
+
+**AI content pipeline**: The AI content generation engine resolves entry links to URLs in its markdown output, ensuring AI consumers see clean, navigable links rather than internal `entry:` references.
+
+**Design rationale**: Entry links were designed to integrate with the existing content ID infrastructure rather than introducing a parallel identification system. By reusing content IDs, the feature inherits all the stability and rename-safety guarantees already built into the reference system. The read-time resolution approach means zero adoption cost -- no rendering pipeline changes, no new template helpers, no client-side resolution library needed by adopters.
+
 ## Comments & Collaboration
 
 The comment system supports asynchronous review workflows.
@@ -1599,6 +1634,7 @@ Complex state management logic is extracted into custom hooks:
 - **useGroupManager**: Group administration
 - **usePermissionManager**: Permission rule management
 - **useReferenceResolution**: Async reference data loading with caching
+- **useEntryLinkResolution**: Client-side entry:ID link resolution for live preview
 
 This extraction keeps components focused on rendering while hooks encapsulate business logic and side effects.
 
@@ -1663,7 +1699,7 @@ CanopyCMS can export its content as clean, AI-consumable markdown with a structu
 
 - **Read-only, public access**: AI content is generated from the default branch (typically `main`) and requires no authentication. It represents the current published state of the site, not in-progress branch edits.
 - **Schema-aware conversion**: The generator uses schema field definitions to produce structured markdown rather than dumping raw JSON. Field labels, descriptions, select option labels, nested objects, and block structures are all rendered meaningfully.
-- **No internal identifiers exposed**: Embedded content IDs (the 12-character Base58 identifiers in filenames) are stripped from all output. AI consumers see clean paths and slugs only.
+- **No internal identifiers exposed**: Embedded content IDs (the 12-character Base58 identifiers in filenames) are stripped from all output, and `entry:ID` inline links are resolved to clean URLs. AI consumers see clean paths and human-readable references only.
 - **Opt-out exclusion model**: All content is included by default. Adopters configure exclusions (by collection, entry type, or custom predicate) rather than inclusions.
 
 ### Content Transformation

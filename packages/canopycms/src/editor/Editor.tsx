@@ -41,6 +41,7 @@ import {
   useSchemaManager,
 } from './hooks'
 import { useBranchActions } from './hooks/useBranchActions'
+import { useEntryLinkResolution } from './hooks/useEntryLinkResolution'
 import { EditorFooter, EditorHeader, EditorSidebar } from './components'
 import { RenameEntryModal } from './components/RenameEntryModal'
 import { EntryCreateModal } from './components/EntryCreateModal'
@@ -48,6 +49,7 @@ import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath, ContentId } from '../paths/types'
 import { useApiClient } from './context'
+import { EntryLinkContext, type EntryLinkOption } from './fields/entry-link'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -99,6 +101,7 @@ export interface EditorProps {
   operatingMode: OperatingMode
   collections?: EditorCollection[]
   contentRoot?: string
+  entryLinkUrl?: import('../entry-link-resolver').EntryLinkUrlResolver
   initialSelectedId?: string
   initialValues?: Record<string, FormValue>
   renderPreview?: (entry: EditorEntry, value: FormValue | undefined) => React.ReactNode
@@ -126,6 +129,7 @@ export const Editor: React.FC<EditorProps> = ({
   branchName = '',
   collections,
   contentRoot,
+  entryLinkUrl,
   initialSelectedId,
   initialValues,
   renderPreview,
@@ -719,7 +723,34 @@ export const Editor: React.FC<EditorProps> = ({
     treeExpandedStateRef.current = treeControllerRef.current?.expandedState ?? {}
   }
 
-  const previewFrameData = Object.keys(previewData).length > 0 ? previewData : effectiveValue
+  // Resolve entry:ID links in body content for live preview
+  const { resolveEntryLinks } = useEntryLinkResolution({
+    entries: entriesState,
+    contentRoot,
+    entryLinkUrl,
+  })
+
+  const previewFrameData = useMemo(() => {
+    const data = Object.keys(previewData).length > 0 ? previewData : effectiveValue
+    if (!data) return data
+    return resolveEntryLinks(data)
+  }, [previewData, effectiveValue, resolveEntryLinks])
+
+  // Entry link context for the InsertEntryLink toolbar button
+  const entryLinkContextValue = useMemo(
+    () => ({
+      entries: entriesState.map(
+        (e): EntryLinkOption => ({
+          contentId: e.contentId,
+          label: e.label,
+          slug: e.slug,
+          collectionPath: e.collectionPath,
+          collectionName: e.collectionName,
+        }),
+      ),
+    }),
+    [entriesState],
+  )
 
   // Helper component for centered messages
   const CenteredMessage = ({ children }: { children: React.ReactNode }) => (
@@ -846,33 +877,35 @@ export const Editor: React.FC<EditorProps> = ({
                       You don&apos;t have permission to edit this content.
                     </CenteredMessage>
                   ) : schema.length > 0 && effectiveValue ? (
-                    <FormRenderer
-                      fields={schema}
-                      value={effectiveValue}
-                      onChange={(next) => {
-                        const contentId = currentEntry?.contentId
-                        if (contentId) {
-                          setDrafts((prev) => ({ ...prev, [contentId]: next }))
+                    <EntryLinkContext.Provider value={entryLinkContextValue}>
+                      <FormRenderer
+                        fields={schema}
+                        value={effectiveValue}
+                        onChange={(next) => {
+                          const contentId = currentEntry?.contentId
+                          if (contentId) {
+                            setDrafts((prev) => ({ ...prev, [contentId]: next }))
+                          }
+                        }}
+                        branch={branchNameState}
+                        onResolvedValueChange={setPreviewData}
+                        onLoadingStateChange={setPreviewLoadingState}
+                        comments={comments}
+                        currentEntryPath={selectedPath}
+                        currentUserId={currentUser}
+                        canResolve={canResolveComments}
+                        focusedFieldPath={focusedFieldPath}
+                        highlightThreadId={highlightThreadId}
+                        onAddComment={handleAddComment}
+                        onResolveThread={handleResolveThread}
+                        conflictNotice={
+                          !!(
+                            currentEntry?.contentId &&
+                            currentBranch?.conflictFiles?.includes(currentEntry.contentId)
+                          )
                         }
-                      }}
-                      branch={branchNameState}
-                      onResolvedValueChange={setPreviewData}
-                      onLoadingStateChange={setPreviewLoadingState}
-                      comments={comments}
-                      currentEntryPath={selectedPath}
-                      currentUserId={currentUser}
-                      canResolve={canResolveComments}
-                      focusedFieldPath={focusedFieldPath}
-                      highlightThreadId={highlightThreadId}
-                      onAddComment={handleAddComment}
-                      onResolveThread={handleResolveThread}
-                      conflictNotice={
-                        !!(
-                          currentEntry?.contentId &&
-                          currentBranch?.conflictFiles?.includes(currentEntry.contentId)
-                        )
-                      }
-                    />
+                      />
+                    </EntryLinkContext.Provider>
                   ) : (
                     <CenteredMessage>No fields to edit.</CenteredMessage>
                   )

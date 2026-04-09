@@ -57,6 +57,7 @@ export async function generateAIContentFiles(
     flatSchema,
     contentRoot: contentRootName,
     config: aiConfig,
+    entryLinkUrl: config.entryLinkUrl,
   })
 
   // Write files to disk

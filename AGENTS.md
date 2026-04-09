@@ -53,14 +53,14 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `operating-mode/` - Operating mode strategies (prod, dev)
 - `api/` - API handlers (see [api/AGENTS.md](packages/canopycms/src/api/AGENTS.md) for API development guidelines)
 - `middleware/` - API middleware patterns (branch access guards); see also `api/guards.ts` for declarative guard system
-- `validation/` - Validation utilities (field traversal, reference validation)
+- `validation/` - Validation utilities (field traversal, reference validation, entry link validation)
 - `utils/` - Shared utilities (error handling, debug, atomic file writes, title-field: resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists)
 - `worker/` - CmsWorker daemon, task queue, deployment infrastructure
 - `ai/` - AI-ready content generation (markdown converter, engine, route handler)
 - `build/` - Static build utilities (write AI content files to disk)
 - `cli/` - CLI commands (`init`, `init-deploy`, `worker run-once`, `generate-ai-content`, `sync`)
 
-Top-level files (intentionally flat for discoverability): services.ts, content-store.ts, content-listing.ts, content-tree.ts, git-manager.ts, branch-registry.ts, etc.
+Top-level files (intentionally flat for discoverability): services.ts, content-store.ts, content-listing.ts, content-tree.ts, entry-link-resolver.ts, git-manager.ts, branch-registry.ts, etc.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md#module-structure) for detailed module documentation.
 

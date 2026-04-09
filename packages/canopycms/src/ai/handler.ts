@@ -69,6 +69,7 @@ export function createAIContentHandler(
       flatSchema,
       contentRoot: contentRootName,
       config: aiConfig,
+      entryLinkUrl: config.entryLinkUrl,
     })
 
     cachedResult = result

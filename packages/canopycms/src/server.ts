@@ -23,3 +23,11 @@ export type {
 } from './content-tree'
 export { listEntries } from './content-listing'
 export type { ListEntriesItem, ListEntriesOptions } from './content-listing'
+export {
+  resolveEntryUrl,
+  resolveEntryLinksInText,
+  resolveEntryLinksInData,
+  extractEntryLinkIds,
+} from './entry-link-resolver'
+export type { EntryLinkUrlResolver } from './entry-link-resolver'
+export { computeEntryUrl } from './utils/entry-url'

@@ -6,6 +6,7 @@ import { sanitizeHref } from 'canopycms'
 import { useCanopyPreview } from 'canopycms/client'
 
 import type { HomeContent } from '../schemas'
+import { MarkdownBody } from './MarkdownBody'
 
 export const HomeView: React.FC<{ data: HomeContent }> = ({ data }) => {
   const { data: liveData, fieldProps } = useCanopyPreview<HomeContent>({
@@ -23,12 +24,9 @@ export const HomeView: React.FC<{ data: HomeContent }> = ({ data }) => {
         <h1 className="text-3xl font-semibold text-slate-900" {...fieldProps('hero.title')}>
           {hero.title}
         </h1>
-        <p
-          className="mt-3 text-base leading-relaxed text-slate-600 whitespace-pre-wrap"
-          {...fieldProps('hero.body')}
-        >
-          {hero.body}
-        </p>
+        <div className="mt-3 text-base leading-relaxed text-slate-600" {...fieldProps('hero.body')}>
+          <MarkdownBody content={hero.body} />
+        </div>
         <a
           href={ctaHref}
           {...fieldProps('cta')}
