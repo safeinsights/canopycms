@@ -82,6 +82,11 @@ export interface SelectFieldConfig extends BaseFieldConfig {
   options: SelectOption[]
 }
 
+/**
+ * Runtime reference field config. Note: `resolvedSchema` for type inference
+ * lives only on InferableField in entry-schema.ts — do not add it here,
+ * as it would flow into validation, serialization, and editor code.
+ */
 export interface ReferenceFieldConfig extends BaseFieldConfig {
   type: 'reference'
   collections: string[]

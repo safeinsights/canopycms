@@ -1397,11 +1397,12 @@ git reset HEAD .canopy-dev/
 
 The codebase maintains high test coverage (1260+ tests, 98%+ coverage):
 
-| Test Type         | Location                           | Purpose                           |
-| ----------------- | ---------------------------------- | --------------------------------- |
-| Unit tests        | `src/**/__tests__/*.test.ts`       | Test individual functions/modules |
-| Component tests   | `src/editor/**/*.test.tsx`         | Test React components with jsdom  |
-| Integration tests | `src/__integration__/**/*.test.ts` | Test complete workflows           |
+| Test Type         | Location                                 | Purpose                                          |
+| ----------------- | ---------------------------------------- | ------------------------------------------------ |
+| Unit tests        | `src/**/__tests__/*.test.ts`             | Test individual functions/modules                |
+| Component tests   | `src/editor/**/*.test.tsx`               | Test React components with jsdom                 |
+| Integration tests | `src/__integration__/**/*.test.ts`       | Test complete workflows                          |
+| Type-level tests  | `src/**/*.test.ts` (with `expectTypeOf`) | Verify TypeScript type inference at compile time |
 
 ### Running Tests
 
@@ -2021,6 +2022,81 @@ This approach ensures:
 - Expected console output doesn't pollute test runs
 - Unexpected console output still surfaces (helping catch real issues)
 - Console behavior is properly tested as part of the functionality
+
+### Type-Level Testing with `expectTypeOf`
+
+Vitest includes a built-in `expectTypeOf` utility for compile-time type assertions. Use it to verify that TypeScript infers the correct types from schema definitions, generics, or utility types -- without executing any runtime code.
+
+**Import from vitest:**
+
+```typescript
+import { describe, it, expectTypeOf } from 'vitest'
+```
+
+**Basic usage:**
+
+```typescript
+it('infers the correct content type from a schema', () => {
+  const schema = defineEntrySchema([
+    { name: 'title', type: 'string' },
+    { name: 'body', type: 'markdown' },
+  ])
+
+  type Content = TypeFromEntrySchema<typeof schema>
+
+  // Verify exact type shape
+  expectTypeOf<Content>().toEqualTypeOf<{ title: string; body: string }>()
+})
+```
+
+**Testing discriminated unions:**
+
+```typescript
+it('produces a discriminated union for block fields', () => {
+  const schema = defineEntrySchema([
+    {
+      name: 'blocks',
+      type: 'block',
+      templates: [
+        { name: 'hero', label: 'Hero', fields: [{ name: 'headline', type: 'string' }] },
+        { name: 'cta', label: 'CTA', fields: [{ name: 'ctaText', type: 'string' }] },
+      ],
+    },
+  ])
+
+  type Content = TypeFromEntrySchema<typeof schema>
+  type Block = Content['blocks'][number]
+  type HeroBlock = Extract<Block, { template: 'hero' }>
+
+  // Each variant only has its own template's fields
+  expectTypeOf<HeroBlock['value']>().toEqualTypeOf<{ headline: string }>()
+
+  // Template narrows to a literal, not a union
+  expectTypeOf<HeroBlock['template']>().toEqualTypeOf<'hero'>()
+
+  void schema // Prevent unused-variable lint error
+})
+```
+
+**Key matchers:**
+
+| Matcher                           | Purpose                                               |
+| --------------------------------- | ----------------------------------------------------- |
+| `.toEqualTypeOf<T>()`             | Exact type match (strictest)                          |
+| `.toMatchTypeOf<T>()`             | Target is assignable to expected (allows extra props) |
+| `.toBeString()` / `.toBeNumber()` | Primitive type checks                                 |
+| `.toBeNullable()`                 | Type includes `null` or `undefined`                   |
+
+**When to use type-level tests:**
+
+- Verifying that generic utility types (like `TypeFromEntrySchema`) produce correct output
+- Ensuring discriminated unions narrow properly (block templates, field types)
+- Catching regressions in type inference when schema definitions change
+- Testing that resolved references carry the correct type through generics
+
+**Important:** These tests run during `vitest --typecheck` or alongside normal tests. They have zero runtime overhead -- `expectTypeOf` is erased at runtime. The `void schema` pattern prevents TypeScript's unused-variable error for schemas that exist solely to drive type inference.
+
+See `packages/canopycms/src/entry-schema.test.ts` for the complete example.
 
 ### Testing Context and Auth
 

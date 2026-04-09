@@ -93,6 +93,19 @@ export type WireFlatSchemaItem =
 
 type Registry = Record<string, EntrySchema>
 
+/** Strip `resolvedSchema` (type-inference-only) from fields before sending over the wire. */
+function stripResolvedSchema(registry: Registry): Registry {
+  return Object.fromEntries(
+    Object.entries(registry).map(([key, fields]) => [
+      key,
+      fields.map((field) => {
+        const { resolvedSchema: _, ...rest } = field as unknown as Record<string, unknown>
+        return rest as unknown as (typeof fields)[number]
+      }),
+    ]),
+  )
+}
+
 /**
  * Resolve the schemaRef for an entry type. Uses the explicit schemaRef if set,
  * otherwise does a reverse lookup in the registry by matching the schema array.
@@ -335,7 +348,7 @@ const getSchemaHandler = async (
     status: 200,
     data: {
       flatSchema: toWireFlatSchema(branchContext.flatSchema, ctx.services.entrySchemaRegistry),
-      entrySchemas: ctx.services.entrySchemaRegistry,
+      entrySchemas: stripResolvedSchema(ctx.services.entrySchemaRegistry),
     },
   }
 }

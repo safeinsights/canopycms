@@ -1,3 +1,4 @@
+/** Structural constraint for fields that can be inferred by TypeFromEntrySchema. */
 type InferableField = {
   name: string
   type: string
@@ -7,6 +8,8 @@ type InferableField = {
   isBody?: boolean
   fields?: readonly InferableField[]
   templates?: ReadonlyArray<{ name: string; fields: readonly InferableField[] }>
+  /** For reference fields: the target collection's schema (from defineEntrySchema) to infer resolved types. */
+  resolvedSchema?: readonly InferableField[]
 }
 
 type RequiredValue<F extends InferableField, V> = F['required'] extends false ? V | undefined : V
@@ -18,6 +21,21 @@ type ObjectValue<F extends InferableField & { fields: readonly InferableField[] 
   F['list'] extends true ? Array<InferContentShape<F['fields']>> : InferContentShape<F['fields']>
 >
 
+/**
+ * Distributes over each member of a block templates union to produce a discriminated union.
+ *
+ * Uses a bare type parameter `T` so that the conditional type distributes:
+ * given `T = { name: 'hero'; fields: [...] } | { name: 'cta'; fields: [...] }`,
+ * produces `{ template: 'hero'; value: { ... } } | { template: 'cta'; value: { ... } }`
+ * rather than collapsing into a single merged object.
+ */
+type DistributeBlockTemplate<T> = T extends {
+  name: infer N
+  fields: infer Fields
+}
+  ? { template: N & string; value: InferContentShape<Extract<Fields, readonly InferableField[]>> }
+  : never
+
 type BlockValue<
   F extends InferableField & {
     templates: ReadonlyArray<{
@@ -25,17 +43,7 @@ type BlockValue<
       fields: readonly InferableField[]
     }>
   },
-> = RequiredValue<
-  F,
-  Array<
-    F['templates'][number] extends { name: infer N; fields: infer Fields }
-      ? {
-          template: N & string
-          value: InferContentShape<Extract<Fields, readonly InferableField[]>>
-        }
-      : never
-  >
->
+> = RequiredValue<F, Array<DistributeBlockTemplate<F['templates'][number]>>>
 
 type FieldValue<F extends InferableField> = F extends {
   type: 'object'
@@ -52,15 +60,17 @@ type FieldValue<F extends InferableField> = F extends {
       >
     : F extends { type: 'select' }
       ? ScalarValue<F, string | number>
-      : F extends { type: 'reference' }
-        ? ScalarValue<F, Record<string, unknown> | null>
-        : F extends { type: 'boolean' }
-          ? ScalarValue<F, boolean>
-          : F extends { type: 'number' }
-            ? ScalarValue<F, number>
-            : F extends { type: 'date' }
-              ? ScalarValue<F, string>
-              : ScalarValue<F, string>
+      : F extends { type: 'reference'; resolvedSchema: infer S }
+        ? ScalarValue<F, InferContentShape<Extract<S, readonly InferableField[]>> | null>
+        : F extends { type: 'reference' }
+          ? ScalarValue<F, string | null>
+          : F extends { type: 'boolean' }
+            ? ScalarValue<F, boolean>
+            : F extends { type: 'number' }
+              ? ScalarValue<F, number>
+              : F extends { type: 'date' }
+                ? ScalarValue<F, string>
+                : ScalarValue<F, string>
 
 /**
  * Infer a TypeScript data shape from a CanopyCMS FieldConfig-like array.
