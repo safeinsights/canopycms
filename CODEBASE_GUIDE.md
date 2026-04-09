@@ -929,14 +929,15 @@ await atomicWriteFile(filePath, JSON.stringify(data, null, 2) + '\n')
 
 Lightweight, read-only AI content serving. Does not require auth or the editor API.
 
-| File                | Purpose                                                                                                                                                   |
-| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| handler.ts          | `createAIContentHandler()` — Next.js GET handler for AI-ready content                                                                                     |
-| generate.ts         | `generateAIContent()` — converts entries to AI-ready markdown                                                                                             |
-| json-to-markdown.ts | Schema-driven entry-to-markdown converter; applies `stripMdxImports` for MDX entries before appending body                                                |
-| resolve-branch.ts   | `resolveBranchRoot()` — resolves branch root for AI handler; mirrors `createActiveBranchDetector` priority (explicit config > git HEAD in dev > fallback) |
-| strip-mdx.ts        | `stripMdxImports()` — removes import/export statements from MDX body content for clean AI consumption                                                     |
-| types.ts            | `AIContentConfig` type                                                                                                                                    |
+| File                    | Purpose                                                                                                                                                                                                                    |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| handler.ts              | `createAIContentHandler()` — Next.js GET handler for AI-ready content                                                                                                                                                      |
+| generate.ts             | `generateAIContent()` — converts entries to AI-ready markdown                                                                                                                                                              |
+| json-to-markdown.ts     | Schema-driven entry-to-markdown converter; body pipeline: `stripMdxImports → componentTransforms → bodyTransforms`                                                                                                         |
+| transform-components.ts | `applyComponentTransforms(body, transforms)`, `parseComponentProps(attrString)` — parses JSX from MDX and applies adopter-defined transforms to clean markdown; regex + convergence loop, code-block and inline-code aware |
+| resolve-branch.ts       | `resolveBranchRoot()` — resolves branch root for AI handler; mirrors `createActiveBranchDetector` priority (explicit config > git HEAD in dev > fallback)                                                                  |
+| strip-mdx.ts            | `stripMdxImports()` — removes import/export statements from MDX body content for clean AI consumption                                                                                                                      |
+| types.ts                | `AIContentConfig`, `AIEntryMeta`, `ExcludeConfig`, `BundleConfig`, `FieldTransforms`, `ComponentProps`, `ComponentTransformFn`, `ComponentTransforms`, `BodyTransformFn`, `BodyTransforms`, manifest types                 |
 
 **Caching strategy in `createAIContentHandler()`**:
 

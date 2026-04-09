@@ -7,6 +7,7 @@
 
 import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig, SelectFieldConfig } from '../config'
 import { stripMdxImports } from './strip-mdx'
+import { applyComponentTransforms } from './transform-components'
 import type { AIEntry, AIContentConfig } from './types'
 
 /**
@@ -81,9 +82,19 @@ function renderMarkdownEntry(
     parts.push('')
   }
 
-  // Append body — strip import/export statements for MDX entries
+  // Append body — pipeline: stripMdxImports → componentTransforms → bodyTransforms
   if (entry.body) {
-    const body = entry.format === 'mdx' ? stripMdxImports(entry.body) : entry.body
+    let body = entry.format === 'mdx' ? stripMdxImports(entry.body) : entry.body
+
+    if (config?.componentTransforms && Object.keys(config.componentTransforms).length > 0) {
+      body = applyComponentTransforms(body, config.componentTransforms)
+    }
+
+    const bodyTransformFn = config?.bodyTransforms?.[entry.entryType]
+    if (bodyTransformFn) {
+      body = bodyTransformFn(body, entry)
+    }
+
     parts.push(body.trim())
     parts.push('')
   }

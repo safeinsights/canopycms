@@ -1404,15 +1404,40 @@ const aiConfig = defineAIContentConfig({
     },
   ],
 
-  // Per-field markdown overrides
+  // Per-field markdown overrides (keyed by entry type, then field name)
   fieldTransforms: {
     dataset: {
       dataFields: (value) =>
         `## Data Fields\n| Name | Type |\n|---|---|\n${(value as Array<{ name: string; type: string }>).map((f) => `| ${f.name} | ${f.type} |`).join('\n')}`,
     },
   },
+
+  // Per-component MDX transforms (keyed by PascalCase component name)
+  // Converts JSX components to clean markdown for AI output.
+  // Return undefined to keep the original JSX unchanged.
+  componentTransforms: {
+    Callout: (props, children) => `> **${props.type ?? 'Note'}:** ${children}`,
+    Spacer: () => '',
+    ChecklistItem: (props, children) =>
+      `- [ ] ${props.label ? `**${props.label}:** ` : ''}${children}`,
+    MatrixRow: (props) => `- **${props.label}** (${props.category}): columns ${props.matches}`,
+  },
+
+  // Per-entry-type body transforms for general markdown cleanup.
+  // Applied after componentTransforms; receives the full body string.
+  bodyTransforms: {
+    guideline: (body) => body.replace(/\s*\|\|[^\n]+/g, ''),
+  },
 })
 ```
+
+**Transform processing pipeline:** For MD/MDX entries, transforms are applied in this order:
+
+1. **`stripMdxImports`** -- import statements are removed automatically
+2. **`componentTransforms`** -- JSX components are matched by PascalCase name and replaced with the transform output (or kept as-is if the transform returns `undefined`)
+3. **`bodyTransforms`** -- the full body string is passed through the entry-type-specific transform for final cleanup
+
+`componentTransforms` are keyed by component name and apply globally across all entry types (since MDX components are project-wide). `bodyTransforms` are keyed by entry type name and are useful for stripping entry-type-specific syntax that does not belong in AI output.
 
 Pass the config to either delivery mechanism:
 

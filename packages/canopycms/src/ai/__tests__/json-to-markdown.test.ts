@@ -587,4 +587,110 @@ describe('entryToMarkdown', () => {
       expect(md).toContain('import something')
     })
   })
+
+  describe('bodyTransforms', () => {
+    it('applies body transform for matching entry type', () => {
+      const entry = makeEntry({
+        format: 'md',
+        entryType: 'guideline',
+        fields: [{ name: 'title', type: 'string' }],
+        data: { title: 'Guide' },
+        body: '## Getting Started || Start\n\nContent here.',
+      })
+      const config: AIContentConfig = {
+        bodyTransforms: {
+          guideline: (body) => body.replace(/\s*\|\|[^\n]+/g, ''),
+        },
+      }
+      const md = entryToMarkdown(entry, config)
+      expect(md).toContain('## Getting Started')
+      expect(md).not.toContain('|| Start')
+    })
+
+    it('does not apply body transform for non-matching entry type', () => {
+      const entry = makeEntry({
+        format: 'md',
+        entryType: 'post',
+        fields: [{ name: 'title', type: 'string' }],
+        data: { title: 'Post' },
+        body: '## Title || Short',
+      })
+      const config: AIContentConfig = {
+        bodyTransforms: {
+          guideline: (body) => body.replace(/\s*\|\|[^\n]+/g, ''),
+        },
+      }
+      const md = entryToMarkdown(entry, config)
+      expect(md).toContain('|| Short')
+    })
+
+    it('receives entry metadata in the transform', () => {
+      const entry = makeEntry({
+        format: 'md',
+        entryType: 'doc',
+        fields: [],
+        data: {},
+        body: 'Content',
+      })
+      const config: AIContentConfig = {
+        bodyTransforms: {
+          doc: (body, meta) => `[${meta.entryType}] ${body}`,
+        },
+      }
+      const md = entryToMarkdown(entry, config)
+      expect(md).toContain('[doc] Content')
+    })
+  })
+
+  describe('componentTransforms', () => {
+    it('applies component transforms to MDX body', () => {
+      const entry = makeEntry({
+        format: 'mdx',
+        fields: [{ name: 'title', type: 'string' }],
+        data: { title: 'Hello' },
+        body: '<Callout type="warning">Watch out!</Callout>',
+      })
+      const config: AIContentConfig = {
+        componentTransforms: {
+          Callout: (props, children) => `> **${props.type}:** ${children}`,
+        },
+      }
+      const md = entryToMarkdown(entry, config)
+      expect(md).toContain('> **warning:** Watch out!')
+      expect(md).not.toContain('<Callout')
+    })
+
+    it('applies pipeline in correct order: stripMdxImports → componentTransforms → bodyTransforms', () => {
+      const entry = makeEntry({
+        format: 'mdx',
+        entryType: 'guideline',
+        fields: [{ name: 'title', type: 'string' }],
+        data: { title: 'Guide' },
+        body: [
+          "import { Callout } from '../components'",
+          '',
+          '## Getting Started || Start',
+          '',
+          '<Callout type="tip">Do this</Callout>',
+        ].join('\n'),
+      })
+      const config: AIContentConfig = {
+        componentTransforms: {
+          Callout: (props, children) => `> **${props.type}:** ${children}`,
+        },
+        bodyTransforms: {
+          guideline: (body) => body.replace(/\s*\|\|[^\n]+/g, ''),
+        },
+      }
+      const md = entryToMarkdown(entry, config)
+      // Imports stripped
+      expect(md).not.toContain('import')
+      // Component transformed
+      expect(md).toContain('> **tip:** Do this')
+      expect(md).not.toContain('<Callout')
+      // Heading metadata stripped
+      expect(md).toContain('## Getting Started')
+      expect(md).not.toContain('|| Start')
+    })
+  })
 })
