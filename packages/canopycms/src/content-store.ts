@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import matter from 'gray-matter'
+import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
 import { atomicWriteFile } from './utils/atomic-write'
 import { findBodyFieldName } from './utils/body-field'
 
@@ -21,7 +22,7 @@ import {
   resolveCollectionPath,
 } from './content-id-index'
 import { generateId } from './id'
-import { getFormatExtension } from './utils/format'
+import { asRecord, getFormatExtension } from './utils/format'
 import {
   normalizeFilesystemPath,
   type LogicalPath,
@@ -43,7 +44,12 @@ export type JsonDocument = {
   data: Record<string, unknown>
 }
 
-export type ContentDocument = (MarkdownDocument | JsonDocument) & {
+export type YamlDocument = {
+  format: 'yaml'
+  data: Record<string, unknown>
+}
+
+export type ContentDocument = (MarkdownDocument | JsonDocument | YamlDocument) & {
   collection: LogicalPath
   collectionName: string
   relativePath: PhysicalPath
@@ -53,6 +59,7 @@ export type ContentDocument = (MarkdownDocument | JsonDocument) & {
 export type WriteInput =
   | { format: 'md' | 'mdx'; data?: Record<string, unknown>; body: string }
   | { format: 'json'; data: Record<string, unknown> }
+  | { format: 'yaml'; data: Record<string, unknown> }
 
 export type ContentStoreErrorCode = 'NOT_FOUND' | 'NO_SCHEMA_ITEM' | 'FORBIDDEN' | 'VALIDATION'
 
@@ -359,11 +366,21 @@ export class ContentStore {
     }
 
     if (format === 'json') {
-      const data = JSON.parse(raw) as Record<string, unknown>
+      const data = asRecord(JSON.parse(raw))
       doc = {
         collection: schemaItem.logicalPath,
         collectionName: schemaItem.name,
         format: 'json',
+        data,
+        relativePath,
+        absolutePath,
+      }
+    } else if (format === 'yaml') {
+      const data = asRecord(yamlParse(raw))
+      doc = {
+        collection: schemaItem.logicalPath,
+        collectionName: schemaItem.name,
+        format: 'yaml',
         data,
         relativePath,
         absolutePath,
@@ -434,28 +451,28 @@ export class ContentStore {
     })
     await fs.mkdir(path.dirname(absolutePath), { recursive: true })
 
+    // Helper to update the ID index after writing
+    const updateIdIndex = () => {
+      if (!id) return
+      const existing = idIndex.findById(id)
+      if (existing) {
+        if (existing.relativePath !== relativePath) {
+          idIndex.updatePath(existing.id, relativePath)
+        }
+      } else {
+        idIndex.add({
+          type: 'entry',
+          relativePath,
+          collection: collectionPath,
+          slug: slug || undefined,
+        })
+      }
+    }
+
     if (input.format === 'json') {
       const json = JSON.stringify(input.data ?? {}, null, 2)
       await atomicWriteFile(absolutePath, `${json}\n`)
-
-      // Update index (ID is already in filename)
-      if (id) {
-        const existing = idIndex.findById(id)
-        if (existing) {
-          // Update if path changed, otherwise do nothing
-          if (existing.relativePath !== relativePath) {
-            idIndex.updatePath(existing.id, relativePath)
-          }
-        } else {
-          // Add new entry to index
-          idIndex.add({
-            type: 'entry',
-            relativePath,
-            collection: collectionPath,
-            slug: slug || undefined,
-          })
-        }
-      }
+      updateIdIndex()
 
       return {
         collection: schemaItem.logicalPath,
@@ -467,27 +484,24 @@ export class ContentStore {
       }
     }
 
-    const file = matter.stringify(input.body, input.data ?? {})
-    await atomicWriteFile(absolutePath, file)
+    if (input.format === 'yaml') {
+      const yaml = yamlStringify(input.data ?? {})
+      await atomicWriteFile(absolutePath, yaml)
+      updateIdIndex()
 
-    // Update index (ID is already in filename)
-    if (id) {
-      const existing = idIndex.findById(id)
-      if (existing) {
-        // Update if path changed, otherwise do nothing
-        if (existing.relativePath !== relativePath) {
-          idIndex.updatePath(existing.id, relativePath)
-        }
-      } else {
-        // Add new entry to index
-        idIndex.add({
-          type: 'entry',
-          relativePath,
-          collection: collectionPath,
-          slug: slug || undefined,
-        })
+      return {
+        collection: schemaItem.logicalPath,
+        collectionName: schemaItem.name,
+        format: 'yaml',
+        data: input.data ?? {},
+        relativePath,
+        absolutePath,
       }
     }
+
+    const file = matter.stringify(input.body, input.data ?? {})
+    await atomicWriteFile(absolutePath, file)
+    updateIdIndex()
 
     return {
       collection: schemaItem.logicalPath,

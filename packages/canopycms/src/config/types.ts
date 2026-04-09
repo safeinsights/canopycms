@@ -33,7 +33,7 @@ export const fieldTypes = [
 
 export type PrimitiveFieldType = (typeof primitiveFieldTypes)[number]
 export type FieldType = (typeof fieldTypes)[number]
-export type ContentFormat = 'md' | 'mdx' | 'json'
+export type ContentFormat = 'md' | 'mdx' | 'json' | 'yaml'
 export type MediaAdapterKind = 'local' | 's3' | 'lfs' | (string & {})
 
 // Permission types

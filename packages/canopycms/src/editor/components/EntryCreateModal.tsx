@@ -16,7 +16,7 @@ import { IconAlertCircle } from '@tabler/icons-react'
 export interface EntryType {
   name: string
   label?: string
-  format: 'json' | 'md' | 'mdx'
+  format: 'json' | 'md' | 'mdx' | 'yaml'
   default?: boolean
   maxItems?: number
 }

@@ -375,7 +375,7 @@ CanopyCMS is entirely file system based. There are no external databases, no Red
 
 **What gets stored:**
 
-- **Content**: MD/MDX/JSON files in the content directory (committed to git)
+- **Content**: MD/MDX/JSON/YAML files in the content directory (committed to git)
 - **Branch metadata**: `.canopy-meta/branch.json` per workspace (state, PR references, sync status, conflict tracking, automatically excluded via git info/exclude)
 - **Branch registry**: `branches.json` at branches root (inventory of all branches, gitignored)
 - **Comments**: `.canopy-meta/comments.json` per branch (NOT committed to git, automatically excluded)
@@ -502,7 +502,7 @@ The schema is defined as a `RootCollectionConfig` with two optional properties:
 **Entry types** define the types of content allowed in a collection. Each entry type has:
 
 - **name**: The type identifier (e.g., 'post', 'doc', 'settings')
-- **format**: Content format (md, mdx, json)
+- **format**: Content format (md, mdx, json, yaml)
 - **fields**: Field schema definitions
 - **maxItems**: Optional cardinality limit (1 = only one instance allowed, like a singleton)
 - **default**: Whether this is the default type for "Add" button
@@ -513,7 +513,9 @@ The schema is defined as a `RootCollectionConfig` with two optional properties:
 
 - **isTitle**: Marks a field as the human-readable title for entries of this type. The editor UI, content listings, and tree builders use this to display meaningful labels instead of raw slugs. Only one field per entry type may be marked `isTitle`. The field must be a scalar (string-like) value that can be resolved at runtime, so `isTitle` is rejected on fields nested inside `list: true` object fields where the system cannot determine which array element to use.
 
-**Reserved field names**: For md/mdx entry types, the field name "body" is reserved. The system uses `body` to carry the markdown content itself (everything below the frontmatter). Schema validation rejects md/mdx entry types that define a frontmatter field named "body" to prevent collisions with the content body. JSON entry types have no such restriction since they have no separate body concept.
+**Reserved field names**: For md/mdx entry types, the field name "body" is reserved. The system uses `body` to carry the markdown content itself (everything below the frontmatter). Schema validation rejects md/mdx entry types that define a frontmatter field named "body" to prevent collisions with the content body. Data-only formats (JSON and YAML) have no such restriction since they have no separate body concept.
+
+**Format categories**: Content formats fall into two categories. **Document formats** (md, mdx) use frontmatter/body separation, where structured fields live in YAML frontmatter and the markdown body is a distinct content area. **Data-only formats** (json, yaml) store all fields as structured data with no body concept. This distinction drives how the system reads, writes, and validates entries of each format.
 
 **Key design principle**: Entry types are schema metadata, not navigable tree nodes. A collection with `entries: [{ name: 'post', ... }]` defines that entries of type "post" can be created in that collection. The entry type itself doesn't appear in navigation—only the collection does.
 
@@ -728,7 +730,7 @@ At initialization, the hierarchical schema is flattened into a `Map<path, FlatSc
 - `type: 'entry-type'`
 - `logicalPath`: Complete logical path including entry type name (e.g., "content/posts/post") - branded type
 - `name`: Entry type name (e.g., 'post', 'doc')
-- `format`: Content format (md, mdx, json)
+- `format`: Content format (md, mdx, json, yaml)
 - `fields`: Field definitions
 - `maxItems`: Optional cardinality limit
 - `parentPath`: Logical path of the parent collection
@@ -1707,7 +1709,7 @@ CanopyCMS can export its content as clean, AI-consumable markdown with a structu
 The generation engine walks the schema tree, reads each entry from the content store, and converts it to markdown:
 
 - **MD/MDX entries**: Frontmatter fields are rendered as labeled metadata, and the markdown body is appended verbatim.
-- **JSON entries**: All fields undergo schema-driven conversion. Each field type (string, boolean, image, code, select, reference, object, block) has a dedicated rendering strategy that produces idiomatic markdown.
+- **JSON/YAML entries**: All fields undergo schema-driven conversion. Each field type (string, boolean, image, code, select, reference, object, block) has a dedicated rendering strategy that produces idiomatic markdown.
 - **Field descriptions**: The `description` field on schema configs (collections, entry types, blocks, and fields) is included in the markdown output, giving AI consumers semantic context about each field's purpose.
 - **Field transforms**: Adopters can provide custom per-entry-type, per-field markdown override functions for cases where the default conversion is insufficient (e.g., rendering a complex data structure as a table).
 
@@ -1810,7 +1812,7 @@ CanopyCMS provides a flat entry listing function (`listEntries()`) that returns 
 
 The listing function walks the flattened schema to discover all collections, reads entries from each in parallel, and returns a flat array of entry items. Each item includes structural metadata (path segments, slug, logical path, content ID, collection path, entry type, format, URL path) plus the entry's data. The URL path is computed with index entry collapsing applied, so adopters can use it directly for routing and linking.
 
-For md/mdx entries, the raw data includes both frontmatter fields and the markdown body content (as `data.body`). For JSON entries, it includes all parsed fields. This means adopters can access the full content of each entry without additional read calls.
+For md/mdx entries, the raw data includes both frontmatter fields and the markdown body content (as `data.body`). For data-only entries (JSON, YAML), it includes all parsed fields. This means adopters can access the full content of each entry without additional read calls.
 
 ### Adopter Customization
 

@@ -184,7 +184,7 @@ describe('listEntries', () => {
     collectionDir: string,
     entryType: string,
     slug: string,
-    format: 'md' | 'mdx' | 'json',
+    format: 'md' | 'mdx' | 'json' | 'yaml',
     data: Record<string, unknown>,
     body?: string,
   ): Promise<string> {
@@ -195,6 +195,9 @@ describe('listEntries', () => {
 
     if (format === 'json') {
       await fs.writeFile(filePath, JSON.stringify(data))
+    } else if (format === 'yaml') {
+      const { stringify } = await import('yaml')
+      await fs.writeFile(filePath, stringify(data))
     } else {
       const frontmatter = Object.entries(data)
         .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)

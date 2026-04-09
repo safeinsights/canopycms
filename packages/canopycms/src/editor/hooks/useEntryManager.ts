@@ -10,6 +10,7 @@ import {
   buildWritePayload,
   normalizeContentPayload,
 } from '../editor-utils'
+import { isDataOnlyFormat } from '../../utils/format'
 import { useApiClient } from '../context'
 
 export interface UseEntryManagerOptions {
@@ -226,8 +227,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       const selectedType = createModalCollection.entryTypes?.find((et) => et.name === entryTypeName)
       const format = selectedType?.format || createModalCollection.format
 
-      const payload =
-        format === 'json' ? { format: 'json' as const, data: {} } : { format, data: {}, body: '' }
+      const payload = isDataOnlyFormat(format)
+        ? { format: format as 'json' | 'yaml', data: {} }
+        : { format, data: {}, body: '' }
 
       // Use collection path (e.g., "content/posts") not name (e.g., "posts")
       const path = `${createModalCollection.path}/${slug}`

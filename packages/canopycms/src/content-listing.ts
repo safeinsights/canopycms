@@ -9,10 +9,11 @@ import type { Dirent } from 'node:fs'
 import path from 'node:path'
 
 import matter from 'gray-matter'
+import { parse as yamlParse } from 'yaml'
 
 import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from './config'
 import { findBodyFieldName } from './utils/body-field'
-import { getFormatExtension } from './utils/format'
+import { asRecord, getFormatExtension } from './utils/format'
 import { resolveCollectionPath } from './content-id-index'
 import { validateAndNormalizePath } from './paths'
 import { isNotFoundError, getErrorMessage } from './utils/error'
@@ -36,7 +37,7 @@ export interface CollectionListItem {
   format: ContentFormat
   entryType: string
   physicalPath: PhysicalPath
-  /** Raw entry data (frontmatter + body for md/mdx, parsed JSON for json) */
+  /** Raw entry data (frontmatter + body for md/mdx, parsed data for json/yaml) */
   data: Record<string, unknown>
   updatedAt?: string
 }
@@ -68,7 +69,10 @@ export const readEntryData = async (
   try {
     const raw = await fs.readFile(filePath, 'utf8')
     if (format === 'json') {
-      return JSON.parse(raw) as Record<string, unknown>
+      return asRecord(JSON.parse(raw))
+    }
+    if (format === 'yaml') {
+      return asRecord(yamlParse(raw))
     }
     const parsed = matter(raw)
     const data = (parsed.data as Record<string, unknown>) ?? {}
@@ -152,7 +156,7 @@ export interface ListEntriesItem<T = Record<string, unknown>> {
   /** Content format */
   format: ContentFormat
   /**
-   * Entry data. Without extract: full raw data (frontmatter + body for md/mdx, JSON fields for json).
+   * Entry data. Without extract: full raw data (frontmatter + body for md/mdx, parsed data for json/yaml).
    * With extract: whatever the extract function returns.
    */
   data: T
