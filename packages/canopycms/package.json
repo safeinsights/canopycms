@@ -1,7 +1,7 @@
 {
   "//": "@codemirror/language, @lezer/highlight: workaround — @mdxeditor/editor uses cm6-theme-basic-light which peer-requires these but mdxeditor doesn't declare them as dependencies",
   "name": "canopycms",
-  "version": "0.0.29",
+  "version": "0.0.30",
   "description": "CanopyCMS core package: schema-driven content, branch-aware editing, and editor UI for Next.js.",
   "license": "MIT",
   "repository": {
