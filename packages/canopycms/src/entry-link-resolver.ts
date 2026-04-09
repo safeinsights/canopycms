@@ -123,6 +123,53 @@ export function resolveEntryLinksInText(
     .join('')
 }
 
+/** Quick-check pattern for early bail-out (no code-block awareness needed). */
+const ENTRY_LINK_QUICK_CHECK =
+  /entry:[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{12}/
+
+/**
+ * Recursively resolve entry:ID patterns in all string values of a data object.
+ *
+ * This handles nested objects, arrays, and mixed structures — important for
+ * JSON entries where markdown fields live inside nested objects (e.g., hero.body).
+ *
+ * Returns the same object reference if nothing changed (structural sharing).
+ */
+export function resolveEntryLinksInData(
+  data: unknown,
+  idIndex: ContentIdIndex,
+  contentRoot: string,
+  customResolver?: EntryLinkUrlResolver,
+): unknown {
+  if (typeof data === 'string') {
+    if (!ENTRY_LINK_QUICK_CHECK.test(data)) return data
+    return resolveEntryLinksInText(data, idIndex, contentRoot, customResolver)
+  }
+
+  if (Array.isArray(data)) {
+    let changed = false
+    const result = data.map((item) => {
+      const resolved = resolveEntryLinksInData(item, idIndex, contentRoot, customResolver)
+      if (resolved !== item) changed = true
+      return resolved
+    })
+    return changed ? result : data
+  }
+
+  if (data != null && typeof data === 'object') {
+    let changed = false
+    const result: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+      const resolved = resolveEntryLinksInData(value, idIndex, contentRoot, customResolver)
+      result[key] = resolved
+      if (resolved !== value) changed = true
+    }
+    return changed ? result : data
+  }
+
+  return data
+}
+
 /**
  * Extract all entry link IDs from text (for validation, not resolution).
  * Returns IDs found in entry:ID patterns, skipping code blocks.

@@ -8,7 +8,7 @@ import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
 import { isDeployedStatic, isBuildMode } from './build-mode'
 import { isNotFoundError } from './utils/error'
-import { resolveEntryLinksInText } from './entry-link-resolver'
+import { resolveEntryLinksInData } from './entry-link-resolver'
 
 export interface ContentReaderOptions {
   services: CanopyServices
@@ -216,16 +216,17 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     // The field name comes from the schema's isBody flag (defaults to 'body').
     const docRecord = doc as Record<string, unknown>
     const rawData = docRecord.data as Record<string, unknown>
-    let body = docRecord.body as string | undefined
+    const body = docRecord.body as string | undefined
     const bodyFieldName = (docRecord.bodyFieldName as string | undefined) ?? 'body'
 
-    // Resolve entry:ID links in body content (parallels reference resolution)
-    if (body != null && (input.resolveEntryLinks ?? true)) {
-      const idIndex = await store.idIndex()
-      body = resolveEntryLinksInText(body, idIndex, contentRoot, services.config.entryLinkUrl)
-    }
+    // Merge body into data first, then resolve entry links across all fields
+    let data = (body != null ? { ...rawData, [bodyFieldName]: body } : rawData) as T
 
-    const data = (body != null ? { ...rawData, [bodyFieldName]: body } : rawData) as T
+    // Resolve entry:ID links in all string values (body + nested markdown fields)
+    if (input.resolveEntryLinks ?? true) {
+      const idIndex = await store.idIndex()
+      data = resolveEntryLinksInData(data, idIndex, contentRoot, services.config.entryLinkUrl) as T
+    }
     const path = buildEntryPath({
       collectionPath: entryPath,
       slug,

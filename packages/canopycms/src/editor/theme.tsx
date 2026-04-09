@@ -109,7 +109,7 @@ export const CanopyCMSProvider: React.FC<CanopyCMSProviderProps> = ({
   const theme = useMemo(() => createCanopyTheme({ colors, themeOverride }), [colors, themeOverride])
 
   return (
-    <MantineProvider theme={theme} defaultColorScheme={colorScheme}>
+    <MantineProvider theme={theme} forceColorScheme={colorScheme}>
       <ModalsProvider>
         {withNotifications ? <Notifications position="bottom-left" /> : null}
         {children}

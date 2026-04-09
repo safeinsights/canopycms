@@ -43,6 +43,10 @@ function buildEntryUrlMap(entries: EditorEntry[], contentRoot?: string): Map<str
   return map
 }
 
+/** Quick-check for early bail-out — avoids regex overhead on strings without entry links. */
+const ENTRY_LINK_QUICK_CHECK =
+  /entry:[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]{12}/
+
 /**
  * Replace entry:ID patterns in text using the provided URL map.
  * Lightweight client-side version (no code-block skipping needed since
@@ -56,49 +60,59 @@ function resolveEntryLinksClient(text: string, urlMap: Map<string, string>): str
   })
 }
 
+/**
+ * Recursively resolve entry:ID patterns in all string values of a data structure.
+ * Handles nested objects and arrays (e.g., hero.body inside a JSON entry).
+ * Returns the same reference if nothing changed (structural sharing).
+ */
+function resolveDeep(data: unknown, urlMap: Map<string, string>): unknown {
+  if (typeof data === 'string') {
+    if (!ENTRY_LINK_QUICK_CHECK.test(data)) return data
+    return resolveEntryLinksClient(data, urlMap)
+  }
+
+  if (Array.isArray(data)) {
+    let changed = false
+    const result = data.map((item) => {
+      const resolved = resolveDeep(item, urlMap)
+      if (resolved !== item) changed = true
+      return resolved
+    })
+    return changed ? result : data
+  }
+
+  if (data != null && typeof data === 'object') {
+    let changed = false
+    const result: Record<string, unknown> = {}
+    for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
+      const resolved = resolveDeep(value, urlMap)
+      result[key] = resolved
+      if (resolved !== value) changed = true
+    }
+    return changed ? result : data
+  }
+
+  return data
+}
+
 export interface UseEntryLinkResolutionOptions {
   entries: EditorEntry[]
   contentRoot?: string
 }
 
 /**
- * Hook that provides a function to resolve entry:ID patterns in body text.
+ * Hook that provides a function to resolve entry:ID patterns in data.
  *
- * Usage in Editor.tsx:
- * ```ts
- * const { resolveEntryLinks } = useEntryLinkResolution({ entries, contentRoot })
- * const resolvedPreviewData = resolveEntryLinks(previewFrameData, bodyFieldNames)
- * ```
+ * Recursively walks nested objects/arrays so markdown fields inside
+ * structured data (e.g., hero.body) are resolved for the preview.
  */
 export function useEntryLinkResolution({ entries, contentRoot }: UseEntryLinkResolutionOptions) {
   const urlMap = useMemo(() => buildEntryUrlMap(entries, contentRoot), [entries, contentRoot])
 
-  /**
-   * Resolve entry:ID patterns in all string values of the data object.
-   * Only processes fields listed in `markdownFields` (or all string fields if not provided).
-   */
   const resolveEntryLinks = useMemo(() => {
-    return (
-      data: Record<string, unknown>,
-      markdownFields?: Set<string>,
-    ): Record<string, unknown> => {
+    return (data: Record<string, unknown>): Record<string, unknown> => {
       if (urlMap.size === 0) return data
-
-      let changed = false
-      const resolved = { ...data }
-
-      for (const [key, value] of Object.entries(resolved)) {
-        if (typeof value !== 'string') continue
-        if (markdownFields && !markdownFields.has(key)) continue
-        if (!ENTRY_LINK_PATTERN.test(value)) continue
-
-        // Reset lastIndex since we used .test() above
-        ENTRY_LINK_PATTERN.lastIndex = 0
-        resolved[key] = resolveEntryLinksClient(value, urlMap)
-        changed = true
-      }
-
-      return changed ? resolved : data
+      return resolveDeep(data, urlMap) as Record<string, unknown>
     }
   }, [urlMap])
 

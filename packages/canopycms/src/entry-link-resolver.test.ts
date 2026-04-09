@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   resolveEntryUrl,
   resolveEntryLinksInText,
+  resolveEntryLinksInData,
   extractEntryLinkIds,
 } from './entry-link-resolver'
 import type { IdLocation } from './content-id-index'
@@ -235,5 +236,66 @@ describe('extractEntryLinkIds', () => {
 
   it('returns empty array for text without entry links', () => {
     expect(extractEntryLinkIds('No links here.')).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// resolveEntryLinksInData
+// ---------------------------------------------------------------------------
+
+describe('resolveEntryLinksInData', () => {
+  const idx = createMockIdIndex({
+    vh2WdhwAFiSL: { collection: 'content/posts', slug: 'hello-world' },
+    abc123def456: { collection: 'content/docs/guides', slug: 'getting-started' },
+  })
+
+  it('resolves entry links in nested object fields', () => {
+    const data = {
+      title: 'Home',
+      hero: {
+        heading: 'Welcome',
+        body: 'See [Hello](entry:vh2WdhwAFiSL) for more.',
+      },
+    }
+    const result = resolveEntryLinksInData(data, idx, 'content') as typeof data
+    expect(result.hero.body).toBe('See [Hello](/posts/hello-world) for more.')
+    expect(result.title).toBe('Home') // unchanged
+    expect(result.hero.heading).toBe('Welcome') // unchanged
+  })
+
+  it('resolves entry links in arrays', () => {
+    const data = {
+      blocks: [
+        { type: 'text', content: 'Read [Guide](entry:abc123def456)' },
+        { type: 'image', src: '/photo.jpg' },
+      ],
+    }
+    const result = resolveEntryLinksInData(data, idx, 'content') as typeof data
+    expect(result.blocks[0].content).toBe('Read [Guide](/docs/guides/getting-started)')
+    expect(result.blocks[1].src).toBe('/photo.jpg') // unchanged
+  })
+
+  it('returns same reference when nothing changes', () => {
+    const data = { title: 'No links', count: 42 }
+    const result = resolveEntryLinksInData(data, idx, 'content')
+    expect(result).toBe(data) // exact same object
+  })
+
+  it('handles deeply nested structures', () => {
+    const data = {
+      sections: [
+        {
+          items: [{ label: '[Hello](entry:vh2WdhwAFiSL)' }],
+        },
+      ],
+    }
+    const result = resolveEntryLinksInData(data, idx, 'content') as typeof data
+    expect(result.sections[0].items[0].label).toBe('[Hello](/posts/hello-world)')
+  })
+
+  it('handles null and non-object values', () => {
+    expect(resolveEntryLinksInData(null, idx, 'content')).toBe(null)
+    expect(resolveEntryLinksInData(42, idx, 'content')).toBe(42)
+    expect(resolveEntryLinksInData(true, idx, 'content')).toBe(true)
   })
 })
