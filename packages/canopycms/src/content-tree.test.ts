@@ -45,7 +45,7 @@ async function createEntry(
   collectionDir: string,
   entryType: string,
   slug: string,
-  format: 'md' | 'mdx' | 'json',
+  format: 'md' | 'mdx' | 'json' | 'yaml',
   data: Record<string, unknown>,
 ): Promise<string> {
   const id = generateId()
@@ -55,6 +55,9 @@ async function createEntry(
 
   if (format === 'json') {
     await fs.writeFile(filePath, JSON.stringify(data))
+  } else if (format === 'yaml') {
+    const { stringify } = await import('yaml')
+    await fs.writeFile(filePath, stringify(data))
   } else {
     const frontmatter = Object.entries(data)
       .map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`)

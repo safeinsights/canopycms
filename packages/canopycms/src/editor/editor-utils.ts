@@ -5,6 +5,7 @@ import type { EditorEntry, EditorCollection } from './Editor'
 import type { TreeNodeData } from '@mantine/core'
 // Import directly from normalize to avoid pulling in server-only branch.ts
 import { normalizeCollectionPath } from '../paths/normalize'
+import { isDataOnlyFormat } from '../utils/format'
 export { normalizeCollectionPath }
 
 export interface PreviewContext {
@@ -75,7 +76,7 @@ export const normalizeContentPayload = (raw: unknown): FormValue => {
   if (data && typeof data === 'object' && 'format' in data && 'data' in data) {
     const format = data.format as ContentFormat
     const payloadData = (data.data as Record<string, unknown>) ?? {}
-    if (format === 'json') return payloadData
+    if (isDataOnlyFormat(format)) return payloadData
     return {
       ...payloadData,
       body:
@@ -92,9 +93,9 @@ export const buildWritePayload = (
   value: FormValue,
 ) => {
   if (!entry.format) return value
-  if (entry.format === 'json') {
+  if (isDataOnlyFormat(entry.format)) {
     return {
-      format: 'json' as const,
+      format: entry.format,
       data: value,
     }
   }

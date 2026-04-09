@@ -83,7 +83,7 @@ const MAX_LABEL_LENGTH = 128
 const entryTypeInputSchema = z.object({
   name: z.string().min(1).max(MAX_NAME_LENGTH),
   label: z.string().max(MAX_LABEL_LENGTH).optional(),
-  format: z.enum(['md', 'mdx', 'json']),
+  format: z.enum(['md', 'mdx', 'json', 'yaml']),
   schema: z.string().min(1),
   default: z.boolean().optional(),
   maxItems: z.number().int().positive().optional(),
@@ -105,7 +105,7 @@ const updateCollectionInputSchema = z.object({
 
 const updateEntryTypeInputSchema = z.object({
   label: z.string().max(MAX_LABEL_LENGTH).optional(),
-  format: z.enum(['md', 'mdx', 'json']).optional(),
+  format: z.enum(['md', 'mdx', 'json', 'yaml']).optional(),
   schema: z.string().min(1).optional(),
   default: z.boolean().optional(),
   maxItems: z.number().int().positive().optional(),

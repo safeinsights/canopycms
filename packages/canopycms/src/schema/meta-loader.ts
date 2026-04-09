@@ -19,7 +19,7 @@ import { extractSlugFromFilename, extractIdFromFilename } from '../content-id-in
  */
 const entryTypeMetaSchema = z.object({
   name: z.string().min(1),
-  format: z.enum(['md', 'mdx', 'json']),
+  format: z.enum(['md', 'mdx', 'json', 'yaml']),
   schema: z.string().min(1), // Entry schema registry key (validated at resolution time)
   label: z.string().optional(),
   default: z.boolean().optional(),
@@ -62,7 +62,7 @@ const rootCollectionMetaSchema = z.object({
 
 export type EntryTypeMeta = {
   name: string
-  format: 'md' | 'mdx' | 'json'
+  format: 'md' | 'mdx' | 'json' | 'yaml'
   schema: string // Entry schema registry key
   label?: string
   default?: boolean

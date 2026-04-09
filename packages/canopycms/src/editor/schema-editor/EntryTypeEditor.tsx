@@ -6,7 +6,7 @@
  * Entry types define the structure of content items:
  * - name: Machine-readable identifier (e.g., "post", "page")
  * - label: Human-readable display name
- * - format: Content format (md, mdx, json)
+ * - format: Content format (md, mdx, json, yaml)
  * - fields: Schema registry key for field definitions
  * - default: Whether this is the default type for new items
  * - maxItems: Optional limit on number of items (1 = singleton-like)
@@ -77,6 +77,7 @@ export interface EntryTypeEditorProps {
 
 const FORMAT_OPTIONS: { value: ContentFormat; label: string }[] = [
   { value: 'json', label: 'JSON' },
+  { value: 'yaml', label: 'YAML' },
   { value: 'md', label: 'Markdown' },
   { value: 'mdx', label: 'MDX' },
 ]

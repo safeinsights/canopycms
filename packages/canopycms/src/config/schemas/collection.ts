@@ -32,7 +32,7 @@ export const relativePathSchema = z
  */
 export const entryTypeSchema = z.object({
   name: z.string().min(1),
-  format: z.enum(['md', 'mdx', 'json']),
+  format: z.enum(['md', 'mdx', 'json', 'yaml']),
   schema: z.array(z.lazy(() => fieldSchema)).min(1),
   label: z.string().optional(),
   description: z.string().optional(),

@@ -41,7 +41,7 @@ describe('ContentStore', () => {
     })
 
     const doc = await store.read(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('hello-world'))
-    if (doc.format === 'json') throw new Error('expected markdown')
+    if (doc.format !== 'md' && doc.format !== 'mdx') throw new Error('expected markdown')
     expect(doc.data.title).toBe('Hello')
     expect(doc.body).toContain('Body text')
     expect(doc.relativePath.endsWith('.md')).toBe(true)
@@ -75,7 +75,7 @@ describe('ContentStore', () => {
     })
 
     const doc = await store.read(unsafeAsLogicalPath('content/pages'), unsafeAsSlug('landing'))
-    if (doc.format === 'json') throw new Error('expected mdx')
+    if (doc.format !== 'md' && doc.format !== 'mdx') throw new Error('expected mdx')
     expect(doc.data.title).toBe('Landing')
     expect(doc.body?.includes('<Hero')).toBe(true)
     expect(doc.absolutePath.endsWith('.mdx')).toBe(true)
@@ -110,6 +110,38 @@ describe('ContentStore', () => {
     const doc = await store.read(unsafeAsLogicalPath('content/config'), unsafeAsSlug('site'))
     expect(doc.data.siteName).toBe('CanopyCMS')
     expect(doc.relativePath.endsWith('.json')).toBe(true)
+  })
+
+  it('writes and reads yaml content', async () => {
+    const root = await tmpDir()
+    const schema = {
+      collections: [
+        {
+          name: 'settings',
+          path: 'config',
+          entries: [
+            {
+              name: 'setting',
+              format: 'yaml' as const,
+              schema: [{ name: 'siteName', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+    await store.write(unsafeAsLogicalPath('content/config'), unsafeAsSlug('site'), {
+      format: 'yaml',
+      data: { siteName: 'CanopyCMS' },
+    })
+
+    const doc = await store.read(unsafeAsLogicalPath('content/config'), unsafeAsSlug('site'))
+    expect(doc.data.siteName).toBe('CanopyCMS')
+    expect(doc.format).toBe('yaml')
+    expect(doc.relativePath.endsWith('.yaml')).toBe(true)
   })
 
   it('prevents path traversal outside root', async () => {
@@ -515,7 +547,7 @@ describe('ContentStore', () => {
       unsafeAsLogicalPath('content/docs/api/v2'),
       unsafeAsSlug('authentication'),
     )
-    if (doc.format === 'json') throw new Error('expected markdown')
+    if (doc.format !== 'md' && doc.format !== 'mdx') throw new Error('expected markdown')
     expect(doc.data.title).toBe('Authentication Guide')
     expect(doc.body).toContain('How to authenticate')
     // Pattern: {type}.{slug}.{id}.{ext}
@@ -570,7 +602,7 @@ describe('ContentStore', () => {
 
       // Verify new path works
       const doc = await store.read(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('new-slug'))
-      if (doc.format === 'json') throw new Error('expected markdown')
+      if (doc.format !== 'md' && doc.format !== 'mdx') throw new Error('expected markdown')
       expect(doc.data.title).toBe('Test Post')
       expect(doc.body).toContain('Content here')
     })
@@ -917,7 +949,7 @@ describe('ContentStore', () => {
         unsafeAsLogicalPath('content/content'),
         unsafeAsSlug('my-content'),
       )
-      if (read.format === 'json') throw new Error('Expected mdx')
+      if (read.format !== 'md' && read.format !== 'mdx') throw new Error('Expected mdx')
       expect(read.body.trim()).toBe('Updated')
 
       // Also verify that even if we specify a different entry type, it gets ignored (preserved)
@@ -1024,7 +1056,7 @@ describe('ContentStore', () => {
       })
 
       const doc = await store.read(unsafeAsLogicalPath('content/post'), unsafeAsSlug('hello'))
-      if (doc.format === 'json') throw new Error('Expected md')
+      if (doc.format !== 'md' && doc.format !== 'mdx') throw new Error('Expected md')
       expect(doc.format).toBe('md')
       expect(doc.data.title).toBe('Hello')
       expect(doc.body).toContain('World')
@@ -1088,7 +1120,7 @@ describe('ContentStore', () => {
       })
 
       const doc = await store.read(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('complex'))
-      if (doc.format === 'json') throw new Error('expected markdown')
+      if (doc.format !== 'md' && doc.format !== 'mdx') throw new Error('expected markdown')
 
       // Verify all frontmatter data survived the roundtrip
       expect(doc.data.title).toBe('Complex Post')
@@ -1141,7 +1173,7 @@ describe('ContentStore', () => {
         unsafeAsLogicalPath('content/docs'),
         unsafeAsSlug('onboarding-checklist'),
       )
-      if (doc.format === 'json') throw new Error('expected mdx')
+      if (doc.format !== 'md' && doc.format !== 'mdx') throw new Error('expected mdx')
       expect(doc.data.title).toBe('Onboarding')
       expect(doc.body).toContain('Checklist content')
     })

@@ -38,7 +38,7 @@ export function entryToMarkdown(entry: AIEntry, config?: AIContentConfig): strin
     // For MD/MDX: render non-body fields as metadata, then body verbatim
     parts.push(...renderMarkdownEntry(entry, config, skipFields))
   } else {
-    // For JSON: full schema-driven conversion
+    // For data-only formats (JSON/YAML): full schema-driven conversion
     parts.push(...renderJsonEntry(entry, config, skipFields))
   }
 

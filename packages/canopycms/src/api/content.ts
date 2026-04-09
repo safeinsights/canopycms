@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import { ContentStore, ContentStoreError } from '../content-store'
+import { ContentStore, ContentStoreError, type WriteInput } from '../content-store'
 import type { EntrySchema, EntryTypeConfig, FlatSchemaItem } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
@@ -10,6 +10,7 @@ import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
 import type { Slug, PhysicalPath } from '../paths'
 import type { BranchContextWithSchema } from '../types'
 import { isNotFoundError } from '../utils/error'
+import { isDataOnlyFormat } from '../utils/format'
 
 /**
  * Parse an API path into logical path segments, prepending the content root if needed.
@@ -57,7 +58,7 @@ export type RenameEntryResponse = ApiResponse<{
 }>
 
 export interface WriteContentBody {
-  format: 'json' | 'md' | 'mdx'
+  format: 'json' | 'md' | 'mdx' | 'yaml'
   data?: Record<string, unknown>
   body?: string
 }
@@ -89,7 +90,7 @@ const writeContentParamsSchema = z.object({
 })
 
 const writeContentBodySchema = z.object({
-  format: z.enum(['json', 'md', 'mdx']),
+  format: z.enum(['json', 'md', 'mdx', 'yaml']),
   data: z.record(z.unknown()).optional(),
   body: z.string().optional(),
 })
@@ -206,27 +207,11 @@ const writeContentHandler = async (
   }
 
   try {
-    const result =
-      body.format === 'json'
-        ? await store.write(
-            schemaItem.logicalPath,
-            slug,
-            {
-              format: 'json',
-              data: body.data ?? {},
-            },
-            params.entryType,
-          )
-        : await store.write(
-            schemaItem.logicalPath,
-            slug,
-            {
-              format: body.format,
-              data: body.data,
-              body: body.body ?? '',
-            },
-            params.entryType,
-          )
+    const writeInput: WriteInput = isDataOnlyFormat(body.format)
+      ? { format: body.format as 'json' | 'yaml', data: body.data ?? {} }
+      : { format: body.format as 'md' | 'mdx', data: body.data, body: body.body ?? '' }
+
+    const result = await store.write(schemaItem.logicalPath, slug, writeInput, params.entryType)
 
     // Validate entry links in body content (warnings only, don't block save)
     // Resolve fields from schema: entry-type has .schema directly,

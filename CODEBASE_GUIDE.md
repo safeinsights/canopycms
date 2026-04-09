@@ -450,7 +450,7 @@ export default withCanopy(
 - **Entry Types**: Define content structure within collections; `maxItems: 1` for single-instance entries
 - **Fields**: text, select, reference, object, code, block, markdown
 - **Field flags**: `isTitle` (marks one string-type field per schema as the display title; validated at registry load time; used by `resolveEntryTitle` fallback chain in `utils/title-field.ts`), `isBody` (marks one markdown/mdx field per schema as the file's body content; at most one per schema; validated at registry load time via `utils/body-field.ts`)
-- **Format**: MD/MDX/JSON with frontmatter (gray-matter)
+- **Format**: MD/MDX/JSON/YAML with frontmatter (gray-matter for md/mdx); JSON and YAML are data-only formats (no body/frontmatter separation)
 
 ## Content Tree
 
@@ -507,7 +507,7 @@ Without `sort`: children are ordered by the collection's `order` array first, th
 
 **Access patterns**: standalone function from `canopycms/server`, method on `CanopyContext`, types from `canopycms`.
 
-**Note**: `readEntryData()` now includes markdown body content in `data.body` for md/mdx entries. Logs a warning on read/parse failure instead of silently returning `{}`.
+**Note**: `readEntryData()` now includes markdown body content in `data.body` for md/mdx entries. YAML entries are parsed as data-only (no body). Logs a warning on read/parse failure instead of silently returning `{}`.
 
 ## Configuration Module
 
@@ -935,7 +935,7 @@ Cross-cutting feature for linking between content entries using `entry:CONTENT_I
 | ---------------- | ------------------------------------------------------------------------------------------------------------------- |
 | error.ts         | Type-safe error handling (getErrorMessage, isNodeError, isNotFoundError, isFileExistsError)                         |
 | debug.ts         | Debug logging utilities (createDebugLogger)                                                                         |
-| format.ts        | Formatting utilities                                                                                                |
+| format.ts        | Content format utilities (getFormatExtension, isDataOnlyFormat); supports md/mdx/json/yaml                          |
 | atomic-write.ts  | Atomic file writes via temp-file + rename (prevents corruption on NFS/EFS)                                          |
 | body-field.ts    | Body field validation (countBodyFields, findInvalidBodyFields) for isBody schema flag                               |
 | title-field.ts   | Title field utilities (resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists) for isTitle schema flag   |

@@ -12,6 +12,7 @@ import { minimatch } from 'minimatch'
 
 import type { ContentStore, ContentDocument, MarkdownDocument } from '../content-store'
 import type { FlatSchemaItem, EntryTypeConfig } from '../config'
+import { isDataOnlyFormat } from '../utils/format'
 import { extractEntryTypeFromFilename, type ContentIdIndex } from '../content-id-index'
 import { getErrorMessage } from '../utils/error'
 import { entryToMarkdown } from './json-to-markdown'
@@ -402,7 +403,7 @@ function docToAIEntry(
     entryType: entryTypeName,
     format: doc.format,
     data: doc.data,
-    body: doc.format !== 'json' ? (doc as MarkdownDocument).body : undefined,
+    body: !isDataOnlyFormat(doc.format) ? (doc as MarkdownDocument).body : undefined,
     fields: entryTypeConfig.schema,
   }
 }
