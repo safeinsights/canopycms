@@ -138,6 +138,76 @@ describe('Schema API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(404)
     })
+
+    it('should strip resolvedSchema from entrySchemas at all nesting levels', async () => {
+      const authorFields = [{ name: 'name', type: 'string' }] as const
+
+      const ctx = {
+        ...mockCtx,
+        services: {
+          ...mockCtx.services,
+          entrySchemaRegistry: {
+            postSchema: [
+              // Top-level reference with resolvedSchema
+              {
+                name: 'author',
+                type: 'reference',
+                collections: ['authors'],
+                resolvedSchema: authorFields,
+              },
+              // Nested inside object
+              {
+                name: 'meta',
+                type: 'object',
+                fields: [
+                  {
+                    name: 'reviewer',
+                    type: 'reference',
+                    collections: ['authors'],
+                    resolvedSchema: authorFields,
+                  },
+                ],
+              },
+              // Nested inside block template
+              {
+                name: 'blocks',
+                type: 'block',
+                templates: [
+                  {
+                    name: 'quote',
+                    fields: [
+                      {
+                        name: 'source',
+                        type: 'reference',
+                        collections: ['authors'],
+                        resolvedSchema: authorFields,
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      } as unknown as ApiContext
+
+      const result = await getSchema.handler(ctx, mockReq, {
+        branch: unsafeAsBranchName('main'),
+      })
+
+      expect(result.ok).toBe(true)
+      const schemas = result.data?.entrySchemas as Record<string, unknown[]>
+      const fields = schemas.postSchema
+
+      // Top-level: no resolvedSchema
+      expect(fields[0]).not.toHaveProperty('resolvedSchema')
+      // Nested in object: no resolvedSchema
+      const objectField = fields[1] as { fields: Record<string, unknown>[] }
+      expect(objectField.fields[0]).not.toHaveProperty('resolvedSchema')
+      // Nested in block template: no resolvedSchema
+      const blockField = fields[2] as { templates: Array<{ fields: Record<string, unknown>[] }> }
+      expect(blockField.templates[0].fields[0]).not.toHaveProperty('resolvedSchema')
+    })
   })
 
   describe('getCollection', () => {

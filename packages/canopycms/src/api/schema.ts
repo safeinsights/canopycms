@@ -100,6 +100,7 @@ function stripResolvedSchema(registry: Registry): Registry {
   )
 }
 
+/** Recurse into .fields (object) and .templates[].fields (block) — the only field types with nested FieldConfig arrays. */
 function stripFieldsDeep(fields: EntrySchema): EntrySchema {
   return fields.map((field) => {
     const raw = field as unknown as Record<string, unknown>

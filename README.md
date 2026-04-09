@@ -939,7 +939,7 @@ type Post = TypeFromEntrySchema<typeof postSchema>
 // With resolvedSchema:    Post['author'] is { name: string; bio: string } | null
 ```
 
-The `resolvedSchema` option is purely for type inference -- it does not change runtime behavior. It accepts any schema created with `defineEntrySchema`, so you can share the same schema objects between your entry type definitions and your reference fields.
+The `resolvedSchema` option is used only for type inference -- it does not affect how content is read, written, or validated at runtime, and is automatically stripped from API responses. It accepts any schema created with `defineEntrySchema`, so you can share the same schema objects between your entry type definitions and your reference fields.
 
 ## Integration Guide
 
