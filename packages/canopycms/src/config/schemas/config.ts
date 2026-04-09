@@ -5,6 +5,7 @@
 import { z } from 'zod'
 
 import type { AuthPlugin } from '../../auth/plugin'
+import type { EntryLinkUrlResolver } from '../../entry-link-resolver'
 import { rootCollectionSchema, relativePathSchema } from './collection'
 import { mediaSchema } from './media'
 
@@ -58,6 +59,7 @@ export const CanopyConfigSchema = z.object({
   sourceRoot: sourceRootSchema.optional(),
   editor: editorConfigSchema.optional(),
   authPlugin: z.custom<AuthPlugin>().optional(),
+  entryLinkUrl: z.custom<EntryLinkUrlResolver>().optional(),
 })
 
 /**

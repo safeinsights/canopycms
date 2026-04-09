@@ -134,6 +134,11 @@ describe('resolveEntryLinksInText', () => {
     expect(resolveEntryLinksInText(text, idx, 'content')).toBe('[Gone](#)')
   })
 
+  it('preserves anchor on missing IDs without double-hash', () => {
+    const text = '[Gone](entry:ZZZZZZZZZZZz#section)'
+    expect(resolveEntryLinksInText(text, idx, 'content')).toBe('[Gone](#section)')
+  })
+
   it('skips entry:ID inside fenced code blocks', () => {
     const text = [
       'Before link.',

@@ -52,7 +52,7 @@ const ENTRY_LINK_QUICK_CHECK =
 function resolveEntryLinksClient(text: string, urlMap: Map<string, string>): string {
   return text.replace(ENTRY_LINK_PATTERN, (_match, id: string, anchor?: string) => {
     const url = urlMap.get(id)
-    if (!url) return `#${anchor ?? ''}`
+    if (!url) return anchor ?? '#'
     return `${url}${anchor ?? ''}`
   })
 }

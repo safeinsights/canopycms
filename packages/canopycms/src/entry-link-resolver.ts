@@ -75,7 +75,7 @@ export function resolveEntryLinksInText(
 
         if (!location || location.type !== 'entry' || !location.collection || !location.slug) {
           log.warn('resolve', `Entry link target not found: entry:${id}`)
-          return `#${anchor ?? ''}`
+          return anchor ?? '#'
         }
 
         let url: string

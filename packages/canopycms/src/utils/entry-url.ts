@@ -39,5 +39,7 @@ export function computeEntryUrl(collection: string, slug: string, contentRoot: s
     segments.push(slug)
   }
 
-  return segments.length > 0 ? `/${segments.join('/')}` : '/'
+  const path = segments.length > 0 ? `/${segments.join('/')}` : '/'
+  // Lowercase to match content-listing.ts and content-tree.ts URL conventions
+  return path.toLowerCase()
 }
