@@ -229,7 +229,16 @@ const writeContentHandler = async (
           )
 
     // Validate entry links in body content (warnings only, don't block save)
-    const fields = schemaItem.type === 'entry-type' ? schemaItem.schema : []
+    // Resolve fields from schema: entry-type has .schema directly,
+    // collections need to look up the entry type by name
+    let fields: EntrySchema = []
+    if (schemaItem.type === 'entry-type') {
+      fields = schemaItem.schema
+    } else if (params.entryType) {
+      fields = schemaItem.entries?.find((e) => e.name === params.entryType)?.schema ?? []
+    } else if (schemaItem.entries?.length === 1) {
+      fields = schemaItem.entries[0].schema ?? []
+    }
     const idIndex = await store.idIndex()
     const linkValidation = validateEntryLinks(body.data ?? {}, fields, idIndex, body.body)
     const entryLinkWarnings =

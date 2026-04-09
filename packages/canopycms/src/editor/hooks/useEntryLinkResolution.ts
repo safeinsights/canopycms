@@ -9,35 +9,32 @@
 
 import { useMemo } from 'react'
 import type { EditorEntry } from '../Editor'
+import { computeEntryUrl } from '../../utils/entry-url'
+import type { EntryLinkUrlResolver } from '../../entry-link-resolver'
 
 const BASE58_CHAR = '[123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz]'
 const ENTRY_LINK_PATTERN = new RegExp(`entry:(${BASE58_CHAR}{12})(#[^\\s)>"']*)?`, 'g')
 
 /**
- * Build a Map from content IDs to URL paths from the editor entries list.
+ * Build a Map from content IDs to URL info from the editor entries list.
+ * Uses the shared computeEntryUrl utility (same logic as the server).
  */
-function buildEntryUrlMap(entries: EditorEntry[], contentRoot?: string): Map<string, string> {
+function buildEntryUrlMap(
+  entries: EditorEntry[],
+  contentRoot: string,
+  customResolver?: EntryLinkUrlResolver,
+): Map<string, string> {
   const map = new Map<string, string>()
-  const root = contentRoot ?? 'content'
 
   for (const entry of entries) {
     if (!entry.contentId || !entry.slug) continue
 
-    const collection = entry.collectionPath ?? ''
-    let stripped = collection as string
-    if (root && stripped.startsWith(`${root}/`)) {
-      stripped = stripped.slice(root.length + 1)
-    } else if (stripped === root) {
-      stripped = ''
-    }
+    const collection = (entry.collectionPath ?? '') as string
+    const url = customResolver
+      ? customResolver({ collection, slug: entry.slug, id: entry.contentId })
+      : computeEntryUrl(collection, entry.slug, contentRoot)
 
-    const segments = stripped.split('/').filter(Boolean)
-    if (entry.slug !== 'index') {
-      segments.push(entry.slug)
-    }
-
-    const urlPath = segments.length > 0 ? `/${segments.join('/')}` : '/'
-    map.set(entry.contentId, urlPath)
+    map.set(entry.contentId, url)
   }
 
   return map
@@ -98,6 +95,8 @@ function resolveDeep(data: unknown, urlMap: Map<string, string>): unknown {
 export interface UseEntryLinkResolutionOptions {
   entries: EditorEntry[]
   contentRoot?: string
+  /** Custom URL resolver — matches the server-side entryLinkUrl config option. */
+  entryLinkUrl?: EntryLinkUrlResolver
 }
 
 /**
@@ -106,8 +105,15 @@ export interface UseEntryLinkResolutionOptions {
  * Recursively walks nested objects/arrays so markdown fields inside
  * structured data (e.g., hero.body) are resolved for the preview.
  */
-export function useEntryLinkResolution({ entries, contentRoot }: UseEntryLinkResolutionOptions) {
-  const urlMap = useMemo(() => buildEntryUrlMap(entries, contentRoot), [entries, contentRoot])
+export function useEntryLinkResolution({
+  entries,
+  contentRoot,
+  entryLinkUrl,
+}: UseEntryLinkResolutionOptions) {
+  const urlMap = useMemo(
+    () => buildEntryUrlMap(entries, contentRoot ?? 'content', entryLinkUrl),
+    [entries, contentRoot, entryLinkUrl],
+  )
 
   const resolveEntryLinks = useMemo(() => {
     return (data: Record<string, unknown>): Record<string, unknown> => {

@@ -329,7 +329,7 @@ export type FlatSchemaItem =
  */
 export type CanopyClientConfig = Pick<
   CanopyConfig,
-  'defaultBaseBranch' | 'defaultActiveBranch' | 'contentRoot' | 'editor' | 'mode'
+  'defaultBaseBranch' | 'defaultActiveBranch' | 'contentRoot' | 'editor' | 'mode' | 'entryLinkUrl'
 > & {
   flatSchema: FlatSchemaItem[]
 }

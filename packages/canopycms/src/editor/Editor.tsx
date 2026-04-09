@@ -101,6 +101,7 @@ export interface EditorProps {
   operatingMode: OperatingMode
   collections?: EditorCollection[]
   contentRoot?: string
+  entryLinkUrl?: import('../entry-link-resolver').EntryLinkUrlResolver
   initialSelectedId?: string
   initialValues?: Record<string, FormValue>
   renderPreview?: (entry: EditorEntry, value: FormValue | undefined) => React.ReactNode
@@ -128,6 +129,7 @@ export const Editor: React.FC<EditorProps> = ({
   branchName = '',
   collections,
   contentRoot,
+  entryLinkUrl,
   initialSelectedId,
   initialValues,
   renderPreview,
@@ -725,6 +727,7 @@ export const Editor: React.FC<EditorProps> = ({
   const { resolveEntryLinks } = useEntryLinkResolution({
     entries: entriesState,
     contentRoot,
+    entryLinkUrl,
   })
 
   const previewFrameData = useMemo(() => {

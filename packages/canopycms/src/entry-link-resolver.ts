@@ -14,8 +14,8 @@
  */
 
 import type { ContentIdIndex, IdLocation } from './content-id-index'
-import { trimSlashes } from './paths/normalize'
 import { createDebugLogger } from './utils/debug'
+import { computeEntryUrl } from './utils/entry-url'
 
 const log = createDebugLogger({ prefix: 'EntryLinks' })
 
@@ -40,41 +40,13 @@ export type EntryLinkUrlResolver = (entry: {
 
 /**
  * Compute a URL path from an entry's location in the content tree.
- *
- * Logic:
- * - Strip the contentRoot prefix (e.g., "content/") from the collection path
- * - Append the slug (unless it's "index", which collapses to the parent path)
- * - Always returns a path starting with "/"
- *
- * Examples:
- *   { collection: "content/posts", slug: "hello-world" } => "/posts/hello-world"
- *   { collection: "content/docs/api", slug: "index" }    => "/docs/api"
- *   { collection: "content", slug: "index" }              => "/"
+ * Delegates to the shared `computeEntryUrl` utility.
  */
 export function resolveEntryUrl(
   location: Pick<IdLocation, 'collection' | 'slug'>,
   contentRoot: string,
 ): string {
-  const root = trimSlashes(contentRoot)
-  const collection = location.collection ?? ''
-
-  // Strip contentRoot prefix
-  let stripped = collection
-  if (root && collection.startsWith(`${root}/`)) {
-    stripped = collection.slice(root.length + 1)
-  } else if (collection === root) {
-    stripped = ''
-  }
-
-  // Build URL segments
-  const segments = stripped.split('/').filter(Boolean)
-
-  // Append slug unless it's "index" (index entries collapse to parent)
-  if (location.slug && location.slug !== 'index') {
-    segments.push(location.slug)
-  }
-
-  return segments.length > 0 ? `/${segments.join('/')}` : '/'
+  return computeEntryUrl(location.collection ?? '', location.slug ?? '', contentRoot)
 }
 
 /**
