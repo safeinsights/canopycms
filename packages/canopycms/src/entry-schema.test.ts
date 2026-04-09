@@ -87,6 +87,39 @@ describe('TypeFromEntrySchema', () => {
     })
   })
 
+  describe('nested reference with resolvedSchema', () => {
+    it('infers resolved type inside an object field', () => {
+      const authorSchema = defineEntrySchema([
+        { name: 'name', type: 'string' },
+        { name: 'bio', type: 'string' },
+      ])
+
+      const schema = defineEntrySchema([
+        {
+          name: 'meta',
+          type: 'object',
+          fields: [
+            {
+              name: 'author',
+              type: 'reference',
+              collections: ['authors'],
+              resolvedSchema: authorSchema,
+            },
+          ],
+        },
+      ])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      expectTypeOf<Content['meta']['author']>().toEqualTypeOf<{
+        name: string
+        bio: string
+      } | null>()
+
+      void schema
+    })
+  })
+
   describe('typed reference list with resolvedSchema', () => {
     it('infers array of resolved type with null', () => {
       const tagSchema = defineEntrySchema([{ name: 'label', type: 'string' }])

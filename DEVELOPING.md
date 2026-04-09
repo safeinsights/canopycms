@@ -2094,7 +2094,7 @@ it('produces a discriminated union for block fields', () => {
 - Catching regressions in type inference when schema definitions change
 - Testing that resolved references carry the correct type through generics
 
-**Important:** These tests run during `vitest --typecheck` or alongside normal tests. They have zero runtime overhead -- `expectTypeOf` is erased at runtime. The `void schema` pattern prevents TypeScript's unused-variable error for schemas that exist solely to drive type inference.
+**Important:** During regular `vitest run`, `expectTypeOf` calls execute as runtime no-ops -- the actual type checking happens via `tsc --noEmit` (which includes test files). With `vitest --typecheck`, vitest itself runs the TypeScript checker. The `void schema` pattern prevents TypeScript's unused-variable error for schemas that exist solely to drive type inference.
 
 See `packages/canopycms/src/entry-schema.test.ts` for the complete example.
 

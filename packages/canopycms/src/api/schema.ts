@@ -96,14 +96,27 @@ type Registry = Record<string, EntrySchema>
 /** Strip `resolvedSchema` (type-inference-only) from fields before sending over the wire. */
 function stripResolvedSchema(registry: Registry): Registry {
   return Object.fromEntries(
-    Object.entries(registry).map(([key, fields]) => [
-      key,
-      fields.map((field) => {
-        const { resolvedSchema: _, ...rest } = field as unknown as Record<string, unknown>
-        return rest as unknown as (typeof fields)[number]
-      }),
-    ]),
+    Object.entries(registry).map(([key, fields]) => [key, stripFieldsDeep(fields)]),
   )
+}
+
+function stripFieldsDeep(fields: EntrySchema): EntrySchema {
+  return fields.map((field) => {
+    const raw = field as unknown as Record<string, unknown>
+    const { resolvedSchema: _, ...rest } = raw
+    if (Array.isArray(rest.fields)) {
+      rest.fields = stripFieldsDeep(rest.fields as unknown as EntrySchema)
+    }
+    if (Array.isArray(rest.templates)) {
+      rest.templates = (rest.templates as Array<Record<string, unknown>>).map((t) => ({
+        ...t,
+        ...(Array.isArray(t.fields) && {
+          fields: stripFieldsDeep(t.fields as unknown as EntrySchema),
+        }),
+      }))
+    }
+    return rest as unknown as (typeof fields)[number]
+  })
 }
 
 /**
