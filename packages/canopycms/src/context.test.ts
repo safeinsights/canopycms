@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import matter from 'gray-matter'
+import { stringify as yamlStringify } from 'yaml'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -293,5 +294,60 @@ describe('readByUrlPath', () => {
       expect(result).not.toBeNull()
       expect(result!.data.title).toBe('Overview')
     })
+  })
+
+  it('reads a yaml index entry via readByUrlPath', async () => {
+    // Schema with a collection whose default is mdx but also has a yaml entry type
+    const yamlSchema = {
+      collections: [
+        {
+          name: 'catalog',
+          path: 'catalog',
+          entries: [
+            {
+              name: 'page',
+              format: 'mdx' as const,
+              default: true,
+              schema: [
+                { name: 'title', type: 'string' as const },
+                { name: 'body', type: 'markdown' as const, isBody: true },
+              ],
+            },
+            {
+              name: 'catalogIndex',
+              format: 'yaml' as const,
+              schema: [{ name: 'source', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    }
+
+    const catalogDir = path.join(root, 'content/catalog')
+    await fs.mkdir(catalogDir, { recursive: true })
+    // Write a YAML index entry with the standard filename pattern: type.slug.id.ext
+    await fs.writeFile(
+      path.join(catalogDir, 'catalogIndex.index.RRMDbToFJNTf.yaml'),
+      yamlStringify({ source: 'NIH' }),
+    )
+
+    const services = await createTestServices(
+      {
+        defaultBranchAccess: 'allow',
+        defaultPathAccess: 'allow',
+        schema: yamlSchema,
+      },
+      { getSettingsBranchRoot: () => Promise.resolve(root) },
+    )
+    const canopyCtx = createCanopyContext({
+      services,
+      extractUser: async () => STATIC_DEPLOY_USER,
+    })
+    const ctx = await canopyCtx.getContext()
+    const result = await ctx.readByUrlPath<{ source: string }>('/catalog')
+    expect(result).not.toBeNull()
+    expect(result!.data.source).toBe('NIH')
+    // Should not have a body field — YAML is data-only
+    expect('body' in result!.data).toBe(false)
   })
 })

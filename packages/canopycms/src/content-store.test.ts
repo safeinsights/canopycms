@@ -144,6 +144,48 @@ describe('ContentStore', () => {
     expect(doc.relativePath.endsWith('.yaml')).toBe(true)
   })
 
+  it('reads non-default yaml entry type with correct format', async () => {
+    const root = await tmpDir()
+    const schema = {
+      collections: [
+        {
+          name: 'research',
+          path: 'research',
+          entries: [
+            {
+              name: 'doc',
+              format: 'mdx' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+              default: true,
+            },
+            {
+              name: 'catalog',
+              format: 'yaml' as const,
+              schema: [{ name: 'source', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ schema })
+    const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+    // Write a YAML entry (non-default type)
+    await store.write(
+      unsafeAsLogicalPath('content/research'),
+      unsafeAsSlug('index'),
+      { format: 'yaml', data: { source: 'NIH' } },
+      'catalog',
+    )
+
+    // Read it back — should use yaml parser, not gray-matter
+    const doc = await store.read(unsafeAsLogicalPath('content/research'), unsafeAsSlug('index'))
+    expect(doc.format).toBe('yaml')
+    expect(doc.data.source).toBe('NIH')
+    expect('body' in doc).toBe(false)
+  })
+
   it('prevents path traversal outside root', async () => {
     const root = await tmpDir()
     const schema = {
