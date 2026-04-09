@@ -5,6 +5,7 @@ import { ContentStore, ContentStoreError } from '../content-store'
 import type { EntrySchema, EntryTypeConfig, FlatSchemaItem } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
+import { validateEntryLinks } from '../validation/entry-link-validator'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
 import type { Slug, PhysicalPath } from '../paths'
 import type { BranchContextWithSchema } from '../types'
@@ -31,6 +32,12 @@ export type ContentWriteResponse = ApiResponse<{
   format: string
   data: Record<string, unknown>
   body?: string
+  entryLinkWarnings?: Array<{
+    field: string
+    fieldPath: string
+    id: string
+    message: string
+  }>
 }>
 
 /** Response type for reference validation */
@@ -221,7 +228,14 @@ const writeContentHandler = async (
             params.entryType,
           )
 
-    return { ok: true, status: 200, data: result }
+    // Validate entry links in body content (warnings only, don't block save)
+    const fields = schemaItem.type === 'entry-type' ? schemaItem.schema : []
+    const idIndex = await store.idIndex()
+    const linkValidation = validateEntryLinks(body.data ?? {}, fields, idIndex, body.body)
+    const entryLinkWarnings =
+      linkValidation.warnings.length > 0 ? linkValidation.warnings : undefined
+
+    return { ok: true, status: 200, data: { ...result, entryLinkWarnings } }
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Write failed'
     return { ok: false, status: 400, error: message }

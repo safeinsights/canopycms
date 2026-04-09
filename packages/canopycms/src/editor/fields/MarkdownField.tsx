@@ -3,6 +3,7 @@ import React, { Suspense, useId, useRef, useCallback, useEffect } from 'react'
 import { Text, Textarea } from '@mantine/core'
 
 import type { MDXEditorMethods } from '@mdxeditor/editor'
+import { InsertEntryLink } from './entry-link'
 
 export interface MarkdownFieldProps {
   id?: string
@@ -39,8 +40,16 @@ const MDXEditorLazy = React.lazy(async () => {
       InsertCodeBlock,
       UndoRedo,
       Separator,
+      insertMarkdown$,
+      usePublisher,
     },
   ] = await Promise.all([import('@mdxeditor/editor'), import('@mdxeditor/editor')])
+
+  /** Toolbar wrapper that provides insertMarkdown to InsertEntryLink */
+  const EntryLinkToolbarButton: React.FC = () => {
+    const insertMarkdown = usePublisher(insertMarkdown$)
+    return <InsertEntryLink onInsert={insertMarkdown} />
+  }
 
   const WrappedEditor: React.FC<{
     markdown: string
@@ -92,6 +101,7 @@ const MDXEditorLazy = React.lazy(async () => {
                 <ListsToggle />
                 <Separator />
                 <CreateLink />
+                <EntryLinkToolbarButton />
                 <InsertImage />
                 <InsertTable />
                 <InsertThematicBreak />

@@ -33,6 +33,7 @@ vi.mock('../content-store', () => {
         body: 'Hello',
       }),
       renameEntry: vi.fn().mockResolvedValue({ newPath: 'content/posts/new-slug' }),
+      idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
     })),
     ContentStoreError: class ContentStoreError extends Error {},
   }

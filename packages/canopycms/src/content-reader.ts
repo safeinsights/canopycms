@@ -8,6 +8,7 @@ import type { BranchContext } from './types'
 import type { CanopyUser } from './user'
 import { isDeployedStatic, isBuildMode } from './build-mode'
 import { isNotFoundError } from './utils/error'
+import { resolveEntryLinksInText } from './entry-link-resolver'
 
 export interface ContentReaderOptions {
   services: CanopyServices
@@ -27,6 +28,8 @@ export interface ReadContentInput {
   user: CanopyUser
   /** Whether to automatically resolve reference fields. Defaults to true. */
   resolveReferences?: boolean
+  /** Whether to resolve entry:ID links in body/markdown fields. Defaults to true. */
+  resolveEntryLinks?: boolean
 }
 
 export interface ContentReader {
@@ -187,9 +190,10 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
 
     // ONLY if permissions pass, read the file
     try {
-      return await store.read(entryPath, slug ?? '', {
+      const doc = await store.read(entryPath, slug ?? '', {
         resolveReferences: input.resolveReferences ?? true,
       })
+      return { doc, store }
     } catch (err: unknown) {
       if (isNotFoundError(err)) return null
       throw err
@@ -201,17 +205,26 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
     message?: string,
   ) => {
     const { entryPath, slug, branchName } = resolveTarget(input)
-    const doc = await readDocument(input)
-    if (!doc || typeof doc !== 'object' || !('data' in doc)) {
+    const result = await readDocument(input)
+    if (!result || typeof result.doc !== 'object' || !('data' in result.doc)) {
       const defaultMessage = `Content not found for ${entryPath}${slug ? `/${slug}` : ''} on branch ${branchName}`
       throw new ContentStoreError(message ?? defaultMessage, 'NOT_FOUND')
     }
+    const { doc, store } = result
+
     // For md/mdx format, merge the body into the data so callers get a complete object.
     // The field name comes from the schema's isBody flag (defaults to 'body').
     const docRecord = doc as Record<string, unknown>
     const rawData = docRecord.data as Record<string, unknown>
-    const body = docRecord.body as string | undefined
+    let body = docRecord.body as string | undefined
     const bodyFieldName = (docRecord.bodyFieldName as string | undefined) ?? 'body'
+
+    // Resolve entry:ID links in body content (parallels reference resolution)
+    if (body != null && (input.resolveEntryLinks ?? true)) {
+      const idIndex = await store.idIndex()
+      body = resolveEntryLinksInText(body, idIndex, contentRoot, services.config.entryLinkUrl)
+    }
+
     const data = (body != null ? { ...rawData, [bodyFieldName]: body } : rawData) as T
     const path = buildEntryPath({
       collectionPath: entryPath,

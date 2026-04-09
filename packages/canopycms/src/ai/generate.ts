@@ -12,9 +12,10 @@ import { minimatch } from 'minimatch'
 
 import type { ContentStore, ContentDocument, MarkdownDocument } from '../content-store'
 import type { FlatSchemaItem, EntryTypeConfig } from '../config'
-import { extractEntryTypeFromFilename } from '../content-id-index'
+import { extractEntryTypeFromFilename, type ContentIdIndex } from '../content-id-index'
 import { getErrorMessage } from '../utils/error'
 import { entryToMarkdown } from './json-to-markdown'
+import { resolveEntryLinksInText, type EntryLinkUrlResolver } from '../entry-link-resolver'
 import type {
   AIContentConfig,
   AIEntry,
@@ -35,6 +36,8 @@ export interface GenerateOptions {
   /** The content root name (e.g., 'content') */
   contentRoot: string
   config?: AIContentConfig
+  /** Custom URL resolver for entry links. */
+  entryLinkUrl?: EntryLinkUrlResolver
 }
 
 export interface GenerateResult {
@@ -51,8 +54,11 @@ export interface GenerateResult {
  * bundle files, and a manifest.
  */
 export async function generateAIContent(options: GenerateOptions): Promise<GenerateResult> {
-  const { store, flatSchema, contentRoot, config } = options
+  const { store, flatSchema, contentRoot, config, entryLinkUrl } = options
   const files = new Map<string, string>()
+
+  // Build content ID index for entry link resolution
+  const idIndex = await store.idIndex()
 
   // Build lookup maps from flat schema
   const collections = flatSchema.filter(
@@ -84,6 +90,8 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
       flatSchema,
       contentRoot,
       config,
+      idIndex,
+      entryLinkUrl,
     )
 
     allEntries.push(...collectionResult.entries)
@@ -96,7 +104,14 @@ export async function generateAIContent(options: GenerateOptions): Promise<Gener
   // Process root-level entries (entries in content root, not in any subcollection)
   const rootCollection = collections.find((c) => c.logicalPath === contentRoot)
   if (rootCollection?.entries) {
-    const rootResult = await processRootEntries(store, rootCollection, contentRoot, config)
+    const rootResult = await processRootEntries(
+      store,
+      rootCollection,
+      contentRoot,
+      config,
+      idIndex,
+      entryLinkUrl,
+    )
     allEntries.push(...rootResult.entries)
     for (const [filePath, content] of rootResult.files) {
       files.set(filePath, content)
@@ -160,6 +175,8 @@ async function processCollection(
   flatSchema: FlatSchemaItem[],
   contentRoot: string,
   config?: AIContentConfig,
+  idIndex?: ContentIdIndex,
+  entryLinkUrl?: EntryLinkUrlResolver,
 ): Promise<CollectionProcessResult> {
   const files = new Map<string, string>()
   const entries: AIEntry[] = []
@@ -189,6 +206,11 @@ async function processCollection(
       })
 
       const aiEntry = docToAIEntry(doc, listEntry.slug, entryTypeName, entryTypeConfig, cleanPath)
+
+      // Resolve entry:ID links in body content
+      if (aiEntry.body && idIndex) {
+        aiEntry.body = resolveEntryLinksInText(aiEntry.body, idIndex, contentRoot, entryLinkUrl)
+      }
 
       // Check predicate exclusion
       if (config?.exclude?.where?.(aiEntry)) continue
@@ -224,7 +246,15 @@ async function processCollection(
   for (const sub of subcollections) {
     if (isCollectionExcluded(sub.logicalPath, contentRoot, config)) continue
 
-    const subResult = await processCollection(store, sub, flatSchema, contentRoot, config)
+    const subResult = await processCollection(
+      store,
+      sub,
+      flatSchema,
+      contentRoot,
+      config,
+      idIndex,
+      entryLinkUrl,
+    )
     entries.push(...subResult.entries)
     for (const [filePath, content] of subResult.files) {
       files.set(filePath, content)
@@ -268,6 +298,8 @@ async function processRootEntries(
   rootCollection: FlatSchemaItem & { type: 'collection' },
   contentRoot: string,
   config?: AIContentConfig,
+  idIndex?: ContentIdIndex,
+  entryLinkUrl?: EntryLinkUrlResolver,
 ): Promise<RootEntryResult> {
   const files = new Map<string, string>()
   const entries: AIEntry[] = []
@@ -292,6 +324,11 @@ async function processRootEntries(
       })
 
       const aiEntry = docToAIEntry(doc, listEntry.slug, entryTypeName, entryTypeConfig, '')
+
+      // Resolve entry:ID links in body content
+      if (aiEntry.body && idIndex) {
+        aiEntry.body = resolveEntryLinksInText(aiEntry.body, idIndex, contentRoot, entryLinkUrl)
+      }
 
       if (config?.exclude?.where?.(aiEntry)) continue
 

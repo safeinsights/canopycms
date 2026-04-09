@@ -56,7 +56,8 @@ The codebase uses a modular structure with clear separation:
 | settings-workspace.ts    | Settings branch workspace                                                                                                                                                                                                                                                                                                         |
 | settings-branch-utils.ts | Settings branch utility helpers                                                                                                                                                                                                                                                                                                   |
 | content-store.ts         | Content persistence (getCollectionEntryPaths for index-based minimal metadata); ContentStoreError with typed codes (ContentStoreErrorCode: NOT_FOUND, NO_SCHEMA_ITEM, FORBIDDEN, VALIDATION) for structural error matching; all internal assertion helpers (e.g. assertCollection) propagate error codes                          |
-| content-reader.ts        | Content reading                                                                                                                                                                                                                                                                                                                   |
+| content-reader.ts        | Content reading; resolves `entry:ID` links in body at read time (opt-out via `resolveEntryLinks: false`)                                                                                                                                                                                                                          |
+| entry-link-resolver.ts   | Entry link resolution: `resolveEntryUrl()`, `resolveEntryLinksInText()`, `extractEntryLinkIds()`; resolves `entry:CONTENT_ID` patterns in markdown body to URL paths; skips fenced/inline code blocks; supports custom resolver via `EntryLinkUrlResolver` callback; missing IDs become `#` dead links                            |
 | content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading, batch listing via listEntries); `ListEntriesItem` includes `urlPath` with index entries collapsed (e.g., `/guides` not `/guides/index`; root index returns `/`)                                                                                    |
 | content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs); `defaultBuildPath` collapses index entries to parent collection URL path                                                                                                                                                                                   |
 | content-id-index.ts      | Content ID indexing                                                                                                                                                                                                                                                                                                               |
@@ -70,29 +71,29 @@ The codebase uses a modular structure with clear separation:
 | asset-store.ts           | Asset storage                                                                                                                                                                                                                                                                                                                     |
 | build-mode.ts            | Static deploy detection (`isDeployedStatic`), build-phase safety net (`isBuildMode`), `STATIC_DEPLOY_USER`                                                                                                                                                                                                                        |
 | user.ts                  | User utilities                                                                                                                                                                                                                                                                                                                    |
-| server.ts                | Server entrypoint exports                                                                                                                                                                                                                                                                                                         |
+| server.ts                | Server entrypoint exports (includes `resolveEntryUrl`, `resolveEntryLinksInText`, `extractEntryLinkIds`, `EntryLinkUrlResolver`)                                                                                                                                                                                                  |
 
 ## API Layer
 
 **Location**: packages/canopycms/src/api/
 
-| Endpoint                          | Handler               | Purpose                                                       |
-| --------------------------------- | --------------------- | ------------------------------------------------------------- |
-| /api/canopycms/branches           | branch.ts             | Create/list branches                                          |
-| /api/canopycms/branch-status      | branch-status.ts      | Get status, submit PR                                         |
-| /api/canopycms/branch-withdraw    | branch-withdraw.ts    | Withdraw PR                                                   |
-| /api/canopycms/branch-review      | branch-review.ts      | Request changes                                               |
-| /api/canopycms/branch-merge       | branch-merge.ts       | Merge & cleanup                                               |
-| /api/canopycms/content            | content.ts            | Read/write content                                            |
-| /api/canopycms/entries            | entries.ts            | Entry management                                              |
-| /api/canopycms/assets             | assets.ts             | Asset upload/delete                                           |
-| /api/canopycms/comments           | comments.ts           | Comment CRUD                                                  |
-| /api/canopycms/groups             | groups.ts             | Group management                                              |
-| /api/canopycms/permissions        | permissions.ts        | Permission management                                         |
-| /api/canopycms/reference-options  | reference-options.ts  | Reference field options                                       |
-| /api/canopycms/resolve-references | resolve-references.ts | Resolve reference IDs to data                                 |
-| /api/canopycms/user               | user.ts               | Current user info                                             |
-| /api/canopycms/schema             | schema.ts             | Schema CRUD (collections, entry types, ordering) - admin only |
+| Endpoint                          | Handler               | Purpose                                                                         |
+| --------------------------------- | --------------------- | ------------------------------------------------------------------------------- |
+| /api/canopycms/branches           | branch.ts             | Create/list branches                                                            |
+| /api/canopycms/branch-status      | branch-status.ts      | Get status, submit PR                                                           |
+| /api/canopycms/branch-withdraw    | branch-withdraw.ts    | Withdraw PR                                                                     |
+| /api/canopycms/branch-review      | branch-review.ts      | Request changes                                                                 |
+| /api/canopycms/branch-merge       | branch-merge.ts       | Merge & cleanup                                                                 |
+| /api/canopycms/content            | content.ts            | Read/write content; validates entry links on write, returns `entryLinkWarnings` |
+| /api/canopycms/entries            | entries.ts            | Entry management                                                                |
+| /api/canopycms/assets             | assets.ts             | Asset upload/delete                                                             |
+| /api/canopycms/comments           | comments.ts           | Comment CRUD                                                                    |
+| /api/canopycms/groups             | groups.ts             | Group management                                                                |
+| /api/canopycms/permissions        | permissions.ts        | Permission management                                                           |
+| /api/canopycms/reference-options  | reference-options.ts  | Reference field options                                                         |
+| /api/canopycms/resolve-references | resolve-references.ts | Resolve reference IDs to data                                                   |
+| /api/canopycms/user               | user.ts               | Current user info                                                               |
+| /api/canopycms/schema             | schema.ts             | Schema CRUD (collections, entry types, ordering) - admin only                   |
 
 **API Support Files**:
 
@@ -512,17 +513,17 @@ Without `sort`: children are ordered by the collection's `order` array first, th
 
 **Location**: packages/canopycms/src/config/
 
-| File                   | Purpose                                    |
-| ---------------------- | ------------------------------------------ |
-| types.ts               | TypeScript type definitions for all config |
-| schemas/config.ts      | Zod schema for CanopyConfig                |
-| schemas/field.ts       | Zod schemas for field types                |
-| schemas/collection.ts  | Zod schemas for collections/entry types    |
-| schemas/permissions.ts | Zod schemas for permissions                |
-| schemas/media.ts       | Zod schema for media config                |
-| flatten.ts             | Schema flattening for O(1) lookups         |
-| validation.ts          | Config validation utilities                |
-| helpers.ts             | defineCanopyConfig, composeCanopyConfig    |
+| File                   | Purpose                                                                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| types.ts               | TypeScript type definitions for all config; includes `entryLinkUrl?: EntryLinkUrlResolver` callback for custom entry link URL resolution |
+| schemas/config.ts      | Zod schema for CanopyConfig                                                                                                              |
+| schemas/field.ts       | Zod schemas for field types                                                                                                              |
+| schemas/collection.ts  | Zod schemas for collections/entry types                                                                                                  |
+| schemas/permissions.ts | Zod schemas for permissions                                                                                                              |
+| schemas/media.ts       | Zod schema for media config                                                                                                              |
+| flatten.ts             | Schema flattening for O(1) lookups                                                                                                       |
+| validation.ts          | Config validation utilities                                                                                                              |
+| helpers.ts             | defineCanopyConfig, composeCanopyConfig                                                                                                  |
 
 ### Schema Definition
 
@@ -593,19 +594,20 @@ const { schema, sources } = await resolveSchema(contentRoot, entrySchemaRegistry
 
 **Location**: packages/canopycms/src/editor/hooks/
 
-| Hook                   | Purpose                                           |
-| ---------------------- | ------------------------------------------------- |
-| useBranchManager       | Branch switching and creation                     |
-| useBranchActions       | Branch workflow actions (submit, withdraw, merge) |
-| useEntryManager        | Entry loading and saving                          |
-| useDraftManager        | Draft state persistence (localStorage)            |
-| useCommentSystem       | Comment CRUD operations                           |
-| useGroupManager        | Group management operations                       |
-| usePermissionManager   | Permission management operations                  |
-| useEditorLayout        | Editor panel layout state                         |
-| useUserContext         | Current user context                              |
-| useUserMetadata        | User metadata fetching                            |
-| useReferenceResolution | Resolve reference IDs to display values           |
+| Hook                   | Purpose                                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| useBranchManager       | Branch switching and creation                                                                            |
+| useBranchActions       | Branch workflow actions (submit, withdraw, merge)                                                        |
+| useEntryManager        | Entry loading and saving                                                                                 |
+| useDraftManager        | Draft state persistence (localStorage)                                                                   |
+| useCommentSystem       | Comment CRUD operations                                                                                  |
+| useGroupManager        | Group management operations                                                                              |
+| usePermissionManager   | Permission management operations                                                                         |
+| useEditorLayout        | Editor panel layout state                                                                                |
+| useUserContext         | Current user context                                                                                     |
+| useUserMetadata        | User metadata fetching                                                                                   |
+| useReferenceResolution | Resolve reference IDs to display values                                                                  |
+| useEntryLinkResolution | Resolve `entry:ID` patterns in preview data before PreviewFrame; client-side URL map from editor entries |
 
 ### Conflict Notice
 
@@ -647,6 +649,20 @@ Conflict indicators appear at two levels:
 
 **Fields**: packages/canopycms/src/editor/fields/
 **Components**: packages/canopycms/src/editor/components/
+
+### Entry Link Fields
+
+**Location**: packages/canopycms/src/editor/fields/entry-link/
+
+MDXEditor toolbar integration for inserting `entry:CONTENT_ID` links into markdown content.
+
+| File                 | Purpose                                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| EntryLinkContext.tsx | React context providing `EntryLinkOption[]` to toolbar components; bridges editor entry list to MDXEditor |
+| InsertEntryLink.tsx  | Toolbar button + searchable entry picker modal (Mantine Combobox); inserts `[Title](entry:ID)` markdown   |
+| index.ts             | Barrel exports                                                                                            |
+
+**Client exports** (via `canopycms/client`): `EntryLinkContext`, `useEntryLinkContext`, `EntryLinkOption`, `EntryLinkContextValue`
 
 ## Git & Branch Management
 
@@ -871,11 +887,12 @@ const params = paramsSchema.parse(req.params)
 
 **Location**: packages/canopycms/src/validation/
 
-| File                   | Purpose                        |
-| ---------------------- | ------------------------------ |
-| field-traversal.ts     | Schema-aware field traversal   |
-| reference-validator.ts | Reference field validation     |
-| deletion-checker.ts    | Referential integrity checking |
+| File                    | Purpose                                                                                                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| field-traversal.ts      | Schema-aware field traversal                                                                                                                                                    |
+| reference-validator.ts  | Reference field validation                                                                                                                                                      |
+| entry-link-validator.ts | Validates `entry:ID` patterns in body/markdown fields at save time; produces warnings (never blocks saves) for broken links; exports `validateEntryLinks()`, `EntryLinkWarning` |
+| deletion-checker.ts     | Referential integrity checking                                                                                                                                                  |
 
 **Field Traversal** - generic way to walk nested data according to schema:
 
@@ -885,6 +902,30 @@ import { traverseFields, findFieldsByType } from '../validation/field-traversal'
 // Find all reference fields in data
 const refs = findFieldsByType(schema, data, 'reference')
 ```
+
+## Entry Links
+
+Cross-cutting feature for linking between content entries using `entry:CONTENT_ID` syntax in markdown body content. Extends the reference-by-ID pattern (used for structured reference fields) to inline links.
+
+**Syntax**: `[Link text](entry:vh2WdhwAFiSL)` or `[Link text](entry:vh2WdhwAFiSL#section-heading)`
+
+| Layer      | File                                              | Purpose                                                                                               |
+| ---------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Core       | src/entry-link-resolver.ts                        | `resolveEntryUrl()`, `resolveEntryLinksInText()`, `extractEntryLinkIds()`; code-block-safe resolution |
+| Validation | src/validation/entry-link-validator.ts            | `validateEntryLinks()` — warnings for broken links at save time (never blocks saves)                  |
+| Config     | src/config/types.ts                               | `entryLinkUrl?: EntryLinkUrlResolver` callback on `CanopyConfig` for custom URL mapping               |
+| Read path  | src/content-reader.ts                             | Resolves entry links in body at read time (default on; opt-out via `resolveEntryLinks: false`)        |
+| Write path | src/api/content.ts                                | Validates entry links on write; returns `entryLinkWarnings` in response                               |
+| AI         | src/ai/generate.ts                                | Resolves entry links in body before AI content generation                                             |
+| Preview    | src/editor/hooks/useEntryLinkResolution.ts        | Client-side hook: builds URL map from editor entries, resolves patterns in preview data               |
+| Toolbar    | src/editor/fields/entry-link/InsertEntryLink.tsx  | MDXEditor toolbar button + entry picker modal                                                         |
+| Context    | src/editor/fields/entry-link/EntryLinkContext.tsx | React context bridging editor entry list to toolbar components                                        |
+
+**Server exports** (`canopycms/server`): `resolveEntryUrl`, `resolveEntryLinksInText`, `extractEntryLinkIds`, `EntryLinkUrlResolver`
+
+**Client exports** (`canopycms/client`): `EntryLinkContext`, `useEntryLinkContext`, `EntryLinkOption`, `EntryLinkContextValue`
+
+**Resolution behavior**: Missing IDs resolve to `#` (dead link) with a warning logged. Anchor fragments are preserved. Code blocks (fenced and inline) are skipped to avoid corrupting code examples.
 
 ## Utility Module
 
@@ -932,7 +973,7 @@ Lightweight, read-only AI content serving. Does not require auth or the editor A
 | File                    | Purpose                                                                                                                                                                                                                    |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | handler.ts              | `createAIContentHandler()` — Next.js GET handler for AI-ready content                                                                                                                                                      |
-| generate.ts             | `generateAIContent()` — converts entries to AI-ready markdown                                                                                                                                                              |
+| generate.ts             | `generateAIContent()` — converts entries to AI-ready markdown; resolves `entry:ID` links in body before output                                                                                                             |
 | json-to-markdown.ts     | Schema-driven entry-to-markdown converter; body pipeline: `stripMdxImports → componentTransforms → bodyTransforms`                                                                                                         |
 | transform-components.ts | `applyComponentTransforms(body, transforms)`, `parseComponentProps(attrString)` — parses JSX from MDX and applies adopter-defined transforms to clean markdown; regex + convergence loop, code-block and inline-code aware |
 | resolve-branch.ts       | `resolveBranchRoot()` — resolves branch root for AI handler; mirrors `createActiveBranchDetector` priority (explicit config > git HEAD in dev > fallback)                                                                  |

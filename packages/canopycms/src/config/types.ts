@@ -8,6 +8,7 @@ import type { OperatingMode } from '../operating-mode'
 import type { AuthPlugin } from '../auth/plugin'
 import type { LogicalPath, ContentId } from '../paths/types'
 import type { PermissionPath } from '../authorization/types'
+import type { EntryLinkUrlResolver } from '../entry-link-resolver'
 
 // Field types
 export const primitiveFieldTypes = [
@@ -247,6 +248,8 @@ export interface CanopyConfig {
   sourceRoot?: SourceRoot
   editor?: CanopyEditorConfig
   authPlugin?: AuthPlugin
+  /** Custom URL resolver for entry links. Overrides the default URL computation. */
+  entryLinkUrl?: EntryLinkUrlResolver
 }
 
 /**
@@ -274,6 +277,8 @@ export interface CanopyConfigInput {
   sourceRoot?: string
   editor?: CanopyEditorConfig
   authPlugin?: AuthPlugin
+  /** Custom URL resolver for entry links. Overrides the default URL computation. */
+  entryLinkUrl?: EntryLinkUrlResolver
 }
 
 export type CanopyConfigFragment = Partial<CanopyConfigInput>
