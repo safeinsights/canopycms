@@ -58,8 +58,8 @@ export const InsertEntryLink: React.FC<InsertEntryLinkProps> = ({ onInsert }) =>
 
   const handleSelect = (entry: EntryLinkOption) => {
     const rawText = entry.label || entry.slug || 'Link'
-    // Escape markdown-special characters in link text to prevent malformed links
-    const linkText = rawText.replace(/([[\]()])/g, '\\$1')
+    // Escape backslashes first, then markdown-special characters in link text
+    const linkText = rawText.replace(/\\/g, '\\\\').replace(/([[\]()])/g, '\\$1')
     const markdown = `[${linkText}](entry:${entry.contentId})`
     onInsert(markdown)
     setOpened(false)
