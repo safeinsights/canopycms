@@ -18,6 +18,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - [Schema Registry and References](#schema-references-system)
 - [Configuration Reference](#configuration-reference)
 - [Content Identification and References](#content-identification--references)
+  - [Type Inference](#type-inference)
 - [Integration Guide](#integration-guide)
   - [Load Content by URL Path](#load-content-by-url-path)
   - [Index Entries and URL Resolution](#index-entries-and-url-resolution)
@@ -657,21 +658,21 @@ const config = defineCanopyConfig({
 
 ### Field Types
 
-| Type        | Description                                     | Options                                          |
-| ----------- | ----------------------------------------------- | ------------------------------------------------ |
-| `string`    | Single-line text                                | -                                                |
-| `number`    | Numeric value                                   | -                                                |
-| `boolean`   | True/false toggle                               | -                                                |
-| `datetime`  | Date and time picker                            | -                                                |
-| `markdown`  | Markdown text editor                            | -                                                |
-| `mdx`       | MDX editor with component support               | -                                                |
-| `rich-text` | Rich text editor                                | -                                                |
-| `image`     | Image upload/selection                          | -                                                |
-| `code`      | Code editor with syntax highlighting            | -                                                |
-| `select`    | Dropdown selection                              | `options: string[] \| {label, value}[]`          |
-| `reference` | Reference to another content entry (UUID-based) | `collections: string[]`, `displayField?: string` |
-| `object`    | Nested object                                   | `fields: FieldConfig[]`                          |
-| `block`     | Block-based content                             | `templates: BlockTemplate[]`                     |
+| Type        | Description                                     | Options                                                                     |
+| ----------- | ----------------------------------------------- | --------------------------------------------------------------------------- |
+| `string`    | Single-line text                                | -                                                                           |
+| `number`    | Numeric value                                   | -                                                                           |
+| `boolean`   | True/false toggle                               | -                                                                           |
+| `datetime`  | Date and time picker                            | -                                                                           |
+| `markdown`  | Markdown text editor                            | -                                                                           |
+| `mdx`       | MDX editor with component support               | -                                                                           |
+| `rich-text` | Rich text editor                                | -                                                                           |
+| `image`     | Image upload/selection                          | -                                                                           |
+| `code`      | Code editor with syntax highlighting            | -                                                                           |
+| `select`    | Dropdown selection                              | `options: string[] \| {label, value}[]`                                     |
+| `reference` | Reference to another content entry (UUID-based) | `collections: string[]`, `displayField?: string`, `resolvedSchema?: Schema` |
+| `object`    | Nested object                                   | `fields: FieldConfig[]`                                                     |
+| `block`     | Block-based content                             | `templates: BlockTemplate[]`                                                |
 
 **Common field options:**
 
@@ -698,6 +699,7 @@ const schema = defineEntrySchema([
     label: 'Author',
     collections: ['authors'], // Load options from 'authors' collection
     displayField: 'name', // Show the author's name in the dropdown
+    resolvedSchema: authorSchema, // Optional: enables typed inference (see Type Inference section)
   },
   {
     name: 'relatedPosts',
@@ -856,6 +858,88 @@ const postSchema = defineEntrySchema([
 // Inferred type: { title: string; tags: string[] }
 type Post = TypeFromEntrySchema<typeof postSchema>
 ```
+
+The type inference covers all field types: `string` and `markdown` fields become `string`, `number` becomes `number`, `boolean` becomes `boolean`, `object` fields become nested objects, `list: true` wraps the value in an array, and `required: false` adds `| undefined`.
+
+#### Typed Block Discriminated Unions
+
+Block fields produce a proper **discriminated union** based on their templates. This means you can switch on `block.template` and TypeScript will narrow `block.value` to the correct shape for that template:
+
+```typescript
+const pageSchema = defineEntrySchema([
+  {
+    name: 'blocks',
+    type: 'block',
+    templates: [
+      {
+        name: 'hero',
+        label: 'Hero Section',
+        fields: [
+          { name: 'headline', type: 'string' },
+          { name: 'body', type: 'markdown' },
+        ],
+      },
+      {
+        name: 'cta',
+        label: 'Call to Action',
+        fields: [
+          { name: 'title', type: 'string' },
+          { name: 'ctaText', type: 'string' },
+        ],
+      },
+    ],
+  },
+])
+
+type Page = TypeFromEntrySchema<typeof pageSchema>
+
+// Page['blocks'] is:
+//   Array<
+//     | { template: 'hero'; value: { headline: string; body: string } }
+//     | { template: 'cta'; value: { title: string; ctaText: string } }
+//   >
+
+for (const block of page.blocks) {
+  switch (block.template) {
+    case 'hero':
+      // block.value is narrowed to { headline: string; body: string }
+      return <HeroSection headline={block.value.headline} body={block.value.body} />
+    case 'cta':
+      // block.value is narrowed to { title: string; ctaText: string }
+      return <CtaSection title={block.value.title} ctaText={block.value.ctaText} />
+  }
+}
+```
+
+#### Typed References with `resolvedSchema`
+
+By default, reference fields infer as `string | null` (the UUID). If you want the inferred type to reflect the resolved entry's shape instead, pass `resolvedSchema` pointing to the target schema:
+
+```typescript
+const authorSchema = defineEntrySchema([
+  { name: 'name', type: 'string', label: 'Name' },
+  { name: 'bio', type: 'string', label: 'Bio' },
+])
+
+const postSchema = defineEntrySchema([
+  { name: 'title', type: 'string', label: 'Title' },
+  {
+    name: 'author',
+    type: 'reference',
+    label: 'Author',
+    collections: ['authors'],
+    displayField: 'name',
+    resolvedSchema: authorSchema, // Infer the resolved type from this schema
+  },
+])
+
+type Post = TypeFromEntrySchema<typeof postSchema>
+
+// Without resolvedSchema: Post['author'] would be string | null
+// With resolvedSchema:    Post['author'] is { name: string; bio: string } | null
+```
+
+The `resolvedSchema` option is used only for type inference -- it does not affect how content is read, written, or validated at runtime, and is automatically stripped from API responses. It accepts any schema created with `defineEntrySchema`, so you can share the same schema objects between your entry type definitions and your reference fields.
 
 ## Integration Guide
 

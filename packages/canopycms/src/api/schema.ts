@@ -93,6 +93,33 @@ export type WireFlatSchemaItem =
 
 type Registry = Record<string, EntrySchema>
 
+/** Strip `resolvedSchema` (type-inference-only) from fields before sending over the wire. */
+function stripResolvedSchema(registry: Registry): Registry {
+  return Object.fromEntries(
+    Object.entries(registry).map(([key, fields]) => [key, stripFieldsDeep(fields)]),
+  )
+}
+
+/** Recurse into .fields (object) and .templates[].fields (block) — the only field types with nested FieldConfig arrays. */
+function stripFieldsDeep(fields: EntrySchema): EntrySchema {
+  return fields.map((field) => {
+    const raw = field as unknown as Record<string, unknown>
+    const { resolvedSchema: _, ...rest } = raw
+    if (Array.isArray(rest.fields)) {
+      rest.fields = stripFieldsDeep(rest.fields as unknown as EntrySchema)
+    }
+    if (Array.isArray(rest.templates)) {
+      rest.templates = (rest.templates as Array<Record<string, unknown>>).map((t) => ({
+        ...t,
+        ...(Array.isArray(t.fields) && {
+          fields: stripFieldsDeep(t.fields as unknown as EntrySchema),
+        }),
+      }))
+    }
+    return rest as unknown as (typeof fields)[number]
+  })
+}
+
 /**
  * Resolve the schemaRef for an entry type. Uses the explicit schemaRef if set,
  * otherwise does a reverse lookup in the registry by matching the schema array.
@@ -335,7 +362,7 @@ const getSchemaHandler = async (
     status: 200,
     data: {
       flatSchema: toWireFlatSchema(branchContext.flatSchema, ctx.services.entrySchemaRegistry),
-      entrySchemas: ctx.services.entrySchemaRegistry,
+      entrySchemas: stripResolvedSchema(ctx.services.entrySchemaRegistry),
     },
   }
 }

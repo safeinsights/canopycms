@@ -61,7 +61,7 @@ The codebase uses a modular structure with clear separation:
 | content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading, batch listing via listEntries); `ListEntriesItem` includes `urlPath` with index entries collapsed (e.g., `/guides` not `/guides/index`; root index returns `/`)                                                                                    |
 | content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs); `defaultBuildPath` collapses index entries to parent collection URL path                                                                                                                                                                                   |
 | content-id-index.ts      | Content ID indexing                                                                                                                                                                                                                                                                                                               |
-| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                                                                                                                                                                                                                                                 |
+| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema); DistributeBlockTemplate produces proper discriminated unions for block fields; InferableField.resolvedSchema enables typed reference resolution (reference fields infer the target collection's content shape)                                                 |
 | entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle (string only) and isBody (at most one, markdown/mdx only)                                                                                                                                                                                                 |
 | git-manager.ts           | Git operations wrapper                                                                                                                                                                                                                                                                                                            |
 | github-service.ts        | GitHub API integration                                                                                                                                                                                                                                                                                                            |
@@ -435,14 +435,14 @@ export default withCanopy(
 
 ### Key Files
 
-| File                     | Purpose                                                                                                                           |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| content-store.ts         | Content persistence (write operations); ContentStoreError with typed error codes for structural matching                          |
-| content-reader.ts        | Content reading                                                                                                                   |
-| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema)                                                                 |
-| entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle (string only) and isBody (at most one, markdown/mdx only) |
-| content-id-index.ts      | Content ID indexing for lookups                                                                                                   |
-| reference-resolver.ts    | Reference field resolution                                                                                                        |
+| File                     | Purpose                                                                                                                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| content-store.ts         | Content persistence (write operations); ContentStoreError with typed error codes for structural matching                                                                         |
+| content-reader.ts        | Content reading                                                                                                                                                                  |
+| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema); DistributeBlockTemplate for block discriminated unions; resolvedSchema on InferableField for typed references |
+| entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle (string only) and isBody (at most one, markdown/mdx only)                                                |
+| content-id-index.ts      | Content ID indexing for lookups                                                                                                                                                  |
+| reference-resolver.ts    | Reference field resolution                                                                                                                                                       |
 
 ### Content Model
 

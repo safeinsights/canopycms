@@ -49,6 +49,7 @@ export const postSchema = defineEntrySchema([
     label: 'Author',
     collections: ['authors'],
     displayField: 'name',
+    resolvedSchema: authorSchema,
   },
   {
     name: 'tags',
@@ -85,7 +86,6 @@ export const postSchema = defineEntrySchema([
 
 export type PostContent = TypeFromEntrySchema<typeof postSchema> & {
   slug: string
-  author: AuthorContent | null
 }
 
 export const docSchema = defineEntrySchema([
