@@ -10,6 +10,10 @@ type InferableField = {
   templates?: ReadonlyArray<{ name: string; fields: readonly InferableField[] }>
   /** For reference fields: the target collection's schema (from defineEntrySchema) to infer resolved types. */
   resolvedSchema?: readonly InferableField[]
+  /** For reference fields: filter by entry type name (e.g., ['partner']). */
+  entryTypes?: readonly string[]
+  /** For reference fields: collection paths to scope the search. */
+  collections?: readonly string[]
 }
 
 type RequiredValue<F extends InferableField, V> = F['required'] extends false ? V | undefined : V

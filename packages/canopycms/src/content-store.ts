@@ -669,7 +669,9 @@ export class ContentStore {
   }
 
   /**
-   * List all entries in a collection.
+   * List all entries in a collection tree (including subcollections).
+   * For example, passing 'content/data-catalog' returns entries from
+   * 'content/data-catalog', 'content/data-catalog/partner-a', etc.
    * Returns array of entry metadata (relativePath, collection, slug).
    * Returns empty array if the collection doesn't exist.
    */
@@ -709,9 +711,8 @@ export class ContentStore {
 
     const collection = item
 
-    // Get entries directly from collection index (O(1) + O(m))
-    // The index now stores logical collection paths, so we can look up directly
-    const baseEntries = idIndex.getEntriesInCollection(collection.logicalPath)
+    // Get entries from this collection and all subcollections via tree traversal
+    const treeEntries = idIndex.getEntriesInCollectionTree(collection.logicalPath)
 
     // Filter and map to required format
     const entries: Array<{
@@ -720,19 +721,13 @@ export class ContentStore {
       slug: Slug
     }> = []
 
-    for (const location of baseEntries) {
-      if (location.type === 'entry' && location.slug) {
-        // Include entries in this collection or subcollections
-        if (
-          location.collection === collection.logicalPath ||
-          location.collection?.startsWith(collection.logicalPath + '/')
-        ) {
-          entries.push({
-            relativePath: location.relativePath,
-            collection: location.collection,
-            slug: location.slug,
-          })
-        }
+    for (const location of treeEntries) {
+      if (location.type === 'entry' && location.slug && location.collection) {
+        entries.push({
+          relativePath: location.relativePath,
+          collection: location.collection,
+          slug: location.slug,
+        })
       }
     }
 

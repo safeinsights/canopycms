@@ -47,10 +47,12 @@ export const selectFieldSchema = fieldBaseSchema.extend({
   options: z.array(selectOptionSchema).min(1),
 })
 
-// Reference field pointing to other collections
+// Reference field pointing to other collections and/or entry types.
+// At least one of `collections` or `entryTypes` must be specified (enforced by config validation).
 export const referenceFieldSchema = fieldBaseSchema.extend({
   type: z.literal('reference'),
-  collections: z.array(z.string().min(1)).min(1),
+  collections: z.array(z.string().min(1)).min(1).optional(),
+  entryTypes: z.array(z.string().min(1)).min(1).optional(),
   displayField: z.string().min(1).optional(),
   options: z.array(referenceOptionSchema).optional(),
 })

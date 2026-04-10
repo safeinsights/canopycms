@@ -13,7 +13,8 @@ export interface ReferenceFieldProps {
   id?: string
   label?: string
   options?: ReferenceOption[] // Now optional - will be loaded from API if not provided
-  collections?: string[] // Collections to load options from
+  collections?: string[] // Collections to load options from (includes subcollections)
+  entryTypes?: string[] // Entry types to filter by (e.g., ['partner'])
   displayField?: string // Field to use for display label
   branch?: string // Current branch
   value: string | string[]
@@ -27,6 +28,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   label,
   options: staticOptions,
   collections,
+  entryTypes,
   displayField = 'title',
   branch = 'main',
   value,
@@ -34,7 +36,9 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   multiple,
   dataCanopyField,
 }) => {
-  const needsFetch = !staticOptions && !!collections && collections.length > 0
+  const hasCollections = !!collections && collections.length > 0
+  const hasEntryTypes = !!entryTypes && entryTypes.length > 0
+  const needsFetch = !staticOptions && (hasCollections || hasEntryTypes)
   const [options, setOptions] = useState<ReferenceOption[]>(staticOptions || [])
   const [loading, setLoading] = useState(needsFetch)
 
@@ -55,7 +59,9 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
 
   // Track deps to detect changes and reset loading during render
   const [prevFetchKey, setPrevFetchKey] = useState('')
-  const fetchKey = needsFetch ? `${collections?.join(',')}:${displayField}:${branch}` : ''
+  const fetchKey = needsFetch
+    ? `${collections?.join(',') ?? ''}:${entryTypes?.join(',') ?? ''}:${displayField}:${branch}`
+    : ''
   if (fetchKey !== prevFetchKey) {
     setPrevFetchKey(fetchKey)
     if (needsFetch) {
@@ -63,17 +69,17 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
     }
   }
 
-  // Load options from API if collections are provided and no static options
+  // Load options from API if collections or entryTypes are provided and no static options
   useEffect(() => {
     if (needsFetch) {
       const apiClient = createApiClient()
 
+      const params: Record<string, string> = { branch, displayField }
+      if (collections && collections.length > 0) params.collections = collections.join(',')
+      if (entryTypes && entryTypes.length > 0) params.entryTypes = entryTypes.join(',')
+
       apiClient.content
-        .getReferenceOptions({
-          branch,
-          collections: collections!.join(','),
-          displayField,
-        })
+        .getReferenceOptions(params)
         .then((response) => {
           if (response.ok && response.data?.options) {
             const mappedOptions = response.data.options.map(
@@ -92,7 +98,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
           setLoading(false)
         })
     }
-  }, [needsFetch, collections, displayField, branch])
+  }, [needsFetch, collections, entryTypes, displayField, branch])
 
   if (loading) {
     return (
