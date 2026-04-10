@@ -454,6 +454,128 @@ describe('ContentIdIndex', () => {
       expect(apiEntries[0].id).toBe(apiEntryId)
     })
   })
+
+  describe('getEntriesInCollectionTree', () => {
+    it('returns entries from a collection and all subcollections', async () => {
+      // Create nested structure: content/catalog, content/catalog/partner-a, content/catalog/partner-b
+      await fs.mkdir(path.join(tempDir, 'content/catalog/partner-a'), { recursive: true })
+      await fs.mkdir(path.join(tempDir, 'content/catalog/partner-b'), { recursive: true })
+
+      const catalogEntryId = 'c1t2L3g4e5n6'
+      const partnerAId = 'p1r2t3n4a5b6'
+      const partnerBId = 'p1r2t3n4b5c7'
+
+      await fs.writeFile(
+        path.join(tempDir, `content/catalog/page.index.${catalogEntryId}.json`),
+        '{}',
+      )
+      await fs.writeFile(
+        path.join(tempDir, `content/catalog/partner-a/partner.overview.${partnerAId}.yaml`),
+        '',
+      )
+      await fs.writeFile(
+        path.join(tempDir, `content/catalog/partner-b/partner.overview.${partnerBId}.yaml`),
+        '',
+      )
+
+      await index.buildFromFilenames('content')
+
+      // Tree traversal should return all entries under catalog
+      const treeEntries = index.getEntriesInCollectionTree(unsafeAsLogicalPath('content/catalog'))
+      expect(treeEntries).toHaveLength(3)
+      const ids = treeEntries.map((e) => e.id).sort()
+      expect(ids).toEqual([catalogEntryId, partnerAId, partnerBId].sort())
+    })
+
+    it('returns only direct entries when no subcollections exist', async () => {
+      await fs.mkdir(path.join(tempDir, 'content/posts'), { recursive: true })
+
+      const postId = 'p1s2t3a4b5c6'
+      await fs.writeFile(path.join(tempDir, `content/posts/post.hello.${postId}.json`), '{}')
+
+      await index.buildFromFilenames('content')
+
+      const entries = index.getEntriesInCollectionTree(unsafeAsLogicalPath('content/posts'))
+      expect(entries).toHaveLength(1)
+      expect(entries[0].id).toBe(postId)
+    })
+
+    it('returns empty array for non-existent collection', async () => {
+      await index.buildFromFilenames('content')
+
+      const entries = index.getEntriesInCollectionTree(unsafeAsLogicalPath('content/nonexistent'))
+      expect(entries).toEqual([])
+    })
+
+    it('does not return entries from sibling collections', async () => {
+      await fs.mkdir(path.join(tempDir, 'content/catalog/partner-a'), { recursive: true })
+      await fs.mkdir(path.join(tempDir, 'content/blog'), { recursive: true })
+
+      const partnerId = 'p1r2t3n4a5b6'
+      const blogId = 'b1L2g3e4n5t6'
+
+      await fs.writeFile(
+        path.join(tempDir, `content/catalog/partner-a/partner.index.${partnerId}.yaml`),
+        '',
+      )
+      await fs.writeFile(path.join(tempDir, `content/blog/post.hello.${blogId}.json`), '{}')
+
+      await index.buildFromFilenames('content')
+
+      const catalogEntries = index.getEntriesInCollectionTree(
+        unsafeAsLogicalPath('content/catalog'),
+      )
+      expect(catalogEntries).toHaveLength(1)
+      expect(catalogEntries[0].id).toBe(partnerId)
+    })
+  })
+
+  describe('getAllEntryLocations', () => {
+    it('returns all entries across all collections', async () => {
+      await fs.mkdir(path.join(tempDir, 'content/posts'), { recursive: true })
+      await fs.mkdir(path.join(tempDir, 'content/authors'), { recursive: true })
+
+      const postId = 'p1s2t3a4b5c6'
+      const authorId = 'a1u2t3h4r5s6'
+      const rootId = 'r1t2e3n4t5y6'
+
+      await fs.writeFile(path.join(tempDir, `content/posts/post.hello.${postId}.json`), '{}')
+      await fs.writeFile(path.join(tempDir, `content/authors/author.alice.${authorId}.json`), '{}')
+      await fs.writeFile(path.join(tempDir, `content/home.${rootId}.json`), '{}')
+
+      await index.buildFromFilenames('content')
+
+      const allEntries = index.getAllEntryLocations()
+      expect(allEntries).toHaveLength(3)
+      const ids = allEntries.map((e) => e.id).sort()
+      expect(ids).toEqual([postId, authorId, rootId].sort())
+    })
+
+    it('excludes collection directories', async () => {
+      const collectionId = 'c1L2L3e4c5t6'
+      await fs.mkdir(path.join(tempDir, `content/posts.${collectionId}`), { recursive: true })
+
+      const entryId = 'e1n2t3r4y5a6'
+      await fs.writeFile(
+        path.join(tempDir, `content/posts.${collectionId}/post.hello.${entryId}.json`),
+        '{}',
+      )
+
+      await index.buildFromFilenames('content')
+
+      const allEntries = index.getAllEntryLocations()
+      expect(allEntries).toHaveLength(1)
+      expect(allEntries[0].type).toBe('entry')
+      expect(allEntries[0].id).toBe(entryId)
+    })
+
+    it('returns empty array when no entries exist', async () => {
+      await index.buildFromFilenames('content')
+
+      const allEntries = index.getAllEntryLocations()
+      expect(allEntries).toEqual([])
+    })
+  })
 })
 
 describe('extractIdFromFilename', () => {

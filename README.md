@@ -658,21 +658,21 @@ const config = defineCanopyConfig({
 
 ### Field Types
 
-| Type        | Description                                     | Options                                                                     |
-| ----------- | ----------------------------------------------- | --------------------------------------------------------------------------- |
-| `string`    | Single-line text                                | -                                                                           |
-| `number`    | Numeric value                                   | -                                                                           |
-| `boolean`   | True/false toggle                               | -                                                                           |
-| `datetime`  | Date and time picker                            | -                                                                           |
-| `markdown`  | Markdown text editor                            | -                                                                           |
-| `mdx`       | MDX editor with component support               | -                                                                           |
-| `rich-text` | Rich text editor                                | -                                                                           |
-| `image`     | Image upload/selection                          | -                                                                           |
-| `code`      | Code editor with syntax highlighting            | -                                                                           |
-| `select`    | Dropdown selection                              | `options: string[] \| {label, value}[]`                                     |
-| `reference` | Reference to another content entry (UUID-based) | `collections: string[]`, `displayField?: string`, `resolvedSchema?: Schema` |
-| `object`    | Nested object                                   | `fields: FieldConfig[]`                                                     |
-| `block`     | Block-based content                             | `templates: BlockTemplate[]`                                                |
+| Type        | Description                                     | Options                                                                                               |
+| ----------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `string`    | Single-line text                                | -                                                                                                     |
+| `number`    | Numeric value                                   | -                                                                                                     |
+| `boolean`   | True/false toggle                               | -                                                                                                     |
+| `datetime`  | Date and time picker                            | -                                                                                                     |
+| `markdown`  | Markdown text editor                            | -                                                                                                     |
+| `mdx`       | MDX editor with component support               | -                                                                                                     |
+| `rich-text` | Rich text editor                                | -                                                                                                     |
+| `image`     | Image upload/selection                          | -                                                                                                     |
+| `code`      | Code editor with syntax highlighting            | -                                                                                                     |
+| `select`    | Dropdown selection                              | `options: string[] \| {label, value}[]`                                                               |
+| `reference` | Reference to another content entry (UUID-based) | `collections?: string[]`, `entryTypes?: string[]`, `displayField?: string`, `resolvedSchema?: Schema` |
+| `object`    | Nested object                                   | `fields: FieldConfig[]`                                                                               |
+| `block`     | Block-based content                             | `templates: BlockTemplate[]`                                                                          |
 
 **Common field options:**
 
@@ -708,6 +708,15 @@ const schema = defineEntrySchema([
     collections: ['posts'],
     displayField: 'title',
     list: true, // Allow multiple references
+  },
+  {
+    name: 'partners',
+    type: 'reference',
+    label: 'Partners',
+    entryTypes: ['partner'], // Find entries by type across all collections
+    displayField: 'name',
+    list: true,
+    resolvedSchema: partnerSchema,
   },
 ])
 ```
@@ -784,7 +793,13 @@ Every entry in your content automatically receives a unique, stable identifier. 
 
 ### Reference Fields
 
-Reference fields let you create typed relationships between content entries. Unlike brittle string links or file paths, references use UUIDs to create robust, move-safe links:
+Reference fields let you create typed relationships between content entries. Unlike brittle string links or file paths, references use UUIDs to create robust, move-safe links.
+
+Reference fields accept `collections`, `entryTypes`, or both to scope which entries can be referenced. At least one must be specified:
+
+- **`collections`** — Scope by collection path(s), including all subcollections within that tree
+- **`entryTypes`** — Scope by entry type name(s), regardless of which collection the entries live in
+- **Both** — Combine for precise scoping (e.g., only `partner` entries within the `data-catalog` tree)
 
 ```typescript
 const schema = defineEntrySchema([
@@ -804,22 +819,40 @@ const schema = defineEntrySchema([
     displayField: 'label',
     list: true, // Allow multiple references
   },
+  {
+    name: 'partners',
+    type: 'reference',
+    label: 'Partners',
+    entryTypes: ['partner'], // Find all 'partner' entries across any collection
+    displayField: 'name',
+    list: true,
+    resolvedSchema: partnerSchema,
+  },
+  {
+    name: 'catalogPartner',
+    type: 'reference',
+    label: 'Catalog Partner',
+    collections: ['data-catalog'], // Search within data-catalog and all its subcollections
+    entryTypes: ['partner'], // But only entries of type 'partner'
+    displayField: 'name',
+  },
 ])
 ```
 
 **Key benefits:**
 
 - **Type safety**: The editor validates that references always point to valid entries
-- **Dynamic options**: The reference field automatically loads available options from the specified collections
+- **Dynamic options**: The reference field automatically loads available options from the specified collections and/or entry types
 - **Move-safe**: References survive file renames and directory moves - the ID is permanent
 - **No broken links**: If you delete an entry, you'll see validation errors on any entries referencing it
 - **Display flexibility**: Show any field from the referenced entry (title, name, slug, etc.) in dropdowns
+- **Co-located data**: Use `entryTypes` to reference entries that live alongside their related content in subcollections, without needing a dedicated collection
 
 ### How References Work in the Editor
 
 When editing a reference field:
 
-1. Click the dropdown to see all available entries from the configured collections
+1. Click the dropdown to see all available entries matching the configured collections and/or entry types
 2. Search by the display field value (e.g., search for author names)
 3. Select an entry - CanopyCMS stores the UUID internally
 4. When reading content, the UUID is resolved to the actual entry data

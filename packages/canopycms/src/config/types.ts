@@ -89,7 +89,8 @@ export interface SelectFieldConfig extends BaseFieldConfig {
  */
 export interface ReferenceFieldConfig extends BaseFieldConfig {
   type: 'reference'
-  collections: string[]
+  collections?: string[]
+  entryTypes?: string[]
   displayField?: string
   options?: ReferenceOption[]
 }

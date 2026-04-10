@@ -195,6 +195,57 @@ export class ContentIdIndex {
   }
 
   /**
+   * Get all entries in a collection and its subcollections (tree traversal).
+   * For example, getEntriesInCollectionTree("content/data-catalog") returns entries
+   * in "content/data-catalog", "content/data-catalog/openstax", etc.
+   *
+   * Performance: O(k * m) where k is number of matching collections and m is avg entries per collection.
+   *
+   * @param collectionPath - The root collection path to search
+   * @returns Array of IdLocation objects for entries in the collection tree
+   */
+  getEntriesInCollectionTree(collectionPath: LogicalPath): IdLocation[] {
+    const locations: IdLocation[] = []
+    const prefix = collectionPath + '/'
+
+    for (const [key, idSet] of this.byCollection) {
+      if (key === collectionPath || key.startsWith(prefix)) {
+        for (const id of idSet) {
+          const location = this.idToLocation.get(id)
+          if (location) {
+            locations.push(location)
+          }
+        }
+      }
+    }
+
+    return locations
+  }
+
+  /**
+   * Get all entry locations across all collections.
+   * Useful for entryType-only queries where no collection scope is specified.
+   *
+   * Performance: O(n) where n is total number of entries.
+   *
+   * @returns Array of all IdLocation objects that are entries
+   */
+  getAllEntryLocations(): IdLocation[] {
+    const locations: IdLocation[] = []
+
+    for (const [, idSet] of this.byCollection) {
+      for (const id of idSet) {
+        const location = this.idToLocation.get(id)
+        if (location && location.type === 'entry') {
+          locations.push(location)
+        }
+      }
+    }
+
+    return locations
+  }
+
+  /**
    * Add a new entry or collection to the index.
    * Note: This only updates the in-memory index. The file with embedded ID
    * must already exist on disk (created by ContentStore).

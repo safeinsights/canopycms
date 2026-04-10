@@ -34,22 +34,28 @@ const getReferenceOptionsHandler = async (
 ): Promise<ReferenceOptionsResponse> => {
   const { branchContext } = gc
 
-  // Query parameter validation
-  const querySchema = z.object({
-    collections: z.string().min(1),
-    displayField: z.string().optional(),
-    search: z.string().optional(),
-  })
+  // Query parameter validation — at least one of collections or entryTypes is required
+  const querySchema = z
+    .object({
+      collections: z.string().optional(),
+      entryTypes: z.string().optional(),
+      displayField: z.string().optional(),
+      search: z.string().optional(),
+    })
+    .refine((data) => data.collections || data.entryTypes, {
+      message: 'At least one of "collections" or "entryTypes" query parameters is required',
+    })
   const queryResult = querySchema.safeParse(req.query ?? {})
   if (!queryResult.success) {
     return {
       ok: false,
       status: 400,
-      error: 'Query parameter "collections" is required',
+      error: queryResult.error.issues[0]?.message ?? 'Invalid query parameters',
     }
   }
 
   const collectionsParam = queryResult.data.collections
+  const entryTypesParam = queryResult.data.entryTypes
   const displayField = queryResult.data.displayField || 'title'
   const search = queryResult.data.search
 
@@ -60,26 +66,37 @@ const getReferenceOptionsHandler = async (
   const idIndex = await store.idIndex()
 
   // Parse and validate collections from query params
-  const rawCollections = collectionsParam
-    .split(',')
-    .map((c) => c.trim())
-    .filter(Boolean)
-  const collections: LogicalPath[] = []
-  for (const raw of rawCollections) {
-    const result = parseLogicalPath(raw)
-    if (!result.ok) {
-      return {
-        ok: false,
-        status: 400,
-        error: `Invalid collection path "${raw}": ${result.error}`,
+  let collections: LogicalPath[] | undefined
+  if (collectionsParam) {
+    const rawCollections = collectionsParam
+      .split(',')
+      .map((c) => c.trim())
+      .filter(Boolean)
+    collections = []
+    for (const raw of rawCollections) {
+      const result = parseLogicalPath(raw)
+      if (!result.ok) {
+        return {
+          ok: false,
+          status: 400,
+          error: `Invalid collection path "${raw}": ${result.error}`,
+        }
       }
+      collections.push(result.path)
     }
-    collections.push(result.path)
   }
+
+  // Parse entry types from query params
+  const entryTypes = entryTypesParam
+    ? entryTypesParam
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean)
+    : undefined
 
   // Load reference options
   const resolver = new ReferenceResolver(store, idIndex)
-  const options = await resolver.loadReferenceOptions(collections, displayField, search)
+  const options = await resolver.loadReferenceOptions(collections, displayField, search, entryTypes)
 
   return {
     ok: true,
@@ -95,7 +112,8 @@ const getReferenceOptionsHandler = async (
 /**
  * Get reference options for a field
  * GET /:branch/reference-options
- * Query params: collections (comma-separated), displayField, search
+ * Query params: collections (comma-separated, optional), entryTypes (comma-separated, optional),
+ *   displayField, search. At least one of collections or entryTypes is required.
  */
 const getReferenceOptions = defineEndpoint({
   namespace: 'content',

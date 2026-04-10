@@ -50,6 +50,53 @@ export const ensureSelectFieldsHaveOptions = (config: unknown): void => {
 }
 
 /**
+ * Recursively check that all reference fields have at least one of `collections` or `entryTypes`.
+ * Throws an error if a reference field has neither.
+ */
+export const ensureReferenceFieldsHaveScope = (config: unknown): void => {
+  const checkFields = (fields: unknown[] | undefined) => {
+    if (!Array.isArray(fields)) return
+    for (const field of fields) {
+      const f = field as Record<string, unknown>
+      if (f?.type === 'reference') {
+        const hasCollections = Array.isArray(f.collections) && f.collections.length > 0
+        const hasEntryTypes = Array.isArray(f.entryTypes) && f.entryTypes.length > 0
+        if (!hasCollections && !hasEntryTypes) {
+          const fieldName = (f?.name as string) ?? 'unknown'
+          throw new Error(
+            `Reference field "${fieldName}" requires at least one of "collections" or "entryTypes"`,
+          )
+        }
+      }
+      if (f?.type === 'object') {
+        checkFields(f.fields as unknown[])
+      }
+      if (f?.type === 'block' && Array.isArray(f.templates)) {
+        for (const template of f.templates as Array<{ fields?: unknown[] }>) {
+          checkFields(template.fields)
+        }
+      }
+    }
+  }
+
+  const walkSchema = (root: Record<string, unknown> | undefined) => {
+    if (!root) return
+    if (Array.isArray(root.entries)) {
+      for (const entryType of root.entries as Array<{ schema?: unknown[] }>) {
+        checkFields(entryType?.schema)
+      }
+    }
+    if (Array.isArray(root.collections)) {
+      for (const collection of root.collections as Array<Record<string, unknown>>) {
+        walkSchema(collection)
+      }
+    }
+  }
+
+  walkSchema((config as Record<string, unknown>)?.schema as Record<string, unknown>)
+}
+
+/**
  * Validate and normalize a CanopyConfig object.
  * Performs Zod validation, checks select field options, and normalizes paths.
  *
@@ -59,6 +106,7 @@ export const ensureSelectFieldsHaveOptions = (config: unknown): void => {
  */
 export const validateCanopyConfig = (config: unknown): CanopyConfig => {
   ensureSelectFieldsHaveOptions(config)
+  ensureReferenceFieldsHaveScope(config)
   const parsed = CanopyConfigSchema.parse(config)
   const normalized = {
     ...parsed,

@@ -60,14 +60,14 @@ The codebase uses a modular structure with clear separation:
 | entry-link-resolver.ts   | Entry link resolution: `resolveEntryUrl()`, `resolveEntryLinksInText()`, `extractEntryLinkIds()`; resolves `entry:CONTENT_ID` patterns in markdown body to URL paths; skips fenced/inline code blocks; supports custom resolver via `EntryLinkUrlResolver` callback; missing IDs become `#` dead links                            |
 | content-listing.ts       | Shared content-listing utilities (entry parsing, ordering, filesystem reading, batch listing via listEntries); `ListEntriesItem` includes `urlPath` with index entries collapsed (e.g., `/guides` not `/guides/index`; root index returns `/`)                                                                                    |
 | content-tree.ts          | Content tree builder for adopters (navigation, sitemaps, breadcrumbs); `defaultBuildPath` collapses index entries to parent collection URL path                                                                                                                                                                                   |
-| content-id-index.ts      | Content ID indexing                                                                                                                                                                                                                                                                                                               |
-| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema); DistributeBlockTemplate produces proper discriminated unions for block fields; InferableField.resolvedSchema enables typed reference resolution (reference fields infer the target collection's content shape)                                                 |
+| content-id-index.ts      | Content ID indexing; getEntriesInCollectionTree (tree traversal including subcollections), getAllEntryLocations (all entries across collections for entryType-only queries)                                                                                                                                                       |
+| entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema); DistributeBlockTemplate produces proper discriminated unions for block fields; InferableField includes resolvedSchema (typed reference resolution), entryTypes, and collections for reference field scoping                                                    |
 | entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle (string only) and isBody (at most one, markdown/mdx only)                                                                                                                                                                                                 |
 | git-manager.ts           | Git operations wrapper                                                                                                                                                                                                                                                                                                            |
 | github-service.ts        | GitHub API integration                                                                                                                                                                                                                                                                                                            |
 | comment-store.ts         | Comment persistence                                                                                                                                                                                                                                                                                                               |
 | url-path-resolver.ts     | URL path to content resolution (resolveUrlPathCandidates: decomposes URL path into ordered entryPath/slug candidates; root path `/` returns `{ entryPath: contentRoot, slug: 'index' }`)                                                                                                                                          |
-| reference-resolver.ts    | Reference resolution                                                                                                                                                                                                                                                                                                              |
+| reference-resolver.ts    | Reference resolution; loadReferenceOptions supports optional collections (with subcollection tree traversal) and/or entryTypes filtering; at least one scope required                                                                                                                                                             |
 | asset-store.ts           | Asset storage                                                                                                                                                                                                                                                                                                                     |
 | build-mode.ts            | Static deploy detection (`isDeployedStatic`), build-phase safety net (`isBuildMode`), `STATIC_DEPLOY_USER`                                                                                                                                                                                                                        |
 | user.ts                  | User utilities                                                                                                                                                                                                                                                                                                                    |
@@ -77,23 +77,23 @@ The codebase uses a modular structure with clear separation:
 
 **Location**: packages/canopycms/src/api/
 
-| Endpoint                          | Handler               | Purpose                                                                         |
-| --------------------------------- | --------------------- | ------------------------------------------------------------------------------- |
-| /api/canopycms/branches           | branch.ts             | Create/list branches                                                            |
-| /api/canopycms/branch-status      | branch-status.ts      | Get status, submit PR                                                           |
-| /api/canopycms/branch-withdraw    | branch-withdraw.ts    | Withdraw PR                                                                     |
-| /api/canopycms/branch-review      | branch-review.ts      | Request changes                                                                 |
-| /api/canopycms/branch-merge       | branch-merge.ts       | Merge & cleanup                                                                 |
-| /api/canopycms/content            | content.ts            | Read/write content; validates entry links on write, returns `entryLinkWarnings` |
-| /api/canopycms/entries            | entries.ts            | Entry management                                                                |
-| /api/canopycms/assets             | assets.ts             | Asset upload/delete                                                             |
-| /api/canopycms/comments           | comments.ts           | Comment CRUD                                                                    |
-| /api/canopycms/groups             | groups.ts             | Group management                                                                |
-| /api/canopycms/permissions        | permissions.ts        | Permission management                                                           |
-| /api/canopycms/reference-options  | reference-options.ts  | Reference field options                                                         |
-| /api/canopycms/resolve-references | resolve-references.ts | Resolve reference IDs to data                                                   |
-| /api/canopycms/user               | user.ts               | Current user info                                                               |
-| /api/canopycms/schema             | schema.ts             | Schema CRUD (collections, entry types, ordering) - admin only                   |
+| Endpoint                          | Handler               | Purpose                                                                                                                                |
+| --------------------------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| /api/canopycms/branches           | branch.ts             | Create/list branches                                                                                                                   |
+| /api/canopycms/branch-status      | branch-status.ts      | Get status, submit PR                                                                                                                  |
+| /api/canopycms/branch-withdraw    | branch-withdraw.ts    | Withdraw PR                                                                                                                            |
+| /api/canopycms/branch-review      | branch-review.ts      | Request changes                                                                                                                        |
+| /api/canopycms/branch-merge       | branch-merge.ts       | Merge & cleanup                                                                                                                        |
+| /api/canopycms/content            | content.ts            | Read/write content; validates entry links on write, returns `entryLinkWarnings`                                                        |
+| /api/canopycms/entries            | entries.ts            | Entry management                                                                                                                       |
+| /api/canopycms/assets             | assets.ts             | Asset upload/delete                                                                                                                    |
+| /api/canopycms/comments           | comments.ts           | Comment CRUD                                                                                                                           |
+| /api/canopycms/groups             | groups.ts             | Group management                                                                                                                       |
+| /api/canopycms/permissions        | permissions.ts        | Permission management                                                                                                                  |
+| /api/canopycms/reference-options  | reference-options.ts  | Reference field options; query params: collections, entryTypes, displayField, search (at least one of collections/entryTypes required) |
+| /api/canopycms/resolve-references | resolve-references.ts | Resolve reference IDs to data                                                                                                          |
+| /api/canopycms/user               | user.ts               | Current user info                                                                                                                      |
+| /api/canopycms/schema             | schema.ts             | Schema CRUD (collections, entry types, ordering) - admin only                                                                          |
 
 **API Support Files**:
 
@@ -441,14 +441,14 @@ export default withCanopy(
 | content-reader.ts        | Content reading                                                                                                                                                                  |
 | entry-schema.ts          | Entry schema definitions (defineEntrySchema, TypeFromEntrySchema); DistributeBlockTemplate for block discriminated unions; resolvedSchema on InferableField for typed references |
 | entry-schema-registry.ts | Entry schema registry for reusable field definitions; validates isTitle (string only) and isBody (at most one, markdown/mdx only)                                                |
-| content-id-index.ts      | Content ID indexing for lookups                                                                                                                                                  |
-| reference-resolver.ts    | Reference field resolution                                                                                                                                                       |
+| content-id-index.ts      | Content ID indexing for lookups; tree traversal (getEntriesInCollectionTree) and global entry queries (getAllEntryLocations)                                                     |
+| reference-resolver.ts    | Reference field resolution; loadReferenceOptions(collections?, displayField, search?, entryTypes?) with subcollection tree traversal and entry type filtering                    |
 
 ### Content Model
 
 - **Collections**: Containers for entries (posts, authors)
 - **Entry Types**: Define content structure within collections; `maxItems: 1` for single-instance entries
-- **Fields**: text, select, reference, object, code, block, markdown
+- **Fields**: text, select, reference, object, code, block, markdown. Reference fields scoped by optional `collections` and/or `entryTypes` (at least one required; validated by `ensureReferenceFieldsHaveScope`)
 - **Field flags**: `isTitle` (marks one string-type field per schema as the display title; validated at registry load time; used by `resolveEntryTitle` fallback chain in `utils/title-field.ts`), `isBody` (marks one markdown/mdx field per schema as the file's body content; at most one per schema; validated at registry load time via `utils/body-field.ts`)
 - **Format**: MD/MDX/JSON/YAML with frontmatter (gray-matter for md/mdx); JSON and YAML are data-only formats (no body/frontmatter separation)
 
@@ -513,17 +513,17 @@ Without `sort`: children are ordered by the collection's `order` array first, th
 
 **Location**: packages/canopycms/src/config/
 
-| File                   | Purpose                                                                                                                                  |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| types.ts               | TypeScript type definitions for all config; includes `entryLinkUrl?: EntryLinkUrlResolver` callback for custom entry link URL resolution |
-| schemas/config.ts      | Zod schema for CanopyConfig                                                                                                              |
-| schemas/field.ts       | Zod schemas for field types                                                                                                              |
-| schemas/collection.ts  | Zod schemas for collections/entry types                                                                                                  |
-| schemas/permissions.ts | Zod schemas for permissions                                                                                                              |
-| schemas/media.ts       | Zod schema for media config                                                                                                              |
-| flatten.ts             | Schema flattening for O(1) lookups                                                                                                       |
-| validation.ts          | Config validation utilities                                                                                                              |
-| helpers.ts             | defineCanopyConfig, composeCanopyConfig                                                                                                  |
+| File                   | Purpose                                                                                                                                                                        |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| types.ts               | TypeScript type definitions for all config; ReferenceFieldConfig has optional `collections` and optional `entryTypes`; includes `entryLinkUrl?: EntryLinkUrlResolver` callback |
+| schemas/config.ts      | Zod schema for CanopyConfig                                                                                                                                                    |
+| schemas/field.ts       | Zod schemas for field types; referenceFieldSchema has optional `collections` and optional `entryTypes` arrays                                                                  |
+| schemas/collection.ts  | Zod schemas for collections/entry types                                                                                                                                        |
+| schemas/permissions.ts | Zod schemas for permissions                                                                                                                                                    |
+| schemas/media.ts       | Zod schema for media config                                                                                                                                                    |
+| flatten.ts             | Schema flattening for O(1) lookups                                                                                                                                             |
+| validation.ts          | Config validation utilities; ensureReferenceFieldsHaveScope ensures reference fields have at least one of collections or entryTypes                                            |
+| helpers.ts             | defineCanopyConfig, composeCanopyConfig                                                                                                                                        |
 
 ### Schema Definition
 
@@ -890,7 +890,7 @@ const params = paramsSchema.parse(req.params)
 | File                    | Purpose                                                                                                                                                                         |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | field-traversal.ts      | Schema-aware field traversal                                                                                                                                                    |
-| reference-validator.ts  | Reference field validation                                                                                                                                                      |
+| reference-validator.ts  | Reference field validation (ID format, existence, collection constraints, entry type constraints via extractEntryTypeFromFilename)                                              |
 | entry-link-validator.ts | Validates `entry:ID` patterns in body/markdown fields at save time; produces warnings (never blocks saves) for broken links; exports `validateEntryLinks()`, `EntryLinkWarning` |
 | deletion-checker.ts     | Referential integrity checking                                                                                                                                                  |
 

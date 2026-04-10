@@ -5,7 +5,7 @@ import type { ContentId } from '../../paths/types'
 import { ROOT_COLLECTION_ID } from '../../paths/types'
 import { composeCanopyConfig, defineCanopyConfig } from '../helpers'
 import { flattenSchema } from '../flatten'
-import { validateCanopyConfig } from '../validation'
+import { ensureReferenceFieldsHaveScope, validateCanopyConfig } from '../validation'
 
 const gitAuthor = {
   gitBotAuthorName: 'Test Bot',
@@ -555,5 +555,114 @@ describe('config validation', () => {
     // Display name preserved as-is
     expect(nested?.name).toBe('EdPlus-Learning-at-Scale')
     expect(nested?.parentPath).toBe('content/data-catalog')
+  })
+})
+
+describe('ensureReferenceFieldsHaveScope', () => {
+  const makeConfig = (fields: unknown[]) => ({
+    schema: {
+      entries: [{ schema: fields }],
+    },
+  })
+
+  it('passes when reference field has collections', () => {
+    expect(() =>
+      ensureReferenceFieldsHaveScope(
+        makeConfig([{ name: 'ref', type: 'reference', collections: ['authors'] }]),
+      ),
+    ).not.toThrow()
+  })
+
+  it('passes when reference field has entryTypes', () => {
+    expect(() =>
+      ensureReferenceFieldsHaveScope(
+        makeConfig([{ name: 'ref', type: 'reference', entryTypes: ['partner'] }]),
+      ),
+    ).not.toThrow()
+  })
+
+  it('passes when reference field has both', () => {
+    expect(() =>
+      ensureReferenceFieldsHaveScope(
+        makeConfig([
+          { name: 'ref', type: 'reference', collections: ['catalog'], entryTypes: ['partner'] },
+        ]),
+      ),
+    ).not.toThrow()
+  })
+
+  it('throws when reference field has neither', () => {
+    expect(() =>
+      ensureReferenceFieldsHaveScope(makeConfig([{ name: 'ref', type: 'reference' }])),
+    ).toThrow('Reference field "ref" requires at least one of "collections" or "entryTypes"')
+  })
+
+  it('throws when collections is empty array', () => {
+    expect(() =>
+      ensureReferenceFieldsHaveScope(
+        makeConfig([{ name: 'ref', type: 'reference', collections: [] }]),
+      ),
+    ).toThrow('Reference field "ref" requires at least one of "collections" or "entryTypes"')
+  })
+
+  it('throws when entryTypes is empty array', () => {
+    expect(() =>
+      ensureReferenceFieldsHaveScope(
+        makeConfig([{ name: 'ref', type: 'reference', entryTypes: [] }]),
+      ),
+    ).toThrow('Reference field "ref" requires at least one of "collections" or "entryTypes"')
+  })
+
+  it('ignores non-reference fields', () => {
+    expect(() =>
+      ensureReferenceFieldsHaveScope(
+        makeConfig([
+          { name: 'title', type: 'string' },
+          { name: 'tags', type: 'select', options: ['a'] },
+        ]),
+      ),
+    ).not.toThrow()
+  })
+
+  it('validates reference fields inside object fields', () => {
+    expect(() =>
+      ensureReferenceFieldsHaveScope(
+        makeConfig([
+          {
+            name: 'meta',
+            type: 'object',
+            fields: [{ name: 'ref', type: 'reference' }],
+          },
+        ]),
+      ),
+    ).toThrow('Reference field "ref"')
+  })
+
+  it('validates reference fields inside block templates', () => {
+    expect(() =>
+      ensureReferenceFieldsHaveScope(
+        makeConfig([
+          {
+            name: 'blocks',
+            type: 'block',
+            templates: [{ name: 'card', fields: [{ name: 'ref', type: 'reference' }] }],
+          },
+        ]),
+      ),
+    ).toThrow('Reference field "ref"')
+  })
+
+  it('validates nested collections', () => {
+    expect(() =>
+      ensureReferenceFieldsHaveScope({
+        schema: {
+          collections: [
+            {
+              entries: [{ schema: [{ name: 'ref', type: 'reference' }] }],
+            },
+          ],
+        },
+      }),
+    ).toThrow('Reference field "ref"')
   })
 })

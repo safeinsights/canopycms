@@ -1,4 +1,7 @@
+import path from 'node:path'
+
 import type { ContentIdIndex } from '../content-id-index'
+import { extractEntryTypeFromFilename } from '../content-id-index'
 import type { FieldConfig, ReferenceFieldConfig } from '../config'
 import { isValidId } from '../id'
 import { findFieldsByType } from './field-traversal'
@@ -52,7 +55,7 @@ export class ReferenceValidator {
       path: ctx.path,
     }))
 
-    for (const { field, value, path } of refs) {
+    for (const { field, value, path: fieldPath } of refs) {
       const ids = Array.isArray(value) ? value : [value]
 
       for (const id of ids) {
@@ -63,7 +66,7 @@ export class ReferenceValidator {
         if (typeof id !== 'string' || !isValidId(id)) {
           errors.push({
             field: field.name,
-            fieldPath: path,
+            fieldPath,
             id: String(id),
             error: 'Invalid content ID format',
           })
@@ -75,7 +78,7 @@ export class ReferenceValidator {
         if (!location) {
           errors.push({
             field: field.name,
-            fieldPath: path,
+            fieldPath,
             id,
             error: 'Referenced entry does not exist',
           })
@@ -86,7 +89,7 @@ export class ReferenceValidator {
         if (location.type !== 'entry') {
           errors.push({
             field: field.name,
-            fieldPath: path,
+            fieldPath,
             id,
             error: 'ID points to a collection, not an entry',
           })
@@ -103,9 +106,23 @@ export class ReferenceValidator {
           if (!allowed) {
             errors.push({
               field: field.name,
-              fieldPath: path,
+              fieldPath,
               id,
               error: `Entry is in collection "${location.collection}", but only [${field.collections.join(', ')}] are allowed`,
+            })
+            continue
+          }
+        }
+
+        // Validate entry type constraint
+        if (field.entryTypes && field.entryTypes.length > 0) {
+          const entryType = extractEntryTypeFromFilename(path.basename(location.relativePath))
+          if (!entryType || !field.entryTypes.includes(entryType)) {
+            errors.push({
+              field: field.name,
+              fieldPath,
+              id,
+              error: `Entry has type "${entryType ?? 'unknown'}", but only [${field.entryTypes.join(', ')}] are allowed`,
             })
           }
         }
@@ -159,6 +176,18 @@ export class ReferenceValidator {
           fieldPath: field.name,
           id,
           error: `Entry is in collection "${location.collection}", but only [${field.collections.join(', ')}] are allowed`,
+        }
+      }
+    }
+
+    if (field.entryTypes && field.entryTypes.length > 0) {
+      const entryType = extractEntryTypeFromFilename(path.basename(location.relativePath))
+      if (!entryType || !field.entryTypes.includes(entryType)) {
+        return {
+          field: field.name,
+          fieldPath: field.name,
+          id,
+          error: `Entry has type "${entryType ?? 'unknown'}", but only [${field.entryTypes.join(', ')}] are allowed`,
         }
       }
     }

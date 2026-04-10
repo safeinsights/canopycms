@@ -1,8 +1,8 @@
-import path from 'node:path'
+import nodePath from 'node:path'
 
 import type { ContentStore } from './content-store'
-import type { ContentIdIndex } from './content-id-index'
-import { extractSlugFromFilename } from './content-id-index'
+import type { ContentIdIndex, IdLocation } from './content-id-index'
+import { extractSlugFromFilename, extractEntryTypeFromFilename } from './content-id-index'
 import type { LogicalPath, PhysicalPath, Slug } from './paths'
 
 export interface ResolvedReference {
@@ -76,75 +76,86 @@ export class ReferenceResolver {
   /**
    * Load all available reference options for a reference field.
    *
-   * This method scans the specified collections and returns options
-   * suitable for a dropdown/select field.
+   * Scans collections (including subcollections) and/or filters by entry type.
+   * At least one of `collections` or `entryTypes` should be provided.
    *
-   * @param collections - Collection paths to search (e.g., ['posts', 'docs'])
+   * @param collections - Collection paths to search, including subcollections (e.g., ['data-catalog'])
    * @param displayField - Field to use for option labels (default: 'title')
    * @param search - Optional search string to filter options
+   * @param entryTypes - Optional entry type names to filter by (e.g., ['partner'])
    */
   async loadReferenceOptions(
-    collections: LogicalPath[],
+    collections?: LogicalPath[],
     displayField = 'title',
     search?: string,
+    entryTypes?: string[],
   ): Promise<ReferenceOption[]> {
     const options: ReferenceOption[] = []
 
-    for (const collectionPath of collections) {
-      // Get all entries in this collection
-      const entries = await this.listEntriesInCollection(collectionPath)
+    // Gather candidate entries. Use getCollectionEntryPaths for collection-based queries
+    // (it handles path normalization and schema index lookups). Use the ID index directly
+    // for entryTypes-only queries (no collection scope).
+    type Candidate = { relativePath: PhysicalPath; collection: LogicalPath; slug: Slug }
+    let candidates: Candidate[]
+    if (collections && collections.length > 0) {
+      // Search within specified collection trees (including subcollections)
+      // getCollectionEntryPaths handles normalization (e.g., 'authors' → 'content/authors')
+      const results = await Promise.all(
+        collections.map((col) => this.store.getCollectionEntryPaths(col)),
+      )
+      candidates = results.flat()
+    } else {
+      // No collection scope — search all entries via index
+      candidates = this.idIndex
+        .getAllEntryLocations()
+        .filter(
+          (loc): loc is IdLocation & { collection: LogicalPath; slug: Slug } =>
+            loc.type === 'entry' && !!loc.collection && !!loc.slug,
+        )
+    }
 
-      for (const entry of entries) {
-        const id = this.idIndex.findByPath(entry.relativePath)
-        if (!id) continue
+    // Filter by entry type if specified
+    if (entryTypes && entryTypes.length > 0) {
+      candidates = candidates.filter((loc) => {
+        const entryType = extractEntryTypeFromFilename(nodePath.basename(loc.relativePath))
+        return entryType != null && entryTypes.includes(entryType)
+      })
+    }
 
-        try {
-          // The slug from the index may include the entry type prefix for new-format files
-          // (e.g., "author.alice" instead of just "alice"). We need to strip the type prefix
-          // before passing to store.read() to avoid double-prefixing.
-          // Use extractSlugFromFilename to properly extract just the slug part.
-          const filename = path.basename(entry.relativePath)
-          const normalizedSlug = extractSlugFromFilename(filename)
+    for (const location of candidates) {
+      if (!location.collection || !location.slug) continue
 
-          const doc = await this.store.read(entry.collection, normalizedSlug)
-          const label = String(doc.data[displayField] || doc.data.title || normalizedSlug)
+      const id = this.idIndex.findByPath(location.relativePath)
+      if (!id) continue
 
-          // Apply search filter if provided
-          if (search && !label.toLowerCase().includes(search.toLowerCase())) {
-            continue
-          }
+      try {
+        const filename = nodePath.basename(location.relativePath)
+        const normalizedSlug = extractSlugFromFilename(filename)
 
-          options.push({
-            id,
-            label,
-            collection: entry.collection,
-          })
-        } catch (error) {
-          // Skip entries that can't be read
-          console.error('Failed to read entry for reference options:', {
-            collection: entry.collection,
-            slug: entry.slug,
-            error,
-          })
+        const doc = await this.store.read(location.collection, normalizedSlug as Slug)
+        const label = String(doc.data[displayField] || doc.data.title || normalizedSlug)
+
+        // Apply search filter if provided
+        if (search && !label.toLowerCase().includes(search.toLowerCase())) {
           continue
         }
+
+        options.push({
+          id,
+          label,
+          collection: location.collection,
+        })
+      } catch (error) {
+        console.error('Failed to read entry for reference options:', {
+          collection: location.collection,
+          slug: location.slug,
+          error,
+        })
+        continue
       }
     }
 
     return options.sort((a, b) => a.label.localeCompare(b.label))
-  }
-
-  /**
-   * Helper to list all entries in a collection.
-   */
-  private async listEntriesInCollection(collectionPath: LogicalPath): Promise<
-    Array<{
-      relativePath: PhysicalPath
-      collection: LogicalPath
-      slug: Slug
-    }>
-  > {
-    return this.store.getCollectionEntryPaths(collectionPath)
   }
 
   /**

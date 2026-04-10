@@ -260,6 +260,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
               value: opt.value,
             }))}
             collections={referenceField.collections}
+            entryTypes={referenceField.entryTypes}
             displayField={referenceField.displayField}
             branch={branch}
             value={

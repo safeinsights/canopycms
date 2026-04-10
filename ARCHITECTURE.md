@@ -1484,31 +1484,29 @@ The reference system allows content to link to other content entries using stabl
 
 ### Reference Fields
 
-Reference fields are schema fields that can reference other entries by their content ID:
+Reference fields are schema fields that can reference other entries by their content ID. Each reference field must specify at least one scoping constraint to control which entries are valid targets:
 
-```javascript
-// Example schema field
-{
-  name: 'relatedPosts',
-  type: 'reference',
-  collections: ['posts'],  // Constrain to specific collections
-  isArray: true            // Allow multiple references
-}
-```
+- **Collection scope** (`collections`): Limits references to entries within specified collections, including all subcollections. For example, scoping to a "data-catalog" collection also includes entries in "data-catalog/openstax" and any other nested subcollections. This uses tree traversal rather than exact collection matching.
+
+- **Entry type scope** (`entryTypes`): Limits references to entries of specific entry types by name (e.g., only "partner" entries), regardless of which collection they live in. This is useful when the same entry type appears in multiple collections or subcollections and you want to reference all instances.
+
+These two scoping mechanisms can be combined. When both are specified, collection scope narrows the search space first, then entry type filtering is applied within those results. When only `entryTypes` is specified (no collection scope), the system searches all entries across the entire content store via the ID index.
 
 References can:
 
-- **Link to specific collections**: Constrain references to certain entry types (e.g., only allow linking to "posts")
+- **Scope by collection tree**: Constrain references to entries in a collection and all its subcollections
+- **Scope by entry type**: Constrain references to entries of a specific type across all collections
+- **Combine both scopes**: Use collection and entry type constraints together for precise targeting
 - **Support both single and multiple references**: A field can reference one entry or an array of entries
-- **Be validated**: The system checks that referenced IDs exist and belong to allowed collections
+- **Be validated**: The system checks that referenced IDs exist and satisfy both collection and entry type constraints
 
 ### Reference Resolution
 
 The `ReferenceResolver` class handles loading and displaying referenced content:
 
 - **Resolve single ID**: Convert a content ID to its display value (e.g., post title)
-- **Load reference options**: Dynamically fetch all available options for a reference field (used for dropdown/select UI)
-- **Search and filter**: Find reference options by search term or apply collection constraints
+- **Load reference options**: Dynamically fetch all available options for a reference field (used for dropdown/select UI). Supports collection-scoped queries (with subcollection tree traversal), entry-type-scoped queries, or both combined.
+- **Search and filter**: Find reference options by search term, collection constraints, and/or entry type constraints
 - **Batch resolution**: Resolve multiple IDs efficiently
 
 ### Reference Validation
@@ -1518,7 +1516,8 @@ The `ReferenceValidator` class ensures reference integrity:
 - **ID format validation**: Checks that ID strings are valid short UUIDs
 - **Existence validation**: Verifies that referenced entries actually exist
 - **Collection constraint validation**: Ensures referenced entries belong to allowed collections
-- **Detailed error reporting**: Reports which reference field failed validation and why
+- **Entry type constraint validation**: Ensures referenced entries match allowed entry types (checked by extracting the entry type from the filename)
+- **Detailed error reporting**: Reports which reference field failed validation and why, including mismatched collection or entry type
 
 Validation can run on entire entries or individual references, supporting both batch checks during content saves and real-time validation in the editor.
 
@@ -1536,7 +1535,7 @@ This prevents orphaned references and keeps the content relationship graph intac
 
 **GET /:branch/reference-options**: Dynamically load reference options
 
-- Query parameters: `collections` (comma-separated), `displayField`, `search`
+- Query parameters: `collections` (comma-separated, optional), `entryTypes` (comma-separated, optional), `displayField`, `search`. At least one of `collections` or `entryTypes` is required.
 - Returns: Array of options with ID, label, and collection
 - Used by editor to populate dropdowns with current available entries
 
