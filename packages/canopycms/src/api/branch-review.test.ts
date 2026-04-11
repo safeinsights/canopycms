@@ -57,7 +57,6 @@ describe('branch review api - requestChanges', () => {
         },
       },
       { branch: 'missing' as BranchName },
-      {},
     )
     expect(res.status).toBe(404)
     expect(res.error).toBe('Branch not found')
@@ -68,7 +67,6 @@ describe('branch review api - requestChanges', () => {
       makeCtx(),
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
       { branch: 'feature/x' as BranchName },
-      {},
     )
     expect(res.status).toBe(403)
     expect(res.error).toContain('Reviewer access required')
@@ -90,7 +88,6 @@ describe('branch review api - requestChanges', () => {
         },
       },
       { branch: 'feature/x' as BranchName },
-      {},
     )
     expect(res.status).toBe(400)
     expect(res.error).toContain("Only 'submitted' branches can have changes requested")
@@ -107,7 +104,6 @@ describe('branch review api - requestChanges', () => {
         },
       },
       { branch: 'feature/x' as BranchName },
-      {},
     )
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
@@ -124,7 +120,6 @@ describe('branch review api - requestChanges', () => {
         },
       },
       { branch: 'feature/x' as BranchName },
-      {},
     )
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
@@ -143,7 +138,6 @@ describe('branch review api - requestChanges', () => {
         },
       },
       { branch: 'feature/x' as BranchName },
-      {},
     )
     expect(res.ok).toBe(true)
     expect(convertToDraft).toHaveBeenCalledWith(123)
@@ -163,7 +157,6 @@ describe('branch review api - requestChanges', () => {
         },
       },
       { branch: 'feature/x' as BranchName },
-      {},
     )
     // Should still succeed even if GitHub API fails
     expect(res.ok).toBe(true)
@@ -190,13 +183,12 @@ describe('branch review api - requestChanges', () => {
         },
       },
       { branch: 'feature/x' as BranchName },
-      {},
     )
     expect(res.ok).toBe(true)
     expect(convertToDraft).not.toHaveBeenCalled()
   })
 
-  it('accepts optional comment parameter', async () => {
+  it('succeeds without a comment (body removed pending comment storage implementation)', async () => {
     const res = await requestChangesHandler(
       makeCtx(),
       {
@@ -207,7 +199,6 @@ describe('branch review api - requestChanges', () => {
         },
       },
       { branch: 'feature/x' as BranchName },
-      { comment: 'Please fix the typo' },
     )
     expect(res.ok).toBe(true)
   })

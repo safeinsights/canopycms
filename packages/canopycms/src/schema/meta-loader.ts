@@ -22,6 +22,7 @@ const entryTypeMetaSchema = z.object({
   format: z.enum(['md', 'mdx', 'json', 'yaml']),
   schema: z.string().min(1), // Entry schema registry key (validated at resolution time)
   label: z.string().optional(),
+  description: z.string().optional(),
   default: z.boolean().optional(),
   maxItems: z.number().int().positive().optional(),
 })
@@ -43,6 +44,7 @@ const collectionMetaSchema = z
   .object({
     name: z.string().min(1),
     label: z.string().optional(),
+    description: z.string().optional(),
     entries: z.array(entryTypeMetaSchema).optional(),
     order: z.array(z.string()), // Embedded IDs for ordering items (required)
   })

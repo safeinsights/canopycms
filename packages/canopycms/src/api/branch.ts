@@ -10,7 +10,7 @@ import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
 import { isNotFoundError, getErrorMessage } from '../utils/error'
-import { branchNameSchema } from './validators'
+import { branchNameSchema, branchParamSchema } from './validators'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
 
@@ -26,10 +26,6 @@ export type BranchDeleteResponse = ApiResponse<{ deleted: boolean }>
 // ============================================================================
 // Zod Schemas for Validation
 // ============================================================================
-
-const branchParamSchema = z.object({
-  branch: branchNameSchema,
-})
 
 const createBranchBodySchema = z.object({
   branch: branchNameSchema,

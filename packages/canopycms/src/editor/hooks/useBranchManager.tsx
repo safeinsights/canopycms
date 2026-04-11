@@ -1,3 +1,5 @@
+'use client'
+
 import { useEffect, useMemo, useState } from 'react'
 import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
@@ -253,7 +255,7 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const handleRequestChanges = async (branchNameForChanges: string) => {
     options.setBusy(true)
     try {
-      const result = await apiClient.workflow.requestChanges({ branch: branchNameForChanges }, {})
+      const result = await apiClient.workflow.requestChanges({ branch: branchNameForChanges })
       if (!result.ok) {
         throw new Error(result.error || 'Failed to request changes')
       }

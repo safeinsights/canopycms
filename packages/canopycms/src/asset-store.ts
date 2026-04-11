@@ -3,6 +3,7 @@ import type { Dirent } from 'node:fs'
 import path from 'node:path'
 
 import { isNotFoundError } from './utils/error'
+import { atomicWriteFile } from './utils/atomic-write'
 
 export interface AssetItem {
   key: string
@@ -41,7 +42,8 @@ export class LocalAssetStore implements AssetStore {
   private resolvePath(key: string): string {
     const clean = normalizeKey(key)
     const resolved = path.resolve(this.root, clean)
-    if (!resolved.startsWith(this.root)) {
+    const rootWithSep = this.root.endsWith(path.sep) ? this.root : this.root + path.sep
+    if (resolved !== this.root && !resolved.startsWith(rootWithSep)) {
       throw new Error('Path traversal detected')
     }
     return resolved
@@ -78,8 +80,7 @@ export class LocalAssetStore implements AssetStore {
 
   async upload(key: string, data: Buffer | Uint8Array, contentType?: string): Promise<AssetItem> {
     const filePath = this.resolvePath(key)
-    await fs.mkdir(path.dirname(filePath), { recursive: true })
-    await fs.writeFile(filePath, data)
+    await atomicWriteFile(filePath, data)
     const stat = await fs.stat(filePath)
     return {
       key: normalizeKey(key),

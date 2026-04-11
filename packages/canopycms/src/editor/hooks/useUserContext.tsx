@@ -1,3 +1,5 @@
+'use client'
+
 import { useEffect, useState } from 'react'
 import { createApiClient } from '../../api'
 import type { UserContext } from '../BranchManager'

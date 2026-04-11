@@ -121,16 +121,24 @@ export class BranchMetadataFileManager {
     const content = JSON.stringify(payload, null, 2) + '\n'
 
     if (expectedVersion === null) {
-      // New file: use exclusive create to prevent race
+      // New file: use temp-file + rename for atomicity, then link(target) to detect EEXIST races.
+      // Plain writeFile({flag:'wx'}) is not atomic — a crash mid-write leaves a partial file
+      // that makes JSON.parse fail on next startup, permanently breaking the branch.
+      const tempPath = `${this.filePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
+      await fs.writeFile(tempPath, content, 'utf-8')
       try {
-        await fs.writeFile(this.filePath, content, { flag: 'wx' })
-        return { version: newVersion, writeId }
+        // link() is atomic and fails with EEXIST if the target already exists,
+        // giving us the same exclusive-create semantics as wx without the atomicity risk.
+        await fs.link(tempPath, this.filePath)
       } catch (err: unknown) {
+        await fs.unlink(tempPath).catch(() => {})
         if (isFileExistsError(err)) {
           throw new BranchMetadataConflictError()
         }
         throw err
       }
+      await fs.unlink(tempPath).catch(() => {})
+      return { version: newVersion, writeId }
     }
 
     // Existing file: temp write + atomic rename + verification

@@ -135,17 +135,33 @@ export class DeletionChecker {
           found.push(fieldPath)
         }
       } else if (field.type === 'object') {
-        // Recurse into object fields
+        // Recurse into object fields — handles both single objects and list:true (array of objects)
         const objectField = field as ObjectFieldConfig
-        if (objectField.fields && typeof value === 'object' && !Array.isArray(value)) {
-          found.push(
-            ...this.findIdInData(
-              value as Record<string, unknown>,
-              targetId,
-              objectField.fields,
-              fieldPath,
-            ),
-          )
+        if (objectField.fields) {
+          if (Array.isArray(value)) {
+            // list: true — value is an array of objects
+            value.forEach((item, index) => {
+              if (typeof item === 'object' && item !== null) {
+                found.push(
+                  ...this.findIdInData(
+                    item as Record<string, unknown>,
+                    targetId,
+                    objectField.fields!,
+                    `${fieldPath}[${index}]`,
+                  ),
+                )
+              }
+            })
+          } else if (typeof value === 'object' && value !== null) {
+            found.push(
+              ...this.findIdInData(
+                value as Record<string, unknown>,
+                targetId,
+                objectField.fields,
+                fieldPath,
+              ),
+            )
+          }
         }
       } else if (field.type === 'block') {
         // Handle block fields
@@ -167,28 +183,6 @@ export class DeletionChecker {
               }
             }
           })
-        }
-      } else if (field.type === 'array') {
-        // Handle array fields
-        const arrayField = field as FieldConfig & {
-          of?: { type: string; fields?: FieldConfig[] }
-        }
-        if (Array.isArray(value) && arrayField.of) {
-          const ofFields = arrayField.of.fields
-          if (arrayField.of.type === 'object' && ofFields) {
-            value.forEach((item, index) => {
-              if (typeof item === 'object' && item !== null) {
-                found.push(
-                  ...this.findIdInData(
-                    item as Record<string, unknown>,
-                    targetId,
-                    ofFields,
-                    `${fieldPath}[${index}]`,
-                  ),
-                )
-              }
-            })
-          }
         }
       }
     }

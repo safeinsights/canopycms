@@ -149,6 +149,79 @@ describe('useDraftManager', () => {
     expect(result.current.modifiedCount).toBe(3)
   })
 
+  it('modifiedCount does not count entries seeded with their loaded value', () => {
+    // This is the bug: Editor.tsx seeds drafts[id] = loaded AND loadedValues[id] = loaded
+    // on first entry open. That entry should not count as "modified".
+    const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+    const loadedVal = { title: 'Loaded Title', body: 'Loaded Content' }
+
+    act(() => {
+      result.current.setLoadedValues({ abc123def456: loadedVal })
+      result.current.setDrafts({ abc123def456: loadedVal })
+    })
+
+    expect(result.current.modifiedCount).toBe(0)
+  })
+
+  it('modifiedCount counts only entries where draft differs from loaded', () => {
+    const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+    const loadedVal = { title: 'Original', body: 'Original Content' }
+    const editedVal = { title: 'Edited', body: 'Original Content' }
+
+    act(() => {
+      result.current.setLoadedValues({ abc123def456: loadedVal })
+      result.current.setDrafts({ abc123def456: editedVal }) // differs → dirty
+    })
+
+    expect(result.current.modifiedCount).toBe(1)
+  })
+
+  it('isAnyDirty returns false when no entries have unsaved changes', () => {
+    const { result } = renderHook(() => useDraftManager(defaultOptions))
+    expect(result.current.isAnyDirty()).toBe(false)
+  })
+
+  it('isAnyDirty returns true when the selected entry is dirty', () => {
+    const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+    act(() => {
+      result.current.setLoadedValues({ abc123def456: { title: 'Original' } })
+      result.current.setDrafts({ abc123def456: { title: 'Changed' } })
+    })
+
+    expect(result.current.isAnyDirty()).toBe(true)
+  })
+
+  it('isAnyDirty returns true when a non-selected entry is dirty', () => {
+    // This is the bug: switching branches when entry A is dirty but entry B is selected
+    // should still prompt the user — but isSelectedDirty() only checks the selected entry.
+    const otherEntry: EditorEntry = {
+      ...mockEntry,
+      path: unsafeAsLogicalPath('entry2'),
+      contentId: unsafeAsContentId('xyz789uvw123'),
+      label: 'Other Entry',
+    }
+    const { result } = renderHook(() =>
+      useDraftManager({
+        ...defaultOptions,
+        currentEntry: otherEntry, // currently viewing entry2
+        entries: [mockEntry, otherEntry],
+      }),
+    )
+
+    act(() => {
+      // entry1 (abc123def456) is dirty but not selected
+      result.current.setLoadedValues({ abc123def456: { title: 'Original' } })
+      result.current.setDrafts({ abc123def456: { title: 'Unsaved changes on entry1!' } })
+    })
+
+    expect(result.current.isAnyDirty()).toBe(true)
+    // Confirm isSelectedDirty() does NOT catch this (the bug we're fixing)
+    expect(result.current.isSelectedDirty()).toBe(false)
+  })
+
   it('computes editedFiles correctly', () => {
     const entries = [
       mockEntry,

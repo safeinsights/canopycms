@@ -1,3 +1,5 @@
+'use client'
+
 import React, { Suspense, useId, useRef, useCallback, useEffect } from 'react'
 
 import { Text, Textarea } from '@mantine/core'

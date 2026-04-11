@@ -307,7 +307,7 @@ describe('useBranchManager', () => {
       await result.current.handleRequestChanges('feature')
     })
 
-    expect(mockClient.workflow.requestChanges).toHaveBeenCalledWith({ branch: 'feature' }, {})
+    expect(mockClient.workflow.requestChanges).toHaveBeenCalledWith({ branch: 'feature' })
   })
 
   it('reloads branch data', async () => {

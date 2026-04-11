@@ -6,7 +6,7 @@ import type { CommentThread, CommentType } from '../comment-store'
 import { CommentStore } from '../comment-store'
 import { isReviewer } from '../authorization'
 import { defineEndpoint } from './route-builder'
-import { branchNameSchema, logicalPathSchema } from './validators'
+import { branchParamSchema, branchNameSchema, logicalPathSchema } from './validators'
 
 export interface AddCommentBody {
   text: string
@@ -35,10 +35,6 @@ export type ResolveCommentResponse = ApiResponse<{ resolved: boolean }>
 // ============================================================================
 // Zod Schemas for Validation
 // ============================================================================
-
-const branchParamSchema = z.object({
-  branch: branchNameSchema,
-})
 
 const threadParamSchema = z.object({
   branch: branchNameSchema,
@@ -104,7 +100,7 @@ const addCommentHandler = async (
     canopyPath: body.canopyPath,
   })
 
-  return { ok: true, status: 200, data: result }
+  return { ok: true, status: 201, data: result }
 }
 
 const resolveCommentHandler = async (

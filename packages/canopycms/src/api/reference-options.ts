@@ -6,7 +6,7 @@ import { ContentStore } from '../content-store'
 import { defineEndpoint } from './route-builder'
 import { ReferenceResolver } from '../reference-resolver'
 import { parseLogicalPath } from '../paths'
-import type { LogicalPath } from '../paths/types'
+import type { ContentId, LogicalPath } from '../paths/types'
 import { branchNameSchema } from './validators'
 
 /** Response type for reference options */
@@ -96,7 +96,28 @@ const getReferenceOptionsHandler = async (
 
   // Load reference options
   const resolver = new ReferenceResolver(store, idIndex)
-  const options = await resolver.loadReferenceOptions(collections, displayField, search, entryTypes)
+  const allOptions = await resolver.loadReferenceOptions(
+    collections,
+    displayField,
+    search,
+    entryTypes,
+  )
+
+  // Filter by path-level read permissions
+  const options = []
+  for (const option of allOptions) {
+    const location = idIndex.findById(option.id as ContentId)
+    if (!location) continue
+    const access = await ctx.services.checkContentAccess(
+      branchContext,
+      branchContext.branchRoot,
+      location.relativePath,
+      req.user,
+      'read',
+    )
+    if (!access.allowed) continue
+    options.push(option)
+  }
 
   return {
     ok: true,

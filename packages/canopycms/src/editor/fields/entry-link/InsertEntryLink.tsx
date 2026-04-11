@@ -1,3 +1,5 @@
+'use client'
+
 /**
  * MDXEditor toolbar button for inserting entry links.
  *

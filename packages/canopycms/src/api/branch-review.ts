@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { branchNameSchema } from './validators'
+import { branchParamSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchContext } from '../types'
 import type { BranchResponse } from './branch'
@@ -7,24 +7,11 @@ import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 import { syncConvertToDraft } from './github-sync'
 
-export interface RequestChangesBody {
-  comment?: string
-}
-
-const branchParamSchema = z.object({
-  branch: branchNameSchema,
-})
-
-const requestChangesBodySchema = z.object({
-  comment: z.string().optional(),
-})
-
 const requestChangesHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,
   _req: ApiRequest,
   _params: z.infer<typeof branchParamSchema>,
-  _body?: z.infer<typeof requestChangesBodySchema>,
 ): Promise<BranchResponse> => {
   const { branchContext } = gc
 
@@ -91,8 +78,8 @@ export const requestChanges = defineEndpoint({
   method: 'POST',
   path: '/:branch/request-changes',
   params: branchParamSchema,
-  body: requestChangesBodySchema,
-  bodyType: 'RequestChangesBody',
+  // body/bodyType removed: comment field was declared but never stored.
+  // Re-add when comment storage is implemented (see TODO in handler).
   responseType: 'BranchResponse',
   response: {} as BranchResponse,
   defaultMockData: {

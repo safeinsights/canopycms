@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { branchNameSchema } from './validators'
+import { branchParamSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchContext } from '../types'
 import type { BranchResponse } from './branch'
@@ -13,14 +13,6 @@ import { syncSubmitPr } from './github-sync'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
-
-// ============================================================================
-// Zod Schemas for Validation
-// ============================================================================
-
-const branchParamSchema = z.object({
-  branch: branchNameSchema,
-})
 
 const getBranchStatusHandler = async (
   gc: { branchContext: BranchContext },

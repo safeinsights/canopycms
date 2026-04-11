@@ -123,29 +123,31 @@ export async function dequeueTask(
     (a, b) =>
       a.task.createdAt.localeCompare(b.task.createdAt) || a.task.id.localeCompare(b.task.id),
   )
-  const { fileName, task } = tasks[0]
+  // Dedup: if a task already finished (crash between write-result and unlink-processing),
+  // clean up the stale pending copy and try the next task in the sorted list.
+  for (const { fileName, task } of tasks) {
+    if (await taskExistsIn(taskDir, task.id, ['completed', 'failed'])) {
+      await fs.unlink(path.join(pendingDir, fileName)).catch(() => {})
+      logger.debug('Skipped already-finished task', { id: task.id })
+      continue
+    }
 
-  // Dedup: if this task already finished (crash between write-result and unlink-processing),
-  // just clean up the stale pending copy
-  if (await taskExistsIn(taskDir, task.id, ['completed', 'failed'])) {
-    await fs.unlink(path.join(pendingDir, fileName)).catch(() => {})
-    logger.debug('Skipped already-finished task', { id: task.id })
-    return null
+    const sourcePath = path.join(pendingDir, fileName)
+    const destPath = path.join(processingDir, fileName)
+
+    try {
+      task.status = 'processing'
+      await atomicWriteFile(destPath, JSON.stringify(task, null, 2))
+      await fs.unlink(sourcePath)
+      logger.debug('Dequeued task', { id: task.id, action: task.action })
+      return task
+    } catch (err) {
+      if (isNotFoundError(err)) continue
+      throw err
+    }
   }
 
-  const sourcePath = path.join(pendingDir, fileName)
-  const destPath = path.join(processingDir, fileName)
-
-  try {
-    task.status = 'processing'
-    await atomicWriteFile(destPath, JSON.stringify(task, null, 2))
-    await fs.unlink(sourcePath)
-    logger.debug('Dequeued task', { id: task.id, action: task.action })
-    return task
-  } catch (err) {
-    if (isNotFoundError(err)) return null
-    throw err
-  }
+  return null
 }
 
 /**

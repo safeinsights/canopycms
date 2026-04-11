@@ -1,9 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import * as p from '@clack/prompts'
+import { createJiti } from 'jiti'
 import { operatingStrategy } from '../operating-mode'
 import type { AuthPlugin } from '../auth/plugin'
 import { filePathExists } from '../utils/fs'
+import { getErrorMessage, isNotFoundError } from '../utils/error'
 
 export type AuthProvider = 'clerk' | 'dev'
 
@@ -261,6 +263,71 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
 }
 
 /**
+ * Detect the CanopyCMS operating mode by importing the adopter's canopycms.config.ts.
+ *
+ * Returns 'dev' when the config file is absent (unconfigured project).
+ * Throws when the config file is present but cannot be loaded or has an unexpected
+ * shape — we refuse to silently default to 'dev' in that case because doing so in
+ * a real prod deployment would mask a broken config and cause the worker-run-once
+ * prod-safety guard to fall through to the dev-only task-skip path.
+ *
+ * Accepts the same shapes as `cli/generate-ai-content.ts`:
+ * `export default defineCanopyConfig({...})` → reads `.default.server.mode`
+ * `export const config = defineCanopyConfig({...})` → reads `.config.server.mode`
+ * Plain object exports (used in tests) are also accepted.
+ */
+async function detectMode(projectDir: string): Promise<'prod' | 'dev'> {
+  const cfgPath = path.join(projectDir, 'canopycms.config.ts')
+
+  // File-absent → unconfigured project; default to dev.
+  try {
+    await fs.stat(cfgPath)
+  } catch (err) {
+    if (isNotFoundError(err)) return 'dev'
+    throw err
+  }
+
+  const jiti = createJiti(import.meta.url)
+  let configModule: Record<string, unknown>
+  try {
+    configModule = (await jiti.import(cfgPath)) as Record<string, unknown>
+  } catch (err) {
+    throw new Error(
+      `Failed to load CanopyCMS config at ${cfgPath}: ${getErrorMessage(err)}. ` +
+        `Refusing to default to dev mode — a broken config in a prod deployment ` +
+        `would cause the worker-run-once prod-safety guard to silently skip prod tasks.`,
+    )
+  }
+
+  // defineCanopyConfig() returns { server, client }; try default and named `config` exports.
+  const configExport = configModule.default ?? configModule.config ?? configModule
+  const serverConfig =
+    typeof configExport === 'object' && configExport !== null && 'server' in configExport
+      ? (configExport as { server: unknown }).server
+      : configExport
+
+  if (
+    !serverConfig ||
+    typeof serverConfig !== 'object' ||
+    !('mode' in serverConfig) ||
+    typeof (serverConfig as { mode: unknown }).mode !== 'string'
+  ) {
+    throw new Error(
+      `Invalid CanopyCMS config at ${cfgPath}: expected server.mode to be a string. ` +
+        `Make sure the config uses defineCanopyConfig() with a valid mode.`,
+    )
+  }
+
+  const mode = (serverConfig as { mode: string }).mode
+  if (mode !== 'prod' && mode !== 'dev') {
+    throw new Error(
+      `Invalid CanopyCMS config at ${cfgPath}: mode must be 'prod' or 'dev', got '${mode}'.`,
+    )
+  }
+  return mode
+}
+
+/**
  * Worker run-once: process pending tasks, sync git, refresh auth cache, then exit.
  * Used in dev mode to trigger worker operations without a persistent daemon.
  */
@@ -271,18 +338,11 @@ export async function workerRunOnce(options: {
   // Dynamic import to avoid loading worker deps when not needed
   const { getTaskQueueDir } = await import('../worker/task-queue-config')
 
-  // Determine workspace and mode from config
-  const cfgPath = path.join(options.projectDir, 'canopycms.config.ts')
-  let mode: 'prod' | 'dev' = 'dev'
-  try {
-    const configContent = await fs.readFile(cfgPath, 'utf-8')
-    // Match the mode property in the config object, not in comments or strings
-    if (/^\s*mode:\s*['"]prod['"]\s*[,}]/m.test(configContent)) {
-      mode = 'prod'
-    }
-  } catch {
-    // Default to dev
-  }
+  // Determine workspace and mode from config by actually importing the config file.
+  // A regex-based detector here is unreliable: it cannot see through spread operators,
+  // helper functions, or dynamic expressions, and can silently fall through to 'dev'
+  // on a real prod config — turning a prod-safety guard into a silent task-loss bug.
+  const mode = await detectMode(options.projectDir)
 
   const taskDir = getTaskQueueDir({ mode })
 
@@ -313,22 +373,37 @@ export async function workerRunOnce(options: {
   }
 
   // Process task queue (if any pending tasks)
-  const { dequeueTask, completeTask } = await import('../worker/task-queue')
-  let taskCount = 0
-  let task
-  while ((task = await dequeueTask(taskDir)) !== null) {
-    console.log(`Processing task: ${task.action} (${task.id})`)
-    // In dev mode without GitHub, just mark tasks as completed
-    // A real worker would execute the GitHub operations
-    console.warn(`  WARNING: Task skipped — GitHub operations require the full worker daemon`)
-    await completeTask(taskDir, task.id, { skipped: true })
-    taskCount++
-  }
+  const { dequeueTask, completeTask, listTasks } = await import('../worker/task-queue')
 
-  if (taskCount > 0) {
-    console.log(`Processed ${taskCount} task(s)`)
-  } else {
+  if (mode === 'prod') {
+    // In prod mode, tasks are real GitHub operations (push-branch, create-PR, etc.).
+    // Silently skipping them with {skipped:true} permanently loses that work.
+    // Check for pending tasks WITHOUT dequeuing — dequeue moves tasks to processing/
+    // and an abandoned processing/ file is harder to recover than a pending/ file.
+    const pending = await listTasks(taskDir, 'pending')
+    if (pending.length > 0) {
+      throw new Error(
+        `workerRunOnce found ${pending.length} pending task(s) in prod mode but cannot execute them. ` +
+          `Use the full worker daemon to process prod task queues.`,
+      )
+    }
     console.log('No pending tasks')
+  } else {
+    // Dev mode: skip tasks with a warning (no GitHub credentials available)
+    let taskCount = 0
+    let task = await dequeueTask(taskDir)
+    while (task !== null) {
+      console.log(`Processing task: ${task.action} (${task.id})`)
+      console.warn(`  WARNING: Task skipped — GitHub operations require the full worker daemon`)
+      await completeTask(taskDir, task.id, { skipped: true })
+      taskCount++
+      task = await dequeueTask(taskDir)
+    }
+    if (taskCount > 0) {
+      console.log(`Processed ${taskCount} task(s)`)
+    } else {
+      console.log('No pending tasks')
+    }
   }
 
   console.log('\nDone')

@@ -1,3 +1,5 @@
+'use client'
+
 import React, { useEffect, useId, useState } from 'react'
 
 import { MultiSelect, Select, Stack, Text, Loader } from '@mantine/core'

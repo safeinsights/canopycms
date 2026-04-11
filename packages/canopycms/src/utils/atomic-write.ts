@@ -13,14 +13,17 @@ import path from 'node:path'
  * Ensures the target file is never partially written.
  *
  * @param filePath - Absolute path to the target file
- * @param content - String content to write
+ * @param content - String or binary content to write
  */
-export async function atomicWriteFile(filePath: string, content: string): Promise<void> {
+export async function atomicWriteFile(
+  filePath: string,
+  content: string | Buffer | Uint8Array,
+): Promise<void> {
   const dir = path.dirname(filePath)
   await fs.mkdir(dir, { recursive: true })
 
   const tempPath = `${filePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
-  await fs.writeFile(tempPath, content, 'utf-8')
+  await fs.writeFile(tempPath, content, typeof content === 'string' ? 'utf-8' : undefined)
 
   try {
     await fs.rename(tempPath, filePath)

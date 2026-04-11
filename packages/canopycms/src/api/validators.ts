@@ -135,6 +135,14 @@ export const slugSchema = z
  * - No leading/trailing slashes
  * - No consecutive slashes
  */
+/**
+ * Common params schema for endpoints that accept a branch name path parameter.
+ * Shared across branch-status, branch-review, branch-withdraw, comments, and branch handlers.
+ */
+export const branchParamSchema = z.object({
+  branch: branchNameSchema,
+})
+
 export const permissionPathSchema = z
   .string()
   .min(1)
