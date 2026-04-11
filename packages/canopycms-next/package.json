@@ -1,6 +1,6 @@
 {
   "name": "canopycms-next",
-  "version": "0.0.31",
+  "version": "0.0.32",
   "description": "Next.js adapter for CanopyCMS",
   "license": "MIT",
   "repository": {
