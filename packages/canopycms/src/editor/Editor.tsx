@@ -63,6 +63,7 @@ export interface EditorEntry {
   collectionName?: string
   slug?: string
   format?: ContentFormat
+  entryType?: string // Entry type name (e.g. 'post', 'settings') — used when saving to collections with multiple types
   type?: 'entry'
   canEdit?: boolean
 }

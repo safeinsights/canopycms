@@ -237,7 +237,10 @@ describe('useEntryManager', () => {
     expect(mockClient.entries.list).toHaveBeenCalledWith({ branch: 'main' })
   })
 
-  it('selects newly created entry after refresh', async () => {
+  it('refreshEntries returns the refreshed entries list', async () => {
+    // Auto-selection of newly created entries is now handled by handleCreateModalSubmit
+    // (which calls refreshEntries and then explicitly selects by collection+slug).
+    // refreshEntries itself no longer has auto-selection side effects.
     const newEntry = {
       ...mockCollectionItem,
       logicalPath: unsafeAsLogicalPath('new-entry'),
@@ -267,13 +270,15 @@ describe('useEntryManager', () => {
       wrapper,
     })
 
+    let refreshed: import('../Editor').EditorEntry[] = []
     await act(async () => {
-      await result.current.refreshEntries()
+      refreshed = await result.current.refreshEntries()
     })
 
-    await waitFor(() => {
-      expect(result.current.selectedPath).toBe('new-entry')
-    })
+    // refreshEntries returns the new entries list
+    expect(refreshed).toHaveLength(2)
+    // selectedPath stays on the existing entry (auto-select is handleCreateModalSubmit's job)
+    expect(result.current.selectedPath).toBe('entry1')
   })
 
   it('opens create modal when creating entry', async () => {

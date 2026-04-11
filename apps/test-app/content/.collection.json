@@ -6,7 +6,14 @@
       "format": "json",
       "schema": "homeSchema",
       "maxItems": 1
+    },
+    {
+      "name": "settings",
+      "label": "Settings",
+      "format": "yaml",
+      "schema": "settingsSchema",
+      "maxItems": 1
     }
   ],
-  "order": ["bo7QdSwn9Tod", "qrstuvwxyz12"]
+  "order": ["bo7QdSwn9Tod", "sEtTiNgS5678", "qrstuvwxyz12"]
 }
