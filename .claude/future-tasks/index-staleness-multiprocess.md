@@ -8,6 +8,7 @@ The `ContentIdIndex` maintains an in-memory mapping of content IDs to file paths
 2. **Slug changes cause file renames**: Old file remains on disk when `write()` creates a new file with different ID
 3. **Direct file deletions**: Files deleted outside `ContentStore.delete()` (e.g., git operations) leave stale entries in index
 4. **Race conditions**: Multiple processes creating entries simultaneously with unique IDs
+5. **Git operations rewrite working tree**: `pullBase`, `pullCurrentBranch`, `rebaseOntoBase`, `checkoutBranch` can change files on disk, but `indexLoaded` is a one-shot flag — the in-memory index is never invalidated after these operations. In a warm Lambda container or long-lived Next.js server, the index reflects pre-operation state indefinitely. This can cause saves to go to the wrong file. (`content-store.ts:108` — added in 2026-04 baseline review)
 
 Current behavior: Eventual consistency - processes continue with stale index until they happen to rebuild it.
 
