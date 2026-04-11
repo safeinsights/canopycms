@@ -1,5 +1,5 @@
 import { type Page, type Locator, expect } from '@playwright/test'
-import { STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
+import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 
 /**
  * Page object for the CanopyCMS Editor.
@@ -117,6 +117,9 @@ export class EditorPage {
   /**
    * Wait for the save success notification to appear.
    * Uses .first() because multiple saves in quick succession can stack notifications.
+   *
+   * @deprecated Prefer {@link saveAndVerify}, which waits for the network PUT response
+   * instead of the notification and is immune to stale notifications from prior saves.
    */
   async waitForSaveNotification(): Promise<void> {
     await expect(
@@ -241,5 +244,49 @@ export class EditorPage {
     const clearButton = field.locator('[data-position="right"] button')
     await clearButton.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
     await clearButton.click()
+  }
+
+  /**
+   * Create a post entry in the Posts collection, fill its title, and save.
+   * Leaves the navigator closed with the new post loaded in the form pane.
+   *
+   * Shared helper used by reference-fields and entry-links tests to avoid
+   * duplicating the navigator → modal → expand → select → fill → save flow.
+   */
+  async createPost(slug: string, title: string): Promise<void> {
+    await this.openEntryNavigator()
+
+    const collectionMenu = this.page.locator('[data-testid="collection-menu-posts"]')
+    await collectionMenu.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await collectionMenu.click()
+
+    const addEntry = this.page.locator('[data-testid="add-entry-menu-item"]')
+    await addEntry.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await addEntry.click()
+
+    const modal = this.page.locator('[data-testid="create-entry-modal"]')
+    await expect(modal).toBeVisible()
+    await this.page.locator('[data-testid="entry-slug-input"]').fill(slug)
+    await this.page.locator('[data-testid="create-entry-submit"]').click()
+    await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+
+    // After creation the navigator is still open. Expand Posts if collapsed,
+    // then click the new entry so it loads in the form pane.
+    const postsCollection = this.page.locator('[data-testid="entry-nav-item-posts"]')
+    await postsCollection.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    const navItem = this.page.locator('[data-testid="entry-nav-item-post"]').last()
+    if (!(await navItem.isVisible())) {
+      await postsCollection.click()
+    }
+    await navItem.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await navItem.click()
+
+    // Close navigator so form pane is interactive
+    await this.page.keyboard.press('Escape')
+    await expect(this.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+
+    // Fill title and save so the entry has a recognisable label
+    await this.fillTextField('title', title)
+    await this.saveAndVerify()
   }
 }

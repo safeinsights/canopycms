@@ -254,6 +254,11 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       )
       if (createdEntry) {
         setSelectedPath(createdEntry.path)
+      } else {
+        console.warn(
+          `[useEntryManager] Could not navigate to newly created entry: ` +
+            `collection=${createModalCollection.path} slug=${slug}`,
+        )
       }
       setCreateModalOpen(false)
       setCreateModalCollection(null)

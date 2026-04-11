@@ -53,6 +53,10 @@ export async function readRawContentFile(contentPath: string): Promise<string> {
  * Find a content file in the main branch by a prefix pattern.
  * The prefix may include a subdirectory (e.g., 'posts.qrstuvwxyz12/post.post.').
  * Returns the relative content path from content/ root (e.g., 'posts.qrstuvwxyz12/post.post.abc123.json').
+ *
+ * NOTE: Uses Array.find, so returns the **first** filesystem-order match.
+ * Callers must ensure the prefix is specific enough that only one file matches.
+ *
  * @param prefix - Filename prefix to match, optionally including a subdir (e.g., 'posts.qrstuvwxyz12/post.post.')
  */
 export async function findContentFile(prefix: string): Promise<string | null> {
@@ -493,61 +497,6 @@ export async function pushConflictingChangeToMain(
   await git.add('.')
   await git.commit('E2E: upstream conflict trigger')
   await git.push('origin', 'main')
-}
-
-/**
- * Ensure the settings YAML entry and updated .collection.json exist in the
- * main branch workspace and are pushed to remote.git.
- *
- * The settings entry type (yaml format) and its seed content file are not
- * committed to the project git repo, so they must be injected into the
- * test workspace after initialization. Safe to call multiple times —
- * subsequent calls after the first push are no-ops because the content
- * will already be present in remote.git.
- */
-export async function ensureSettingsContent(): Promise<void> {
-  const mainPath = getMainBranchPath()
-  const contentDir = path.join(mainPath, 'content')
-
-  // Write updated .collection.json with settings entry type
-  const collectionJson = {
-    entries: [
-      { name: 'home', label: 'Home', format: 'json', schema: 'homeSchema', maxItems: 1 },
-      {
-        name: 'settings',
-        label: 'Settings',
-        format: 'yaml',
-        schema: 'settingsSchema',
-        maxItems: 1,
-      },
-    ],
-    order: ['bo7QdSwn9Tod', 'sEtTiNgS5678', 'qrstuvwxyz12'],
-  }
-  await fs.writeFile(
-    path.join(contentDir, '.collection.json'),
-    JSON.stringify(collectionJson, null, 2),
-    'utf8',
-  )
-
-  // Write settings YAML seed file
-  await fs.writeFile(
-    path.join(contentDir, 'settings.settings.sEtTiNgS5678.yaml'),
-    'siteName: "Test Site"\nmaintenanceMode: false\n',
-    'utf8',
-  )
-
-  // Commit and push to remote.git so future workspace resets also get this content
-  const git = simpleGit({ baseDir: mainPath })
-  await git.addConfig('user.name', 'CanopyCMS Test Bot')
-  await git.addConfig('user.email', 'test@example.com')
-  await git.add('.')
-
-  // Only commit if there are staged changes (idempotent after first run)
-  const status = await git.status()
-  if (status.staged.length > 0) {
-    await git.commit('E2E: add settings content for yaml-format tests')
-    await git.push('origin', 'main')
-  }
 }
 
 /**

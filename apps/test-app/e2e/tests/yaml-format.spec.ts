@@ -4,7 +4,6 @@ import { switchUser } from '../fixtures/test-users'
 import {
   resetWorkspace,
   ensureMainBranch,
-  ensureSettingsContent,
   readRawContentFile,
   findContentFile,
 } from '../fixtures/test-workspace'
@@ -30,7 +29,6 @@ test.describe('YAML Format and isTitle Flag', () => {
     })
     await test.step('reset workspace', () => resetWorkspace())
     await test.step('ensure main branch', () => ensureMainBranch(BASE_URL))
-    await test.step('seed settings content', () => ensureSettingsContent())
     editorPage = new EditorPage(page)
     await test.step('switch user', () => switchUser(page, 'admin'))
   })

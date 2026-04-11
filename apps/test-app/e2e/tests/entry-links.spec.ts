@@ -7,7 +7,7 @@ import {
   findContentFile,
   readRawContentFile,
 } from '../fixtures/test-workspace'
-import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
+import { STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeouts'
 
 const BASE_URL = 'http://localhost:5174'
 
@@ -31,57 +31,11 @@ test.describe('Entry Links in MDX Editor', () => {
     await test.step('switch user', () => switchUser(page, 'admin'))
   })
 
-  /**
-   * Create a post entry and open it for editing, with the body field focused.
-   * Returns with the navigator closed and the post form showing.
-   */
-  async function createPostAndOpenBody(
-    page: Parameters<typeof switchUser>[0],
-    slug: string,
-    title: string,
-  ): Promise<void> {
-    await editorPage.openEntryNavigator()
-
-    const collectionMenu = page.locator('[data-testid="collection-menu-posts"]')
-    await collectionMenu.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
-    await collectionMenu.click()
-
-    const addEntry = page.locator('[data-testid="add-entry-menu-item"]')
-    await addEntry.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-    await addEntry.click()
-
-    const modal = page.locator('[data-testid="create-entry-modal"]')
-    await expect(modal).toBeVisible()
-    await page.locator('[data-testid="entry-slug-input"]').fill(slug)
-    await page.locator('[data-testid="create-entry-submit"]').click()
-    await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
-
-    // After creation the navigator is still open. Expand Posts if collapsed, then
-    // click the new post entry so it's loaded in the form pane.
-    const postsCollection = page.locator('[data-testid="entry-nav-item-posts"]')
-    await postsCollection.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
-    const navItem = page.locator('[data-testid="entry-nav-item-post"]').last()
-    const isVisible = await navItem.isVisible()
-    if (!isVisible) {
-      await postsCollection.click()
-    }
-    await navItem.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
-    await navItem.click()
-
-    // Close navigator
-    await page.keyboard.press('Escape')
-    await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
-
-    // Fill title field so the entry has a recognisable label
-    await editorPage.fillTextField('title', title)
-    await editorPage.saveAndVerify()
-  }
-
   test('entry link toolbar button is visible in MDX editor', async ({ page }) => {
     await test.step('open editor and create a post', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await createPostAndOpenBody(page, 'link-test-post', 'Link Test Post')
+      await editorPage.createPost('link-test-post', 'Link Test Post')
     })
 
     await test.step('verify body MDX editor is visible', async () => {
@@ -99,8 +53,8 @@ test.describe('Entry Links in MDX Editor', () => {
     await test.step('open editor, create two posts, then reload so entries are refreshed', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await createPostAndOpenBody(page, 'modal-test-post', 'Modal Test Post')
-      await createPostAndOpenBody(page, 'second-post', 'Second Post')
+      await editorPage.createPost('modal-test-post', 'Modal Test Post')
+      await editorPage.createPost('second-post', 'Second Post')
       // Reload so entriesState re-fetches with updated post labels
       await page.reload()
       await editorPage.waitForReady()
@@ -147,7 +101,7 @@ test.describe('Entry Links in MDX Editor', () => {
     await test.step('create a searchable post then reload to refresh entries', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await createPostAndOpenBody(page, 'searchable-post', 'Searchable Post')
+      await editorPage.createPost('searchable-post', 'Searchable Post')
       // Reload so entriesState re-fetches with the saved post title
       await page.reload()
       await editorPage.waitForReady()
@@ -189,7 +143,7 @@ test.describe('Entry Links in MDX Editor', () => {
     await test.step('open editor, create post, open entry link modal', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await createPostAndOpenBody(page, 'no-match-post', 'No Match Post')
+      await editorPage.createPost('no-match-post', 'No Match Post')
       const bodyEditor = page.getByRole('textbox', { name: 'editable markdown' })
       await bodyEditor.waitFor({ state: 'visible', timeout: LONG_TIMEOUT })
       await bodyEditor.click()
@@ -211,7 +165,7 @@ test.describe('Entry Links in MDX Editor', () => {
     await test.step('open editor and create a target post', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await createPostAndOpenBody(page, 'link-target', 'Link Target Post')
+      await editorPage.createPost('link-target', 'Link Target Post')
     })
 
     await test.step('open entry link modal and select an entry', async () => {

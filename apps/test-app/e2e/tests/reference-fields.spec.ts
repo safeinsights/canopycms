@@ -7,55 +7,6 @@ import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from '../fixtures/timeo
 const BASE_URL = 'http://localhost:5174'
 
 /**
- * Creates a post entry with a given slug and title, leaving the navigator closed.
- * Returns the slug used (for disk verification if needed).
- */
-async function createPostWithTitle(
-  page: Parameters<typeof switchUser>[0],
-  editorPage: EditorPage,
-  slug: string,
-  title: string,
-): Promise<void> {
-  // Open navigator if not already open
-  await editorPage.openEntryNavigator()
-
-  const collectionMenuButton = page.locator('[data-testid="collection-menu-posts"]')
-  await collectionMenuButton.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
-  await collectionMenuButton.click()
-
-  const addEntryItem = page.locator('[data-testid="add-entry-menu-item"]')
-  await addEntryItem.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
-  await addEntryItem.click()
-
-  const modal = page.locator('[data-testid="create-entry-modal"]')
-  await expect(modal).toBeVisible()
-  await page.locator('[data-testid="entry-slug-input"]').fill(slug)
-  await page.locator('[data-testid="create-entry-submit"]').click()
-  await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
-
-  // After creation the navigator is still open. Expand the Posts collection if needed,
-  // then click the new post entry so it's loaded in the form pane.
-  const postsCollection = page.locator('[data-testid="entry-nav-item-posts"]')
-  await postsCollection.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
-  // Click to expand (if already expanded this is a no-op effectively; the nav items will be visible)
-  const navItem = page.locator('[data-testid="entry-nav-item-post"]').last()
-  const isVisible = await navItem.isVisible()
-  if (!isVisible) {
-    await postsCollection.click()
-  }
-  await navItem.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
-  await navItem.click()
-
-  // Close navigator so form pane is interactive
-  await page.keyboard.press('Escape')
-  await expect(editorPage.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
-
-  // Fill in title and save
-  await editorPage.fillTextField('title', title)
-  await editorPage.saveAndVerify()
-}
-
-/**
  * E2E tests for reference field functionality.
  *
  * Tests single-select and multi-select reference fields that load options
@@ -78,8 +29,8 @@ test.describe('Reference Fields', () => {
     await test.step('open editor and create two posts', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await createPostWithTitle(page, editorPage, 'alpha-post', 'Alpha Post')
-      await createPostWithTitle(page, editorPage, 'beta-post', 'Beta Post')
+      await editorPage.createPost('alpha-post', 'Alpha Post')
+      await editorPage.createPost('beta-post', 'Beta Post')
     })
 
     await test.step('navigate to Home Page entry', async () => {
@@ -115,7 +66,7 @@ test.describe('Reference Fields', () => {
     await test.step('create a post to reference', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await createPostWithTitle(page, editorPage, 'ref-target', 'Ref Target Post')
+      await editorPage.createPost('ref-target', 'Ref Target Post')
     })
 
     await test.step('navigate to Home Page', async () => {
@@ -161,7 +112,7 @@ test.describe('Reference Fields', () => {
     await test.step('set up: create post, select reference, save', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await createPostWithTitle(page, editorPage, 'clearable-post', 'Clearable Post')
+      await editorPage.createPost('clearable-post', 'Clearable Post')
       await editorPage.openEntryNavigator()
       await editorPage.selectEntry('Home Page')
       await page.keyboard.press('Escape')
@@ -189,8 +140,8 @@ test.describe('Reference Fields', () => {
     await test.step('create two posts to reference', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await createPostWithTitle(page, editorPage, 'featured-one', 'Featured One')
-      await createPostWithTitle(page, editorPage, 'featured-two', 'Featured Two')
+      await editorPage.createPost('featured-one', 'Featured One')
+      await editorPage.createPost('featured-two', 'Featured Two')
     })
 
     await test.step('navigate to Home Page', async () => {
@@ -245,9 +196,9 @@ test.describe('Reference Fields', () => {
     await test.step('create three posts with distinct titles', async () => {
       await editorPage.goto()
       await editorPage.waitForReady()
-      await createPostWithTitle(page, editorPage, 'apple-post', 'Apple')
-      await createPostWithTitle(page, editorPage, 'banana-post', 'Banana')
-      await createPostWithTitle(page, editorPage, 'cherry-post', 'Cherry')
+      await editorPage.createPost('apple-post', 'Apple')
+      await editorPage.createPost('banana-post', 'Banana')
+      await editorPage.createPost('cherry-post', 'Cherry')
     })
 
     await test.step('navigate to Home Page', async () => {
