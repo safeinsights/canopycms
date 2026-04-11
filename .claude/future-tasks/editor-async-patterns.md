@@ -70,6 +70,17 @@ Medium-High. Likely to be noticed as flickering in the reference field or as sta
 - `packages/canopycms/src/editor/hooks/useEntryManager.ts`
 - `packages/canopycms/src/editor/Editor.tsx`
 
+## Additional: reference-options access-check efficiency
+
+`reference-options.ts` currently calls `store.read()` for every candidate entry (to get the label) and _then_ filters by `checkContentAccess`. Denied users trigger file I/O for content they'll never see. The better design is to pass a permission predicate into `loadReferenceOptions` as a filter callback so file reads are skipped entirely for denied paths.
+
+Also, the `idIndex.findById(option.id as ContentId)` cast is unnecessary — `findById` accepts `string`.
+
+## Additional: JSON.stringify dirty check
+
+`useDraftManager` uses `JSON.stringify(draft) !== JSON.stringify(loaded)` for `modifiedCount` and `isAnyDirty`. This is key-order sensitive: a localStorage-hydrated draft may have different property ordering than a freshly-loaded server object, producing a false-positive "dirty" even when the values are identical. Replace with `fast-deep-equal` (already likely transitive via Mantine/react-hook-form) or a simple recursive equality helper.
+
 ## Related
 
 - Review report: HIGH-9, HIGH-10, MEDIUM (loadEntry, refreshEntries)
+- Sub-review findings (April 2026): LOW-1 (reference-options double-lookup), LOW-3 (stringify dirty check)

@@ -313,23 +313,25 @@ export async function workerRunOnce(options: {
   }
 
   // Process task queue (if any pending tasks)
-  const { dequeueTask, completeTask } = await import('../worker/task-queue')
-  const firstTask = await dequeueTask(taskDir)
+  const { dequeueTask, completeTask, listTasks } = await import('../worker/task-queue')
 
-  if (firstTask !== null) {
-    if (mode === 'prod') {
-      // In prod mode, tasks are real GitHub operations (push-branch, create-PR, etc.).
-      // Silently skipping them with {skipped:true} permanently loses that work.
-      // The full CmsWorker daemon must process prod tasks.
+  if (mode === 'prod') {
+    // In prod mode, tasks are real GitHub operations (push-branch, create-PR, etc.).
+    // Silently skipping them with {skipped:true} permanently loses that work.
+    // Check for pending tasks WITHOUT dequeuing — dequeue moves tasks to processing/
+    // and an abandoned processing/ file is harder to recover than a pending/ file.
+    const pending = await listTasks(taskDir, 'pending')
+    if (pending.length > 0) {
       throw new Error(
-        `workerRunOnce found pending tasks in prod mode but cannot execute them. ` +
+        `workerRunOnce found ${pending.length} pending task(s) in prod mode but cannot execute them. ` +
           `Use the full worker daemon to process prod task queues.`,
       )
     }
-
+    console.log('No pending tasks')
+  } else {
     // Dev mode: skip tasks with a warning (no GitHub credentials available)
     let taskCount = 0
-    let task: typeof firstTask | null = firstTask
+    let task = await dequeueTask(taskDir)
     while (task !== null) {
       console.log(`Processing task: ${task.action} (${task.id})`)
       console.warn(`  WARNING: Task skipped — GitHub operations require the full worker daemon`)
@@ -337,9 +339,11 @@ export async function workerRunOnce(options: {
       taskCount++
       task = await dequeueTask(taskDir)
     }
-    console.log(`Processed ${taskCount} task(s)`)
-  } else {
-    console.log('No pending tasks')
+    if (taskCount > 0) {
+      console.log(`Processed ${taskCount} task(s)`)
+    } else {
+      console.log('No pending tasks')
+    }
   }
 
   console.log('\nDone')

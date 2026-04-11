@@ -381,6 +381,15 @@ describe('workerRunOnce', () => {
     await expect(workerRunOnce({ projectDir: tmpDir })).rejects.toThrow(
       /prod.*full worker daemon|full worker daemon.*prod/i,
     )
+
+    // Critical: tasks must remain in pending/ — NOT moved to processing/.
+    // The original fix called dequeueTask() before throwing, which stranded
+    // tasks in processing/ and made them harder to recover than leaving them pending.
+    const pendingFiles = await fs.readdir(path.join(taskDir, 'pending'))
+    expect(pendingFiles).toHaveLength(1)
+    const processingDir = path.join(taskDir, 'processing')
+    const processingFiles = await fs.readdir(processingDir).catch(() => [])
+    expect(processingFiles).toHaveLength(0)
   })
 
   it('warns and skips tasks in dev mode (expected behavior for dev-only workflow)', async () => {

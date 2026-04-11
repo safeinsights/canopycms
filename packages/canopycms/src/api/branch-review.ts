@@ -7,10 +7,6 @@ import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 import { syncConvertToDraft } from './github-sync'
 
-export interface RequestChangesBody {
-  comment?: string
-}
-
 const requestChangesHandler = async (
   gc: { branchContext: BranchContext },
   ctx: ApiContext,

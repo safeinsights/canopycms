@@ -8,7 +8,6 @@
 // Type imports
 import type { BranchDeleteResponse, BranchListResponse, BranchResponse, CreateBranchBody, UpdateBranchAccessBody } from './branch'
 import type { BranchMergeResponse } from './branch-status'
-import type { RequestChangesBody } from './branch-review'
 import type { AddCommentBody, AddCommentResponse, CommentsResponse, ResolveCommentResponse } from './comments'
 import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResponse, RenameEntryBody, RenameEntryResponse, ValidateReferencesBody, WriteContentBody } from './content'
 import type { ReferenceOptionsResponse } from './reference-options'
@@ -112,8 +111,8 @@ export class CanopyApiClient {
     /**
      * requestChanges - POST /:branch/request-changes
      */
-    requestChanges: (params: Record<string, string>, body: RequestChangesBody): Promise<BranchResponse> => {
-      return this.request('POST', this.buildPath('/:branch/request-changes', params), body)
+    requestChanges: (params: Record<string, string>): Promise<BranchResponse> => {
+      return this.request('POST', this.buildPath('/:branch/request-changes', params))
     },
 
     /**
