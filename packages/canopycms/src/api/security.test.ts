@@ -39,6 +39,7 @@ vi.mock('../content-store', () => ({
   ContentStore: vi.fn().mockImplementation(() => ({
     idIndex: vi.fn().mockResolvedValue({}),
     read: vi.fn().mockResolvedValue({ data: { title: 'Test' } }),
+    resolveDocumentPath: vi.fn().mockResolvedValue({ relativePath: 'posts/hello' }),
   })),
   ContentStoreError: class ContentStoreError extends Error {},
 }))
@@ -106,6 +107,27 @@ describe('Security: Branch access checks', () => {
 
       expect(result.ok).toBe(true)
     })
+
+    it('omits entries the user is not permitted to read via path-level permissions', async () => {
+      const ctx = createMockApiContext({
+        branchContext: { ...branchContext, flatSchema: mockFlatSchema },
+        allowBranchAccess: true,
+        allowContentAccess: false, // path-level denial
+      })
+      const req = {
+        user: createMockUser(),
+        query: { collections: 'posts', displayField: 'title' },
+      } as unknown as ApiRequest
+
+      const result = await REFERENCE_OPTIONS_ROUTES.get.handler(ctx, req, {
+        branch: unsafeAsBranchName('secret-branch'),
+      })
+
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.data!.options).toHaveLength(0)
+      }
+    })
   })
 
   describe('resolve-references endpoint', () => {
@@ -125,6 +147,30 @@ describe('Security: Branch access checks', () => {
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(403)
+    })
+
+    it('omits entries the user is not permitted to read via path-level permissions', async () => {
+      // Branch access is granted, but path-level read is denied for this specific entry.
+      // The handler must call checkContentAccess and exclude denied entries from the response.
+      const ctx = createMockApiContext({
+        branchContext: { ...branchContext, flatSchema: mockFlatSchema },
+        allowBranchAccess: true,
+        allowContentAccess: false, // path-level denial
+      })
+      const req = { user: createMockUser() } as unknown as ApiRequest
+
+      const result = await RESOLVE_REFERENCES_ROUTES.post.handler(
+        ctx,
+        req,
+        { branch: unsafeAsBranchName('secret-branch') },
+        { ids: ['a1b2c3d4e5f6' as ContentId] },
+      )
+
+      expect(result.ok).toBe(true)
+      // The entry should be absent because checkContentAccess denied it
+      if (result.ok) {
+        expect(Object.keys(result.data!.resolved)).toHaveLength(0)
+      }
     })
   })
 
