@@ -76,6 +76,21 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const loadedValue = currentId ? loadedValues[currentId] : undefined
   const effectiveValue = selectedValue ?? loadedValue
 
+  // Number of draft entries that differ from their loaded server value.
+  //
+  // Two intentional behaviors worth noting:
+  //
+  // 1. A draft without a corresponding `loadedValues` entry (e.g. a localStorage-restored
+  //    draft whose entry has not been opened in this session) is counted as dirty. We
+  //    cannot prove such a draft matches server state, so we conservatively treat it
+  //    as unsaved work — this is what keeps the branch-switch guard from silently
+  //    discarding restored drafts.
+  //
+  // 2. The comparison uses `JSON.stringify`, which is property-order sensitive. A
+  //    rehydrated draft whose keys were serialized in a different order than the
+  //    server-loaded object will show as dirty even when the values are semantically
+  //    identical. This is a known limitation; replacing with `fast-deep-equal` is
+  //    tracked in `.claude/future-tasks/editor-async-patterns.md`.
   const modifiedCount = useMemo(
     () =>
       Object.keys(drafts).filter(
@@ -248,7 +263,11 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   }
 
   // Returns true if ANY draft entry differs from its loaded value.
-  // Used for branch-switch guards so unsaved work in non-selected entries is not silently discarded.
+  //
+  // Used for branch-switch guards so unsaved work in non-selected entries is not
+  // silently discarded. Derived from `modifiedCount`, so the two semantics notes
+  // above also apply: localStorage-restored drafts without a loaded value count as
+  // dirty, and the underlying comparison is `JSON.stringify`-based.
   const isAnyDirty = (): boolean => modifiedCount > 0
 
   return {

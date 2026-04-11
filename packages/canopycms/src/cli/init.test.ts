@@ -363,14 +363,20 @@ describe('workerRunOnce', () => {
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
-  it('throws when prod mode has pending tasks (prevents silent task loss)', async () => {
-    // Write a canopycms.config.ts that declares mode: 'prod'
-    // Note: the mode regex requires `mode:` at or near the start of a line
+  // Helper: write a config fixture that jiti can actually import.
+  // We use a plain-object default export matching the shape `defineCanopyConfig()` produces
+  // (`{ server: {...} }`) so tests don't need to resolve the real canopycms package import.
+  async function writeConfig(mode: string | null): Promise<void> {
+    const modeField = mode === null ? '' : `mode: '${mode}',`
     await fs.writeFile(
       path.join(tmpDir, 'canopycms.config.ts'),
-      `export default defineCanopyConfig({\n  mode: 'prod',\n})`,
+      `export default { server: { ${modeField} } }`,
       'utf-8',
     )
+  }
+
+  it('throws when prod mode has pending tasks (prevents silent task loss)', async () => {
+    await writeConfig('prod')
 
     // Enqueue a task in the prod task directory (redirected to tmpDir via env var)
     const { getTaskQueueDir } = await import('../worker/task-queue-config')
@@ -393,12 +399,72 @@ describe('workerRunOnce', () => {
   })
 
   it('warns and skips tasks in dev mode (expected behavior for dev-only workflow)', async () => {
-    await fs.writeFile(
-      path.join(tmpDir, 'canopycms.config.ts'),
-      `export default defineCanopyConfig({ mode: 'dev' })`,
-      'utf-8',
-    )
+    await writeConfig('dev')
     // No tasks enqueued — should complete without error
     await expect(workerRunOnce({ projectDir: tmpDir })).resolves.toBeUndefined()
+  })
+
+  it('defaults to dev when canopycms.config.ts is missing', async () => {
+    // No config file — unconfigured project should default to dev, not error.
+    await expect(workerRunOnce({ projectDir: tmpDir })).resolves.toBeUndefined()
+  })
+
+  it('throws when the config file is present but fails to import', async () => {
+    // A syntactically broken config must NOT silently default to dev — in a real
+    // prod deployment that would cause workerRunOnce to fall through to the dev
+    // task-skip path and silently discard pending prod tasks.
+    await fs.writeFile(
+      path.join(tmpDir, 'canopycms.config.ts'),
+      `this is not valid typescript {{{ <- syntax error`,
+      'utf-8',
+    )
+    await expect(workerRunOnce({ projectDir: tmpDir })).rejects.toThrow(
+      /Failed to load CanopyCMS config/,
+    )
+  })
+
+  it('throws when the config has no mode field', async () => {
+    // Invalid shape — the detector should not guess.
+    await writeConfig(null)
+    await expect(workerRunOnce({ projectDir: tmpDir })).rejects.toThrow(
+      /expected server\.mode to be a string/,
+    )
+  })
+
+  it('throws when the config has an unexpected mode value', async () => {
+    await writeConfig('staging')
+    await expect(workerRunOnce({ projectDir: tmpDir })).rejects.toThrow(
+      /mode must be 'prod' or 'dev'/,
+    )
+  })
+
+  it('reads mode from a dynamically-computed expression (regex-detector would miss this)', async () => {
+    // The previous regex-based detector could not see through function calls or
+    // conditional expressions. With jiti we actually evaluate the module, so
+    // `mode` resolves to its real runtime value regardless of how it was written.
+    await fs.writeFile(
+      path.join(tmpDir, 'canopycms.config.ts'),
+      [
+        `const computeMode = () => 'prod' as const`,
+        `export default { server: { mode: computeMode() } }`,
+      ].join('\n'),
+      'utf-8',
+    )
+
+    // Enqueue a task so we can observe the prod-mode guard firing.
+    const { getTaskQueueDir } = await import('../worker/task-queue-config')
+    const { enqueueTask } = await import('../worker/task-queue')
+    const taskDir = getTaskQueueDir({ mode: 'prod' })
+    await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: 'feature-x' } })
+
+    // If the detector still used regex, it would match neither `mode: computeMode()`
+    // nor any literal 'prod', fall through to dev, and dequeueTask would silently
+    // skip the task. The jiti-based detector should resolve the real value and throw.
+    await expect(workerRunOnce({ projectDir: tmpDir })).rejects.toThrow(
+      /prod.*full worker daemon|full worker daemon.*prod/i,
+    )
+
+    const pendingFiles = await fs.readdir(path.join(taskDir, 'pending'))
+    expect(pendingFiles).toHaveLength(1)
   })
 })

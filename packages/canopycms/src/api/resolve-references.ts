@@ -55,11 +55,11 @@ const resolveReferencesHandler = async (
       const result = await resolver.resolve(id)
       if (result && result.exists && result.collection && result.slug) {
         // Check path-level read permission before returning content
-        const resolved_path = await store.resolveDocumentPath(result.collection, result.slug)
+        const resolvedPath = await store.resolveDocumentPath(result.collection, result.slug)
         const access = await ctx.services.checkContentAccess(
           branchContext,
           branchContext.branchRoot,
-          resolved_path.relativePath,
+          resolvedPath.relativePath,
           req.user,
           'read',
         )
