@@ -95,7 +95,7 @@ describe('Review Workflow Integration', () => {
       },
     )
 
-    expect(commentResponse.status).toBe(200)
+    expect(commentResponse.status).toBe(201)
 
     // STEP 5: Reviewer requests changes
     const requestChangesResponse = await reviewerClient.post(
@@ -166,8 +166,8 @@ describe('Review Workflow Integration', () => {
       }),
     ])
 
-    expect(reviewerComment.status).toBe(200)
-    expect(adminComment.status).toBe(200)
+    expect(reviewerComment.status).toBe(201)
+    expect(adminComment.status).toBe(201)
 
     // List all comments
     const listResponse = await reviewerClient.get('/api/canopycms/feature-multi-reviewer/comments')
@@ -219,7 +219,7 @@ describe('Review Workflow Integration', () => {
       },
     )
 
-    expect(commentResponse.status).toBe(200)
+    expect(commentResponse.status).toBe(201)
     const commentData = await commentResponse.json<AddCommentResponse>()
     const threadId = commentData.data?.threadId
 

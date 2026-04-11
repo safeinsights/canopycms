@@ -1,3 +1,5 @@
+'use client'
+
 import { useEffect, useMemo, useState } from 'react'
 import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'

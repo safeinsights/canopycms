@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { branchNameSchema } from './validators'
+import { branchParamSchema } from './validators'
 import type { ApiContext, ApiRequest } from './types'
 import type { BranchContext } from '../types'
 import type { BranchResponse } from './branch'
@@ -7,10 +7,6 @@ import { getBranchMetadataFileManager } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 import { canPerformWorkflowAction } from '../authorization'
 import { syncConvertToDraft } from './github-sync'
-
-const branchParamSchema = z.object({
-  branch: branchNameSchema,
-})
 
 const withdrawBranchHandler = async (
   gc: { branchContext: BranchContext },

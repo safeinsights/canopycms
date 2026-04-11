@@ -144,7 +144,7 @@ const updatePermissionsHandler = async (
       mode,
     })
 
-    return { ok: true, status: 200 }
+    return { ok: true, status: 200, data: {} }
   } catch (error) {
     return {
       ok: false,

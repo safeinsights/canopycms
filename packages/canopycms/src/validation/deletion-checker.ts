@@ -168,28 +168,6 @@ export class DeletionChecker {
             }
           })
         }
-      } else if (field.type === 'array') {
-        // Handle array fields
-        const arrayField = field as FieldConfig & {
-          of?: { type: string; fields?: FieldConfig[] }
-        }
-        if (Array.isArray(value) && arrayField.of) {
-          const ofFields = arrayField.of.fields
-          if (arrayField.of.type === 'object' && ofFields) {
-            value.forEach((item, index) => {
-              if (typeof item === 'object' && item !== null) {
-                found.push(
-                  ...this.findIdInData(
-                    item as Record<string, unknown>,
-                    targetId,
-                    ofFields,
-                    `${fieldPath}[${index}]`,
-                  ),
-                )
-              }
-            })
-          }
-        }
       }
     }
 

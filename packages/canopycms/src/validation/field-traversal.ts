@@ -89,15 +89,31 @@ export function traverseFields<T>(
     // Then recurse into nested structures
     if (field.type === 'object') {
       const objectField = field as ObjectFieldConfig
-      if (objectField.fields && typeof value === 'object' && !Array.isArray(value)) {
-        results.push(
-          ...traverseFields(
-            objectField.fields,
-            value as Record<string, unknown>,
-            visitor,
-            fieldPath,
-          ),
-        )
+      if (objectField.fields) {
+        if (Array.isArray(value)) {
+          // list: true — value is an array of objects
+          value.forEach((item, index) => {
+            if (typeof item === 'object' && item !== null) {
+              results.push(
+                ...traverseFields(
+                  objectField.fields!,
+                  item as Record<string, unknown>,
+                  visitor,
+                  `${fieldPath}[${index}]`,
+                ),
+              )
+            }
+          })
+        } else if (typeof value === 'object' && value !== null) {
+          results.push(
+            ...traverseFields(
+              objectField.fields,
+              value as Record<string, unknown>,
+              visitor,
+              fieldPath,
+            ),
+          )
+        }
       }
     } else if (field.type === 'block') {
       const blockField = field as BlockFieldConfig

@@ -188,6 +188,40 @@ describe('field-traversal', () => {
       ])
     })
 
+    it('recurses into list-mode object fields (list: true)', () => {
+      // This is the bug: when an object field has list:true, its value is an array.
+      // The guard `!Array.isArray(value)` caused the entire field to be skipped,
+      // so references inside list-of-objects were never visited or validated.
+      const schema: FieldConfig[] = [
+        {
+          name: 'authors',
+          type: 'object',
+          label: 'Authors',
+          list: true,
+          fields: [
+            { name: 'name', type: 'string', label: 'Name' },
+            { name: 'ref', type: 'reference', label: 'Profile', collections: ['profiles'] },
+          ],
+        },
+      ]
+      const data = {
+        authors: [
+          { name: 'Alice', ref: 'profile-1' },
+          { name: 'Bob', ref: 'profile-2' },
+        ],
+      }
+
+      const refs = traverseFields(schema, data, ({ field, value, path }) => {
+        if (field.type === 'reference') return [{ path, value }]
+        return []
+      })
+
+      expect(refs).toEqual([
+        { path: 'authors[0].ref', value: 'profile-1' },
+        { path: 'authors[1].ref', value: 'profile-2' },
+      ])
+    })
+
     it('handles missing block template gracefully', () => {
       const schema: FieldConfig[] = [
         {

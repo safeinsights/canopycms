@@ -1,3 +1,5 @@
+'use client'
+
 /**
  * React context for providing entry data to the InsertEntryLink toolbar button.
  *

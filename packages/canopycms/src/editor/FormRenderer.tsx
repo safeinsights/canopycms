@@ -1,3 +1,5 @@
+'use client'
+
 import React from 'react'
 
 import { Alert, Button, Group, Paper, Stack, Text } from '@mantine/core'
