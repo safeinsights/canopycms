@@ -101,6 +101,32 @@ describe('Task Queue', () => {
     it('returns null when pending directory does not exist', async () => {
       expect(await dequeueTask(path.join(tmpDir, 'nonexistent'))).toBeNull()
     })
+
+    it('skips stale duplicate and dequeues the next valid task', async () => {
+      // Simulate a crash-recovery scenario: task A is pending AND already completed
+      // (crash between completeTask writing the result and unlinking the pending file).
+      // dequeueTask should skip A and return B, not halt the queue by returning null.
+      const idA = await enqueueTask(tmpDir, { action: 'push', payload: { branch: 'a' } })
+      // Small delay ensures A has an older createdAt than B (FIFO sort stability)
+      await new Promise((r) => setTimeout(r, 5))
+      const idB = await enqueueTask(tmpDir, { action: 'push', payload: { branch: 'b' } })
+
+      // Simulate: complete A externally (write a completed file) while its pending copy still exists
+      const taskAContent = await fs.readFile(path.join(tmpDir, 'pending', `${idA}.json`), 'utf-8')
+      const taskA = JSON.parse(taskAContent)
+      taskA.status = 'completed'
+      await fs.mkdir(path.join(tmpDir, 'completed'), { recursive: true })
+      await fs.writeFile(path.join(tmpDir, 'completed', `${idA}.json`), JSON.stringify(taskA))
+      // pending copy of A still exists — this is the stale duplicate
+
+      // dequeueTask should skip A (stale) and return B
+      const dequeued = await dequeueTask(tmpDir)
+      expect(dequeued).not.toBeNull()
+      expect(dequeued!.id).toBe(idB)
+
+      // The stale pending file for A should have been cleaned up
+      await expect(fs.stat(path.join(tmpDir, 'pending', `${idA}.json`))).rejects.toThrow()
+    })
   })
 
   describe('complete', () => {

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { init, initDeployAws } from './init'
+import { init, initDeployAws, workerRunOnce } from './init'
 import { mockConsole } from '../test-utils/console-spy'
 
 // Mock @clack/prompts to avoid interactive prompts in tests
@@ -344,5 +344,52 @@ describe('canopycms init-deploy aws', () => {
     const content = await fs.readFile(dockerfilePath, 'utf-8')
     expect(content).not.toBe('existing')
     expect(content).toContain('lambda-adapter')
+  })
+})
+
+describe('workerRunOnce', () => {
+  let tmpDir: string
+  const originalWorkspaceRoot = process.env.CANOPYCMS_WORKSPACE_ROOT
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-test-'))
+    // Redirect the prod workspace to tmpDir so getTaskQueueDir doesn't point to /mnt/efs
+    process.env.CANOPYCMS_WORKSPACE_ROOT = tmpDir
+  })
+
+  afterEach(async () => {
+    process.env.CANOPYCMS_WORKSPACE_ROOT = originalWorkspaceRoot
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('throws when prod mode has pending tasks (prevents silent task loss)', async () => {
+    // Write a canopycms.config.ts that declares mode: 'prod'
+    // Note: the mode regex requires `mode:` at or near the start of a line
+    await fs.writeFile(
+      path.join(tmpDir, 'canopycms.config.ts'),
+      `export default defineCanopyConfig({\n  mode: 'prod',\n})`,
+      'utf-8',
+    )
+
+    // Enqueue a task in the prod task directory (redirected to tmpDir via env var)
+    const { getTaskQueueDir } = await import('../worker/task-queue-config')
+    const { enqueueTask } = await import('../worker/task-queue')
+    const taskDir = getTaskQueueDir({ mode: 'prod' })
+    await enqueueTask(taskDir, { action: 'push-branch', payload: { branch: 'feature-x' } })
+
+    await expect(workerRunOnce({ projectDir: tmpDir })).rejects.toThrow(
+      /prod.*full worker daemon|full worker daemon.*prod/i,
+    )
+  })
+
+  it('warns and skips tasks in dev mode (expected behavior for dev-only workflow)', async () => {
+    await fs.writeFile(
+      path.join(tmpDir, 'canopycms.config.ts'),
+      `export default defineCanopyConfig({ mode: 'dev' })`,
+      'utf-8',
+    )
+    // No tasks enqueued — should complete without error
+    await expect(workerRunOnce({ projectDir: tmpDir })).resolves.toBeUndefined()
   })
 })

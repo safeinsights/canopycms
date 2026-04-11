@@ -314,18 +314,29 @@ export async function workerRunOnce(options: {
 
   // Process task queue (if any pending tasks)
   const { dequeueTask, completeTask } = await import('../worker/task-queue')
-  let taskCount = 0
-  let task
-  while ((task = await dequeueTask(taskDir)) !== null) {
-    console.log(`Processing task: ${task.action} (${task.id})`)
-    // In dev mode without GitHub, just mark tasks as completed
-    // A real worker would execute the GitHub operations
-    console.warn(`  WARNING: Task skipped — GitHub operations require the full worker daemon`)
-    await completeTask(taskDir, task.id, { skipped: true })
-    taskCount++
-  }
+  const firstTask = await dequeueTask(taskDir)
 
-  if (taskCount > 0) {
+  if (firstTask !== null) {
+    if (mode === 'prod') {
+      // In prod mode, tasks are real GitHub operations (push-branch, create-PR, etc.).
+      // Silently skipping them with {skipped:true} permanently loses that work.
+      // The full CmsWorker daemon must process prod tasks.
+      throw new Error(
+        `workerRunOnce found pending tasks in prod mode but cannot execute them. ` +
+          `Use the full worker daemon to process prod task queues.`,
+      )
+    }
+
+    // Dev mode: skip tasks with a warning (no GitHub credentials available)
+    let taskCount = 0
+    let task: typeof firstTask | null = firstTask
+    while (task !== null) {
+      console.log(`Processing task: ${task.action} (${task.id})`)
+      console.warn(`  WARNING: Task skipped — GitHub operations require the full worker daemon`)
+      await completeTask(taskDir, task.id, { skipped: true })
+      taskCount++
+      task = await dequeueTask(taskDir)
+    }
     console.log(`Processed ${taskCount} task(s)`)
   } else {
     console.log('No pending tasks')

@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   BranchMetadataFileManager,
@@ -68,6 +68,37 @@ describe('BranchMetadataFileManager', () => {
 
       const loaded = await BranchMetadataFileManager.loadOnly(root)
       expect(loaded?.branch.name).toBe('feature/x')
+    })
+
+    it('uses atomic temp-file + link when creating a new branch.json', async () => {
+      // Verify the new-file path goes through temp-write + link() rather than writeFile({wx}).
+      // writeFile({wx}) is not atomic: a crash mid-write leaves a partial file that
+      // makes JSON.parse fail on next startup, permanently breaking the branch.
+      // link() is atomic and EEXIST-safe: it either creates the target or fails cleanly.
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const meta = getBranchMetadataFileManager(root, registryDir)
+
+      const linkSpy = vi.spyOn(fs, 'link')
+
+      await meta.save({
+        branch: { name: 'atomicity-test', status: 'editing', createdBy: 'u1' },
+      })
+
+      expect(linkSpy).toHaveBeenCalled()
+
+      // The final file should be valid JSON — no temp fragments left behind
+      const metaPath = path.join(root, '.canopy-meta', 'branch.json')
+      const raw = await fs.readFile(metaPath, 'utf-8')
+      const parsed = JSON.parse(raw)
+      expect(parsed.branch.name).toBe('atomicity-test')
+
+      // No .tmp files should remain
+      const metaDir = path.join(root, '.canopy-meta')
+      const entries = await fs.readdir(metaDir)
+      expect(entries.some((e) => e.endsWith('.tmp'))).toBe(false)
+
+      linkSpy.mockRestore()
     })
 
     it('updates existing metadata and stamps updatedAt', async () => {
