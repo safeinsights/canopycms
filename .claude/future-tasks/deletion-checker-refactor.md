@@ -35,7 +35,19 @@ This eliminates the duplicated traversal logic entirely, reduces the function to
 - `DeletionChecker` is the only remaining consumer of a hand-rolled traversal in `validation/`
 - `ReferenceValidator` and `EntryLinkValidator` already use `traverseFields`
 
+## Also: reconcile `_type` vs `template` block discriminator
+
+`ai/json-to-markdown.ts:376` uses `blockItem._type || blockItem.template` as the block type
+discriminator, suggesting `template` is a legitimate alternate key in some content. Both
+`traverseFields` (`field-traversal.ts:36`) and `findIdInData` (`deletion-checker.ts`) use only
+`_type`, so blocks stored with `template` are silently skipped during reference validation and
+deletion checking.
+
+Reconcile this at the same time as the refactor: decide on the canonical key and make all
+traversal code consistent.
+
 ## Files
 
 - `packages/canopycms/src/validation/deletion-checker.ts`
 - `packages/canopycms/src/validation/field-traversal.ts`
+- `packages/canopycms/src/ai/json-to-markdown.ts` (for context on the `template` key)
