@@ -34,4 +34,27 @@ describe('LocalAssetStore', () => {
     const store = new LocalAssetStore({ root })
     await expect(store.upload('../evil.txt', Buffer.from('x'))).rejects.toBeInstanceOf(Error)
   })
+
+  it('prevents sibling-directory bypass via prefix-only startsWith check', async () => {
+    // Root: /tmp/canopycms-XYZ/assets
+    // Sibling: /tmp/canopycms-XYZ/assets-sibling  ← starts with "assets" but is outside root
+    // A key of "../assets-sibling/file" resolves to the sibling dir, which naively passes
+    // startsWith(root) because "assets-sibling" starts with "assets".
+    const parent = await tmpDir()
+    const root = path.join(parent, 'assets')
+    const sibling = path.join(parent, 'assets-sibling')
+    await fs.mkdir(root)
+    await fs.mkdir(sibling)
+    await fs.writeFile(path.join(sibling, 'secret.txt'), 'secret content')
+
+    const store = new LocalAssetStore({ root })
+
+    await expect(store.list('../assets-sibling')).rejects.toThrow('Path traversal detected')
+    await expect(store.upload('../assets-sibling/evil.txt', Buffer.from('x'))).rejects.toThrow(
+      'Path traversal detected',
+    )
+    await expect(store.delete('../assets-sibling/secret.txt')).rejects.toThrow(
+      'Path traversal detected',
+    )
+  })
 })
