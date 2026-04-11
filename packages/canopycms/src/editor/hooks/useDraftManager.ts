@@ -32,6 +32,7 @@ export interface UseDraftManagerReturn {
   handleReload: () => Promise<void>
   isDirtyForEntry: (entryPath: string) => boolean
   isSelectedDirty: () => boolean
+  isAnyDirty: () => boolean
 }
 
 /**
@@ -75,7 +76,14 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const loadedValue = currentId ? loadedValues[currentId] : undefined
   const effectiveValue = selectedValue ?? loadedValue
 
-  const modifiedCount = useMemo(() => Object.keys(drafts).length, [drafts])
+  const modifiedCount = useMemo(
+    () =>
+      Object.keys(drafts).filter(
+        (id) =>
+          !loadedValues[id] || JSON.stringify(drafts[id]) !== JSON.stringify(loadedValues[id]),
+      ).length,
+    [drafts, loadedValues],
+  )
 
   const editedFiles = useMemo(() => {
     const draftIds = Object.keys(drafts)
@@ -239,6 +247,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     )
   }
 
+  // Returns true if ANY draft entry differs from its loaded value.
+  // Used for branch-switch guards so unsaved work in non-selected entries is not silently discarded.
+  const isAnyDirty = (): boolean => modifiedCount > 0
+
   return {
     drafts,
     setDrafts,
@@ -255,5 +267,6 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     handleReload,
     isDirtyForEntry,
     isSelectedDirty,
+    isAnyDirty,
   }
 }

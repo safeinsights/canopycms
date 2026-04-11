@@ -6,7 +6,7 @@ import { useApiClient } from '../context'
 export interface UseBranchActionsOptions {
   branchName: string
   setBranchName: (name: string) => void
-  isSelectedDirty: () => boolean // From useDraftManager
+  isAnyDirty: () => boolean // From useDraftManager
   onReloadBranches: () => Promise<void>
   onBranchSwitch?: (branch: string) => void
 }
@@ -32,7 +32,7 @@ export interface UseBranchActionsReturn {
  * const { handleBranchChange, handleCreateBranch } = useBranchActions({
  *   branchName,
  *   setBranchName,
- *   isSelectedDirty,
+ *   isAnyDirty,
  *   onReloadBranches
  * })
  * ```
@@ -59,7 +59,7 @@ export function useBranchActions(options: UseBranchActionsOptions): UseBranchAct
 
   // Helper: Check for dirty state and show modal
   const confirmIfDirty = async (message: string): Promise<boolean> => {
-    if (!options.isSelectedDirty()) return true
+    if (!options.isAnyDirty()) return true
 
     return new Promise<boolean>((resolve) => {
       modals.openConfirmModal({

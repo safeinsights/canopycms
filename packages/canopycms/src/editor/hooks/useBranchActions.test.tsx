@@ -36,14 +36,14 @@ describe('useBranchActions', () => {
   let mockClient: MockApiClient
   let wrapper: ReturnType<typeof createApiClientWrapper>
   const mockSetBranchName = vi.fn()
-  const mockIsSelectedDirty = vi.fn(() => false)
+  const mockIsAnyDirty = vi.fn(() => false)
   const mockOnReloadBranches = vi.fn().mockResolvedValue(undefined)
   const mockOnBranchSwitch = vi.fn()
 
   const defaultOptions = {
     branchName: 'main',
     setBranchName: mockSetBranchName,
-    isSelectedDirty: mockIsSelectedDirty,
+    isAnyDirty: mockIsAnyDirty,
     onReloadBranches: mockOnReloadBranches,
     onBranchSwitch: mockOnBranchSwitch,
   }
@@ -55,7 +55,7 @@ describe('useBranchActions', () => {
     setupMockLocation()
     setupMockHistory()
     mockSetBranchName.mockClear()
-    mockIsSelectedDirty.mockReturnValue(false)
+    mockIsAnyDirty.mockReturnValue(false)
     mockOnReloadBranches.mockClear()
     mockOnBranchSwitch.mockClear()
   })
@@ -78,9 +78,31 @@ describe('useBranchActions', () => {
     expect(window.history.replaceState).toHaveBeenCalled()
   })
 
+  it('shows confirmation when a non-selected entry has unsaved changes', async () => {
+    // This is the core bug: isSelectedDirty only checked the current entry.
+    // If you edited entry A, navigated to entry B, then switched branches,
+    // no confirmation was shown and entry A's work was silently destroyed.
+    // The fix: use isAnyDirty() which checks all draft entries.
+    const { modals } = await import('@mantine/modals')
+    mockIsAnyDirty.mockReturnValue(true) // some entry (not necessarily selected) is dirty
+
+    const { result } = renderHook(() => useBranchActions(defaultOptions), { wrapper })
+
+    act(() => {
+      result.current.handleBranchChange('feature')
+    })
+
+    await waitFor(() => {
+      expect(modals.openConfirmModal).toHaveBeenCalled()
+    })
+
+    // Branch should not switch without confirmation
+    expect(mockSetBranchName).not.toHaveBeenCalled()
+  })
+
   it('shows confirmation modal when switching with unsaved changes', async () => {
     const { modals } = await import('@mantine/modals')
-    mockIsSelectedDirty.mockReturnValue(true)
+    mockIsAnyDirty.mockReturnValue(true)
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), {
       wrapper,
@@ -110,7 +132,7 @@ describe('useBranchActions', () => {
 
   it('does not switch branch when user cancels', async () => {
     const { modals } = await import('@mantine/modals')
-    mockIsSelectedDirty.mockReturnValue(true)
+    mockIsAnyDirty.mockReturnValue(true)
 
     // Mock the confirmation modal to call onCancel
     ;(modals.openConfirmModal as any).mockImplementation((config: any) => {
@@ -187,7 +209,7 @@ describe('useBranchActions', () => {
 
   it('prompts for confirmation when creating branch with unsaved changes', async () => {
     const { modals } = await import('@mantine/modals')
-    mockIsSelectedDirty.mockReturnValue(true)
+    mockIsAnyDirty.mockReturnValue(true)
 
     const { result } = renderHook(() => useBranchActions(defaultOptions), {
       wrapper,
@@ -204,7 +226,7 @@ describe('useBranchActions', () => {
 
   it('does not create branch when user cancels dirty check', async () => {
     const { modals } = await import('@mantine/modals')
-    mockIsSelectedDirty.mockReturnValue(true)
+    mockIsAnyDirty.mockReturnValue(true)
 
     // Mock the confirmation modal to call onCancel
     ;(modals.openConfirmModal as any).mockImplementation((config: any) => {

@@ -264,6 +264,7 @@ export const Editor: React.FC<EditorProps> = ({
     handleDiscardFileDraft,
     handleReload,
     isSelectedDirty,
+    isAnyDirty,
   } = useDraftManager({
     branchName: branchNameState,
     selectedPath,
@@ -275,11 +276,11 @@ export const Editor: React.FC<EditorProps> = ({
     setBusy: setEntriesLoading,
   })
 
-  // 4. Branch actions (depends on isSelectedDirty, setBranchName)
+  // 4. Branch actions (depends on isAnyDirty, setBranchName)
   const { handleBranchChange, handleCreateBranch } = useBranchActions({
     branchName: branchNameState,
     setBranchName,
-    isSelectedDirty,
+    isAnyDirty,
     onReloadBranches: () => loadBranches(),
   })
 
