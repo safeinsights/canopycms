@@ -102,17 +102,25 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
 
   if (loading) {
     return (
-      <Stack gap={4} data-canopy-field={dataCanopyField}>
+      <Stack
+        gap={4}
+        data-canopy-field={dataCanopyField}
+        data-testid={`reference-field-${dataCanopyField}`}
+      >
         <Text size="sm" fw={500}>
           {label}
         </Text>
-        <Loader size="sm" />
+        <Loader size="sm" data-testid={`reference-loading-${dataCanopyField}`} />
       </Stack>
     )
   }
 
   return (
-    <Stack gap={4} data-canopy-field={dataCanopyField}>
+    <Stack
+      gap={4}
+      data-canopy-field={dataCanopyField}
+      data-testid={`reference-field-${dataCanopyField}`}
+    >
       {multiple ? (
         <MultiSelect
           id={inputId}

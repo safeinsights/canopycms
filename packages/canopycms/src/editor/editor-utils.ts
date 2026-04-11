@@ -156,6 +156,7 @@ export const buildEntriesFromListResponse = ({
       collectionName: entry.collectionName,
       slug: entry.slug,
       format: entry.format,
+      entryType: entry.entryType,
       type: 'entry' as const,
       canEdit: entry.canEdit,
     }

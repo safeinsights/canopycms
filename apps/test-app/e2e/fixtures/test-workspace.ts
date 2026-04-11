@@ -40,6 +40,46 @@ export async function readContentFile<T = unknown>(contentPath: string): Promise
 }
 
 /**
+ * Read a raw content file from the main branch (without parsing).
+ * Useful for YAML files or format-agnostic verification.
+ * @param contentPath - Relative path within content/
+ */
+export async function readRawContentFile(contentPath: string): Promise<string> {
+  const filePath = getContentFilePath(contentPath)
+  return fs.readFile(filePath, 'utf8')
+}
+
+/**
+ * Find a content file in the main branch by a prefix pattern.
+ * The prefix may include a subdirectory (e.g., 'posts.qrstuvwxyz12/post.post.').
+ * Returns the relative content path from content/ root (e.g., 'posts.qrstuvwxyz12/post.post.abc123.json').
+ *
+ * NOTE: Uses Array.find, so returns the **first** filesystem-order match.
+ * Callers must ensure the prefix is specific enough that only one file matches.
+ *
+ * @param prefix - Filename prefix to match, optionally including a subdir (e.g., 'posts.qrstuvwxyz12/post.post.')
+ */
+export async function findContentFile(prefix: string): Promise<string | null> {
+  const contentDir = path.join(getMainBranchPath(), 'content')
+  const slashIdx = prefix.indexOf('/')
+  if (slashIdx !== -1) {
+    const subdir = prefix.substring(0, slashIdx)
+    const filePrefix = prefix.substring(slashIdx + 1)
+    const subdirPath = path.join(contentDir, subdir)
+    try {
+      const entries = await fs.readdir(subdirPath)
+      const match = entries.find((e) => e.startsWith(filePrefix))
+      return match ? `${subdir}/${match}` : null
+    } catch {
+      return null
+    }
+  }
+  const entries = await fs.readdir(contentDir)
+  const match = entries.find((e) => e.startsWith(prefix))
+  return match ?? null
+}
+
+/**
  * Check if the main branch workspace exists.
  */
 export async function workspaceExists(): Promise<boolean> {

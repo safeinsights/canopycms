@@ -183,6 +183,29 @@ describe('useEntryManager', () => {
     )
   })
 
+  it('saves entry with entryType when entry has entryType set', async () => {
+    const entryWithType = {
+      ...mockEntry,
+      entryType: 'settings',
+    }
+    mockClient.content.write.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { siteName: 'Test' } as any,
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
+
+    await result.current.saveEntry(entryWithType, { siteName: 'Test' })
+
+    expect(mockClient.content.write).toHaveBeenCalledWith(
+      { branch: 'main', path: 'posts/test', entryType: 'settings' },
+      expect.any(Object),
+    )
+  })
+
   it('handles save entry error', async () => {
     mockClient.content.write.mockResolvedValueOnce({
       ok: false,
@@ -237,7 +260,10 @@ describe('useEntryManager', () => {
     expect(mockClient.entries.list).toHaveBeenCalledWith({ branch: 'main' })
   })
 
-  it('selects newly created entry after refresh', async () => {
+  it('refreshEntries returns the refreshed entries list', async () => {
+    // Auto-selection of newly created entries is now handled by handleCreateModalSubmit
+    // (which calls refreshEntries and then explicitly selects by collection+slug).
+    // refreshEntries itself no longer has auto-selection side effects.
     const newEntry = {
       ...mockCollectionItem,
       logicalPath: unsafeAsLogicalPath('new-entry'),
@@ -267,13 +293,15 @@ describe('useEntryManager', () => {
       wrapper,
     })
 
+    let refreshed: import('../Editor').EditorEntry[] = []
     await act(async () => {
-      await result.current.refreshEntries()
+      refreshed = await result.current.refreshEntries()
     })
 
-    await waitFor(() => {
-      expect(result.current.selectedPath).toBe('new-entry')
-    })
+    // refreshEntries returns the new entries list
+    expect(refreshed).toHaveLength(2)
+    // selectedPath stays on the existing entry (auto-select is handleCreateModalSubmit's job)
+    expect(result.current.selectedPath).toBe('entry1')
   })
 
   it('opens create modal when creating entry', async () => {

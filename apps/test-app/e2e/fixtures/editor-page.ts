@@ -1,5 +1,5 @@
 import { type Page, type Locator, expect } from '@playwright/test'
-import { STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
+import { SHORT_TIMEOUT, STANDARD_TIMEOUT, LONG_TIMEOUT } from './timeouts'
 
 /**
  * Page object for the CanopyCMS Editor.
@@ -116,19 +116,33 @@ export class EditorPage {
 
   /**
    * Wait for the save success notification to appear.
+   * Uses .first() because multiple saves in quick succession can stack notifications.
+   *
+   * @deprecated Prefer {@link saveAndVerify}, which waits for the network PUT response
+   * instead of the notification and is immune to stale notifications from prior saves.
    */
   async waitForSaveNotification(): Promise<void> {
-    await expect(this.page.locator('.mantine-Notification-root', { hasText: 'Saved' })).toBeVisible(
-      { timeout: STANDARD_TIMEOUT },
-    )
+    await expect(
+      this.page.locator('.mantine-Notification-root', { hasText: 'Saved' }).first(),
+    ).toBeVisible({ timeout: STANDARD_TIMEOUT })
   }
 
   /**
-   * Complete save flow: click save and wait for success notification.
+   * Complete save flow: click save and wait for the content PUT response.
+   * Uses waitForResponse instead of notification polling so stale notifications
+   * from prior saves don't cause false positives.
    */
   async saveAndVerify(): Promise<void> {
-    await this.save()
-    await this.waitForSaveNotification()
+    await Promise.all([
+      this.page.waitForResponse(
+        (resp) =>
+          resp.url().includes('/api/canopycms/') &&
+          resp.request().method() === 'PUT' &&
+          resp.status() === 200,
+        { timeout: STANDARD_TIMEOUT },
+      ),
+      this.save(),
+    ])
   }
 
   // NOTE: List field add/remove buttons and toggle/select/object fields
@@ -166,5 +180,113 @@ export class EditorPage {
   async verifyFieldValue(fieldName: string, expectedValue: string): Promise<void> {
     const input = this.getFieldInput(fieldName)
     await expect(input).toHaveValue(expectedValue)
+  }
+
+  /**
+   * Get the container for a reference field.
+   */
+  getReferenceField(fieldName: string): Locator {
+    return this.formPane.locator(`[data-testid="reference-field-${fieldName}"]`)
+  }
+
+  /**
+   * Wait for a reference field to finish loading its options.
+   */
+  async waitForReferenceOptions(fieldName: string): Promise<void> {
+    const loader = this.formPane.locator(`[data-testid="reference-loading-${fieldName}"]`)
+    // Wait for loader to disappear (it's shown while fetching options)
+    await expect(loader).not.toBeVisible({ timeout: STANDARD_TIMEOUT })
+  }
+
+  /**
+   * Select an option in a single-select reference field (Mantine Select).
+   * @param fieldName - The data-canopy-field name
+   * @param optionLabel - The visible label of the option to select
+   */
+  async selectReferenceOption(fieldName: string, optionLabel: string): Promise<void> {
+    await this.waitForReferenceOptions(fieldName)
+    const field = this.getReferenceField(fieldName)
+    // Mantine Select renders a hidden value input alongside the visible search input
+    const input = field.locator('input:not([type="hidden"])')
+    await input.click()
+    // Scope to mantine-Select-option to avoid collisions with MultiSelect portals
+    // that may also be rendered in the DOM simultaneously
+    const option = this.page.locator('.mantine-Select-option', { hasText: optionLabel })
+    await option.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await option.click()
+  }
+
+  /**
+   * Select multiple options in a multi-select reference field (Mantine MultiSelect).
+   * @param fieldName - The data-canopy-field name
+   * @param optionLabels - Array of visible labels to select
+   */
+  async selectMultiReferenceOptions(fieldName: string, optionLabels: string[]): Promise<void> {
+    await this.waitForReferenceOptions(fieldName)
+    const field = this.getReferenceField(fieldName)
+    const input = field.locator('input:not([type="hidden"])')
+    for (const label of optionLabels) {
+      await input.click()
+      // Scope to mantine-MultiSelect-option to avoid collisions with Select portals
+      const option = this.page.locator('.mantine-MultiSelect-option', { hasText: label })
+      await option.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+      await option.click()
+    }
+  }
+
+  /**
+   * Clear a single-select reference field by clicking the rightSection button.
+   * Mantine Select renders a clear (CloseButton) in [data-position="right"] when a value is set.
+   */
+  async clearReferenceField(fieldName: string): Promise<void> {
+    const field = this.getReferenceField(fieldName)
+    // The clear button lives in the input's right section
+    const clearButton = field.locator('[data-position="right"] button')
+    await clearButton.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await clearButton.click()
+  }
+
+  /**
+   * Create a post entry in the Posts collection, fill its title, and save.
+   * Leaves the navigator closed with the new post loaded in the form pane.
+   *
+   * Shared helper used by reference-fields and entry-links tests to avoid
+   * duplicating the navigator → modal → expand → select → fill → save flow.
+   */
+  async createPost(slug: string, title: string): Promise<void> {
+    await this.openEntryNavigator()
+
+    const collectionMenu = this.page.locator('[data-testid="collection-menu-posts"]')
+    await collectionMenu.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await collectionMenu.click()
+
+    const addEntry = this.page.locator('[data-testid="add-entry-menu-item"]')
+    await addEntry.waitFor({ state: 'visible', timeout: SHORT_TIMEOUT })
+    await addEntry.click()
+
+    const modal = this.page.locator('[data-testid="create-entry-modal"]')
+    await expect(modal).toBeVisible()
+    await this.page.locator('[data-testid="entry-slug-input"]').fill(slug)
+    await this.page.locator('[data-testid="create-entry-submit"]').click()
+    await expect(modal).not.toBeVisible({ timeout: LONG_TIMEOUT })
+
+    // After creation the navigator is still open. Expand Posts if collapsed,
+    // then click the new entry so it loads in the form pane.
+    const postsCollection = this.page.locator('[data-testid="entry-nav-item-posts"]')
+    await postsCollection.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    const navItem = this.page.locator('[data-testid="entry-nav-item-post"]').last()
+    if (!(await navItem.isVisible())) {
+      await postsCollection.click()
+    }
+    await navItem.waitFor({ state: 'visible', timeout: STANDARD_TIMEOUT })
+    await navItem.click()
+
+    // Close navigator so form pane is interactive
+    await this.page.keyboard.press('Escape')
+    await expect(this.entryNavigator).not.toBeVisible({ timeout: SHORT_TIMEOUT })
+
+    // Fill title and save so the entry has a recognisable label
+    await this.fillTextField('title', title)
+    await this.saveAndVerify()
   }
 }

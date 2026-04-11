@@ -73,6 +73,7 @@ export const InsertEntryLink: React.FC<InsertEntryLinkProps> = ({ onInsert }) =>
         size="sm"
         color="gray"
         title="Insert entry link"
+        data-testid="insert-entry-link-button"
         onClick={() => setOpened(true)}
       >
         <IconFileSymlink size={16} />
@@ -98,6 +99,7 @@ export const InsertEntryLink: React.FC<InsertEntryLinkProps> = ({ onInsert }) =>
             <Combobox.Target>
               <InputBase
                 placeholder="Search entries..."
+                data-testid="entry-link-search"
                 value={search}
                 onChange={(event) => {
                   setSearch(event.currentTarget.value)

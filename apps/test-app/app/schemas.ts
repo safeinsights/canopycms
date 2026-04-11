@@ -15,14 +15,29 @@ export const homeSchema = defineEntrySchema([
   { name: 'published', type: 'boolean', label: 'Published' },
   {
     name: 'featuredPosts',
-    type: 'string',
+    type: 'reference',
     list: true,
     label: 'Featured Posts',
+    collections: ['posts'],
+    displayField: 'title',
   },
+  {
+    name: 'relatedPost',
+    type: 'reference',
+    label: 'Related Post',
+    collections: ['posts'],
+    displayField: 'title',
+  },
+] as const)
+
+export const settingsSchema = defineEntrySchema([
+  { name: 'siteName', type: 'string', label: 'Site Name', isTitle: true },
+  { name: 'maintenanceMode', type: 'boolean', label: 'Maintenance Mode' },
 ] as const)
 
 // Entry schema registry for CanopyCMS - references entry schemas by name in .collection.json files
 export const entrySchemaRegistry = createEntrySchemaRegistry({
   postSchema,
   homeSchema,
+  settingsSchema,
 })

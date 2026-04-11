@@ -147,7 +147,7 @@ describe('Editor integration', () => {
       if (url === entry.apiPath && (!init || !init.method || init.method === 'GET')) {
         return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
       }
-      if (url === entry.apiPath && init?.method === 'PUT') {
+      if (url.startsWith(entry.apiPath) && init?.method === 'PUT') {
         const body = JSON.parse(init.body as string)
         return Promise.resolve(okJson({ ok: true, status: 200, data: body.data }))
       }
@@ -198,13 +198,16 @@ describe('Editor integration', () => {
       expect(
         fetchMock.mock.calls.some(
           ([url, init]) =>
-            url === entry.apiPath && (init as RequestInit | undefined)?.method === 'PUT',
+            (url as string).startsWith(entry.apiPath) &&
+            (init as RequestInit | undefined)?.method === 'PUT',
         ),
       ).toBe(true),
     )
 
     const saveCall = fetchMock.mock.calls.find(
-      ([url, init]) => url === entry.apiPath && (init as RequestInit | undefined)?.method === 'PUT',
+      ([url, init]) =>
+        (url as string).startsWith(entry.apiPath) &&
+        (init as RequestInit | undefined)?.method === 'PUT',
     )
     expect(saveCall).toBeTruthy()
     const body = JSON.parse((saveCall?.[1] as RequestInit).body as string)

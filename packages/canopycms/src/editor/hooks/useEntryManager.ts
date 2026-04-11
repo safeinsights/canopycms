@@ -33,7 +33,7 @@ export interface UseEntryManagerReturn {
   currentEntry: EditorEntry | undefined
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
-  refreshEntries: (branch?: string) => Promise<void>
+  refreshEntries: (branch?: string) => Promise<EditorEntry[]>
   handleCreateEntry: (collectionPath: LogicalPath, entryTypeName?: string) => Promise<void>
   renameEntry: (path: string, newSlug: string) => Promise<void>
   loadEntry: (entry: EditorEntry) => Promise<FormValue>
@@ -143,19 +143,21 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     const payload = buildWritePayload(entry, value)
     // Build path from collectionPath and slug (if it's a collection entry)
     const path = entry.slug ? `${entry.collectionPath}/${entry.slug}` : entry.collectionPath
+    const writeParams: { branch: string; path: string; entryType?: string } = {
+      branch: options.branchName,
+      path,
+    }
+    if (entry.entryType) writeParams.entryType = entry.entryType
     const result = await apiClient.content.write(
-      {
-        branch: options.branchName,
-        path,
-      },
+      writeParams,
       payload as unknown as WriteContentBody, // buildWritePayload returns the correct shape
     )
     if (!result.ok) throw new Error(`Save failed: ${result.status}`)
     return normalizeContentPayload(result.data)
   }
 
-  const refreshEntries = async (branch: string = options.branchName) => {
-    if (!branch) return
+  const refreshEntries = async (branch: string = options.branchName): Promise<EditorEntry[]> => {
+    if (!branch) return []
 
     // Fetch schema from schema API
     const schemaResult = await apiClient.schema.get({ branch })
@@ -190,14 +192,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     })
 
     setEntriesState(refreshed)
-
-    // Only auto-select newly created entry if there were already entries before
-    if (entriesState.length > 0) {
-      const newlyCreated = refreshed.find((e) => !entriesState.find((old) => old.path === e.path))
-      if (newlyCreated) {
-        setSelectedPath(newlyCreated.path)
-      }
-    }
+    return refreshed
   }
 
   /**
@@ -247,8 +242,24 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         throw new Error(errorMsg)
       }
 
-      await refreshEntries()
+      const refreshed = await refreshEntries()
       notifications.show({ message: 'Created new entry', color: 'green' })
+
+      // Explicitly navigate to the newly created entry.
+      // We find it by matching collectionPath + slug rather than comparing entry
+      // counts, which avoids stale-closure race conditions where entriesState is
+      // still empty when this function runs (slow server / cold start).
+      const createdEntry = refreshed.find(
+        (e) => e.collectionPath === createModalCollection.path && e.slug === slug,
+      )
+      if (createdEntry) {
+        setSelectedPath(createdEntry.path)
+      } else {
+        console.warn(
+          `[useEntryManager] Could not navigate to newly created entry: ` +
+            `collection=${createModalCollection.path} slug=${slug}`,
+        )
+      }
       setCreateModalOpen(false)
       setCreateModalCollection(null)
     } catch (err) {

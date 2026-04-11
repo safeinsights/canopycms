@@ -10,6 +10,7 @@ coverage
 reference
 test-results/
 playwright-report/
+.playwright-mcp/
 
 # CanopyCMS local workspaces
 .canopy*/
