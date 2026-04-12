@@ -89,6 +89,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const [navigatorOpen, setNavigatorOpen] = useState(false)
   const isInitialMount = useRef(true)
   const hasSyncedFromUrl = useRef(false)
+  // OCC version tokens keyed by contentId — captured on load, sent on save
+  const entryVersionsRef = useRef<Map<string, number>>(new Map())
 
   // Entry create modal state
   const [createModalOpen, setCreateModalOpen] = useState(false)
@@ -133,6 +135,10 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       path,
     })
     if (!result.ok) throw new Error(`Load failed: ${result.status}`)
+    // Capture OCC version token for next save
+    if (entry.contentId && typeof result.data?.version === 'number') {
+      entryVersionsRef.current.set(entry.contentId, result.data.version)
+    }
     return normalizeContentPayload(result.data)
   }
 
@@ -148,11 +154,19 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       path,
     }
     if (entry.entryType) writeParams.entryType = entry.entryType
-    const result = await apiClient.content.write(
-      writeParams,
-      payload as unknown as WriteContentBody, // buildWritePayload returns the correct shape
-    )
+    const expectedVersion = entry.contentId
+      ? entryVersionsRef.current.get(entry.contentId)
+      : undefined
+    const writeBody: WriteContentBody = {
+      ...(payload as unknown as WriteContentBody),
+      ...(expectedVersion !== undefined ? { expectedVersion } : {}),
+    }
+    const result = await apiClient.content.write(writeParams, writeBody)
     if (!result.ok) throw new Error(`Save failed: ${result.status}`)
+    // Update stored version token from write response
+    if (entry.contentId && typeof result.data?.version === 'number') {
+      entryVersionsRef.current.set(entry.contentId, result.data.version)
+    }
     return normalizeContentPayload(result.data)
   }
 

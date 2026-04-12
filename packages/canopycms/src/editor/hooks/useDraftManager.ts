@@ -160,10 +160,13 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       })
     } catch (err) {
       console.error(err)
+      const isConflict = err instanceof Error && err.message.includes('409')
       notifications.show({
-        message: 'Save failed',
-        color: 'red',
-        autoClose: getNotificationDuration(6000),
+        message: isConflict
+          ? 'Content was modified by another editor. Reload to see the latest changes.'
+          : 'Save failed',
+        color: isConflict ? 'yellow' : 'red',
+        autoClose: getNotificationDuration(isConflict ? 8000 : 6000),
         withCloseButton: true,
       })
     } finally {

@@ -1,7 +1,12 @@
 import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
-import { ContentStore, ContentStoreError, type WriteInput } from '../content-store'
+import {
+  ContentStore,
+  ContentStoreError,
+  ContentConflictError,
+  type WriteInput,
+} from '../content-store'
 import type { EntrySchema, EntryTypeConfig, FlatSchemaItem } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
@@ -26,6 +31,8 @@ export type ContentReadResponse = ApiResponse<{
   format: string
   data: Record<string, unknown>
   body?: string
+  /** OCC version token: file mtime in ms. Pass back as `expectedVersion` on next write. */
+  version?: number
 }>
 
 /** Response type for content write operations */
@@ -33,6 +40,8 @@ export type ContentWriteResponse = ApiResponse<{
   format: string
   data: Record<string, unknown>
   body?: string
+  /** OCC version token: file mtime after the write. Pass back as `expectedVersion` on next write. */
+  version?: number
   entryLinkWarnings?: Array<{
     field: string
     fieldPath: string
@@ -61,6 +70,8 @@ export interface WriteContentBody {
   format: 'json' | 'md' | 'mdx' | 'yaml'
   data?: Record<string, unknown>
   body?: string
+  /** OCC version token from a prior read/write response. When present, write is rejected with 409 if file has changed. */
+  expectedVersion?: number
 }
 
 export interface ValidateReferencesBody {
@@ -93,6 +104,7 @@ const writeContentBodySchema = z.object({
   format: z.enum(['json', 'md', 'mdx', 'yaml']),
   data: z.record(z.unknown()).optional(),
   body: z.string().optional(),
+  expectedVersion: z.number().optional(),
 })
 
 const validateReferencesParamsSchema = z.object({
@@ -208,8 +220,17 @@ const writeContentHandler = async (
 
   try {
     const writeInput: WriteInput = isDataOnlyFormat(body.format)
-      ? { format: body.format as 'json' | 'yaml', data: body.data ?? {} }
-      : { format: body.format as 'md' | 'mdx', data: body.data, body: body.body ?? '' }
+      ? {
+          format: body.format as 'json' | 'yaml',
+          data: body.data ?? {},
+          expectedVersion: body.expectedVersion,
+        }
+      : {
+          format: body.format as 'md' | 'mdx',
+          data: body.data,
+          body: body.body ?? '',
+          expectedVersion: body.expectedVersion,
+        }
 
     const result = await store.write(schemaItem.logicalPath, slug, writeInput, params.entryType)
 
@@ -231,6 +252,13 @@ const writeContentHandler = async (
 
     return { ok: true, status: 200, data: { ...result, entryLinkWarnings } }
   } catch (err) {
+    if (err instanceof ContentConflictError) {
+      return {
+        ok: false,
+        status: 409,
+        error: 'Content conflict: entry was modified by another editor',
+      }
+    }
     const message = err instanceof ContentStoreError ? err.message : 'Write failed'
     return { ok: false, status: 400, error: message }
   }
