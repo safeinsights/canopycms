@@ -2,6 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { ListEntriesResponse } from '../../api/entries'
 import type { WriteContentBody } from '../../api/content'
+
+/** Thrown by saveEntry when the API returns a non-200 response. Carries the HTTP status so callers can distinguish conflict (409) from other errors. */
+export class SaveApiError extends Error {
+  constructor(public readonly status: number) {
+    super(`Save failed: ${status}`)
+    this.name = 'SaveApiError'
+  }
+}
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
@@ -162,7 +170,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       ...(expectedVersion !== undefined ? { expectedVersion } : {}),
     }
     const result = await apiClient.content.write(writeParams, writeBody)
-    if (!result.ok) throw new Error(`Save failed: ${result.status}`)
+    if (!result.ok) throw new SaveApiError(result.status)
     // Update stored version token from write response
     if (entry.contentId && typeof result.data?.version === 'number') {
       entryVersionsRef.current.set(entry.contentId, result.data.version)

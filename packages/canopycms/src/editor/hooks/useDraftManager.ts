@@ -4,6 +4,7 @@ import type { EditorEntry } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
 import { getNotificationDuration } from '../utils/env'
+import { SaveApiError } from './useEntryManager'
 
 export interface UseDraftManagerOptions {
   branchName: string
@@ -160,7 +161,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       })
     } catch (err) {
       console.error(err)
-      const isConflict = err instanceof Error && err.message.includes('409')
+      const isConflict = err instanceof SaveApiError && err.status === 409
       notifications.show({
         message: isConflict
           ? 'Content was modified by another editor. Reload to see the latest changes.'

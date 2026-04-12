@@ -369,10 +369,13 @@ export class ContentStore {
       relativePath,
       entryTypeName: resolvedEntryTypeName,
     } = await this.buildPaths(schemaItem, slug)
-    const [raw, stat] = await Promise.all([
-      fs.readFile(absolutePath, 'utf8'),
-      fs.stat(absolutePath),
-    ])
+    // stat BEFORE readFile: conservative version token that can only produce false-positive
+    // conflicts, never false-negatives. If a write lands between stat and readFile the client
+    // receives newer content but an older token → their next save triggers a 409 (safe).
+    // stat-after or parallel stat+read risks the opposite: old content + new token → silent
+    // overwrite of a concurrent write (data loss).
+    const stat = await fs.stat(absolutePath)
+    const raw = await fs.readFile(absolutePath, 'utf8')
 
     let doc: ContentDocument
     let format: ContentFormat
