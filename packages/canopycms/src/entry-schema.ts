@@ -136,9 +136,14 @@ export type TypeFromEntrySchema<T extends readonly InferableField[]> = InferCont
  * })
  * // TypeFromEntrySchema: { ..., metaTitle: string, metaDescription: string }
  */
-export const defineInlineFieldGroup = <const T extends InferableField & { type: 'group' }>(
+export const defineInlineFieldGroup = <
+  const T extends Omit<InferableField, 'type'> & {
+    name: string
+    fields: readonly InferableField[]
+  },
+>(
   group: T,
-): T => group
+): T & { readonly type: 'group' } => ({ ...group, type: 'group' as const })
 
 /**
  * Define a reusable nested field group — a visual container in the editor that groups

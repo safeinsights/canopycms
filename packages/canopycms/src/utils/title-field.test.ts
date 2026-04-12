@@ -282,4 +282,110 @@ describe('findTitleFieldsInLists', () => {
     ]
     expect(findTitleFieldsInLists(fields)).toEqual(['sections.header.heading'])
   })
+
+  it('finds misplaced isTitle inside a list:true object that is inside an inline group', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'content',
+        type: 'group',
+        fields: [
+          {
+            name: 'items',
+            type: 'object',
+            list: true,
+            fields: [{ name: 'title', type: 'string', isTitle: true }],
+          },
+        ],
+      } as FieldConfig,
+    ]
+    // Inline group is transparent — 'items' path uses its own name
+    expect(findTitleFieldsInLists(fields)).toEqual(['items.title'])
+  })
+})
+
+describe('extractTitleFromSchema with inline groups', () => {
+  it('finds isTitle: true field inside an inline group', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'seo',
+        type: 'group',
+        fields: [
+          { name: 'metaTitle', type: 'string', isTitle: true },
+          { name: 'metaDescription', type: 'string' },
+        ],
+      } as FieldConfig,
+      { name: 'body', type: 'markdown' },
+    ]
+    const data = { metaTitle: 'Hello World', metaDescription: 'desc', body: '...' }
+    expect(extractTitleFromSchema(fields, data)).toBe('Hello World')
+  })
+
+  it('finds isTitle: true field inside a nested inline group', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'outer',
+        type: 'group',
+        fields: [
+          {
+            name: 'inner',
+            type: 'group',
+            fields: [{ name: 'heading', type: 'string', isTitle: true }],
+          } as FieldConfig,
+        ],
+      } as FieldConfig,
+    ]
+    const data = { heading: 'Nested Title' }
+    expect(extractTitleFromSchema(fields, data)).toBe('Nested Title')
+  })
+})
+
+describe('countTitleFields with inline groups', () => {
+  it('counts isTitle fields inside inline groups', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'seo',
+        type: 'group',
+        fields: [{ name: 'metaTitle', type: 'string', isTitle: true }],
+      } as FieldConfig,
+      { name: 'body', type: 'markdown' },
+    ]
+    expect(countTitleFields(fields)).toBe(1)
+  })
+
+  it('counts multiple isTitle fields across inline groups', () => {
+    const fields: FieldConfig[] = [
+      { name: 'heading', type: 'string', isTitle: true },
+      {
+        name: 'seo',
+        type: 'group',
+        fields: [{ name: 'metaTitle', type: 'string', isTitle: true }],
+      } as FieldConfig,
+    ]
+    expect(countTitleFields(fields)).toBe(2)
+  })
+})
+
+describe('findInvalidTitleFields with inline groups', () => {
+  it('finds invalid isTitle (non-string type) inside an inline group', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'stats',
+        type: 'group',
+        fields: [{ name: 'count', type: 'number', isTitle: true }],
+      } as FieldConfig,
+    ]
+    // Inline group is transparent — path of the invalid field is just 'count'
+    expect(findInvalidTitleFields(fields)).toEqual(['count'])
+  })
+
+  it('returns empty array when isTitle is on a string field inside an inline group', () => {
+    const fields: FieldConfig[] = [
+      {
+        name: 'seo',
+        type: 'group',
+        fields: [{ name: 'metaTitle', type: 'string', isTitle: true }],
+      } as FieldConfig,
+    ]
+    expect(findInvalidTitleFields(fields)).toEqual([])
+  })
 })

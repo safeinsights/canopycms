@@ -85,16 +85,17 @@ export function traverseFields<T>(
     const fieldPath = pathPrefix ? `${pathPrefix}.${field.name}` : field.name
     const value = data[field.name]
 
-    // Skip undefined/null values
-    if (value === undefined || value === null) continue
-
-    // Inline groups are transparent to the data — recurse at the same path prefix
+    // Inline groups are transparent to the data — their children live at the parent
+    // data level, not under field.name, so skip the null/undefined guard for them.
     if (field.type === 'group') {
       results.push(
         ...traverseFields((field as InlineGroupFieldConfig).fields, data, visitor, pathPrefix),
       )
       continue
     }
+
+    // Skip undefined/null values for all other field types
+    if (value === undefined || value === null) continue
 
     // Let visitor handle this field first
     results.push(...visitor({ field, value, path: fieldPath }))

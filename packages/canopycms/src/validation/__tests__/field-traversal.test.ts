@@ -295,3 +295,98 @@ describe('field-traversal', () => {
     })
   })
 })
+
+describe('inline group transparency', () => {
+  it('inline groups are transparent — visitor sees child fields at the flat path', () => {
+    const schema: FieldConfig[] = [
+      { name: 'title', type: 'string', label: 'Title' },
+      {
+        name: 'seo',
+        type: 'group',
+        fields: [
+          { name: 'metaTitle', type: 'string', label: 'Meta Title' },
+          { name: 'metaDescription', type: 'string', label: 'Meta Description' },
+        ],
+      } as FieldConfig,
+    ]
+    const data = { title: 'Hello', metaTitle: 'SEO Title', metaDescription: 'SEO Desc' }
+
+    const visited: string[] = []
+    traverseFields(schema, data, ({ path, field }) => {
+      visited.push(`${path}:${field.type}`)
+      return []
+    })
+
+    // 'seo' group itself is NOT visited; its children appear at flat paths
+    expect(visited).toEqual(['title:string', 'metaTitle:string', 'metaDescription:string'])
+  })
+
+  it('nested inline groups are transparent — grandchild fields also at flat path', () => {
+    const schema: FieldConfig[] = [
+      {
+        name: 'outer',
+        type: 'group',
+        fields: [
+          { name: 'a', type: 'string', label: 'A' },
+          {
+            name: 'inner',
+            type: 'group',
+            fields: [{ name: 'b', type: 'string', label: 'B' }],
+          } as FieldConfig,
+        ],
+      } as FieldConfig,
+    ]
+    const data = { a: 'alpha', b: 'beta' }
+
+    const visited: string[] = []
+    traverseFields(schema, data, ({ path }) => {
+      visited.push(path)
+      return []
+    })
+
+    expect(visited).toEqual(['a', 'b'])
+  })
+
+  it('a reference field inside an inline group is found correctly', () => {
+    const schema: FieldConfig[] = [
+      {
+        name: 'relations',
+        type: 'group',
+        fields: [
+          { name: 'author', type: 'reference', label: 'Author', collections: ['authors'] },
+          { name: 'reviewer', type: 'reference', label: 'Reviewer', collections: ['users'] },
+        ],
+      } as FieldConfig,
+      { name: 'body', type: 'markdown', label: 'Body' },
+    ]
+    const data = { author: 'author-1', reviewer: 'user-2', body: '# Hello' }
+
+    const refs = traverseFields(schema, data, ({ field, value, path }) => {
+      if (field.type === 'reference') return [{ path, value }]
+      return []
+    })
+
+    expect(refs).toEqual([
+      { path: 'author', value: 'author-1' },
+      { path: 'reviewer', value: 'user-2' },
+    ])
+  })
+
+  it('findFieldsByType finds fields inside inline groups', () => {
+    const schema: FieldConfig[] = [
+      { name: 'title', type: 'string', label: 'Title' },
+      {
+        name: 'seo',
+        type: 'group',
+        fields: [{ name: 'author', type: 'reference', label: 'Author', collections: ['authors'] }],
+      } as FieldConfig,
+    ]
+    const data = { title: 'Post', author: 'author-1' }
+
+    const refs = findFieldsByType(schema, data, 'reference')
+
+    expect(refs).toHaveLength(1)
+    expect(refs[0].path).toBe('author')
+    expect(refs[0].value).toBe('author-1')
+  })
+})
