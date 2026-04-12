@@ -137,8 +137,10 @@ export type TypeFromEntrySchema<T extends readonly InferableField[]> = InferCont
  * // TypeFromEntrySchema: { ..., metaTitle: string, metaDescription: string }
  */
 export const defineInlineFieldGroup = <
-  const T extends Omit<InferableField, 'type'> & {
+  const T extends {
     name: string
+    label?: string
+    description?: string
     fields: readonly InferableField[]
   },
 >(

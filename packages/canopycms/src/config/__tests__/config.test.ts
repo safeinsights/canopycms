@@ -5,7 +5,12 @@ import type { ContentId } from '../../paths/types'
 import { ROOT_COLLECTION_ID } from '../../paths/types'
 import { composeCanopyConfig, defineCanopyConfig } from '../helpers'
 import { flattenSchema } from '../flatten'
-import { ensureReferenceFieldsHaveScope, validateCanopyConfig } from '../validation'
+import {
+  ensureReferenceFieldsHaveScope,
+  ensureNoGroupsInsideComplexFields,
+  ensureNoFlattenedFieldNameCollisions,
+  validateCanopyConfig,
+} from '../validation'
 
 const gitAuthor = {
   gitBotAuthorName: 'Test Bot',
@@ -664,5 +669,159 @@ describe('ensureReferenceFieldsHaveScope', () => {
         },
       }),
     ).toThrow('Reference field "ref"')
+  })
+})
+
+describe('ensureNoGroupsInsideComplexFields', () => {
+  const makeConfig = (fields: unknown[]) => ({
+    schema: { entries: [{ name: 'doc', schema: fields }] },
+  })
+
+  it('passes when a group is at the top level', () => {
+    expect(() =>
+      ensureNoGroupsInsideComplexFields(
+        makeConfig([
+          { name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'string' }] },
+        ]),
+      ),
+    ).not.toThrow()
+  })
+
+  it('passes when a group is nested inside another group', () => {
+    expect(() =>
+      ensureNoGroupsInsideComplexFields(
+        makeConfig([
+          {
+            name: 'outer',
+            type: 'group',
+            fields: [{ name: 'inner', type: 'group', fields: [{ name: 'a', type: 'string' }] }],
+          },
+        ]),
+      ),
+    ).not.toThrow()
+  })
+
+  it('throws when a group is directly inside an object field', () => {
+    expect(() =>
+      ensureNoGroupsInsideComplexFields(
+        makeConfig([
+          {
+            name: 'meta',
+            type: 'object',
+            fields: [
+              { name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'string' }] },
+            ],
+          },
+        ]),
+      ),
+    ).toThrow('Inline group "seo" cannot be nested inside a object field')
+  })
+
+  it('throws when a group is inside a block template', () => {
+    expect(() =>
+      ensureNoGroupsInsideComplexFields(
+        makeConfig([
+          {
+            name: 'blocks',
+            type: 'block',
+            templates: [
+              {
+                name: 'hero',
+                fields: [
+                  { name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'string' }] },
+                ],
+              },
+            ],
+          },
+        ]),
+      ),
+    ).toThrow('Inline group "seo" cannot be nested inside a block field')
+  })
+
+  it('throws when a group is inside an object that is inside a top-level group', () => {
+    expect(() =>
+      ensureNoGroupsInsideComplexFields(
+        makeConfig([
+          {
+            name: 'outer',
+            type: 'group',
+            fields: [
+              {
+                name: 'meta',
+                type: 'object',
+                fields: [{ name: 'inner', type: 'group', fields: [{ name: 'a', type: 'string' }] }],
+              },
+            ],
+          },
+        ]),
+      ),
+    ).toThrow('Inline group "inner" cannot be nested inside a object field')
+  })
+})
+
+describe('ensureNoFlattenedFieldNameCollisions', () => {
+  const makeConfig = (fields: unknown[]) => ({
+    schema: { entries: [{ name: 'doc', schema: fields }] },
+  })
+
+  it('passes with no duplicates', () => {
+    expect(() =>
+      ensureNoFlattenedFieldNameCollisions(
+        makeConfig([
+          { name: 'title', type: 'string' },
+          { name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'string' }] },
+        ]),
+      ),
+    ).not.toThrow()
+  })
+
+  it('throws when a group field collides with a top-level field', () => {
+    expect(() =>
+      ensureNoFlattenedFieldNameCollisions(
+        makeConfig([
+          { name: 'title', type: 'string' },
+          { name: 'seo', type: 'group', fields: [{ name: 'title', type: 'string' }] },
+        ]),
+      ),
+    ).toThrow('Field name collision')
+  })
+
+  it('throws when two groups have a field with the same name', () => {
+    expect(() =>
+      ensureNoFlattenedFieldNameCollisions(
+        makeConfig([
+          { name: 'nav', type: 'group', fields: [{ name: 'label', type: 'string' }] },
+          { name: 'seo', type: 'group', fields: [{ name: 'label', type: 'string' }] },
+        ]),
+      ),
+    ).toThrow('Field name collision')
+  })
+
+  it('passes when collisions are in separate object scopes', () => {
+    expect(() =>
+      ensureNoFlattenedFieldNameCollisions(
+        makeConfig([
+          { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+          { name: 'footer', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+        ]),
+      ),
+    ).not.toThrow()
+  })
+
+  it('throws on collision within a nested object scope', () => {
+    expect(() =>
+      ensureNoFlattenedFieldNameCollisions(
+        makeConfig([
+          {
+            name: 'hero',
+            type: 'object',
+            fields: [
+              { name: 'title', type: 'string' },
+              { name: 'inner', type: 'group', fields: [{ name: 'title', type: 'string' }] },
+            ],
+          },
+        ]),
+      ),
+    ).toThrow('Field name collision')
   })
 })

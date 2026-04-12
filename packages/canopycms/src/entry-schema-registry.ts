@@ -6,13 +6,15 @@ import {
   findTitleFieldsInLists,
 } from './utils/title-field'
 import { countBodyFields, findInvalidBodyFields } from './utils/body-field'
+import { flattenGroupFields } from './utils/flatten-group-fields'
 
-/** Look up a field's type by dotted path (e.g., "meta.order"). */
+/** Look up a field's type by dotted path (e.g., "meta.order").
+ * Groups are transparent — their children are searched at the same path level. */
 function findFieldType(fields: readonly FieldConfig[], dottedPath: string): string {
   const parts = dottedPath.split('.')
   let current: readonly FieldConfig[] = fields
   for (let i = 0; i < parts.length; i++) {
-    const field = current.find((f) => f.name === parts[i])
+    const field = flattenGroupFields(current).find((f) => f.name === parts[i])
     if (!field) return 'unknown'
     if (i === parts.length - 1) return field.type
     if (field.type === 'object' && 'fields' in field && field.fields) {
