@@ -149,13 +149,18 @@ function renderField(
     return transformed
   }
 
+  // Inline groups have no list/label; they are transparent layout hints — skip
+  if (field.type === 'group') {
+    return ''
+  }
+
   const label = field.label || field.name
   const heading = '#'.repeat(Math.min(depth, 6))
   const descriptionLine =
     'description' in field && field.description ? `\n\n*${field.description}*` : ''
 
   // Handle list fields
-  if (field.list && Array.isArray(value)) {
+  if ('list' in field && field.list && Array.isArray(value)) {
     return renderListField(field, value, depth, label, heading, descriptionLine, entry, config)
   }
 

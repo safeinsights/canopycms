@@ -29,6 +29,7 @@ export const fieldTypes = [
   'reference',
   'object',
   'block',
+  'group',
 ] as const
 
 export type PrimitiveFieldType = (typeof primitiveFieldTypes)[number]
@@ -113,6 +114,20 @@ export interface ObjectFieldConfig extends BaseFieldConfig {
 }
 
 /**
+ * Inline group field config: visually groups fields in the editor without creating
+ * a nested data key. Fields inside the group are stored flat in the parent content.
+ * Use defineInlineFieldGroup() to create these.
+ * For data-nested grouping, use ObjectFieldConfig / defineNestedFieldGroup() instead.
+ */
+export interface InlineGroupFieldConfig {
+  type: 'group'
+  name: string // React key + duplicate-name validation; NOT a data key
+  label?: string
+  description?: string
+  fields: FieldConfig[] // FieldConfig includes InlineGroupFieldConfig — nested groups work
+}
+
+/**
  * Custom field config for user-defined field types.
  * The type must not conflict with built-in types.
  * Note: We use a branded type approach to avoid index signature issues.
@@ -127,6 +142,7 @@ export type FieldConfig =
   | ReferenceFieldConfig
   | BlockFieldConfig
   | ObjectFieldConfig
+  | InlineGroupFieldConfig
   | CustomFieldConfig
 
 // Media configuration

@@ -29,6 +29,7 @@ export type {
   SelectFieldConfig,
   ReferenceFieldConfig,
   ObjectFieldConfig,
+  InlineGroupFieldConfig,
   CustomFieldConfig,
   // Schema types
   EntrySchema,

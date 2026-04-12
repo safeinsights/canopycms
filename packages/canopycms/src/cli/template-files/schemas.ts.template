@@ -1,4 +1,9 @@
-import { defineEntrySchema, type TypeFromEntrySchema } from 'canopycms'
+import {
+  defineEntrySchema,
+  defineInlineFieldGroup,
+  defineNestedFieldGroup,
+  type TypeFromEntrySchema,
+} from 'canopycms'
 import { createEntrySchemaRegistry } from 'canopycms/server'
 
 // Define your entry schemas here.
@@ -12,6 +17,45 @@ export const pageSchema = defineEntrySchema([
 ])
 
 export type PageContent = TypeFromEntrySchema<typeof pageSchema>
+
+// --- Field Groups ---
+//
+// Use defineInlineFieldGroup() to define reusable field sets that render as a
+// visually grouped section in the editor. Fields are stored flat in the content
+// file — no nested key is created.
+//
+//   const seoGroup = defineInlineFieldGroup({
+//     name: 'seo',
+//     label: 'SEO',
+//     fields: [
+//       { name: 'metaTitle', type: 'string', label: 'Meta Title' },
+//       { name: 'metaDescription', type: 'string', label: 'Meta Description' },
+//     ],
+//   })
+//   // TypeFromEntrySchema: { ..., metaTitle: string, metaDescription: string }
+//
+// Use defineNestedFieldGroup() when you want fields stored under a named key:
+//
+//   const seoGroup = defineNestedFieldGroup({
+//     name: 'seo',
+//     label: 'SEO',
+//     fields: [
+//       { name: 'metaTitle', type: 'string', label: 'Meta Title' },
+//       { name: 'metaDescription', type: 'string', label: 'Meta Description' },
+//     ],
+//   })
+//   // TypeFromEntrySchema: { ..., seo: { metaTitle: string, metaDescription: string } }
+//
+// Include either in a schema by passing it directly as an array element:
+//
+//   const docSchema = defineEntrySchema([
+//     { name: 'title', type: 'string' },
+//     seoGroup,
+//     { name: 'body', type: 'markdown' },
+//   ])
+
+// Uncomment to use:
+// export { defineInlineFieldGroup, defineNestedFieldGroup }
 
 export const entrySchemaRegistry = createEntrySchemaRegistry({
   pageSchema,

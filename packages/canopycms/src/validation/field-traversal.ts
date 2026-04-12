@@ -6,7 +6,12 @@
  * own schemas.
  */
 
-import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig } from '../config'
+import type {
+  FieldConfig,
+  ObjectFieldConfig,
+  BlockFieldConfig,
+  InlineGroupFieldConfig,
+} from '../config'
 
 /**
  * Context provided to the visitor function for each field.
@@ -82,6 +87,14 @@ export function traverseFields<T>(
 
     // Skip undefined/null values
     if (value === undefined || value === null) continue
+
+    // Inline groups are transparent to the data — recurse at the same path prefix
+    if (field.type === 'group') {
+      results.push(
+        ...traverseFields((field as InlineGroupFieldConfig).fields, data, visitor, pathPrefix),
+      )
+      continue
+    }
 
     // Let visitor handle this field first
     results.push(...visitor({ field, value, path: fieldPath }))
