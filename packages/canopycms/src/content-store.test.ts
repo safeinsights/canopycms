@@ -2,11 +2,11 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from './config-test'
 import { flattenSchema } from './config'
-import { ContentStore, ContentStoreError } from './content-store'
+import { ContentStore, ContentStoreError, ContentConflictError } from './content-store'
 import { generateId } from './id'
 import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
 
@@ -1268,5 +1268,135 @@ describe('ContentStore', () => {
         ),
       ).rejects.toThrow('already exists')
     })
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OCC (Optimistic Concurrency Control) version token
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContentStore OCC', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [{ name: 'post', format: 'json' as const, schema: [] }],
+      },
+    ],
+  } as const
+
+  const makeStore = async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-occ-'))
+    const config = defineCanopyTestConfig({ schema })
+    return new ContentStore(root, flattenSchema(schema, config.contentRoot))
+  }
+
+  it('read returns a version (mtime) field', async () => {
+    const store = await makeStore()
+    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('a'), {
+      format: 'json',
+      data: { v: 1 },
+    })
+    const doc = await store.read(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('a'))
+    expect(typeof doc.version).toBe('number')
+    expect(doc.version).toBeGreaterThan(0)
+  })
+
+  it('write returns a version field', async () => {
+    const store = await makeStore()
+    const doc = await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('b'), {
+      format: 'json',
+      data: { v: 1 },
+    })
+    expect(typeof doc.version).toBe('number')
+    expect(doc.version).toBeGreaterThan(0)
+  })
+
+  it('write without expectedVersion always succeeds (backwards compat)', async () => {
+    const store = await makeStore()
+    // First write (new entry)
+    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('c'), {
+      format: 'json',
+      data: { v: 1 },
+    })
+    // Second write, no expectedVersion — must not throw
+    const doc = await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('c'), {
+      format: 'json',
+      data: { v: 2 },
+    })
+    expect((doc.data as Record<string, unknown>).v).toBe(2)
+  })
+
+  it('write with correct expectedVersion succeeds and returns updated version', async () => {
+    const store = await makeStore()
+    const first = await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('d'), {
+      format: 'json',
+      data: { v: 1 },
+    })
+    const second = await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('d'), {
+      format: 'json',
+      data: { v: 2 },
+      expectedVersion: first.version,
+    })
+    expect((second.data as Record<string, unknown>).v).toBe(2)
+    expect(typeof second.version).toBe('number')
+  })
+
+  it('write with stale expectedVersion throws ContentConflictError', async () => {
+    const store = await makeStore()
+    const first = await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('e'), {
+      format: 'json',
+      data: { v: 1 },
+    })
+    // Simulate a concurrent write that advances the mtime
+    await new Promise((r) => setTimeout(r, 10))
+    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('e'), {
+      format: 'json',
+      data: { v: 2 },
+    })
+    // Now try to write with the version from the first write — should conflict
+    await expect(
+      store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('e'), {
+        format: 'json',
+        data: { v: 3 },
+        expectedVersion: first.version,
+      }),
+    ).rejects.toThrow(ContentConflictError)
+  })
+
+  it('read version matches the version returned by write', async () => {
+    const store = await makeStore()
+    const written = await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('f'), {
+      format: 'json',
+      data: { v: 1 },
+    })
+    const read = await store.read(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('f'))
+    // Both should reflect the same file state
+    expect(read.version).toBe(written.version)
+  })
+
+  it('write rethrows non-ENOENT stat errors, does not silently bypass OCC', async () => {
+    const store = await makeStore()
+    const written = await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('g'), {
+      format: 'json',
+      data: { v: 1 },
+    })
+
+    // Simulate a filesystem error (e.g. EACCES) on the OCC stat call
+    const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+    const statSpy = vi.spyOn(fs, 'stat').mockRejectedValueOnce(eacces)
+
+    try {
+      await expect(
+        store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('g'), {
+          format: 'json',
+          data: { v: 2 },
+          expectedVersion: written.version,
+        }),
+      ).rejects.toThrow('EACCES')
+    } finally {
+      statSpy.mockRestore()
+    }
   })
 })

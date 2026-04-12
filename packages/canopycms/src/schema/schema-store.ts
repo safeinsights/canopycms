@@ -13,6 +13,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { z } from 'zod'
 import { atomicWriteFile } from '../utils/atomic-write'
+import { withLock } from '../utils/async-mutex'
 
 import type { ContentFormat } from '../config'
 import type { EntrySchemaRegistry } from './types'
@@ -271,7 +272,7 @@ export class SchemaOps {
   private async writeCollectionMeta(physicalPath: string, meta: CollectionMetaFile): Promise<void> {
     const metaPath = path.join(physicalPath, '.collection.json')
     const content = JSON.stringify(meta, null, 2) + '\n'
-    await atomicWriteFile(metaPath, content)
+    await withLock(metaPath, () => atomicWriteFile(metaPath, content))
   }
 
   /**
@@ -280,7 +281,7 @@ export class SchemaOps {
   private async writeRootCollectionMeta(meta: RootCollectionMetaFile): Promise<void> {
     const metaPath = path.join(this.contentRoot, '.collection.json')
     const content = JSON.stringify(meta, null, 2) + '\n'
-    await atomicWriteFile(metaPath, content)
+    await withLock(metaPath, () => atomicWriteFile(metaPath, content))
   }
 
   // --------------------------------------------------------------------------

@@ -36,6 +36,7 @@ vi.mock('../content-store', () => {
       idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
     })),
     ContentStoreError: class ContentStoreError extends Error {},
+    ContentConflictError: class ContentConflictError extends Error {},
   }
 })
 
@@ -158,6 +159,31 @@ describe('content api', () => {
       { format: 'json', data: { title: 'hi' } },
     )
     expect(res.ok).toBe(true)
+  })
+
+  it('returns 409 when store.write throws ContentConflictError', async () => {
+    const ctx = allowedCtx()
+    const { ContentStore, ContentConflictError } = await import('../content-store')
+
+    const mockStore = {
+      resolvePath: vi.fn().mockReturnValue({
+        schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+        slug: 'hello',
+      }),
+      resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+      write: vi.fn().mockRejectedValue(new ContentConflictError()),
+      idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+    }
+    vi.mocked(ContentStore).mockImplementationOnce(() => mockStore as any)
+
+    const res = await writeContent(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/x'), path: unsafeAsLogicalPath('posts/hello') },
+      { format: 'json', data: { title: 'hi' }, expectedVersion: 999 },
+    )
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(409)
   })
 
   describe('renameEntry', () => {

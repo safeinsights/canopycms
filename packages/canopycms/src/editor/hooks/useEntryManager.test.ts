@@ -613,4 +613,45 @@ describe('useEntryManager', () => {
       expect(result.current.selectedPath).toBe('entry1')
     })
   })
+
+  it('clears OCC version tokens on branch switch so stale tokens are not sent', async () => {
+    // Set up: load an entry to populate the version token
+    mockClient.content.read.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { format: 'json', data: { v: 1 }, version: 1000 } as any,
+    })
+
+    const { result, rerender } = renderHook((props) => useEntryManager(props), {
+      initialProps: { ...defaultOptions, branchName: 'main' },
+      wrapper,
+    })
+
+    // Load entry to capture version token
+    await act(async () => {
+      await result.current.loadEntry(mockEntry)
+    })
+
+    // Set up write mock for the save after branch switch
+    mockClient.content.write.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { format: 'json', data: { v: 2 } } as any,
+    })
+
+    // Switch branch — should clear the version token
+    await act(async () => {
+      rerender({ ...defaultOptions, branchName: 'feature-branch' })
+    })
+
+    // Save on the new branch — must NOT include the stale expectedVersion from 'main'
+    await act(async () => {
+      await result.current.saveEntry(mockEntry, { v: 2 })
+    })
+
+    expect(mockClient.content.write).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: 'feature-branch' }),
+      expect.not.objectContaining({ expectedVersion: expect.anything() }),
+    )
+  })
 })

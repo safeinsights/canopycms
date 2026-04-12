@@ -4,6 +4,7 @@ import path from 'node:path'
 import matter from 'gray-matter'
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
 import { atomicWriteFile } from './utils/atomic-write'
+import { withLock } from './utils/async-mutex'
 import { findBodyFieldName } from './utils/body-field'
 
 import type {
@@ -22,6 +23,7 @@ import {
   resolveCollectionPath,
 } from './content-id-index'
 import { generateId } from './id'
+import { isNodeError } from './utils/error'
 import { asRecord, getFormatExtension } from './utils/format'
 import {
   normalizeFilesystemPath,
@@ -54,12 +56,14 @@ export type ContentDocument = (MarkdownDocument | JsonDocument | YamlDocument) &
   collectionName: string
   relativePath: PhysicalPath
   absolutePath: string
+  /** File mtime in ms at the time of read/write. Used as an OCC version token. */
+  version?: number
 }
 
 export type WriteInput =
-  | { format: 'md' | 'mdx'; data?: Record<string, unknown>; body: string }
-  | { format: 'json'; data: Record<string, unknown> }
-  | { format: 'yaml'; data: Record<string, unknown> }
+  | { format: 'md' | 'mdx'; data?: Record<string, unknown>; body: string; expectedVersion?: number }
+  | { format: 'json'; data: Record<string, unknown>; expectedVersion?: number }
+  | { format: 'yaml'; data: Record<string, unknown>; expectedVersion?: number }
 
 export type ContentStoreErrorCode = 'NOT_FOUND' | 'NO_SCHEMA_ITEM' | 'FORBIDDEN' | 'VALIDATION'
 
@@ -68,6 +72,17 @@ export class ContentStoreError extends Error {
   constructor(message: string, code: ContentStoreErrorCode) {
     super(message)
     this.code = code
+  }
+}
+
+/**
+ * Thrown when `expectedVersion` on a write doesn't match the file's current mtime.
+ * Indicates a cross-process concurrent write — the caller should reload and retry.
+ */
+export class ContentConflictError extends Error {
+  constructor() {
+    super('Content was modified by another editor')
+    this.name = 'ContentConflictError'
   }
 }
 
@@ -354,6 +369,12 @@ export class ContentStore {
       relativePath,
       entryTypeName: resolvedEntryTypeName,
     } = await this.buildPaths(schemaItem, slug)
+    // stat BEFORE readFile: conservative version token that can only produce false-positive
+    // conflicts, never false-negatives. If a write lands between stat and readFile the client
+    // receives newer content but an older token → their next save triggers a 409 (safe).
+    // stat-after or parallel stat+read risks the opposite: old content + new token → silent
+    // overwrite of a concurrent write (data loss).
+    const stat = await fs.stat(absolutePath)
     const raw = await fs.readFile(absolutePath, 'utf8')
 
     let doc: ContentDocument
@@ -418,6 +439,7 @@ export class ContentStore {
       doc.data = await this.resolveReferencesInData(doc.data, fields)
     }
 
+    doc.version = stat.mtimeMs
     return doc
   }
 
@@ -430,7 +452,7 @@ export class ContentStore {
     const idIndex = await this.idIndex()
     const schemaItem = this.assertSchemaItem(collectionPath)
 
-    // Determine expected format and fields based on entry type
+    // Determine expected format and fields (validation — outside lock so errors are immediate)
     let expectedFormat: ContentFormat
     let fields: EntrySchema = []
     if (schemaItem.type === 'entry-type') {
@@ -460,73 +482,84 @@ export class ContentStore {
         'VALIDATION',
       )
     }
+
+    // Resolve paths outside the lock so validation errors surface immediately
     const { absolutePath, relativePath, id } = await this.buildPaths(schemaItem, slug, {
       entryTypeName,
     })
-    await fs.mkdir(path.dirname(absolutePath), { recursive: true })
 
-    // Helper to update the ID index after writing
-    const updateIdIndex = () => {
-      if (!id) return
-      const existing = idIndex.findById(id)
-      if (existing) {
-        if (existing.relativePath !== relativePath) {
-          idIndex.updatePath(existing.id, relativePath)
+    return withLock(absolutePath, async () => {
+      await fs.mkdir(path.dirname(absolutePath), { recursive: true })
+
+      // OCC: if caller supplied a version token, reject stale writes
+      if (input.expectedVersion !== undefined) {
+        try {
+          const existing = await fs.stat(absolutePath)
+          if (existing.mtimeMs !== input.expectedVersion) {
+            throw new ContentConflictError()
+          }
+        } catch (err) {
+          if (err instanceof ContentConflictError) throw err
+          if (isNodeError(err) && err.code === 'ENOENT') {
+            // File doesn't exist yet — first write, skip version check
+          } else {
+            throw err
+          }
         }
+      }
+
+      // Serialize content string
+      let content: string
+      if (input.format === 'json') {
+        content = `${JSON.stringify(input.data ?? {}, null, 2)}\n`
+      } else if (input.format === 'yaml') {
+        content = yamlStringify(input.data ?? {})
       } else {
-        idIndex.add({
-          type: 'entry',
-          relativePath,
-          collection: collectionPath,
-          slug: slug || undefined,
-        })
+        content = matter.stringify(input.body, input.data ?? {})
       }
-    }
 
-    if (input.format === 'json') {
-      const json = JSON.stringify(input.data ?? {}, null, 2)
-      await atomicWriteFile(absolutePath, `${json}\n`)
-      updateIdIndex()
+      await atomicWriteFile(absolutePath, content)
 
-      return {
+      // Update the ID index after a successful write
+      if (id) {
+        const existing = idIndex.findById(id)
+        if (existing) {
+          if (existing.relativePath !== relativePath) {
+            idIndex.updatePath(existing.id, relativePath)
+          }
+        } else {
+          idIndex.add({
+            type: 'entry',
+            relativePath,
+            collection: collectionPath,
+            slug: slug || undefined,
+          })
+        }
+      }
+
+      const afterStat = await fs.stat(absolutePath)
+      const base = {
         collection: schemaItem.logicalPath,
         collectionName: schemaItem.name,
-        format: 'json',
-        data: input.data ?? {},
         relativePath,
         absolutePath,
+        version: afterStat.mtimeMs,
       }
-    }
 
-    if (input.format === 'yaml') {
-      const yaml = yamlStringify(input.data ?? {})
-      await atomicWriteFile(absolutePath, yaml)
-      updateIdIndex()
-
+      if (input.format === 'json') {
+        return { ...base, format: 'json' as const, data: input.data ?? {} }
+      }
+      if (input.format === 'yaml') {
+        return { ...base, format: 'yaml' as const, data: input.data ?? {} }
+      }
       return {
-        collection: schemaItem.logicalPath,
-        collectionName: schemaItem.name,
-        format: 'yaml',
+        ...base,
+        format: input.format,
         data: input.data ?? {},
-        relativePath,
-        absolutePath,
+        body: input.body,
+        bodyFieldName: findBodyFieldName(fields),
       }
-    }
-
-    const file = matter.stringify(input.body, input.data ?? {})
-    await atomicWriteFile(absolutePath, file)
-    updateIdIndex()
-
-    return {
-      collection: schemaItem.logicalPath,
-      collectionName: schemaItem.name,
-      format: input.format,
-      data: input.data ?? {},
-      body: input.body,
-      bodyFieldName: findBodyFieldName(fields),
-      relativePath,
-      absolutePath,
-    }
+    })
   }
 
   /**
@@ -558,16 +591,18 @@ export class ContentStore {
     const collection = this.assertCollection(collectionPath)
     const { absolutePath, relativePath } = await this.buildPaths(collection, slug)
 
-    // Get ID before deleting
-    const id = idIndex.findByPath(relativePath)
+    return withLock(absolutePath, async () => {
+      // Get ID before deleting
+      const id = idIndex.findByPath(relativePath)
 
-    // Delete file
-    await fs.unlink(absolutePath)
+      // Delete file
+      await fs.unlink(absolutePath)
 
-    // Remove from index
-    if (id) {
-      idIndex.remove(id)
-    }
+      // Remove from index
+      if (id) {
+        idIndex.remove(id)
+      }
+    })
   }
 
   /**
@@ -595,77 +630,99 @@ export class ContentStore {
       throw new ContentStoreError('New slug cannot be empty', 'VALIDATION')
     }
 
-    // Get current file path
-    const { absolutePath: currentPath, relativePath: currentRelPath } = await this.buildPaths(
-      collection,
-      currentSlug,
-    )
-
-    // Verify current file exists
-    try {
-      await fs.access(currentPath)
-    } catch {
-      throw new ContentStoreError(`Entry not found: ${currentSlug}`, 'NOT_FOUND')
-    }
-
     // If slugs are the same, no-op
     if (currentSlug === safeNewSlug) {
       return { newPath: `${collectionPath}/${currentSlug}` as LogicalPath }
     }
 
-    // Extract entry type name and extension from current filename
-    const currentFilename = path.basename(currentPath)
-    const parts = currentFilename.split('.')
-    if (parts.length < 4) {
-      throw new ContentStoreError(`Invalid entry filename format: ${currentFilename}`, 'VALIDATION')
-    }
+    // Resolve source path outside the lock so validation errors surface immediately
+    const { absolutePath: currentPath, relativePath: currentRelPath } = await this.buildPaths(
+      collection,
+      currentSlug,
+    )
 
-    const entryTypeName = parts[0]
-    const contentId = parts[parts.length - 2]
-    const ext = `.${parts[parts.length - 1]}`
+    return withLock(currentPath, async () => {
+      // Verify source exists (inside lock so we see the current state)
+      try {
+        await fs.access(currentPath)
+      } catch {
+        throw new ContentStoreError(`Entry not found: ${currentSlug}`, 'NOT_FOUND')
+      }
 
-    // Build new filename with new slug
-    const newFilename = `${entryTypeName}.${safeNewSlug}.${contentId}${ext}`
-    const parentDir = path.dirname(currentPath)
-    const newPath = path.join(parentDir, newFilename)
+      // Extract entry type name and extension from current filename
+      const currentFilename = path.basename(currentPath)
+      const parts = currentFilename.split('.')
+      if (parts.length < 4) {
+        throw new ContentStoreError(
+          `Invalid entry filename format: ${currentFilename}`,
+          'VALIDATION',
+        )
+      }
 
-    // Check if any file with the new slug already exists (regardless of ID)
-    // Need to check for pattern: {entryTypeName}.{newSlug}.{any-id}{ext}
-    try {
-      const entries = await fs.readdir(parentDir, { withFileTypes: true })
-      for (const entry of entries) {
-        if (entry.isDirectory()) continue
+      const entryTypeName = parts[0]
+      const contentId = parts[parts.length - 2]
+      const ext = `.${parts[parts.length - 1]}`
 
-        // Extract slug from filename using the same pattern
-        const existingSlug = extractSlugFromFilename(entry.name, entryTypeName)
-        if (existingSlug === safeNewSlug) {
+      // Build new filename with new slug
+      const newFilename = `${entryTypeName}.${safeNewSlug}.${contentId}${ext}`
+      const parentDir = path.dirname(currentPath)
+      const newPath = path.join(parentDir, newFilename)
+
+      // Check if any file with the new slug already exists (regardless of ID)
+      // This catches same-slug-different-ID conflicts that link() alone cannot prevent
+      try {
+        const entries = await fs.readdir(parentDir, { withFileTypes: true })
+        for (const entry of entries) {
+          if (entry.isDirectory()) continue
+          const existingSlug = extractSlugFromFilename(entry.name, entryTypeName)
+          if (existingSlug === safeNewSlug) {
+            throw new ContentStoreError(
+              `Entry with slug "${safeNewSlug}" already exists in collection "${collectionPath}"`,
+              'VALIDATION',
+            )
+          }
+        }
+      } catch (err) {
+        if (err instanceof ContentStoreError) throw err
+        // Ignore filesystem errors (e.g. ENOENT if parent dir doesn't exist)
+      }
+
+      // Use link()+unlink() instead of rename() so a concurrent cross-process rename to the
+      // exact same destination path fails with EEXIST rather than silently overwriting.
+      //
+      // Tradeoff: this is a two-step operation, not a single atomic syscall. If unlink()
+      // fails after a successful link() (e.g. a transient EFS error), both the old and new
+      // slug files will exist pointing at the same inode. The ID index will reflect the new
+      // path, so subsequent reads work, but the orphaned source file will persist until the
+      // next rename or deletion of that entry. This is an acceptable tradeoff: the EEXIST
+      // protection on link() prevents silent data loss on concurrent renames, and the
+      // partial-failure case is detectable and recoverable. See also:
+      // .claude/future-tasks/content-store-lock-key.md — when lock keys migrate to content
+      // IDs, rename and write on the same entry will be fully serialized, further reducing
+      // this window.
+      try {
+        await fs.link(currentPath, newPath)
+      } catch (err) {
+        if (isNodeError(err) && err.code === 'EEXIST') {
           throw new ContentStoreError(
             `Entry with slug "${safeNewSlug}" already exists in collection "${collectionPath}"`,
             'VALIDATION',
           )
         }
-      }
-    } catch (err) {
-      // Re-throw ContentStoreError (e.g., "already exists") — ignore filesystem errors
-      if (err instanceof ContentStoreError) {
         throw err
       }
-      // Ignore other errors (e.g., ENOENT if parent dir doesn't exist)
-    }
+      await fs.unlink(currentPath)
 
-    // Atomically rename the file
-    await fs.rename(currentPath, newPath)
+      // Update the ID index
+      const newRelativePath = path.relative(this.root, newPath) as PhysicalPath
+      const entryId = idIndex.findByPath(currentRelPath)
+      if (entryId) {
+        idIndex.updatePath(entryId, newRelativePath)
+      }
 
-    // Update the ID index
-    const newRelativePath = path.relative(this.root, newPath) as PhysicalPath
-    const entryId = idIndex.findByPath(currentRelPath)
-    if (entryId) {
-      idIndex.updatePath(entryId, newRelativePath)
-    }
-
-    // Return new logical path
-    const newLogicalPath = `${collectionPath}/${safeNewSlug}` as LogicalPath
-    return { newPath: newLogicalPath }
+      // Return new logical path
+      return { newPath: `${collectionPath}/${safeNewSlug}` as LogicalPath }
+    })
   }
 
   /**

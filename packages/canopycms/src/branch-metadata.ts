@@ -7,6 +7,7 @@ import { BranchRegistry } from './branch-registry'
 import { resolveBranchPath } from './paths'
 import { type OperatingMode } from './operating-mode'
 import { isFileExistsError, isNotFoundError } from './utils/error'
+import { withLock } from './utils/async-mutex'
 
 const BRANCH_META_DIR = '.canopy-meta'
 const BRANCH_META_FILE = 'branch.json'
@@ -24,28 +25,6 @@ export class BranchMetadataConflictError extends Error {
   constructor() {
     super('Concurrent modification detected in branch metadata')
     this.name = 'BranchMetadataConflictError'
-  }
-}
-
-// Module-level lock: serializes access to each branch.json within this process.
-const fileLocks = new Map<string, Promise<void>>()
-
-async function withFileLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
-  while (fileLocks.has(filePath)) {
-    await fileLocks.get(filePath)
-  }
-
-  let resolve!: () => void
-  const lockPromise = new Promise<void>((r) => {
-    resolve = r
-  })
-  fileLocks.set(filePath, lockPromise)
-
-  try {
-    return await fn()
-  } finally {
-    fileLocks.delete(filePath)
-    resolve()
   }
 }
 
@@ -199,7 +178,7 @@ export class BranchMetadataFileManager {
   }
 
   async save(incoming: BranchMetadataUpdate): Promise<BranchMetadataFile> {
-    return withFileLock(this.filePath, () =>
+    return withLock(this.filePath, () =>
       this.withRetry(async () => {
         const { meta: existing, version } = await this.load()
         const now = new Date().toISOString()
