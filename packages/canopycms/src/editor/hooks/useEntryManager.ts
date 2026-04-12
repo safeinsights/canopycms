@@ -2,14 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { ListEntriesResponse } from '../../api/entries'
 import type { WriteContentBody } from '../../api/content'
-
-/** Thrown by saveEntry when the API returns a non-200 response. Carries the HTTP status so callers can distinguish conflict (409) from other errors. */
-export class SaveApiError extends Error {
-  constructor(public readonly status: number) {
-    super(`Save failed: ${status}`)
-    this.name = 'SaveApiError'
-  }
-}
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
@@ -20,6 +12,14 @@ import {
 } from '../editor-utils'
 import { isDataOnlyFormat } from '../../utils/format'
 import { useApiClient } from '../context'
+
+/** Thrown by saveEntry when the API returns a non-200 response. Carries the HTTP status so callers can distinguish conflict (409) from other errors. */
+export class SaveApiError extends Error {
+  constructor(public readonly status: number) {
+    super(`Save failed: ${status}`)
+    this.name = 'SaveApiError'
+  }
+}
 
 export interface UseEntryManagerOptions {
   initialEntries: EditorEntry[]
@@ -351,6 +351,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         isInitialMount.current = false
       } else {
         setSelectedPath('')
+        // Clear stale OCC version tokens — mtimes differ per branch
+        entryVersionsRef.current.clear()
       }
 
       // Refresh entries for new branch

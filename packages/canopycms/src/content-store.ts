@@ -500,7 +500,11 @@ export class ContentStore {
           }
         } catch (err) {
           if (err instanceof ContentConflictError) throw err
-          // ENOENT: file doesn't exist yet — first write, skip check
+          if (isNodeError(err) && err.code === 'ENOENT') {
+            // File doesn't exist yet — first write, skip version check
+          } else {
+            throw err
+          }
         }
       }
 

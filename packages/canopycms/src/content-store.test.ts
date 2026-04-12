@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from './config-test'
 import { flattenSchema } from './config'
@@ -1374,5 +1374,29 @@ describe('ContentStore OCC', () => {
     const read = await store.read(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('f'))
     // Both should reflect the same file state
     expect(read.version).toBe(written.version)
+  })
+
+  it('write rethrows non-ENOENT stat errors, does not silently bypass OCC', async () => {
+    const store = await makeStore()
+    const written = await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('g'), {
+      format: 'json',
+      data: { v: 1 },
+    })
+
+    // Simulate a filesystem error (e.g. EACCES) on the OCC stat call
+    const eacces = Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+    const statSpy = vi.spyOn(fs, 'stat').mockRejectedValueOnce(eacces)
+
+    try {
+      await expect(
+        store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('g'), {
+          format: 'json',
+          data: { v: 2 },
+          expectedVersion: written.version,
+        }),
+      ).rejects.toThrow('EACCES')
+    } finally {
+      statSpy.mockRestore()
+    }
   })
 })
