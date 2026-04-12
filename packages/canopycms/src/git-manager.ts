@@ -28,6 +28,20 @@ export interface GitManagerOptions {
 
 export type GitStatus = Pick<StatusResult, 'files' | 'ahead' | 'behind' | 'current' | 'tracking'>
 
+export class GitConflictError extends Error {
+  constructor(public readonly conflictedFiles: string[]) {
+    super(`Git conflict in ${conflictedFiles.length} file(s): ${conflictedFiles.join(', ')}`)
+    this.name = 'GitConflictError'
+  }
+}
+
+export class GitNonFastForwardError extends Error {
+  constructor() {
+    super('Non-fast-forward update rejected')
+    this.name = 'GitNonFastForwardError'
+  }
+}
+
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
   remoteUrl?: string
@@ -519,19 +533,40 @@ export class GitManager {
 
   async pullBase(): Promise<void> {
     await this.git.fetch(this.remote, this.baseBranch)
-    await this.git.merge([`${this.remote}/${this.baseBranch}`])
+    try {
+      await this.git.merge([`${this.remote}/${this.baseBranch}`])
+    } catch {
+      // Capture conflicted files before aborting — abort clears them from status
+      const status = await this.git.status()
+      await this.git.merge(['--abort']).catch(() => {})
+      throw new GitConflictError(status.conflicted)
+    }
   }
 
   async pullCurrentBranch(): Promise<void> {
     const branches = await this.git.branch()
     const currentBranch = branches.current
     await this.git.fetch(this.remote, currentBranch)
-    await this.git.merge([`${this.remote}/${currentBranch}`])
+    try {
+      await this.git.merge([`${this.remote}/${currentBranch}`])
+    } catch {
+      // Capture conflicted files before aborting — abort clears them from status
+      const status = await this.git.status()
+      await this.git.merge(['--abort']).catch(() => {})
+      throw new GitConflictError(status.conflicted)
+    }
   }
 
   async rebaseOntoBase(): Promise<void> {
     await this.git.fetch(this.remote, this.baseBranch)
-    await this.git.rebase([`${this.remote}/${this.baseBranch}`])
+    try {
+      await this.git.rebase([`${this.remote}/${this.baseBranch}`])
+    } catch {
+      // Capture conflicted files before aborting — abort clears them from status
+      const status = await this.git.status()
+      await this.git.rebase(['--abort']).catch(() => {})
+      throw new GitConflictError(status.conflicted)
+    }
   }
 
   async add(files: string | string[]): Promise<void> {

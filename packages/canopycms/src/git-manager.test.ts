@@ -5,7 +5,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-import { GitManager } from './git-manager'
+import { GitManager, GitConflictError } from './git-manager'
 import { initTestRepo } from './test-utils'
 
 describe('GitManager.ensureLocalSimulatedRemote', () => {
@@ -656,3 +656,253 @@ describe('GitManager traversal protection', () => {
     expect(content).toBe('hello')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Conflict handling helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a minimal two-repo conflict scenario:
+ *   remote (bare) ← shared initial commit
+ *   local clone   ← branch commit modifying `file.txt`
+ *   second clone  ← diverging commit modifying `file.txt` → pushed to remote
+ *
+ * After setup, `localPath` has one unpushed commit that conflicts with the
+ * remote's tip.  The local repo's `origin` points at the bare remote.
+ */
+async function setupMergeConflict(tmpDir: string): Promise<{
+  localPath: string
+  manager: GitManager
+  conflictFile: string
+}> {
+  const remotePath = path.join(tmpDir, 'remote.git')
+  const localPath = path.join(tmpDir, 'local')
+  const otherPath = path.join(tmpDir, 'other')
+  const conflictFile = 'shared.txt'
+
+  // Bare remote
+  await fs.mkdir(remotePath, { recursive: true })
+  const bareGit = simpleGit({ baseDir: remotePath })
+  await bareGit.init(true)
+
+  // Initial commit from a temp clone
+  const seedPath = path.join(tmpDir, 'seed')
+  await fs.mkdir(seedPath, { recursive: true })
+  const seedGit = await initTestRepo(seedPath)
+  await seedGit.raw(['branch', '-M', 'main'])
+  await fs.writeFile(path.join(seedPath, conflictFile), 'initial', 'utf8')
+  await seedGit.add(['.'])
+  await seedGit.commit('initial')
+  await seedGit.addRemote('origin', remotePath)
+  await seedGit.push('origin', 'main')
+
+  // Local clone
+  await simpleGit().clone(remotePath, localPath)
+  const localRaw = simpleGit({ baseDir: localPath })
+  await localRaw.addConfig('user.name', 'Test Bot')
+  await localRaw.addConfig('user.email', 'test@canopycms.test')
+  await localRaw.addConfig('canopycms.managed', 'true')
+
+  // Local diverging commit (edit shared.txt)
+  await fs.writeFile(path.join(localPath, conflictFile), 'local version', 'utf8')
+  await localRaw.add(['.'])
+  await localRaw.commit('local change')
+
+  // Remote diverging commit via a second clone (edit shared.txt differently)
+  await simpleGit().clone(remotePath, otherPath)
+  const otherGit = simpleGit({ baseDir: otherPath })
+  await otherGit.addConfig('user.name', 'Other Bot')
+  await otherGit.addConfig('user.email', 'other@canopycms.test')
+  await fs.writeFile(path.join(otherPath, conflictFile), 'remote version', 'utf8')
+  await otherGit.add(['.'])
+  await otherGit.commit('remote change')
+  await otherGit.push('origin', 'main')
+
+  const manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
+  return { localPath, manager, conflictFile }
+}
+
+/**
+ * Build a rebase conflict scenario:
+ *   remote/main ← diverging commit modifying `shared.txt`
+ *   local/feature ← commit modifying `shared.txt` on a feature branch
+ *
+ * After setup, `rebaseOntoBase()` will conflict on `shared.txt`.
+ */
+async function setupRebaseConflict(tmpDir: string): Promise<{
+  localPath: string
+  manager: GitManager
+  conflictFile: string
+}> {
+  const remotePath = path.join(tmpDir, 'remote.git')
+  const localPath = path.join(tmpDir, 'local')
+  const otherPath = path.join(tmpDir, 'other')
+  const conflictFile = 'shared.txt'
+
+  // Bare remote
+  await fs.mkdir(remotePath, { recursive: true })
+  const bareGit = simpleGit({ baseDir: remotePath })
+  await bareGit.init(true)
+
+  // Seed remote with initial commit
+  const seedPath = path.join(tmpDir, 'seed')
+  await fs.mkdir(seedPath, { recursive: true })
+  const seedGit = await initTestRepo(seedPath)
+  await seedGit.raw(['branch', '-M', 'main'])
+  await fs.writeFile(path.join(seedPath, conflictFile), 'initial', 'utf8')
+  await seedGit.add(['.'])
+  await seedGit.commit('initial')
+  await seedGit.addRemote('origin', remotePath)
+  await seedGit.push('origin', 'main')
+
+  // Local clone — create feature branch, commit conflicting change
+  await simpleGit().clone(remotePath, localPath)
+  const localRaw = simpleGit({ baseDir: localPath })
+  await localRaw.addConfig('user.name', 'Test Bot')
+  await localRaw.addConfig('user.email', 'test@canopycms.test')
+  await localRaw.addConfig('canopycms.managed', 'true')
+  await localRaw.checkoutLocalBranch('feature')
+  await fs.writeFile(path.join(localPath, conflictFile), 'feature version', 'utf8')
+  await localRaw.add(['.'])
+  await localRaw.commit('feature change')
+
+  // Advance remote/main with a conflicting change via second clone
+  await simpleGit().clone(remotePath, otherPath)
+  const otherGit = simpleGit({ baseDir: otherPath })
+  await otherGit.addConfig('user.name', 'Other Bot')
+  await otherGit.addConfig('user.email', 'other@canopycms.test')
+  await fs.writeFile(path.join(otherPath, conflictFile), 'main version', 'utf8')
+  await otherGit.add(['.'])
+  await otherGit.commit('main change')
+  await otherGit.push('origin', 'main')
+
+  const manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
+  return { localPath, manager, conflictFile }
+}
+
+async function hasGitStateFile(repoPath: string, ...names: string[]): Promise<boolean> {
+  for (const name of names) {
+    try {
+      await fs.stat(path.join(repoPath, '.git', name))
+      return true
+    } catch {
+      // not found
+    }
+  }
+  return false
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe('GitManager conflict handling', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-conflict-test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  describe('pullBase', () => {
+    it('throws GitConflictError when remote/base diverges with local changes', async () => {
+      const { manager } = await setupMergeConflict(tmpDir)
+
+      await expect(manager.pullBase()).rejects.toThrow(GitConflictError)
+    })
+
+    it('includes conflicting file paths in the error', async () => {
+      const { manager, conflictFile } = await setupMergeConflict(tmpDir)
+
+      const err = await manager.pullBase().catch((e) => e)
+      expect(err).toBeInstanceOf(GitConflictError)
+      expect((err as GitConflictError).conflictedFiles).toContain(conflictFile)
+    })
+
+    it('leaves no MERGE_HEAD after conflict (workspace is clean)', async () => {
+      const { localPath, manager } = await setupMergeConflict(tmpDir)
+
+      await manager.pullBase().catch(() => {})
+
+      expect(await hasGitStateFile(localPath, 'MERGE_HEAD')).toBe(false)
+    })
+  })
+
+  describe('pullCurrentBranch', () => {
+    it('throws GitConflictError when remote branch diverges with local changes', async () => {
+      const { localPath, manager } = await setupMergeConflict(tmpDir)
+      // Force-push local commit so remote tracks local's diverged state, then
+      // create further local divergence before pushing a conflicting remote commit
+      const localRaw = simpleGit({ baseDir: localPath })
+      await localRaw.push('origin', 'main', ['--force'])
+      // Now add another local commit diverging from remote
+      await fs.writeFile(path.join(localPath, 'extra.txt'), 'local extra', 'utf8')
+      await localRaw.add(['.'])
+      await localRaw.commit('extra local')
+
+      // Push a conflicting commit to remote/main via another clone
+      const other2 = path.join(tmpDir, 'other2')
+      await simpleGit().clone(path.join(tmpDir, 'remote.git'), other2)
+      const other2Git = simpleGit({ baseDir: other2 })
+      await other2Git.addConfig('user.name', 'Bot')
+      await other2Git.addConfig('user.email', 'bot@test.com')
+      await fs.writeFile(path.join(other2, 'extra.txt'), 'remote extra', 'utf8')
+      await other2Git.add(['.'])
+      await other2Git.commit('extra remote')
+      await other2Git.push('origin', 'main')
+
+      await expect(manager.pullCurrentBranch()).rejects.toThrow(GitConflictError)
+    })
+
+    it('leaves no MERGE_HEAD after conflict (workspace is clean)', async () => {
+      const { localPath, manager } = await setupMergeConflict(tmpDir)
+      const localRaw = simpleGit({ baseDir: localPath })
+      // Force-push local commit so remote tracks local's diverged state
+      await localRaw.push('origin', 'main', ['--force'])
+      await fs.writeFile(path.join(localPath, 'extra.txt'), 'local extra', 'utf8')
+      await localRaw.add(['.'])
+      await localRaw.commit('extra local')
+
+      const other2 = path.join(tmpDir, 'other2')
+      await simpleGit().clone(path.join(tmpDir, 'remote.git'), other2)
+      const other2Git = simpleGit({ baseDir: other2 })
+      await other2Git.addConfig('user.name', 'Bot')
+      await other2Git.addConfig('user.email', 'bot@test.com')
+      await fs.writeFile(path.join(other2, 'extra.txt'), 'remote extra', 'utf8')
+      await other2Git.add(['.'])
+      await other2Git.commit('extra remote')
+      await other2Git.push('origin', 'main')
+
+      await manager.pullCurrentBranch().catch(() => {})
+
+      expect(await hasGitStateFile(localPath, 'MERGE_HEAD')).toBe(false)
+    })
+  })
+
+  describe('rebaseOntoBase', () => {
+    it('throws GitConflictError when feature branch conflicts with base', async () => {
+      const { manager } = await setupRebaseConflict(tmpDir)
+
+      await expect(manager.rebaseOntoBase()).rejects.toThrow(GitConflictError)
+    })
+
+    it('includes conflicting file paths in the error', async () => {
+      const { manager, conflictFile } = await setupRebaseConflict(tmpDir)
+
+      const err = await manager.rebaseOntoBase().catch((e) => e)
+      expect(err).toBeInstanceOf(GitConflictError)
+      expect((err as GitConflictError).conflictedFiles).toContain(conflictFile)
+    })
+
+    it('leaves no REBASE_MERGE or rebase-merge dir after conflict (workspace is clean)', async () => {
+      const { localPath, manager } = await setupRebaseConflict(tmpDir)
+
+      await manager.rebaseOntoBase().catch(() => {})
+
+      expect(await hasGitStateFile(localPath, 'REBASE_MERGE', 'rebase-merge')).toBe(false)
+    })
+  })
+}, 30_000)
