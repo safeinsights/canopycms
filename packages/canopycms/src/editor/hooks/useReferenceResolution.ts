@@ -34,6 +34,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { EntrySchema } from '../../config'
 import { resolveChangedReferences } from '../client-reference-resolver'
+import { flattenGroupFields } from '../../utils/flatten-group-fields'
 
 export type FormValue = Record<string, unknown>
 
@@ -65,7 +66,7 @@ export function useReferenceResolution({
   // Map field names to their types for fast lookup
   const referenceFieldNames = useMemo(() => {
     const names = new Set<string>()
-    for (const field of fields) {
+    for (const field of flattenGroupFields(fields)) {
       if (field.type === 'reference') {
         names.add(field.name)
       }

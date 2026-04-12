@@ -6,6 +6,7 @@
  */
 
 import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig, SelectFieldConfig } from '../config'
+import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { stripMdxImports } from './strip-mdx'
 import { applyComponentTransforms } from './transform-components'
 import type { AIEntry, AIContentConfig } from './types'
@@ -57,7 +58,7 @@ function renderMarkdownEntry(
 
   // Render frontmatter fields (excluding body-like fields and already-rendered fields)
   const bodyFieldTypes = new Set(['rich-text', 'markdown', 'mdx'])
-  const metadataFields = entry.fields.filter(
+  const metadataFields = flattenGroupFields(entry.fields).filter(
     (f) => !bodyFieldTypes.has(f.type) && !skipFields.has(f.name),
   )
 
@@ -112,7 +113,7 @@ function renderJsonEntry(
 ): string[] {
   const parts: string[] = []
 
-  for (const field of entry.fields) {
+  for (const field of flattenGroupFields(entry.fields)) {
     if (skipFields.has(field.name)) continue
     const value = entry.data[field.name]
     if (value === undefined || value === null) continue
@@ -155,7 +156,7 @@ function renderField(
     'description' in field && field.description ? `\n\n*${field.description}*` : ''
 
   // Handle list fields
-  if (field.list && Array.isArray(value)) {
+  if ('list' in field && field.list && Array.isArray(value)) {
     return renderListField(field, value, depth, label, heading, descriptionLine, entry, config)
   }
 

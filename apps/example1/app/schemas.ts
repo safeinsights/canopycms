@@ -1,5 +1,42 @@
-import { TypeFromEntrySchema, defineEntrySchema } from 'canopycms'
+import {
+  TypeFromEntrySchema,
+  defineEntrySchema,
+  defineInlineFieldGroup,
+  defineNestedFieldGroup,
+} from 'canopycms'
 import { createEntrySchemaRegistry } from 'canopycms/server'
+
+// Shared inline field group: fields are stored flat in the content file.
+// TypeFromEntrySchema on a schema that includes this group will have
+// { metaTitle: string, metaDescription: string } merged into the top-level shape.
+const seoGroup = defineInlineFieldGroup({
+  name: 'seo',
+  label: 'SEO',
+  description: 'Search engine optimization settings',
+  fields: [
+    { name: 'metaTitle', type: 'string', label: 'Meta Title' },
+    { name: 'metaDescription', type: 'string', label: 'Meta Description' },
+  ],
+})
+
+// Shared inline field group for navigation metadata.
+const navGroup = defineInlineFieldGroup({
+  name: 'nav',
+  label: 'Navigation',
+  fields: [{ name: 'navText', type: 'string', label: 'Nav Text' }],
+})
+
+// Nested field group: fields are stored under the group's name as a sub-object.
+// TypeFromEntrySchema on a schema that includes this group will have
+// { location: { city: string, country: string } } in the shape.
+const locationGroup = defineNestedFieldGroup({
+  name: 'location',
+  label: 'Location',
+  fields: [
+    { name: 'city', type: 'string', label: 'City' },
+    { name: 'country', type: 'string', label: 'Country' },
+  ],
+})
 
 export const homeSchema = defineEntrySchema([
   {
@@ -37,6 +74,8 @@ export type HomeContent = TypeFromEntrySchema<typeof homeSchema>
 export const authorSchema = defineEntrySchema([
   { name: 'name', type: 'string', label: 'Name' },
   { name: 'bio', type: 'string', label: 'Bio' },
+  // Nested group: author.location.city / author.location.country in content files
+  locationGroup,
 ])
 
 export type AuthorContent = TypeFromEntrySchema<typeof authorSchema>
@@ -59,6 +98,8 @@ export const postSchema = defineEntrySchema([
     options: ['typed', 'fast', 'diagram', 'mdx'],
   },
   { name: 'published', type: 'boolean', label: 'Published' },
+  // Inline SEO group: metaTitle/metaDescription stored flat alongside other fields
+  seoGroup,
   { name: 'body', type: 'markdown', label: 'Body', isBody: true },
   {
     name: 'blocks',
@@ -91,6 +132,10 @@ export type PostContent = TypeFromEntrySchema<typeof postSchema> & {
 export const docSchema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title' },
   { name: 'description', type: 'string', label: 'Description' },
+  // Inline SEO group: metaTitle/metaDescription stored flat in doc frontmatter
+  seoGroup,
+  // Inline nav group: navText stored flat in doc frontmatter
+  navGroup,
   { name: 'body', type: 'markdown', label: 'Body', isBody: true },
 ])
 

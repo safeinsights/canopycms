@@ -1,4 +1,9 @@
-import type { FieldConfig } from '../config'
+import type { FieldConfig, InlineGroupFieldConfig } from '../config'
+
+/** Type guard: true if field is an inline group (type === 'group'). */
+function isGroupField(field: FieldConfig): field is InlineGroupFieldConfig {
+  return field.type === 'group'
+}
 
 /**
  * Find the field marked `isTitle: true` in a schema and extract its value from data.
@@ -17,12 +22,15 @@ function findTitleValue(
   data: Record<string, unknown>,
 ): string | undefined {
   for (const field of fields) {
-    if (field.isTitle) {
+    // Inline groups are transparent — recurse at the same data level
+    if (isGroupField(field)) {
+      const result = findTitleValue(field.fields, data)
+      if (result !== undefined) return result
+    } else if ('isTitle' in field && field.isTitle) {
       const value = data[field.name]
       return typeof value === 'string' ? value : undefined
-    }
-    // Recurse into non-list object fields (list objects can't provide a single title value)
-    if (field.type === 'object' && 'fields' in field && field.fields && !field.list) {
+    } else if (field.type === 'object' && 'fields' in field && field.fields && !field.list) {
+      // Recurse into non-list object fields (list objects can't provide a single title value)
       const nested = data[field.name]
       if (nested != null && typeof nested === 'object' && !Array.isArray(nested)) {
         const result = findTitleValue(field.fields, nested as Record<string, unknown>)
@@ -79,9 +87,13 @@ export function resolveEntryTitle(
 export function countTitleFields(fields: readonly FieldConfig[]): number {
   let count = 0
   for (const field of fields) {
-    if (field.isTitle) count++
-    if (field.type === 'object' && 'fields' in field && field.fields && !field.list) {
+    if (isGroupField(field)) {
       count += countTitleFields(field.fields)
+    } else {
+      if ('isTitle' in field && field.isTitle) count++
+      if (field.type === 'object' && 'fields' in field && field.fields && !field.list) {
+        count += countTitleFields(field.fields)
+      }
     }
   }
   return count
@@ -98,12 +110,16 @@ export function findInvalidTitleFields(
 ): string[] {
   const invalid: string[] = []
   for (const field of fields) {
-    const fieldPath = parentPath ? `${parentPath}.${field.name}` : field.name
-    if (field.isTitle && field.type !== 'string') {
-      invalid.push(fieldPath)
-    }
-    if (field.type === 'object' && 'fields' in field && field.fields && !field.list) {
-      invalid.push(...findInvalidTitleFields(field.fields, fieldPath))
+    if (isGroupField(field)) {
+      invalid.push(...findInvalidTitleFields(field.fields, parentPath))
+    } else {
+      const fieldPath = parentPath ? `${parentPath}.${field.name}` : field.name
+      if ('isTitle' in field && field.isTitle && field.type !== 'string') {
+        invalid.push(fieldPath)
+      }
+      if (field.type === 'object' && 'fields' in field && field.fields && !field.list) {
+        invalid.push(...findInvalidTitleFields(field.fields, fieldPath))
+      }
     }
   }
   return invalid
@@ -119,13 +135,17 @@ export function findTitleFieldsInLists(
 ): string[] {
   const found: string[] = []
   for (const field of fields) {
-    const fieldPath = parentPath ? `${parentPath}.${field.name}` : field.name
-    if (field.type === 'object' && 'fields' in field && field.fields) {
-      if (field.list) {
-        // Any isTitle inside a list object is invalid — collect them
-        found.push(...collectAllTitleFields(field.fields, fieldPath))
-      } else {
-        found.push(...findTitleFieldsInLists(field.fields, fieldPath))
+    if (isGroupField(field)) {
+      found.push(...findTitleFieldsInLists(field.fields, parentPath))
+    } else {
+      const fieldPath = parentPath ? `${parentPath}.${field.name}` : field.name
+      if (field.type === 'object' && 'fields' in field && field.fields) {
+        if (field.list) {
+          // Any isTitle inside a list object is invalid — collect them
+          found.push(...collectAllTitleFields(field.fields, fieldPath))
+        } else {
+          found.push(...findTitleFieldsInLists(field.fields, fieldPath))
+        }
       }
     }
   }
@@ -136,10 +156,15 @@ export function findTitleFieldsInLists(
 function collectAllTitleFields(fields: readonly FieldConfig[], parentPath: string): string[] {
   const found: string[] = []
   for (const field of fields) {
-    const fieldPath = `${parentPath}.${field.name}`
-    if (field.isTitle) found.push(fieldPath)
-    if (field.type === 'object' && 'fields' in field && field.fields) {
-      found.push(...collectAllTitleFields(field.fields, fieldPath))
+    if (isGroupField(field)) {
+      // Inline groups are transparent — recurse at the same data level (no new path segment)
+      found.push(...collectAllTitleFields(field.fields, parentPath))
+    } else {
+      const fieldPath = `${parentPath}.${field.name}`
+      if ('isTitle' in field && field.isTitle) found.push(fieldPath)
+      if (field.type === 'object' && 'fields' in field && field.fields) {
+        found.push(...collectAllTitleFields(field.fields, fieldPath))
+      }
     }
   }
   return found

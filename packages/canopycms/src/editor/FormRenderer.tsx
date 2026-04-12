@@ -9,6 +9,7 @@ import type {
   BlockFieldConfig,
   EntrySchema,
   FieldConfig,
+  InlineGroupFieldConfig,
   ObjectFieldConfig,
   ReferenceFieldConfig,
   SelectFieldConfig,
@@ -21,6 +22,7 @@ import { SelectField } from './fields/SelectField'
 import { ReferenceField } from './fields/ReferenceField'
 import { CodeField } from './fields/CodeField'
 import { ObjectField } from './fields/ObjectField'
+import { InlineGroupField } from './fields/InlineGroupField'
 import { formatCanopyPath, normalizeCanopyPath } from './canopy-path'
 import { FieldWrapper } from './comments/FieldWrapper'
 import { EntryComments } from './comments/EntryComments'
@@ -420,6 +422,24 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
       )}
 
       {fields.map((field) => {
+        // Inline groups are transparent to the value — render them directly with parent value/onChange
+        if (field.type === 'group') {
+          const groupField = field as InlineGroupFieldConfig
+          return (
+            <div key={`group-${groupField.name}`}>
+              <InlineGroupField
+                label={groupField.label}
+                description={groupField.description}
+                fields={groupField.fields}
+                value={value}
+                onChange={onChange}
+                renderField={renderField}
+                path={[]}
+              />
+            </div>
+          )
+        }
+
         const val = value[field.name]
         const path = [field.name]
         return (

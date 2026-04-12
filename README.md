@@ -687,6 +687,49 @@ const config = defineCanopyConfig({
 }
 ```
 
+### Field Groups
+
+Field groups let you visually organize related fields in the editor without forcing you to restructure your content files. Two helpers are available:
+
+**`defineInlineFieldGroup`** — groups fields under a labeled, bordered section in the editor. The fields are stored **flat** in your content file alongside other top-level fields.
+
+**`defineNestedFieldGroup`** — groups fields under a labeled section and stores them as a **nested object** in your content file (equivalent to `type: 'object'` with ergonomic sugar).
+
+```typescript
+import { defineInlineFieldGroup, defineNestedFieldGroup, defineEntrySchema } from 'canopycms'
+
+// Inline group: fields stored flat (metaTitle, metaDescription at top level)
+const seoGroup = defineInlineFieldGroup({
+  name: 'seo',
+  label: 'SEO',
+  description: 'Search engine metadata', // optional
+  fields: [
+    { name: 'metaTitle', type: 'string', label: 'Meta Title' },
+    { name: 'metaDescription', type: 'string', label: 'Meta Description' },
+  ],
+})
+
+// Nested group: fields stored under a key (seo.metaTitle, seo.metaDescription)
+const seoGroupNested = defineNestedFieldGroup({
+  name: 'seo',
+  label: 'SEO',
+  fields: [
+    { name: 'metaTitle', type: 'string', label: 'Meta Title' },
+    { name: 'metaDescription', type: 'string', label: 'Meta Description' },
+  ],
+})
+
+const docSchema = defineEntrySchema([
+  { name: 'title', type: 'string', required: true },
+  seoGroup, // or seoGroupNested
+  { name: 'body', type: 'markdown' },
+])
+// TypeFromEntrySchema with inline group → { title: string; metaTitle: string; metaDescription: string; body: string }
+// TypeFromEntrySchema with nested group → { title: string; seo: { metaTitle: string; metaDescription: string }; body: string }
+```
+
+Groups are reusable — define them once and include them in multiple schemas. Both helpers accept an optional `description` that appears as hint text in the editor.
+
 **Example with reference field:**
 
 ```typescript

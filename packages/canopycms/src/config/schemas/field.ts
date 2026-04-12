@@ -82,6 +82,15 @@ export const objectFieldSchema = fieldBaseSchema.extend({
   fields: z.array(z.lazy(() => fieldHolder[0])).min(1),
 })
 
+// Inline group field: visual grouping only, no data nesting
+export const inlineGroupFieldSchema = z.object({
+  type: z.literal('group'),
+  name: z.string().min(1),
+  label: z.string().optional(),
+  description: z.string().optional(),
+  fields: z.array(z.lazy(() => fieldHolder[0])).min(1),
+})
+
 // Custom field (user-defined type)
 export const customFieldSchema = z.lazy(() =>
   fieldBaseSchema
@@ -103,6 +112,7 @@ const knownFieldSchema: z.ZodTypeAny = z.discriminatedUnion('type', [
   referenceFieldSchema,
   objectFieldSchema,
   blockFieldSchema,
+  inlineGroupFieldSchema,
 ])
 
 // Complete field schema (built-in or custom)
