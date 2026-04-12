@@ -688,7 +688,18 @@ export class ContentStore {
       }
 
       // Use link()+unlink() instead of rename() so a concurrent cross-process rename to the
-      // exact same destination path fails with EEXIST rather than silently overwriting
+      // exact same destination path fails with EEXIST rather than silently overwriting.
+      //
+      // Tradeoff: this is a two-step operation, not a single atomic syscall. If unlink()
+      // fails after a successful link() (e.g. a transient EFS error), both the old and new
+      // slug files will exist pointing at the same inode. The ID index will reflect the new
+      // path, so subsequent reads work, but the orphaned source file will persist until the
+      // next rename or deletion of that entry. This is an acceptable tradeoff: the EEXIST
+      // protection on link() prevents silent data loss on concurrent renames, and the
+      // partial-failure case is detectable and recoverable. See also:
+      // .claude/future-tasks/content-store-lock-key.md — when lock keys migrate to content
+      // IDs, rename and write on the same entry will be fully serialized, further reducing
+      // this window.
       try {
         await fs.link(currentPath, newPath)
       } catch (err) {
