@@ -19,6 +19,9 @@ export const ensureSelectFieldsHaveOptions = (config: unknown): void => {
         const fieldName = (f?.name as string) ?? 'unknown'
         throw new Error(`Select field "${fieldName}" requires options`)
       }
+      if (f?.type === 'group') {
+        checkFields(f.fields as unknown[])
+      }
       if (f?.type === 'object') {
         checkFields(f.fields as unknown[])
       }
@@ -68,6 +71,9 @@ export const ensureReferenceFieldsHaveScope = (config: unknown): void => {
           )
         }
       }
+      if (f?.type === 'group') {
+        checkFields(f.fields as unknown[])
+      }
       if (f?.type === 'object') {
         checkFields(f.fields as unknown[])
       }
@@ -97,6 +103,55 @@ export const ensureReferenceFieldsHaveScope = (config: unknown): void => {
 }
 
 /**
+ * Validate that inline groups (type: 'group') only appear at the top level of entry
+ * schemas, not inside object or block fields. Groups inside complex fields would produce
+ * correct TypeScript types but broken editor rendering.
+ */
+export const ensureNoGroupsInsideComplexFields = (config: unknown): void => {
+  const checkFields = (fields: unknown[] | undefined, parentType?: string): void => {
+    if (!Array.isArray(fields)) return
+    for (const field of fields) {
+      const f = field as Record<string, unknown>
+      if (f?.type === 'group') {
+        if (parentType) {
+          const groupName = (f?.name as string) ?? 'unnamed'
+          throw new Error(
+            `Inline group "${groupName}" cannot be nested inside a ${parentType} field. ` +
+              `Use defineInlineFieldGroup() only at the top level of an entry schema or inside another group.`,
+          )
+        }
+        // Top-level group — recurse to check its own children
+        checkFields(f.fields as unknown[], undefined)
+      }
+      if (f?.type === 'object') {
+        checkFields(f.fields as unknown[], 'object')
+      }
+      if (f?.type === 'block' && Array.isArray(f.templates)) {
+        for (const template of f.templates as Array<{ fields?: unknown[] }>) {
+          checkFields(template.fields, 'block')
+        }
+      }
+    }
+  }
+
+  const walkSchema = (root: Record<string, unknown> | undefined): void => {
+    if (!root) return
+    if (Array.isArray(root.entries)) {
+      for (const entryType of root.entries as Array<{ schema?: unknown[] }>) {
+        checkFields(entryType?.schema)
+      }
+    }
+    if (Array.isArray(root.collections)) {
+      for (const collection of root.collections as Array<Record<string, unknown>>) {
+        walkSchema(collection)
+      }
+    }
+  }
+
+  walkSchema((config as Record<string, unknown>)?.schema as Record<string, unknown>)
+}
+
+/**
  * Validate and normalize a CanopyConfig object.
  * Performs Zod validation, checks select field options, and normalizes paths.
  *
@@ -107,6 +162,7 @@ export const ensureReferenceFieldsHaveScope = (config: unknown): void => {
 export const validateCanopyConfig = (config: unknown): CanopyConfig => {
   ensureSelectFieldsHaveOptions(config)
   ensureReferenceFieldsHaveScope(config)
+  ensureNoGroupsInsideComplexFields(config)
   const parsed = CanopyConfigSchema.parse(config)
   const normalized = {
     ...parsed,

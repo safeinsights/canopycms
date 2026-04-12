@@ -1,6 +1,7 @@
 import type { EntrySchema, FieldConfig, ReferenceFieldConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import { createApiClient } from '../api/client'
+import { flattenGroupFields } from '../utils/flatten-group-fields'
 
 /**
  * Client-side utility for incrementally resolving reference fields in form data.
@@ -18,7 +19,7 @@ export function findChangedFields(
 ): FieldConfig[] {
   const changed: FieldConfig[] = []
 
-  for (const field of schema) {
+  for (const field of flattenGroupFields(schema)) {
     const prevFieldValue = prevValue[field.name]
     const currentFieldValue = currentValue[field.name]
 

@@ -1,6 +1,11 @@
 import type { ContentStore } from '../content-store'
 import type { ContentIdIndex } from '../content-id-index'
-import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig } from '../config'
+import type {
+  FieldConfig,
+  InlineGroupFieldConfig,
+  ObjectFieldConfig,
+  BlockFieldConfig,
+} from '../config'
 import { type LogicalPath, type Slug, type PhysicalPath } from '../paths'
 
 export interface ReferenceInfo {
@@ -120,6 +125,19 @@ export class DeletionChecker {
     const found: string[] = []
 
     for (const field of schema) {
+      // Inline groups are transparent — recurse into their children at the same data level
+      if (field.type === 'group') {
+        found.push(
+          ...this.findIdInData(
+            data,
+            targetId,
+            (field as InlineGroupFieldConfig).fields,
+            pathPrefix,
+          ),
+        )
+        continue
+      }
+
       const fieldPath = pathPrefix ? `${pathPrefix}.${field.name}` : field.name
       const value = data[field.name]
 

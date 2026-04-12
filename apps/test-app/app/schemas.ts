@@ -10,7 +10,6 @@ export const postSchema = defineEntrySchema([
 ] as const)
 
 export const seoGroup = defineInlineFieldGroup({
-  type: 'group',
   name: 'seo',
   label: 'SEO',
   description: 'Search engine optimisation metadata',

@@ -13,6 +13,7 @@ import type {
   EntrySchema,
   FlatSchemaItem,
   EntryTypeConfig,
+  InlineGroupFieldConfig,
   ObjectFieldConfig,
 } from './config'
 import {
@@ -803,6 +804,16 @@ export class ContentStore {
     const idIndex = await this.idIndex()
 
     for (const field of fields) {
+      // Inline groups are transparent — recurse into their children at the same data level
+      if (field.type === 'group') {
+        const groupResolved = await this.resolveReferencesInData(
+          resolved,
+          (field as InlineGroupFieldConfig).fields,
+        )
+        Object.assign(resolved, groupResolved)
+        continue
+      }
+
       const value = data[field.name]
 
       if (field.type === 'reference') {

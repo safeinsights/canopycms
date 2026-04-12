@@ -6,6 +6,7 @@
  */
 
 import type { FieldConfig, ObjectFieldConfig, BlockFieldConfig, SelectFieldConfig } from '../config'
+import { flattenGroupFields } from '../utils/flatten-group-fields'
 import { stripMdxImports } from './strip-mdx'
 import { applyComponentTransforms } from './transform-components'
 import type { AIEntry, AIContentConfig } from './types'
@@ -112,7 +113,7 @@ function renderJsonEntry(
 ): string[] {
   const parts: string[] = []
 
-  for (const field of entry.fields) {
+  for (const field of flattenGroupFields(entry.fields)) {
     if (skipFields.has(field.name)) continue
     const value = entry.data[field.name]
     if (value === undefined || value === null) continue
@@ -147,11 +148,6 @@ function renderField(
   const transformed = applyFieldTransform(entry, field, value, config)
   if (transformed !== undefined) {
     return transformed
-  }
-
-  // Inline groups have no list/label; they are transparent layout hints — skip
-  if (field.type === 'group') {
-    return ''
   }
 
   const label = field.label || field.name

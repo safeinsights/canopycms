@@ -1,4 +1,5 @@
 import type { FieldConfig } from '../config'
+import { flattenGroupFields } from './flatten-group-fields'
 
 const BODY_FIELD_TYPES = new Set(['markdown', 'mdx'])
 
@@ -9,7 +10,7 @@ const BODY_FIELD_TYPES = new Set(['markdown', 'mdx'])
  */
 export function countBodyFields(fields: readonly FieldConfig[]): number {
   let count = 0
-  for (const field of fields) {
+  for (const field of flattenGroupFields(fields)) {
     if ('isBody' in field && field.isBody) count++
   }
   return count
@@ -20,7 +21,7 @@ export function countBodyFields(fields: readonly FieldConfig[]): number {
  * Used at read time to map the markdown file's content to the correct data field.
  */
 export function findBodyFieldName(fields: readonly FieldConfig[]): string {
-  for (const field of fields) {
+  for (const field of flattenGroupFields(fields)) {
     if ('isBody' in field && field.isBody) return field.name
   }
   return 'body'
@@ -32,7 +33,7 @@ export function findBodyFieldName(fields: readonly FieldConfig[]): string {
  */
 export function findInvalidBodyFields(fields: readonly FieldConfig[]): string[] {
   const invalid: string[] = []
-  for (const field of fields) {
+  for (const field of flattenGroupFields(fields)) {
     if ('isBody' in field && field.isBody && !BODY_FIELD_TYPES.has(field.type)) {
       invalid.push(field.name)
     }
