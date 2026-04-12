@@ -58,7 +58,7 @@ function renderMarkdownEntry(
 
   // Render frontmatter fields (excluding body-like fields and already-rendered fields)
   const bodyFieldTypes = new Set(['rich-text', 'markdown', 'mdx'])
-  const metadataFields = entry.fields.filter(
+  const metadataFields = flattenGroupFields(entry.fields).filter(
     (f) => !bodyFieldTypes.has(f.type) && !skipFields.has(f.name),
   )
 
