@@ -168,10 +168,14 @@ export class CmsWorker {
     }
     this.activeTimeouts.clear()
     // Wait for all in-flight operations to complete (up to taskTimeoutMs)
+    let drainTimer: NodeJS.Timeout | undefined
     await Promise.race([
       Promise.allSettled([...this.activeOperations]),
-      new Promise<void>((r) => setTimeout(r, this.taskTimeoutMs)),
+      new Promise<void>((r) => {
+        drainTimer = setTimeout(r, this.taskTimeoutMs)
+      }),
     ])
+    clearTimeout(drainTimer)
     await this.releaseLock()
     console.log('CMS Worker stopped')
   }

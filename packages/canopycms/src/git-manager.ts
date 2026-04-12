@@ -35,13 +35,6 @@ export class GitConflictError extends Error {
   }
 }
 
-export class GitNonFastForwardError extends Error {
-  constructor() {
-    super('Non-fast-forward update rejected')
-    this.name = 'GitNonFastForwardError'
-  }
-}
-
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
   remoteUrl?: string
@@ -535,11 +528,12 @@ export class GitManager {
     await this.git.fetch(this.remote, this.baseBranch)
     try {
       await this.git.merge([`${this.remote}/${this.baseBranch}`])
-    } catch {
+    } catch (err) {
       // Capture conflicted files before aborting — abort clears them from status
       const status = await this.git.status()
       await this.git.merge(['--abort']).catch(() => {})
-      throw new GitConflictError(status.conflicted)
+      if (status.conflicted.length > 0) throw new GitConflictError(status.conflicted)
+      throw err
     }
   }
 
@@ -549,11 +543,12 @@ export class GitManager {
     await this.git.fetch(this.remote, currentBranch)
     try {
       await this.git.merge([`${this.remote}/${currentBranch}`])
-    } catch {
+    } catch (err) {
       // Capture conflicted files before aborting — abort clears them from status
       const status = await this.git.status()
       await this.git.merge(['--abort']).catch(() => {})
-      throw new GitConflictError(status.conflicted)
+      if (status.conflicted.length > 0) throw new GitConflictError(status.conflicted)
+      throw err
     }
   }
 
@@ -561,11 +556,12 @@ export class GitManager {
     await this.git.fetch(this.remote, this.baseBranch)
     try {
       await this.git.rebase([`${this.remote}/${this.baseBranch}`])
-    } catch {
+    } catch (err) {
       // Capture conflicted files before aborting — abort clears them from status
       const status = await this.git.status()
       await this.git.rebase(['--abort']).catch(() => {})
-      throw new GitConflictError(status.conflicted)
+      if (status.conflicted.length > 0) throw new GitConflictError(status.conflicted)
+      throw err
     }
   }
 

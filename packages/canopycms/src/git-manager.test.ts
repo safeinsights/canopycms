@@ -905,4 +905,72 @@ describe('GitManager conflict handling', () => {
       expect(await hasGitStateFile(localPath, 'REBASE_MERGE', 'rebase-merge')).toBe(false)
     })
   })
+
+  // -------------------------------------------------------------------------
+  // Non-conflict failure: unrelated histories
+  // Two repos with no common ancestor. git merge/rebase rejects with
+  // "refusing to merge unrelated histories" — status.conflicted is empty,
+  // so the original error must be re-thrown, not GitConflictError.
+  // -------------------------------------------------------------------------
+
+  /**
+   * Local repo has no common ancestor with the remote.
+   * After setup, `local/main` and `remote/main` share zero commits.
+   */
+  async function setupUnrelatedHistories(
+    dir: string,
+    branch = 'main',
+  ): Promise<{ localPath: string; manager: GitManager }> {
+    const remotePath = path.join(dir, 'remote.git')
+    const localPath = path.join(dir, 'local')
+
+    // Independent bare remote with its own commit history
+    await fs.mkdir(remotePath, { recursive: true })
+    const bareGit = simpleGit({ baseDir: remotePath })
+    await bareGit.init(true)
+    const seedPath = path.join(dir, 'seed')
+    await fs.mkdir(seedPath)
+    const seedGit = await initTestRepo(seedPath)
+    await seedGit.raw(['branch', '-M', branch])
+    await fs.writeFile(path.join(seedPath, 'remote.txt'), 'remote', 'utf8')
+    await seedGit.add(['.'])
+    await seedGit.commit('remote initial')
+    await seedGit.addRemote('origin', remotePath)
+    await seedGit.push('origin', branch)
+
+    // Completely independent local repo — no clone, no shared commits
+    await fs.mkdir(localPath)
+    const localGit = await initTestRepo(localPath)
+    await localGit.raw(['branch', '-M', branch])
+    await fs.writeFile(path.join(localPath, 'local.txt'), 'local', 'utf8')
+    await localGit.add(['.'])
+    await localGit.commit('local initial')
+    await localGit.addRemote('origin', remotePath)
+
+    const manager = new GitManager({ repoPath: localPath, baseBranch: branch })
+    return { localPath, manager }
+  }
+
+  describe('non-conflict git failures re-throw the original error', () => {
+    it('pullBase re-throws original error when histories are unrelated (not GitConflictError)', async () => {
+      const { manager } = await setupUnrelatedHistories(tmpDir)
+
+      const err = await manager.pullBase().catch((e) => e)
+      expect(err).not.toBeInstanceOf(GitConflictError)
+      expect(err).toBeInstanceOf(Error)
+    })
+
+    it('pullCurrentBranch re-throws original error when histories are unrelated', async () => {
+      const { manager } = await setupUnrelatedHistories(tmpDir)
+
+      const err = await manager.pullCurrentBranch().catch((e) => e)
+      expect(err).not.toBeInstanceOf(GitConflictError)
+      expect(err).toBeInstanceOf(Error)
+    })
+
+    // Note: rebaseOntoBase uses the same re-throw pattern. Unlike `git merge`,
+    // `git rebase` accepts unrelated histories (it just applies local commits on
+    // top), so there is no simple real-git trigger for a non-conflict rebase
+    // failure that doesn't also involve conflicts.
+  })
 }, 30_000)
