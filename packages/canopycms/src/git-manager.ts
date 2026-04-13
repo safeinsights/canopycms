@@ -529,10 +529,17 @@ export class GitManager {
     try {
       await this.git.merge([`${this.remote}/${this.baseBranch}`])
     } catch (err) {
-      // Capture conflicted files before aborting — abort clears them from status
-      const status = await this.git.status()
-      await this.git.merge(['--abort']).catch(() => {})
-      if (status.conflicted.length > 0) throw new GitConflictError(status.conflicted)
+      // Capture conflicted files before aborting — abort clears them from status.
+      // If status() itself fails (e.g. corrupted .git), still abort and re-throw
+      // the original error so the workspace is left as clean as possible.
+      try {
+        const status = await this.git.status()
+        await this.git.merge(['--abort']).catch(() => {})
+        if (status.conflicted.length > 0) throw new GitConflictError(status.conflicted)
+      } catch (recoveryErr) {
+        if (recoveryErr instanceof GitConflictError) throw recoveryErr
+        await this.git.merge(['--abort']).catch(() => {})
+      }
       throw err
     }
   }
@@ -544,10 +551,14 @@ export class GitManager {
     try {
       await this.git.merge([`${this.remote}/${currentBranch}`])
     } catch (err) {
-      // Capture conflicted files before aborting — abort clears them from status
-      const status = await this.git.status()
-      await this.git.merge(['--abort']).catch(() => {})
-      if (status.conflicted.length > 0) throw new GitConflictError(status.conflicted)
+      try {
+        const status = await this.git.status()
+        await this.git.merge(['--abort']).catch(() => {})
+        if (status.conflicted.length > 0) throw new GitConflictError(status.conflicted)
+      } catch (recoveryErr) {
+        if (recoveryErr instanceof GitConflictError) throw recoveryErr
+        await this.git.merge(['--abort']).catch(() => {})
+      }
       throw err
     }
   }
@@ -557,10 +568,14 @@ export class GitManager {
     try {
       await this.git.rebase([`${this.remote}/${this.baseBranch}`])
     } catch (err) {
-      // Capture conflicted files before aborting — abort clears them from status
-      const status = await this.git.status()
-      await this.git.rebase(['--abort']).catch(() => {})
-      if (status.conflicted.length > 0) throw new GitConflictError(status.conflicted)
+      try {
+        const status = await this.git.status()
+        await this.git.rebase(['--abort']).catch(() => {})
+        if (status.conflicted.length > 0) throw new GitConflictError(status.conflicted)
+      } catch (recoveryErr) {
+        if (recoveryErr instanceof GitConflictError) throw recoveryErr
+        await this.git.rebase(['--abort']).catch(() => {})
+      }
       throw err
     }
   }

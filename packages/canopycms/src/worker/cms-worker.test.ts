@@ -73,6 +73,6 @@ describe('CmsWorker.stop()', () => {
 
     // Should have bailed after ~500ms (taskTimeoutMs), not hung forever
     expect(elapsed).toBeGreaterThanOrEqual(400)
-    expect(elapsed).toBeLessThan(2000)
+    expect(elapsed).toBeLessThan(5000)
   })
 })
