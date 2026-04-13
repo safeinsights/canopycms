@@ -98,7 +98,7 @@ export class CmsWorker {
   private baseBranch: string
   private activeTimeouts = new Set<NodeJS.Timeout>()
   private running = false
-  private currentOperation: Promise<void> | null = null
+  private activeOperations = new Set<Promise<void>>()
   private maxTasksPerCycle: number
   private taskTimeoutMs: number
   private maxRetries: number
@@ -167,13 +167,15 @@ export class CmsWorker {
       clearTimeout(t)
     }
     this.activeTimeouts.clear()
-    // Wait for any in-flight operation to complete (up to taskTimeoutMs)
-    if (this.currentOperation) {
-      await Promise.race([
-        this.currentOperation,
-        new Promise<void>((r) => setTimeout(r, this.taskTimeoutMs)),
-      ])
-    }
+    // Wait for all in-flight operations to complete (up to taskTimeoutMs)
+    let drainTimer: NodeJS.Timeout | undefined
+    await Promise.race([
+      Promise.allSettled([...this.activeOperations]),
+      new Promise<void>((r) => {
+        drainTimer = setTimeout(r, this.taskTimeoutMs)
+      }),
+    ])
+    clearTimeout(drainTimer)
     await this.releaseLock()
     console.log('CMS Worker stopped')
   }
@@ -265,9 +267,9 @@ export class CmsWorker {
         const operation = fn().catch((err) => {
           console.error('Worker loop error:', err instanceof Error ? err.message : err)
         })
-        this.currentOperation = operation
+        this.activeOperations.add(operation)
+        operation.finally(() => this.activeOperations.delete(operation))
         await operation
-        this.currentOperation = null
         run()
       }, interval)
       this.activeTimeouts.add(timeout)

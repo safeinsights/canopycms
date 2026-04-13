@@ -19,3 +19,4 @@ playwright-report/
 .claude/settings.local.json
 .claude/memory/
 .claude/projects/
+.claude/worktrees/

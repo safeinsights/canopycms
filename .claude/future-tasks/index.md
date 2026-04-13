@@ -11,11 +11,9 @@ Priority levels:
 
 ## P0 — Must fix before multi-editor prod launch
 
-| File                                                               | Summary                                                                                                                                                             |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [content-store-locking.md](content-store-locking.md)               | Concurrent writes to the same entry are not serialized; last-writer-wins data loss on EFS with multiple editors                                                     |
-| [git-conflict-handling.md](git-conflict-handling.md)               | `checkoutBranch` can silently reset local branches; merge/rebase conflicts leave workspaces permanently broken; worker `stop()` doesn't await all in-flight git ops |
-| [index-staleness-multiprocess.md](index-staleness-multiprocess.md) | ContentId index never invalidated after git ops (pullBase, rebase, checkout); index also diverges across processes; stale index → wrong-file saves                  |
+| File                                                               | Summary                                                                                                                                      |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| [index-staleness-multiprocess.md](index-staleness-multiprocess.md) | ContentId index never invalidated after git ops (pullBase, rebase, checkout); index also diverges across processes; stale index → wrong-file saves |
 
 ---
 

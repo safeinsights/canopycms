@@ -28,6 +28,13 @@ export interface GitManagerOptions {
 
 export type GitStatus = Pick<StatusResult, 'files' | 'ahead' | 'behind' | 'current' | 'tracking'>
 
+export class GitConflictError extends Error {
+  constructor(public readonly conflictedFiles: string[]) {
+    super(`Git conflict in ${conflictedFiles.length} file(s): ${conflictedFiles.join(', ')}`)
+    this.name = 'GitConflictError'
+  }
+}
+
 export interface ResolveRemoteUrlOptions {
   mode: OperatingMode
   remoteUrl?: string
@@ -519,19 +526,58 @@ export class GitManager {
 
   async pullBase(): Promise<void> {
     await this.git.fetch(this.remote, this.baseBranch)
-    await this.git.merge([`${this.remote}/${this.baseBranch}`])
+    try {
+      await this.git.merge([`${this.remote}/${this.baseBranch}`])
+    } catch (err) {
+      // Capture conflicted files before aborting — abort clears them from status.
+      // If status() itself fails (e.g. corrupted .git), still abort and re-throw
+      // the original error so the workspace is left as clean as possible.
+      try {
+        const status = await this.git.status()
+        await this.git.merge(['--abort']).catch(() => {})
+        if (status.conflicted.length > 0) throw new GitConflictError(status.conflicted)
+      } catch (recoveryErr) {
+        if (recoveryErr instanceof GitConflictError) throw recoveryErr
+        await this.git.merge(['--abort']).catch(() => {})
+      }
+      throw err
+    }
   }
 
   async pullCurrentBranch(): Promise<void> {
     const branches = await this.git.branch()
     const currentBranch = branches.current
     await this.git.fetch(this.remote, currentBranch)
-    await this.git.merge([`${this.remote}/${currentBranch}`])
+    try {
+      await this.git.merge([`${this.remote}/${currentBranch}`])
+    } catch (err) {
+      try {
+        const status = await this.git.status()
+        await this.git.merge(['--abort']).catch(() => {})
+        if (status.conflicted.length > 0) throw new GitConflictError(status.conflicted)
+      } catch (recoveryErr) {
+        if (recoveryErr instanceof GitConflictError) throw recoveryErr
+        await this.git.merge(['--abort']).catch(() => {})
+      }
+      throw err
+    }
   }
 
   async rebaseOntoBase(): Promise<void> {
     await this.git.fetch(this.remote, this.baseBranch)
-    await this.git.rebase([`${this.remote}/${this.baseBranch}`])
+    try {
+      await this.git.rebase([`${this.remote}/${this.baseBranch}`])
+    } catch (err) {
+      try {
+        const status = await this.git.status()
+        await this.git.rebase(['--abort']).catch(() => {})
+        if (status.conflicted.length > 0) throw new GitConflictError(status.conflicted)
+      } catch (recoveryErr) {
+        if (recoveryErr instanceof GitConflictError) throw recoveryErr
+        await this.git.rebase(['--abort']).catch(() => {})
+      }
+      throw err
+    }
   }
 
   async add(files: string | string[]): Promise<void> {

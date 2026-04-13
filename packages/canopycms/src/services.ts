@@ -9,7 +9,7 @@ import {
   createCheckContentAccess,
   loadPathPermissions,
 } from './authorization'
-import { GitManager } from './git-manager'
+import { GitManager, GitConflictError } from './git-manager'
 import { BranchRegistry } from './branch-registry'
 import { SettingsWorkspaceManager } from './settings-workspace'
 import { getDefaultBranchBase } from './paths'
@@ -324,7 +324,8 @@ async function _createCanopyServicesInternal(
       // Note: BranchWorkspaceManager already ensured we're on the settings branch
       try {
         await git.pullCurrentBranch()
-      } catch {
+      } catch (err) {
+        if (err instanceof GitConflictError) throw err
         // First push, no remote branch yet, or no changes to pull
         console.info('No remote settings branch changes to pull (this is normal for first commit)')
       }
