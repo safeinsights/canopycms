@@ -449,6 +449,7 @@ export class ContentStore {
     slug: Slug | '' = '',
     input: WriteInput,
     entryTypeName?: string,
+    existingId?: ContentId,
   ): Promise<ContentDocument> {
     const idIndex = await this.idIndex()
     const schemaItem = this.assertSchemaItem(collectionPath)
@@ -487,6 +488,7 @@ export class ContentStore {
     // Resolve paths outside the lock so validation errors surface immediately
     const { absolutePath, relativePath, id } = await this.buildPaths(schemaItem, slug, {
       entryTypeName,
+      existingId,
     })
 
     return withLock(absolutePath, async () => {
@@ -526,6 +528,11 @@ export class ContentStore {
         const existing = idIndex.findById(id)
         if (existing) {
           if (existing.relativePath !== relativePath) {
+            // Slug changed — delete the orphaned file at the old path before updating the index
+            const oldAbsPath = path.join(this.root, existing.relativePath)
+            await fs.unlink(oldAbsPath).catch((err: unknown) => {
+              if (!isNodeError(err) || err.code !== 'ENOENT') throw err
+            })
             idIndex.updatePath(existing.id, relativePath)
           }
         } else {
