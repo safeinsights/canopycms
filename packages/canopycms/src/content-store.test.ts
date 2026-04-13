@@ -827,6 +827,103 @@ describe('ContentStore', () => {
     })
   })
 
+  describe('write with existingId (slug change)', () => {
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'json' as const, schema: [] }],
+        },
+      ],
+    } as const
+
+    it('deletes the old file when writing with a changed slug', async () => {
+      const root = await tmpDir()
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      // Write initial entry
+      const doc = await store.write(
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsSlug('old-slug'),
+        {
+          format: 'json',
+          data: { title: 'Original' },
+        },
+      )
+      const oldAbsPath = doc.absolutePath
+
+      // Get the stable content ID
+      const existingId = await store.getIdForEntry(
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsSlug('old-slug'),
+      )
+      expect(existingId).toBeTruthy()
+
+      // Write to a new slug, carrying the same content ID
+      await store.write(
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsSlug('new-slug'),
+        { format: 'json', data: { title: 'Updated' } },
+        undefined,
+        existingId!,
+      )
+
+      // Old file must be gone — not just absent from the index, gone from disk
+      await expect(fs.access(oldAbsPath)).rejects.toThrow()
+
+      // New file must exist and have updated content
+      const newDoc = await store.read(
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsSlug('new-slug'),
+      )
+      expect(newDoc.data.title).toBe('Updated')
+    })
+
+    it('does not throw when the old file was already deleted externally', async () => {
+      const root = await tmpDir()
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      const doc = await store.write(
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsSlug('old-slug'),
+        {
+          format: 'json',
+          data: { title: 'Original' },
+        },
+      )
+
+      const existingId = await store.getIdForEntry(
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsSlug('old-slug'),
+      )
+      expect(existingId).toBeTruthy()
+
+      // Delete the old file externally before the slug-change write
+      await fs.unlink(doc.absolutePath)
+
+      // Should complete without error even though the old file is already gone
+      await expect(
+        store.write(
+          unsafeAsLogicalPath('content/posts'),
+          unsafeAsSlug('new-slug'),
+          { format: 'json', data: { title: 'Updated' } },
+          undefined,
+          existingId!,
+        ),
+      ).resolves.toBeDefined()
+
+      // New file must exist
+      const newDoc = await store.read(
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsSlug('new-slug'),
+      )
+      expect(newDoc.data.title).toBe('Updated')
+    })
+  })
+
   describe('multiple entry types', () => {
     it('creates entries with specified entry type', async () => {
       const root = await tmpDir()
