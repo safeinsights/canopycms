@@ -680,19 +680,21 @@ async function setupMergeConflict(tmpDir: string): Promise<{
   const otherPath = path.join(tmpDir, 'other')
   const conflictFile = 'shared.txt'
 
-  // Bare remote
+  // Bare remote — set HEAD before any pushes so clones know the default branch
   await fs.mkdir(remotePath, { recursive: true })
   const bareGit = simpleGit({ baseDir: remotePath })
   await bareGit.init(true)
+  await bareGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
 
   // Initial commit from a temp clone
   const seedPath = path.join(tmpDir, 'seed')
   await fs.mkdir(seedPath, { recursive: true })
   const seedGit = await initTestRepo(seedPath)
+  // Set unborn branch to 'main' before first commit (portable across git versions)
+  await seedGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
   await fs.writeFile(path.join(seedPath, conflictFile), 'initial', 'utf8')
   await seedGit.add(['.'])
   await seedGit.commit('initial')
-  await seedGit.raw(['branch', '-M', 'main'])
   await seedGit.addRemote('origin', remotePath)
   await seedGit.push('origin', 'main')
 
@@ -739,19 +741,21 @@ async function setupRebaseConflict(tmpDir: string): Promise<{
   const otherPath = path.join(tmpDir, 'other')
   const conflictFile = 'shared.txt'
 
-  // Bare remote
+  // Bare remote — set HEAD before any pushes so clones know the default branch
   await fs.mkdir(remotePath, { recursive: true })
   const bareGit = simpleGit({ baseDir: remotePath })
   await bareGit.init(true)
+  await bareGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
 
   // Seed remote with initial commit
   const seedPath = path.join(tmpDir, 'seed')
   await fs.mkdir(seedPath, { recursive: true })
   const seedGit = await initTestRepo(seedPath)
+  // Set unborn branch to 'main' before first commit (portable across git versions)
+  await seedGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
   await fs.writeFile(path.join(seedPath, conflictFile), 'initial', 'utf8')
   await seedGit.add(['.'])
   await seedGit.commit('initial')
-  await seedGit.raw(['branch', '-M', 'main'])
   await seedGit.addRemote('origin', remotePath)
   await seedGit.push('origin', 'main')
 
@@ -928,23 +932,24 @@ describe('GitManager conflict handling', () => {
     await fs.mkdir(remotePath, { recursive: true })
     const bareGit = simpleGit({ baseDir: remotePath })
     await bareGit.init(true)
+    await bareGit.raw(['symbolic-ref', 'HEAD', `refs/heads/${branch}`])
     const seedPath = path.join(dir, 'seed')
     await fs.mkdir(seedPath)
     const seedGit = await initTestRepo(seedPath)
+    await seedGit.raw(['symbolic-ref', 'HEAD', `refs/heads/${branch}`])
     await fs.writeFile(path.join(seedPath, 'remote.txt'), 'remote', 'utf8')
     await seedGit.add(['.'])
     await seedGit.commit('remote initial')
-    await seedGit.raw(['branch', '-M', branch])
     await seedGit.addRemote('origin', remotePath)
     await seedGit.push('origin', branch)
 
     // Completely independent local repo — no clone, no shared commits
     await fs.mkdir(localPath)
     const localGit = await initTestRepo(localPath)
+    await localGit.raw(['symbolic-ref', 'HEAD', `refs/heads/${branch}`])
     await fs.writeFile(path.join(localPath, 'local.txt'), 'local', 'utf8')
     await localGit.add(['.'])
     await localGit.commit('local initial')
-    await localGit.raw(['branch', '-M', branch])
     await localGit.addRemote('origin', remotePath)
 
     const manager = new GitManager({ repoPath: localPath, baseBranch: branch })
