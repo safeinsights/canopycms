@@ -57,6 +57,13 @@ export interface InitializeWorkspaceOptions {
   gitBotAuthorName: string
   /** Git author email for internal commits (e.g., orphan branch init). */
   gitBotAuthorEmail: string
+  /**
+   * Pattern to add to `.git/info/exclude` so runtime metadata
+   * (e.g., `.canopy-meta/`) never enters the workspace's git history.
+   * Only applied to content branches; orphan settings branches intentionally
+   * track files under `.canopy-meta/`.
+   */
+  gitExcludePattern?: string
 }
 
 export class GitManager {
@@ -482,6 +489,12 @@ export class GitManager {
       await git.createOrphanSettingsBranch(options.branchName, {})
     } else {
       await git.checkoutBranch(options.branchName)
+      // Exclude runtime metadata from git tracking on content branches.
+      // Orphan settings branches deliberately track .canopy-meta/ payloads,
+      // so we skip this step for them.
+      if (options.gitExcludePattern) {
+        await git.ensureGitExclude(options.gitExcludePattern)
+      }
     }
 
     return git

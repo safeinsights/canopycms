@@ -657,6 +657,102 @@ describe('GitManager traversal protection', () => {
   })
 })
 
+describe('GitManager.initializeWorkspace gitExcludePattern', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-git-test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  async function makeRemote(): Promise<string> {
+    const sourceDir = path.join(tmpDir, 'source')
+    await fs.mkdir(sourceDir, { recursive: true })
+    const sourceGit = await initTestRepo(sourceDir)
+    await sourceGit.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(sourceDir, 'content.txt'), 'hello', 'utf8')
+    await sourceGit.add(['.'])
+    await sourceGit.commit('initial commit')
+    const remotePath = path.join(tmpDir, 'remote.git')
+    await simpleGit().raw(['clone', '--bare', sourceDir, remotePath])
+    return remotePath
+  }
+
+  it('writes the pattern to .git/info/exclude on a content branch', async () => {
+    const remotePath = await makeRemote()
+    const workspacePath = path.join(tmpDir, 'workspace')
+
+    await GitManager.initializeWorkspace({
+      workspacePath,
+      branchName: 'main',
+      mode: 'dev',
+      baseBranch: 'main',
+      remoteUrl: remotePath,
+      branchType: 'content',
+      gitBotAuthorName: 'Test Bot',
+      gitBotAuthorEmail: 'test@canopycms.test',
+      gitExcludePattern: '.canopy-meta/',
+    })
+
+    const exclude = await fs.readFile(path.join(workspacePath, '.git', 'info', 'exclude'), 'utf-8')
+    expect(exclude.split('\n').map((l) => l.trim())).toContain('.canopy-meta/')
+  })
+
+  it('does not modify .git/info/exclude on an orphan settings branch', async () => {
+    const remotePath = await makeRemote()
+    const workspacePath = path.join(tmpDir, 'workspace')
+
+    await GitManager.initializeWorkspace({
+      workspacePath,
+      branchName: 'canopycms-settings-test',
+      mode: 'dev',
+      baseBranch: 'main',
+      remoteUrl: remotePath,
+      branchType: 'orphan',
+      gitBotAuthorName: 'Test Bot',
+      gitBotAuthorEmail: 'test@canopycms.test',
+      gitExcludePattern: '.canopy-meta/',
+    })
+
+    let excludeContents = ''
+    try {
+      excludeContents = await fs.readFile(
+        path.join(workspacePath, '.git', 'info', 'exclude'),
+        'utf-8',
+      )
+    } catch {
+      // File may not exist at all on a fresh clone — that's fine.
+    }
+    expect(excludeContents.split('\n').map((l) => l.trim())).not.toContain('.canopy-meta/')
+  })
+
+  it('is idempotent across repeated initializeWorkspace calls', async () => {
+    const remotePath = await makeRemote()
+    const workspacePath = path.join(tmpDir, 'workspace')
+
+    const opts = {
+      workspacePath,
+      branchName: 'main',
+      mode: 'dev' as const,
+      baseBranch: 'main',
+      remoteUrl: remotePath,
+      branchType: 'content' as const,
+      gitBotAuthorName: 'Test Bot',
+      gitBotAuthorEmail: 'test@canopycms.test',
+      gitExcludePattern: '.canopy-meta/',
+    }
+    await GitManager.initializeWorkspace(opts)
+    await GitManager.initializeWorkspace(opts)
+
+    const exclude = await fs.readFile(path.join(workspacePath, '.git', 'info', 'exclude'), 'utf-8')
+    const matches = exclude.split('\n').filter((l) => l.trim() === '.canopy-meta/')
+    expect(matches).toHaveLength(1)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // Conflict handling helpers
 // ---------------------------------------------------------------------------

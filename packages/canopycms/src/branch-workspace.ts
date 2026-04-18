@@ -4,6 +4,7 @@ import { getBranchMetadataFileManager, loadBranchContext } from './branch-metada
 import { isDeployedStatic } from './build-mode'
 import type { BranchAccessControl, BranchContext, CanopyUserId } from './types'
 import type { OperatingMode } from './operating-mode'
+import { operatingStrategy } from './operating-mode'
 import { GitManager } from './git-manager'
 import { createDebugLogger } from './utils/debug'
 
@@ -69,6 +70,7 @@ export class BranchWorkspaceManager {
             branchType: 'content',
             gitBotAuthorName: this.config.gitBotAuthorName,
             gitBotAuthorEmail: this.config.gitBotAuthorEmail,
+            gitExcludePattern: operatingStrategy(options.mode).getGitExcludePattern(),
           })
         } finally {
           // Always clean up the lock when done (success or failure)
