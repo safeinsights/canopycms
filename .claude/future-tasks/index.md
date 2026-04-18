@@ -53,6 +53,15 @@ Priority levels:
 | [deletion-checker-refactor.md](deletion-checker-refactor.md)                       | Refactor `DeletionChecker` to use `traverseFields` — eliminates duplicated traversal logic that has caused bugs twice      |
 | [adopt-changesets.md](adopt-changesets.md)                                         | Replace auto-patch publishing with changesets for deliberate semantic versioning                                           |
 | [audit-logging.md](audit-logging.md)                                               | Audit trail for permission/group changes with query API and notifications                                                  |
+| [init-respects-adopter-conventions.md](init-respects-adopter-conventions.md)       | `canopycms init` should detect adopter's Prettier config + package manager and match them in generated files + next-steps |
+
+---
+
+## P1 — High-impact correctness or quality (adopter-side)
+
+| File                                                                                   | Summary                                                                                                                                              |
+| -------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [next-16.2-postcss-fork-bomb.md](next-16.2-postcss-fork-bomb.md)                       | Next 16.2.x + Turbopack + PostCSS = fork bomb on adopter `pnpm dev`. Workaround: pin `next` to `~16.1.6`. Document in README; consider pinning in examples. |
 
 ---
 
