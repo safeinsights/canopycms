@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     name: Validate, Typecheck & Test
@@ -12,6 +15,22 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check for bidirectional unicode characters
+        run: |
+          if git grep -P -I -l '[\x{202A}-\x{202E}\x{2066}-\x{2069}]'; then
+              echo '::error::Bidirectional unicode characters detected (CVE-2021-42574 Trojan Source)'
+              exit 1
+          fi
+
+      - name: Run Trivy license scanner
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'license'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
 
       - uses: pnpm/action-setup@v4
 
