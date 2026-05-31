@@ -159,7 +159,7 @@ export interface PushContentToWorkspaceOptions {
 
 /**
  * Copy working-tree content into a branch workspace and commit it. Prompt-free — the interactive CLI
- * and the dev watcher both call this for the actual copy + commit + tag step.
+ * (`canopycms sync push`) calls this for the actual copy + commit + tag step.
  *
  * Returns the number of changed files committed (0 when content was already up to date).
  */
