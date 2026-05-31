@@ -24,7 +24,8 @@ export interface GenerateContentStaticParamsOptions extends CollectStaticPathsOp
   /**
    * For a catch-all route nested under a URL prefix (e.g. `app/docs/[[...slug]]`), set this to the
    * route's base (e.g. `'/docs'`). Entries are scoped to that prefix and `segments` are made relative
-   * to it, so the params match the route. Without it, segments are the full URL path.
+   * to it, so the params match the route. Without it, segments are the full URL path. Applies to
+   * catch-all shapes (it rewrites `segments`); it has no effect with `shape: 'single'`.
    */
   basePath?: string
 }
@@ -50,7 +51,8 @@ export async function collectStaticParams(
 
   if (basePath) {
     // Make segments relative to a nested route's base prefix (e.g. '/docs' for app/docs/[[...slug]]).
-    const prefix = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath
+    // urlPath is always lowercased (see content-listing), so lowercase the prefix to match.
+    const prefix = (basePath.endsWith('/') ? basePath.slice(0, -1) : basePath).toLowerCase()
     entries = entries
       .filter((entry) => entry.urlPath === prefix || entry.urlPath.startsWith(`${prefix}/`))
       .map((entry) => {

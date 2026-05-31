@@ -1,7 +1,7 @@
 /**
  * Prompt-free core of the content sync between the working tree and CMS branch workspaces in
  * `.canopy-dev/content-branches/`. The interactive CLI (cli/sync.ts) wraps these with prompts; the
- * dev content watcher (dev-content-watcher.ts) reuses them for divergence detection and auto-sync.
+ * dev content watcher (dev-content-watcher.ts) reuses the diff helpers for divergence detection.
  */
 
 import fs from 'node:fs/promises'

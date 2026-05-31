@@ -40,7 +40,7 @@ export const read = async <T = unknown>(input: {
 }
 
 // Enumeration-only static params — no admin build context exposed to page modules.
-export const generateContentStaticParams = async (options?: GenerateContentStaticParamsOptions) => {
+export const contentStaticParams = async (options?: GenerateContentStaticParamsOptions) => {
   const context = await canopyContextPromise
   return context.generateContentStaticParams(options)
 }

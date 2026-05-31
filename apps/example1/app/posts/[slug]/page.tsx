@@ -1,7 +1,8 @@
 import React from 'react'
+import { notFound } from 'next/navigation'
 import PostView from '../../components/PostView'
 import type { PostContent } from '../../schemas'
-import { generateContentStaticParams, read } from '../../lib/canopy'
+import { contentStaticParams, readByUrlPath } from '../../lib/canopy'
 
 interface Params {
   slug: string
@@ -11,16 +12,16 @@ export const dynamicParams = true
 
 // Single-segment [slug] route scoped to the posts collection.
 export const generateStaticParams = () =>
-  generateContentStaticParams({ rootPath: 'content/posts', shape: 'single' })
+  contentStaticParams({ rootPath: 'content/posts', shape: 'single' })
 
 const PostPage = async ({ params }: { params: Params }) => {
   // Phase-selecting read: build context at build, branch-aware runtime context at request time.
-  const { data } = await read<PostContent>({
-    entryPath: 'content/posts',
-    slug: params.slug,
-  })
+  // Null-safe — returns null (→ 404) for unknown/non-entry slugs rather than throwing.
+  const result = await readByUrlPath<PostContent>(`/posts/${params.slug}`)
 
-  return <PostView data={data} />
+  if (!result) return notFound()
+
+  return <PostView data={result.data} />
 }
 
 export default PostPage

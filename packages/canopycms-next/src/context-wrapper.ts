@@ -225,7 +225,7 @@ export async function createNextCanopyContext(
     entrySchemaRegistry: options.entrySchemaRegistry,
   })
 
-  // In dev, surface (or auto-fix) divergence between working-tree content and the served branch clone.
+  // In dev, surface divergence between working-tree content and the served branch clone (warn-only).
   // All logic lives in the core watcher; this is just the once-at-startup trigger (thin Next wiring).
   if (options.config.mode === 'dev' && !isBuildMode()) {
     startDevContentWatcher(services, { mode: options.config.dev?.contentSync })

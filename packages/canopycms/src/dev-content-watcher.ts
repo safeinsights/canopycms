@@ -132,6 +132,10 @@ export function startDevContentWatcher(
   watcher.on('add', () => void check())
   watcher.on('change', () => void check())
   watcher.on('unlink', () => void check())
+  // Handle watcher errors (e.g. inotify ENOSPC/EMFILE) so an unhandled 'error' event can't crash dev.
+  watcher.on('error', (err) =>
+    warn(`CanopyCMS: dev content-sync watcher error: ${getErrorMessage(err)}`),
+  )
 
   // Initial divergence check at startup.
   void check()

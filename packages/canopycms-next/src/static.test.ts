@@ -56,4 +56,12 @@ describe('collectStaticParams', () => {
     // /docs index → empty segments; /docs/guides/intro → ['guides','intro']; /posts/a excluded
     expect(params).toEqual([{ slug: [] }, { slug: ['guides', 'intro'] }])
   })
+
+  it('basePath matches case-insensitively (urlPath is always lowercased)', async () => {
+    const ctx = fakeBuildCtx([{ urlPath: '/docs/guides', slug: 'guides', entryType: 'doc' }])
+
+    const params = await collectStaticParams(ctx, { basePath: '/Docs' })
+
+    expect(params).toEqual([{ slug: ['guides'] }])
+  })
 })

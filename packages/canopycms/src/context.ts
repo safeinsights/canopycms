@@ -40,8 +40,9 @@ export interface CanopyContextOptions {
  * Obtained via getCanopyForBuild(); reads the filesystem directly as a synthetic admin
  * (STATIC_DEPLOY_USER) and bypasses all branch/path ACLs. Safe for static generation
  * (generateStaticParams, sitemap, build-time page rendering); it must NOT be used to serve
- * content at request time on a `server` deployment — adapters guard against that. For
- * request-scoped, ACL-enforced access use getCanopy() (CanopyContext) instead.
+ * content at request time on a production `server` deployment. (Framework adapters throw on the
+ * read helpers there; `services` remains a raw, unguarded escape hatch.) For request-scoped,
+ * ACL-enforced access use getCanopy() (CanopyContext) instead.
  *
  * Includes read/readByUrlPath so build-time code can resolve a single entry by path/URL without
  * scanning the whole collection.

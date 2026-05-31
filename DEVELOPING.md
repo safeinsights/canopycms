@@ -500,7 +500,7 @@ Prefer the framework helper over hand-rolled `generateStaticParams`. `generateCo
 // app/lib/canopy.ts
 const canopyContextPromise = createNextCanopyContext({ config, authPlugin, entrySchemaRegistry })
 
-export const generateContentStaticParams = async (options?: GenerateContentStaticParamsOptions) => {
+export const contentStaticParams = async (options?: GenerateContentStaticParamsOptions) => {
   const context = await canopyContextPromise
   return context.generateContentStaticParams(options)
 }
@@ -512,17 +512,17 @@ Pages import the bound helper from `lib/canopy` — never `getCanopyForBuild`.
 
 ```typescript
 // app/posts/[slug]/page.tsx
-import { generateContentStaticParams } from '../../lib/canopy'
+import { contentStaticParams } from '../../lib/canopy'
 
 export const generateStaticParams = () =>
-  generateContentStaticParams({ rootPath: 'content/posts', shape: 'single' })
+  contentStaticParams({ rootPath: 'content/posts', shape: 'single' })
 ```
 
 **Catch-all `[...slug]` / `[[...slug]]` route** — the default `shape: 'catch-all'` emits the URL `segments` array across all content:
 
 ```typescript
 // app/[...slug]/page.tsx
-export const generateStaticParams = () => generateContentStaticParams()
+export const generateStaticParams = () => contentStaticParams()
 ```
 
 **Options** (`GenerateContentStaticParamsOptions`):
@@ -540,7 +540,7 @@ export const generateStaticParams = () => generateContentStaticParams()
 ```typescript
 // app/docs/[[...slug]]/page.tsx
 export const generateStaticParams = () =>
-  generateContentStaticParams({ rootPath: 'content/docs', basePath: '/docs' })
+  contentStaticParams({ rootPath: 'content/docs', basePath: '/docs' })
 ```
 
 **Gotcha:** a root index (`/`) yields empty `segments` — keep it only for an optional catch-all `[[...slug]]`, otherwise exclude it with `filter`.
@@ -559,7 +559,7 @@ There are three ways to read a single entry, and using the wrong one at build ti
 | `getCanopy().read/readByUrlPath`               | Request only                | Branch-aware, enforces ACLs                      | Server-component rendering at request time                                         |
 | `getCanopyForBuild().read/readByUrlPath`       | Build only                  | Synthetic admin, no ACLs, working tree           | Advanced escape hatch: `generateMetadata`, build-time render that needs raw access |
 
-**Never call the runtime `getCanopy().readByUrlPath()` at build time** — there is no request context, so it returns `null` and your statically generated pages come up blank. `getCanopyForBuild()` is an advanced escape hatch (synthetic admin, bypasses all ACLs); the recommended page surface is the phase-selecting `read`/`readByUrlPath` plus the bound `generateContentStaticParams`, which never hand the admin context to your page modules. On a **production `server` deployment** (`mode: 'prod' && deployedAs: 'server' && !isBuildMode()`), `getCanopyForBuild()` methods _throw_ if invoked at request time, so they can't accidentally leak protected content into a request path. The guard only fires in prod because dev legitimately uses the build context for `generateStaticParams`/`generateMetadata` (same not-build signature as the request-time footgun, with no reliable way to tell them apart), whereas in prod that ambiguity is gone.
+**Never call the runtime `getCanopy().readByUrlPath()` at build time** — there is no request context, so it returns `null` and your statically generated pages come up blank. `getCanopyForBuild()` is an advanced escape hatch (synthetic admin, bypasses all ACLs); the recommended page surface is the phase-selecting `read`/`readByUrlPath` plus the bound `contentStaticParams`, which never hand the admin context to your page modules. On a **production `server` deployment** (`mode: 'prod' && deployedAs: 'server' && !isBuildMode()`), `getCanopyForBuild()` methods _throw_ if invoked at request time, so they can't accidentally leak protected content into a request path. The guard only fires in prod because dev legitimately uses the build context for `generateStaticParams`/`generateMetadata` (same not-build signature as the request-time footgun, with no reliable way to tell them apart), whereas in prod that ambiguity is gone.
 
 **Recommended: the phase-selecting `read`/`readByUrlPath` from `createNextCanopyContext()`.** They are correct in both phases by construction — filesystem-direct working tree at build, branch-aware ACL-enforced runtime at request — so page code never has to hand-pick the admin build context:
 
@@ -569,7 +569,7 @@ const ctx = await createNextCanopyContext({ config, authPlugin, entrySchemaRegis
 export const readByUrlPath = ctx.readByUrlPath // auto-selects build vs runtime
 ```
 
-`apps/example1` follows this: `app/lib/canopy.ts` exports the phase-selecting `read`/`readByUrlPath` and the bound `generateContentStaticParams`, and the pages call those — `app/posts/[slug]/page.tsx` (single-segment, `read`) and `app/docs/[[...slug]]/page.tsx` (nested catch-all, `readByUrlPath`). Neither page imports `getCanopyForBuild`.
+`apps/example1` follows this: `app/lib/canopy.ts` exports the phase-selecting `read`/`readByUrlPath` and the bound `contentStaticParams`, and the pages call those — `app/posts/[slug]/page.tsx` (single-segment) and `app/docs/[[...slug]]/page.tsx` (nested catch-all with `basePath`), both resolving via `readByUrlPath` + `notFound()`. Neither page imports `getCanopyForBuild`.
 
 ### Branch Config: defaultBaseBranch vs defaultActiveBranch
 

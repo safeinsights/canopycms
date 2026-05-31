@@ -2,6 +2,7 @@ import { promises as fs } from 'fs'
 import { join } from 'pathe'
 import { z } from 'zod'
 import chokidar from 'chokidar'
+import { getErrorMessage } from '../utils/error'
 
 import type {
   ContentFormat,
@@ -366,6 +367,10 @@ export function watchCollectionMetaFiles(contentRoot: string, onChange: () => vo
   watcher.on('add', onChange)
   watcher.on('change', onChange)
   watcher.on('unlink', onChange)
+  // Handle watcher errors (e.g. inotify ENOSPC/EMFILE) so an unhandled 'error' event can't crash dev.
+  watcher.on('error', (err) =>
+    console.warn(`CanopyCMS: .collection.json watcher error: ${getErrorMessage(err)}`),
+  )
 
   // Return cleanup function
   return () => watcher.close()
