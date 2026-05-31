@@ -23,6 +23,12 @@ export const deployedAsSchema = z.enum(['static', 'server']).default('server')
 export const contentRootSchema = relativePathSchema.default('content')
 export const sourceRootSchema = z.string().min(1).optional()
 export const deploymentNameSchema = z.string().default('prod')
+export const devContentSyncSchema = z.enum(['off', 'warn']).default('warn')
+
+// Dev-mode-only behavior. Ignored when mode !== 'dev'.
+export const devConfigSchema = z.object({
+  contentSync: devContentSyncSchema.optional(),
+})
 
 // Editor configuration schema
 export const editorConfigSchema = z.object({
@@ -60,6 +66,7 @@ export const CanopyConfigSchema = z.object({
   editor: editorConfigSchema.optional(),
   authPlugin: z.custom<AuthPlugin>().optional(),
   entryLinkUrl: z.custom<EntryLinkUrlResolver>().optional(),
+  dev: devConfigSchema.optional(),
 })
 
 /**

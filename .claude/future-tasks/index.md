@@ -54,6 +54,8 @@ Priority levels:
 | [adopt-changesets.md](adopt-changesets.md)                                         | Replace auto-patch publishing with changesets for deliberate semantic versioning                                           |
 | [audit-logging.md](audit-logging.md)                                               | Audit trail for permission/group changes with query API and notifications                                                  |
 | [init-respects-adopter-conventions.md](init-respects-adopter-conventions.md)       | `canopycms init` should detect adopter's Prettier config + package manager and match them in generated files + next-steps |
+| [static-export-sitemap.md](static-export-sitemap.md)                               | Static-export sitemap helper: enumerate published entries + singletons → `sitemap.xml` (framework-agnostic core + Next adapter) |
+| [static-export-seo-metadata.md](static-export-seo-metadata.md)                     | Static-export SEO metadata helper + recommended SEO field group → Next `Metadata`                                          |
 
 ---
 

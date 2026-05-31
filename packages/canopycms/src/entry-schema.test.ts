@@ -1,5 +1,6 @@
 import { describe, expect, it, expectTypeOf } from 'vitest'
 import {
+  defineBlockTemplate,
   defineEntrySchema,
   defineInlineFieldGroup,
   defineNestedFieldGroup,
@@ -47,6 +48,66 @@ describe('TypeFromEntrySchema', () => {
       expectTypeOf<HeroBlock['template']>().toEqualTypeOf<'hero'>()
 
       void schema
+    })
+  })
+
+  describe('defineBlockTemplate reuse across schemas', () => {
+    it('a shared template reused across two schemas still narrows on .template', () => {
+      const heroBlock = defineBlockTemplate({
+        name: 'hero',
+        label: 'Hero',
+        fields: [
+          { name: 'headline', type: 'string' },
+          { name: 'subheading', type: 'string', required: false },
+        ],
+      })
+      const ctaBlock = defineBlockTemplate({
+        name: 'cta',
+        fields: [
+          { name: 'label', type: 'string' },
+          { name: 'href', type: 'string' },
+        ],
+      })
+
+      const pageSchema = defineEntrySchema([
+        { name: 'title', type: 'string' },
+        { name: 'sections', type: 'block', templates: [heroBlock, ctaBlock] },
+      ])
+      // The same templates reused in a second schema
+      const landingSchema = defineEntrySchema([
+        { name: 'eyebrow', type: 'string' },
+        { name: 'blocks', type: 'block', templates: [heroBlock, ctaBlock] },
+      ])
+
+      type PageBlock = TypeFromEntrySchema<typeof pageSchema>['sections'][number]
+      type LandingBlock = TypeFromEntrySchema<typeof landingSchema>['blocks'][number]
+
+      // Discriminated union narrows per template in both schemas
+      expectTypeOf<Extract<PageBlock, { template: 'hero' }>['value']>().toEqualTypeOf<{
+        headline: string
+        subheading: string | undefined
+      }>()
+      expectTypeOf<Extract<PageBlock, { template: 'cta' }>['value']>().toEqualTypeOf<{
+        label: string
+        href: string
+      }>()
+      expectTypeOf<Extract<LandingBlock, { template: 'hero' }>['value']>().toEqualTypeOf<{
+        headline: string
+        subheading: string | undefined
+      }>()
+
+      // The helper is an identity — it returns the template object unchanged
+      expect(heroBlock).toEqual({
+        name: 'hero',
+        label: 'Hero',
+        fields: [
+          { name: 'headline', type: 'string' },
+          { name: 'subheading', type: 'string', required: false },
+        ],
+      })
+
+      void pageSchema
+      void landingSchema
     })
   })
 

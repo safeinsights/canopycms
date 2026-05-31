@@ -110,6 +110,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
   let gitBotAuthorEmail: GitBotAuthorEmail | undefined
   let mode: CanopyOperatingMode | undefined
   let deploymentName: string | undefined
+  let dev: CanopyConfigInput['dev'] | undefined
 
   for (const fragment of fragments) {
     if (fragment.media) {
@@ -151,6 +152,9 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     if (fragment.deploymentName) {
       deploymentName = fragment.deploymentName
     }
+    if (fragment.dev) {
+      dev = fragment.dev
+    }
   }
 
   const merged: CanopyConfigInput = {
@@ -169,6 +173,7 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     ...(gitBotAuthorEmail ? { gitBotAuthorEmail } : {}),
     ...(mode ? { mode } : {}),
     ...(deploymentName ? { deploymentName } : {}),
+    ...(dev ? { dev } : {}),
   }
 
   return validateCanopyConfig(merged)

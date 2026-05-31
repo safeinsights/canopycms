@@ -18,43 +18,14 @@ import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import * as p from '@clack/prompts'
 import { filePathExists } from '../utils/fs'
-
-/** Validate that a resolved path stays within the expected parent directory. */
-function assertWithinDir(resolved: string, parent: string, label: string): void {
-  const normalizedResolved = path.resolve(resolved)
-  const normalizedParent = path.resolve(parent)
-  if (
-    !normalizedResolved.startsWith(normalizedParent + path.sep) &&
-    normalizedResolved !== normalizedParent
-  ) {
-    throw new Error(`${label} escapes the expected directory: ${resolved}`)
-  }
-}
-
-/**
- * Safely replace a directory by renaming the old one to a backup, renaming
- * the new one into place, then deleting the backup. If interrupted between
- * steps, at least one copy always exists on disk.
- */
-async function safeReplaceDir(oldDir: string, newDir: string): Promise<void> {
-  const backupDir = `${oldDir}.sync-backup-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  const oldExists = await filePathExists(oldDir)
-  if (oldExists) {
-    await fs.rename(oldDir, backupDir)
-  }
-  try {
-    await fs.rename(newDir, oldDir)
-  } catch (err) {
-    // Restore backup if the rename failed
-    if (oldExists) {
-      await fs.rename(backupDir, oldDir).catch(() => {})
-    }
-    throw err
-  }
-  if (oldExists) {
-    await fs.rm(backupDir, { recursive: true, force: true }).catch(() => {})
-  }
-}
+import {
+  assertWithinDir,
+  copyDir,
+  listFilesRecursive,
+  pushContentToWorkspace,
+  safeReplaceDir,
+  SYNC_BASE_TAG,
+} from '../sync-core'
 
 export interface SyncOptions {
   projectDir: string
@@ -64,47 +35,6 @@ export interface SyncOptions {
   contentRoot?: string
   /** Skip confirmation prompts (for testing or scripts). */
   force?: boolean
-}
-
-const SYNC_BASE_TAG = 'canopycms-sync-base'
-
-/** Recursively list all file paths relative to `dir`. Skips .git and symlinks. */
-async function listFilesRecursive(dir: string, prefix = ''): Promise<string[]> {
-  const results: string[] = []
-  let entries: import('node:fs').Dirent[]
-  try {
-    entries = await fs.readdir(dir, { withFileTypes: true })
-  } catch {
-    return results
-  }
-  for (const entry of entries) {
-    if (entry.name === '.git') continue
-    if (entry.isSymbolicLink()) continue
-    const rel = prefix ? `${prefix}/${entry.name}` : entry.name
-    if (entry.isDirectory()) {
-      results.push(...(await listFilesRecursive(path.join(dir, entry.name), rel)))
-    } else {
-      results.push(rel)
-    }
-  }
-  return results
-}
-
-/** Recursively copy a directory, creating the destination if needed. Skips .git directories and symlinks. */
-async function copyDir(src: string, dest: string): Promise<void> {
-  await fs.mkdir(dest, { recursive: true })
-  const entries = await fs.readdir(src, { withFileTypes: true })
-  for (const entry of entries) {
-    if (entry.name === '.git') continue
-    if (entry.isSymbolicLink()) continue
-    const srcPath = path.join(src, entry.name)
-    const destPath = path.join(dest, entry.name)
-    if (entry.isDirectory()) {
-      await copyDir(srcPath, destPath)
-    } else {
-      await fs.copyFile(srcPath, destPath)
-    }
-  }
 }
 
 /** Detect the current git branch name from the working tree. */
@@ -260,36 +190,20 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
 
   p.log.step(`Pushing content to branch workspace: ${branchName}`)
 
-  // Copy working-tree content → workspace content dir
-  const wsContentDir = path.join(branchPath, contentRoot)
-  assertWithinDir(wsContentDir, branchPath, '--content-root')
-  const tmpDir = `${wsContentDir}.sync-tmp-${Date.now()}`
-  try {
-    await copyDir(srcContentDir, tmpDir)
-    await safeReplaceDir(wsContentDir, tmpDir)
-  } catch (err) {
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
-    throw err
-  }
+  // Copy working-tree content → workspace content dir, commit, and tag the sync base.
+  const { fileCount } = await pushContentToWorkspace({
+    srcContentDir,
+    branchPath,
+    contentRoot,
+    baseTag: SYNC_BASE_TAG,
+  })
 
-  // Stage and check for changes
-  await wsGit.add('-A')
-  const postStatus = await wsGit.status()
-
-  if (postStatus.files.length === 0) {
+  if (fileCount === 0) {
     p.log.info('Content is already up to date — nothing to push')
-    // Still tag as sync base — marks this as a known sync point for future merges
-    await wsGit.tag(['-f', SYNC_BASE_TAG])
-    return { fileCount: 0 }
+  } else {
+    p.log.success(`Pushed ${fileCount} file change(s) to branch "${branchName}"`)
   }
-
-  await wsGit.commit('sync: update content from working tree')
-
-  // Tag as sync base for future merges
-  await wsGit.tag(['-f', SYNC_BASE_TAG])
-
-  p.log.success(`Pushed ${postStatus.files.length} file change(s) to branch "${branchName}"`)
-  return { fileCount: postStatus.files.length }
+  return { fileCount }
 }
 
 /**

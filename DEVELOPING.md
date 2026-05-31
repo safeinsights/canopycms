@@ -492,6 +492,85 @@ it('bypasses permissions during Next.js build phase', async () => {
 })
 ```
 
+### Static-Export Helpers (`generateStaticParams`)
+
+Prefer the framework helper over hand-rolled `generateStaticParams`. `generateContentStaticParams(opts)` is a **bound method on the `createNextCanopyContext()` result** — it closes over the (guarded) build context, so your page modules enumerate routable content without ever importing the admin `getCanopyForBuild`. Wire it through `lib/canopy` alongside the phase-selecting reads, then call `context.generateContentStaticParams(opts)`:
+
+```typescript
+// app/lib/canopy.ts
+const canopyContextPromise = createNextCanopyContext({ config, authPlugin, entrySchemaRegistry })
+
+export const contentStaticParams = async (options?: GenerateContentStaticParamsOptions) => {
+  const context = await canopyContextPromise
+  return context.generateContentStaticParams(options)
+}
+```
+
+Pages import the bound helper from `lib/canopy` — never `getCanopyForBuild`.
+
+**Single-segment `[slug]` route** — scope to one collection with `rootPath` + `shape: 'single'`:
+
+```typescript
+// app/posts/[slug]/page.tsx
+import { contentStaticParams } from '../../lib/canopy'
+
+export const generateStaticParams = () =>
+  contentStaticParams({ rootPath: 'content/posts', shape: 'single' })
+```
+
+**Catch-all `[...slug]` / `[[...slug]]` route** — the default `shape: 'catch-all'` emits the URL `segments` array across all content:
+
+```typescript
+// app/[...slug]/page.tsx
+export const generateStaticParams = () => contentStaticParams()
+```
+
+**Options** (`GenerateContentStaticParamsOptions`):
+
+| Option      | Purpose                                                                                                                                                                     |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `rootPath`  | Scope to a collection logical path (e.g. `content/posts`); defaults to the whole content root                                                                               |
+| `shape`     | `'catch-all'` (default, emits `segments`) or `'single'` (emits the entry `slug`)                                                                                            |
+| `basePath`  | For a catch-all nested under a URL prefix (e.g. `app/docs/[[...slug]]`), the route base (e.g. `'/docs'`); scopes entries to that prefix and makes `segments` relative to it |
+| `paramName` | Route param name; defaults to `'slug'`                                                                                                                                      |
+| `filter`    | Predicate to drop entries (e.g. exclude the root index: `(e) => e.segments.length > 0`)                                                                                     |
+
+**`basePath` for nested catch-all routes:** a catch-all under a URL prefix needs its params relative to that prefix, or the route generates doubled paths like `/docs/docs/...`. Pass `basePath` so the segments are stripped of the prefix:
+
+```typescript
+// app/docs/[[...slug]]/page.tsx
+export const generateStaticParams = () =>
+  contentStaticParams({ rootPath: 'content/docs', basePath: '/docs' })
+```
+
+**Gotcha:** a root index (`/`) yields empty `segments` — keep it only for an optional catch-all `[[...slug]]`, otherwise exclude it with `filter`.
+
+Under the hood the bound method calls the framework-agnostic free helper `collectStaticParams(buildCtx, opts)` (from `canopycms-next`), which maps the neutral `StaticPathEntry[]` descriptors (each carrying a collapsed `segments` array, the entry `slug`, and `urlPath`) returned by core `collectStaticPaths(ctx, opts)` (from `canopycms/server`). Reach for those free helpers directly only when building a non-Next adapter or a sitemap.
+
+See `apps/example1/app/posts/[slug]/page.tsx` (single-segment) and `apps/example1/app/docs/[[...slug]]/page.tsx` (nested catch-all with `basePath`) — both use the bound helper plus phase-selecting reads.
+
+### Build-Time Single-Entry Reads
+
+There are three ways to read a single entry, and using the wrong one at build time silently returns `null` (the "build fine, dev blank" trap):
+
+| Source                                         | Phase                       | ACLs / branch                                    | Use for                                                                            |
+| ---------------------------------------------- | --------------------------- | ------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| `createNextCanopyContext().read/readByUrlPath` | **Either** (auto-selecting) | Picks build context at build, runtime at request | **Recommended** page surface for `[...slug]` / `[slug]` resolution                 |
+| `getCanopy().read/readByUrlPath`               | Request only                | Branch-aware, enforces ACLs                      | Server-component rendering at request time                                         |
+| `getCanopyForBuild().read/readByUrlPath`       | Build only                  | Synthetic admin, no ACLs, working tree           | Advanced escape hatch: `generateMetadata`, build-time render that needs raw access |
+
+**Never call the runtime `getCanopy().readByUrlPath()` at build time** — there is no request context, so it returns `null` and your statically generated pages come up blank. `getCanopyForBuild()` is an advanced escape hatch (synthetic admin, bypasses all ACLs); the recommended page surface is the phase-selecting `read`/`readByUrlPath` plus the bound `contentStaticParams`, which never hand the admin context to your page modules. On a **production `server` deployment** (`mode: 'prod' && deployedAs: 'server' && !isBuildMode()`), `getCanopyForBuild()` methods _throw_ if invoked at request time, so they can't accidentally leak protected content into a request path. The guard only fires in prod because dev legitimately uses the build context for `generateStaticParams`/`generateMetadata` (same not-build signature as the request-time footgun, with no reliable way to tell them apart), whereas in prod that ambiguity is gone.
+
+**Recommended: the phase-selecting `read`/`readByUrlPath` from `createNextCanopyContext()`.** They are correct in both phases by construction — filesystem-direct working tree at build, branch-aware ACL-enforced runtime at request — so page code never has to hand-pick the admin build context:
+
+```typescript
+// app/lib/canopy.ts
+const ctx = await createNextCanopyContext({ config, authPlugin, entrySchemaRegistry })
+export const readByUrlPath = ctx.readByUrlPath // auto-selects build vs runtime
+```
+
+`apps/example1` follows this: `app/lib/canopy.ts` exports the phase-selecting `read`/`readByUrlPath` and the bound `contentStaticParams`, and the pages call those — `app/posts/[slug]/page.tsx` (single-segment) and `app/docs/[[...slug]]/page.tsx` (nested catch-all with `basePath`), both resolving via `readByUrlPath` + `notFound()`. Neither page imports `getCanopyForBuild`.
+
 ### Branch Config: defaultBaseBranch vs defaultActiveBranch
 
 CanopyCMS distinguishes between two branch config fields:
@@ -958,6 +1037,71 @@ it('resolves collection entry paths', () => {
 })
 ```
 
+### Page Blocks (Flexible Content)
+
+The `block` field type holds an **ordered, repeatable list of heterogeneous section templates** — the "flexible content" / page-builder pattern. Each item in the list is one of the field's `templates`, discriminated by a `template` literal. `TypeFromEntrySchema` derives a discriminated union so each variant only carries its own template's fields.
+
+```typescript
+const pageSchema = defineEntrySchema([
+  { name: 'title', type: 'string' },
+  {
+    name: 'sections',
+    type: 'block',
+    templates: [
+      { name: 'hero', label: 'Hero', fields: [{ name: 'headline', type: 'string' }] },
+      { name: 'cta', label: 'CTA', fields: [{ name: 'ctaText', type: 'string' }] },
+    ],
+  },
+])
+
+type Page = TypeFromEntrySchema<typeof pageSchema>
+// Page['sections'] is:
+//   Array<{ template: 'hero'; value: { headline: string } }
+//        | { template: 'cta';  value: { ctaText: string } }>
+```
+
+**Reusing templates across schemas with `defineBlockTemplate()`**
+
+`defineBlockTemplate()` (exported from `canopycms`) lets you define a block template **once** and drop the same const into multiple schemas' `templates` arrays, while still deriving precise per-variant types. It is an identity function whose only job is to preserve the literal types (`const` inference) so `TypeFromEntrySchema` can narrow each variant.
+
+```typescript
+import { defineBlockTemplate, defineEntrySchema } from 'canopycms'
+
+const heroBlock = defineBlockTemplate({
+  name: 'hero',
+  label: 'Hero',
+  fields: [
+    { name: 'headline', type: 'string' },
+    { name: 'body', type: 'markdown' },
+  ],
+})
+
+const ctaBlock = defineBlockTemplate({
+  name: 'cta',
+  label: 'CTA',
+  fields: [
+    { name: 'title', type: 'string' },
+    { name: 'ctaText', type: 'string' },
+  ],
+})
+
+// Reuse the same consts in any schema's `block` field:
+const postSchema = defineEntrySchema([
+  { name: 'title', type: 'string' },
+  { name: 'blocks', type: 'block', templates: [heroBlock, ctaBlock] },
+])
+```
+
+**Why:** defining templates inline works, but `defineBlockTemplate()` avoids copy-pasting the same section shape into every schema (and the type drift that causes). Narrow a single variant with `Extract`:
+
+```typescript
+type Block = TypeFromEntrySchema<typeof postSchema>['blocks'][number]
+type HeroBlock = Extract<Block, { template: 'hero' }>
+// HeroBlock['value'] is { headline: string; body: string }
+```
+
+See `apps/example1/app/schemas.ts` for the `heroBlock`/`ctaBlock` consts reused in `postSchema`'s `blocks` field, and `packages/canopycms/src/entry-schema.test.ts` for type-level tests of block narrowing.
+
 ## Working with Content IDs
 
 ### Using the ID Index
@@ -1390,6 +1534,33 @@ git reset HEAD .canopy-dev/
 **Common mistake:** Forgetting to add `.canopy*/` to `.gitignore` when setting up a new app.
 
 **Fix:** Always add `.canopy*/` to your `.gitignore`. The `npx canopycms init` command does this automatically.
+
+### Dev Content Sync (`dev.contentSync`)
+
+In dev mode, the editor and dev server read content from a branch clone under `.canopy-dev/content-branches/<branch>/`, while the static build reads the working tree directly. When you edit working-tree `content/**` outside the editor, the dev server keeps serving the stale clone — the long-standing **"build fine, dev blank"** staleness trap.
+
+The `dev.contentSync` config field (in `CanopyConfig`, `DevContentSyncMode`) controls how this divergence is handled. It is dev-mode only (ignored when `mode !== 'dev'`):
+
+```typescript
+// canopycms.config.ts
+export default defineCanopyConfig({
+  mode: 'dev',
+  dev: {
+    contentSync: 'warn', // 'off' | 'warn'  (default: 'warn')
+  },
+})
+```
+
+| Mode               | Behavior                                                                                                     |
+| ------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `'warn'` (default) | On startup and on `content/**` changes, logs a warning naming the diverged files so the staleness is visible |
+| `'off'`            | No watcher, no warnings                                                                                      |
+
+The warning tells you to run `npx canopycms sync push` to update the clone (see [CLI (`canopycms sync`)](#cli-canopycms-sync)). Choose `'off'` for unit-test configs or when you only ever edit through the editor.
+
+**There is intentionally no auto-push mode.** Auto-overwriting the branch clone from the working tree would silently clobber uncommitted editor "Save" state in the clone, with no Canopy-level recovery path for the editor. Reconcile divergence explicitly via `canopycms sync push` (which has interactive conflict handling) rather than letting a watcher do it for you.
+
+**Implementation:** all logic lives in the core watcher `src/dev-content-watcher.ts` (`startDevContentWatcher()`); framework adapters just call it once at dev startup (see the Next wiring in `packages/canopycms-next/src/context-wrapper.ts`). The watcher is a no-op when not in dev mode, when mode is `'off'`, or when the working-tree content directory does not exist. On each check it re-resolves the active branch (so it follows git-HEAD branch switches) and dedupes across HMR reloads so dev restarts don't double-warn.
 
 ## Testing
 
