@@ -7,7 +7,7 @@ import {
 /**
  * Next.js static-export helpers built on the framework-agnostic core in `canopycms/server`.
  *
- * Today this ships `generateContentStaticParams`. Sitemap and SEO-metadata helpers are tracked as
+ * Today this ships static-params generation. Sitemap and SEO-metadata helpers are tracked as
  * follow-up work (see .claude/future-tasks/static-export-sitemap.md and
  * .claude/future-tasks/static-export-seo-metadata.md).
  */
@@ -21,32 +21,44 @@ export interface GenerateContentStaticParamsOptions extends CollectStaticPathsOp
    * - 'single' → `[slug]`: param value is the entry `slug` (pair with `rootPath` to scope a collection).
    */
   shape?: 'catch-all' | 'single'
+  /**
+   * For a catch-all route nested under a URL prefix (e.g. `app/docs/[[...slug]]`), set this to the
+   * route's base (e.g. `'/docs'`). Entries are scoped to that prefix and `segments` are made relative
+   * to it, so the params match the route. Without it, segments are the full URL path.
+   */
+  basePath?: string
 }
 
 /**
- * Build the array Next's `generateStaticParams` expects from CanopyCMS content.
+ * Shape CanopyCMS content paths into the array Next's `generateStaticParams` expects.
  *
- * Reads filesystem-direct via the build context (admin, build-time only). For a catch-all route it
- * emits `{ [paramName]: segments }`; for a single-segment route it emits `{ [paramName]: slug }`.
+ * This is an **enumeration-only** capability: it reads only the set of routable paths (via the build
+ * context's `listEntries`), never entry content, and `generateStaticParams` is build-only — so it
+ * cannot serve a user request. It takes a build context directly; prefer the bound
+ * `generateContentStaticParams` returned from `createNextCanopyContext`, which closes over the build
+ * context so your page modules never import the admin context.
  *
  * Note: a root index ('/') yields empty `segments` — keep it only for an optional catch-all
  * `[[...slug]]`, otherwise exclude it via `options.filter` (e.g. `(e) => e.segments.length > 0`).
- *
- * @example
- * // app/[...slug]/page.tsx
- * export const generateStaticParams = () => generateContentStaticParams(getCanopyForBuild)
- *
- * // app/posts/[slug]/page.tsx
- * export const generateStaticParams = () =>
- *   generateContentStaticParams(getCanopyForBuild, { rootPath: 'content/posts', shape: 'single' })
  */
-export async function generateContentStaticParams(
-  getCanopyForBuild: () => Promise<CanopyBuildContext>,
+export async function collectStaticParams(
+  buildCtx: Pick<CanopyBuildContext, 'listEntries'>,
   options: GenerateContentStaticParamsOptions = {},
 ): Promise<Array<Record<string, string | string[]>>> {
-  const { paramName = 'slug', shape = 'catch-all', ...collectOptions } = options
-  const ctx = await getCanopyForBuild()
-  const entries = await collectStaticPaths(ctx, collectOptions)
+  const { paramName = 'slug', shape = 'catch-all', basePath, ...collectOptions } = options
+  let entries = await collectStaticPaths(buildCtx, collectOptions)
+
+  if (basePath) {
+    // Make segments relative to a nested route's base prefix (e.g. '/docs' for app/docs/[[...slug]]).
+    const prefix = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath
+    entries = entries
+      .filter((entry) => entry.urlPath === prefix || entry.urlPath.startsWith(`${prefix}/`))
+      .map((entry) => {
+        const rel = entry.urlPath === prefix ? '' : entry.urlPath.slice(prefix.length + 1)
+        return { ...entry, segments: rel ? rel.split('/') : [] }
+      })
+  }
+
   return entries.map((entry) =>
     shape === 'single' ? { [paramName]: entry.slug } : { [paramName]: entry.segments },
   )

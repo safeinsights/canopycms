@@ -6,6 +6,6 @@ export {
   type NextCanopyContextResult,
 } from './context-wrapper'
 
-export { generateContentStaticParams, type GenerateContentStaticParamsOptions } from './static'
+export { collectStaticParams, type GenerateContentStaticParamsOptions } from './static'
 
 export { createMockAuthPlugin, createRejectingAuthPlugin } from './test-utils'

@@ -7,8 +7,11 @@
  * stale content until `canopycms sync push` runs. This watcher surfaces that divergence:
  *
  * - 'warn' (default): log a warning naming the diverged files (on startup and on content changes).
- * - 'auto': push working-tree content into the branch clone automatically (no manual sync).
  * - 'off': do nothing.
+ *
+ * There is intentionally NO auto-push mode: overwriting the branch clone from the working tree would
+ * silently clobber uncommitted editor "Save" state with no Canopy-level recovery for the editor.
+ * Reconciliation goes through the interactive `canopycms sync push` (conflict-aware) instead.
  *
  * All logic lives here in the core package; framework adapters just call startDevContentWatcher() once
  * at dev startup. See packages/canopycms-next/src/context-wrapper.ts for the Next wiring.
@@ -21,18 +24,12 @@ import type { CanopyServices } from './services'
 import type { DevContentSyncMode } from './config/types'
 import { operatingStrategy } from './operating-mode'
 import { getErrorMessage } from './utils/error'
-import {
-  diffContentTrees,
-  isContentTreeDiffEmpty,
-  pushContentToWorkspace,
-  SYNC_BASE_TAG,
-  type ContentTreeDiff,
-} from './sync-core'
+import { diffContentTrees, isContentTreeDiffEmpty, type ContentTreeDiff } from './sync-core'
 
 export interface StartDevContentWatcherOptions {
-  /** 'warn' (default) | 'auto' | 'off'. */
+  /** 'warn' (default) | 'off'. */
   mode?: DevContentSyncMode
-  /** Branch clone to compare against. Defaults to defaultActiveBranch ?? defaultBaseBranch ?? 'main'. */
+  /** Branch clone to compare against. Defaults to the served active branch, re-resolved each check. */
   branch?: string
   /** Project root. Defaults to config.sourceRoot ?? process.cwd(). */
   sourceRoot?: string
@@ -41,6 +38,11 @@ export interface StartDevContentWatcherOptions {
 }
 
 const MAX_LISTED_FILES = 10
+
+// Dedupe watchers by working-tree content dir so HMR re-evaluating the adapter module (which discards
+// the disposer) doesn't accumulate watchers. This module lives in canopycms/server, so its state
+// survives app-side HMR. Each new start disposes any prior watcher for the same dir.
+const activeWatchers = new Map<string, () => void>()
 
 function formatList(label: string, files: string[]): string | null {
   if (files.length === 0) return null
@@ -54,7 +56,7 @@ function formatDivergenceWarning(branch: string, diff: ContentTreeDiff): string 
   const lines = [
     `CanopyCMS: working-tree content has diverged from the dev branch clone "${branch}" — the dev ` +
       'server is serving stale content. Run `npx canopycms sync push` to update it ' +
-      "(set dev.contentSync: 'auto' to auto-sync, or 'off' to silence this).",
+      "(set dev.contentSync: 'off' to silence this).",
     formatList('changed', diff.changed),
     formatList('only in working tree', diff.added),
     formatList('only in branch clone', diff.removed),
@@ -77,20 +79,21 @@ export function startDevContentWatcher(
 
   const sourceRoot = options.sourceRoot ?? services.config.sourceRoot ?? process.cwd()
   const contentRoot = services.config.contentRoot || 'content'
-  const branch =
-    options.branch ??
-    services.config.defaultActiveBranch ??
-    services.config.defaultBaseBranch ??
-    'main'
-
   const strategy = operatingStrategy('dev')
   const workingTreeContentDir = strategy.getContentRoot(sourceRoot)
-  const branchPath = strategy.getContentBranchRoot(branch, sourceRoot)
-  const branchContentDir = path.join(branchPath, contentRoot)
   const warn = options.warn ?? ((message: string) => console.warn(message))
 
   // Nothing to watch if the working tree has no content directory (e.g. unit-test configs).
   if (!fsSync.existsSync(workingTreeContentDir)) return noop
+
+  // Resolve the branch fresh each check: the dev server silently follows git-HEAD switches
+  // (services.refreshActiveBranch reassigns config.defaultActiveBranch), so the comparison target
+  // must track whatever branch is currently being served. An explicit options.branch pins it.
+  const resolveBranch = () =>
+    options.branch ??
+    services.config.defaultActiveBranch ??
+    services.config.defaultBaseBranch ??
+    'main'
 
   let running = false
   let pending = false
@@ -101,27 +104,15 @@ export function startDevContentWatcher(
     }
     running = true
     try {
+      const branch = resolveBranch()
+      const branchContentDir = path.join(
+        strategy.getContentBranchRoot(branch, sourceRoot),
+        contentRoot,
+      )
       // No branch clone yet (e.g. before the first editor/dev request created it) → nothing to compare.
       if (!fsSync.existsSync(branchContentDir)) return
       const diff = await diffContentTrees(workingTreeContentDir, branchContentDir)
       if (isContentTreeDiffEmpty(diff)) return
-
-      if (mode === 'auto') {
-        const { fileCount } = await pushContentToWorkspace({
-          srcContentDir: workingTreeContentDir,
-          branchPath,
-          contentRoot,
-          commitMessage: 'sync: auto-push from dev content watcher',
-          baseTag: SYNC_BASE_TAG,
-        })
-        if (fileCount > 0) {
-          warn(
-            `CanopyCMS: auto-synced ${fileCount} content change(s) to dev branch clone "${branch}".`,
-          )
-        }
-        return
-      }
-
       warn(formatDivergenceWarning(branch, diff))
     } catch (err) {
       warn(`CanopyCMS: dev content-sync check failed: ${getErrorMessage(err)}`)
@@ -134,6 +125,9 @@ export function startDevContentWatcher(
     }
   }
 
+  // Dispose any prior watcher for this dir (HMR re-start) before creating a new one.
+  activeWatchers.get(workingTreeContentDir)?.()
+
   const watcher = chokidar.watch(workingTreeContentDir, { ignoreInitial: true })
   watcher.on('add', () => void check())
   watcher.on('change', () => void check())
@@ -142,7 +136,12 @@ export function startDevContentWatcher(
   // Initial divergence check at startup.
   void check()
 
-  return () => {
+  const dispose = () => {
     void watcher.close()
+    if (activeWatchers.get(workingTreeContentDir) === dispose) {
+      activeWatchers.delete(workingTreeContentDir)
+    }
   }
+  activeWatchers.set(workingTreeContentDir, dispose)
+  return dispose
 }

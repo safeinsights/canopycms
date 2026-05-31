@@ -59,17 +59,17 @@ Use `--non-interactive` for CI (uses defaults), `--force` to overwrite existing 
 
 ### What it creates
 
-| File                                             | Purpose                                                                                                    |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `canopycms.config.ts`                            | Main configuration (mode, editor settings)                                                                 |
-| `{appDir}/lib/canopy.ts`                         | Server-side context setup; exports `getCanopy`, `getCanopyForBuild`, and `getHandler`                      |
-| `{appDir}/schemas.ts`                            | Entry schema definitions and registry                                                                      |
-| `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all API route handler                                                                         |
-| `{appDir}/edit/page.tsx`                         | Editor page component                                                                                      |
-| `{appDir}/ai/config.ts`                          | AI content configuration (included unless `--no-ai` is passed)                                             |
-| `{appDir}/ai/[...path]/route.ts`                 | AI content route handler (included unless `--no-ai` is passed)                                             |
-| `middleware.ts`                                  | Route protection for `/edit` and `/api/canopycms` (passthrough by default; commented Clerk example inside) |
-| `next.config.ts`                                 | Next.js config wrapped with `withCanopy()` for transpilation and dual-build support                        |
+| File                                             | Purpose                                                                                                                                                                           |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `canopycms.config.ts`                            | Main configuration (mode, editor settings)                                                                                                                                        |
+| `{appDir}/lib/canopy.ts`                         | Server-side context setup; exports `getCanopy`, phase-selecting `read`/`readByUrlPath`, `contentStaticParams`, `getHandler` (and `getCanopyForBuild` as an advanced escape hatch) |
+| `{appDir}/schemas.ts`                            | Entry schema definitions and registry                                                                                                                                             |
+| `{appDir}/api/canopycms/[...canopycms]/route.ts` | Single catch-all API route handler                                                                                                                                                |
+| `{appDir}/edit/page.tsx`                         | Editor page component                                                                                                                                                             |
+| `{appDir}/ai/config.ts`                          | AI content configuration (included unless `--no-ai` is passed)                                                                                                                    |
+| `{appDir}/ai/[...path]/route.ts`                 | AI content route handler (included unless `--no-ai` is passed)                                                                                                                    |
+| `middleware.ts`                                  | Route protection for `/edit` and `/api/canopycms` (passthrough by default; commented Clerk example inside)                                                                        |
+| `next.config.ts`                                 | Next.js config wrapped with `withCanopy()` for transpilation and dual-build support                                                                                               |
 
 It also updates `.gitignore` to exclude CanopyCMS runtime directories (`.canopy-dev/`).
 
@@ -320,7 +320,7 @@ Then create nested collections in subfolders (e.g., `content/docs/guides/.collec
 Pass your schema registry to `createNextCanopyContext` in `app/lib/canopy.ts`. The `npx canopycms init` command generates this file automatically:
 
 ```typescript
-import { createNextCanopyContext } from 'canopycms-next'
+import { createNextCanopyContext, type GenerateContentStaticParamsOptions } from 'canopycms-next'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import config from '../../canopycms.config'
@@ -341,7 +341,21 @@ export const getCanopy = async () => {
   return context.getCanopy()
 }
 
-// For build-time functions (no request scope needed, full admin privileges)
+// Phase-selecting reads: filesystem-direct at build, branch-aware (ACL-enforced) at request time.
+// Recommended for resolving a page by URL/path in a [...slug] / [slug] route.
+export const readByUrlPath = async <T = unknown>(urlPath: string) => {
+  const context = await canopyContextPromise
+  return context.readByUrlPath<T>(urlPath)
+}
+
+// Enumeration-only static params (no admin context exposed). Use in generateStaticParams.
+export const contentStaticParams = async (options?: GenerateContentStaticParamsOptions) => {
+  const context = await canopyContextPromise
+  return context.generateContentStaticParams(options)
+}
+
+// Advanced escape hatch: bypasses all ACLs (synthetic admin) and throws if used at request time on a
+// production server. Prefer readByUrlPath/read/contentStaticParams above.
 export const getCanopyForBuild = async () => {
   const context = await canopyContextPromise
   return context.getCanopyForBuild()
@@ -491,21 +505,21 @@ Available schemas: authorSchema, homeSchema, docSchema
 
 ### `defineCanopyConfig` Options
 
-| Option                | Type                   | Required | Default     | Description                                                                                                                                                                                                                                                                   |
-| --------------------- | ---------------------- | -------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema`              | `RootCollectionConfig` | No\*     | -           | Object with `collections` and `entries` arrays defining your content structure. \*Required unless using `.collection.json` meta files                                                                                                                                         |
-| `gitBotAuthorName`    | `string`               | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                                                                                                   |
-| `gitBotAuthorEmail`   | `string`               | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                                                                                                  |
-| `mode`                | `'dev' \| 'prod'`      | No       | `'dev'`     | Operating mode (see below)                                                                                                                                                                                                                                                    |
-| `contentRoot`         | `string`               | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                                                                                     |
-| `defaultBaseBranch`   | `string`               | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`)                                                                                                                                                                                                 |
-| `defaultActiveBranch` | `string`               | No       | (see below) | Which workspace the dev server serves content from and which branch the editor opens by default. In dev mode, auto-detected from the current git branch. In prod mode, falls back to `defaultBaseBranch`                                                                      |
-| `defaultBranchAccess` | `'allow' \| 'deny'`    | No       | `'deny'`    | Default access policy for new branches                                                                                                                                                                                                                                        |
-| `defaultPathAccess`   | `'allow' \| 'deny'`    | No       | `'allow'`   | Default access policy for content paths                                                                                                                                                                                                                                       |
-| `deployedAs`          | `'server' \| 'static'` | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced.                                                                      |
-| `media`               | `MediaConfig`          | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                                                                                               |
-| `editor`              | `EditorConfig`         | No       | -           | Editor UI customization options                                                                                                                                                                                                                                               |
-| `dev`                 | `DevConfig`            | No       | -           | Dev-mode-only behavior. `dev.contentSync: 'off' \| 'warn' \| 'auto'` (default `'warn'`) controls how the dev server detects/reconciles working-tree edits vs. the served branch clone (see [Local Development Sync](#local-development-sync)). Ignored when `mode !== 'dev'`. |
+| Option                | Type                   | Required | Default     | Description                                                                                                                                                                                                                                                      |
+| --------------------- | ---------------------- | -------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`              | `RootCollectionConfig` | No\*     | -           | Object with `collections` and `entries` arrays defining your content structure. \*Required unless using `.collection.json` meta files                                                                                                                            |
+| `gitBotAuthorName`    | `string`               | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                                                                                      |
+| `gitBotAuthorEmail`   | `string`               | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                                                                                     |
+| `mode`                | `'dev' \| 'prod'`      | No       | `'dev'`     | Operating mode (see below)                                                                                                                                                                                                                                       |
+| `contentRoot`         | `string`               | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                                                                        |
+| `defaultBaseBranch`   | `string`               | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`)                                                                                                                                                                                    |
+| `defaultActiveBranch` | `string`               | No       | (see below) | Which workspace the dev server serves content from and which branch the editor opens by default. In dev mode, auto-detected from the current git branch. In prod mode, falls back to `defaultBaseBranch`                                                         |
+| `defaultBranchAccess` | `'allow' \| 'deny'`    | No       | `'deny'`    | Default access policy for new branches                                                                                                                                                                                                                           |
+| `defaultPathAccess`   | `'allow' \| 'deny'`    | No       | `'allow'`   | Default access policy for content paths                                                                                                                                                                                                                          |
+| `deployedAs`          | `'server' \| 'static'` | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced.                                                         |
+| `media`               | `MediaConfig`          | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                                                                                  |
+| `editor`              | `EditorConfig`         | No       | -           | Editor UI customization options                                                                                                                                                                                                                                  |
+| `dev`                 | `DevConfig`            | No       | -           | Dev-mode-only behavior. `dev.contentSync: 'off' \| 'warn'` (default `'warn'`) controls how the dev server detects/reports working-tree edits vs. the served branch clone (see [Local Development Sync](#local-development-sync)). Ignored when `mode !== 'dev'`. |
 
 **Note**: You must define your schema using at least one of these approaches:
 
@@ -524,14 +538,14 @@ See the [Schema Registry and References](#schema-references-system) section for 
 
 When working in `dev` mode, your content lives in two places: the working tree of your repo and the branch workspaces inside `.canopy-dev/content-branches/` that the CMS editor reads from. If you edit files in the working tree directly (or pull from GitHub) while the dev server serves a branch clone, the two can drift — the classic "builds fine, but the dev editor shows blank/stale content" trap.
 
-**Automatic divergence detection.** The `dev.contentSync` config option controls how the dev server reconciles working-tree edits with the served branch clone (dev mode only; ignored when `mode !== 'dev'`):
+**Automatic divergence detection.** The `dev.contentSync` config option controls how the dev server detects and reports working-tree edits that have drifted from the served branch clone (dev mode only; ignored when `mode !== 'dev'`):
 
 ```typescript
 // canopycms.config.ts
 export default defineCanopyConfig({
   // ...
   dev: {
-    contentSync: 'warn', // 'off' | 'warn' (default) | 'auto'
+    contentSync: 'warn', // 'off' | 'warn' (default)
   },
 })
 ```
@@ -539,10 +553,11 @@ export default defineCanopyConfig({
 | Value    | Behavior                                                                                                            |
 | -------- | ------------------------------------------------------------------------------------------------------------------- |
 | `'warn'` | Default. On startup and on `content/**` changes, logs a warning naming the files that diverge from the branch clone |
-| `'auto'` | Automatically pushes working-tree content changes into the branch clone — no manual sync needed                     |
 | `'off'`  | No watcher, no warnings                                                                                             |
 
-When `contentSync` is `'warn'` or you want explicit control, the `canopycms sync` command keeps the two in sync.
+> **Why there is no `'auto'` mode:** auto-pushing the working tree into the branch clone could silently clobber uncommitted editor "Save" state, with no Canopy-level recovery path for the editor. Reconcile explicitly instead with `canopycms sync push`, which is interactive and conflict-aware.
+
+To keep the two in sync, use the `canopycms sync` command.
 
 **Push** (working tree → branch workspace) -- copies your current working-tree content into a branch workspace and commits it, so the CMS editor sees your latest changes (e.g., after pulling from GitHub or editing files directly). By default, targets the workspace matching your current git branch (auto-creating it if needed):
 
@@ -1164,85 +1179,122 @@ This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPa
 
 ### Static Export with generateStaticParams
 
-For static-export sites you need a `generateStaticParams` that enumerates every content URL. `generateContentStaticParams()` (from `canopycms-next`) builds the array Next.js expects directly from your CanopyCMS content, so you do not have to hand-roll the path-segment mapping.
+For static-export sites you need a `generateStaticParams` that enumerates every content URL directly from your CanopyCMS content, so you do not have to hand-roll the path-segment mapping. This is exposed as a **bound helper** on the result of `createNextCanopyContext` — wire it once in your `lib/canopy.ts` and call it from each page. Because it is bound to the build context internally, your page modules never import the admin `getCanopyForBuild`.
+
+The scaffolded `lib/canopy.ts` already exports it as `contentStaticParams`:
+
+```typescript
+// app/lib/canopy.ts
+import { createNextCanopyContext, type GenerateContentStaticParamsOptions } from 'canopycms-next'
+
+const canopyContextPromise = createNextCanopyContext({
+  config: config.server,
+  authPlugin,
+  entrySchemaRegistry,
+})
+
+export const contentStaticParams = async (options?: GenerateContentStaticParamsOptions) => {
+  const context = await canopyContextPromise
+  return context.generateContentStaticParams(options)
+}
+```
 
 **Catch-all route** (`app/[...slug]/page.tsx`) — emits `{ slug: segments[] }` for each entry:
 
 ```typescript
 // app/[...slug]/page.tsx
-import { generateContentStaticParams } from 'canopycms-next'
-import { getCanopyForBuild } from '../lib/canopy'
+import { contentStaticParams } from '../lib/canopy'
 
-export const generateStaticParams = () => generateContentStaticParams(getCanopyForBuild)
+export const generateStaticParams = () => contentStaticParams()
 ```
 
 **Collection-scoped single-segment route** (`app/posts/[slug]/page.tsx`) — pass `shape: 'single'` (emits `{ slug }`) and `rootPath` to scope to one collection:
 
 ```typescript
 // app/posts/[slug]/page.tsx
-import { generateContentStaticParams } from 'canopycms-next'
-import { getCanopyForBuild } from '../../lib/canopy'
+import { contentStaticParams } from '../../lib/canopy'
 
 export const generateStaticParams = () =>
-  generateContentStaticParams(getCanopyForBuild, { rootPath: 'content/posts', shape: 'single' })
+  contentStaticParams({ rootPath: 'content/posts', shape: 'single' })
+```
+
+**Catch-all nested under a URL prefix** (`app/docs/[[...slug]]/page.tsx`) — pass `basePath` so the emitted `segments` are relative to that prefix and match the route:
+
+```typescript
+// app/docs/[[...slug]]/page.tsx
+import { contentStaticParams } from '../../lib/canopy'
+
+export const generateStaticParams = () =>
+  contentStaticParams({ rootPath: 'content/docs', basePath: '/docs' })
 ```
 
 **Options:**
 
-| Option      | Type                      | Default       | Description                                                                                             |
-| ----------- | ------------------------- | ------------- | ------------------------------------------------------------------------------------------------------- |
-| `shape`     | `'catch-all' \| 'single'` | `'catch-all'` | `'catch-all'` emits the URL `segments` array; `'single'` emits the entry `slug`                         |
-| `paramName` | `string`                  | `'slug'`      | Route param name (matches your `[...name]` / `[name]` folder)                                           |
-| `rootPath`  | `string`                  | Content root  | Scope to a subtree (e.g., `'content/posts'`), useful with `shape: 'single'`                             |
-| `filter`    | `(entry) => boolean`      | -             | Exclude entries; e.g. drop the root index from a non-optional catch-all: `(e) => e.segments.length > 0` |
+| Option      | Type                      | Default       | Description                                                                                                                                                                            |
+| ----------- | ------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shape`     | `'catch-all' \| 'single'` | `'catch-all'` | `'catch-all'` emits the URL `segments` array; `'single'` emits the entry `slug`                                                                                                        |
+| `paramName` | `string`                  | `'slug'`      | Route param name (matches your `[...name]` / `[name]` folder)                                                                                                                          |
+| `rootPath`  | `string`                  | Content root  | Scope to a subtree (e.g., `'content/posts'`), useful with `shape: 'single'`                                                                                                            |
+| `basePath`  | `string`                  | -             | For a catch-all nested under a URL prefix (e.g. `app/docs/[[...slug]]`): set to the route base (`'/docs'`) so entries are scoped to that prefix and `segments` are made relative to it |
+| `filter`    | `(entry) => boolean`      | -             | Exclude entries; e.g. drop the root index from a non-optional catch-all: `(e) => e.segments.length > 0`                                                                                |
 
 > A root index (`/`) produces empty `segments` — keep it only for an optional catch-all `[[...slug]]`, otherwise exclude it with `filter`.
+>
+> **Advanced (framework-agnostic):** if you need to call the enumeration with a build context you already hold, the free helper `collectStaticParams(buildCtx, options)` from `canopycms-next` takes the build context directly. The bound `contentStaticParams` above is preferred for ordinary page code.
 >
 > Sitemap and SEO-metadata static-export helpers are coming separately.
 
 ### Reading Content at Build Time
 
-`getCanopyForBuild()` provides a context that does not depend on request headers. Use it in `generateStaticParams`, `generateMetadata`, and any other build-time function where Next.js does not have a live request:
+For ordinary page work you should **not** need a build-specific context. The recommended page surface is:
+
+- **Content** — the phase-selecting `readByUrlPath`/`read` helpers (below), which read the working tree during static generation and the branch-aware, ACL-enforced runtime context at request time.
+- **Paths** — the bound `contentStaticParams` helper for `generateStaticParams` (see [Static Export with generateStaticParams](#static-export-with-generatestaticparams)).
+
+Both are exported from your scaffolded `lib/canopy.ts`, so your page modules never import an admin context.
 
 ```typescript
 // app/posts/[slug]/page.tsx
-import { getCanopyForBuild, getCanopy } from '../lib/canopy'
+import { contentStaticParams, read } from '../../lib/canopy'
 
-// Build-time: no request scope available
-export async function generateStaticParams() {
-  const canopy = await getCanopyForBuild()
-  const entries = await canopy.listEntries()
-  return entries.map((entry) => ({ slug: entry.slug }))
-}
+// Build-only: enumeration of paths, no admin context in the page module
+export const generateStaticParams = () =>
+  contentStaticParams({ rootPath: 'content/posts', shape: 'single' })
 
 export async function generateMetadata({ params }) {
-  const canopy = await getCanopyForBuild()
-  const { data } = await canopy.read({
-    entryPath: 'content/posts',
-    slug: params.slug,
-  })
+  // Phase-selecting read: working tree at build, ACL-enforced runtime at request time
+  const { data } = await read({ entryPath: 'content/posts', slug: params.slug })
   return { title: data.title }
 }
 
-// Request-time: use getCanopy() for auth-aware reads
 export default async function PostPage({ params }) {
-  const canopy = await getCanopy()
-  const { data } = await canopy.read({
-    entryPath: 'content/posts',
-    slug: params.slug,
-  })
+  const { data } = await read({ entryPath: 'content/posts', slug: params.slug })
   return <PostView post={data} />
 }
 ```
 
+#### Advanced: `getCanopyForBuild()`
+
+`getCanopyForBuild()` is an **advanced escape hatch** that returns a context not tied to request headers. The scaffolded `lib/canopy.ts` exports it but no longer leads with it — reach for it only when the phase-selecting helpers above are not enough (e.g. a standalone build script, or scanning the whole content set with `listEntries`/`buildContentTree` outside a page):
+
+```typescript
+// Standalone build script (not a page module)
+import { getCanopyForBuild } from '../lib/canopy'
+
+const canopy = await getCanopyForBuild()
+const entries = await canopy.listEntries()
+```
+
 **When to use which:**
 
-| Function              | Auth                                       | Request scope needed | Use for                                                   |
-| --------------------- | ------------------------------------------ | -------------------- | --------------------------------------------------------- |
-| `getCanopy()`         | Current user                               | Yes                  | Server components, route handlers                         |
-| `getCanopyForBuild()` | Full admin (bypasses all auth/permissions) | No                   | `generateStaticParams`, `generateMetadata`, build scripts |
+| Function                                            | Auth                                              | Request scope needed | Use for                                                        |
+| --------------------------------------------------- | ------------------------------------------------- | -------------------- | -------------------------------------------------------------- |
+| `read()` / `readByUrlPath()` (from `lib/canopy.ts`) | Phase-selecting (admin at build, user at request) | No (auto)            | Page modules that render in both phases — recommended surface  |
+| `contentStaticParams()`                             | Build-only enumeration                            | No                   | `generateStaticParams`                                         |
+| `getCanopy()`                                       | Current user                                      | Yes                  | Server components, route handlers                              |
+| `getCanopyForBuild()`                               | Full admin (bypasses all auth/permissions)        | No                   | Advanced: build scripts, whole-collection scans outside a page |
 
-> **Security note:** `getCanopyForBuild()` runs as a synthetic admin user with unrestricted read access, bypassing all branch and path ACLs. Only use it in build-time code paths (static generation, metadata) that are not exposed to end users at request time. On a `server` deployment, the build context now **throws if its operations are invoked at request time** — a guard rail so the ACL-bypassing reader cannot be accidentally used to serve live requests. Use `getCanopy()` (or the phase-selecting helpers below) for request-time reads.
+> **Security note:** `getCanopyForBuild()` runs as a synthetic admin user with unrestricted read access, bypassing all branch and path ACLs. Only use it in build-time code paths that are not exposed to end users at request time. On a **production `server` deployment** (`mode: 'prod'` **and** `deployedAs: 'server'`), its operations **throw if invoked at request time** (i.e. outside the build phase) — a guard rail so the ACL-bypassing reader cannot be accidentally used to serve live requests. The guard intentionally does **not** fire in dev: Next legitimately invokes `generateStaticParams`/`generateMetadata` through the build context during `next dev` with the same not-build-phase signature as misuse, so a dev guard would false-positive on idiomatic code; in prod that ambiguity is gone (`generateStaticParams` is build-only). Use `getCanopy()` (or the phase-selecting helpers above) for request-time reads.
 
 The build context also exposes a build-safe `readByUrlPath()` that returns `null` for non-entry paths (e.g. `/favicon.ico`, `/robots.txt`) instead of throwing, so a single `[...slug]` page can resolve real entries and cleanly `notFound()` everything else.
 
@@ -1503,23 +1555,21 @@ import { buildContentTree } from 'canopycms/server'
 
 ## Listing Entries
 
-`listEntries()` returns a flat array of every content entry in your site. It is designed for `generateStaticParams`, search indexing, sitemaps, and any other case where you need to iterate over all content without the tree hierarchy.
+`listEntries()` returns a flat array of every content entry in your site. It is designed for search indexing, sitemaps, and any other case where you need to iterate over all content without the tree hierarchy. (For `generateStaticParams`, prefer the bound `contentStaticParams` helper — see [Static Export with generateStaticParams](#static-export-with-generatestaticparams) — which enumerates routable paths without handing an admin context to your page module.)
 
 ### Basic Usage
 
+`listEntries()` is available on both the request-scoped context (`getCanopy()`) and the advanced build context (`getCanopyForBuild()`); use the latter for build scripts or whole-collection scans that run outside a request:
+
 ```typescript
-// app/posts/[...slug]/page.tsx
-import { getCanopyForBuild } from '../../lib/canopy'
+// build script or non-request context
+import { getCanopyForBuild } from '../lib/canopy'
 
-export async function generateStaticParams() {
-  const canopy = await getCanopyForBuild()
-  const entries = await canopy.listEntries()
+const canopy = await getCanopyForBuild()
+const entries = await canopy.listEntries()
 
-  // urlPath has index collapsing applied — preferred for URL generation
-  return entries.map((entry) => ({
-    slug: entry.urlPath.split('/').filter(Boolean),
-  }))
-}
+// urlPath has index collapsing applied — preferred for URL generation
+const slugs = entries.map((entry) => entry.urlPath.split('/').filter(Boolean))
 ```
 
 Each entry includes `urlPath` -- a URL-ready string with index entries collapsed to their parent path (e.g., `'/guides'` instead of `'/guides/index'`, `'/'` for root index entries). This is round-trip safe with `readByUrlPath()`: calling `readByUrlPath(entry.urlPath)` resolves to the same entry. The raw `pathSegments` array is also available for consumers that need the unmodified filesystem structure.
@@ -1641,7 +1691,7 @@ Access control uses three layers:
 
 **Bootstrap admin groups**: When using `getCanopy()`, users with IDs matching the `bootstrapAdminIds` configuration automatically receive the `admins` group membership, even before groups are set up in the repository. This makes initial setup easier.
 
-**Build mode bypass**: During `next build`, all permission checks are bypassed to allow static generation of all content, regardless of auth configuration. Use `getCanopyForBuild()` in build-time functions like `generateStaticParams` and `generateMetadata` to avoid request-scope errors.
+**Build mode bypass**: During `next build`, all permission checks are bypassed to allow static generation of all content, regardless of auth configuration. In page modules, drive `generateStaticParams` with the bound `contentStaticParams` helper and resolve content with the phase-selecting `read`/`readByUrlPath` (both from `lib/canopy.ts`) so you avoid request-scope errors without importing an admin context.
 
 ### Live Preview
 
@@ -1910,8 +1960,8 @@ CanopyCMS is designed for minimal integration effort. Run `npx canopycms init` t
 
 **Optional touchpoints:**
 
-- **Server components**: Use `await getCanopy()` to read draft content with automatic auth; use `await getCanopyForBuild()` in `generateStaticParams` and `generateMetadata` (no request scope needed). For `[...slug]`/`[slug]` pages, prefer the phase-selecting `readByUrlPath`/`read` from `createNextCanopyContext` (see [Phase-Selecting readByUrlPath / read](#phase-selecting-readbyurlpath--read))
-- **Static export**: Use `generateContentStaticParams(getCanopyForBuild)` from `canopycms-next` to drive `generateStaticParams` (see [Static Export with generateStaticParams](#static-export-with-generatestaticparams))
+- **Server components**: Use `await getCanopy()` to read draft content with automatic auth. For `[...slug]`/`[slug]` pages that render in both build and request phases, prefer the phase-selecting `readByUrlPath`/`read` from `lib/canopy.ts` (see [Phase-Selecting readByUrlPath / read](#phase-selecting-readbyurlpath--read)). `getCanopyForBuild()` remains as an advanced escape hatch for build scripts and whole-collection scans
+- **Static export**: Use the bound `contentStaticParams` helper from `lib/canopy.ts` to drive `generateStaticParams` (supports `shape`, `rootPath`, and `basePath` for nested catch-all routes); see [Static Export with generateStaticParams](#static-export-with-generatestaticparams)
 - **AI content route**: `{appDir}/ai/[...path]/route.ts` -- serve content as AI-readable markdown; generated by default during `init` (see [AI-Ready Content](#ai-ready-content))
 
 To switch between auth providers, set the `CANOPY_AUTH_MODE` environment variable (`dev` or `clerk`). The generated code handles both providers without regenerating files.

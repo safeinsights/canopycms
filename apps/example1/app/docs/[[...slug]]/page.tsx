@@ -2,7 +2,7 @@ import React from 'react'
 import { notFound } from 'next/navigation'
 import DocView from '../../components/DocView'
 import type { DocContent } from '../../schemas'
-import { getCanopy, getCanopyForBuild } from '../../lib/canopy'
+import { generateContentStaticParams, readByUrlPath } from '../../lib/canopy'
 
 interface Params {
   slug?: string[]
@@ -10,11 +10,9 @@ interface Params {
 
 export const dynamicParams = true
 
-export const generateStaticParams = async (): Promise<Params[]> => {
-  const canopy = await getCanopyForBuild()
-  const entries = await canopy.listEntries({ rootPath: 'content/docs' })
-  return entries.map((entry) => ({ slug: entry.pathSegments }))
-}
+// Catch-all nested under /docs: basePath makes the params relative to the route base.
+export const generateStaticParams = () =>
+  generateContentStaticParams({ rootPath: 'content/docs', basePath: '/docs' })
 
 const DocPage = async ({ params }: { params: Params }) => {
   const slugParts = params.slug || []
@@ -23,9 +21,9 @@ const DocPage = async ({ params }: { params: Params }) => {
     return <div>Docs landing page - TODO</div>
   }
 
-  const canopy = await getCanopy()
+  // Phase-selecting read: build context at build, branch-aware runtime context at request time.
   const urlPath = `/docs/${slugParts.join('/')}`
-  const result = await canopy.readByUrlPath<DocContent>(urlPath)
+  const result = await readByUrlPath<DocContent>(urlPath)
 
   if (!result) return notFound()
 

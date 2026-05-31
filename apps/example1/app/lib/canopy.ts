@@ -1,4 +1,4 @@
-import { createNextCanopyContext } from 'canopycms-next'
+import { createNextCanopyContext, type GenerateContentStaticParamsOptions } from 'canopycms-next'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import config from '../../canopycms.config'
@@ -19,10 +19,30 @@ export const getCanopy = async () => {
   return context.getCanopy()
 }
 
-// Export for build-time functions (generateStaticParams, generateMetadata)
-export const getCanopyForBuild = async () => {
+// Phase-selecting reads: filesystem-direct at build time, branch-aware (ACL-enforced) at request time.
+// Recommended for resolving a page by URL/path in a [...slug] / [slug] route — correct in both phases.
+export const readByUrlPath = async <T = unknown>(
+  urlPath: string,
+  options?: { branch?: string; resolveReferences?: boolean },
+) => {
   const context = await canopyContextPromise
-  return context.getCanopyForBuild()
+  return context.readByUrlPath<T>(urlPath, options)
+}
+
+export const read = async <T = unknown>(input: {
+  entryPath: string
+  slug?: string
+  branch?: string
+  resolveReferences?: boolean
+}) => {
+  const context = await canopyContextPromise
+  return context.read<T>(input)
+}
+
+// Enumeration-only static params — no admin build context exposed to page modules.
+export const generateContentStaticParams = async (options?: GenerateContentStaticParamsOptions) => {
+  const context = await canopyContextPromise
+  return context.generateContentStaticParams(options)
 }
 
 // Export for API routes

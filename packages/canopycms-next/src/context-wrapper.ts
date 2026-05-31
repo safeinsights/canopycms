@@ -23,6 +23,7 @@ import { authResultToCanopyUser } from 'canopycms'
 import type { InternalGroup } from 'canopycms/server'
 import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth/cache'
 import { createCanopyCatchAllHandler } from './adapter'
+import { collectStaticParams, type GenerateContentStaticParamsOptions } from './static'
 
 let warnedNoAdmins = false
 let warnedStaticMode = false
@@ -57,23 +58,33 @@ export interface NextCanopyOptions {
 }
 
 /**
- * Wrap a build context so its operations throw if used at request time on a `server` deployment.
+ * Wrap a build context so its operations throw if misused at request time on a production server.
  *
- * On a `server` deployment the request-scoped getCanopy() enforces branch/path ACLs, but the build
- * context runs as a synthetic admin and bypasses them — using it in a request path would leak
- * ACL-protected content. On a `static` deployment there is no runtime authorization to bypass (the
- * public site is pre-built files), so no guard is applied — and a blanket guard would false-positive
- * on legitimate build helpers (generateStaticParams/sitemap) that Next can invoke in dev without
- * isBuildMode(). CANOPY_BUILD_MODE=true is the escape hatch for non-Next static generation.
+ * The build context runs as a synthetic admin and bypasses all branch/path ACLs. At **prod-server
+ * request time** there is never a legitimate reason to use it — a real user is on the other end, so
+ * content must be read through the request-scoped, ACL-enforcing getCanopy() (or the phase-selecting
+ * read/readByUrlPath, which routes to it at request time). So the guard fires for
+ * `mode === 'prod' && deployedAs === 'server' && !isBuildMode()` and fails closed (throws) rather than
+ * silently leaking protected content.
+ *
+ * Why not also in dev: Next invokes legitimate static-generation hooks (generateStaticParams,
+ * generateMetadata) in `next dev` with the same `!isBuildMode()` signature as the footgun, and there
+ * is no reliable way to tell them apart — a dev guard would false-positive on idiomatic code. In prod
+ * that ambiguity is gone (generateStaticParams is build-only; request-time build-context use is the
+ * footgun). Why not on `static` deployments: they skip ACLs everywhere by design, so there's nothing
+ * to leak. `CANOPY_BUILD_MODE=true` marks non-Next static generation as build phase.
  */
-function guardBuildContext(buildCtx: CanopyBuildContext, config: CanopyConfig): CanopyBuildContext {
+export function guardBuildContext(
+  buildCtx: CanopyBuildContext,
+  config: CanopyConfig,
+): CanopyBuildContext {
   const assertBuildPhase = (method: string): void => {
-    if (config.deployedAs === 'server' && !isBuildMode()) {
+    if (config.mode === 'prod' && config.deployedAs === 'server' && !isBuildMode()) {
       throw new Error(
-        `CanopyCMS: getCanopyForBuild().${method}() was called at request time on a 'server' ` +
-          'deployment. The build context bypasses all branch and path ACLs and must only be used ' +
-          'during static generation (next build / CANOPY_BUILD_MODE=true). Use the request-scoped ' +
-          'getCanopy() instead, or the auto-selecting read()/readByUrlPath() from createNextCanopyContext.',
+        `CanopyCMS: getCanopyForBuild().${method}() was called at request time on a production ` +
+          "'server' deployment. The build context bypasses all branch and path ACLs and must only be " +
+          'used during static generation (next build / CANOPY_BUILD_MODE=true). Use the request-scoped ' +
+          'getCanopy(), or the phase-selecting read()/readByUrlPath() from createNextCanopyContext.',
       )
     }
   }
@@ -122,9 +133,10 @@ export interface NextCanopyContextResult {
    * code can resolve a single entry by path/URL without scanning the whole collection.
    *
    * **Security note:** This context bypasses all branch and path ACLs (synthetic admin, unrestricted
-   * read). Use it ONLY in build-time code paths not exposed to end users. On a `server` deployment its
-   * operations throw if invoked at request time (where getCanopy() would enforce ACLs); prefer the
-   * phase-selecting `readByUrlPath`/`read` below for page resolution.
+   * read). It's an advanced escape hatch — for ordinary page work prefer the phase-selecting
+   * `readByUrlPath`/`read` (content) and `generateContentStaticParams` (paths) below, which don't hand
+   * the admin context to your page modules. On a production `server` deployment its operations throw
+   * if invoked at request time (where getCanopy() would enforce ACLs).
    */
   getCanopyForBuild: () => Promise<CanopyBuildContext>
   /**
@@ -138,6 +150,15 @@ export interface NextCanopyContextResult {
   readByUrlPath: CanopyContext['readByUrlPath']
   /** Phase-selecting `read` (build context at build, runtime context at request) — counterpart to readByUrlPath. */
   read: CanopyContext['read']
+  /**
+   * Build the array Next's `generateStaticParams` expects from CanopyCMS content. Enumeration-only
+   * (reads the set of routable paths, never entry content) and closes over the build context, so your
+   * page module never imports the admin `getCanopyForBuild`. Use `{ rootPath, shape: 'single' }` for a
+   * `[slug]` route, or the default catch-all for `[...slug]`.
+   */
+  generateContentStaticParams: (
+    options?: GenerateContentStaticParamsOptions,
+  ) => Promise<Array<Record<string, string | string[]>>>
   /** API catch-all route handler */
   handler: ReturnType<typeof createCanopyCatchAllHandler>
   /** Underlying services (rarely needed directly) */
@@ -304,6 +325,12 @@ export async function createNextCanopyContext(
     return ctx.read<T>(input)
   }
 
+  // Enumeration-only static-params helper, bound to the (guarded) build context so page modules don't
+  // import the admin context just to list paths. generateStaticParams is build-only, so this is safe.
+  const generateContentStaticParams = async (options: GenerateContentStaticParamsOptions = {}) => {
+    return collectStaticParams(await getCanopyForBuild(), options)
+  }
+
   // Create API handler using same services
   const handler = createCanopyCatchAllHandler({
     ...options,
@@ -316,6 +343,7 @@ export async function createNextCanopyContext(
     getCanopyForBuild,
     readByUrlPath,
     read,
+    generateContentStaticParams,
     handler,
     services,
   }
