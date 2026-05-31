@@ -77,6 +77,19 @@ export class BranchSchemaCache {
   }
 
   /**
+   * Whether to skip the on-disk cache for this branchRoot.
+   *
+   * branchRoot equals the project root (process.cwd()) only in the synthetic
+   * contexts used by static deployments and build phases — real branch roots are
+   * always nested under the workspace (.canopy-dev/content-branches/<name> in dev,
+   * <workspaceRoot>/content-branches/<name> in prod). Never write .canopy-meta/ at
+   * the project root, regardless of which entrypoint produced the cwd branchRoot.
+   */
+  private skipDiskCache(branchRoot: string): boolean {
+    return isBuildMode() || path.resolve(branchRoot) === path.resolve(process.cwd())
+  }
+
+  /**
    * Get schema for a branch (loads from cache or resolves fresh).
    *
    * @param branchRoot - Root directory of the branch (e.g., .canopy-dev/content-branches/main)
@@ -104,7 +117,7 @@ export class BranchSchemaCache {
 
     // In static/build mode, branchRoot is process.cwd() (the project root).
     // Skip disk cache to avoid creating .canopy-meta/ at the project root.
-    const skipDiskCache = isBuildMode()
+    const skipDiskCache = this.skipDiskCache(branchRoot)
 
     if (!skipDiskCache) {
       const cacheDir = path.join(branchRoot, '.canopy-meta')
@@ -196,7 +209,7 @@ export class BranchSchemaCache {
    * @param branchRoot - Root directory of the branch
    */
   async invalidate(branchRoot: string): Promise<void> {
-    if (isBuildMode()) return
+    if (this.skipDiskCache(branchRoot)) return
 
     const cacheDir = path.join(branchRoot, '.canopy-meta')
     const stalePath = path.join(cacheDir, 'schema-cache.stale')

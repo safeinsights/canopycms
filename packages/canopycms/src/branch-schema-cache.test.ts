@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest'
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -234,6 +234,44 @@ describe('BranchSchemaCache', () => {
 
       expect(result.schema).toBeDefined()
       expect(result.flatSchema).toBeDefined()
+    })
+  })
+
+  describe('project root (static/build synthetic context)', () => {
+    it('should NOT create .canopy-meta when branchRoot is the project root', async () => {
+      const registry = new BranchSchemaCache()
+      const entrySchemaRegistry: Record<string, readonly FieldConfig[]> = {
+        pageSchema: [{ name: 'title', type: 'string', label: 'Title' }],
+      }
+
+      // Static deployments resolve branchRoot to process.cwd(). Simulate that by
+      // pointing process.cwd() at the temp branch root, then using it as branchRoot.
+      // (process.chdir() is unavailable in vitest workers, so spy on cwd instead.)
+      const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(branchRoot)
+      try {
+        const result = await registry.getSchema(branchRoot, entrySchemaRegistry)
+
+        // Schema still resolves fresh (no disk cache layer)
+        expect(result.schema.entries?.[0].name).toBe('page')
+
+        // ...but nothing was written to .canopy-meta at the project root
+        const metaPath = path.join(branchRoot, '.canopy-meta')
+        const metaExists = await fs
+          .access(metaPath)
+          .then(() => true)
+          .catch(() => false)
+        expect(metaExists).toBe(false)
+
+        // invalidate() must also be a no-op at the project root
+        await registry.invalidate(branchRoot)
+        const metaExistsAfterInvalidate = await fs
+          .access(metaPath)
+          .then(() => true)
+          .catch(() => false)
+        expect(metaExistsAfterInvalidate).toBe(false)
+      } finally {
+        cwdSpy.mockRestore()
+      }
     })
   })
 
