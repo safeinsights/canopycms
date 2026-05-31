@@ -1,5 +1,7 @@
 # Static-export sitemap helper
 
+NOTE: This was written in terms of static support, but should also support dev and prod server capabilities
+
 ## Problem
 
 Adopters building static (`output: 'export'`) Next sites must hand-roll `sitemap.xml` by enumerating

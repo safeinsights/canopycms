@@ -1,5 +1,7 @@
 # Static-export SEO metadata helper
 
+NOTE: This was written in terms of static support, but should also support dev and prod server capabilities
+
 ## Problem
 
 Adopters must hand-map an entry's SEO fields to Next `Metadata` (title / description / OpenGraph /
