@@ -22,6 +22,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - [Integration Guide](#integration-guide)
   - [Load Content by URL Path](#load-content-by-url-path)
   - [Index Entries and URL Resolution](#index-entries-and-url-resolution)
+  - [Static Export with generateStaticParams](#static-export-with-generatestaticparams)
 - [Sanitizing URLs from CMS Content](#sanitizing-urls-from-cms-content)
 - [Content Tree Builder](#content-tree-builder)
 - [Listing Entries](#listing-entries)
@@ -490,20 +491,21 @@ Available schemas: authorSchema, homeSchema, docSchema
 
 ### `defineCanopyConfig` Options
 
-| Option                | Type                   | Required | Default     | Description                                                                                                                                                                                              |
-| --------------------- | ---------------------- | -------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema`              | `RootCollectionConfig` | No\*     | -           | Object with `collections` and `entries` arrays defining your content structure. \*Required unless using `.collection.json` meta files                                                                    |
-| `gitBotAuthorName`    | `string`               | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                              |
-| `gitBotAuthorEmail`   | `string`               | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                             |
-| `mode`                | `'dev' \| 'prod'`      | No       | `'dev'`     | Operating mode (see below)                                                                                                                                                                               |
-| `contentRoot`         | `string`               | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                |
-| `defaultBaseBranch`   | `string`               | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`)                                                                                                                            |
-| `defaultActiveBranch` | `string`               | No       | (see below) | Which workspace the dev server serves content from and which branch the editor opens by default. In dev mode, auto-detected from the current git branch. In prod mode, falls back to `defaultBaseBranch` |
-| `defaultBranchAccess` | `'allow' \| 'deny'`    | No       | `'deny'`    | Default access policy for new branches                                                                                                                                                                   |
-| `defaultPathAccess`   | `'allow' \| 'deny'`    | No       | `'allow'`   | Default access policy for content paths                                                                                                                                                                  |
-| `deployedAs`          | `'server' \| 'static'` | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced. |
-| `media`               | `MediaConfig`          | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                          |
-| `editor`              | `EditorConfig`         | No       | -           | Editor UI customization options                                                                                                                                                                          |
+| Option                | Type                   | Required | Default     | Description                                                                                                                                                                                                                                                                   |
+| --------------------- | ---------------------- | -------- | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema`              | `RootCollectionConfig` | No\*     | -           | Object with `collections` and `entries` arrays defining your content structure. \*Required unless using `.collection.json` meta files                                                                                                                                         |
+| `gitBotAuthorName`    | `string`               | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                                                                                                   |
+| `gitBotAuthorEmail`   | `string`               | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                                                                                                  |
+| `mode`                | `'dev' \| 'prod'`      | No       | `'dev'`     | Operating mode (see below)                                                                                                                                                                                                                                                    |
+| `contentRoot`         | `string`               | No       | `'content'` | Root directory for content files relative to project root                                                                                                                                                                                                                     |
+| `defaultBaseBranch`   | `string`               | No       | `'main'`    | Git branch used as the fork point for CMS content branches (typically `main`)                                                                                                                                                                                                 |
+| `defaultActiveBranch` | `string`               | No       | (see below) | Which workspace the dev server serves content from and which branch the editor opens by default. In dev mode, auto-detected from the current git branch. In prod mode, falls back to `defaultBaseBranch`                                                                      |
+| `defaultBranchAccess` | `'allow' \| 'deny'`    | No       | `'deny'`    | Default access policy for new branches                                                                                                                                                                                                                                        |
+| `defaultPathAccess`   | `'allow' \| 'deny'`    | No       | `'allow'`   | Default access policy for content paths                                                                                                                                                                                                                                       |
+| `deployedAs`          | `'server' \| 'static'` | No       | `'server'`  | Deployment shape. `'static'`: site is pre-built with no live editor; all CMS API requests return 401 and `authPlugin` is not required. `'server'`: normal server-rendered deployment with auth enforced.                                                                      |
+| `media`               | `MediaConfig`          | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                                                                                               |
+| `editor`              | `EditorConfig`         | No       | -           | Editor UI customization options                                                                                                                                                                                                                                               |
+| `dev`                 | `DevConfig`            | No       | -           | Dev-mode-only behavior. `dev.contentSync: 'off' \| 'warn' \| 'auto'` (default `'warn'`) controls how the dev server detects/reconciles working-tree edits vs. the served branch clone (see [Local Development Sync](#local-development-sync)). Ignored when `mode !== 'dev'`. |
 
 **Note**: You must define your schema using at least one of these approaches:
 
@@ -520,7 +522,27 @@ See the [Schema Registry and References](#schema-references-system) section for 
 
 ### Local Development Sync
 
-When working in `dev` mode, your content lives in two places: the working tree of your repo and the branch workspaces inside `.canopy-dev/content-branches/` that the CMS editor reads from. The `canopycms sync` command keeps them in sync.
+When working in `dev` mode, your content lives in two places: the working tree of your repo and the branch workspaces inside `.canopy-dev/content-branches/` that the CMS editor reads from. If you edit files in the working tree directly (or pull from GitHub) while the dev server serves a branch clone, the two can drift — the classic "builds fine, but the dev editor shows blank/stale content" trap.
+
+**Automatic divergence detection.** The `dev.contentSync` config option controls how the dev server reconciles working-tree edits with the served branch clone (dev mode only; ignored when `mode !== 'dev'`):
+
+```typescript
+// canopycms.config.ts
+export default defineCanopyConfig({
+  // ...
+  dev: {
+    contentSync: 'warn', // 'off' | 'warn' (default) | 'auto'
+  },
+})
+```
+
+| Value    | Behavior                                                                                                            |
+| -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `'warn'` | Default. On startup and on `content/**` changes, logs a warning naming the files that diverge from the branch clone |
+| `'auto'` | Automatically pushes working-tree content changes into the branch clone — no manual sync needed                     |
+| `'off'`  | No watcher, no warnings                                                                                             |
+
+When `contentSync` is `'warn'` or you want explicit control, the `canopycms sync` command keeps the two in sync.
 
 **Push** (working tree → branch workspace) -- copies your current working-tree content into a branch workspace and commits it, so the CMS editor sees your latest changes (e.g., after pulling from GitHub or editing files directly). By default, targets the workspace matching your current git branch (auto-creating it if needed):
 
@@ -658,21 +680,21 @@ const config = defineCanopyConfig({
 
 ### Field Types
 
-| Type        | Description                                     | Options                                                                                               |
-| ----------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `string`    | Single-line text                                | -                                                                                                     |
-| `number`    | Numeric value                                   | -                                                                                                     |
-| `boolean`   | True/false toggle                               | -                                                                                                     |
-| `datetime`  | Date and time picker                            | -                                                                                                     |
-| `markdown`  | Markdown text editor                            | -                                                                                                     |
-| `mdx`       | MDX editor with component support               | -                                                                                                     |
-| `rich-text` | Rich text editor                                | -                                                                                                     |
-| `image`     | Image upload/selection                          | -                                                                                                     |
-| `code`      | Code editor with syntax highlighting            | -                                                                                                     |
-| `select`    | Dropdown selection                              | `options: string[] \| {label, value}[]`                                                               |
-| `reference` | Reference to another content entry (UUID-based) | `collections?: string[]`, `entryTypes?: string[]`, `displayField?: string`, `resolvedSchema?: Schema` |
-| `object`    | Nested object                                   | `fields: FieldConfig[]`                                                                               |
-| `block`     | Block-based content                             | `templates: BlockTemplate[]`                                                                          |
+| Type        | Description                                     | Options                                                                                                                 |
+| ----------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `string`    | Single-line text                                | -                                                                                                                       |
+| `number`    | Numeric value                                   | -                                                                                                                       |
+| `boolean`   | True/false toggle                               | -                                                                                                                       |
+| `datetime`  | Date and time picker                            | -                                                                                                                       |
+| `markdown`  | Markdown text editor                            | -                                                                                                                       |
+| `mdx`       | MDX editor with component support               | -                                                                                                                       |
+| `rich-text` | Rich text editor                                | -                                                                                                                       |
+| `image`     | Image upload/selection                          | -                                                                                                                       |
+| `code`      | Code editor with syntax highlighting            | -                                                                                                                       |
+| `select`    | Dropdown selection                              | `options: string[] \| {label, value}[]`                                                                                 |
+| `reference` | Reference to another content entry (UUID-based) | `collections?: string[]`, `entryTypes?: string[]`, `displayField?: string`, `resolvedSchema?: Schema`                   |
+| `object`    | Nested object                                   | `fields: FieldConfig[]`                                                                                                 |
+| `block`     | Block-based "flexible content" / page blocks    | `templates: BlockTemplate[]` (define each with `defineBlockTemplate`, see [Page Blocks](#page-blocks-flexible-content)) |
 
 **Common field options:**
 
@@ -729,6 +751,49 @@ const docSchema = defineEntrySchema([
 ```
 
 Groups are reusable — define them once and include them in multiple schemas. Both helpers accept an optional `description` that appears as hint text in the editor.
+
+### Page Blocks (Flexible Content)
+
+A `block` field holds an ordered, repeatable list of heterogeneous section blocks discriminated by a `template` key — the "flexible content" / page-builder pattern. Each block in the list picks one of the field's templates, so a page entry becomes an array of typed sections that editors can add, remove, and reorder.
+
+Use `defineBlockTemplate()` (from `canopycms`) to define a reusable section template once and embed it in multiple entry schemas' `block` fields, instead of duplicating the template inline in every schema:
+
+```typescript
+import { defineBlockTemplate, defineEntrySchema } from 'canopycms'
+
+const heroBlock = defineBlockTemplate({
+  name: 'hero',
+  label: 'Hero',
+  fields: [
+    { name: 'heading', type: 'string' },
+    { name: 'subheading', type: 'string', required: false },
+  ],
+})
+
+const ctaBlock = defineBlockTemplate({
+  name: 'cta',
+  label: 'Call to Action',
+  fields: [
+    { name: 'label', type: 'string' },
+    { name: 'href', type: 'string' },
+  ],
+})
+
+// Reuse the same templates across multiple page schemas:
+const pageSchema = defineEntrySchema([
+  { name: 'title', type: 'string', required: true },
+  { name: 'sections', type: 'block', templates: [heroBlock, ctaBlock] },
+])
+
+type Page = TypeFromEntrySchema<typeof pageSchema>
+// Page['sections'] narrows to a discriminated union:
+//   Array<
+//     | { template: 'hero'; value: { heading: string; subheading?: string } }
+//     | { template: 'cta';  value: { label: string; href: string } }
+//   >
+```
+
+`defineBlockTemplate()` is an identity/type-inference helper (like `defineEntrySchema` and the field-group helpers): it returns the template unchanged but preserves the literal types so `TypeFromEntrySchema` derives the correct discriminated union. Switch on `block.template` to render each section (see [Typed Block Discriminated Unions](#typed-block-discriminated-unions)).
 
 **Example with reference field:**
 
@@ -1097,6 +1162,44 @@ Index entries (entries with slug `"index"`) represent the default content for a 
 
 This means `entry.urlPath` from `listEntries()` is round-trip safe: `readByUrlPath(entry.urlPath)` always resolves back to the same entry.
 
+### Static Export with generateStaticParams
+
+For static-export sites you need a `generateStaticParams` that enumerates every content URL. `generateContentStaticParams()` (from `canopycms-next`) builds the array Next.js expects directly from your CanopyCMS content, so you do not have to hand-roll the path-segment mapping.
+
+**Catch-all route** (`app/[...slug]/page.tsx`) — emits `{ slug: segments[] }` for each entry:
+
+```typescript
+// app/[...slug]/page.tsx
+import { generateContentStaticParams } from 'canopycms-next'
+import { getCanopyForBuild } from '../lib/canopy'
+
+export const generateStaticParams = () => generateContentStaticParams(getCanopyForBuild)
+```
+
+**Collection-scoped single-segment route** (`app/posts/[slug]/page.tsx`) — pass `shape: 'single'` (emits `{ slug }`) and `rootPath` to scope to one collection:
+
+```typescript
+// app/posts/[slug]/page.tsx
+import { generateContentStaticParams } from 'canopycms-next'
+import { getCanopyForBuild } from '../../lib/canopy'
+
+export const generateStaticParams = () =>
+  generateContentStaticParams(getCanopyForBuild, { rootPath: 'content/posts', shape: 'single' })
+```
+
+**Options:**
+
+| Option      | Type                      | Default       | Description                                                                                             |
+| ----------- | ------------------------- | ------------- | ------------------------------------------------------------------------------------------------------- |
+| `shape`     | `'catch-all' \| 'single'` | `'catch-all'` | `'catch-all'` emits the URL `segments` array; `'single'` emits the entry `slug`                         |
+| `paramName` | `string`                  | `'slug'`      | Route param name (matches your `[...name]` / `[name]` folder)                                           |
+| `rootPath`  | `string`                  | Content root  | Scope to a subtree (e.g., `'content/posts'`), useful with `shape: 'single'`                             |
+| `filter`    | `(entry) => boolean`      | -             | Exclude entries; e.g. drop the root index from a non-optional catch-all: `(e) => e.segments.length > 0` |
+
+> A root index (`/`) produces empty `segments` — keep it only for an optional catch-all `[[...slug]]`, otherwise exclude it with `filter`.
+>
+> Sitemap and SEO-metadata static-export helpers are coming separately.
+
 ### Reading Content at Build Time
 
 `getCanopyForBuild()` provides a context that does not depend on request headers. Use it in `generateStaticParams`, `generateMetadata`, and any other build-time function where Next.js does not have a live request:
@@ -1139,7 +1242,42 @@ export default async function PostPage({ params }) {
 | `getCanopy()`         | Current user                               | Yes                  | Server components, route handlers                         |
 | `getCanopyForBuild()` | Full admin (bypasses all auth/permissions) | No                   | `generateStaticParams`, `generateMetadata`, build scripts |
 
-> **Security note:** `getCanopyForBuild()` runs as a synthetic admin user with unrestricted read access, bypassing all branch and path ACLs. Only use it in build-time code paths (static generation, metadata) that are not exposed to end users at request time.
+> **Security note:** `getCanopyForBuild()` runs as a synthetic admin user with unrestricted read access, bypassing all branch and path ACLs. Only use it in build-time code paths (static generation, metadata) that are not exposed to end users at request time. On a `server` deployment, the build context now **throws if its operations are invoked at request time** — a guard rail so the ACL-bypassing reader cannot be accidentally used to serve live requests. Use `getCanopy()` (or the phase-selecting helpers below) for request-time reads.
+
+The build context also exposes a build-safe `readByUrlPath()` that returns `null` for non-entry paths (e.g. `/favicon.ico`, `/robots.txt`) instead of throwing, so a single `[...slug]` page can resolve real entries and cleanly `notFound()` everything else.
+
+### Phase-Selecting `readByUrlPath` / `read`
+
+For a `[...slug]`/`[slug]` page that must work in both phases, `createNextCanopyContext` returns top-level `readByUrlPath` and `read` helpers that automatically pick the right context: the admin build context during static generation (reads the working tree) and the branch-aware, ACL-enforced runtime context at request time (branch-clone preview in dev). This is the recommended way to resolve a page by URL — page code never has to hand-pick the admin build context.
+
+Export them from your `lib/canopy.ts` alongside `getCanopy`:
+
+```typescript
+// app/lib/canopy.ts
+const canopyContextPromise = createNextCanopyContext({
+  config: config.server,
+  authPlugin,
+  entrySchemaRegistry,
+})
+
+export const readByUrlPath = async <T = unknown>(urlPath: string) => {
+  const context = await canopyContextPromise
+  return context.readByUrlPath<T>(urlPath)
+}
+```
+
+```typescript
+// app/[...slug]/page.tsx
+import { notFound } from 'next/navigation'
+import { readByUrlPath } from '../lib/canopy'
+
+export default async function Page({ params }) {
+  const urlPath = '/' + (params.slug?.join('/') ?? '')
+  const result = await readByUrlPath<{ title: string; body: string }>(urlPath)
+  if (!result) return notFound()
+  return <Article title={result.data.title} body={result.data.body} />
+}
+```
 
 ### Advanced: Using createContentReader Directly
 
@@ -1194,6 +1332,38 @@ import { sanitizeHref } from 'canopycms'
 | `""`                            | `"#"` (invalid URL)          |
 
 Use `sanitizeHref` anywhere you render an `href` attribute with a value that comes from CMS content -- call-to-action links, navigation URLs, author website fields, etc. It constructs a fresh string from the parsed URL rather than passing the original input through, which also satisfies static analysis tools (e.g., CodeQL taint tracking).
+
+### Error Handling Utilities
+
+When your code catches errors thrown by CanopyCMS reads (e.g., to render a `notFound()` vs. a `403`), the same typed error helpers CanopyCMS uses internally are available to adopters from the `canopycms/utils/error` subpath:
+
+```typescript
+import {
+  getErrorMessage,
+  isNodeError,
+  isNotFoundError,
+  isPermissionError,
+  isFileExistsError,
+} from 'canopycms/utils/error'
+```
+
+- `getErrorMessage(err)` — safely extract a string message from an `unknown` caught value (avoids `any`)
+- `isNodeError(err)` — type guard narrowing to `NodeJS.ErrnoException` (gives you `.code`, `.path`, etc.)
+- `isNotFoundError(err)` / `isPermissionError(err)` / `isFileExistsError(err)` — classify common filesystem failures (`ENOENT`, `EACCES`/`EPERM`, `EEXIST`)
+
+```typescript
+import { notFound } from 'next/navigation'
+import { isNotFoundError, isPermissionError } from 'canopycms/utils/error'
+
+try {
+  const { data } = await canopy.read({ entryPath: 'content/posts', slug })
+  return <PostView post={data} />
+} catch (err) {
+  if (isNotFoundError(err)) return notFound()
+  if (isPermissionError(err)) return <Forbidden />
+  throw err
+}
+```
 
 ### Media Configuration
 
@@ -1740,7 +1910,8 @@ CanopyCMS is designed for minimal integration effort. Run `npx canopycms init` t
 
 **Optional touchpoints:**
 
-- **Server components**: Use `await getCanopy()` to read draft content with automatic auth; use `await getCanopyForBuild()` in `generateStaticParams` and `generateMetadata` (no request scope needed)
+- **Server components**: Use `await getCanopy()` to read draft content with automatic auth; use `await getCanopyForBuild()` in `generateStaticParams` and `generateMetadata` (no request scope needed). For `[...slug]`/`[slug]` pages, prefer the phase-selecting `readByUrlPath`/`read` from `createNextCanopyContext` (see [Phase-Selecting readByUrlPath / read](#phase-selecting-readbyurlpath--read))
+- **Static export**: Use `generateContentStaticParams(getCanopyForBuild)` from `canopycms-next` to drive `generateStaticParams` (see [Static Export with generateStaticParams](#static-export-with-generatestaticparams))
 - **AI content route**: `{appDir}/ai/[...path]/route.ts` -- serve content as AI-readable markdown; generated by default during `init` (see [AI-Ready Content](#ai-ready-content))
 
 To switch between auth providers, set the `CANOPY_AUTH_MODE` environment variable (`dev` or `clerk`). The generated code handles both providers without regenerating files.

@@ -31,3 +31,7 @@ export {
 } from './entry-link-resolver'
 export type { EntryLinkUrlResolver } from './entry-link-resolver'
 export { computeEntryUrl } from './utils/entry-url'
+export { collectStaticPaths } from './static'
+export type { StaticPathEntry, CollectStaticPathsOptions } from './static'
+export { startDevContentWatcher } from './dev-content-watcher'
+export type { StartDevContentWatcherOptions } from './dev-content-watcher'

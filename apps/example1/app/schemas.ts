@@ -1,5 +1,6 @@
 import {
   TypeFromEntrySchema,
+  defineBlockTemplate,
   defineEntrySchema,
   defineInlineFieldGroup,
   defineNestedFieldGroup,
@@ -35,6 +36,27 @@ const locationGroup = defineNestedFieldGroup({
   fields: [
     { name: 'city', type: 'string', label: 'City' },
     { name: 'country', type: 'string', label: 'Country' },
+  ],
+})
+
+// Reusable "page block" templates: define each section once with defineBlockTemplate(), then drop the
+// same consts into any schema's `block` field. A `block` field holds an ordered, repeatable list of
+// these heterogeneous templates, discriminated by `template` — the "flexible content" pattern.
+const heroBlock = defineBlockTemplate({
+  name: 'hero',
+  label: 'Hero',
+  fields: [
+    { name: 'headline', type: 'string' },
+    { name: 'body', type: 'markdown' },
+  ],
+})
+
+const ctaBlock = defineBlockTemplate({
+  name: 'cta',
+  label: 'CTA',
+  fields: [
+    { name: 'title', type: 'string' },
+    { name: 'ctaText', type: 'string' },
   ],
 })
 
@@ -101,28 +123,9 @@ export const postSchema = defineEntrySchema([
   // Inline SEO group: metaTitle/metaDescription stored flat alongside other fields
   seoGroup,
   { name: 'body', type: 'markdown', label: 'Body', isBody: true },
-  {
-    name: 'blocks',
-    type: 'block',
-    templates: [
-      {
-        name: 'hero',
-        label: 'Hero',
-        fields: [
-          { name: 'headline', type: 'string' },
-          { name: 'body', type: 'markdown' },
-        ],
-      },
-      {
-        name: 'cta',
-        label: 'CTA',
-        fields: [
-          { name: 'title', type: 'string' },
-          { name: 'ctaText', type: 'string' },
-        ],
-      },
-    ],
-  },
+  // Ordered, repeatable list of heterogeneous section blocks. The shared templates above are
+  // reused here (and could be embedded in other schemas the same way).
+  { name: 'blocks', type: 'block', templates: [heroBlock, ctaBlock] },
 ])
 
 export type PostContent = TypeFromEntrySchema<typeof postSchema> & {

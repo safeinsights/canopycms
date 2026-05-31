@@ -129,6 +129,12 @@ The core package organizes code into focused modules, each with a single respons
 - Static AI content writer (writes generated markdown and manifest to disk)
 - Used by the CLI and during static site builds
 
+**Static-Export Helpers** - Framework-agnostic static-site-generation support:
+
+- `collectStaticPaths` produces neutral route descriptors (URL path, segments, slug, entry type) from the build context
+- Designed to be mapped onto any framework's static-generation shape (e.g. Next.js `generateStaticParams`) by a thin adapter
+- See [Static-Export Helpers](#static-export-helpers) for the core-plus-adapter design
+
 **Validation** - Content validation utilities:
 
 - Reference validator for checking content references
@@ -168,6 +174,11 @@ Some files remain at the source root because they represent core domain concepts
 
 - Git manager (low-level git operations)
 - GitHub service (GitHub API integration)
+
+**Dev Content Sync:**
+
+- Sync core (prompt-free content-tree diffing, copy, and commit primitives shared by the sync CLI and the dev watcher)
+- Dev content watcher (dev-only divergence detection between the working tree and the served branch clone; see [Dev Content Divergence Detection](#dev-content-divergence-detection))
 
 **Core:**
 
@@ -898,7 +909,7 @@ Full-featured local development with branching and git operations — a local si
 
 `defaultActiveBranch` is auto-detected from the current git HEAD if not explicitly set in the config (see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)). The detected value is baked into the config object at service creation time so that all downstream code uses the same value without re-detecting (avoids races if HEAD changes mid-request). Settings (groups and permissions) use the same orphan branch mechanism as prod (`canopycms-settings-{deploymentName}`, default: `canopycms-settings-local`), with the workspace at `.canopy-dev/settings/`. Commits go to the local bare remote but no PR is created, keeping the workflow lightweight during development. The AI content cache is invalidated on every request in dev mode so content edits are reflected immediately.
 
-Use `npx canopycms worker run-once` to process queued tasks, refresh the auth cache, and simulate the EC2 worker locally. Use `npx canopycms sync push` / `npx canopycms sync pull` to synchronize content between the developer's working tree and the CMS editor's branch workspaces (see [Content Sync CLI](#content-sync-cli) below).
+Use `npx canopycms worker run-once` to process queued tasks, refresh the auth cache, and simulate the EC2 worker locally. Use `npx canopycms sync push` / `npx canopycms sync pull` to synchronize content between the developer's working tree and the CMS editor's branch workspaces (see [Content Sync CLI](#content-sync-cli) below). A background watcher (see [Dev Content Divergence Detection](#dev-content-divergence-detection) below) can surface or auto-resolve divergence between the working tree and the served branch clone, so developers do not have to remember to run sync manually.
 
 ### prod
 
@@ -1049,6 +1060,25 @@ The `sync` command bridges this gap with bidirectional content synchronization b
 
 **Why sync does not touch remote.git:** Earlier designs had push update the local bare remote and fan out fetches to all branch workspaces. This was removed because the sync command's purpose is narrow: move content between the developer's working tree and a single branch workspace. The bare remote is kept current by the existing publish and submit flows, and mixing those responsibilities in sync created confusing semantics (especially for the "both" direction).
 
+### Dev Content Divergence Detection
+
+The content sync CLI closes the gap between the developer's working tree and the editor's branch clones, but only when the developer remembers to run it. In dev mode there are two distinct content readers that can silently disagree:
+
+- The **editor and dev server** read content from the served branch clone under `.canopy-dev/content-branches/<branch>/`.
+- The **static build** reads the working-tree `content/**` directly.
+
+When a developer edits working-tree content outside the editor, the dev server keeps serving the stale branch clone until a sync runs. A background watcher surfaces this divergence automatically. Its behavior is controlled by a single dev-only config knob, `dev.contentSync`:
+
+- **`'warn'`** (default): Log a warning that names the diverged files (added, removed, and changed), pointing the developer at `npx canopycms sync push`.
+- **`'auto'`**: Push the working-tree content into the branch clone automatically, so the dev server reflects working-tree edits with no manual step.
+- **`'off'`**: Disable the watcher entirely.
+
+The watcher runs an initial check at dev startup and re-checks whenever a working-tree content file is added, changed, or removed. It compares the two directories by exact file content (byte comparison, robust to mtime differences), so it only fires on real divergence. It is a no-op outside dev mode, when the working tree has no content directory, or before the branch clone has been created.
+
+**Why this lives in core:** All the divergence-detection and auto-push logic lives in the core package's watcher. The Next.js adapter merely starts the watcher once at dev startup (a thin, framework-specific trigger), keeping the adapter free of behavior. The non-interactive sync primitives -- copy, commit, and content-tree diffing -- were extracted into a shared sync core that both the interactive sync CLI and the watcher reuse, so there is a single implementation of "compare two content trees" and "push working-tree content into a branch clone."
+
+**Deliberate non-goal -- no "dev reads working tree directly" mode:** A simpler-seeming alternative would be to have the dev server read the working tree directly, bypassing the branch clone. This was deliberately rejected. The branch-clone model is the foundation of the editing workflow (branch isolation, drafts, ACLs, the publish/submit flow), and a special dev read path that skips it would diverge dev behavior from prod and undermine the guarantee that "every edit happens on a branch." Surfacing divergence (and optionally auto-syncing it) preserves the branch-clone model while still giving developers a fast, low-friction loop.
+
 ## Context Architecture
 
 CanopyCMS provides a context system that manages authentication, permissions, and content access in a framework-agnostic way.
@@ -1134,13 +1164,16 @@ Setup is a one-time operation in a central file (e.g., `app/lib/canopy.ts`):
 
 ```typescript
 // One-time setup
-const { getCanopy, getCanopyForBuild, handler, services } = createNextCanopyContext({
-  config: canopyConfig,
-  authPlugin: clerkAuthPlugin,
-})
+const { getCanopy, getCanopyForBuild, read, readByUrlPath, handler, services } =
+  createNextCanopyContext({
+    config: canopyConfig,
+    authPlugin: clerkAuthPlugin,
+  })
 
-export { getCanopy, getCanopyForBuild, handler, services }
+export { getCanopy, getCanopyForBuild, read, readByUrlPath, handler, services }
 ```
+
+The returned `read`/`readByUrlPath` are the phase-selecting helpers (see [Phase-Selecting Read](#phase-selecting-read)); they are the recommended way to resolve a page by path or URL in routes that render in both the build and request phases.
 
 Then in pages and API routes:
 
@@ -1158,9 +1191,24 @@ No manual user management, no config imports, no auth logic. The context handles
 **Two context functions serve different scopes:**
 
 - **`getCanopy()`** is request-scoped. It calls `headers()` to authenticate the current user and is wrapped with React `cache()` for per-request memoization. Use it in server components and route handlers.
-- **`getCanopyForBuild()`** is process-scoped. It uses a synthetic admin user with no auth, making it safe to call from `generateStaticParams`, `generateMetadata`, and other non-request-scoped contexts where `headers()` is unavailable. It is memoized for the process lifetime. **Security note:** this context bypasses all branch and path ACLs — only use it in build-time code paths that are not exposed to end users at request time.
+- **`getCanopyForBuild()`** is process-scoped. It uses a synthetic admin user with no auth, making it safe to call from `generateStaticParams`, `generateMetadata`, and other non-request-scoped contexts where `headers()` is unavailable. It is memoized for the process lifetime. Beyond `buildContentTree()` and `listEntries()`, it also exposes build-safe `read()` and `readByUrlPath()` so build-time page code can resolve a single entry by path or URL without scanning the whole collection. **Security note:** this context bypasses all branch and path ACLs (synthetic admin, unrestricted filesystem-direct reads) — only use it in build-time code paths that are not exposed to end users at request time. The request-time guard described below enforces this on server deployments.
 
 This dual-context pattern replaces the need for `isBuildMode()` environment detection in most cases. Instead of the framework guessing whether auth is available, adopters explicitly choose the right context for each call site.
+
+### Build Context Request-Time Guard
+
+Because the build context bypasses all authorization, using it at request time on a deployment that has real users would leak ACL-protected content. The Next.js adapter wraps the build context so that every one of its operations (`read`, `readByUrlPath`, `buildContentTree`, `listEntries`) asserts it is running in a build phase before doing any work.
+
+The guard is deployment-type aware:
+
+- On a **`deployedAs: 'server'`** deployment, the build context's operations **throw** if invoked at request time (detected via `isBuildMode()` being false). This catches the real authorization-bypass hazard: a page accidentally calling the admin build context while serving a live, authenticated request. The error message directs the developer to the request-scoped `getCanopy()` or the phase-selecting helpers instead.
+- On a **`deployedAs: 'static'`** deployment, **no guard is applied**. A static export is pre-built files with no runtime authorization to bypass, so there is nothing to protect. A blanket guard would also false-positive on legitimate build helpers like `generateStaticParams` that Next.js can invoke during `next dev` without `isBuildMode()` being set. (`CANOPY_BUILD_MODE=true` remains the escape hatch for non-Next static generation.)
+
+### Phase-Selecting Read
+
+A page in a `[...slug]`/`[slug]` route needs to resolve content correctly in two different phases: filesystem-direct (working tree) during the build, and branch-aware (the editor's branch-clone preview) at request time in dev. Hand-picking the right context at each call site is error-prone.
+
+To remove that burden, the Next.js adapter also returns phase-selecting `read()` and `readByUrlPath()` functions. These pick the context automatically: at build time (`isBuildMode()`) they use the build context; at request time they use the branch-aware, ACL-enforced runtime context from `getCanopy()`. Page code calls one function and is correct in both phases by construction, without ever touching the admin build context directly.
 
 ## The Permission Model
 
@@ -1829,6 +1877,31 @@ The generic `<T>` parameter flows through, giving adopters type safety on extrac
 Both `listEntries()` and `buildContentTree()` share the same underlying content listing layer for entry discovery, filename parsing, and data reading. They differ in output shape: the tree builder produces a nested hierarchy preserving parent-child relationships, while `listEntries()` produces a flat array with path segments for adopters who need to reconstruct structure themselves or do not need hierarchy at all.
 
 Both are available on the `CanopyContext` object, using the same `canopy` instance that handles branch resolution and schema access.
+
+## Static-Export Helpers
+
+Statically generated sites need to enumerate every routable content entry to produce route parameters (and, eventually, sitemaps and SEO metadata). CanopyCMS provides this through a two-layer design that mirrors the package architecture: a framework-agnostic core and a thin per-framework adapter.
+
+### Framework-Agnostic Core
+
+The core exposes `collectStaticPaths()`, which reads routable entries via the build context's `listEntries()` and reduces each to a neutral path descriptor. Each descriptor carries:
+
+- a URL-ready `urlPath` (index entries collapsed, round-trips with `readByUrlPath`),
+- the URL `segments` array (for catch-all `[...slug]` routes),
+- the entry `slug` (for collection-scoped single-segment `[slug]` routes), and
+- the entry type name.
+
+Crucially, these structures contain **no framework-specific types**. They are plain data that any framework adapter can map onto its own static-generation shape. The helper supports scoping to a collection subtree and filtering by predicate (for example, dropping the root index or keeping only one entry type).
+
+### Thin Framework Adapter
+
+The `canopycms-next` package builds `generateContentStaticParams()` on top of the neutral core. It maps the descriptors into the array Next.js's `generateStaticParams` expects, supporting both catch-all routes (param value is the `segments` array) and single-segment routes (param value is the entry `slug`, paired with a collection scope).
+
+The adapter is deliberately minimal — it only knows the shape Next.js wants. A future `canopycms-<framework>` adapter would reuse the same `collectStaticPaths()` core and provide its own thin mapping, exactly as the auth-plugin and context adapters do.
+
+Because these helpers read through the build context, they inherit its build-time-only, filesystem-direct, admin-level access (and the request-time guard on server deployments).
+
+**Deferred work:** Sitemap generation and SEO metadata extraction are intended to follow the same core-plus-adapter pattern but are tracked as separate future tasks. Only static path collection ships today.
 
 ## Extensibility Points
 

@@ -35,9 +35,16 @@ export interface CanopyContextOptions {
 }
 
 /**
- * Build-time context with only listing/tree operations.
- * Does NOT include read/readByUrlPath since those require request-scoped auth.
- * Use getCanopyForBuild() to obtain this; use getCanopy() for request-scoped access.
+ * Build-time context.
+ *
+ * Obtained via getCanopyForBuild(); reads the filesystem directly as a synthetic admin
+ * (STATIC_DEPLOY_USER) and bypasses all branch/path ACLs. Safe for static generation
+ * (generateStaticParams, sitemap, build-time page rendering); it must NOT be used to serve
+ * content at request time on a `server` deployment — adapters guard against that. For
+ * request-scoped, ACL-enforced access use getCanopy() (CanopyContext) instead.
+ *
+ * Includes read/readByUrlPath so build-time code can resolve a single entry by path/URL without
+ * scanning the whole collection.
  */
 export interface CanopyBuildContext {
   /** Build a content tree from the schema and filesystem entries. */
@@ -50,12 +57,7 @@ export interface CanopyBuildContext {
     options?: ListEntriesOptions<T>,
   ) => Promise<ListEntriesItem<T>[]>
 
-  /** Underlying services */
-  services: CanopyServices
-}
-
-export interface CanopyContext extends CanopyBuildContext {
-  /** Content reader with automatic auth context */
+  /** Content reader (auth context applied automatically — admin at build time). */
   read: <T = unknown>(input: {
     entryPath: string
     slug?: string
@@ -69,8 +71,9 @@ export interface CanopyContext extends CanopyBuildContext {
    * Tries direct entry match first (last segment = slug, rest = collection path),
    * then falls back to index entry (full path = collection, slug = 'index').
    * Root path '/' resolves to the content root's index entry.
-   * Returns null if no content matches the path (including collection URLs
-   * that have no index entry — use buildContentTree for those).
+   * Returns null if no content matches the path — including collection URLs that have no
+   * index entry (use buildContentTree for those) and non-entry/invalid paths such as
+   * `/favicon.ico` or Next internals (the slug validator rejects them, treated as a miss).
    *
    * @example
    * ```ts
@@ -88,6 +91,11 @@ export interface CanopyContext extends CanopyBuildContext {
     options?: { branch?: string; resolveReferences?: boolean },
   ) => Promise<{ data: T; path: string } | null>
 
+  /** Underlying services */
+  services: CanopyServices
+}
+
+export interface CanopyContext extends CanopyBuildContext {
   /** Current authenticated user */
   user: CanopyUser
 }
@@ -168,6 +176,10 @@ export function createCanopyContext(options: CanopyContextOptions) {
       const { branch, resolveReferences } = options ?? {}
 
       for (const candidate of candidates) {
+        // Skip candidates whose slug isn't a valid slug (e.g. URL paths like /favicon.ico or
+        // Next internals that the [...slug] route catches). These can never match an entry, so
+        // treat them as a miss rather than letting read() throw an "Invalid slug" error.
+        if (!parseSlug(candidate.slug).ok) continue
         try {
           return await read<T>({
             entryPath: candidate.entryPath,

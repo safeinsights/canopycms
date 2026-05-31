@@ -246,6 +246,20 @@ export type SourceRoot = string | undefined
 export type DeployedAs = 'static' | 'server'
 
 /**
+ * How the dev server reconciles working-tree content edits with the branch clone it serves.
+ * - 'warn' (default): on startup and on content/** changes, log a warning naming files when the
+ *   working tree diverges from the dev branch clone (so the staleness is visible, not silent).
+ * - 'auto': automatically push working-tree content changes into the branch clone (no manual sync).
+ * - 'off': no watcher, no warnings.
+ */
+export type DevContentSyncMode = 'off' | 'warn' | 'auto'
+
+/** Dev-mode-only behavior. Ignored when `mode !== 'dev'`. */
+export interface DevConfig {
+  contentSync?: DevContentSyncMode
+}
+
+/**
  * Validated CanopyConfig - the runtime configuration object.
  */
 export interface CanopyConfig {
@@ -272,6 +286,8 @@ export interface CanopyConfig {
   authPlugin?: AuthPlugin
   /** Custom URL resolver for entry links. Overrides the default URL computation. */
   entryLinkUrl?: EntryLinkUrlResolver
+  /** Dev-mode-only behavior (content-sync divergence detection). Ignored when mode !== 'dev'. */
+  dev?: DevConfig
 }
 
 /**
@@ -301,6 +317,8 @@ export interface CanopyConfigInput {
   authPlugin?: AuthPlugin
   /** Custom URL resolver for entry links. Overrides the default URL computation. */
   entryLinkUrl?: EntryLinkUrlResolver
+  /** Dev-mode-only behavior (content-sync divergence detection). Ignored when mode !== 'dev'. */
+  dev?: DevConfig
 }
 
 export type CanopyConfigFragment = Partial<CanopyConfigInput>

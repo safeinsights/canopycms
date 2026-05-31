@@ -3,9 +3,15 @@ import { cache } from 'react'
 import { headers } from 'next/headers'
 import {
   createCanopyContext,
+  isBuildMode,
+  startDevContentWatcher,
   type CanopyContext,
   type CanopyBuildContext,
   type CanopyServices,
+  type BuildContentTreeOptions,
+  type ContentTreeNode,
+  type ListEntriesOptions,
+  type ListEntriesItem,
   createCanopyServices,
   operatingStrategy,
   loadInternalGroups,
@@ -50,23 +56,88 @@ export interface NextCanopyOptions {
   entrySchemaRegistry: Record<string, readonly FieldConfig[]>
 }
 
+/**
+ * Wrap a build context so its operations throw if used at request time on a `server` deployment.
+ *
+ * On a `server` deployment the request-scoped getCanopy() enforces branch/path ACLs, but the build
+ * context runs as a synthetic admin and bypasses them — using it in a request path would leak
+ * ACL-protected content. On a `static` deployment there is no runtime authorization to bypass (the
+ * public site is pre-built files), so no guard is applied — and a blanket guard would false-positive
+ * on legitimate build helpers (generateStaticParams/sitemap) that Next can invoke in dev without
+ * isBuildMode(). CANOPY_BUILD_MODE=true is the escape hatch for non-Next static generation.
+ */
+function guardBuildContext(buildCtx: CanopyBuildContext, config: CanopyConfig): CanopyBuildContext {
+  const assertBuildPhase = (method: string): void => {
+    if (config.deployedAs === 'server' && !isBuildMode()) {
+      throw new Error(
+        `CanopyCMS: getCanopyForBuild().${method}() was called at request time on a 'server' ` +
+          'deployment. The build context bypasses all branch and path ACLs and must only be used ' +
+          'during static generation (next build / CANOPY_BUILD_MODE=true). Use the request-scoped ' +
+          'getCanopy() instead, or the auto-selecting read()/readByUrlPath() from createNextCanopyContext.',
+      )
+    }
+  }
+  return {
+    services: buildCtx.services,
+    buildContentTree: <T = unknown>(
+      options?: BuildContentTreeOptions<T>,
+    ): Promise<ContentTreeNode<T>[]> => {
+      assertBuildPhase('buildContentTree')
+      return buildCtx.buildContentTree<T>(options)
+    },
+    listEntries: <T = Record<string, unknown>>(
+      options?: ListEntriesOptions<T>,
+    ): Promise<ListEntriesItem<T>[]> => {
+      assertBuildPhase('listEntries')
+      return buildCtx.listEntries<T>(options)
+    },
+    read: <T = unknown>(input: {
+      entryPath: string
+      slug?: string
+      branch?: string
+      resolveReferences?: boolean
+    }): Promise<{ data: T; path: string }> => {
+      assertBuildPhase('read')
+      return buildCtx.read<T>(input)
+    },
+    readByUrlPath: <T = unknown>(
+      urlPath: string,
+      options?: { branch?: string; resolveReferences?: boolean },
+    ): Promise<{ data: T; path: string } | null> => {
+      assertBuildPhase('readByUrlPath')
+      return buildCtx.readByUrlPath<T>(urlPath, options)
+    },
+  }
+}
+
 export interface NextCanopyContextResult {
   /** Request-scoped context. Uses headers() + React cache(). Call from server components and route handlers. */
   getCanopy: () => Promise<CanopyContext>
   /**
    * Build-time context. Uses STATIC_DEPLOY_USER (full admin, no auth), no request scope needed.
-   * Safe to call from generateStaticParams, generateMetadata, and other non-request-scoped contexts.
+   * Safe to call from generateStaticParams, generateMetadata, sitemap, and build-time page rendering.
    * Memoized for the process lifetime — multiple calls return the same context.
    *
-   * Returns a narrower type than getCanopy() — only buildContentTree and listEntries are
-   * available. read/readByUrlPath are excluded because build-time code should not perform
-   * per-user content reads.
+   * Returns a narrower type than getCanopy() (no `user`) but includes read/readByUrlPath so build-time
+   * code can resolve a single entry by path/URL without scanning the whole collection.
    *
-   * **Security note:** This context bypasses all branch and path ACLs. It runs as a
-   * synthetic admin user with unrestricted read access. Only use it in build-time
-   * code paths that are not exposed to end users (e.g., static generation).
+   * **Security note:** This context bypasses all branch and path ACLs (synthetic admin, unrestricted
+   * read). Use it ONLY in build-time code paths not exposed to end users. On a `server` deployment its
+   * operations throw if invoked at request time (where getCanopy() would enforce ACLs); prefer the
+   * phase-selecting `readByUrlPath`/`read` below for page resolution.
    */
   getCanopyForBuild: () => Promise<CanopyBuildContext>
+  /**
+   * Phase-selecting `readByUrlPath`. At build time (isBuildMode()) it reads filesystem-direct via the
+   * build context; at request time it uses the branch-aware, ACL-enforced runtime context (getCanopy()).
+   *
+   * This is the recommended way to resolve a page by URL in a `[...slug]`/`[slug]` route: correct in
+   * both phases by construction (working tree at build, branch-clone preview in dev), so page code
+   * never has to hand-pick the admin build context. Returns null for non-matching/invalid paths.
+   */
+  readByUrlPath: CanopyContext['readByUrlPath']
+  /** Phase-selecting `read` (build context at build, runtime context at request) — counterpart to readByUrlPath. */
+  read: CanopyContext['read']
   /** API catch-all route handler */
   handler: ReturnType<typeof createCanopyCatchAllHandler>
   /** Underlying services (rarely needed directly) */
@@ -133,6 +204,12 @@ export async function createNextCanopyContext(
     entrySchemaRegistry: options.entrySchemaRegistry,
   })
 
+  // In dev, surface (or auto-fix) divergence between working-tree content and the served branch clone.
+  // All logic lives in the core watcher; this is just the once-at-startup trigger (thin Next wiring).
+  if (options.config.mode === 'dev' && !isBuildMode()) {
+    startDevContentWatcher(services, { mode: options.config.dev?.contentSync })
+  }
+
   // User extractor: passes Next.js headers to auth plugin, loads internal groups, applies authorization
   const extractUser = async (): Promise<CanopyUser> => {
     const headersList = await headers()
@@ -193,11 +270,12 @@ export async function createNextCanopyContext(
       buildContextPromise = buildContext
         .getContext()
         .then(
-          ({ buildContentTree, listEntries, services }): CanopyBuildContext => ({
-            buildContentTree,
-            listEntries,
-            services,
-          }),
+          ({ buildContentTree, listEntries, read, readByUrlPath, services }): CanopyBuildContext =>
+            // Guard so these reads throw if used at request time on a `server` deployment.
+            guardBuildContext(
+              { buildContentTree, listEntries, read, readByUrlPath, services },
+              options.config,
+            ),
         )
         .catch((err) => {
           buildContextPromise = null
@@ -205,6 +283,25 @@ export async function createNextCanopyContext(
         })
     }
     return buildContextPromise
+  }
+
+  // Phase-selecting helpers: build context during static generation, branch-aware runtime at request
+  // time. Lets page code resolve content without hand-picking the admin build context (see item #5).
+  const readByUrlPath: CanopyContext['readByUrlPath'] = async <T = unknown>(
+    urlPath: string,
+    opts?: { branch?: string; resolveReferences?: boolean },
+  ) => {
+    const ctx = isBuildMode() ? await getCanopyForBuild() : await getCanopy()
+    return ctx.readByUrlPath<T>(urlPath, opts)
+  }
+  const read: CanopyContext['read'] = async <T = unknown>(input: {
+    entryPath: string
+    slug?: string
+    branch?: string
+    resolveReferences?: boolean
+  }) => {
+    const ctx = isBuildMode() ? await getCanopyForBuild() : await getCanopy()
+    return ctx.read<T>(input)
   }
 
   // Create API handler using same services
@@ -217,6 +314,8 @@ export async function createNextCanopyContext(
   return {
     getCanopy,
     getCanopyForBuild,
+    readByUrlPath,
+    read,
     handler,
     services,
   }

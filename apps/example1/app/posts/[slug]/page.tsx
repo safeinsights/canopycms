@@ -1,4 +1,5 @@
 import React from 'react'
+import { generateContentStaticParams } from 'canopycms-next'
 import PostView from '../../components/PostView'
 import type { PostContent } from '../../schemas'
 import { getCanopy, getCanopyForBuild } from '../../lib/canopy'
@@ -9,11 +10,9 @@ interface Params {
 
 export const dynamicParams = true
 
-export const generateStaticParams = async (): Promise<Params[]> => {
-  const canopy = await getCanopyForBuild()
-  const entries = await canopy.listEntries({ rootPath: 'content/posts' })
-  return entries.map((entry) => ({ slug: entry.slug }))
-}
+// Single-segment [slug] route scoped to the posts collection.
+export const generateStaticParams = () =>
+  generateContentStaticParams(getCanopyForBuild, { rootPath: 'content/posts', shape: 'single' })
 
 const PostPage = async ({ params }: { params: Params }) => {
   const canopy = await getCanopy()

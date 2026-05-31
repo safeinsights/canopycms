@@ -28,6 +28,7 @@
     "./worker/cms-worker": "./src/worker/cms-worker.ts",
     "./ai": "./src/ai/index.ts",
     "./build": "./src/build/index.ts",
+    "./utils/error": "./src/utils/error.ts",
     "./test-utils": "./src/test-utils/index.ts"
   },
   "files": [
@@ -78,6 +79,10 @@
       "./build": {
         "import": "./dist/build/index.js",
         "types": "./dist/build/index.d.ts"
+      },
+      "./utils/error": {
+        "import": "./dist/utils/error.js",
+        "types": "./dist/utils/error.d.ts"
       },
       "./test-utils": {
         "import": "./dist/test-utils/index.js",

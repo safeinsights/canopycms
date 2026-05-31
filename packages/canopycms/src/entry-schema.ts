@@ -172,3 +172,46 @@ export const defineNestedFieldGroup = <
 >(
   group: T,
 ): T & { readonly type: 'object' } => ({ ...group, type: 'object' as const })
+
+/**
+ * Define a reusable block template once and embed it in multiple entry schemas' `block` fields.
+ *
+ * A `block` field holds an ordered, repeatable list of heterogeneous section blocks discriminated by
+ * a `template` key (the "flexible content" / "page blocks" pattern). Defining each template inline in
+ * every schema's `templates` array duplicates the field definitions; this const-inference identity
+ * helper (like defineEntrySchema) lets you define a template once and reuse it across schemas while
+ * still deriving the correct discriminated-union type via TypeFromEntrySchema.
+ *
+ * @example
+ * const heroBlock = defineBlockTemplate({
+ *   name: 'hero',
+ *   label: 'Hero',
+ *   fields: [
+ *     { name: 'heading', type: 'string' },
+ *     { name: 'subheading', type: 'string', required: false },
+ *   ],
+ * })
+ * const ctaBlock = defineBlockTemplate({
+ *   name: 'cta',
+ *   fields: [{ name: 'label', type: 'string' }, { name: 'href', type: 'string' }],
+ * })
+ *
+ * // Reuse the same templates across multiple page schemas:
+ * const pageSchema = defineEntrySchema([
+ *   { name: 'title', type: 'string' },
+ *   { name: 'sections', type: 'block', templates: [heroBlock, ctaBlock] },
+ * ])
+ * // TypeFromEntrySchema<typeof pageSchema>['sections'] narrows to:
+ * //   Array<{ template: 'hero'; value: { heading: string; subheading?: string } }
+ * //        | { template: 'cta';  value: { label: string; href: string } }>
+ */
+export const defineBlockTemplate = <
+  const T extends {
+    name: string
+    label?: string
+    description?: string
+    fields: readonly InferableField[]
+  },
+>(
+  template: T,
+): T => template

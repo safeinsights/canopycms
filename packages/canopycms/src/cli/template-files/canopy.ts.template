@@ -21,6 +21,26 @@ export const getCanopyForBuild = async () => {
   return context.getCanopyForBuild()
 }
 
+// Phase-selecting reads: filesystem-direct at build time, branch-aware (ACL-enforced) at request time.
+// Recommended for resolving a page by URL in a [...slug] / [slug] route — correct in both phases.
+export const readByUrlPath = async <T = unknown>(
+  urlPath: string,
+  options?: { branch?: string; resolveReferences?: boolean },
+) => {
+  const context = await canopyContextPromise
+  return context.readByUrlPath<T>(urlPath, options)
+}
+
+export const read = async <T = unknown>(input: {
+  entryPath: string
+  slug?: string
+  branch?: string
+  resolveReferences?: boolean
+}) => {
+  const context = await canopyContextPromise
+  return context.read<T>(input)
+}
+
 // Export for API routes
 export const getHandler = async () => {
   const context = await canopyContextPromise
