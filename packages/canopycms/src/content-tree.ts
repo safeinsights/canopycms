@@ -19,6 +19,20 @@ export interface ContentTreeExtractMeta {
   entryType?: string
   /** Content format — present when kind is 'entry'. */
   format?: ContentFormat
+  /**
+   * The entry with slug 'index' inside a collection, when present.
+   * Represents the collection's "identity" under the directory-as-page pattern
+   * (e.g., a partner's metadata for /data-catalog/<partner>/, a section landing
+   * for /docs/<section>/). Only populated when kind === 'collection' AND the
+   * collection contains an entry with slug 'index'. Undefined for collections
+   * at the maxDepth cap (entries aren't loaded there). Adopters should narrow
+   * on `indexEntry.entryType` before reading type-specific fields.
+   */
+  indexEntry?: {
+    entryType: string
+    format: ContentFormat
+    data: Record<string, unknown>
+  }
 }
 import type { LogicalPath, ContentId, Slug } from './paths/types'
 import { listCollectionEntries, sortByOrder, type CollectionListItem } from './content-listing'
@@ -165,7 +179,6 @@ export async function buildContentTree<T = unknown>(
     collection: CollectionSchemaItem,
     depth: number,
   ): Promise<ContentTreeNode<T> | null> => {
-    // Build collection node (before children, so filter can reject early)
     const collectionData: Record<string, unknown> = {
       name: collection.name,
       label: collection.label,
@@ -180,16 +193,19 @@ export async function buildContentTree<T = unknown>(
         label: collection.label,
       },
     }
-    if (extract) {
-      node.fields = extract(collectionData, {
-        kind: 'collection',
-        logicalPath: collection.logicalPath,
-      })
-    }
-    if (filter && !filter(node)) return null
 
-    // If at max depth, return collection without children
-    if (maxDepth !== undefined && depth >= maxDepth) return node
+    // maxDepth branch: don't load entries (no children would be exposed anyway).
+    // Consequence: extract sees no indexEntry on depth-capped collections.
+    if (maxDepth !== undefined && depth >= maxDepth) {
+      if (extract) {
+        node.fields = extract(collectionData, {
+          kind: 'collection',
+          logicalPath: collection.logicalPath,
+        })
+      }
+      if (filter && !filter(node)) return null
+      return node
+    }
 
     // Gather child collections and entries in parallel
     const childCollections = childrenByParent.get(collection.logicalPath) ?? []
@@ -197,6 +213,23 @@ export async function buildContentTree<T = unknown>(
       Promise.all(childCollections.map((child) => buildNode(child, depth + 1))),
       listCollectionEntries(branchRoot, collection),
     ])
+
+    // Surface the 'index' entry (when present) to extract via meta.
+    // 'index' is the same magic slug Canopy uses in defaultBuildPath to collapse
+    // /foo/index URLs to /foo/, keeping conventions consistent.
+    const idx = entries.find((e) => e.slug === 'index')
+    const indexEntry = idx
+      ? { entryType: idx.entryType, format: idx.format, data: idx.data }
+      : undefined
+
+    if (extract) {
+      node.fields = extract(collectionData, {
+        kind: 'collection',
+        logicalPath: collection.logicalPath,
+        indexEntry,
+      })
+    }
+    if (filter && !filter(node)) return null
 
     // Build entry nodes
     const entryNodes: ContentTreeNode<T>[] = []

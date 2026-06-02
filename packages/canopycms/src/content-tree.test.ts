@@ -632,4 +632,317 @@ describe('buildContentTree', () => {
     expect(tree[0].collection?.name).toBe('posts')
     expect(tree[0].collection?.label).toBe('Blog Posts')
   })
+
+  it('extract receives meta.indexEntry for a collection with an index entry', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: marsDir } = await createCollection(contentDir, 'mars')
+    await createEntry(marsDir, 'partner', 'index', 'yaml', {
+      name: 'Mars University',
+      isFictional: true,
+      tagline: 'Education on the red planet',
+    })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'mars',
+          path: 'mars',
+          entries: [{ name: 'partner', format: 'yaml', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const collectionMetas: Array<{
+      logicalPath: string
+      indexEntry: { entryType: string; format: string; data: Record<string, unknown> } | undefined
+    }> = []
+    await buildContentTree(tempDir, flat, 'content', {
+      extract: (_data, meta) => {
+        if (meta.kind === 'collection') {
+          collectionMetas.push({
+            logicalPath: meta.logicalPath,
+            indexEntry: meta.indexEntry,
+          })
+        }
+        return {}
+      },
+    })
+
+    const marsMeta = collectionMetas.find((m) => m.logicalPath === 'content/mars')
+    expect(marsMeta).toBeDefined()
+    expect(marsMeta?.indexEntry?.entryType).toBe('partner')
+    expect(marsMeta?.indexEntry?.format).toBe('yaml')
+    expect(marsMeta?.indexEntry?.data.name).toBe('Mars University')
+    expect(marsMeta?.indexEntry?.data.isFictional).toBe(true)
+  })
+
+  it('extract receives meta.indexEntry === undefined for a collection without an index entry', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [{ name: 'post', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const collectionMetas: Array<{
+      logicalPath: string
+      indexEntry: { entryType: string; format: string; data: Record<string, unknown> } | undefined
+    }> = []
+    await buildContentTree(tempDir, flat, 'content', {
+      extract: (_data, meta) => {
+        if (meta.kind === 'collection') {
+          collectionMetas.push({
+            logicalPath: meta.logicalPath,
+            indexEntry: meta.indexEntry,
+          })
+        }
+        return {}
+      },
+    })
+
+    const postsMeta = collectionMetas.find((m) => m.logicalPath === 'content/posts')
+    expect(postsMeta).toBeDefined()
+    expect(postsMeta?.indexEntry).toBeUndefined()
+  })
+
+  it('adopters can narrow on meta.indexEntry.entryType to read type-specific fields', async () => {
+    // Two sibling collections: one has a 'partner' index with isFictional, the other has a
+    // 'doc' index without isFictional. The extract callback narrows on entryType.
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: marsDir } = await createCollection(contentDir, 'mars')
+    await createEntry(marsDir, 'partner', 'index', 'yaml', {
+      name: 'Mars University',
+      isFictional: true,
+    })
+
+    const { dir: guideDir } = await createCollection(contentDir, 'guide')
+    await createEntry(guideDir, 'doc', 'index', 'md', { title: 'Guide Overview' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'mars',
+          path: 'mars',
+          entries: [{ name: 'partner', format: 'yaml', schema: [] }],
+        },
+        {
+          name: 'guide',
+          path: 'guide',
+          entries: [{ name: 'doc', format: 'md', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    interface NavFields {
+      isFictional: boolean
+    }
+
+    const tree = await buildContentTree<NavFields>(tempDir, flat, 'content', {
+      extract: (data, meta) => {
+        if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
+          return { isFictional: Boolean(meta.indexEntry.data.isFictional) }
+        }
+        if (meta.kind === 'collection') {
+          return { isFictional: false }
+        }
+        return { isFictional: false }
+      },
+    })
+
+    const marsNode = tree.find((n) => n.collection?.name === 'mars')
+    const guideNode = tree.find((n) => n.collection?.name === 'guide')
+    expect(marsNode?.fields?.isFictional).toBe(true)
+    expect(guideNode?.fields?.isFictional).toBe(false)
+  })
+
+  it('extract is invoked exactly once per collection node', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: marsDir } = await createCollection(contentDir, 'mars')
+    await createEntry(marsDir, 'partner', 'index', 'yaml', { name: 'Mars' })
+    await createEntry(marsDir, 'partner', 'about', 'yaml', { name: 'About' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'mars',
+          path: 'mars',
+          entries: [{ name: 'partner', format: 'yaml', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const calls: string[] = []
+    await buildContentTree(tempDir, flat, 'content', {
+      extract: (_data, meta) => {
+        if (meta.kind === 'collection') calls.push(`collection:${meta.logicalPath}`)
+        return {}
+      },
+    })
+
+    // One call for the mars collection (root collection isn't returned as a node)
+    expect(calls.filter((c) => c === 'collection:content/mars')).toHaveLength(1)
+  })
+
+  it('filter sees node.fields derived from index entry data', async () => {
+    // A draft flag on the index entry should be visible to filter via fields.
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: marsDir } = await createCollection(contentDir, 'mars')
+    await createEntry(marsDir, 'partner', 'index', 'yaml', { name: 'Mars', draft: true })
+
+    const { dir: openstaxDir } = await createCollection(contentDir, 'openstax')
+    await createEntry(openstaxDir, 'partner', 'index', 'yaml', { name: 'OpenStax', draft: false })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'mars',
+          path: 'mars',
+          entries: [{ name: 'partner', format: 'yaml', schema: [] }],
+        },
+        {
+          name: 'openstax',
+          path: 'openstax',
+          entries: [{ name: 'partner', format: 'yaml', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    interface NavFields {
+      draft: boolean
+    }
+
+    const tree = await buildContentTree<NavFields>(tempDir, flat, 'content', {
+      extract: (_data, meta) => {
+        if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
+          return { draft: Boolean(meta.indexEntry.data.draft) }
+        }
+        return { draft: false }
+      },
+      filter: (node) => {
+        if (node.kind === 'collection' && node.fields?.draft) return false
+        return true
+      },
+    })
+
+    const names = tree.map((n) => n.collection?.name).filter(Boolean)
+    expect(names).toEqual(['openstax'])
+  })
+
+  it('maxDepth cap suppresses meta.indexEntry exposure on capped collections', async () => {
+    // When traversal halts at maxDepth, entries aren't loaded, so meta.indexEntry is undefined.
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: marsDir } = await createCollection(contentDir, 'mars')
+    await createEntry(marsDir, 'partner', 'index', 'yaml', { name: 'Mars' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'mars',
+          path: 'mars',
+          entries: [{ name: 'partner', format: 'yaml', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const collectionMetas: Array<{
+      logicalPath: string
+      indexEntry: { entryType: string; format: string; data: Record<string, unknown> } | undefined
+    }> = []
+    await buildContentTree(tempDir, flat, 'content', {
+      maxDepth: 1,
+      extract: (_data, meta) => {
+        if (meta.kind === 'collection') {
+          collectionMetas.push({
+            logicalPath: meta.logicalPath,
+            indexEntry: meta.indexEntry,
+          })
+        }
+        return {}
+      },
+    })
+
+    const marsMeta = collectionMetas.find((m) => m.logicalPath === 'content/mars')
+    expect(marsMeta).toBeDefined()
+    expect(marsMeta?.indexEntry).toBeUndefined()
+  })
+
+  it('index entry still appears as a child of the collection', async () => {
+    // Backwards compatibility: surfacing indexEntry on meta does NOT remove it from children[].
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: marsDir } = await createCollection(contentDir, 'mars')
+    await createEntry(marsDir, 'partner', 'index', 'yaml', { name: 'Mars' })
+    await createEntry(marsDir, 'partner', 'about', 'yaml', { name: 'About' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'mars',
+          path: 'mars',
+          entries: [{ name: 'partner', format: 'yaml', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const tree = await buildContentTree(tempDir, flat, 'content')
+
+    const marsNode = tree[0]
+    const indexChild = marsNode.children?.find(
+      (c) => c.kind === 'entry' && c.entry?.slug === 'index',
+    )
+    expect(indexChild).toBeDefined()
+  })
+
+  it('does not store indexEntry on the public collection node', async () => {
+    // Guards against accidentally regrowing the node payload in a future refactor.
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: marsDir } = await createCollection(contentDir, 'mars')
+    await createEntry(marsDir, 'partner', 'index', 'yaml', { name: 'Mars' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'mars',
+          path: 'mars',
+          entries: [{ name: 'partner', format: 'yaml', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const tree = await buildContentTree(tempDir, flat, 'content')
+
+    const marsNode = tree[0]
+    expect(marsNode.kind).toBe('collection')
+    expect((marsNode as unknown as Record<string, unknown>).indexEntry).toBeUndefined()
+  })
 })

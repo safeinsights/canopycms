@@ -1497,6 +1497,28 @@ const tree = await canopy.buildContentTree<NavItem>({
 // e.g., tree[0].children?.[0].fields?.title
 ```
 
+The `extract` callback receives a second `meta` argument with structural context:
+
+- `meta.kind` -- `"collection"` or `"entry"`
+- `meta.logicalPath` -- the node's logical path
+- `meta.entryType`, `meta.format` -- present when `kind === "entry"`
+- `meta.indexEntry` -- present when `kind === "collection"` and the directory contains an entry with `slug === "index"`. Carries that entry's `entryType`, `format`, and raw `data`. This represents the collection's identity under the **directory-as-page pattern** (e.g., a partner's metadata for `/data-catalog/<partner>/`, a section landing for `/docs/<section>/`).
+
+Narrow on `meta.indexEntry.entryType` before reading type-specific fields:
+
+```typescript
+const tree = await canopy.buildContentTree({
+  extract: (data, meta) => {
+    if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
+      return { isFictional: Boolean(meta.indexEntry.data.isFictional) }
+    }
+    return {}
+  },
+})
+```
+
+Note: `meta.indexEntry` is undefined for collections at the `maxDepth` cap (entries aren't loaded there).
+
 ### Filtering Nodes
 
 The `filter` callback runs after `extract`, so you can filter based on extracted fields. Returning `false` excludes a node and all its descendants:
@@ -1530,14 +1552,14 @@ const tree = await canopy.buildContentTree<NavItem>({
 
 ### Options Reference
 
-| Option      | Type                                                       | Default                                                  | Description                                                                             |
-| ----------- | ---------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `rootPath`  | `string`                                                   | Content root                                             | Starting collection path (e.g., `"content/docs"` for a subtree)                         |
-| `extract`   | `(data, node) => T`                                        | -                                                        | Extract typed custom fields from raw entry/collection data                              |
-| `filter`    | `(node: ContentTreeNode<T>) => boolean`                    | -                                                        | Return false to exclude a node and its descendants                                      |
-| `buildPath` | `(logicalPath, kind) => string`                            | Strips content root, lowercases, collapses index entries | Custom URL path builder (default collapses index entries to parent path and lowercases) |
-| `sort`      | `(a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number` | Order array then alphabetical                            | Custom sort for children at each level (replaces default sort)                          |
-| `maxDepth`  | `number`                                                   | Unlimited                                                | Maximum depth to traverse                                                               |
+| Option      | Type                                                       | Default                                                  | Description                                                                                                                                      |
+| ----------- | ---------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `rootPath`  | `string`                                                   | Content root                                             | Starting collection path (e.g., `"content/docs"` for a subtree)                                                                                  |
+| `extract`   | `(data, meta: ContentTreeExtractMeta) => T`                | -                                                        | Extract typed custom fields from raw entry/collection data. `meta.indexEntry` exposes a collection's directory-as-page index entry when present. |
+| `filter`    | `(node: ContentTreeNode<T>) => boolean`                    | -                                                        | Return false to exclude a node and its descendants                                                                                               |
+| `buildPath` | `(logicalPath, kind) => string`                            | Strips content root, lowercases, collapses index entries | Custom URL path builder (default collapses index entries to parent path and lowercases)                                                          |
+| `sort`      | `(a: ContentTreeNode<T>, b: ContentTreeNode<T>) => number` | Order array then alphabetical                            | Custom sort for children at each level (replaces default sort)                                                                                   |
+| `maxDepth`  | `number`                                                   | Unlimited                                                | Maximum depth to traverse                                                                                                                        |
 
 ### Imports
 

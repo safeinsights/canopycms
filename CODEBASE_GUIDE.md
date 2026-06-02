@@ -482,6 +482,29 @@ Builds a tree of content nodes from the schema and filesystem for adopter use ca
 
 Without `sort`: children are ordered by the collection's `order` array first, then remaining items alphabetically. With `sort`: the comparator fully replaces the default sort. It runs after `extract` and `filter`, so `fields` is available.
 
+### ContentTreeExtractMeta
+
+The second argument passed to `extract(data, meta)`:
+
+| Field       | Type                                                                           | Description                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| kind        | `'collection' \| 'entry'`                                                      | Node kind                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| logicalPath | LogicalPath                                                                    | Logical CMS path for the node                                                                                                                                                                                                                                                                                                                                                                                                            |
+| entryType   | string?                                                                        | Entry type name (present when `kind === 'entry'`)                                                                                                                                                                                                                                                                                                                                                                                        |
+| format      | ContentFormat?                                                                 | Content format (present when `kind === 'entry'`)                                                                                                                                                                                                                                                                                                                                                                                         |
+| indexEntry  | `{ entryType: string; format: ContentFormat; data: Record<string, unknown> }?` | The collection's `slug === 'index'` entry, if any. Populated only when `kind === 'collection'` AND such an entry exists. Represents the collection's "identity" under the directory-as-page pattern (e.g., `/data-catalog/<partner>/partner.index.yaml` IS the partner's metadata). Undefined for collections at the `maxDepth` cap (entries aren't loaded there). Narrow on `indexEntry.entryType` before reading type-specific fields. |
+
+Order of operations inside `buildNode`: for collections, entries are fetched BEFORE `extract` is called, so `meta.indexEntry` is populated when present and filters that depend on `node.fields` derived from index data work as expected. `ContentTreeNode` itself does NOT carry `indexEntry` — it is only surfaced via `meta`.
+
+```ts
+extract: (data, meta) => {
+  if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
+    return { isFictional: Boolean(meta.indexEntry.data.isFictional) }
+  }
+  // ...
+}
+```
+
 ## Content Listing (Batch)
 
 **Location**: packages/canopycms/src/content-listing.ts
