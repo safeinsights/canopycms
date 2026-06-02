@@ -1519,6 +1519,35 @@ const tree = await canopy.buildContentTree({
 
 Note: `meta.indexEntry` is undefined for collections at the `maxDepth` cap (entries aren't loaded there).
 
+#### Typed `meta.indexEntry.data` via Entry-Type Registry
+
+`buildContentTree<T, TEntryTypes>` accepts an optional second generic — an adopter-supplied map from entry-type names to their data shapes. When provided, narrowing on `meta.indexEntry.entryType` types `meta.indexEntry.data` as the matching shape (a discriminated union), so you can drop `as` casts and `unknown` checks. The default for `TEntryTypes` is a loose `Record<string, unknown>`-style shape, so existing callers work unchanged. Reuse the schemas you already defined with `defineEntrySchema` via `TypeFromEntrySchema` — no redeclaration. The exported `EntryTypeMap` type alias documents the expected shape (`Record<string, object>`); adopters don't have to extend it, any matching interface works.
+
+```typescript
+import { defineEntrySchema, type TypeFromEntrySchema, buildContentTree } from 'canopycms'
+
+const partnerSchema = defineEntrySchema([
+  { name: 'name', type: 'string', isTitle: true },
+  { name: 'isFictional', type: 'boolean' },
+])
+const docSchema = defineEntrySchema([{ name: 'title', type: 'string' }])
+
+interface MyEntries {
+  partner: TypeFromEntrySchema<typeof partnerSchema>
+  doc: TypeFromEntrySchema<typeof docSchema>
+}
+
+buildContentTree<NavFields, MyEntries>(branchRoot, flat, 'content', {
+  extract: (data, meta) => {
+    if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
+      // meta.indexEntry.data is typed as the partner shape — no casting needed
+      return { isFictional: Boolean(meta.indexEntry.data.isFictional) }
+    }
+    return { isFictional: false }
+  },
+})
+```
+
 ### Filtering Nodes
 
 The `filter` callback runs after `extract`, so you can filter based on extracted fields. Returning `false` excludes a node and all its descendants:

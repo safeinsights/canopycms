@@ -11,6 +11,7 @@ import {
   buildContentTree as buildContentTreeImpl,
   type BuildContentTreeOptions,
   type ContentTreeNode,
+  type EntryTypeMap,
 } from './content-tree'
 import {
   listEntries as listEntriesImpl,
@@ -48,9 +49,15 @@ export interface CanopyContextOptions {
  * scanning the whole collection.
  */
 export interface CanopyBuildContext {
-  /** Build a content tree from the schema and filesystem entries. */
-  buildContentTree: <T = unknown>(
-    options?: BuildContentTreeOptions<T>,
+  /**
+   * Build a content tree from the schema and filesystem entries.
+   *
+   * Supply TEntryTypes (a map of entry type name → data shape, typically
+   * derived via `TypeFromEntrySchema<typeof yourSchema>`) to get narrowed
+   * access to `meta.indexEntry.data` inside the `extract` callback.
+   */
+  buildContentTree: <T = unknown, TEntryTypes extends EntryTypeMap = EntryTypeMap>(
+    options?: BuildContentTreeOptions<T, TEntryTypes>,
   ) => Promise<ContentTreeNode<T>[]>
 
   /** List all content entries as a flat array. */
@@ -228,11 +235,14 @@ export function createCanopyContext(options: CanopyContextOptions) {
       return schemaContextPromise
     }
 
-    const buildContentTree: CanopyContext['buildContentTree'] = async <T = unknown>(
-      options?: BuildContentTreeOptions<T>,
+    const buildContentTree: CanopyContext['buildContentTree'] = async <
+      T = unknown,
+      TEntryTypes extends EntryTypeMap = EntryTypeMap,
+    >(
+      options?: BuildContentTreeOptions<T, TEntryTypes>,
     ) => {
       const { branchRoot, flatSchema, contentRootName } = await resolveSchemaContext()
-      return buildContentTreeImpl<T>(branchRoot, flatSchema, contentRootName, options)
+      return buildContentTreeImpl<T, TEntryTypes>(branchRoot, flatSchema, contentRootName, options)
     }
 
     const listEntries: CanopyContext['listEntries'] = async <T = Record<string, unknown>>(

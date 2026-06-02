@@ -920,6 +920,55 @@ describe('buildContentTree', () => {
     expect(indexChild).toBeDefined()
   })
 
+  it('TEntryTypes generic narrows meta.indexEntry.data via entryType discriminant', async () => {
+    // Compile-time + runtime check: when the adopter supplies an EntryTypeMap, TS narrows
+    // meta.indexEntry.data to the registered shape after meta.indexEntry.entryType === '...'.
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: marsDir } = await createCollection(contentDir, 'mars')
+    await createEntry(marsDir, 'partner', 'index', 'yaml', {
+      name: 'Mars University',
+      isFictional: true,
+    })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'mars',
+          path: 'mars',
+          entries: [{ name: 'partner', format: 'yaml', schema: [] }],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    // No `extends Record<...>` — adopters declare plain interfaces and the
+    // constraint (EntryTypeMap = Record<string, object>) accepts them.
+    interface MyEntries {
+      partner: { name: string; isFictional?: boolean; tagline?: string }
+      doc: { title: string }
+    }
+    interface NavFields {
+      partnerName: string | null
+    }
+
+    const tree = await buildContentTree<NavFields, MyEntries>(tempDir, flat, 'content', {
+      extract: (_data, meta) => {
+        if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
+          // After the narrow, TS sees meta.indexEntry.data as MyEntries['partner'].
+          // Both .name and .isFictional are typed (no `unknown`) — refactor-safe.
+          const partner: MyEntries['partner'] = meta.indexEntry.data
+          return { partnerName: partner.name }
+        }
+        return { partnerName: null }
+      },
+    })
+
+    const marsNode = tree.find((n) => n.collection?.name === 'mars')
+    expect(marsNode?.fields?.partnerName).toBe('Mars University')
+  })
+
   it('does not store indexEntry on the public collection node', async () => {
     // Guards against accidentally regrowing the node payload in a future refactor.
     const contentDir = path.join(tempDir, 'content')
