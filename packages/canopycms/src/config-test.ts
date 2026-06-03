@@ -11,10 +11,7 @@ const FALLBACK_AUTHOR = {
   gitBotAuthorEmail: 'canopycms-test@example.com',
 }
 
-type TestConfigInput = Omit<
-  CanopyConfigInput,
-  'gitBotAuthorName' | 'gitBotAuthorEmail' | 'schema'
-> & {
+type TestConfigInput = Omit<CanopyConfigInput, 'gitBotAuthorName' | 'gitBotAuthorEmail'> & {
   schema: RootCollectionConfig
 } & Partial<Pick<CanopyConfigInput, 'gitBotAuthorName' | 'gitBotAuthorEmail'>>
 

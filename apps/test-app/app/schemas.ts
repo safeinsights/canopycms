@@ -46,7 +46,11 @@ export const settingsSchema = defineEntrySchema([
   { name: 'maintenanceMode', type: 'boolean', label: 'Maintenance Mode' },
 ] as const)
 
-// Entry schema registry for CanopyCMS - references entry schemas by name in .collection.json files
+// Entry schema registry. Intentionally kept on the keyless schema-variable-name
+// convention (postSchema / homeSchema / settingsSchema) so this app exercises
+// the supported "Path B" registry shape — `example1` and the CLI template
+// demonstrate the recommended entry-type-name convention.
+// See README "Migrating from the schema-name-keyed registry" for both paths.
 export const entrySchemaRegistry = createEntrySchemaRegistry({
   postSchema,
   homeSchema,

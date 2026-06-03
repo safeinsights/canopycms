@@ -29,7 +29,7 @@ export const normalizePathValue = (val: string): string =>
  * @returns Array of flattened schema items with full paths
  *
  * @example
- * const flat = flattenSchema(config.schema, 'content')
+ * const flat = flattenSchema(rootCollection, 'content')
  * const map = new Map(flat.map(item => [item.logicalPath, item]))
  * const item = map.get('content/posts') // O(1) lookup
  */

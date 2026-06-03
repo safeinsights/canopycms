@@ -635,13 +635,7 @@ Schema resolution happens during service initialization through a multi-step pro
 - Builds nested collection hierarchy
 - Threads each collection's ContentId into the resolved `CollectionConfig`
 
-**Step 3: Merge with config**
-
-- Config-defined schemas are merged with file-based schemas
-- Collections are concatenated
-- Config entries take precedence if root defines entries in both places
-
-**Step 4: Flatten schema**
+**Step 3: Flatten schema**
 
 - Final merged schema is flattened into `Map<path, FlatSchemaItem>` for O(1) lookups
 - Each flattened collection item carries its ContentId (used for conflict tracking and ordering)
@@ -653,7 +647,7 @@ Schema resolution happens during service initialization through a multi-step pro
 - Clear error messages when referenced schemas don't exist
 - Lists available schema registry keys in error messages
 - Validates collection structure during parse (must have entries or collections)
-- Throws if no schema is provided (neither config nor meta files)
+- Throws if no `.collection.json` files are found in the content directory
 
 ### Async Initialization Pattern
 
@@ -2653,9 +2647,9 @@ The transition from singletons to entry types with cardinality constraints elimi
 
 The key insight: treating the content root as a normal collection eliminates the need to special-case root-level items. Every collection except the root has a parent, and the root is just the one collection with `parentPath: undefined`.
 
-### Why schema meta files instead of all-in-config?
+### Benefits of the schema meta file pattern
 
-The schema meta file system provides an alternative to defining all schemas in `canopycms.config.ts`, offering several architectural benefits:
+The schema meta file system offers several architectural benefits:
 
 **Co-location with content:**
 
@@ -2679,9 +2673,6 @@ The schema meta file system provides an alternative to defining all schemas in `
 
 **Flexibility:**
 
-- Projects can use all-in-config, all-in-meta, or a hybrid approach
-- Config-defined schemas and file-based schemas are merged
-- Gradual migration path: start with config, move to meta files as project grows
 - Different teams can manage different parts of the schema
 
 **Registry pattern enables reuse:**
@@ -2694,23 +2685,8 @@ The schema meta file system provides an alternative to defining all schemas in `
 **Limitations:**
 
 - Requires async initialization (file I/O)
-- Two sources of truth (config and meta files) can be confusing initially
 - Schema registry must be maintained separately from meta files
 - References are validated at runtime, not TypeScript compile time
-
-**When to use meta files:**
-
-- Large projects with many collections
-- Content teams that need visibility into collection structure
-- Projects where collection hierarchy changes frequently
-- Multi-team environments where content structure ownership is distributed
-
-**When to use config-only:**
-
-- Small projects with 1-3 collections
-- Solo developers who prefer everything in code
-- Projects where TypeScript type checking is critical
-- Rapid prototyping where schema changes frequently
 
 ### Why is AI content served from a separate route, not the editor API?
 
