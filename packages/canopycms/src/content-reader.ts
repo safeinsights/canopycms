@@ -36,7 +36,7 @@ export interface ContentReader {
   read: <T = unknown>(
     input: ReadContentInput,
     message?: string,
-  ) => Promise<{ data: T; path: string }>
+  ) => Promise<{ data: T; path: string; meta: { physicalPath: PhysicalPath } }>
 }
 
 /**
@@ -149,9 +149,14 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
 
     // Get the path WITHOUT reading the file
     let relativePath: PhysicalPath
+    // Absolute filesystem path to the entry file. Surfaced on read() / readByUrlPath()
+    // for server-side colocated-artifact reads (e.g. a sibling profile.json). Already
+    // computed here for permission checks; just carried through.
+    let physicalPath: PhysicalPath
     try {
       const resolved = await store.resolveDocumentPath(entryPath, slug ?? '')
       relativePath = resolved.relativePath
+      physicalPath = resolved.absolutePath as PhysicalPath
     } catch (err) {
       const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
       const code = err instanceof ContentStoreError ? err.code : 'VALIDATION'
@@ -193,7 +198,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       const doc = await store.read(entryPath, slug ?? '', {
         resolveReferences: input.resolveReferences ?? true,
       })
-      return { doc, store }
+      return { doc, store, physicalPath }
     } catch (err: unknown) {
       if (isNotFoundError(err)) return null
       throw err
@@ -210,7 +215,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       const defaultMessage = `Content not found for ${entryPath}${slug ? `/${slug}` : ''} on branch ${branchName}`
       throw new ContentStoreError(message ?? defaultMessage, 'NOT_FOUND')
     }
-    const { doc, store } = result
+    const { doc, store, physicalPath } = result
 
     // For md/mdx format, merge the body into the data so callers get a complete object.
     // The field name comes from the schema's isBody flag (defaults to 'body').
@@ -232,7 +237,7 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
       slug,
       branch: branchName,
     })
-    return { data, path }
+    return { data, path, meta: { physicalPath } }
   }
 
   return { read }

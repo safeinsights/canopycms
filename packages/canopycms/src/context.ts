@@ -4,7 +4,13 @@ import type { ReadContentInput } from './content-reader'
 import { isDeployedStatic, isBuildMode, STATIC_DEPLOY_USER } from './build-mode'
 import { createContentReader } from './content-reader'
 import { ContentStoreError } from './content-store'
-import { createLogicalPath, parseSlug, resolveBranchPaths, type Slug } from './paths'
+import {
+  createLogicalPath,
+  parseSlug,
+  resolveBranchPaths,
+  type PhysicalPath,
+  type Slug,
+} from './paths'
 import { resolveUrlPathCandidates } from './url-path-resolver'
 import { loadOrCreateBranchContext } from './branch-workspace'
 import {
@@ -65,13 +71,21 @@ export interface CanopyBuildContext {
     options?: ListEntriesOptions<T>,
   ) => Promise<ListEntriesItem<T>[]>
 
-  /** Content reader (auth context applied automatically — admin at build time). */
+  /**
+   * Content reader (auth context applied automatically — admin at build time).
+   *
+   * `meta.physicalPath` is the absolute filesystem path to the resolved entry file.
+   * It is **server-only** — do not serialize it to the client or embed it in public
+   * output, as it reveals the deployment's filesystem layout (home dir / EFS mount /
+   * branch name). Intended for build-time reads of colocated artifacts, e.g.
+   * `fs.readFile(path.join(path.dirname(result.meta.physicalPath), 'profile.json'))`.
+   */
   read: <T = unknown>(input: {
     entryPath: string
     slug?: string
     branch?: string
     resolveReferences?: boolean
-  }) => Promise<{ data: T; path: string }>
+  }) => Promise<{ data: T; path: string; meta: { physicalPath: PhysicalPath } }>
 
   /**
    * Read content by URL path, resolving the collection/entry split automatically.
@@ -83,6 +97,11 @@ export interface CanopyBuildContext {
    * index entry (use buildContentTree for those) and non-entry/invalid paths such as
    * `/favicon.ico` or Next internals (the slug validator rejects them, treated as a miss).
    *
+   * The result's `meta.physicalPath` is the absolute filesystem path to the resolved
+   * entry file. It is **server-only** — do not serialize it to the client or embed it
+   * in public output, as it reveals the deployment's filesystem layout (home dir / EFS
+   * mount / branch name). Intended for build-time reads of colocated artifacts.
+   *
    * @example
    * ```ts
    * // URL /docs/guides/getting-started → reads content/docs/guides + slug "getting-started"
@@ -91,13 +110,15 @@ export interface CanopyBuildContext {
    * const result = await canopy.readByUrlPath<DocContent>('/docs/guides/getting-started')
    * if (result) {
    *   const { data, path } = result
+   *   // Read a sibling artifact colocated with the entry (server-only):
+   *   const profile = path.join(path.dirname(result.meta.physicalPath), 'profile.json')
    * }
    * ```
    */
   readByUrlPath: <T = unknown>(
     urlPath: string,
     options?: { branch?: string; resolveReferences?: boolean },
-  ) => Promise<{ data: T; path: string } | null>
+  ) => Promise<{ data: T; path: string; meta: { physicalPath: PhysicalPath } } | null>
 
   /** Underlying services */
   services: CanopyServices

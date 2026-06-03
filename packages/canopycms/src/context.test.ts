@@ -10,6 +10,7 @@ import { createTestServices } from './config-test'
 import { createCanopyContext } from './context'
 import { ContentStoreError } from './content-store'
 import { STATIC_DEPLOY_USER } from './build-mode'
+import { parsePhysicalPath } from './paths'
 import type { BranchContext } from './types'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-context-'))
@@ -349,5 +350,74 @@ describe('readByUrlPath', () => {
     expect(result!.data.source).toBe('NIH')
     // Should not have a body field — YAML is data-only
     expect('body' in result!.data).toBe(false)
+  })
+
+  describe('meta.physicalPath', () => {
+    it('points at the resolved entry file (absolute) for a nested entry', async () => {
+      const guidesDir = path.join(root, 'content/docs/guides')
+      await fs.mkdir(guidesDir, { recursive: true })
+      const filePath = path.join(guidesDir, 'getting-started.md')
+      await fs.writeFile(filePath, matter.stringify('# Hello', { title: 'Getting Started' }))
+
+      const ctx = await createContext()
+      const result = await ctx.readByUrlPath<{ title: string }>('/docs/guides/getting-started')
+      expect(result).not.toBeNull()
+      expect(path.isAbsolute(result!.meta.physicalPath)).toBe(true)
+      expect(result!.meta.physicalPath).toBe(filePath)
+    })
+
+    it('points at the index file for an index entry', async () => {
+      const guidesDir = path.join(root, 'content/docs/guides')
+      await fs.mkdir(guidesDir, { recursive: true })
+      const indexPath = path.join(guidesDir, 'index.md')
+      await fs.writeFile(indexPath, matter.stringify('Welcome', { title: 'Guides Index' }))
+
+      const ctx = await createContext()
+      // /docs/guides → falls back to content/docs/guides + slug "index"
+      const result = await ctx.readByUrlPath<{ title: string }>('/docs/guides')
+      expect(result).not.toBeNull()
+      expect(path.isAbsolute(result!.meta.physicalPath)).toBe(true)
+      expect(result!.meta.physicalPath).toBe(indexPath)
+    })
+
+    it('reflects the current on-disk file after a slug rename (no stale index)', async () => {
+      // This is the symptom that drove the ask: a build-time urlPath→absPath map went
+      // stale when a content slug was renamed (mars → mars-university). readByUrlPath
+      // resolves the path fresh from disk every call, so the rename is reflected.
+      const docsDir = path.join(root, 'content/docs')
+      await fs.mkdir(docsDir, { recursive: true })
+      // Real Canopy filenames embed a content ID: {type}.{slug}.{id}.{ext}
+      const id = 'RRMDbToFJNTf'
+      const before = path.join(docsDir, `doc.mars.${id}.json`)
+      await fs.writeFile(before, JSON.stringify({ title: 'Mars' }))
+
+      const ctx = await createContext()
+      const first = await ctx.readByUrlPath<{ title: string }>('/docs/mars')
+      expect(first).not.toBeNull()
+      expect(first!.meta.physicalPath).toBe(before)
+
+      // Rename the slug on disk, preserving the content ID — same ctx, no cache rebuild.
+      const after = path.join(docsDir, `doc.mars-university.${id}.json`)
+      await fs.rename(before, after)
+
+      const second = await ctx.readByUrlPath<{ title: string }>('/docs/mars-university')
+      expect(second).not.toBeNull()
+      expect(second!.meta.physicalPath).toBe(after)
+      expect(second!.meta.physicalPath).not.toContain('doc.mars.')
+    })
+
+    it('is a valid PhysicalPath for an ID-bearing entry file', async () => {
+      const docsDir = path.join(root, 'content/docs')
+      await fs.mkdir(docsDir, { recursive: true })
+      await fs.writeFile(
+        path.join(docsDir, 'doc.overview.RRMDbToFJNTf.json'),
+        JSON.stringify({ title: 'Overview' }),
+      )
+
+      const ctx = await createContext()
+      const result = await ctx.readByUrlPath<{ title: string }>('/docs/overview')
+      expect(result).not.toBeNull()
+      expect(parsePhysicalPath(result!.meta.physicalPath).ok).toBe(true)
+    })
   })
 })
