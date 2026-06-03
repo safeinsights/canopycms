@@ -13,6 +13,7 @@ import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { isNotFoundError } from './utils/error'
 import { detectHeadBranch } from './utils/git'
+import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
 
@@ -140,13 +141,23 @@ export class GitManager {
 
     // Create new lock promise
     const lockPromise = log.timed('git', 'ensureLocalSimulatedRemote', async () => {
+      // The in-memory lock above only serializes within one process; take a
+      // cross-process lock too so parallel build workers can't both create the
+      // bare remote and race ("cannot mkdir remote.git: File exists"). Released
+      // in the finally below.
+      let releaseLock: (() => Promise<void>) | undefined
       try {
         log.debug('git', 'Initializing local simulated remote', {
           remotePath: options.remotePath,
           baseBranch: options.baseBranch,
         })
 
-        // Check if already exists (idempotent)
+        // Take the cross-process lock before checking/creating the bare remote.
+        const remoteParent = path.dirname(options.remotePath)
+        releaseLock = await acquireProvisioningLock(remoteParent, '.remote-init.lock')
+
+        // Check if already exists (idempotent) — another process may have
+        // finished provisioning while we waited for the lock.
         try {
           const stat = await fs.stat(options.remotePath)
           if (stat.isDirectory()) {
@@ -207,9 +218,8 @@ export class GitManager {
           )
         }
 
-        // Create bare remote
+        // Create bare remote (parent dir already ensured above, under the lock)
         log.debug('git', 'Creating bare remote repository')
-        await fs.mkdir(path.dirname(options.remotePath), { recursive: true })
         await simpleGit().raw([
           'init',
           '--bare',
@@ -260,7 +270,14 @@ export class GitManager {
 
         log.debug('git', 'Remote initialization complete')
       } finally {
-        // Always clean up the lock when done (success or failure)
+        // Release the cross-process lock first, then clear the in-memory lock.
+        if (releaseLock) {
+          try {
+            await releaseLock()
+          } catch (err: unknown) {
+            log.debug('git', 'Failed to release remote-init lock', { err })
+          }
+        }
         remoteInitLocks.delete(options.remotePath)
       }
     })

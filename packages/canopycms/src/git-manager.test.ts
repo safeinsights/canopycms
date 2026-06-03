@@ -82,6 +82,42 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     expect(finalStat.mtimeMs).toBe(initialMtime)
   })
 
+  it('waits for a cross-process lock before provisioning the remote', async () => {
+    // The in-memory lock only serializes within one process. Build tools (e.g.
+    // Next.js static generation) provision from parallel worker *processes*, so
+    // provisioning is guarded by an on-disk lock. Here we hold that lock
+    // ourselves (standing in for another process) and assert that
+    // ensureLocalSimulatedRemote blocks until it's released.
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(tmpDir, 'test.txt'), 'hello', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial commit')
+
+    const remotePath = path.join(tmpDir, 'remote.git')
+    // Mirrors GitManager's lockfilePath: a `.remote-init.lock` dir alongside the remote.
+    const lockPath = path.join(path.dirname(remotePath), '.remote-init.lock')
+    await fs.mkdir(lockPath) // simulate another process holding the lock
+
+    const ensurePromise = GitManager.ensureLocalSimulatedRemote({
+      remotePath,
+      sourcePath: tmpDir,
+      baseBranch: 'main',
+    })
+
+    // While the lock is held, provisioning must not proceed.
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    await expect(fs.stat(remotePath)).rejects.toMatchObject({ code: 'ENOENT' })
+
+    // Release the lock; provisioning should then complete.
+    await fs.rmdir(lockPath)
+    await ensurePromise
+
+    expect((await fs.stat(remotePath)).isDirectory()).toBe(true)
+    const remoteGit = simpleGit({ baseDir: remotePath })
+    expect((await remoteGit.branch()).all).toContain('main')
+  })
+
   it('throws error if sourcePath is not a git repo', async () => {
     const remotePath = path.join(tmpDir, 'remote.git')
 
