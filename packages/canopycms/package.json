@@ -108,7 +108,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@clack/prompts": "^1.1.0",
+    "@clack/prompts": "^1.5.0",
     "@codemirror/language": "^6.0.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^8.0.0",
@@ -122,11 +122,11 @@
     "@mantine/notifications": "^7.14.2",
     "@mdxeditor/editor": "^3.52.4",
     "@octokit/rest": "^20.0.2",
-    "@tabler/icons-react": "^3.36.0",
+    "@tabler/icons-react": "^3.44.0",
     "chokidar": "^4.0.3",
     "chroma-js": "^3.2.0",
     "gray-matter": "^4.0.3",
-    "jiti": "^2.6.1",
+    "jiti": "^2.7.0",
     "minimatch": "^9.0.7",
     "minimist": "^1.2.8",
     "pathe": "^1.1.2",
@@ -134,7 +134,7 @@
     "react-split-pane": "^0.1.92",
     "short-uuid": "^6.0.3",
     "simple-git": "^3.36.0",
-    "yaml": "^2.8.3",
+    "yaml": "^2.9.0",
     "zod": "^3.23.8"
   },
   "peerDependencies": {
@@ -142,7 +142,7 @@
     "react-dom": "^18.0.0 || ^19.0.0"
   },
   "devDependencies": {
-    "@playwright/test": "^1.57.0",
+    "@playwright/test": "^1.60.0",
     "@storybook/addon-essentials": "^8.1.11",
     "@storybook/react": "^8.1.11",
     "@storybook/react-vite": "^8.1.11",
@@ -154,14 +154,14 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^5.1.0",
-    "autoprefixer": "^10.4.20",
-    "esbuild": "^0.25.0",
+    "autoprefixer": "^10.5.0",
+    "esbuild": "^0.28.0",
     "jsdom": "^24.1.3",
     "postcss": "^8.5.10",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "storybook": "^8.6.17",
-    "tsx": "^4.19.0",
+    "tsx": "^4.22.4",
     "vitest": "^1.6.0"
   }
 }

@@ -57,7 +57,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.0",
     "@types/react": "^18.3.12",
     "canopycms": "workspace:*",
     "next": "^14.2.25",
