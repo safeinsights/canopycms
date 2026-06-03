@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 import type { CanopyConfig } from './config'
 import { ensureBranchRoot } from './paths'
 import { getBranchMetadataFileManager, loadBranchContext } from './branch-metadata'
@@ -7,6 +9,7 @@ import type { OperatingMode } from './operating-mode'
 import { operatingStrategy } from './operating-mode'
 import { GitManager } from './git-manager'
 import { createDebugLogger } from './utils/debug'
+import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'BranchWorkspace' })
 
@@ -51,11 +54,22 @@ export class BranchWorkspaceManager {
 
       // Create new lock promise
       const lockPromise = (async () => {
+        // The in-memory lock above only serializes within one process. Parallel
+        // build workers (separate processes) could otherwise both clone into the
+        // same branch workspace ("destination path already exists"), so guard the
+        // workspace init with a cross-process lock too. initializeWorkspace is
+        // idempotent, so the waiter simply finds the workspace already cloned.
+        let releaseLock: (() => Promise<void>) | undefined
         try {
           log.debug('workspace', 'Ensuring git workspace', {
             branchName: options.branchName,
             mode: options.mode,
           })
+
+          releaseLock = await acquireProvisioningLock(
+            path.dirname(options.branchRoot),
+            `.${path.basename(options.branchRoot)}.init.lock`,
+          )
 
           // Delegate git initialization to GitManager
           await GitManager.initializeWorkspace({
@@ -73,7 +87,14 @@ export class BranchWorkspaceManager {
             gitExcludePattern: operatingStrategy(options.mode).getGitExcludePattern(),
           })
         } finally {
-          // Always clean up the lock when done (success or failure)
+          // Release the cross-process lock first, then clear the in-memory lock.
+          if (releaseLock) {
+            try {
+              await releaseLock()
+            } catch (err: unknown) {
+              log.debug('workspace', 'Failed to release workspace-init lock', { err })
+            }
+          }
           workspaceInitLocks.delete(options.branchRoot)
         }
       })()
