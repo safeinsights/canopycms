@@ -52,7 +52,7 @@
   },
   "devDependencies": {
     "@clerk/backend": "^2.33.3",
-    "@clerk/nextjs": "^6.39.3",
+    "@clerk/nextjs": "^7.4.3",
     "@types/node": "^22.9.0",
     "canopycms": "workspace:*",
     "typescript": "^5.6.3",
