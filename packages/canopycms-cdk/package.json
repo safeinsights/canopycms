@@ -1,6 +1,6 @@
 {
   "name": "canopycms-cdk",
-  "version": "0.0.44",
+  "version": "0.0.45",
   "description": "AWS CDK constructs and EC2 worker for CanopyCMS deployment",
   "license": "MIT",
   "repository": {
