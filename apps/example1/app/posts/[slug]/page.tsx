@@ -14,10 +14,12 @@ export const dynamicParams = true
 export const generateStaticParams = () =>
   contentStaticParams({ rootPath: 'content/posts', shape: 'single' })
 
-const PostPage = async ({ params }: { params: Params }) => {
+const PostPage = async ({ params }: { params: Promise<Params> }) => {
+  // Next.js 15: route params are async and must be awaited.
+  const { slug } = await params
   // Phase-selecting read: build context at build, branch-aware runtime context at request time.
   // Null-safe — returns null (→ 404) for unknown/non-entry slugs rather than throwing.
-  const result = await readByUrlPath<PostContent>(`/posts/${params.slug}`)
+  const result = await readByUrlPath<PostContent>(`/posts/${slug}`)
 
   if (!result) return notFound()
 

@@ -19,37 +19,43 @@ vi.mock('../schema/schema-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../schema/schema-store')>()
   return {
     ...actual,
-    SchemaOps: vi.fn().mockImplementation(() => ({
-      createCollection: vi.fn(),
-      updateCollection: vi.fn(),
-      deleteCollection: vi.fn(),
-      addEntryType: vi.fn(),
-      updateEntryType: vi.fn(),
-      removeEntryType: vi.fn(),
-      updateOrder: vi.fn(),
-      isCollectionEmpty: vi.fn(),
-      countEntriesUsingType: vi.fn(),
-      readCollectionMeta: vi.fn(),
-    })),
+    SchemaOps: vi.fn().mockImplementation(function () {
+      return {
+        createCollection: vi.fn(),
+        updateCollection: vi.fn(),
+        deleteCollection: vi.fn(),
+        addEntryType: vi.fn(),
+        updateEntryType: vi.fn(),
+        removeEntryType: vi.fn(),
+        updateOrder: vi.fn(),
+        isCollectionEmpty: vi.fn(),
+        countEntriesUsingType: vi.fn(),
+        readCollectionMeta: vi.fn(),
+      }
+    }),
   }
 })
 
 // Mock ContentStore for reference tests
 vi.mock('../content-store', () => ({
-  ContentStore: vi.fn().mockImplementation(() => ({
-    idIndex: vi.fn().mockResolvedValue({}),
-    read: vi.fn().mockResolvedValue({ data: { title: 'Test' } }),
-    resolveDocumentPath: vi.fn().mockResolvedValue({ relativePath: 'posts/hello' }),
-  })),
+  ContentStore: vi.fn().mockImplementation(function () {
+    return {
+      idIndex: vi.fn().mockResolvedValue({}),
+      read: vi.fn().mockResolvedValue({ data: { title: 'Test' } }),
+      resolveDocumentPath: vi.fn().mockResolvedValue({ relativePath: 'posts/hello' }),
+    }
+  }),
   ContentStoreError: class ContentStoreError extends Error {},
 }))
 
 // Mock ReferenceResolver
 vi.mock('../reference-resolver', () => ({
-  ReferenceResolver: vi.fn().mockImplementation(() => ({
-    loadReferenceOptions: vi.fn().mockResolvedValue([]),
-    resolve: vi.fn().mockResolvedValue({ exists: true, collection: 'posts', slug: 'hello' }),
-  })),
+  ReferenceResolver: vi.fn().mockImplementation(function () {
+    return {
+      loadReferenceOptions: vi.fn().mockResolvedValue([]),
+      resolve: vi.fn().mockResolvedValue({ exists: true, collection: 'posts', slug: 'hello' }),
+    }
+  }),
 }))
 
 import { REFERENCE_OPTIONS_ROUTES } from './reference-options'

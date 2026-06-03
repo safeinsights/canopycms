@@ -6,7 +6,7 @@
  */
 
 import React from 'react'
-import { vi } from 'vitest'
+import { vi, type Mock } from 'vitest'
 import { createMockApiClient, type MockApiClient } from '../../../api/__test__/mock-client'
 import { ApiClientProvider } from '../../context'
 
@@ -94,7 +94,7 @@ export function setupMockLocation(options: { href?: string; search?: string } = 
  * })
  * ```
  */
-export function setupMockHistory() {
+export function setupMockHistory(): Mock {
   const mockReplaceState = vi.fn()
   window.history.replaceState = mockReplaceState
   return mockReplaceState

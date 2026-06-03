@@ -6,20 +6,22 @@ import { mockConsole } from '../test-utils/console-spy'
 
 // Mock the BranchWorkspaceManager to avoid git operations
 vi.mock('../branch-workspace', () => ({
-  BranchWorkspaceManager: vi.fn().mockImplementation(() => ({
-    openOrCreateBranch: vi.fn().mockResolvedValue({
-      branch: {
-        name: 'new-branch',
-        status: 'editing',
-        createdBy: 'test-user',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        access: {},
-      },
-      branchRoot: '/tmp/test',
-      baseRoot: '/tmp/base',
-    }),
-  })),
+  BranchWorkspaceManager: vi.fn().mockImplementation(function () {
+    return {
+      openOrCreateBranch: vi.fn().mockResolvedValue({
+        branch: {
+          name: 'new-branch',
+          status: 'editing',
+          createdBy: 'test-user',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          access: {},
+        },
+        branchRoot: '/tmp/test',
+        baseRoot: '/tmp/base',
+      }),
+    }
+  }),
   loadBranchContext: vi.fn().mockResolvedValue(null),
 }))
 

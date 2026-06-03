@@ -14,8 +14,10 @@ export const dynamicParams = true
 export const generateStaticParams = () =>
   contentStaticParams({ rootPath: 'content/docs', basePath: '/docs' })
 
-const DocPage = async ({ params }: { params: Params }) => {
-  const slugParts = params.slug || []
+const DocPage = async ({ params }: { params: Promise<Params> }) => {
+  // Next.js 15: route params are async and must be awaited.
+  const { slug } = await params
+  const slugParts = slug || []
 
   if (slugParts.length === 0) {
     return <div>Docs landing page - TODO</div>

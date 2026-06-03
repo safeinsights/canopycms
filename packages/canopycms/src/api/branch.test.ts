@@ -25,29 +25,35 @@ const mockMetadataUpdate = vi.fn().mockImplementation((updates: { branch?: { acc
 })
 
 vi.mock('../branch-metadata', () => ({
-  BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-    save: mockMetadataUpdate,
-  })),
-  getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-    save: mockMetadataUpdate,
-  })),
+  BranchMetadataFileManager: vi.fn().mockImplementation(function () {
+    return {
+      save: mockMetadataUpdate,
+    }
+  }),
+  getBranchMetadataFileManager: vi.fn().mockImplementation(function () {
+    return {
+      save: mockMetadataUpdate,
+    }
+  }),
 }))
 
 vi.mock('../branch-workspace', () => ({
-  BranchWorkspaceManager: vi.fn().mockImplementation(() => ({
-    openOrCreateBranch: vi.fn().mockResolvedValue({
-      baseRoot: '/tmp/base',
-      branchRoot: '/tmp/base/feature-test',
-      branch: {
-        name: 'feature/test',
-        status: 'editing',
-        access: {},
-        createdBy: 'user-1',
-        createdAt: 'now',
-        updatedAt: 'now',
-      },
-    }),
-  })),
+  BranchWorkspaceManager: vi.fn().mockImplementation(function () {
+    return {
+      openOrCreateBranch: vi.fn().mockResolvedValue({
+        baseRoot: '/tmp/base',
+        branchRoot: '/tmp/base/feature-test',
+        branch: {
+          name: 'feature/test',
+          status: 'editing',
+          access: {},
+          createdBy: 'user-1',
+          createdAt: 'now',
+          updatedAt: 'now',
+        },
+      }),
+    }
+  }),
 }))
 
 import {

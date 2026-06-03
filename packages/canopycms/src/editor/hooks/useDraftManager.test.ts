@@ -61,6 +61,10 @@ describe('useDraftManager', () => {
       writable: true,
     })
 
+    mockLoadEntry.mockReset()
+    mockSaveEntry.mockReset()
+    mockSetBusy.mockReset()
+
     mockLoadEntry.mockResolvedValue({
       title: 'Loaded Title',
       body: 'Loaded Content',
