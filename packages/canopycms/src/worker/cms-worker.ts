@@ -623,7 +623,12 @@ export class CmsWorker {
 
         const branchGit = simpleGit({
           baseDir: branchPath,
+          // Keep git non-interactive during rebase/merge so it never blocks on an editor.
+          // simple-git >=3.32 blocks setting core.editor unless explicitly opted in; the
+          // value here is a hardcoded literal ("true", the shell no-op), not user input,
+          // so enabling allowUnsafeEditor carries no injection risk.
           config: ['core.editor=true'],
+          unsafe: { allowUnsafeEditor: true },
         })
 
         // Skip dirty branches — editor has unsaved changes that can't be rebased.

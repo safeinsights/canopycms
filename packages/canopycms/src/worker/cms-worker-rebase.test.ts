@@ -108,7 +108,9 @@ async function createBranchSetup(
   await fs.mkdir(contentBranchesPath, { recursive: true })
   await simpleGit().clone(remotePath, branchPath)
 
-  const branchGit = simpleGit({ baseDir: branchPath })
+  // allowUnsafeEditor: simple-git >=3.32 blocks setting core.editor without opt-in;
+  // mirrors the production CmsWorker git config (hardcoded literal, no user input).
+  const branchGit = simpleGit({ baseDir: branchPath, unsafe: { allowUnsafeEditor: true } })
   await branchGit.addConfig('user.name', 'Test Bot')
   await branchGit.addConfig('user.email', 'test@canopycms.test')
   // Prevent interactive editor prompts during `rebase --continue`

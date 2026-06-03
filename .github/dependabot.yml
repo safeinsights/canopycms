@@ -1,0 +1,34 @@
+# Dependabot configuration.
+# The repo is a single pnpm workspace, so one npm ecosystem entry rooted at "/"
+# covers every package.json + the root pnpm-lock.yaml. Updates are grouped so
+# routine bumps arrive as a few batched PRs instead of dozens of individual ones.
+# Security updates (Dependabot alerts) remain enabled regardless of this config.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # One PR for all routine patch + minor bumps across the workspace.
+      npm-minor-patch:
+        applies-to: version-updates
+        update-types:
+          - minor
+          - patch
+      # Security fixes batched together so they land fast as one reviewable PR.
+      npm-security:
+        applies-to: security-updates
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - '*'
