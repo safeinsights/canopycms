@@ -1,4 +1,4 @@
-import { vi } from 'vitest'
+import { vi, type Mock } from 'vitest'
 import type { ApiContext } from '../api/types'
 import type { BranchContext, BranchStatus, BranchAccessControl } from '../types'
 import type { CanopyServices } from '../services'
@@ -117,7 +117,14 @@ export function createMockUser(
  * const gitManager = createMockGitManager()
  * gitManager.status.mockResolvedValue({ files: [], ahead: 0, behind: 0, current: 'main' })
  */
-export function createMockGitManager() {
+export function createMockGitManager(): {
+  checkoutBranch: Mock
+  status: Mock
+  add: Mock
+  commit: Mock
+  push: Mock
+  ensureAuthor: Mock
+} {
   return {
     checkoutBranch: vi.fn().mockResolvedValue(undefined),
     status: vi.fn().mockResolvedValue({
@@ -293,7 +300,11 @@ export function createMockApiContext(options: MockApiContextOptions = {}): ApiCo
  *   createMockBranchContext({ branchName: 'feature/b', createdBy: 'u2' })
  * ])
  */
-export function createMockRegistry(branches?: BranchContext[]) {
+export function createMockRegistry(branches?: BranchContext[]): {
+  list: Mock
+  get: Mock
+  invalidate: Mock
+} {
   const defaultBranches = branches ?? [
     createMockBranchContext({ branchName: 'feature/a', createdBy: 'u1' }),
     createMockBranchContext({ branchName: 'feature/b', createdBy: 'u2' }),
@@ -325,7 +336,11 @@ export function createMockRegistry(branches?: BranchContext[]) {
  * const githubService = createMockGitHubService()
  * githubService.convertToDraft.mockResolvedValue(undefined)
  */
-export function createMockGitHubService() {
+export function createMockGitHubService(): {
+  convertToDraft: Mock
+  markReadyForReview: Mock
+  closePullRequest: Mock
+} {
   return {
     convertToDraft: vi.fn().mockResolvedValue(undefined),
     markReadyForReview: vi.fn().mockResolvedValue(undefined),
@@ -346,7 +361,10 @@ export function createMockGitHubService() {
  * const mockSave = vi.fn().mockResolvedValue({ branch: { status: 'submitted' } })
  * vi.mock('../branch-metadata', () => createMockBranchMetadata(mockSave))
  */
-export function createMockBranchMetadata(saveImpl?: any) {
+export function createMockBranchMetadata(saveImpl?: any): {
+  BranchMetadataFileManager: Mock
+  getBranchMetadataFileManager: Mock
+} {
   const defaultSave = vi.fn().mockResolvedValue({
     schemaVersion: 1,
     branch: {
@@ -362,12 +380,16 @@ export function createMockBranchMetadata(saveImpl?: any) {
   const save = saveImpl ?? defaultSave
 
   return {
-    BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-      save,
-    })),
-    getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-      save,
-    })),
+    BranchMetadataFileManager: vi.fn().mockImplementation(function () {
+      return {
+        save,
+      }
+    }),
+    getBranchMetadataFileManager: vi.fn().mockImplementation(function () {
+      return {
+        save,
+      }
+    }),
   }
 }
 
@@ -385,7 +407,11 @@ export function createMockBranchMetadata(saveImpl?: any) {
  *   createMockPermissionsLoader([{ path: 'content/**', edit: { allowedUsers: ['u1'] } }])
  * )
  */
-export function createMockPermissionsLoader(permissions: PathPermission[] = []) {
+export function createMockPermissionsLoader(permissions: PathPermission[] = []): {
+  loadPathPermissions: Mock
+  loadPermissionsFile: Mock
+  savePathPermissions: Mock
+} {
   return {
     loadPathPermissions: vi.fn().mockResolvedValue(permissions),
     loadPermissionsFile: vi.fn().mockResolvedValue(null),
@@ -402,7 +428,9 @@ export function createMockPermissionsLoader(permissions: PathPermission[] = []) 
  * @example
  * vi.mock('../branch-workspace', () => createMockBranchWorkspace())
  */
-export function createMockBranchWorkspace(branchContext?: BranchContext) {
+export function createMockBranchWorkspace(branchContext?: BranchContext): {
+  BranchWorkspaceManager: Mock
+} {
   const defaultContext =
     branchContext ??
     createMockBranchContext({
@@ -410,9 +438,11 @@ export function createMockBranchWorkspace(branchContext?: BranchContext) {
     })
 
   return {
-    BranchWorkspaceManager: vi.fn().mockImplementation(() => ({
-      openOrCreateBranch: vi.fn().mockResolvedValue(defaultContext),
-    })),
+    BranchWorkspaceManager: vi.fn().mockImplementation(function () {
+      return {
+        openOrCreateBranch: vi.fn().mockResolvedValue(defaultContext),
+      }
+    }),
   }
 }
 
@@ -424,22 +454,24 @@ export function createMockBranchWorkspace(branchContext?: BranchContext) {
  * @example
  * vi.mock('../comment-store', () => createMockCommentStore())
  */
-export function createMockCommentStore() {
+export function createMockCommentStore(): { CommentStore: Mock } {
   return {
-    CommentStore: vi.fn().mockImplementation(() => ({
-      listThreads: vi.fn().mockResolvedValue([]),
-      addComment: vi.fn().mockResolvedValue({ threadId: 'thread1', commentId: 'c1' }),
-      getThread: vi.fn().mockResolvedValue({
-        id: 'thread1',
-        comments: [],
-        resolved: false,
-        type: 'field',
-        entryPath: 'posts/hello',
-        canopyPath: 'title',
-        authorId: 'u1',
-        createdAt: 'now',
-      }),
-      resolveThread: vi.fn().mockResolvedValue(true),
-    })),
+    CommentStore: vi.fn().mockImplementation(function () {
+      return {
+        listThreads: vi.fn().mockResolvedValue([]),
+        addComment: vi.fn().mockResolvedValue({ threadId: 'thread1', commentId: 'c1' }),
+        getThread: vi.fn().mockResolvedValue({
+          id: 'thread1',
+          comments: [],
+          resolved: false,
+          type: 'field',
+          entryPath: 'posts/hello',
+          canopyPath: 'title',
+          authorId: 'u1',
+          createdAt: 'now',
+        }),
+        resolveThread: vi.fn().mockResolvedValue(true),
+      }
+    }),
   }
 }

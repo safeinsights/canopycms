@@ -1,5 +1,6 @@
 'use client'
 
+import { Suspense } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { CanopyEditorPage } from 'canopycms/client'
 import type { CanopyClientConfig } from 'canopycms/client'
@@ -25,12 +26,24 @@ import type { CanopyClientConfig } from 'canopycms/client'
 export const NextCanopyEditorPage = (config: CanopyClientConfig) => {
   const CorePage = CanopyEditorPage(config)
 
-  return function NextEditorPage() {
+  // Reads URL search params. Next.js 15 requires useSearchParams() consumers to
+  // sit under a <Suspense> boundary, otherwise static rendering errors with
+  // "useSearchParams() should be wrapped in a suspense boundary". We provide the
+  // boundary here so adopters don't have to wrap their /edit page themselves.
+  function EditorWithSearchParams() {
     const urlSearchParams = useSearchParams()
     const searchParams = {
       branch: urlSearchParams.get('branch') ?? undefined,
       entry: urlSearchParams.get('entry') ?? undefined,
     }
     return <CorePage searchParams={searchParams} />
+  }
+
+  return function NextEditorPage() {
+    return (
+      <Suspense fallback={null}>
+        <EditorWithSearchParams />
+      </Suspense>
+    )
   }
 }

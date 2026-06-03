@@ -11,30 +11,32 @@ const renameEntry = CONTENT_ROUTES.renameEntry.handler
 
 vi.mock('../content-store', () => {
   return {
-    ContentStore: vi.fn().mockImplementation(() => ({
-      resolvePath: vi.fn().mockReturnValue({
-        schemaItem: { logicalPath: 'content/posts', type: 'collection' },
-        slug: 'hello',
-      }),
-      resolveDocumentPath: vi.fn().mockReturnValue({
-        relativePath: 'content/posts/hello',
-        absolutePath: '/abs/content/posts/hello',
-      }),
-      read: vi.fn().mockResolvedValue({
-        collection: 'posts',
-        format: 'md',
-        data: {},
-        body: 'Hello',
-      }),
-      write: vi.fn().mockResolvedValue({
-        collection: 'posts',
-        format: 'md',
-        data: {},
-        body: 'Hello',
-      }),
-      renameEntry: vi.fn().mockResolvedValue({ newPath: 'content/posts/new-slug' }),
-      idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
-    })),
+    ContentStore: vi.fn().mockImplementation(function () {
+      return {
+        resolvePath: vi.fn().mockReturnValue({
+          schemaItem: { logicalPath: 'content/posts', type: 'collection' },
+          slug: 'hello',
+        }),
+        resolveDocumentPath: vi.fn().mockReturnValue({
+          relativePath: 'content/posts/hello',
+          absolutePath: '/abs/content/posts/hello',
+        }),
+        read: vi.fn().mockResolvedValue({
+          collection: 'posts',
+          format: 'md',
+          data: {},
+          body: 'Hello',
+        }),
+        write: vi.fn().mockResolvedValue({
+          collection: 'posts',
+          format: 'md',
+          data: {},
+          body: 'Hello',
+        }),
+        renameEntry: vi.fn().mockResolvedValue({ newPath: 'content/posts/new-slug' }),
+        idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+      }
+    }),
     ContentStoreError: class ContentStoreError extends Error {},
     ContentConflictError: class ContentConflictError extends Error {},
   }
@@ -174,7 +176,9 @@ describe('content api', () => {
       write: vi.fn().mockRejectedValue(new ContentConflictError()),
       idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
     }
-    vi.mocked(ContentStore).mockImplementationOnce(() => mockStore as any)
+    vi.mocked(ContentStore).mockImplementationOnce(function () {
+      return mockStore as any
+    })
 
     const res = await writeContent(
       ctx,
@@ -313,7 +317,9 @@ describe('content api', () => {
           .mockRejectedValue(new ContentStoreError('Entry not found: nonexistent', 'NOT_FOUND')),
       }
 
-      vi.mocked(ContentStore).mockImplementationOnce(() => mockStore as any)
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
 
       const res = await renameEntry(
         ctx,
@@ -352,7 +358,9 @@ describe('content api', () => {
           ),
       }
 
-      vi.mocked(ContentStore).mockImplementationOnce(() => mockStore as any)
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return mockStore as any
+      })
 
       const res = await renameEntry(
         ctx,

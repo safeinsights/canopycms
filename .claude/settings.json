@@ -33,8 +33,12 @@
       "WebFetch(domain:clerk.com)",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:registry.npmjs.org)",
-      "mcp__playwright__browser_navigate"
+      "mcp__playwright__browser_navigate",
+      "Bash(pnpm why *)",
+      "Bash(pnpm audit *)"
     ],
-    "additionalDirectories": ["/tmp"]
+    "additionalDirectories": [
+      "/tmp"
+    ]
   }
 }

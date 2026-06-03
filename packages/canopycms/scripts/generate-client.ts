@@ -473,7 +473,7 @@ export type MockApiClient = {
   [K in keyof CanopyApiClient]: CanopyApiClient[K] extends Record<string, any>
     ? {
         [M in keyof CanopyApiClient[K]]: CanopyApiClient[K][M] extends (...args: infer Args) => infer Return
-          ? Mock<Args, Return>
+          ? Mock<(...args: Args) => Return>
           : never
       }
     : never

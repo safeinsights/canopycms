@@ -1,40 +1,42 @@
 import { describe, expect, it, vi } from 'vitest'
 
 vi.mock('../comment-store', () => ({
-  CommentStore: vi.fn().mockImplementation(() => ({
-    listThreads: vi.fn().mockResolvedValue([
-      {
+  CommentStore: vi.fn().mockImplementation(function () {
+    return {
+      listThreads: vi.fn().mockResolvedValue([
+        {
+          id: 'thread1',
+          comments: [
+            {
+              id: 'c1',
+              text: 'Test comment',
+              userId: 'u1',
+              threadId: 'thread1',
+              timestamp: '2024-01-01',
+            },
+          ],
+          resolved: false,
+          type: 'field',
+          entryPath: unsafeAsLogicalPath('posts/hello'),
+          canopyPath: 'title',
+          authorId: 'u1',
+          createdAt: '2024-01-01',
+        },
+      ]),
+      addComment: vi.fn().mockResolvedValue({ threadId: 'thread1', commentId: 'c1' }),
+      getThread: vi.fn().mockResolvedValue({
         id: 'thread1',
-        comments: [
-          {
-            id: 'c1',
-            text: 'Test comment',
-            userId: 'u1',
-            threadId: 'thread1',
-            timestamp: '2024-01-01',
-          },
-        ],
+        comments: [],
         resolved: false,
         type: 'field',
         entryPath: unsafeAsLogicalPath('posts/hello'),
         canopyPath: 'title',
         authorId: 'u1',
         createdAt: '2024-01-01',
-      },
-    ]),
-    addComment: vi.fn().mockResolvedValue({ threadId: 'thread1', commentId: 'c1' }),
-    getThread: vi.fn().mockResolvedValue({
-      id: 'thread1',
-      comments: [],
-      resolved: false,
-      type: 'field',
-      entryPath: unsafeAsLogicalPath('posts/hello'),
-      canopyPath: 'title',
-      authorId: 'u1',
-      createdAt: '2024-01-01',
-    }),
-    resolveThread: vi.fn().mockResolvedValue(true),
-  })),
+      }),
+      resolveThread: vi.fn().mockResolvedValue(true),
+    }
+  }),
 }))
 
 import { COMMENT_ROUTES } from './comments'

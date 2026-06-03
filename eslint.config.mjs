@@ -17,6 +17,8 @@ const eslintConfig = [
       'coverage/**',
       'test-results/**',
       'playwright-report/**',
+      // Next.js-generated type shim (regenerated on every build; not meant to be linted)
+      '**/next-env.d.ts',
       'packages/canopycms/src/api/client.ts',
       'packages/canopycms/src/api/__test__/mock-client.ts',
     ],
