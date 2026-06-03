@@ -537,6 +537,8 @@ If your registry currently uses schema-variable names as keys (the convention pr
 
 No content files, frontmatter, or `.canopy-meta/` cache files need migration. In dev mode, editing `.collection.json` automatically invalidates the schema cache; the next read picks up the new strings.
 
+**Behavior change for both paths:** `createEntrySchemaRegistry` now runs the same field-shape checks that previously ran via `validateCanopyConfig` (select fields must have `options`, reference fields must have `collections` or `entryTypes`, no inline groups inside object/block fields, no field-name collisions after group flattening). Schemas that passed registry creation before but quietly held one of these mistakes will throw at registry creation now. The error messages cite the specific field; fix the schema and rerun.
+
 **Path B — Keep your existing keyless shorthand.** Your code keeps working exactly as today. You don't get the auto-derived `EntryTypes` map, so if you want typed access to `meta.indexEntry.data`, declare a parallel interface manually:
 
 ```ts
@@ -586,13 +588,7 @@ Available schemas: author, home, doc
 | `editor`              | `EditorConfig`         | No       | -           | Editor UI customization options                                                                                                                                                                                                                                  |
 | `dev`                 | `DevConfig`            | No       | -           | Dev-mode-only behavior. `dev.contentSync: 'off' \| 'warn'` (default `'warn'`) controls how the dev server detects/reports working-tree edits vs. the served branch clone (see [Local Development Sync](#local-development-sync)). Ignored when `mode !== 'dev'`. |
 
-**Note**: You must define your schema using at least one of these approaches:
-
-- Config-based: Set the `schema` option in `defineCanopyConfig`
-- Meta file-based: Create `.collection.json` files in your content directory (requires passing `entrySchemaRegistry` to `createNextCanopyContext`)
-- Hybrid: Use both approaches together - schemas will be merged
-
-See the [Schema Registry and References](#schema-references-system) section for details on using `.collection.json` meta files.
+**Note**: Schemas are declared in TypeScript with `defineEntrySchema`, registered with `createEntrySchemaRegistry`, and referenced from `.collection.json` files alongside your content. See the [Schema Registry and References](#schema-references-system) section for details.
 
 ### Operating Modes
 
@@ -666,87 +662,109 @@ The schema uses a unified collection-based structure. Collections contain **entr
 - For unique content (homepage, settings), create an entry type with `maxItems: 1`
 - You can mix multiple entry types in a single collection
 
+Declare your schemas once in `schemas.ts` and register them by entry-type name:
+
 ```typescript
-const config = defineCanopyConfig({
-  // ...required fields...
-  schema: {
-    collections: [
-      // Collection with repeatable entries (e.g., blog posts)
-      {
-        name: 'posts',
-        label: 'Blog Posts',
-        path: 'posts',        // Files at content/posts/*.json
-        entries: [
-          {
-            name: 'post',
-            format: 'json',   // or 'md', 'mdx'
-            schema: [...],
-          },
-        ],
-      },
-      // Collection with singleton-like entry (e.g., homepage)
-      {
-        name: 'pages',
-        label: 'Pages',
-        path: 'pages',
-        entries: [
-          {
-            name: 'home',
-            label: 'Homepage',
-            format: 'json',
-            schema: [...],
-            maxItems: 1,      // Only one homepage allowed
-          },
-        ],
-      },
-      // Collection with multiple entry types
-      {
-        name: 'docs',
-        label: 'Documentation',
-        path: 'docs',
-        entries: [
-          {
-            name: 'guide',
-            label: 'Guide',
-            format: 'mdx',
-            schema: [...],
-          },
-          {
-            name: 'tutorial',
-            label: 'Tutorial',
-            format: 'mdx',
-            schema: [...],
-          },
-        ],
-        // Nested collections
-        collections: [
-          {
-            name: 'api',
-            label: 'API Reference',
-            path: 'api',
-            entries: [
-              {
-                name: 'endpoint',
-                format: 'mdx',
-                schema: [...],
-              },
-            ],
-          },
-        ],
-      },
-    ],
-    // Entry types at root level (optional)
-    entries: [
-      {
-        name: 'settings',
-        label: 'Site Settings',
-        format: 'json',
-        schema: [...],
-        maxItems: 1,          // Singleton-like at root level
-      },
-    ],
-  },
+// app/schemas.ts
+import { defineEntrySchema } from 'canopycms'
+import { createEntrySchemaRegistry } from 'canopycms/server'
+
+export const postSchema = defineEntrySchema([
+  /* fields */
+])
+export const homeSchema = defineEntrySchema([
+  /* fields */
+])
+export const guideSchema = defineEntrySchema([
+  /* fields */
+])
+export const tutorialSchema = defineEntrySchema([
+  /* fields */
+])
+export const endpointSchema = defineEntrySchema([
+  /* fields */
+])
+export const settingsSchema = defineEntrySchema([
+  /* fields */
+])
+
+export const entrySchemaRegistry = createEntrySchemaRegistry({
+  post: postSchema,
+  home: homeSchema,
+  guide: guideSchema,
+  tutorial: tutorialSchema,
+  endpoint: endpointSchema,
+  settings: settingsSchema,
 })
+```
+
+Then place a `.collection.json` next to each collection's content. The directory tree decides where each collection lives — there is no `path` field.
+
+**Repeatable entries** — `content/posts/.collection.json`:
+
+```json
+{
+  "name": "posts",
+  "label": "Blog Posts",
+  "entries": [{ "name": "post", "format": "json", "schema": "post" }]
+}
+```
+
+**Singleton-like entry** — `content/pages/.collection.json`:
+
+```json
+{
+  "name": "pages",
+  "label": "Pages",
+  "entries": [
+    {
+      "name": "home",
+      "label": "Homepage",
+      "format": "json",
+      "schema": "home",
+      "maxItems": 1
+    }
+  ]
+}
+```
+
+**Multiple entry types in one collection** — `content/docs/.collection.json`:
+
+```json
+{
+  "name": "docs",
+  "label": "Documentation",
+  "entries": [
+    { "name": "guide", "label": "Guide", "format": "mdx", "schema": "guide" },
+    { "name": "tutorial", "label": "Tutorial", "format": "mdx", "schema": "tutorial" }
+  ]
+}
+```
+
+**Nested collections** — add a `.collection.json` in a subdirectory of `content/docs/`, e.g. `content/docs/api/.collection.json`:
+
+```json
+{
+  "name": "api",
+  "label": "API Reference",
+  "entries": [{ "name": "endpoint", "format": "mdx", "schema": "endpoint" }]
+}
+```
+
+**Root-level entries** (e.g., site-wide settings) — `content/.collection.json`:
+
+```json
+{
+  "entries": [
+    {
+      "name": "settings",
+      "label": "Site Settings",
+      "format": "json",
+      "schema": "settings",
+      "maxItems": 1
+    }
+  ]
+}
 ```
 
 **Key concepts:**

@@ -944,8 +944,9 @@ describe('buildContentTree', () => {
     }
     const flat = flattenSchema(schema, 'content')
 
-    // No `extends Record<...>` — adopters declare plain interfaces and the
-    // constraint (EntryTypeMap = Record<string, object>) accepts them.
+    // `TEntryTypes` is unconstrained, so plain interfaces (no `extends Record<...>`,
+    // no index signatures) satisfy it. `EntryTypeMap` is an optional convenience
+    // alias adopters can target, not a bound on the generic.
     interface MyEntries {
       partner: { name: string; isFictional?: boolean; tagline?: string }
       doc: { title: string }

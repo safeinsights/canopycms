@@ -496,12 +496,7 @@ Content directories and filenames may have mixed casing (e.g., `content/docs/API
 
 ## Schema-Driven Content Model
 
-CanopyCMS uses a schema model based on **collections** and **entry types**. Schemas can be defined in two ways:
-
-1. **Configuration-based**: Schema defined directly in `canopycms.config.ts`
-2. **File-based**: Schema defined in `.collection.json` files alongside content (with references to a centralized schema registry)
-
-These approaches can be mixed—file-based and config-based schemas are merged together during initialization.
+CanopyCMS uses a schema model based on **collections** and **entry types**. Schemas are defined in `.collection.json` files alongside content, with entry types referencing field definitions in a centralized schema registry.
 
 ### Schema Structure
 
@@ -583,7 +578,6 @@ The `schema` property contains a string reference (like `"postSchema"`) that is 
 - **Type safety**: Schema registry is defined in TypeScript with full type checking
 - **Separation of concerns**: Content structure (meta files) is separate from field definitions (registry)
 - **Co-location**: Collection metadata lives with content files, not in config
-- **Merge flexibility**: Config-based and file-based schemas can coexist
 
 ### Schema Meta Files
 

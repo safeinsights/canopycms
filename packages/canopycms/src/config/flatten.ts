@@ -20,33 +20,6 @@ export const normalizePathValue = (val: string): string =>
   normalize(val).split('/').filter(Boolean).join('/')
 
 /**
- * Normalize all paths in the root collection schema.
- * Recursively processes nested collections.
- */
-export const normalizeSchemaPathsRoot = (root: RootCollectionConfig): RootCollectionConfig => {
-  const normalizeCollection = (collection: CollectionConfig, parentPath = ''): CollectionConfig => {
-    const logicalPath = parentPath ? join(parentPath, collection.path) : collection.path
-    const normalizedFull = normalizePathValue(logicalPath)
-    if (!normalizedFull || normalizedFull.includes('..')) {
-      throw new Error(`Invalid path for collection "${collection.name}"`)
-    }
-
-    return {
-      ...collection,
-      path: normalizePathValue(collection.path),
-      collections: collection.collections?.map((c: CollectionConfig) =>
-        normalizeCollection(c, normalizedFull),
-      ),
-    }
-  }
-
-  return {
-    ...root,
-    collections: root.collections?.map((c: CollectionConfig) => normalizeCollection(c)),
-  }
-}
-
-/**
  * Flatten the root collection schema into a flat array for O(1) lookups.
  * Traverses the nested schema structure and returns all collections and entry types
  * with their full paths resolved.

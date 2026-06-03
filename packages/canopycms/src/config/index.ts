@@ -72,16 +72,11 @@ export {
   selectOptionSchema,
   referenceOptionSchema,
 } from './schemas/field'
-export {
-  collectionSchema,
-  rootCollectionSchema,
-  entryTypeSchema,
-  relativePathSchema,
-} from './schemas/collection'
+export { collectionSchema, entryTypeSchema, relativePathSchema } from './schemas/collection'
 export { permissionTargetSchema, pathPermissionSchema } from './schemas/permissions'
 export { mediaSchema } from './schemas/media'
 
 // Re-export utilities
-export { flattenSchema, normalizePathValue, normalizeSchemaPathsRoot } from './flatten'
+export { flattenSchema, normalizePathValue } from './flatten'
 export { validateCanopyConfig, ensureSelectFieldsHaveOptions } from './validation'
 export { defineCanopyConfig, composeCanopyConfig, type CanopyConfigAuthoring } from './helpers'
