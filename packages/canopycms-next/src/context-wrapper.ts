@@ -103,19 +103,21 @@ export function guardBuildContext(
       assertBuildPhase('listEntries')
       return buildCtx.listEntries<T>(options)
     },
+    // Return types inferred from the core build context (which now carries
+    // meta.physicalPath); the returned object is validated against CanopyBuildContext.
     read: <T = unknown>(input: {
       entryPath: string
       slug?: string
       branch?: string
       resolveReferences?: boolean
-    }): Promise<{ data: T; path: string }> => {
+    }) => {
       assertBuildPhase('read')
       return buildCtx.read<T>(input)
     },
     readByUrlPath: <T = unknown>(
       urlPath: string,
       options?: { branch?: string; resolveReferences?: boolean },
-    ): Promise<{ data: T; path: string } | null> => {
+    ) => {
       assertBuildPhase('readByUrlPath')
       return buildCtx.readByUrlPath<T>(urlPath, options)
     },

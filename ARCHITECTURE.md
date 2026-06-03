@@ -1097,6 +1097,8 @@ Calling `getContext()` returns a `CanopyContext` with:
 - **services**: Access to underlying services if needed
 - **user**: Current authenticated user (with bootstrap admin groups applied)
 
+**Resolved filesystem path on single reads:** `read()` and `readByUrlPath()` return a `meta.physicalPath` field — the absolute filesystem path to the resolved entry file. This lets server-side and build-time adopters read artifacts colocated with an entry (e.g. a sibling `profile.json` in the same directory) without re-deriving CanopyCMS's URL-to-filesystem mapping. This is the only place an absolute filesystem path appears on the public-ish surface, and it is deliberately confined to these single-result, server-only readers. It is **not** present on the higher-fanout `listEntries()` (`ListEntriesItem`) or `buildContentTree()` (`ContentTreeNode`) shapes, because Next.js adopters routinely serialize those as component props, RSC payloads, or JSON API responses — keeping them free of absolute paths avoids leaking deployment layout (home directory, EFS mount point, branch name) into output. The field is structurally sealed as server-only: it is reachable only through `canopycms/server`, the bare `canopycms` entrypoint exports types only, the client bundle never imports the context module, and the implementing modules import `node:fs`/`node:path` so a browser build would fail. This complements the server-only, ACL-bypassing nature of `getCanopyForBuild()` and the stripping of internal content IDs from output.
+
 The context automatically handles:
 
 - User extraction via the provided `getUser` function
