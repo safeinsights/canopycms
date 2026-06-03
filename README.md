@@ -539,6 +539,8 @@ No content files, frontmatter, or `.canopy-meta/` cache files need migration. In
 
 **Behavior change for both paths:** `createEntrySchemaRegistry` now runs the same field-shape checks that previously ran via `validateCanopyConfig` (select fields must have `options`, reference fields must have `collections` or `entryTypes`, no inline groups inside object/block fields, no field-name collisions after group flattening). Schemas that passed registry creation before but quietly held one of these mistakes will throw at registry creation now. The error messages cite the specific field; fix the schema and rerun.
 
+**Config is now strict:** `defineCanopyConfig` rejects unknown top-level keys instead of silently ignoring them. A leftover inline `schema:` from the old config-based approach — or any typo'd/unsupported key — now throws `Unrecognized key(s) in object`. Remove any keys not listed in the [Configuration Reference](#configuration-reference).
+
 **Path B — Keep your existing keyless shorthand.** Your code keeps working exactly as today. You don't get the auto-derived `EntryTypes` map, so if you want typed access to `meta.indexEntry.data`, declare a parallel interface manually:
 
 ```ts

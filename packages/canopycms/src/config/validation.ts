@@ -136,8 +136,7 @@ export const ensureNoFlattenedFieldNameCollisions = (
     }
   }
 
-  if (!Array.isArray(fields)) return
-  checkScope(fields, scopeLabel)
+  checkScope(Array.isArray(fields) ? fields : undefined, scopeLabel)
 }
 
 /**
