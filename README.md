@@ -5,7 +5,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 **Key features:**
 
 - **Schema-enforced content**: Define your content structure with TypeScript - get runtime validation and type inference
-- **Flexible schema definition**: Use config-based schemas, `.collection.json` meta files, or a hybrid approach
+- **Schema-driven content**: Define entry schemas once with `defineEntrySchema`, register them with `createEntrySchemaRegistry`, and reference them from `.collection.json` files alongside your content
 - **Branch-based editing**: Every editor works on an isolated branch, preventing conflicts and enabling review workflows
 - **Git as source of truth**: All content is versioned in git with full history, rollback, and PR-based review
 - **Live preview**: See changes in real-time with click-to-focus field navigation
@@ -187,31 +187,25 @@ The init command adds `.canopy-dev/` to your `.gitignore`. Branch metadata is au
 
 ## Schema Registry and References
 
-CanopyCMS supports two approaches for defining your content schema:
-
-1. **Config-based schemas**: Define everything in `canopycms.config.ts` (traditional approach)
-2. **Meta file schemas**: Define collections using `.collection.json` files in your content directories (new approach)
-3. **Hybrid**: Mix both approaches - use meta files for some collections and config for others
-
-The meta file approach provides better separation of concerns by colocating schema definitions with content, making it easier to manage large content structures.
+Schemas live in TypeScript (declared via `defineEntrySchema`) and are registered with `createEntrySchemaRegistry`. Your content lives in `.collection.json` files that reference schemas from the registry by name.
 
 ### How It Works
 
-The schema references system has three key components:
+Three components:
 
-1. **Schema Registry**: A centralized registry of reusable field schemas defined in TypeScript
-2. **Meta Files**: `.collection.json` files that reference schemas from the registry
-3. **Automatic Loading**: CanopyCMS automatically scans your content directory for meta files and resolves schema references
+1. **Schema Registry** — a TypeScript object mapping entry-type names to their field schemas, created with `createEntrySchemaRegistry`.
+2. **Meta Files** — `.collection.json` files in your content directories that reference schemas from the registry via their `entry.schema` property.
+3. **Automatic Loading** — CanopyCMS scans your content directory for meta files and resolves schema references when the editor starts and at build time.
 
 ### Setting Up a Schema Registry
 
-Create a schemas file (e.g., `app/schemas.ts`) to define your field schemas and registry:
+Create a schemas file (e.g., `app/schemas.ts`):
 
 ```typescript
-import { defineEntrySchema } from 'canopycms'
+import { defineEntrySchema, type EntryTypesFromRegistry } from 'canopycms'
 import { createEntrySchemaRegistry } from 'canopycms/server'
 
-// Define your field schemas
+// 1. Declare your entry schemas.
 export const postSchema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title', required: true },
   {
@@ -237,13 +231,37 @@ export const homeSchema = defineEntrySchema([
   { name: 'content', type: 'markdown', label: 'Content' },
 ])
 
-// Create the registry - validates schemas at creation time
+// 2. Register them. KEY EACH SCHEMA BY ENTRY-TYPE NAME — the same string
+// that appears in your `.collection.json` files' `entry.schema` property,
+// in filenames (`post.<slug>.<id>.mdx`), and in `meta.entryType` from the
+// tree builder. Keying this way lets EntryTypesFromRegistry derive your
+// typed entry-type map automatically (see step 3).
 export const entrySchemaRegistry = createEntrySchemaRegistry({
-  postSchema,
-  authorSchema,
-  homeSchema,
+  post: postSchema,
+  author: authorSchema,
+  home: homeSchema,
 })
+
+// 3. Derive a typed entry-type map. Pass `EntryTypes` as the second generic
+// to `canopy.buildContentTree<NavFields, EntryTypes>(...)` to get narrowed
+// access to `meta.indexEntry.data` after switching on `meta.entryType`.
+export type EntryTypes = EntryTypesFromRegistry<typeof entrySchemaRegistry>
+
+// 4. Per-schema aliases derive cleanly from EntryTypes — single source of truth.
+export type PostContent = EntryTypes['post']
+export type AuthorContent = EntryTypes['author']
+export type HomeContent = EntryTypes['home']
 ```
+
+#### Convention: why key the registry by entry-type name?
+
+The string in `.collection.json`'s `entry.schema` field is a lookup key into the registry. Picking the **entry-type name** as that key:
+
+- Removes one level of indirection (`entry.name` and `entry.schema` are the same string in the common case).
+- Makes error messages clearer (`Available schemas: post, author, home` rather than `postSchema, authorSchema, homeSchema`).
+- Lets `EntryTypesFromRegistry<typeof entrySchemaRegistry>` derive the typed entry-type map automatically. Without it you'd declare a parallel `MyEntries` interface using `TypeFromEntrySchema<typeof postSchema>` per entry — the previously-documented fallback.
+
+If you have multiple entry types that share one schema (`{ partner-v1: ..., partner-v2: ... }` both pointing at `partnerSchema`), name-keying still works — it just means two registry entries hold the same schema reference. Workable; ugly. If that's your situation, see the migration section below for the manual `MyEntries` fallback.
 
 ### Creating .collection.json Meta Files
 
@@ -259,7 +277,7 @@ Create `.collection.json` files in your content directories to define collection
     {
       "name": "post",
       "format": "json",
-      "schema": "postSchema"
+      "schema": "post"
     }
   ]
 }
@@ -276,7 +294,7 @@ Create `.collection.json` files in your content directories to define collection
       "name": "home",
       "label": "Homepage",
       "format": "json",
-      "schema": "homeSchema",
+      "schema": "home",
       "maxItems": 1
     }
   ]
@@ -293,7 +311,7 @@ Create `.collection.json` files in your content directories to define collection
     {
       "name": "doc",
       "format": "mdx",
-      "schema": "docSchema"
+      "schema": "doc"
     }
   ]
 }
@@ -309,7 +327,7 @@ Then create nested collections in subfolders (e.g., `content/docs/guides/.collec
     {
       "name": "guide",
       "format": "mdx",
-      "schema": "guideSchema"
+      "schema": "guide"
     }
   ]
 }
@@ -398,7 +416,7 @@ For production deployments that need networkless JWT verification (e.g., AWS Lam
     {
       "name": "home",
       "format": "json",
-      "schema": "homeSchema",
+      "schema": "home",
       "maxItems": 1               // Singleton-like: only one homepage
     }
   ]
@@ -448,43 +466,91 @@ content/
 - Schema registry keeps field definitions DRY
 - Large content structures are easier to navigate
 
-**Flexibility:**
+### Migrating from the schema-name-keyed registry
 
-- Use meta files for some collections, config for others
-- Override or extend meta file schemas in config if needed
-- Gradual migration path from config-based to meta file approach
+If your registry currently uses schema-variable names as keys (the convention previously generated by `npx canopycms init`), you have two paths.
 
-### Hybrid Approach
+**Path A — Migrate to the entry-type-name convention (recommended).** Mechanical changes only; runtime behavior is identical afterward.
 
-You can mix both approaches in the same project:
+1. Rename the registry keys in `schemas.ts`:
 
-```typescript
-// canopycms.config.ts
-export default defineCanopyConfig({
-  schema: {
-    // Config-based collection
-    collections: [
-      {
-        name: 'pages',
-        label: 'Pages',
-        path: 'pages',
-        entries: [
-          {
-            name: 'page',
-            format: 'mdx',
-            schema: pageSchema, // Inline schema definition
-          },
-        ],
-      },
-    ],
-    // Note: Collections defined in .collection.json files will be
-    // automatically merged with these config-based collections
-  },
-  // ...other config
-})
+   ```ts
+   // Before
+   export const entrySchemaRegistry = createEntrySchemaRegistry({
+     postSchema,
+     authorSchema,
+     homeSchema,
+   })
+
+   // After
+   export const entrySchemaRegistry = createEntrySchemaRegistry({
+     post: postSchema,
+     author: authorSchema,
+     home: homeSchema,
+   })
+   ```
+
+2. Update every `.collection.json` file to match. The `entry.schema` strings reference the registry keys you just renamed:
+
+   ```diff
+    {
+      "entries": [
+        {
+          "name": "post",
+          "format": "mdx",
+   -      "schema": "postSchema"
+   +      "schema": "post"
+        }
+      ]
+    }
+   ```
+
+   A find-and-replace across `content/**/.collection.json` covers it: `"schema": "postSchema"` → `"schema": "post"`, repeated per schema. Then verify with `grep -r "Schema\"" content/`.
+
+3. Add the typed entry-type map and switch per-schema aliases to derive from it:
+
+   ```ts
+   import { type EntryTypesFromRegistry } from 'canopycms'
+
+   export type EntryTypes = EntryTypesFromRegistry<typeof entrySchemaRegistry>
+
+   // These names stay the same at every call site — they just source from EntryTypes now.
+   export type PostContent = EntryTypes['post']
+   export type AuthorContent = EntryTypes['author']
+   export type HomeContent = EntryTypes['home']
+   ```
+
+4. Pass `EntryTypes` as the second generic to `buildContentTree` wherever you call it:
+
+   ```ts
+   await canopy.buildContentTree<NavFields, EntryTypes>({
+     extract: (data, meta) => {
+       if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
+         // meta.indexEntry.data is now typed as PartnerContent — no `unknown` casting.
+       }
+       return {}
+     },
+   })
+   ```
+
+5. Run `pnpm typecheck`. If a `.collection.json` still references an old schema name, you'll get a clear error pointing at the file (`Schema reference "postSchema" ... not found in registry. Available schemas: post, author, home`). Fix and rerun.
+
+No content files, frontmatter, or `.canopy-meta/` cache files need migration. In dev mode, editing `.collection.json` automatically invalidates the schema cache; the next read picks up the new strings.
+
+**Path B — Keep your existing keyless shorthand.** Your code keeps working exactly as today. You don't get the auto-derived `EntryTypes` map, so if you want typed access to `meta.indexEntry.data`, declare a parallel interface manually:
+
+```ts
+import { type TypeFromEntrySchema } from 'canopycms'
+
+interface MyEntries {
+  partner: TypeFromEntrySchema<typeof partnerSchema>
+  doc: TypeFromEntrySchema<typeof docSchema>
+}
+
+await canopy.buildContentTree<NavFields, MyEntries>({ ... })
 ```
 
-Collections defined in `.collection.json` files are automatically loaded and merged with any collections defined in your config. This gives you maximum flexibility to choose the best approach for each part of your content structure.
+This is the right choice if you have multiple entry types sharing one schema and prefer one registry entry per _schema_ rather than per _entry type_, or if you're not ready to touch `.collection.json` files yet. The migration is always available later.
 
 ### Schema Validation
 
@@ -497,8 +563,8 @@ CanopyCMS validates schema references at startup:
 **Example error message:**
 
 ```
-Error: Schema reference "postSchema" in collection "posts" not found in registry.
-Available schemas: authorSchema, homeSchema, docSchema
+Error: Schema reference "post" in collection "posts" not found in registry.
+Available schemas: author, home, doc
 ```
 
 ## Configuration Reference
@@ -507,7 +573,6 @@ Available schemas: authorSchema, homeSchema, docSchema
 
 | Option                | Type                   | Required | Default     | Description                                                                                                                                                                                                                                                      |
 | --------------------- | ---------------------- | -------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `schema`              | `RootCollectionConfig` | No\*     | -           | Object with `collections` and `entries` arrays defining your content structure. \*Required unless using `.collection.json` meta files                                                                                                                            |
 | `gitBotAuthorName`    | `string`               | Yes      | -           | Name used for git commits made by CanopyCMS                                                                                                                                                                                                                      |
 | `gitBotAuthorEmail`   | `string`               | Yes      | -           | Email used for git commits made by CanopyCMS                                                                                                                                                                                                                     |
 | `mode`                | `'dev' \| 'prod'`      | No       | `'dev'`     | Operating mode (see below)                                                                                                                                                                                                                                       |

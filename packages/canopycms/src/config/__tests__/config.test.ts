@@ -6,6 +6,7 @@ import { ROOT_COLLECTION_ID } from '../../paths/types'
 import { composeCanopyConfig, defineCanopyConfig } from '../helpers'
 import { flattenSchema } from '../flatten'
 import {
+  ensureSelectFieldsHaveOptions,
   ensureReferenceFieldsHaveScope,
   ensureNoGroupsInsideComplexFields,
   ensureNoFlattenedFieldNameCollisions,
@@ -18,70 +19,17 @@ const gitAuthor = {
 }
 
 describe('config validation', () => {
-  it('accepts a valid config with mdx collection and blocks', () => {
-    const schema = {
-      collections: [
-        {
-          name: 'posts',
-          path: 'posts',
-          entries: [
-            {
-              name: 'entry',
-              format: 'mdx' as const,
-              schema: [
-                { name: 'title', type: 'string' as const, required: true },
-                { name: 'body', type: 'mdx' as const, required: true },
-                { name: 'tags', type: 'string' as const, list: true },
-                {
-                  name: 'layout',
-                  type: 'block' as const,
-                  templates: [
-                    {
-                      name: 'hero',
-                      label: 'Hero',
-                      fields: [
-                        {
-                          name: 'headline',
-                          type: 'string' as const,
-                          required: true,
-                        },
-                        { name: 'ctaLabel', type: 'string' as const },
-                      ],
-                    },
-                  ],
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    } as const
-
-    defineCanopyConfig({
-      ...gitAuthor,
-      media: { adapter: 's3', bucket: 'my-bucket', region: 'us-east-1' },
-    })
-
-    // Verify schema is valid on its own (config no longer contains schema)
-    expect(schema.collections).toBeDefined()
-    expect(schema.collections[0].name).toBe('posts')
+  it('accepts a minimal config', () => {
+    expect(() => validateCanopyConfig({ ...gitAuthor })).not.toThrow()
   })
 
-  it('rejects select fields without options', () => {
+  it('rejects unknown fields (strict mode)', () => {
     expect(() =>
       validateCanopyConfig({
         ...gitAuthor,
-      }),
-    ).not.toThrow() // Config validation no longer includes schema validation
-  })
-
-  it('allows config without schema (schema loaded from .collection.json)', () => {
-    // Schema is loaded from .collection.json meta files, not from config
-    expect(() =>
-      validateCanopyConfig({
-        ...gitAuthor,
-      }),
-    ).not.toThrow()
+        unknownField: 'oops',
+      } as Record<string, unknown>),
+    ).toThrow()
   })
 
   it('composes config fragments from multiple files', () => {
@@ -563,265 +511,270 @@ describe('config validation', () => {
   })
 })
 
-describe('ensureReferenceFieldsHaveScope', () => {
-  const makeConfig = (fields: unknown[]) => ({
-    schema: {
-      entries: [{ schema: fields }],
-    },
+// The ensure* field-shape validators take a flat EntrySchema (field array) directly.
+// They're called from createEntrySchemaRegistry on each schema in the registry; these
+// tests exercise them on representative field arrays without any config wrapper.
+
+describe('ensureSelectFieldsHaveOptions', () => {
+  it('passes when select field has non-empty options', () => {
+    expect(() =>
+      ensureSelectFieldsHaveOptions([{ name: 'tags', type: 'select', options: ['a', 'b'] }]),
+    ).not.toThrow()
   })
 
+  it('throws when select field has no options', () => {
+    expect(() => ensureSelectFieldsHaveOptions([{ name: 'tags', type: 'select' }])).toThrow(
+      'Select field "tags" requires options',
+    )
+  })
+
+  it('throws when select field has empty options array', () => {
+    expect(() =>
+      ensureSelectFieldsHaveOptions([{ name: 'tags', type: 'select', options: [] }]),
+    ).toThrow('Select field "tags" requires options')
+  })
+
+  it('ignores non-select fields', () => {
+    expect(() =>
+      ensureSelectFieldsHaveOptions([
+        { name: 'title', type: 'string' },
+        { name: 'ref', type: 'reference', collections: ['authors'] },
+      ]),
+    ).not.toThrow()
+  })
+
+  it('validates select fields inside group fields', () => {
+    expect(() =>
+      ensureSelectFieldsHaveOptions([
+        {
+          name: 'seo',
+          type: 'group',
+          fields: [{ name: 'category', type: 'select' }],
+        },
+      ]),
+    ).toThrow('Select field "category" requires options')
+  })
+
+  it('validates select fields inside object fields', () => {
+    expect(() =>
+      ensureSelectFieldsHaveOptions([
+        {
+          name: 'meta',
+          type: 'object',
+          fields: [{ name: 'category', type: 'select' }],
+        },
+      ]),
+    ).toThrow('Select field "category" requires options')
+  })
+
+  it('validates select fields inside block templates', () => {
+    expect(() =>
+      ensureSelectFieldsHaveOptions([
+        {
+          name: 'blocks',
+          type: 'block',
+          templates: [{ name: 'card', fields: [{ name: 'category', type: 'select' }] }],
+        },
+      ]),
+    ).toThrow('Select field "category" requires options')
+  })
+})
+
+describe('ensureReferenceFieldsHaveScope', () => {
   it('passes when reference field has collections', () => {
     expect(() =>
-      ensureReferenceFieldsHaveScope(
-        makeConfig([{ name: 'ref', type: 'reference', collections: ['authors'] }]),
-      ),
+      ensureReferenceFieldsHaveScope([
+        { name: 'ref', type: 'reference', collections: ['authors'] },
+      ]),
     ).not.toThrow()
   })
 
   it('passes when reference field has entryTypes', () => {
     expect(() =>
-      ensureReferenceFieldsHaveScope(
-        makeConfig([{ name: 'ref', type: 'reference', entryTypes: ['partner'] }]),
-      ),
+      ensureReferenceFieldsHaveScope([{ name: 'ref', type: 'reference', entryTypes: ['partner'] }]),
     ).not.toThrow()
   })
 
   it('passes when reference field has both', () => {
     expect(() =>
-      ensureReferenceFieldsHaveScope(
-        makeConfig([
-          { name: 'ref', type: 'reference', collections: ['catalog'], entryTypes: ['partner'] },
-        ]),
-      ),
+      ensureReferenceFieldsHaveScope([
+        { name: 'ref', type: 'reference', collections: ['catalog'], entryTypes: ['partner'] },
+      ]),
     ).not.toThrow()
   })
 
   it('throws when reference field has neither', () => {
-    expect(() =>
-      ensureReferenceFieldsHaveScope(makeConfig([{ name: 'ref', type: 'reference' }])),
-    ).toThrow('Reference field "ref" requires at least one of "collections" or "entryTypes"')
+    expect(() => ensureReferenceFieldsHaveScope([{ name: 'ref', type: 'reference' }])).toThrow(
+      'Reference field "ref" requires at least one of "collections" or "entryTypes"',
+    )
   })
 
   it('throws when collections is empty array', () => {
     expect(() =>
-      ensureReferenceFieldsHaveScope(
-        makeConfig([{ name: 'ref', type: 'reference', collections: [] }]),
-      ),
+      ensureReferenceFieldsHaveScope([{ name: 'ref', type: 'reference', collections: [] }]),
     ).toThrow('Reference field "ref" requires at least one of "collections" or "entryTypes"')
   })
 
   it('throws when entryTypes is empty array', () => {
     expect(() =>
-      ensureReferenceFieldsHaveScope(
-        makeConfig([{ name: 'ref', type: 'reference', entryTypes: [] }]),
-      ),
+      ensureReferenceFieldsHaveScope([{ name: 'ref', type: 'reference', entryTypes: [] }]),
     ).toThrow('Reference field "ref" requires at least one of "collections" or "entryTypes"')
   })
 
   it('ignores non-reference fields', () => {
     expect(() =>
-      ensureReferenceFieldsHaveScope(
-        makeConfig([
-          { name: 'title', type: 'string' },
-          { name: 'tags', type: 'select', options: ['a'] },
-        ]),
-      ),
+      ensureReferenceFieldsHaveScope([
+        { name: 'title', type: 'string' },
+        { name: 'tags', type: 'select', options: ['a'] },
+      ]),
     ).not.toThrow()
   })
 
   it('validates reference fields inside object fields', () => {
     expect(() =>
-      ensureReferenceFieldsHaveScope(
-        makeConfig([
-          {
-            name: 'meta',
-            type: 'object',
-            fields: [{ name: 'ref', type: 'reference' }],
-          },
-        ]),
-      ),
+      ensureReferenceFieldsHaveScope([
+        {
+          name: 'meta',
+          type: 'object',
+          fields: [{ name: 'ref', type: 'reference' }],
+        },
+      ]),
     ).toThrow('Reference field "ref"')
   })
 
   it('validates reference fields inside block templates', () => {
     expect(() =>
-      ensureReferenceFieldsHaveScope(
-        makeConfig([
-          {
-            name: 'blocks',
-            type: 'block',
-            templates: [{ name: 'card', fields: [{ name: 'ref', type: 'reference' }] }],
-          },
-        ]),
-      ),
-    ).toThrow('Reference field "ref"')
-  })
-
-  it('validates nested collections', () => {
-    expect(() =>
-      ensureReferenceFieldsHaveScope({
-        schema: {
-          collections: [
-            {
-              entries: [{ schema: [{ name: 'ref', type: 'reference' }] }],
-            },
-          ],
+      ensureReferenceFieldsHaveScope([
+        {
+          name: 'blocks',
+          type: 'block',
+          templates: [{ name: 'card', fields: [{ name: 'ref', type: 'reference' }] }],
         },
-      }),
+      ]),
     ).toThrow('Reference field "ref"')
   })
 })
 
 describe('ensureNoGroupsInsideComplexFields', () => {
-  const makeConfig = (fields: unknown[]) => ({
-    schema: { entries: [{ name: 'doc', schema: fields }] },
-  })
-
   it('passes when a group is at the top level', () => {
     expect(() =>
-      ensureNoGroupsInsideComplexFields(
-        makeConfig([
-          { name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'string' }] },
-        ]),
-      ),
+      ensureNoGroupsInsideComplexFields([
+        { name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'string' }] },
+      ]),
     ).not.toThrow()
   })
 
   it('passes when a group is nested inside another group', () => {
     expect(() =>
-      ensureNoGroupsInsideComplexFields(
-        makeConfig([
-          {
-            name: 'outer',
-            type: 'group',
-            fields: [{ name: 'inner', type: 'group', fields: [{ name: 'a', type: 'string' }] }],
-          },
-        ]),
-      ),
+      ensureNoGroupsInsideComplexFields([
+        {
+          name: 'outer',
+          type: 'group',
+          fields: [{ name: 'inner', type: 'group', fields: [{ name: 'a', type: 'string' }] }],
+        },
+      ]),
     ).not.toThrow()
   })
 
   it('throws when a group is directly inside an object field', () => {
     expect(() =>
-      ensureNoGroupsInsideComplexFields(
-        makeConfig([
-          {
-            name: 'meta',
-            type: 'object',
-            fields: [
-              { name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'string' }] },
-            ],
-          },
-        ]),
-      ),
+      ensureNoGroupsInsideComplexFields([
+        {
+          name: 'meta',
+          type: 'object',
+          fields: [{ name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'string' }] }],
+        },
+      ]),
     ).toThrow('Inline group "seo" cannot be nested inside a object field')
   })
 
   it('throws when a group is inside a block template', () => {
     expect(() =>
-      ensureNoGroupsInsideComplexFields(
-        makeConfig([
-          {
-            name: 'blocks',
-            type: 'block',
-            templates: [
-              {
-                name: 'hero',
-                fields: [
-                  { name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'string' }] },
-                ],
-              },
-            ],
-          },
-        ]),
-      ),
+      ensureNoGroupsInsideComplexFields([
+        {
+          name: 'blocks',
+          type: 'block',
+          templates: [
+            {
+              name: 'hero',
+              fields: [
+                { name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'string' }] },
+              ],
+            },
+          ],
+        },
+      ]),
     ).toThrow('Inline group "seo" cannot be nested inside a block field')
   })
 
   it('throws when a group is inside an object that is inside a top-level group', () => {
     expect(() =>
-      ensureNoGroupsInsideComplexFields(
-        makeConfig([
-          {
-            name: 'outer',
-            type: 'group',
-            fields: [
-              {
-                name: 'meta',
-                type: 'object',
-                fields: [{ name: 'inner', type: 'group', fields: [{ name: 'a', type: 'string' }] }],
-              },
-            ],
-          },
-        ]),
-      ),
+      ensureNoGroupsInsideComplexFields([
+        {
+          name: 'outer',
+          type: 'group',
+          fields: [
+            {
+              name: 'meta',
+              type: 'object',
+              fields: [{ name: 'inner', type: 'group', fields: [{ name: 'a', type: 'string' }] }],
+            },
+          ],
+        },
+      ]),
     ).toThrow('Inline group "inner" cannot be nested inside a object field')
   })
 })
 
 describe('ensureNoFlattenedFieldNameCollisions', () => {
-  const makeConfig = (fields: unknown[]) => ({
-    schema: { entries: [{ name: 'doc', schema: fields }] },
-  })
-
   it('passes with no duplicates', () => {
     expect(() =>
-      ensureNoFlattenedFieldNameCollisions(
-        makeConfig([
-          { name: 'title', type: 'string' },
-          { name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'string' }] },
-        ]),
-      ),
+      ensureNoFlattenedFieldNameCollisions([
+        { name: 'title', type: 'string' },
+        { name: 'seo', type: 'group', fields: [{ name: 'metaTitle', type: 'string' }] },
+      ]),
     ).not.toThrow()
   })
 
   it('throws when a group field collides with a top-level field', () => {
     expect(() =>
-      ensureNoFlattenedFieldNameCollisions(
-        makeConfig([
-          { name: 'title', type: 'string' },
-          { name: 'seo', type: 'group', fields: [{ name: 'title', type: 'string' }] },
-        ]),
-      ),
+      ensureNoFlattenedFieldNameCollisions([
+        { name: 'title', type: 'string' },
+        { name: 'seo', type: 'group', fields: [{ name: 'title', type: 'string' }] },
+      ]),
     ).toThrow('Field name collision')
   })
 
   it('throws when two groups have a field with the same name', () => {
     expect(() =>
-      ensureNoFlattenedFieldNameCollisions(
-        makeConfig([
-          { name: 'nav', type: 'group', fields: [{ name: 'label', type: 'string' }] },
-          { name: 'seo', type: 'group', fields: [{ name: 'label', type: 'string' }] },
-        ]),
-      ),
+      ensureNoFlattenedFieldNameCollisions([
+        { name: 'nav', type: 'group', fields: [{ name: 'label', type: 'string' }] },
+        { name: 'seo', type: 'group', fields: [{ name: 'label', type: 'string' }] },
+      ]),
     ).toThrow('Field name collision')
   })
 
   it('passes when collisions are in separate object scopes', () => {
     expect(() =>
-      ensureNoFlattenedFieldNameCollisions(
-        makeConfig([
-          { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
-          { name: 'footer', type: 'object', fields: [{ name: 'title', type: 'string' }] },
-        ]),
-      ),
+      ensureNoFlattenedFieldNameCollisions([
+        { name: 'hero', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+        { name: 'footer', type: 'object', fields: [{ name: 'title', type: 'string' }] },
+      ]),
     ).not.toThrow()
   })
 
   it('throws on collision within a nested object scope', () => {
     expect(() =>
-      ensureNoFlattenedFieldNameCollisions(
-        makeConfig([
-          {
-            name: 'hero',
-            type: 'object',
-            fields: [
-              { name: 'title', type: 'string' },
-              { name: 'inner', type: 'group', fields: [{ name: 'title', type: 'string' }] },
-            ],
-          },
-        ]),
-      ),
+      ensureNoFlattenedFieldNameCollisions([
+        {
+          name: 'hero',
+          type: 'object',
+          fields: [
+            { name: 'title', type: 'string' },
+            { name: 'inner', type: 'group', fields: [{ name: 'title', type: 'string' }] },
+          ],
+        },
+      ]),
     ).toThrow('Field name collision')
   })
 })

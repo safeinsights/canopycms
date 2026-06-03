@@ -6,7 +6,7 @@ import { z } from 'zod'
 
 import type { AuthPlugin } from '../../auth/plugin'
 import type { EntryLinkUrlResolver } from '../../entry-link-resolver'
-import { rootCollectionSchema, relativePathSchema } from './collection'
+import { relativePathSchema } from './collection'
 import { mediaSchema } from './media'
 
 // Default value schemas
@@ -43,31 +43,32 @@ export const editorConfigSchema = z.object({
   AccountComponent: z.custom<React.ComponentType>().optional(),
 })
 
-// Main CanopyConfig schema
-export const CanopyConfigSchema = z.object({
-  schema: rootCollectionSchema.optional(),
-  media: mediaSchema.optional(),
-  defaultBranchAccess: defaultBranchAccessSchema.optional(),
-  defaultPathAccess: defaultPathAccessSchema.optional(),
-  defaultBaseBranch: defaultBaseBranchSchema.optional(),
-  defaultActiveBranch: z.string().min(1).optional(),
-  defaultRemoteName: defaultRemoteNameSchema.optional(),
-  defaultRemoteUrl: defaultRemoteUrlSchema.optional(),
-  gitBotAuthorName: gitBotAuthorNameSchema,
-  gitBotAuthorEmail: gitBotAuthorEmailSchema,
-  githubTokenEnvVar: githubTokenEnvVarSchema.optional(),
-  mode: operatingModeSchema, // Has .default(), so not optional in output type
-  deployedAs: deployedAsSchema, // Has .default('server'), so always present after validation
-  settingsBranch: z.string().optional(),
-  autoCreateSettingsPR: z.boolean().optional(),
-  deploymentName: deploymentNameSchema.optional(),
-  contentRoot: contentRootSchema.default('content'),
-  sourceRoot: sourceRootSchema.optional(),
-  editor: editorConfigSchema.optional(),
-  authPlugin: z.custom<AuthPlugin>().optional(),
-  entryLinkUrl: z.custom<EntryLinkUrlResolver>().optional(),
-  dev: devConfigSchema.optional(),
-})
+// Main CanopyConfig schema.
+export const CanopyConfigSchema = z
+  .object({
+    media: mediaSchema.optional(),
+    defaultBranchAccess: defaultBranchAccessSchema.optional(),
+    defaultPathAccess: defaultPathAccessSchema.optional(),
+    defaultBaseBranch: defaultBaseBranchSchema.optional(),
+    defaultActiveBranch: z.string().min(1).optional(),
+    defaultRemoteName: defaultRemoteNameSchema.optional(),
+    defaultRemoteUrl: defaultRemoteUrlSchema.optional(),
+    gitBotAuthorName: gitBotAuthorNameSchema,
+    gitBotAuthorEmail: gitBotAuthorEmailSchema,
+    githubTokenEnvVar: githubTokenEnvVarSchema.optional(),
+    mode: operatingModeSchema, // Has .default(), so not optional in output type
+    deployedAs: deployedAsSchema, // Has .default('server'), so always present after validation
+    settingsBranch: z.string().optional(),
+    autoCreateSettingsPR: z.boolean().optional(),
+    deploymentName: deploymentNameSchema.optional(),
+    contentRoot: contentRootSchema.default('content'),
+    sourceRoot: sourceRootSchema.optional(),
+    editor: editorConfigSchema.optional(),
+    authPlugin: z.custom<AuthPlugin>().optional(),
+    entryLinkUrl: z.custom<EntryLinkUrlResolver>().optional(),
+    dev: devConfigSchema.optional(),
+  })
+  .strict()
 
 /**
  * Helper to get schema default values.

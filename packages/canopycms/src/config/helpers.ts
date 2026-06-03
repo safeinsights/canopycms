@@ -29,17 +29,22 @@ export type CanopyConfigAuthoring = CanopyConfigInput
  * Performs runtime validation using the CanopyConfig schema.
  * Returns a bundle with `server` (full config) and `client(overrides)` (safe subset).
  *
+ * Schemas live in `.collection.json` files alongside your content, referenced
+ * through `createEntrySchemaRegistry` in your `schemas.ts`. See README
+ * "Setting Up a Schema Registry".
+ *
  * @example
  * ```ts
  * // canopycms.config.ts
  * import { defineCanopyConfig } from 'canopycms'
  *
- * export const canopyConfig = defineCanopyConfig({
- *   gitBotAuthorName: 'Bot',
+ * export default defineCanopyConfig({
+ *   mode: 'dev',
+ *   gitBotAuthorName: 'My CMS Bot',
  *   gitBotAuthorEmail: 'bot@example.com',
- *   schema: {
- *     collections: [...]
- *   }
+ *   editor: {
+ *     title: 'My Editor',
+ *   },
  * })
  * ```
  */

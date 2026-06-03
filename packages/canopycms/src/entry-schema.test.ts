@@ -4,6 +4,7 @@ import {
   defineEntrySchema,
   defineInlineFieldGroup,
   defineNestedFieldGroup,
+  type EntryTypesFromRegistry,
   type TypeFromEntrySchema,
 } from './entry-schema'
 
@@ -322,5 +323,64 @@ describe('inline groups', () => {
     expect(group).toEqual({ name: 'hero', type: 'object', fields })
     expect(group.type).toBe('object')
     expect(group.fields).toBe(fields)
+  })
+})
+
+describe('EntryTypesFromRegistry', () => {
+  // These tests are primarily compile-time assertions — the runtime body just
+  // confirms the helper exists. If the type derivation breaks, tsc will fail.
+
+  it('derives entry-type-keyed map from a registry value', () => {
+    const partnerSchema = defineEntrySchema([
+      { name: 'name', type: 'string', isTitle: true },
+      { name: 'isFictional', type: 'boolean' },
+    ])
+    const docSchema = defineEntrySchema([{ name: 'title', type: 'string' }])
+
+    const registry = {
+      partner: partnerSchema,
+      doc: docSchema,
+    } as const
+
+    type EntryTypes = EntryTypesFromRegistry<typeof registry>
+
+    expect(Object.keys(registry).sort()).toEqual(['doc', 'partner'])
+
+    // Discriminated keys
+    expectTypeOf<keyof EntryTypes>().toEqualTypeOf<'partner' | 'doc'>()
+
+    // partner shape carries the schema-derived fields
+    expectTypeOf<EntryTypes['partner']>().toMatchTypeOf<{
+      name: string
+      isFictional: boolean
+    }>()
+
+    // doc shape carries its own (disjoint) fields
+    expectTypeOf<EntryTypes['doc']>().toMatchTypeOf<{ title: string }>()
+
+    // partner does NOT carry doc's fields and vice versa — per-entry-type isolation
+    type PartnerKeys = keyof EntryTypes['partner']
+    type DocKeys = keyof EntryTypes['doc']
+    expectTypeOf<PartnerKeys & 'title'>().toEqualTypeOf<never>()
+    expectTypeOf<DocKeys & 'name'>().toEqualTypeOf<never>()
+
+    expect(true).toBe(true)
+  })
+
+  it('per-schema aliases derive from EntryTypes[K]', () => {
+    const partnerSchema = defineEntrySchema([
+      { name: 'name', type: 'string', isTitle: true },
+      { name: 'tagline', type: 'string' },
+    ])
+
+    const registry = { partner: partnerSchema } as const
+    expect(Object.keys(registry)).toEqual(['partner'])
+    type EntryTypes = EntryTypesFromRegistry<typeof registry>
+    type PartnerContent = EntryTypes['partner']
+
+    // PartnerContent equals what TypeFromEntrySchema would produce on its own
+    expectTypeOf<PartnerContent>().toEqualTypeOf<TypeFromEntrySchema<typeof partnerSchema>>()
+
+    expect(true).toBe(true)
   })
 })

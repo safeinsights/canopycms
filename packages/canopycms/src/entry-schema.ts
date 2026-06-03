@@ -116,6 +116,41 @@ export const defineEntrySchema = <const T extends readonly InferableField[]>(fie
 export type TypeFromEntrySchema<T extends readonly InferableField[]> = InferContentShape<T>
 
 /**
+ * Derive a map of entry-type-name → content-shape from an `entrySchemaRegistry`.
+ *
+ * Pass `typeof entrySchemaRegistry` as the type argument. The registry must be keyed
+ * by entry-type name (the filename token, also the value of `meta.entryType` in
+ * `buildContentTree` callbacks) for the derived map to plug straight into
+ * `buildContentTree`'s `TEntryTypes` generic.
+ *
+ * @example
+ * ```ts
+ * export const entrySchemaRegistry = createEntrySchemaRegistry({
+ *   partner: partnerSchema,
+ *   doc: docSchema,
+ *   home: homeSchema,
+ * })
+ *
+ * export type EntryTypes = EntryTypesFromRegistry<typeof entrySchemaRegistry>
+ *
+ * // Then per-schema aliases stay one line each, anchored to the registry:
+ * export type PartnerContent = EntryTypes['partner']
+ *
+ * // And the tree-builder narrows on entryType:
+ * await canopy.buildContentTree<NavFields, EntryTypes>({
+ *   extract: (data, meta) => {
+ *     if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
+ *       // meta.indexEntry.data is typed PartnerContent
+ *     }
+ *   },
+ * })
+ * ```
+ */
+export type EntryTypesFromRegistry<T extends Record<string, readonly InferableField[]>> = {
+  [K in keyof T]: TypeFromEntrySchema<T[K]>
+}
+
+/**
  * Define a reusable inline field group — a visual container in the editor that groups
  * related fields together without creating a nested data key. The group's fields are
  * stored flat alongside the other fields in the content file.

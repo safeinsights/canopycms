@@ -7,6 +7,12 @@ import {
 } from './utils/title-field'
 import { countBodyFields, findInvalidBodyFields } from './utils/body-field'
 import { flattenGroupFields } from './utils/flatten-group-fields'
+import {
+  ensureSelectFieldsHaveOptions,
+  ensureReferenceFieldsHaveScope,
+  ensureNoFlattenedFieldNameCollisions,
+  ensureNoGroupsInsideComplexFields,
+} from './config/validation'
 
 /** Look up a field's type by dotted path (e.g., "meta.order").
  * Groups are transparent — their children are searched at the same path level. */
@@ -27,25 +33,69 @@ function findFieldType(fields: readonly FieldConfig[], dottedPath: string): stri
 }
 
 /**
- * Creates a type-safe entry schema registry with runtime validation.
+ * Create a type-safe entry schema registry with runtime validation.
  *
- * Maps entry schema names to their field definitions. These names are
- * referenced by `.collection.json` files via the `"schema"` property.
+ * The KEYS in the registry are the strings that `.collection.json` files (and
+ * the editor wire format) use to look up each schema via the `entry.schema`
+ * property. You can pick any string — but the **recommended convention is to
+ * key by the entry-type name** (the filename token, the same string that
+ * appears in `meta.entryType` in `buildContentTree` callbacks). When you do
+ * that, `EntryTypesFromRegistry<typeof yourRegistry>` derives the
+ * discriminated-union map for `buildContentTree`'s `TEntryTypes` parameter
+ * automatically — no parallel interface to maintain.
  *
  * @example
+ * Recommended — keys are entry-type names:
  * ```typescript
  * import { createEntrySchemaRegistry } from 'canopycms/server'
+ * import { type EntryTypesFromRegistry, defineEntrySchema } from 'canopycms'
+ *
+ * export const partnerSchema = defineEntrySchema([
+ *   { name: 'name', type: 'string', label: 'Name', isTitle: true },
+ *   { name: 'isFictional', type: 'boolean', label: 'Fictional?' },
+ * ])
+ * export const docSchema = defineEntrySchema([
+ *   { name: 'title', type: 'string', label: 'Title' },
+ * ])
  *
  * export const entrySchemaRegistry = createEntrySchemaRegistry({
- *   postSchema: [
- *     { type: 'string', name: 'title', label: 'Title', required: true },
- *     { type: 'markdown', name: 'body', label: 'Body' },
- *   ],
- *   authorSchema: [
- *     { type: 'string', name: 'name', label: 'Name', required: true },
- *   ],
+ *   partner: partnerSchema,
+ *   doc: docSchema,
  * })
+ *
+ * // Then in .collection.json:
+ * //   { "name": "partner", "format": "yaml", "schema": "partner" }
+ *
+ * // Derive entry-type map for typed narrowing:
+ * export type EntryTypes = EntryTypesFromRegistry<typeof entrySchemaRegistry>
+ *
+ * // Per-schema aliases stay one line each, anchored to the registry:
+ * export type PartnerContent = EntryTypes['partner']
  * ```
+ *
+ * @example
+ * Also valid — keys are schema-variable names (prior convention):
+ * ```typescript
+ * export const entrySchemaRegistry = createEntrySchemaRegistry({
+ *   partnerSchema,  // JS shorthand — key is the string "partnerSchema"
+ *   docSchema,
+ * })
+ *
+ * // .collection.json must then say:
+ * //   { "name": "partner", "schema": "partnerSchema" }
+ * //
+ * // EntryTypesFromRegistry produces a map keyed by "partnerSchema" rather than
+ * // by "partner", so it can't plug straight into buildContentTree's TEntryTypes.
+ * // Either rekey the registry to the recommended convention, or declare the
+ * // entry-type map manually using TypeFromEntrySchema<typeof partnerSchema>.
+ * ```
+ *
+ * Runtime validation: registry must be non-empty, each schema must be a
+ * non-empty `EntrySchema` array, at most one `isTitle` per schema (string
+ * fields only), at most one `isBody` per schema (markdown/mdx only). Field-
+ * shape checks: select fields must have options, reference fields must have
+ * `collections` or `entryTypes`, no inline groups inside object/block fields,
+ * no field-name collisions after group flattening.
  */
 export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>(registry: T): T {
   // Validate that registry is not empty
@@ -96,6 +146,13 @@ export function createEntrySchemaRegistry<T extends Record<string, EntrySchema>>
         `Entry schema registry entry "${key}": field "${invalidBodyFields[0]}" has isBody: true but is type "${findFieldType(schema, invalidBodyFields[0])}" — isBody is only valid on markdown or mdx fields`,
       )
     }
+    // Field-shape checks moved here from validateCanopyConfig — these used to walk
+    // the (now-removed) inline-config schema; the registry is now the canonical
+    // entry point for entry schemas, so they run here.
+    ensureSelectFieldsHaveOptions(schema)
+    ensureReferenceFieldsHaveScope(schema)
+    ensureNoGroupsInsideComplexFields(schema)
+    ensureNoFlattenedFieldNameCollisions(schema, `entry schema "${key}"`)
   }
 
   return registry
