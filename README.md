@@ -1537,7 +1537,8 @@ interface MyEntries {
   doc: TypeFromEntrySchema<typeof docSchema>
 }
 
-buildContentTree<NavFields, MyEntries>(branchRoot, flat, 'content', {
+const canopy = await getCanopyForBuild()
+const tree = await canopy.buildContentTree<NavFields, MyEntries>({
   extract: (data, meta) => {
     if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
       // meta.indexEntry.data is typed as the partner shape — no casting needed

@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 
 import { buildContentTree, type ContentTreeNode } from './content-tree'
+import type { CanopyBuildContext } from './context'
 import { flattenSchema } from './config/flatten'
 import { generateId } from './id'
 import type { RootCollectionConfig } from './config'
@@ -992,6 +993,95 @@ describe('buildContentTree', () => {
 
     const marsNode = tree[0]
     expect(marsNode.kind).toBe('collection')
-    expect((marsNode as unknown as Record<string, unknown>).indexEntry).toBeUndefined()
+    // Assert the full own-key set rather than just the absence of `indexEntry`:
+    // catches any future refactor that grows the node payload, not only the one
+    // specific key we currently care about.
+    expect(Object.keys(marsNode).sort()).toEqual(
+      ['path', 'logicalPath', 'kind', 'contentId', 'collection', 'children'].sort(),
+    )
+  })
+
+  it('filter rejecting a collection short-circuits descendant traversal', async () => {
+    // Locks in the perf optimization: when filter rejects a collection, its
+    // child collections should never have extract called on them (we never
+    // recurse into them, never read their entries). A reorder that recursed
+    // before filter would silently regress this — the tree output would still
+    // be correct, but every descendant would have been visited.
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: parentDir } = await createCollection(contentDir, 'parent')
+    await createEntry(parentDir, 'page', 'index', 'yaml', { draft: true })
+    const { dir: childDir } = await createCollection(parentDir, 'child')
+    await createEntry(childDir, 'page', 'visible', 'md', { title: 'Visible' })
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'parent',
+          path: 'parent',
+          entries: [{ name: 'page', format: 'yaml', schema: [] }],
+          collections: [
+            {
+              name: 'child',
+              path: 'parent/child',
+              entries: [{ name: 'page', format: 'md', schema: [] }],
+            },
+          ],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const visited: string[] = []
+    await buildContentTree(tempDir, flat, 'content', {
+      extract: (_data, meta) => {
+        visited.push(`${meta.kind}:${meta.logicalPath}`)
+        if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'page') {
+          return { draft: Boolean(meta.indexEntry.data.draft) }
+        }
+        return { draft: false }
+      },
+      filter: (node) => {
+        if (node.kind === 'collection' && (node.fields as { draft?: boolean })?.draft) return false
+        return true
+      },
+    })
+
+    expect(visited).toContain('collection:content/parent')
+    // The child collection must NOT have been visited — parent's filter rejected it.
+    expect(visited).not.toContain('collection:content/parent/child')
+    expect(visited).not.toContain('entry:content/parent/child/visible')
+  })
+
+  it('CanopyBuildContext.buildContentTree accepts plain interfaces for TEntryTypes (compile-time check)', () => {
+    // This test exists purely to exercise the context-path generic constraint at
+    // typecheck time. The runtime body never executes the call — but `tsc` must
+    // accept it. A prior version of context.ts re-imposed `extends EntryTypeMap`,
+    // which rejected plain interfaces with TS2344; this test would have failed
+    // typecheck under that regression.
+    interface PartnerContent {
+      name: string
+      isFictional?: boolean
+    }
+    interface DocContent {
+      title: string
+    }
+    interface MyEntries {
+      partner: PartnerContent
+      doc: DocContent
+    }
+    const _typecheckOnly = (ctx: CanopyBuildContext) =>
+      ctx.buildContentTree<{ partnerName: string }, MyEntries>({
+        extract: (_data, meta) => {
+          if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
+            // meta.indexEntry.data must narrow to PartnerContent here
+            return { partnerName: meta.indexEntry.data.name }
+          }
+          return { partnerName: '' }
+        },
+      })
+    void _typecheckOnly
+    expect(true).toBe(true)
   })
 })

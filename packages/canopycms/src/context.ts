@@ -11,7 +11,7 @@ import {
   buildContentTree as buildContentTreeImpl,
   type BuildContentTreeOptions,
   type ContentTreeNode,
-  type EntryTypeMap,
+  type DefaultEntryTypes,
 } from './content-tree'
 import {
   listEntries as listEntriesImpl,
@@ -56,7 +56,7 @@ export interface CanopyBuildContext {
    * derived via `TypeFromEntrySchema<typeof yourSchema>`) to get narrowed
    * access to `meta.indexEntry.data` inside the `extract` callback.
    */
-  buildContentTree: <T = unknown, TEntryTypes extends EntryTypeMap = EntryTypeMap>(
+  buildContentTree: <T = unknown, TEntryTypes = DefaultEntryTypes>(
     options?: BuildContentTreeOptions<T, TEntryTypes>,
   ) => Promise<ContentTreeNode<T>[]>
 
@@ -237,7 +237,7 @@ export function createCanopyContext(options: CanopyContextOptions) {
 
     const buildContentTree: CanopyContext['buildContentTree'] = async <
       T = unknown,
-      TEntryTypes extends EntryTypeMap = EntryTypeMap,
+      TEntryTypes = DefaultEntryTypes,
     >(
       options?: BuildContentTreeOptions<T, TEntryTypes>,
     ) => {
