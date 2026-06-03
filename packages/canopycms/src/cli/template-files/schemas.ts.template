@@ -2,21 +2,18 @@ import {
   defineEntrySchema,
   defineInlineFieldGroup,
   defineNestedFieldGroup,
-  type TypeFromEntrySchema,
+  type EntryTypesFromRegistry,
 } from 'canopycms'
 import { createEntrySchemaRegistry } from 'canopycms/server'
 
 // Define your entry schemas here.
 // Each schema describes the fields for a content type.
-// The schema name should match the "entrySchema" value in your .collection.json files.
 
 export const pageSchema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title' },
   { name: 'description', type: 'string', label: 'Description' },
   { name: 'body', type: 'markdown', label: 'Body', isBody: true },
 ])
-
-export type PageContent = TypeFromEntrySchema<typeof pageSchema>
 
 // --- Field Groups ---
 //
@@ -57,6 +54,24 @@ export type PageContent = TypeFromEntrySchema<typeof pageSchema>
 // Uncomment to use:
 // export { defineInlineFieldGroup, defineNestedFieldGroup }
 
+// --- Registry ---
+//
+// Key the registry by ENTRY-TYPE NAME (the filename token in your content files,
+// e.g. `page.<slug>.<id>.mdx` → 'page'). The same string is what `.collection.json`
+// files reference via the `"schema"` property. Keying this way lets
+// `EntryTypesFromRegistry<typeof entrySchemaRegistry>` derive the typed entry-type
+// map automatically — see below.
+
 export const entrySchemaRegistry = createEntrySchemaRegistry({
-  pageSchema,
+  page: pageSchema,
 })
+
+// --- Typed entry-type map ---
+//
+// Pass `EntryTypes` as the second generic to `canopy.buildContentTree<NavFields, EntryTypes>`
+// to get narrowed access to `meta.indexEntry.data` after switching on `meta.entryType`.
+// Per-schema aliases derive cleanly from EntryTypes (single source of truth).
+
+export type EntryTypes = EntryTypesFromRegistry<typeof entrySchemaRegistry>
+
+export type PageContent = EntryTypes['page']

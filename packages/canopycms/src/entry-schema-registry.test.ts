@@ -137,6 +137,51 @@ describe('createEntrySchemaRegistry', () => {
       }),
     ).toThrow('isBody is only valid on markdown or mdx fields')
   })
+
+  // The 4 field-shape validators are wired in here from ./config/validation —
+  // these tests lock in that wiring so a future refactor that drops the calls
+  // can't silently pass green.
+
+  it('throws when a select field is missing options', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [{ name: 'tags', type: 'select' } as any],
+      }),
+    ).toThrow('Select field "tags" requires options')
+  })
+
+  it('throws when a reference field has no collections or entryTypes', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [{ name: 'ref', type: 'reference' } as any],
+      }),
+    ).toThrow('Reference field "ref" requires at least one of "collections" or "entryTypes"')
+  })
+
+  it('throws when an inline group is nested inside an object field', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [
+          {
+            name: 'meta',
+            type: 'object',
+            fields: [{ name: 'seo', type: 'group', fields: [{ name: 'x', type: 'string' }] }],
+          } as any,
+        ],
+      }),
+    ).toThrow('Inline group "seo" cannot be nested inside a object field')
+  })
+
+  it('throws on flattened field-name collision and surfaces the entry-type key in the label', () => {
+    expect(() =>
+      createEntrySchemaRegistry({
+        post: [
+          { name: 'title', type: 'string' },
+          { name: 'seo', type: 'group', fields: [{ name: 'title', type: 'string' }] } as any,
+        ],
+      }),
+    ).toThrow('Field name collision in entry schema "post"')
+  })
 })
 
 describe('validateEntrySchemaRegistry', () => {

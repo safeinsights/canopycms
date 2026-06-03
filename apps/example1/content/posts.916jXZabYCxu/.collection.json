@@ -5,7 +5,7 @@
     {
       "name": "post",
       "format": "md",
-      "schema": "postSchema"
+      "schema": "post"
     }
   ],
   "order": ["vh2WdhwAFiSL", "tuggGbrydvYr"]

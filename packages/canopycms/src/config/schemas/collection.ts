@@ -57,11 +57,4 @@ const collectionSchema: z.ZodTypeAny = z.lazy(() =>
     }),
 )
 
-// Root collection: no name/path required (top-level schema)
-export const rootCollectionSchema = z.object({
-  entries: z.array(entryTypeSchema).optional(),
-  collections: z.array(collectionSchema).optional(),
-  order: z.array(z.string()).optional(), // Embedded IDs for ordering items
-})
-
 export { collectionSchema }

@@ -29,5 +29,7 @@ export type {
   ContentTreeNode,
   BuildContentTreeOptions,
   ContentTreeExtractMeta,
+  EntryTypeMap,
+  DefaultEntryTypes,
 } from './content-tree'
 export type { ListEntriesItem, ListEntriesOptions } from './content-listing'

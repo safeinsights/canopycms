@@ -10,6 +10,7 @@ import {
   type CanopyServices,
   type BuildContentTreeOptions,
   type ContentTreeNode,
+  type DefaultEntryTypes,
   type ListEntriesOptions,
   type ListEntriesItem,
   createCanopyServices,
@@ -90,11 +91,11 @@ export function guardBuildContext(
   }
   return {
     services: buildCtx.services,
-    buildContentTree: <T = unknown>(
-      options?: BuildContentTreeOptions<T>,
+    buildContentTree: <T = unknown, TEntryTypes = DefaultEntryTypes>(
+      options?: BuildContentTreeOptions<T, TEntryTypes>,
     ): Promise<ContentTreeNode<T>[]> => {
       assertBuildPhase('buildContentTree')
-      return buildCtx.buildContentTree<T>(options)
+      return buildCtx.buildContentTree<T, TEntryTypes>(options)
     },
     listEntries: <T = Record<string, unknown>>(
       options?: ListEntriesOptions<T>,

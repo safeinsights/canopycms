@@ -1,5 +1,5 @@
 import {
-  TypeFromEntrySchema,
+  type EntryTypesFromRegistry,
   defineBlockTemplate,
   defineEntrySchema,
   defineInlineFieldGroup,
@@ -91,16 +91,12 @@ export const homeSchema = defineEntrySchema([
   },
 ])
 
-export type HomeContent = TypeFromEntrySchema<typeof homeSchema>
-
 export const authorSchema = defineEntrySchema([
   { name: 'name', type: 'string', label: 'Name' },
   { name: 'bio', type: 'string', label: 'Bio' },
   // Nested group: author.location.city / author.location.country in content files
   locationGroup,
 ])
-
-export type AuthorContent = TypeFromEntrySchema<typeof authorSchema>
 
 export const postSchema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title' },
@@ -128,10 +124,6 @@ export const postSchema = defineEntrySchema([
   { name: 'blocks', type: 'block', templates: [heroBlock, ctaBlock] },
 ])
 
-export type PostContent = TypeFromEntrySchema<typeof postSchema> & {
-  slug: string
-}
-
 export const docSchema = defineEntrySchema([
   { name: 'title', type: 'string', label: 'Title' },
   { name: 'description', type: 'string', label: 'Description' },
@@ -142,14 +134,23 @@ export const docSchema = defineEntrySchema([
   { name: 'body', type: 'markdown', label: 'Body', isBody: true },
 ])
 
-export type DocContent = TypeFromEntrySchema<typeof docSchema> & {
-  slug: string
-}
-
-// Entry schema registry for CanopyCMS - references entry schemas by name in .collection.json files
+// Entry schema registry — keyed by entry-type name (the filename token, also the
+// string `.collection.json` files reference via the `schema:` property). Keying
+// this way lets `EntryTypesFromRegistry<typeof entrySchemaRegistry>` derive the
+// typed entry-type map automatically.
 export const entrySchemaRegistry = createEntrySchemaRegistry({
-  postSchema,
-  authorSchema,
-  docSchema,
-  homeSchema,
+  post: postSchema,
+  author: authorSchema,
+  doc: docSchema,
+  home: homeSchema,
 })
+
+// Typed entry-type map — pass as the second generic to `canopy.buildContentTree<NavFields, EntryTypes>`
+// to get narrowed access to `meta.indexEntry.data` after switching on `meta.entryType`.
+export type EntryTypes = EntryTypesFromRegistry<typeof entrySchemaRegistry>
+
+// Per-schema aliases derive from EntryTypes — single source of truth.
+export type HomeContent = EntryTypes['home']
+export type AuthorContent = EntryTypes['author']
+export type PostContent = EntryTypes['post'] & { slug: string }
+export type DocContent = EntryTypes['doc'] & { slug: string }

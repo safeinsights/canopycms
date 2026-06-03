@@ -469,7 +469,7 @@ Builds a tree of content nodes from the schema and filesystem for adopter use ca
 | content-tree.ts    | `buildContentTree()` function and `ContentTreeNode` / options types                                           |
 | content-listing.ts | `listEntries()`, `listCollectionEntries()`, `sortByOrder()`, `parseTypedFilename()`, `readEntryData()` shared |
 
-### BuildContentTreeOptions<T>
+### BuildContentTreeOptions<T, TEntryTypes>
 
 | Option    | Default                                                                | Description                                                         |
 | --------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -481,6 +481,31 @@ Builds a tree of content nodes from the schema and filesystem for adopter use ca
 | maxDepth  | unlimited                                                              | Max traversal depth                                                 |
 
 Without `sort`: children are ordered by the collection's `order` array first, then remaining items alphabetically. With `sort`: the comparator fully replaces the default sort. It runs after `extract` and `filter`, so `fields` is available.
+
+### ContentTreeExtractMeta<TEntryTypes>
+
+The second argument passed to `extract(data, meta)`. `buildContentTree<T, TEntryTypes>` accepts an optional second type parameter; `TEntryTypes` defaults to a loose `Record<string, unknown>` shape so existing callers are unaffected. When supplied, both `meta.entryType` and `meta.indexEntry` become discriminated on the entry-type literal union, giving adopters narrowed access to `meta.indexEntry.data` after switching on `meta.indexEntry.entryType`.
+
+Exported helper: `EntryTypeMap = Record<string, object>` — the documented shape adopters can reuse, but `TEntryTypes` is unconstrained so plain interfaces (without index signatures) work too. Recommended pattern: key `entrySchemaRegistry` by entry-type name and derive `EntryTypes` via `EntryTypesFromRegistry<typeof entrySchemaRegistry>` — single source of truth, zero parallel declarations. Per-schema aliases like `PartnerContent = EntryTypes['partner']` follow naturally. Adopters who can't (or won't) key the registry by entry-type name can still declare a parallel `MyEntries` interface manually using `TypeFromEntrySchema<typeof someSchema>` per entry — see README "Migrating from the schema-name-keyed registry".
+
+| Field       | Type                                                                                            | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| kind        | `'collection' \| 'entry'`                                                                       | Node kind                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| logicalPath | LogicalPath                                                                                     | Logical CMS path for the node                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| entryType   | `keyof TEntryTypes & string` (default: `string`)?                                               | Entry type name (present when `kind === 'entry'`); narrows to a literal union when `TEntryTypes` is supplied                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| format      | ContentFormat?                                                                                  | Content format (present when `kind === 'entry'`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| indexEntry  | `{ entryType: K; format: ContentFormat; data: TEntryTypes[K] }?` (discriminated union over `K`) | The collection's `slug === 'index'` entry, if any. Populated only when `kind === 'collection'` AND such an entry exists. Represents the collection's "identity" under the directory-as-page pattern (e.g., `/data-catalog/<partner>/partner.index.yaml` IS the partner's metadata). Undefined for collections at the `maxDepth` cap. When `TEntryTypes` is supplied, narrowing on `indexEntry.entryType` discriminates `indexEntry.data` to the matching type. Default `TEntryTypes` keeps `data` as `Record<string, unknown>`. |
+
+Order of operations inside `buildNode`: for collections, entries are fetched BEFORE `extract` is called, so `meta.indexEntry` is populated when present and filters that depend on `node.fields` derived from index data work as expected. `ContentTreeNode` itself does NOT carry `indexEntry` — it is only surfaced via `meta`.
+
+```ts
+extract: (data, meta) => {
+  if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
+    return { isFictional: Boolean(meta.indexEntry.data.isFictional) }
+  }
+  // ...
+}
+```
 
 ## Content Listing (Batch)
 

@@ -2657,6 +2657,10 @@ pnpm typecheck
 pnpm test
 ```
 
+### Public re-exports: attach JSDoc at the entrypoint
+
+When you add a new top-level public symbol re-exported from `packages/canopycms/src/server.ts` (or `index.ts`) via a named `export { X } from './module'` statement, **attach JSDoc above the re-export site too**, even if the source file already documents the original declaration. TypeScript's JSDoc propagation through `export { X } from './module'` is inconsistent across LSP versions and module-resolution modes, so adopters hovering over `import { X } from 'canopycms/server'` in VSCode can lose the documentation if it only lives on the original. Duplicating it at the re-export site is the reliable fix and the convention this codebase follows. Wildcard `export *` re-exports propagate more reliably and don't need duplication.
+
 ### Storybook
 
 Update stories when UI changes. Run Storybook to verify:

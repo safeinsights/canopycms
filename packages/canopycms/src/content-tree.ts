@@ -11,14 +11,82 @@
 
 import type { FlatSchemaItem, ContentFormat } from './config'
 
+/**
+ * Adopter-supplied registry mapping entry type names (as they appear in
+ * filenames: `partner.index.yaml` → `'partner'`) to their data shapes.
+ *
+ * Pair with `TypeFromEntrySchema<typeof yourSchema>` to derive shapes from
+ * schemas you've already defined — no redeclaration needed.
+ *
+ * @example
+ * ```ts
+ * import { defineEntrySchema, type TypeFromEntrySchema } from 'canopycms'
+ *
+ * const partnerSchema = defineEntrySchema([
+ *   { name: 'name', type: 'string', isTitle: true },
+ *   { name: 'tagline', type: 'string' },
+ * ])
+ * const docSchema = defineEntrySchema([
+ *   { name: 'title', type: 'string' },
+ * ])
+ *
+ * interface MyEntries {
+ *   partner: TypeFromEntrySchema<typeof partnerSchema>
+ *   doc: TypeFromEntrySchema<typeof docSchema>
+ * }
+ *
+ * const canopy = await getCanopyForBuild()
+ * await canopy.buildContentTree<NavFields, MyEntries>({
+ *   extract: (data, meta) => {
+ *     if (meta.kind === 'collection' && meta.indexEntry?.entryType === 'partner') {
+ *       // meta.indexEntry.data is narrowed to PartnerContent
+ *       return { name: meta.indexEntry.data.name }
+ *     }
+ *     return { name: '' }
+ *   },
+ * })
+ * ```
+ */
+export type EntryTypeMap = Record<string, object>
+
+/**
+ * Default TEntryTypes when an adopter hasn't supplied one.
+ * The index signature preserves the loose shape — `meta.indexEntry.data`
+ * stays `Record<string, unknown>`, useful for unstructured access without
+ * opting in to the discriminated-union pattern. Exported so callers wrapping
+ * `buildContentTree` (e.g. CanopyBuildContext) share the same default.
+ */
+export type DefaultEntryTypes = { [entryType: string]: Record<string, unknown> }
+
 /** Metadata passed to the extract callback. */
-export interface ContentTreeExtractMeta {
+export interface ContentTreeExtractMeta<TEntryTypes = DefaultEntryTypes> {
   kind: 'collection' | 'entry'
   logicalPath: LogicalPath
-  /** Entry type name — present when kind is 'entry'. */
-  entryType?: string
+  /**
+   * Entry type name — present when kind is 'entry'.
+   * Narrows to a literal union when TEntryTypes is supplied.
+   */
+  entryType?: keyof TEntryTypes & string
   /** Content format — present when kind is 'entry'. */
   format?: ContentFormat
+  /**
+   * The entry with slug 'index' inside a collection, when present.
+   * Represents the collection's "identity" under the directory-as-page pattern
+   * (e.g., a partner's metadata for /data-catalog/<partner>/, a section landing
+   * for /docs/<section>/). Only populated when kind === 'collection' AND the
+   * collection contains an entry with slug 'index'. Undefined for collections
+   * at the maxDepth cap (entries aren't loaded there).
+   *
+   * When TEntryTypes is supplied, this becomes a discriminated union: narrow
+   * on `indexEntry.entryType` and `data` is typed accordingly.
+   */
+  indexEntry?: {
+    [K in keyof TEntryTypes & string]: {
+      entryType: K
+      format: ContentFormat
+      data: TEntryTypes[K]
+    }
+  }[keyof TEntryTypes & string]
 }
 import type { LogicalPath, ContentId, Slug } from './paths/types'
 import { listCollectionEntries, sortByOrder, type CollectionListItem } from './content-listing'
@@ -55,18 +123,28 @@ export interface ContentTreeNode<T = unknown> {
   children?: ContentTreeNode<T>[]
 }
 
-export interface BuildContentTreeOptions<T = unknown> {
+export interface BuildContentTreeOptions<T = unknown, TEntryTypes = DefaultEntryTypes> {
   /** Starting collection path. Defaults to content root. */
   rootPath?: string
   /**
    * Extract typed custom fields from each node's raw data.
    * For entries: data is frontmatter + body (md/mdx) or parsed JSON.
    * For collections: data is `{ name, label }` from the schema.
+   *
+   * Supply TEntryTypes to get narrowed access to `meta.indexEntry.data`
+   * via discriminated-union narrowing on `meta.indexEntry.entryType`.
+   *
+   * Note: extract should be a pure mapping. It may be invoked on entry nodes
+   * that `filter` later removes (the tree-walk extracts then filters), so any
+   * side effects (logging, counters, populating an external index) will see
+   * those rejected nodes too.
    */
-  extract?: (data: Record<string, unknown>, meta: ContentTreeExtractMeta) => T
+  extract?: (data: Record<string, unknown>, meta: ContentTreeExtractMeta<TEntryTypes>) => T
   /**
    * Filter: return false to exclude a node and its descendants.
-   * Runs after extract, so `fields` is available.
+   * Runs after extract, so `fields` is available. Rejecting a collection
+   * short-circuits descendant traversal (no recursion into child collections
+   * or entry reads beneath the rejected node).
    */
   filter?: (node: ContentTreeNode<T>) => boolean
   /** Custom URL path builder. Default: strips content root prefix, collapses index entries to parent path, lowercases. */
@@ -139,11 +217,11 @@ const defaultBuildPath = (
  * @param contentRootName - The content root name (e.g. "content")
  * @param options - Tree-building options
  */
-export async function buildContentTree<T = unknown>(
+export async function buildContentTree<T = unknown, TEntryTypes = DefaultEntryTypes>(
   branchRoot: string,
   flatSchema: FlatSchemaItem[],
   contentRootName: string,
-  options?: BuildContentTreeOptions<T>,
+  options?: BuildContentTreeOptions<T, TEntryTypes>,
 ): Promise<ContentTreeNode<T>[]> {
   const childrenByParent = groupByParent(flatSchema)
   const extract = options?.extract
@@ -165,7 +243,6 @@ export async function buildContentTree<T = unknown>(
     collection: CollectionSchemaItem,
     depth: number,
   ): Promise<ContentTreeNode<T> | null> => {
-    // Build collection node (before children, so filter can reject early)
     const collectionData: Record<string, unknown> = {
       name: collection.name,
       label: collection.label,
@@ -180,28 +257,59 @@ export async function buildContentTree<T = unknown>(
         label: collection.label,
       },
     }
+
+    // maxDepth branch: don't load entries (no children would be exposed anyway).
+    // Consequence: extract sees no indexEntry on depth-capped collections.
+    if (maxDepth !== undefined && depth >= maxDepth) {
+      if (extract) {
+        node.fields = extract(collectionData, {
+          kind: 'collection',
+          logicalPath: collection.logicalPath,
+        })
+      }
+      if (filter && !filter(node)) return null
+      return node
+    }
+
+    // Load this collection's entries first (needed for indexEntry detection).
+    // We deliberately do NOT parallelize the child-collection recursion here:
+    // if `filter` rejects this collection, returning early short-circuits all
+    // descendant I/O — preserving the pre-existing "filter prunes whole subtree"
+    // optimization that the directory-as-page reorder would otherwise lose.
+    const entries = await listCollectionEntries(branchRoot, collection)
+
+    // Surface the 'index' entry (when present) to extract via meta.
+    // 'index' is the same magic slug Canopy uses in defaultBuildPath to collapse
+    // /foo/index URLs to /foo/, keeping conventions consistent. If a collection
+    // contains multiple slug==='index' entries (only possible via hand-edited or
+    // merged content — the write path forbids it), the first by filename order
+    // wins.
+    // The cast bridges runtime string keys to the parametric discriminated union;
+    // the adopter narrows on `indexEntry.entryType` to get the typed `data`.
+    const idx = entries.find((e) => e.slug === 'index')
+    const indexEntry = (
+      idx ? { entryType: idx.entryType, format: idx.format, data: idx.data } : undefined
+    ) as ContentTreeExtractMeta<TEntryTypes>['indexEntry']
+
     if (extract) {
       node.fields = extract(collectionData, {
         kind: 'collection',
         logicalPath: collection.logicalPath,
+        indexEntry,
       })
     }
     if (filter && !filter(node)) return null
 
-    // If at max depth, return collection without children
-    if (maxDepth !== undefined && depth >= maxDepth) return node
-
-    // Gather child collections and entries in parallel
+    // Now recurse into child collections (after filter has had a chance to prune)
     const childCollections = childrenByParent.get(collection.logicalPath) ?? []
-    const [childCollectionNodes, entries] = await Promise.all([
-      Promise.all(childCollections.map((child) => buildNode(child, depth + 1))),
-      listCollectionEntries(branchRoot, collection),
-    ])
+    const childCollectionNodes = await Promise.all(
+      childCollections.map((child) => buildNode(child, depth + 1)),
+    )
 
     // Build entry nodes
     const entryNodes: ContentTreeNode<T>[] = []
     for (const entry of entries) {
-      const entryNode = buildEntryNode(entry, buildPath, extract)
+      const entryNode = buildEntryNode<T, TEntryTypes>(entry, buildPath, extract)
       if (filter && !filter(entryNode)) continue
       entryNodes.push(entryNode)
     }
@@ -232,7 +340,7 @@ export async function buildContentTree<T = unknown>(
 
   const rootEntryNodes: ContentTreeNode<T>[] = []
   for (const entry of rootEntries) {
-    const entryNode = buildEntryNode(entry, buildPath, extract)
+    const entryNode = buildEntryNode<T, TEntryTypes>(entry, buildPath, extract)
     if (filter && !filter(entryNode)) continue
     rootEntryNodes.push(entryNode)
   }
@@ -246,10 +354,10 @@ export async function buildContentTree<T = unknown>(
 }
 
 /** Build a ContentTreeNode for an entry. */
-function buildEntryNode<T>(
+function buildEntryNode<T, TEntryTypes = DefaultEntryTypes>(
   entry: CollectionListItem,
   buildPath: (lp: LogicalPath, kind: 'collection' | 'entry') => string,
-  extract?: BuildContentTreeOptions<T>['extract'],
+  extract?: BuildContentTreeOptions<T, TEntryTypes>['extract'],
 ): ContentTreeNode<T> {
   const node: ContentTreeNode<T> = {
     path: buildPath(entry.logicalPath, 'entry'),
@@ -264,10 +372,12 @@ function buildEntryNode<T>(
     },
   }
   if (extract) {
+    // Runtime gives us the raw string entryType; cast to the parametric key
+    // type so callers who supply TEntryTypes get the discriminated-union narrowing.
     node.fields = extract(entry.data, {
       kind: 'entry',
       logicalPath: entry.logicalPath,
-      entryType: entry.entryType,
+      entryType: entry.entryType as keyof TEntryTypes & string,
       format: entry.format,
     })
   }
