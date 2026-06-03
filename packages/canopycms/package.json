@@ -120,7 +120,7 @@
     "@mantine/hooks": "^7.14.2",
     "@mantine/modals": "^7.14.2",
     "@mantine/notifications": "^7.14.2",
-    "@mdxeditor/editor": "^3.52.4",
+    "@mdxeditor/editor": "^4.0.2",
     "@octokit/rest": "^20.0.2",
     "@tabler/icons-react": "^3.36.0",
     "chokidar": "^4.0.3",
