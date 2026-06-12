@@ -163,6 +163,10 @@ export function createCanopyContext(options: CanopyContextOptions) {
    * Call this in server components/routes to get auth-aware reader.
    */
   const getContext = async (): Promise<CanopyContext> => {
+    // Dev mode follows the developer's git HEAD (no-op in prod/static or when
+    // defaultActiveBranch is explicit). Same contract as the HTTP API handler —
+    // switching branches mid-session updates what getCanopy() serves.
+    await services.refreshActiveBranch()
     const user = await getUser()
 
     // Create base content reader

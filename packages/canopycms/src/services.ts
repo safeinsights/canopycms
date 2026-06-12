@@ -19,6 +19,7 @@ import { BranchSchemaCache } from './branch-schema-cache'
 import { enqueueTask } from './worker/task-queue'
 import { getTaskQueueDir } from './worker/task-queue-config'
 import { detectHeadBranch } from './utils/git'
+import { isDeployedStatic } from './build-mode'
 
 /**
  * Create a per-instance active branch detector with its own 5-second TTL cache.
@@ -33,6 +34,8 @@ function createActiveBranchDetector() {
 
   return async (config: CanopyConfig): Promise<string> => {
     if (config.defaultActiveBranch) return config.defaultActiveBranch
+    // Static deployments read content from the checkout — never shell out to git
+    if (isDeployedStatic(config)) return config.defaultBaseBranch ?? 'main'
     if (config.mode === 'dev') {
       const now = Date.now()
       if (cache && now < cache.expiresAt) {
@@ -423,6 +426,8 @@ async function _createCanopyServicesInternal(
     getSettingsBranchRoot,
     refreshActiveBranch: async () => {
       if (services.config.mode !== 'dev') return
+      // Static deployments serve from the checkout — no git HEAD to track
+      if (isDeployedStatic(services.config)) return
       // If the adopter explicitly configured defaultActiveBranch, respect it —
       // don't override with git HEAD detection.
       if (explicitActiveBranch) return

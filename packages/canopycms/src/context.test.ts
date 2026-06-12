@@ -125,6 +125,37 @@ describe('createCanopyContext - build context', () => {
     const result = await ctx.read<{ title: string }>({ entryPath: 'content/docs', slug: 'intro' })
     expect(result.data.title).toBe('Intro')
   })
+
+  it('getContext refreshes the active branch before resolving readers', async () => {
+    const docsDir = path.join(root, 'content/docs')
+    await fs.mkdir(docsDir, { recursive: true })
+    await fs.writeFile(path.join(docsDir, 'intro.json'), JSON.stringify({ title: 'Intro' }))
+
+    const services = await createTestServices(
+      {
+        defaultBranchAccess: 'allow',
+        defaultPathAccess: 'allow',
+        schema: testSchema,
+      },
+      { getSettingsBranchRoot: () => Promise.resolve(root) },
+    )
+    // Simulate a dev-mode git branch switch surfaced by refreshActiveBranch
+    const refreshSpy = vi.fn(async () => {
+      services.config = { ...services.config, defaultActiveBranch: 'flipped' }
+    })
+    services.refreshActiveBranch = refreshSpy
+
+    const canopyCtx = createCanopyContext({
+      services,
+      extractUser: async () => STATIC_DEPLOY_USER,
+    })
+    const ctx = await canopyCtx.getContext()
+
+    expect(refreshSpy).toHaveBeenCalled()
+    // Default-branch reads must target the freshly detected branch
+    const result = await ctx.read<{ title: string }>({ entryPath: 'content/docs', slug: 'intro' })
+    expect(result.path).toBe('/docs/intro?branch=flipped')
+  })
 })
 
 describe('readByUrlPath', () => {

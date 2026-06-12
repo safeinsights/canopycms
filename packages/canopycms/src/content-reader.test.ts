@@ -495,3 +495,99 @@ describe('createContentReader', () => {
     readFileSpy.mockRestore()
   })
 })
+
+describe('static deployments (deployedAs: static)', () => {
+  const staticSchema = {
+    collections: [
+      {
+        name: 'pages',
+        path: 'pages',
+        entries: [
+          {
+            name: 'page',
+            format: 'json' as const,
+            schema: [
+              {
+                name: 'hero',
+                type: 'object' as const,
+                fields: [{ name: 'title', type: 'string' as const }],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  }
+
+  const setupStaticSite = async () => {
+    const root = await tmpDir()
+    const pagesDir = path.join(root, 'content/pages')
+    await fs.mkdir(pagesDir, { recursive: true })
+    await fs.writeFile(
+      path.join(pagesDir, 'home.json'),
+      JSON.stringify({ hero: { title: 'Static Hi' } }, null, 2),
+      'utf8',
+    )
+    return root
+  }
+
+  it('reads from the checkout via cwd without creating branch workspaces', async () => {
+    const root = await setupStaticSite()
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(root)
+    try {
+      const reader = createContentReader({
+        services: await createTestServices(
+          {
+            defaultBranchAccess: 'allow',
+            defaultPathAccess: 'allow',
+            mode: 'dev',
+            deployedAs: 'static',
+            schema: staticSchema,
+          },
+          { getSettingsBranchRoot: () => Promise.resolve(root) },
+        ),
+      })
+
+      const home = await reader.read<{ hero: { title: string } }>({
+        entryPath: unsafeAsLogicalPath('content/pages'),
+        slug: unsafeAsSlug('home'),
+        user: ANONYMOUS_USER,
+      })
+      expect(home.data.hero.title).toBe('Static Hi')
+
+      // No git or workspace side effects in the checkout
+      await expect(fs.access(path.join(root, '.canopy-dev'))).rejects.toThrow()
+    } finally {
+      cwdSpy.mockRestore()
+    }
+  })
+
+  it('works with allowCreateBranch: false (regression: threw "Branch not found")', async () => {
+    const root = await setupStaticSite()
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(root)
+    try {
+      const reader = createContentReader({
+        services: await createTestServices(
+          {
+            defaultBranchAccess: 'allow',
+            defaultPathAccess: 'allow',
+            mode: 'dev',
+            deployedAs: 'static',
+            schema: staticSchema,
+          },
+          { getSettingsBranchRoot: () => Promise.resolve(root) },
+        ),
+        allowCreateBranch: false,
+      })
+
+      const home = await reader.read<{ hero: { title: string } }>({
+        entryPath: unsafeAsLogicalPath('content/pages'),
+        slug: unsafeAsSlug('home'),
+        user: ANONYMOUS_USER,
+      })
+      expect(home.data.hero.title).toBe('Static Hi')
+    } finally {
+      cwdSpy.mockRestore()
+    }
+  })
+})

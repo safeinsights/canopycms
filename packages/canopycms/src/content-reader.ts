@@ -56,6 +56,19 @@ export const createContentReader = (options: ContentReaderOptions): ContentReade
   const createdBy = options.createdBy ?? 'canopycms-content-reader'
 
   const resolveBranchContext = async (branchName: string): Promise<BranchContext> => {
+    // Static deployments read from the checkout: loadOrCreateBranchContext returns a
+    // synthetic cwd context without git ops, regardless of allowCreateBranch.
+    if (isDeployedStatic(services.config)) {
+      return loadOrCreateBranchContext({
+        config: services.config,
+        branchName,
+        mode: operatingMode,
+        basePathOverride,
+        createdBy,
+        remoteUrl: services.config.defaultRemoteUrl,
+      })
+    }
+
     // Check custom resolver first (e.g., from HTTP handler)
     if (options.getBranchContext) {
       const existing = await options.getBranchContext(branchName)

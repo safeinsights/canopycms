@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
 import {
@@ -188,6 +188,45 @@ describe('BranchWorkspaceManager', () => {
     expect(status.current).toBe('feature-foo')
     const remotes = await git.getRemotes(true)
     expect(remotes.find((r) => r.name === 'origin')?.refs.fetch).toBe(remotePath)
+  })
+
+  it('loadOrCreateBranchContext returns a synthetic cwd context for static deployments', async () => {
+    const root = await tmpDir()
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(root)
+    try {
+      const config = defineCanopyTestConfig(
+        {
+          schema: {
+            collections: [
+              {
+                name: 'posts',
+                path: 'posts',
+                entries: [
+                  { name: 'post', format: 'md', schema: [{ name: 'title', type: 'string' }] },
+                ],
+              },
+            ],
+          },
+        },
+        { mode: 'dev', deployedAs: 'static' },
+      )
+
+      const context = await loadOrCreateBranchContext({
+        config,
+        branchName: 'main',
+        mode: 'dev',
+        createdBy: 'test-runner',
+      })
+
+      expect(context.branchRoot).toBe(root)
+      expect(context.baseRoot).toBe(root)
+      expect(context.branch.createdBy).toBe('__static_deploy__')
+      // No git ops or workspace dirs may be created
+      await expect(fs.access(path.join(root, '.canopy-dev'))).rejects.toThrow()
+      await expect(fs.access(path.join(root, '.canopy-meta'))).rejects.toThrow()
+    } finally {
+      cwdSpy.mockRestore()
+    }
   })
 
   it('loadOrCreateBranchContext creates workspace when missing', async () => {
