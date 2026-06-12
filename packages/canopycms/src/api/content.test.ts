@@ -190,6 +190,101 @@ describe('content api', () => {
     expect(res.status).toBe(409)
   })
 
+  describe('validateEntry hook', () => {
+    const writeReq = { user: { type: 'authenticated' as const, userId: 'u1', groups: [] } }
+    const writeParams = {
+      branch: unsafeAsBranchName('feature/x'),
+      path: unsafeAsLogicalPath('posts/hello'),
+    }
+
+    it('passes the expected input to the hook', async () => {
+      const ctx = allowedCtx()
+      const hook = vi.fn().mockResolvedValue([])
+      ctx.services.config.validateEntry = hook
+
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'post' },
+        {
+          format: 'mdx',
+          data: { title: 'hi' },
+          body: '# Hello',
+        },
+      )
+      expect(res.ok).toBe(true)
+      expect(hook).toHaveBeenCalledWith({
+        entryPath: 'content/posts/hello',
+        branch: 'feature/x',
+        entryType: 'post',
+        format: 'mdx',
+        data: { title: 'hi' },
+        body: '# Hello',
+      })
+    })
+
+    it('rejects the save with 422 before writing when the hook returns errors', async () => {
+      const ctx = allowedCtx()
+      ctx.services.config.validateEntry = () => [
+        { level: 'error', message: 'MDX failed to compile', fieldPath: 'body' },
+      ]
+      const { ContentStore } = await import('../content-store')
+      const writeSpy = vi.fn()
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return {
+          resolvePath: vi.fn().mockReturnValue({
+            schemaItem: { logicalPath: 'content/posts', type: 'collection', entries: [] },
+            slug: 'hello',
+          }),
+          resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
+          write: writeSpy,
+          idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        } as any
+      })
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'mdx',
+        data: {},
+        body: '# {broken',
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.error).toContain('body: MDX failed to compile')
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('returns warning issues alongside a successful save', async () => {
+      const ctx = allowedCtx()
+      ctx.services.config.validateEntry = () => [
+        { level: 'warning', message: 'Heading levels skip from h1 to h3' },
+      ]
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: { title: 'hi' },
+      })
+      expect(res.ok).toBe(true)
+      expect(res.data?.validationWarnings).toEqual([
+        { level: 'warning', message: 'Heading levels skip from h1 to h3' },
+      ])
+    })
+
+    it('returns 500 when the hook itself throws', async () => {
+      const ctx = allowedCtx()
+      ctx.services.config.validateEntry = () => {
+        throw new Error('boom')
+      }
+
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: {},
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(500)
+      expect(res.error).toContain('validateEntry hook failed: boom')
+    })
+  })
+
   describe('renameEntry', () => {
     it('renames entry when allowed', async () => {
       const ctx = allowedCtx()

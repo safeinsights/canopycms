@@ -7,14 +7,14 @@ import {
   ContentConflictError,
   type WriteInput,
 } from '../content-store'
-import type { EntrySchema, EntryTypeConfig, FlatSchemaItem } from '../config'
+import type { EntrySchema, EntryTypeConfig, EntryValidationIssue, FlatSchemaItem } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
 import { validateEntryLinks } from '../validation/entry-link-validator'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
 import type { Slug, PhysicalPath } from '../paths'
 import type { BranchContextWithSchema } from '../types'
-import { isNotFoundError } from '../utils/error'
+import { getErrorMessage, isNotFoundError } from '../utils/error'
 import { isDataOnlyFormat } from '../utils/format'
 
 /**
@@ -48,6 +48,8 @@ export type ContentWriteResponse = ApiResponse<{
     id: string
     message: string
   }>
+  /** Warning-level issues from the adopter's validateEntry hook (save succeeded). */
+  validationWarnings?: EntryValidationIssue[]
 }>
 
 /** Response type for reference validation */
@@ -218,6 +220,42 @@ const writeContentHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
+  // Adopter save-time validation, run BEFORE the file is written: 'error' issues
+  // refuse the save (e.g. a body that would break the site's production build),
+  // 'warning' issues are returned alongside the successful write.
+  let validationWarnings: EntryValidationIssue[] | undefined
+  const validateEntry = ctx.services.config.validateEntry
+  if (validateEntry) {
+    let issues: EntryValidationIssue[]
+    try {
+      issues = await validateEntry({
+        entryPath: logicalPathSegments.join('/'),
+        branch: params.branch,
+        ...(params.entryType ? { entryType: params.entryType } : {}),
+        format: body.format,
+        data: body.data ?? {},
+        body: body.body,
+      })
+    } catch (err) {
+      return { ok: false, status: 500, error: `validateEntry hook failed: ${getErrorMessage(err)}` }
+    }
+    const errors = issues.filter((issue) => issue.level === 'error')
+    if (errors.length > 0) {
+      return {
+        ok: false,
+        status: 422,
+        // '; '-joined: the editor shows this in a notification, which collapses newlines
+        error: errors
+          .map((issue) =>
+            issue.fieldPath ? `${issue.fieldPath}: ${issue.message}` : issue.message,
+          )
+          .join('; '),
+      }
+    }
+    const warnings = issues.filter((issue) => issue.level === 'warning')
+    if (warnings.length > 0) validationWarnings = warnings
+  }
+
   try {
     const writeInput: WriteInput = isDataOnlyFormat(body.format)
       ? {
@@ -250,7 +288,7 @@ const writeContentHandler = async (
     const entryLinkWarnings =
       linkValidation.warnings.length > 0 ? linkValidation.warnings : undefined
 
-    return { ok: true, status: 200, data: { ...result, entryLinkWarnings } }
+    return { ok: true, status: 200, data: { ...result, entryLinkWarnings, validationWarnings } }
   } catch (err) {
     if (err instanceof ContentConflictError) {
       return {

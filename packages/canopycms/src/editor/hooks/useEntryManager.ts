@@ -13,10 +13,13 @@ import {
 import { isDataOnlyFormat } from '../../utils/format'
 import { useApiClient } from '../context'
 
-/** Thrown by saveEntry when the API returns a non-200 response. Carries the HTTP status so callers can distinguish conflict (409) from other errors. */
+/** Thrown by saveEntry when the API returns a non-200 response. Carries the HTTP status so callers can distinguish conflict (409) and validation rejection (422) from other errors. */
 export class SaveApiError extends Error {
-  constructor(public readonly status: number) {
-    super(`Save failed: ${status}`)
+  constructor(
+    public readonly status: number,
+    serverMessage?: string,
+  ) {
+    super(serverMessage || `Save failed: ${status}`)
     this.name = 'SaveApiError'
   }
 }
@@ -170,10 +173,27 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       ...(expectedVersion !== undefined ? { expectedVersion } : {}),
     }
     const result = await apiClient.content.write(writeParams, writeBody)
-    if (!result.ok) throw new SaveApiError(result.status)
+    if (!result.ok) throw new SaveApiError(result.status, result.error)
     // Update stored version token from write response
     if (entry.contentId && typeof result.data?.version === 'number') {
       entryVersionsRef.current.set(entry.contentId, result.data.version)
+    }
+    // Warning-level issues from the adopter's validateEntry hook: saved, but surface them
+    const validationWarnings = result.data?.validationWarnings
+    if (validationWarnings && validationWarnings.length > 0) {
+      notifications.show({
+        title: 'Saved with warnings',
+        // '; '-joined: the notification collapses newlines, so '\n' would run the
+        // issues together (matches the '; ' join the save-rejection path uses).
+        message: validationWarnings
+          .map((issue) =>
+            issue.fieldPath ? `${issue.fieldPath}: ${issue.message}` : issue.message,
+          )
+          .join('; '),
+        color: 'yellow',
+        autoClose: false,
+        withCloseButton: true,
+      })
     }
     return normalizeContentPayload(result.data)
   }

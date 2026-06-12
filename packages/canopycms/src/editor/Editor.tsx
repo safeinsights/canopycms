@@ -2,7 +2,18 @@
 
 import React, { useEffect, useMemo, useState, useRef } from 'react'
 
-import { ActionIcon, Box, Drawer, Group, Menu, Paper, Text, Title, useTree } from '@mantine/core'
+import {
+  ActionIcon,
+  Alert,
+  Box,
+  Drawer,
+  Group,
+  Menu,
+  Paper,
+  Text,
+  Title,
+  useTree,
+} from '@mantine/core'
 import {
   IconChevronDown,
   IconChevronUp,
@@ -179,6 +190,10 @@ export const Editor: React.FC<EditorProps> = ({
   // Preview data with resolved references for live preview
   const [previewData, setPreviewData] = useState<FormValue>({})
   const [previewLoadingState, setPreviewLoadingState] = useState<FormValue>({})
+  // Draft compile/render error reported by the preview page (null = renders cleanly)
+  const [previewError, setPreviewError] = useState<{ message: string; fieldPath?: string } | null>(
+    null,
+  )
 
   // API client for schema operations
   const apiClient = useApiClient()
@@ -250,6 +265,11 @@ export const Editor: React.FC<EditorProps> = ({
 
   // Use collections from API (falls back to props if not loaded yet)
   const activeCollections = collectionsFromApi.length > 0 ? collectionsFromApi : collections
+
+  // Clear any reported preview error when switching entries
+  useEffect(() => {
+    setPreviewError(null)
+  }, [currentEntry?.path])
 
   // 3. Draft manager (depends on branchNameState, selectedPath from useEntryManager)
   const {
@@ -772,18 +792,34 @@ export const Editor: React.FC<EditorProps> = ({
 
   const defaultPreview =
     currentEntry?.previewSrc && previewFrameData ? (
-      <PreviewFrame
-        src={currentEntry.previewSrc}
-        path={currentEntry.previewSrc}
-        data={previewFrameData}
-        isLoading={previewLoadingState}
-        style={{
-          width: '100%',
-          height: '100%',
-          border: '1px solid var(--mantine-color-gray-3)',
-        }}
-        highlightEnabled={highlightEnabled}
-      />
+      <Box pos="relative" w="100%" h="100%">
+        {previewError && (
+          <Alert
+            color="red"
+            title="Preview error"
+            withCloseButton
+            onClose={() => setPreviewError(null)}
+            style={{ position: 'absolute', top: 8, left: 8, right: 8, zIndex: 2 }}
+          >
+            {previewError.fieldPath
+              ? `${previewError.fieldPath}: ${previewError.message}`
+              : previewError.message}
+          </Alert>
+        )}
+        <PreviewFrame
+          src={currentEntry.previewSrc}
+          path={currentEntry.previewSrc}
+          data={previewFrameData}
+          isLoading={previewLoadingState}
+          style={{
+            width: '100%',
+            height: '100%',
+            border: '1px solid var(--mantine-color-gray-3)',
+          }}
+          highlightEnabled={highlightEnabled}
+          onPreviewError={setPreviewError}
+        />
+      </Box>
     ) : (
       <Paper
         withBorder

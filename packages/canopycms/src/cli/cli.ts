@@ -4,7 +4,7 @@
  * CanopyCMS CLI entrypoint.
  *
  * Routes commands to their implementations:
- *   init, init-deploy, worker, generate-ai-content, sync
+ *   init, init-deploy, worker, generate-ai-content, sync, migrate
  *
  * Command implementations live in separate files (init.ts, sync.ts, etc.)
  * and are dynamically imported to keep startup fast.
@@ -19,8 +19,17 @@ import type { AuthPlugin } from '../auth/plugin'
 /** Parse raw CLI args into structured flags and positional command. Exported for testing. */
 export function parseArgs(rawArgs: string[]) {
   const argv = minimist(rawArgs, {
-    boolean: ['force', 'non-interactive'],
-    string: ['app-dir', 'branch', 'content-root', 'output', 'config'],
+    boolean: ['force', 'non-interactive', 'dry-run'],
+    string: [
+      'app-dir',
+      'branch',
+      'content-root',
+      'output',
+      'config',
+      'entry-type',
+      'format',
+      'schema',
+    ],
     alias: { f: 'force' },
   })
   const flags = argv as Record<string, string | boolean>
@@ -30,6 +39,27 @@ export function parseArgs(rawArgs: string[]) {
 
 const SYNC_SUBCOMMANDS = ['push', 'pull', 'both', 'abort'] as const
 type SyncSubcommand = (typeof SYNC_SUBCOMMANDS)[number]
+
+/**
+ * Resolve the project root for commands that need an existing CanopyCMS
+ * project, walking up from cwd to the nearest canopycms.config.ts.
+ * Exits with an error when not inside a project.
+ */
+async function requireProjectRoot(command: string): Promise<string> {
+  const { findProjectRoot, PROJECT_MARKER } = await import('./project-root')
+  const root = await findProjectRoot(process.cwd())
+  if (!root) {
+    console.error(
+      `Error: "canopycms ${command}" must run inside a CanopyCMS project — ` +
+        `no ${PROJECT_MARKER} found in ${process.cwd()} or any parent directory.`,
+    )
+    process.exit(1)
+  }
+  if (root !== process.cwd()) {
+    console.log(`Using project root: ${root}`)
+  }
+  return root
+}
 
 /** Resolve sync subcommand from positional arg. Returns null if missing or invalid. Exported for testing. */
 export function resolveSyncSubcommand(sub: string | undefined): SyncSubcommand | null {
@@ -129,11 +159,11 @@ async function main() {
     } catch {
       console.warn(`Could not load auth plugin for mode "${authMode}" — skipping cache refresh`)
     }
-    await workerRunOnce({ projectDir: process.cwd(), authPlugin })
+    await workerRunOnce({ projectDir: await requireProjectRoot('worker run-once'), authPlugin })
   } else if (command === 'generate-ai-content') {
     const { generateAIContentCLI } = await import('./generate-ai-content')
     await generateAIContentCLI({
-      projectDir: process.cwd(),
+      projectDir: await requireProjectRoot('generate-ai-content'),
       outputDir: typeof flags['output'] === 'string' ? flags['output'] : undefined,
       configPath: typeof flags['config'] === 'string' ? flags['config'] : undefined,
       appDir: typeof flags['app-dir'] === 'string' ? flags['app-dir'] : undefined,
@@ -157,10 +187,24 @@ async function main() {
     }
     const { sync } = await import('./sync')
     await sync({
-      projectDir: process.cwd(),
+      projectDir: await requireProjectRoot(`sync ${direction}`),
       direction,
       branch: typeof flags['branch'] === 'string' ? flags['branch'] : undefined,
       contentRoot: typeof flags['content-root'] === 'string' ? flags['content-root'] : undefined,
+      force: flags['force'] === true,
+    })
+  } else if (command === 'migrate') {
+    const { migrate } = await import('./migrate')
+    await migrate({
+      projectDir: await requireProjectRoot('migrate'),
+      contentRoot: typeof flags['content-root'] === 'string' ? flags['content-root'] : undefined,
+      entryType: typeof flags['entry-type'] === 'string' ? flags['entry-type'] : undefined,
+      format:
+        typeof flags['format'] === 'string'
+          ? (flags['format'] as import('./migrate').MigrateFormat)
+          : undefined,
+      schema: typeof flags['schema'] === 'string' ? flags['schema'] : undefined,
+      dryRun: flags['dry-run'] === true,
       force: flags['force'] === true,
     })
   } else {
@@ -188,6 +232,16 @@ async function main() {
     console.log('    pull                  Pull content from a branch workspace')
     console.log('    both                  3-way merge between working tree and workspace')
     console.log('    abort                 Abort a failed merge in a branch workspace')
+    console.log('')
+    console.log(
+      '  migrate                 Convert an existing content tree to CanopyCMS conventions',
+    )
+    console.log('    --content-root <path> Content directory (default: content)')
+    console.log('    --entry-type <name>   Entry type name (e.g. doc)')
+    console.log('    --format <fmt>        File format to migrate: md|mdx|json|yaml')
+    console.log('    --schema <key>        Entry schema registry key (e.g. docSchema)')
+    console.log('    --dry-run             Print the plan without changing anything')
+    console.log('    --force               Skip confirmation prompts')
     process.exit(0)
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 
 import { defineCanopyTestConfig, createTestServices } from './config-test'
-import { getBootstrapAdminIds } from './services'
+import { createCanopyServices, getBootstrapAdminIds } from './services'
 import { authResultToCanopyUser } from './user'
 import { RESERVED_GROUPS } from './authorization'
 import type { AuthenticationResult } from './auth/types'
@@ -12,6 +12,12 @@ import { mockConsole } from './test-utils/console-spy'
 vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => ({})),
 }))
+
+// Wrap detectHeadBranch so tests can assert whether services shell out to git
+vi.mock('./utils/git', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./utils/git')>()
+  return { ...actual, detectHeadBranch: vi.fn(actual.detectHeadBranch) }
+})
 
 /** Create a mock git instance with sensible defaults and optional overrides. */
 function createMockGitInstance(overrides?: {
@@ -115,6 +121,74 @@ describe('createCanopyServices', () => {
     const gm = services.createGitManagerFor('/tmp/repo')
     const status = await gm.status()
     expect(status.current).toBe('main')
+  })
+})
+
+describe('active branch detection', () => {
+  const mockBranchSchemaCache = {
+    getSchema: async () => ({ schema: testSchema, flatSchema: [] }),
+    invalidate: async () => {},
+  } as unknown as NonNullable<Parameters<typeof createCanopyServices>[1]>['branchSchemaCache']
+
+  const makeServices = async (overrides: Record<string, unknown>) => {
+    const cfg = defineCanopyTestConfig({ schema: testSchema }, overrides)
+    return createCanopyServices(cfg, { branchSchemaCache: mockBranchSchemaCache })
+  }
+
+  beforeEach(async () => {
+    mockConsole()
+    const { detectHeadBranch } = await import('./utils/git')
+    vi.mocked(detectHeadBranch).mockReset()
+  })
+
+  it('dev mode detects the active branch from git HEAD at creation', async () => {
+    const { detectHeadBranch } = await import('./utils/git')
+    vi.mocked(detectHeadBranch).mockResolvedValue('feature-x')
+
+    const services = await makeServices({ mode: 'dev' })
+    expect(detectHeadBranch).toHaveBeenCalled()
+    expect(services.config.defaultActiveBranch).toBe('feature-x')
+  })
+
+  it('static deployments never shell out to git, at creation or on refresh', async () => {
+    const { detectHeadBranch } = await import('./utils/git')
+
+    const services = await makeServices({ mode: 'dev', deployedAs: 'static' })
+    expect(services.config.defaultActiveBranch).toBe('main')
+
+    await services.refreshActiveBranch()
+    expect(detectHeadBranch).not.toHaveBeenCalled()
+  })
+
+  it('explicit defaultActiveBranch is never overridden by detection or refresh', async () => {
+    const { detectHeadBranch } = await import('./utils/git')
+
+    const services = await makeServices({ mode: 'dev', defaultActiveBranch: 'pinned' })
+    await services.refreshActiveBranch()
+
+    expect(services.config.defaultActiveBranch).toBe('pinned')
+    expect(detectHeadBranch).not.toHaveBeenCalled()
+  })
+
+  it('refreshActiveBranch adopts a new git HEAD after the detection TTL', async () => {
+    const { detectHeadBranch } = await import('./utils/git')
+    vi.mocked(detectHeadBranch).mockResolvedValue('feature-x')
+    vi.useFakeTimers()
+    try {
+      const services = await makeServices({ mode: 'dev' })
+      expect(services.config.defaultActiveBranch).toBe('feature-x')
+
+      vi.mocked(detectHeadBranch).mockResolvedValue('feature-y')
+      // Within the 5s TTL the cached HEAD is reused
+      await services.refreshActiveBranch()
+      expect(services.config.defaultActiveBranch).toBe('feature-x')
+
+      vi.advanceTimersByTime(6000)
+      await services.refreshActiveBranch()
+      expect(services.config.defaultActiveBranch).toBe('feature-y')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

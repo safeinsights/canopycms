@@ -131,6 +131,17 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 - Evaluate cost/benefit: 98.3% coverage is high, functionality works in production
 - Files: `InlineCommentThread.test.tsx` (2 skipped), `ThreadCarousel.test.tsx` (2 skipped)
 
+### 16. Migrate command: source-specific ordering conventions
+
+- `canopycms migrate` handles the generic rename + `.collection.json` scaffold; order defaults to alphabetical
+- Add opt-in support for common source conventions (e.g. Nextra `_meta.json` → `order` + labels)
+- Reference implementation: docs-site-proto's `scripts/migrate-content.ts`
+
+### 17. Preview error channel: field-level outline
+
+- `reportError(message, fieldPath)` surfaces an alert over the preview pane (done)
+- Follow-up: when `fieldPath` is present, also outline/highlight the matching form field (reuse the click-to-focus mechanics)
+
 ## Completed
 
 - **Deployment Infrastructure** ✅

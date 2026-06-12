@@ -1,3 +1,7 @@
+// CanopyCMS AI content endpoint — server (CMS) builds only.
+// With dual-build (staticBuild), this file is generated as route.server.ts and
+// excluded from the static export. For static sites, generate AI content files at
+// build time instead: npx canopycms generate-ai-content
 import { createAIContentHandler } from 'canopycms/ai'
 import config from '{{CONFIG_IMPORT}}'
 import { entrySchemaRegistry } from '../../schemas'

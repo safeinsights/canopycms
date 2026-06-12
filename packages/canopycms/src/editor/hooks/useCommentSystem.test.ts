@@ -496,13 +496,14 @@ describe('useCommentSystem', () => {
     mockElement.scrollIntoView = vi.fn()
     document.body.appendChild(mockElement)
 
-    // Simulate preview frame message
+    // Simulate preview frame message (origin must match the preview's origin)
     const message = new MessageEvent('message', {
       data: {
         type: 'canopycms:preview:focus',
         entryPath: 'preview-entry1',
         fieldPath: 'title',
       },
+      origin: window.location.origin,
     })
 
     act(() => {

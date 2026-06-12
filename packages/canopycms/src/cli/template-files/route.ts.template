@@ -1,3 +1,6 @@
+// CanopyCMS editor/API catch-all route — server (CMS) builds only.
+// With dual-build (staticBuild), this file is generated as route.server.ts and
+// excluded from the static export: API routes cannot run under `output: 'export'`.
 import { getHandler } from '{{CANOPY_IMPORT}}'
 import type { NextRequest } from 'next/server'
 

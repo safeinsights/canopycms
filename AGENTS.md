@@ -59,7 +59,7 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `ai/` - AI-ready content generation (markdown converter, engine, route handler)
 - `build/` - Static build utilities (write AI content files to disk)
 - `static/` - Framework-agnostic static-generation helpers (collectStaticPaths; sitemap/SEO deferred)
-- `cli/` - CLI commands (`init`, `init-deploy`, `worker run-once`, `generate-ai-content`, `sync`)
+- `cli/` - CLI commands (`init`, `init-deploy`, `worker run-once`, `generate-ai-content`, `sync`, `migrate`); project-root discovery (`project-root.ts`)
 
 Top-level files (intentionally flat for discoverability): services.ts, content-store.ts, content-listing.ts, content-tree.ts, entry-link-resolver.ts, git-manager.ts, branch-registry.ts, sync-core.ts (prompt-free content sync core), dev-content-watcher.ts (dev working-tree↔branch-clone divergence detection), etc.
 

@@ -162,12 +162,17 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     } catch (err) {
       console.error(err)
       const isConflict = err instanceof SaveApiError && err.status === 409
+      // 422 = rejected by the adopter's validateEntry hook; show its message
+      const isValidation = err instanceof SaveApiError && err.status === 422
       notifications.show({
+        ...(isValidation ? { title: 'Save rejected' } : {}),
         message: isConflict
           ? 'Content was modified by another editor. Reload to see the latest changes.'
-          : 'Save failed',
+          : isValidation
+            ? err.message
+            : 'Save failed',
         color: isConflict ? 'yellow' : 'red',
-        autoClose: getNotificationDuration(isConflict ? 8000 : 6000),
+        autoClose: getNotificationDuration(isConflict || isValidation ? 8000 : 6000),
         withCloseButton: true,
       })
     } finally {

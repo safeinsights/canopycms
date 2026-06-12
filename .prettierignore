@@ -15,5 +15,6 @@ packages/canopycms/src/api/__test__/mock-client.ts
 
 # Template files with non-TS placeholders or non-TS content
 **/canopy.ts.template
+**/canopycms.config.ts.template
 **/Dockerfile.*.template
 **/deploy-*.yml.template

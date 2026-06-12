@@ -14,9 +14,21 @@ async function readTemplate(name: string): Promise<string> {
   return fs.readFile(path.join(TEMPLATES_DIR, name), 'utf-8')
 }
 
-export async function canopyCmsConfig(options: { mode: string }): Promise<string> {
+export async function canopyCmsConfig(options: {
+  mode: string
+  staticBuild?: boolean
+}): Promise<string> {
   const template = await readTemplate('canopycms.config.ts.template')
-  return template.replace('{{MODE}}', options.mode)
+  // Dual-build sites flip deployedAs per build: the public static export reads
+  // content with no auth/request context, while dev and the CMS build run as a
+  // server. Defaulting to 'server' is required — the CMS server re-evaluates
+  // this config at runtime, and `next dev` must never get 'static'.
+  const deployedAs = options.staticBuild
+    ? '  // Static public export: build with CANOPY_BUILD=static (CMS build uses CANOPY_BUILD=cms,\n' +
+      '  // see next.config.ts). Anything else runs as a server.\n' +
+      "  deployedAs: process.env.CANOPY_BUILD === 'static' ? 'static' : 'server',\n"
+    : ''
+  return template.replace('{{MODE}}', options.mode).replace('{{DEPLOYED_AS}}', deployedAs)
 }
 
 export async function canopyContext(options: {

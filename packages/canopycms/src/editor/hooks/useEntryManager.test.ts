@@ -206,6 +206,34 @@ describe('useEntryManager', () => {
     )
   })
 
+  it('surfaces validateEntry warnings in a single "; "-joined notification', async () => {
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.content.write.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: {
+        title: 'Saved',
+        validationWarnings: [
+          { level: 'warning', message: 'Heading levels skip from h1 to h3', fieldPath: 'body' },
+          { level: 'warning', message: 'Missing alt text on an image' },
+        ],
+      } as any,
+    })
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+    await result.current.saveEntry(mockEntry, { title: 'Saved' })
+
+    // Notifications collapse newlines, so issues must be '; '-joined (not '\n') to stay
+    // legible — matches the save-rejection path. Locks the separator against regression.
+    expect(notifications.show).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'Saved with warnings',
+        message: 'body: Heading levels skip from h1 to h3; Missing alt text on an image',
+        color: 'yellow',
+      }),
+    )
+  })
+
   it('handles save entry error', async () => {
     mockClient.content.write.mockResolvedValueOnce({
       ok: false,

@@ -235,6 +235,27 @@ describe('schema-meta-loader', () => {
         'Invalid root .collection.json',
       )
     })
+
+    it('should default order to [] when missing from a collection meta file', async () => {
+      const contentDir = path.join(tempDir, 'content')
+      await fs.mkdir(contentDir, { recursive: true })
+
+      const pagesDir = path.join(contentDir, 'pages')
+      await fs.mkdir(pagesDir, { recursive: true })
+      // Hand-authored .collection.json without an order field (alphabetical fallback)
+      await fs.writeFile(
+        path.join(pagesDir, '.collection.json'),
+        JSON.stringify({
+          name: 'pages',
+          entries: [{ name: 'page', format: 'json', schema: 'homeSchema' }],
+        }),
+      )
+
+      const result = await loadCollectionMetaFiles(contentDir)
+
+      expect(result.collections).toHaveLength(1)
+      expect(result.collections[0].order).toEqual([])
+    })
   })
 
   describe('resolveCollectionReferences', () => {

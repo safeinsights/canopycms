@@ -177,6 +177,34 @@ describe('canopycms init', () => {
     ).rejects.toThrow()
   })
 
+  it('uses .server extension for the AI route when staticBuild is true', async () => {
+    await init(defaultOpts(tmpDir, { staticBuild: true }))
+
+    const aiRoute = path.join(tmpDir, 'app/ai/[...path]/route.server.ts')
+    const stat = await fs.stat(aiRoute)
+    expect(stat.isFile()).toBe(true)
+
+    // A plain route.ts here would land in the static export build and break output:'export'
+    await expect(fs.stat(path.join(tmpDir, 'app/ai/[...path]/route.ts'))).rejects.toThrow()
+  })
+
+  it('adds a CANOPY_BUILD-driven deployedAs to the config when staticBuild is true', async () => {
+    await init(defaultOpts(tmpDir, { staticBuild: true }))
+
+    const config = await fs.readFile(path.join(tmpDir, 'canopycms.config.ts'), 'utf-8')
+    expect(config).toContain(
+      "deployedAs: process.env.CANOPY_BUILD === 'static' ? 'static' : 'server',",
+    )
+  })
+
+  it('omits deployedAs from the config by default', async () => {
+    await init(defaultOpts(tmpDir))
+
+    const config = await fs.readFile(path.join(tmpDir, 'canopycms.config.ts'), 'utf-8')
+    expect(config).not.toContain('deployedAs')
+    expect(config).not.toContain('{{DEPLOYED_AS}}')
+  })
+
   it('skips existing files in non-interactive mode', async () => {
     const configPath = path.join(tmpDir, 'canopycms.config.ts')
     await fs.writeFile(configPath, 'existing content', 'utf-8')

@@ -1,13 +1,20 @@
 import { withCanopy } from 'canopycms-next/config'
 
-const isCmsBuild = process.env.CANOPY_BUILD === 'cms'
-
-// Dual-build: static export for the public site, standalone Node.js server for the CMS.
+// Dual-build via CANOPY_BUILD:
+//   CANOPY_BUILD=static -> static export of the public site (editor/API excluded)
+//   CANOPY_BUILD=cms    -> standalone Node.js server for the CMS
+//   unset (next dev, or a plain `next build`) -> regular server build with the editor included
 // If deploying the CMS build to Vercel or another platform that doesn't use standalone,
 // change 'standalone' to the appropriate output mode for your platform.
+const buildFlavor = process.env.CANOPY_BUILD
+
 export default withCanopy(
   {
-    output: isCmsBuild ? 'standalone' : 'export',
+    ...(buildFlavor === 'static'
+      ? { output: 'export' as const }
+      : buildFlavor === 'cms'
+        ? { output: 'standalone' as const }
+        : {}),
   },
-  { staticBuild: !isCmsBuild },
+  { staticBuild: buildFlavor === 'static' },
 )
