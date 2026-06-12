@@ -183,11 +183,13 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     if (validationWarnings && validationWarnings.length > 0) {
       notifications.show({
         title: 'Saved with warnings',
+        // '; '-joined: the notification collapses newlines, so '\n' would run the
+        // issues together (matches the '; ' join the save-rejection path uses).
         message: validationWarnings
           .map((issue) =>
             issue.fieldPath ? `${issue.fieldPath}: ${issue.message}` : issue.message,
           )
-          .join('\n'),
+          .join('; '),
         color: 'yellow',
         autoClose: false,
         withCloseButton: true,
