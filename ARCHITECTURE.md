@@ -245,7 +245,7 @@ const services = await createCanopyServices({
 
 This function:
 
-1. Detects the effective active branch (see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)) and bakes it into the config so all downstream code uses a single consistent value
+1. Detects the effective active branch **and** base branch (dev-mode git HEAD detection for whichever the adopter left unset; see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)) and bakes both into the config so all downstream code uses consistent values. In dev mode, `refreshActiveBranch()` re-detects them per request — again, only the fields the adopter left unset
 2. Validates and flattens the schema
 3. Creates authorization checkers
 4. Initializes the branch registry (prod and dev modes)
@@ -387,7 +387,7 @@ CanopyCMS is entirely file system based. There are no external databases, no Red
 **What gets stored:**
 
 - **Content**: MD/MDX/JSON/YAML files in the content directory (committed to git)
-- **Branch metadata**: `.canopy-meta/branch.json` per workspace (state, PR references, sync status, conflict tracking, automatically excluded via git info/exclude)
+- **Branch metadata**: `.canopy-meta/branch.json` per workspace (state, recorded base branch — the immutable fork point set at creation — PR references, sync status, conflict tracking, automatically excluded via git info/exclude)
 - **Branch registry**: `branches.json` at branches root (inventory of all branches, gitignored)
 - **Comments**: `.canopy-meta/comments.json` per branch (NOT committed to git, automatically excluded)
 - **Settings (prod)**: `groups.json` and `permissions.json` on orphan branch `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific), workspace at `{workspaceRoot}/settings/`
@@ -871,21 +871,30 @@ Users can work on main branch too—there's nothing preventing it. The branch mo
 
 CanopyCMS distinguishes between two branch concepts that serve different purposes:
 
-- **`defaultBaseBranch`** is the fork point for CMS content branches. When a user creates a new editing branch, it is forked from this branch. It is always the repository's primary branch (typically `main`). Git operations like rebasing editing branches use this as the upstream target.
+- **`defaultBaseBranch`** is the fork point for CMS content branches. When a user creates a new editing branch, it is forked from this branch, and the branch used to seed workspace clones from the (real or simulated) remote. Git operations like rebasing editing branches use this as the upstream target.
 
 - **`defaultActiveBranch`** is the workspace from which content is served by default — the branch the editor opens when no branch is specified, the branch used for content reading APIs, AI content generation, and the content tree builder. It answers the question "which branch should I look at right now?"
 
-**Why they are separate:** In dev mode, a developer is often working on a feature branch (e.g., `redesign-nav`). They want the CMS editor to show content from that branch, not from `main`. But new CMS editing branches should still fork from `main`, because the feature branch is temporary. Conflating these two concepts would force developers to either serve stale `main` content or fork editing branches from an unstable feature branch.
+**Why they are separate:** In dev mode, a developer is often working on a feature branch (e.g., `redesign-nav`). They want the CMS editor to show content from that branch, not from `main`. Setting `defaultBaseBranch` explicitly lets new CMS editing branches still fork from a stable branch while the served content follows the feature branch. Conflating the two concepts would force developers to either serve stale `main` content or fork editing branches from an unstable feature branch.
 
-**Detection behavior:**
+**Detection matrix** (the single implementation is `resolveBaseBranch()` in `utils/git.ts` plus the active-branch detector in `services.ts`):
 
-- If explicitly configured, the configured value is used in both modes
-- In dev mode, `defaultActiveBranch` is auto-detected from the current git HEAD (the branch the developer has checked out)
-- In prod mode, `defaultActiveBranch` falls back to `defaultBaseBranch` (typically `main`)
+|          | `defaultBaseBranch` set                            | `defaultBaseBranch` unset                                                                           |
+| -------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| **dev**  | base = configured value; active follows git HEAD   | base **and** active follow git HEAD (workspaces fork from the branch the developer has checked out) |
+| **prod** | base = configured value; active falls back to base | base = `'main'`; active falls back to base                                                          |
+
+- An explicitly configured value (for either field) is always respected and never overridden by detection
 - Static deployments (`deployedAs: 'static'`) skip detection and per-request refresh entirely — a static export serves from the checkout, so there is no git HEAD to track and no git calls are made
-- The detected value is set in the config at service creation time, and refreshed per-request via `refreshActiveBranch()` (dev mode only, with a 5-second cache to avoid excessive git calls)
+- Both resolved values are baked into the config at service creation time, and refreshed per-request via `refreshActiveBranch()` (dev mode only, with a 5-second cache); only fields the adopter left unset are refreshed
+- On detached HEAD (or no git repo), detection falls back to `defaultBaseBranch ?? 'main'`
+- The Zod schema intentionally leaves `defaultBaseBranch` undefined when unset (`.optional()` defeats the `.default('main')`) — that is what makes "unset" detectable for dev-mode HEAD detection
 
-**Per-request branch tracking:** In dev mode, every content-serving entry point — the API handler and the context factory behind `getCanopy()` — calls `refreshActiveBranch()` on each request. If the developer switches git branches, the active branch silently updates — no server restart needed. The workspace for the new branch is lazily created on the first content request via the handler's auto-create path (`BranchWorkspaceManager.openOrCreateBranch`). This only affects non-editor content serving (the public dev site, `getCanopy()`, AI content); the editor is pinned to its own branch via URL params and has branch-specific drafts in localStorage.
+**Recorded fork point:** When a branch workspace is created, the resolved base branch is recorded in the branch's metadata (`.canopy-meta/branch.json`, `branch.baseBranch`) and is immutable afterwards. Git operations on an existing branch (commits, submit, PR base) prefer the recorded fork point over the config value, so a developer switching git branches mid-session cannot retarget an existing branch's base.
+
+**Decision history** (recorded here because the question "did we decide to auto-detect branches?" has come up repeatedly): branch auto-detection was deliberately introduced twice — PR #26 (dev-mode consolidation; HEAD detection for the fork point when `defaultBaseBranch` is unset) and PR #36 (the `defaultBaseBranch`/`defaultActiveBranch` split with per-request active-branch detection). PR #74 (v0.0.50) hardened the dev simulated remote to serve newly-detected base branches on demand; it changed no detection semantics. There was never a decision _against_ detection; adopters can opt out at any time by setting both fields explicitly.
+
+**Per-request branch tracking:** In dev mode, every content-serving entry point — the API handler and the context factory behind `getCanopy()` — calls `refreshActiveBranch()` on each request. If the developer switches git branches, the active branch (and, when unset, the base branch used for newly provisioned workspaces) silently updates — no server restart needed. The workspace for the new branch is lazily created on the first content request via the handler's auto-create path (`BranchWorkspaceManager.openOrCreateBranch`). This only affects non-editor content serving (the public dev site, `getCanopy()`, AI content); the editor is pinned to its own branch via URL params and has branch-specific drafts in localStorage.
 
 **Fallback chain:** Throughout the system, content-serving code resolves the active branch as `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. The handler auto-creates workspaces for `defaultActiveBranch` on demand, ensuring the active branch is always ready to serve content.
 
@@ -897,7 +906,7 @@ CanopyCMS supports two operating modes to fit different environments. The mode i
 
 Full-featured local development with branching and git operations — a local simulation of production behavior. Creates per-branch workspaces in `.canopy-dev/content-branches/` and maintains a local bare git remote at `.canopy-dev/remote.git`. This mode mirrors prod behavior: branch creation, workspace cloning, the settings branch, and the worker CLI all work the same way locally as they do in production.
 
-`defaultActiveBranch` is auto-detected from the current git HEAD if not explicitly set in the config (see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)). The detected value is baked into the config object at service creation time so that all downstream code uses the same value without re-detecting (avoids races if HEAD changes mid-request). Settings (groups and permissions) use the same orphan branch mechanism as prod (`canopycms-settings-{deploymentName}`, default: `canopycms-settings-local`), with the workspace at `.canopy-dev/settings/`. Commits go to the local bare remote but no PR is created, keeping the workflow lightweight during development. The AI content cache is invalidated on every request in dev mode so content edits are reflected immediately.
+`defaultActiveBranch` and `defaultBaseBranch` are each auto-detected from the current git HEAD if not explicitly set in the config (see [Branch Identity](#branch-identity-defaultbasebranch-vs-defaultactivebranch)). The detected values are baked into the config object at service creation time so that all downstream code uses the same values without re-detecting (avoids races if HEAD changes mid-request). Settings (groups and permissions) use the same orphan branch mechanism as prod (`canopycms-settings-{deploymentName}`, default: `canopycms-settings-local`), with the workspace at `.canopy-dev/settings/`. Commits go to the local bare remote but no PR is created, keeping the workflow lightweight during development. The AI content cache is invalidated on every request in dev mode so content edits are reflected immediately.
 
 Use `npx canopycms worker run-once` to process queued tasks, refresh the auth cache, and simulate the EC2 worker locally. Use `npx canopycms sync push` / `npx canopycms sync pull` to synchronize content between the developer's working tree and the CMS editor's branch workspaces (see [Content Sync CLI](#content-sync-cli) below). A background watcher (see [Dev Content Divergence Detection](#dev-content-divergence-detection) below) surfaces divergence between the working tree and the served branch clone, so developers do not silently serve stale content when they forget to run sync.
 

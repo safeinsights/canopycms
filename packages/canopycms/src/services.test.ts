@@ -150,6 +150,35 @@ describe('active branch detection', () => {
     expect(services.config.defaultActiveBranch).toBe('feature-x')
   })
 
+  it('dev mode bakes the detected HEAD as base branch when unset', async () => {
+    const { detectHeadBranch } = await import('./utils/git')
+    vi.mocked(detectHeadBranch).mockResolvedValue('feature-x')
+
+    const services = await makeServices({ mode: 'dev' })
+    expect(services.config.defaultBaseBranch).toBe('feature-x')
+  })
+
+  it('explicit defaultBaseBranch pins the fork point while active follows HEAD', async () => {
+    const { detectHeadBranch } = await import('./utils/git')
+    vi.mocked(detectHeadBranch).mockResolvedValue('feature-x')
+
+    const services = await makeServices({ mode: 'dev', defaultBaseBranch: 'develop' })
+    expect(services.config.defaultBaseBranch).toBe('develop')
+    expect(services.config.defaultActiveBranch).toBe('feature-x')
+
+    await services.refreshActiveBranch()
+    expect(services.config.defaultBaseBranch).toBe('develop')
+  })
+
+  it('detached HEAD falls back to defaultBaseBranch, not main', async () => {
+    const { detectHeadBranch } = await import('./utils/git')
+    // Simulate the real detached-HEAD behavior: detectHeadBranch returns its fallback
+    vi.mocked(detectHeadBranch).mockImplementation(async (_root, fallback) => fallback ?? 'main')
+
+    const services = await makeServices({ mode: 'dev', defaultBaseBranch: 'develop' })
+    expect(services.config.defaultActiveBranch).toBe('develop')
+  })
+
   it('static deployments never shell out to git, at creation or on refresh', async () => {
     const { detectHeadBranch } = await import('./utils/git')
 
@@ -160,14 +189,41 @@ describe('active branch detection', () => {
     expect(detectHeadBranch).not.toHaveBeenCalled()
   })
 
-  it('explicit defaultActiveBranch is never overridden by detection or refresh', async () => {
+  it('static deployments serve from a non-default configured base branch', async () => {
     const { detectHeadBranch } = await import('./utils/git')
 
-    const services = await makeServices({ mode: 'dev', defaultActiveBranch: 'pinned' })
+    const services = await makeServices({
+      mode: 'dev',
+      deployedAs: 'static',
+      defaultBaseBranch: 'develop',
+    })
+    expect(services.config.defaultActiveBranch).toBe('develop')
+    expect(services.config.defaultBaseBranch).toBe('develop')
+    expect(detectHeadBranch).not.toHaveBeenCalled()
+  })
+
+  it('explicit branch identity is never overridden by detection or refresh', async () => {
+    const { detectHeadBranch } = await import('./utils/git')
+
+    const services = await makeServices({
+      mode: 'dev',
+      defaultActiveBranch: 'pinned',
+      defaultBaseBranch: 'base-pin',
+    })
     await services.refreshActiveBranch()
 
     expect(services.config.defaultActiveBranch).toBe('pinned')
+    expect(services.config.defaultBaseBranch).toBe('base-pin')
     expect(detectHeadBranch).not.toHaveBeenCalled()
+  })
+
+  it('with active pinned, an unset base branch still follows git HEAD', async () => {
+    const { detectHeadBranch } = await import('./utils/git')
+    vi.mocked(detectHeadBranch).mockResolvedValue('feature-x')
+
+    const services = await makeServices({ mode: 'dev', defaultActiveBranch: 'pinned' })
+    expect(services.config.defaultActiveBranch).toBe('pinned')
+    expect(services.config.defaultBaseBranch).toBe('feature-x')
   })
 
   it('refreshActiveBranch adopts a new git HEAD after the detection TTL', async () => {
@@ -186,6 +242,9 @@ describe('active branch detection', () => {
       vi.advanceTimersByTime(6000)
       await services.refreshActiveBranch()
       expect(services.config.defaultActiveBranch).toBe('feature-y')
+      // The unset base branch follows HEAD too, so workspaces provisioned
+      // mid-session fork from the developer's current branch
+      expect(services.config.defaultBaseBranch).toBe('feature-y')
     } finally {
       vi.useRealTimers()
     }

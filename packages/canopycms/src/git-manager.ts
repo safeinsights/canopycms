@@ -12,7 +12,7 @@ import {
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNotFoundError } from './utils/error'
-import { detectHeadBranch } from './utils/git'
+import { resolveBaseBranch } from './utils/git'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -454,15 +454,15 @@ export class GitManager {
    * @returns Configured GitManager instance for the workspace
    */
   static async initializeWorkspace(options: InitializeWorkspaceOptions): Promise<GitManager> {
-    // In dev mode, auto-detect the current HEAD branch when baseBranch is not explicitly set
-    let baseBranch = options.baseBranch
-    if (!baseBranch && options.mode === 'dev') {
-      const sourceRoot = options.sourceRoot
+    // Resolve the fork point through the shared resolver (dev mode detects the
+    // current HEAD when baseBranch is not explicitly set).
+    const baseBranch = await resolveBaseBranch({
+      defaultBaseBranch: options.baseBranch,
+      mode: options.mode,
+      detectFrom: options.sourceRoot
         ? path.resolve(process.cwd(), options.sourceRoot)
-        : process.cwd()
-      baseBranch = await detectHeadBranch(sourceRoot)
-    }
-    baseBranch = baseBranch ?? 'main'
+        : process.cwd(),
+    })
     const remoteName = options.remoteName ?? 'origin'
 
     // 1. Check if git already initialized (with traversal protection)

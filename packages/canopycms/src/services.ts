@@ -41,15 +41,13 @@ function createActiveBranchDetector() {
       if (cache && now < cache.expiresAt) {
         return cache.value
       }
-      try {
-        // Always use cwd for branch detection — git walks up to find .git.
-        // sourceRoot is about content location, not the repo root.
-        const branch = await detectHeadBranch(process.cwd())
-        cache = { value: branch, expiresAt: now + 5000 }
-        return branch
-      } catch {
-        // Detached HEAD or no git repo — fall through to base branch
-      }
+      // Always use cwd for branch detection — git walks up to find .git.
+      // sourceRoot is about content location, not the repo root.
+      // On detached HEAD or no git repo, detectHeadBranch returns the
+      // base-branch fallback instead of throwing.
+      const branch = await detectHeadBranch(process.cwd(), config.defaultBaseBranch ?? 'main')
+      cache = { value: branch, expiresAt: now + 5000 }
+      return branch
     }
     return config.defaultBaseBranch ?? 'main'
   }
@@ -172,10 +170,11 @@ export const createTestCanopyServices = async (
   config: CanopyConfig,
   options: CreateCanopyServicesOptions = {},
 ): Promise<CanopyServices> => {
-  // In tests, default active branch to base branch to avoid auto-detecting
-  // from git HEAD (which varies depending on the developer's working branch).
+  // In tests, pin both branch identity fields to avoid auto-detecting from
+  // git HEAD (which varies depending on the developer's working branch).
   const testConfig = {
     ...config,
+    defaultBaseBranch: config.defaultBaseBranch ?? 'main',
     defaultActiveBranch: config.defaultActiveBranch ?? config.defaultBaseBranch ?? 'main',
   }
   return _createCanopyServicesInternal(testConfig, options)
@@ -193,14 +192,25 @@ async function _createCanopyServicesInternal(
   const strategy = operatingStrategy(config.mode)
   strategy.validateConfig(config)
 
-  // Detect the active branch (which workspace to serve from).
-  // In dev mode this is the current git HEAD; in prod it's defaultBaseBranch.
-  // Bake into config so all downstream code uses the same value.
+  // Resolve branch identity once (see ARCHITECTURE.md "Branch Identity"):
+  // - active branch: which workspace to serve from (dev: git HEAD, prod: base)
+  // - base branch: fork point for new editing branches (dev: git HEAD when
+  //   unset, otherwise the configured value; prod: configured value or 'main')
+  // Bake both into config so all downstream code reads one consistent value.
   // The detector has its own per-instance 5s TTL cache for git HEAD checks.
   const detectActiveBranch = createActiveBranchDetector()
   const explicitActiveBranch = config.defaultActiveBranch
+  const explicitBaseBranch = config.defaultBaseBranch
   const defaultActiveBranch = await detectActiveBranch(config)
-  config = { ...config, defaultActiveBranch }
+  // When unset, the base branch follows the same dev-mode HEAD detection
+  // (matching resolveBaseBranch in utils/git.ts, the canonical definition used
+  // by workspace provisioning). Reuses the detector's 5s TTL cache.
+  const defaultBaseBranch =
+    explicitBaseBranch ??
+    (config.mode === 'dev' && !isDeployedStatic(config)
+      ? await detectActiveBranch({ ...config, defaultActiveBranch: undefined })
+      : 'main')
+  config = { ...config, defaultActiveBranch, defaultBaseBranch }
 
   // Load bootstrap admin IDs from environment
   const bootstrapAdminIds = getBootstrapAdminIds()
@@ -254,7 +264,11 @@ async function _createCanopyServicesInternal(
     files: string | string[]
     message: string
   }): Promise<void> => {
-    const git = createGitManagerFor(options.context.branchRoot)
+    // Prefer the fork point recorded at branch creation over the (possibly
+    // re-detected) config value, so operations stay pinned to the branch's base.
+    const git = createGitManagerFor(options.context.branchRoot, {
+      baseBranch: options.context.branch.baseBranch,
+    })
     await git.ensureAuthor({
       name: config.gitBotAuthorName,
       email: config.gitBotAuthorEmail,
@@ -267,7 +281,9 @@ async function _createCanopyServicesInternal(
     context: BranchContext
     message?: string
   }): Promise<void> => {
-    const git = createGitManagerFor(options.context.branchRoot)
+    const git = createGitManagerFor(options.context.branchRoot, {
+      baseBranch: options.context.branch.baseBranch,
+    })
     await git.ensureAuthor({
       name: config.gitBotAuthorName,
       email: config.gitBotAuthorEmail,
@@ -428,23 +444,36 @@ async function _createCanopyServicesInternal(
       if (services.config.mode !== 'dev') return
       // Static deployments serve from the checkout — no git HEAD to track
       if (isDeployedStatic(services.config)) return
-      // If the adopter explicitly configured defaultActiveBranch, respect it —
-      // don't override with git HEAD detection.
-      if (explicitActiveBranch) return
+      // Explicitly configured values are respected — never overridden by
+      // git HEAD detection. Only re-detect what the adopter left unset.
+      if (explicitActiveBranch && explicitBaseBranch) return
       // Re-detect from git HEAD (5s TTL cache prevents excessive shell-outs).
       // Silently switch — the public dev site should reflect the current branch
       // just like code hot-reloads. The editor is pinned to its own branch via
-      // URL params, so this only affects non-editor content serving.
+      // URL params, so this only affects non-editor content serving. The base
+      // branch (fork point) follows HEAD too when unset, so workspaces
+      // provisioned mid-session fork from the developer's current branch.
       const fresh = await detectActiveBranch({
         ...services.config,
         defaultActiveBranch: undefined,
       })
-      if (fresh !== services.config.defaultActiveBranch) {
+      const next = { ...services.config }
+      let changed = false
+      if (!explicitActiveBranch && fresh !== next.defaultActiveBranch) {
+        next.defaultActiveBranch = fresh
+        changed = true
+      }
+      if (!explicitBaseBranch && fresh !== next.defaultBaseBranch) {
+        next.defaultBaseBranch = fresh
+        changed = true
+      }
+      if (changed) {
         // Note: closures in this function (getSettingsBranchRoot, checkContentAccess,
         // createGitManagerFor, etc.) capture the original `config` local variable.
-        // Only defaultActiveBranch is expected to change here — those closures don't
-        // read it. Consumers that need the fresh value must read services.config.
-        services.config = { ...services.config, defaultActiveBranch: fresh }
+        // Only the branch identity fields change here — git operations on existing
+        // branches use the fork point recorded in branch metadata, and consumers
+        // that need the fresh values must read services.config.
+        services.config = next
       }
     },
   }

@@ -129,14 +129,16 @@ export const createBranchHandler = async (
       }
     }
 
-    // Load path permissions from the main branch's JSON file
-    const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-    const mainBranchContext = await ctx.getBranchContext(mainBranch)
+    // Load path permissions from the base branch's JSON file (the resolved
+    // fork point — baked into config at service creation; dev-mode git HEAD
+    // when not explicitly configured)
+    const baseBranch = ctx.services.config.defaultBaseBranch ?? 'main'
+    const baseBranchContext = await ctx.getBranchContext(baseBranch)
 
     let pathPermissions: PathPermission[] = []
-    if (mainBranchContext) {
+    if (baseBranchContext) {
       const operatingMode = ctx.services.config.mode
-      pathPermissions = await loadPathPermissions(mainBranchContext.branchRoot, operatingMode)
+      pathPermissions = await loadPathPermissions(baseBranchContext.branchRoot, operatingMode)
     }
 
     // Check if user can create branches

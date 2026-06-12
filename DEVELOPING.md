@@ -575,22 +575,28 @@ export const readByUrlPath = ctx.readByUrlPath // auto-selects build vs runtime
 
 CanopyCMS distinguishes between two branch config fields:
 
-- **`defaultBaseBranch`** -- The fork point for new CMS branches. When the editor creates a branch, it forks from this branch (typically `main`). Used by `GitManager`, `BranchWorkspace`, and `GitHubService` for rebase targets and PR base branches.
+- **`defaultBaseBranch`** -- The fork point for new CMS branches. When the editor creates a branch, it forks from this branch. When unset in dev mode, it is auto-detected from the current git HEAD (same as the active branch). The canonical resolver is `resolveBaseBranch()` in `utils/git.ts`: explicit config wins → dev-mode git HEAD → `'main'`. Used by `GitManager`, `BranchWorkspace`, and `GitHubService` for rebase targets and PR base branches. The fork point used to create a workspace is recorded immutably in branch metadata (`branch.baseBranch` in `.canopy-meta/branch.json`); git operations on existing branches (`commitFiles`/`submitBranch` in `services.ts`, the PR base in `api/github-sync.ts`) prefer the recorded value over config, so a branch stays pinned to its original base even if the config value changes later.
 
 - **`defaultActiveBranch`** -- Which workspace to serve content from by default. This is the branch the dev server, editor UI, content reader, and AI content resolver use when no branch is explicitly requested.
 
 **Auto-detection in dev mode:**
 
-`defaultActiveBranch` is auto-detected from the current git HEAD at service initialization (`createActiveBranchDetector()` in `services.ts`) and refreshed per-request via `refreshActiveBranch()` (with a 5-second cache). Both the HTTP API handler and `getCanopy()`/`getContext()` perform this refresh (previously only the HTTP handler did), so server-component reads follow branch switches too. This means if you switch from `main` to `my-feature` while the dev server is running, the CMS silently starts serving content from the `my-feature` workspace — no restart needed. The workspace is lazily created on the first content request if it doesn't exist. Static deployments (`deployedAs: 'static'`) never shell out to git for branch detection — they fall back to `defaultBaseBranch ?? 'main'`.
+Both branch identity fields are resolved once at service creation and baked into config: `defaultActiveBranch` is auto-detected from the current git HEAD (`createActiveBranchDetector()` in `services.ts`), and `defaultBaseBranch` follows the same dev-mode HEAD detection when unset (matching `resolveBaseBranch()`). `refreshActiveBranch()` then re-detects **both** per-request (with a 5-second cache) — each field only when not explicitly configured; explicit config values are never overridden. Both the HTTP API handler and `getCanopy()`/`getContext()` perform this refresh (previously only the HTTP handler did), so server-component reads follow branch switches too. This means if you switch from `main` to `my-feature` while the dev server is running, the CMS silently starts serving content from the `my-feature` workspace — no restart needed. The workspace is lazily created on the first content request if it doesn't exist. On a detached HEAD or outside a git repo, detection falls back to `defaultBaseBranch ?? 'main'` (the active-branch detector passes the base branch as the `detectHeadBranch` fallback). Static deployments (`deployedAs: 'static'`) never shell out to git for branch detection — they fall back to `defaultBaseBranch ?? 'main'`.
 
 This only affects non-editor content serving (public site, `getCanopy()`, AI content). The editor is pinned to its own branch via URL params and stores drafts per-branch in localStorage.
 
-The detection priority is:
+The detection priority for `defaultActiveBranch` is:
 
 1. Explicit `defaultActiveBranch` in config (both modes)
 2. Current git HEAD branch (dev mode only)
 3. `defaultBaseBranch` from config
 4. `'main'` as final fallback
+
+For `defaultBaseBranch` (via `resolveBaseBranch()` in `utils/git.ts`):
+
+1. Explicit `defaultBaseBranch` in config (both modes)
+2. Current git HEAD branch (dev mode only)
+3. `'main'` as final fallback
 
 **Where `defaultActiveBranch` is consumed:**
 
@@ -608,7 +614,7 @@ The `canopycms sync` command defaults to the current git branch (via `detectCurr
 
 **In tests:**
 
-Most test configs set `defaultBaseBranch: 'main'` and do not set `defaultActiveBranch`. This is correct -- the auto-detection only runs in `createCanopyServices()`, so mock services skip it. If your test needs a specific active branch, set it explicitly:
+`createTestCanopyServices` (in `services.ts`) pins both branch identity fields — `defaultBaseBranch ?? 'main'` and `defaultActiveBranch ?? defaultBaseBranch ?? 'main'` — so tests never shell out to git for HEAD detection (which would vary with the developer's working branch). Mock services skip detection entirely since it only runs in real service creation. Tests that construct `BranchWorkspaceManager` directly should still set `defaultBaseBranch` explicitly to avoid HEAD detection during workspace creation (see `branch-workspace.test.ts`, which sets `'main'`). If your test needs a specific active branch, set it explicitly:
 
 ```typescript
 const services = createMockServices({

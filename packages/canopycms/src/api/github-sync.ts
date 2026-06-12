@@ -80,7 +80,8 @@ export async function syncSubmitPr(
       branch: context.branch.name,
       title: prTitle,
       body: prBody,
-      baseBranch: ctx.services.config.defaultBaseBranch ?? 'main',
+      // Target the fork point recorded at branch creation when available
+      baseBranch: context.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
       pullRequestNumber: context.branch.pullRequestNumber,
     },
   })
