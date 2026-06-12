@@ -31,6 +31,27 @@ export function parseArgs(rawArgs: string[]) {
 const SYNC_SUBCOMMANDS = ['push', 'pull', 'both', 'abort'] as const
 type SyncSubcommand = (typeof SYNC_SUBCOMMANDS)[number]
 
+/**
+ * Resolve the project root for commands that need an existing CanopyCMS
+ * project, walking up from cwd to the nearest canopycms.config.ts.
+ * Exits with an error when not inside a project.
+ */
+async function requireProjectRoot(command: string): Promise<string> {
+  const { findProjectRoot, PROJECT_MARKER } = await import('./project-root')
+  const root = await findProjectRoot(process.cwd())
+  if (!root) {
+    console.error(
+      `Error: "canopycms ${command}" must run inside a CanopyCMS project — ` +
+        `no ${PROJECT_MARKER} found in ${process.cwd()} or any parent directory.`,
+    )
+    process.exit(1)
+  }
+  if (root !== process.cwd()) {
+    console.log(`Using project root: ${root}`)
+  }
+  return root
+}
+
 /** Resolve sync subcommand from positional arg. Returns null if missing or invalid. Exported for testing. */
 export function resolveSyncSubcommand(sub: string | undefined): SyncSubcommand | null {
   if (sub && (SYNC_SUBCOMMANDS as readonly string[]).includes(sub)) return sub as SyncSubcommand
@@ -129,11 +150,11 @@ async function main() {
     } catch {
       console.warn(`Could not load auth plugin for mode "${authMode}" — skipping cache refresh`)
     }
-    await workerRunOnce({ projectDir: process.cwd(), authPlugin })
+    await workerRunOnce({ projectDir: await requireProjectRoot('worker run-once'), authPlugin })
   } else if (command === 'generate-ai-content') {
     const { generateAIContentCLI } = await import('./generate-ai-content')
     await generateAIContentCLI({
-      projectDir: process.cwd(),
+      projectDir: await requireProjectRoot('generate-ai-content'),
       outputDir: typeof flags['output'] === 'string' ? flags['output'] : undefined,
       configPath: typeof flags['config'] === 'string' ? flags['config'] : undefined,
       appDir: typeof flags['app-dir'] === 'string' ? flags['app-dir'] : undefined,
@@ -157,7 +178,7 @@ async function main() {
     }
     const { sync } = await import('./sync')
     await sync({
-      projectDir: process.cwd(),
+      projectDir: await requireProjectRoot(`sync ${direction}`),
       direction,
       branch: typeof flags['branch'] === 'string' ? flags['branch'] : undefined,
       contentRoot: typeof flags['content-root'] === 'string' ? flags['content-root'] : undefined,

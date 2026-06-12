@@ -167,20 +167,74 @@ describe('canopycms sync', () => {
       expect(result.pushed).toBe(0)
     })
 
-    it('reports no changes when content directory does not exist', async () => {
+    it('fails hard when content directory does not exist', async () => {
       const workspace = await setupTestWorkspace()
       projectDir = workspace.projectDir
 
       await fs.rm(path.join(projectDir, 'content'), { recursive: true, force: true })
 
-      const result = await sync({
-        projectDir,
-        direction: 'push',
-        branch: 'test-branch',
-        force: true,
-      })
+      await expect(
+        sync({
+          projectDir,
+          direction: 'push',
+          branch: 'test-branch',
+          force: true,
+        }),
+      ).rejects.toThrow(/Content directory not found/)
+    })
 
-      expect(result.pushed).toBe(0)
+    it('does not create a branch workspace when the content directory is missing', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+
+      await fs.rm(path.join(projectDir, 'content'), { recursive: true, force: true })
+
+      // Push to a branch with no existing workspace: validation must run BEFORE
+      // selectBranch's autoCreate so the failed push leaves no side effects.
+      await expect(
+        sync({
+          projectDir,
+          direction: 'push',
+          branch: 'brand-new-branch',
+          force: true,
+        }),
+      ).rejects.toThrow(/Content directory not found/)
+
+      const wsPath = path.join(projectDir, '.canopy-dev', 'content-branches', 'brand-new-branch')
+      await expect(fs.access(wsPath)).rejects.toThrow()
+    })
+
+    it('fails hard for sync both when the content directory is missing', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+
+      await fs.rm(path.join(projectDir, 'content'), { recursive: true, force: true })
+
+      await expect(
+        sync({
+          projectDir,
+          direction: 'both',
+          branch: 'another-new-branch',
+          force: true,
+        }),
+      ).rejects.toThrow(/Content directory not found/)
+
+      const wsPath = path.join(projectDir, '.canopy-dev', 'content-branches', 'another-new-branch')
+      await expect(fs.access(wsPath)).rejects.toThrow()
+    })
+
+    it('fails hard for an unknown branch when auto-create is not available (pull)', async () => {
+      const workspace = await setupTestWorkspace()
+      projectDir = workspace.projectDir
+
+      await expect(
+        sync({
+          projectDir,
+          direction: 'pull',
+          branch: 'no-such-branch',
+          force: true,
+        }),
+      ).rejects.toThrow(/Branch workspace "no-such-branch" not found/)
     })
 
     it('auto-commits uncommitted editor changes before push', async () => {
@@ -444,34 +498,28 @@ describe('canopycms sync', () => {
       expect(content).toBe('# Hello\n\nLocal uncommitted edit.\n')
     })
 
-    it('reports error when branch workspace does not exist', async () => {
+    it('fails hard when branch workspace does not exist', async () => {
       const workspace = await setupTestWorkspace()
       projectDir = workspace.projectDir
-      const pMock = await import('@clack/prompts')
 
-      const result = await sync({
-        projectDir,
-        direction: 'pull',
-        branch: 'nonexistent-branch',
-      })
-
-      expect(result.pulled).toBe(0)
-      expect(pMock.log.error).toHaveBeenCalledWith(expect.stringContaining('nonexistent-branch'))
+      await expect(
+        sync({
+          projectDir,
+          direction: 'pull',
+          branch: 'nonexistent-branch',
+        }),
+      ).rejects.toThrow(/Branch workspace "nonexistent-branch" not found/)
     })
 
-    it('reports error when no branch workspaces exist', async () => {
+    it('fails hard when no branch workspaces exist', async () => {
       projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-sync-test-'))
-      const pMock = await import('@clack/prompts')
 
-      const result = await sync({
-        projectDir,
-        direction: 'pull',
-      })
-
-      expect(result.pulled).toBe(0)
-      expect(pMock.log.error).toHaveBeenCalledWith(
-        expect.stringContaining('No branch workspaces found'),
-      )
+      await expect(
+        sync({
+          projectDir,
+          direction: 'pull',
+        }),
+      ).rejects.toThrow(/No branch workspaces found/)
     })
 
     it('rejects --content-root that escapes the project directory', async () => {

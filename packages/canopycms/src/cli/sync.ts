@@ -37,6 +37,18 @@ export interface SyncOptions {
   force?: boolean
 }
 
+/**
+ * Sync precondition failure (missing content dir, unknown branch, …).
+ * Thrown so the CLI exits non-zero — scripts/CI must not sail past a
+ * push that synced nothing.
+ */
+export class SyncError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SyncError'
+  }
+}
+
 /** Detect the current git branch name from the working tree. */
 async function detectCurrentBranch(projectDir: string): Promise<string> {
   const git = simpleGit({ baseDir: projectDir })
@@ -72,10 +84,9 @@ async function selectBranch(
 
   if (!branchName) {
     if (branches.length === 0) {
-      p.log.error(
+      throw new SyncError(
         'No branch workspaces found and could not detect current git branch. Use --branch to specify.',
       )
-      return null
     }
     if (branches.length === 1) {
       branchName = branches[0]
@@ -108,11 +119,8 @@ async function selectBranch(
       await wsGit.raw(['commit', '--allow-empty', '-m', 'init: workspace created by sync'])
       p.log.info(`Created branch workspace: ${branchName}`)
     } else {
-      p.log.error(`Branch workspace "${branchName}" not found.`)
-      if (branches.length > 0) {
-        p.log.info(`Available branches: ${branches.join(', ')}`)
-      }
-      return null
+      const available = branches.length > 0 ? ` Available branches: ${branches.join(', ')}` : ''
+      throw new SyncError(`Branch workspace "${branchName}" not found.${available}`)
     }
   }
 
@@ -128,20 +136,22 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
   const contentRoot = options.contentRoot || 'content'
   const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
 
+  // Validate source content BEFORE selectBranch, which may create a workspace —
+  // a push with nothing to push must not leave side effects behind.
+  const srcContentDir = path.join(projectDir, contentRoot)
+  assertWithinDir(srcContentDir, projectDir, '--content-root')
+  if (!(await filePathExists(srcContentDir))) {
+    throw new SyncError(
+      `Content directory not found: ${contentRoot}/ (expected at ${srcContentDir})`,
+    )
+  }
+
   const branchName = await selectBranch({ ...options, projectDir, autoCreate: true }, branchesDir)
   if (!branchName) return { fileCount: 0 }
 
   const branchPath = path.join(branchesDir, branchName)
   assertWithinDir(branchPath, branchesDir, '--branch')
   const wsGit = simpleGit({ baseDir: branchPath })
-
-  // Validate source content
-  const srcContentDir = path.join(projectDir, contentRoot)
-  assertWithinDir(srcContentDir, projectDir, '--content-root')
-  if (!(await filePathExists(srcContentDir))) {
-    p.log.warn(`Content directory not found: ${contentRoot}/`)
-    return { fileCount: 0 }
-  }
 
   // Check workspace health
   const status = await wsGit.status()
@@ -222,8 +232,9 @@ async function syncPull(options: SyncOptions): Promise<{ fileCount: number }> {
   const branchContentDir = path.join(branchPath, contentRoot)
   assertWithinDir(branchContentDir, branchPath, '--content-root')
   if (!(await filePathExists(branchContentDir))) {
-    p.log.error(`Content directory not found in branch workspace: ${branchName}/${contentRoot}`)
-    return { fileCount: 0 }
+    throw new SyncError(
+      `Content directory not found in branch workspace: ${branchName}/${contentRoot}`,
+    )
   }
 
   p.log.step(`Pulling content from branch: ${branchName}`)
@@ -337,20 +348,21 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
   const contentRoot = options.contentRoot || 'content'
   const branchesDir = path.join(projectDir, '.canopy-dev', 'content-branches')
 
+  // Validate source content BEFORE selectBranch, which may create a workspace
+  const srcContentDir = path.join(projectDir, contentRoot)
+  assertWithinDir(srcContentDir, projectDir, '--content-root')
+  if (!(await filePathExists(srcContentDir))) {
+    throw new SyncError(
+      `Content directory not found: ${contentRoot}/ (expected at ${srcContentDir})`,
+    )
+  }
+
   const branchName = await selectBranch({ ...options, projectDir, autoCreate: true }, branchesDir)
   if (!branchName) return { pushed: 0, pulled: 0 }
 
   const branchPath = path.join(branchesDir, branchName)
   assertWithinDir(branchPath, branchesDir, '--branch')
   const wsGit = simpleGit({ baseDir: branchPath })
-
-  // Validate source content
-  const srcContentDir = path.join(projectDir, contentRoot)
-  assertWithinDir(srcContentDir, projectDir, '--content-root')
-  if (!(await filePathExists(srcContentDir))) {
-    p.log.warn(`Content directory not found: ${contentRoot}/`)
-    return { pushed: 0, pulled: 0 }
-  }
 
   // Check workspace health
   const status = await wsGit.status()
