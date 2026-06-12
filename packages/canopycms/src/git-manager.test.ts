@@ -82,6 +82,121 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     expect(finalStat.mtimeMs).toBe(initialMtime)
   })
 
+  it('pushes a missing base branch into an existing remote', async () => {
+    // A stale remote.git seeded with main only — then the developer creates a
+    // new branch (dev-mode auto-detect makes this the routine case)
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(tmpDir, 'test.txt'), 'hello', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial commit')
+
+    const remotePath = path.join(tmpDir, 'remote.git')
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath,
+      sourcePath: tmpDir,
+      baseBranch: 'main',
+    })
+
+    await git.checkoutLocalBranch('feature/new-work')
+    await fs.writeFile(path.join(tmpDir, 'feature.txt'), 'feature', 'utf8')
+    await git.add(['.'])
+    await git.commit('feature commit')
+    const sourceSha = (await git.revparse(['feature/new-work'])).trim()
+
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath,
+      sourcePath: tmpDir,
+      baseBranch: 'feature/new-work',
+    })
+
+    const remoteGit = simpleGit({ baseDir: remotePath })
+    const remoteSha = (await remoteGit.revparse(['refs/heads/feature/new-work'])).trim()
+    expect(remoteSha).toBe(sourceSha)
+    // main is still there too
+    const branches = await remoteGit.branch()
+    expect(branches.all).toContain('main')
+  })
+
+  it('never updates a branch that already exists in the remote', async () => {
+    // The CMS pushes editor state into this remote — a refresh from the source
+    // repo must not clobber it, even when the source branch has moved on
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(tmpDir, 'test.txt'), 'hello', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial commit')
+
+    const remotePath = path.join(tmpDir, 'remote.git')
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath,
+      sourcePath: tmpDir,
+      baseBranch: 'main',
+    })
+    const remoteGit = simpleGit({ baseDir: remotePath })
+    const seededSha = (await remoteGit.revparse(['refs/heads/main'])).trim()
+
+    // Source main moves ahead
+    await fs.writeFile(path.join(tmpDir, 'more.txt'), 'more', 'utf8')
+    await git.add(['.'])
+    await git.commit('second commit')
+
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath,
+      sourcePath: tmpDir,
+      baseBranch: 'main',
+    })
+
+    const finalSha = (await remoteGit.revparse(['refs/heads/main'])).trim()
+    expect(finalSha).toBe(seededSha)
+  })
+
+  it('initializeWorkspace clones a workspace whose base branch postdates the remote', async () => {
+    // End-to-end regression for the adopter report: stale .canopy-dev/remote.git
+    // + branch auto-detect previously failed with "Remote branch not found"
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(tmpDir, 'test.txt'), 'hello', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial commit')
+
+    const remotePath = path.join(tmpDir, '.canopy-dev', 'remote.git')
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath,
+      sourcePath: tmpDir,
+      baseBranch: 'main',
+    })
+
+    await git.checkoutLocalBranch('feature/postdates-remote')
+    await fs.writeFile(path.join(tmpDir, 'feature.txt'), 'feature', 'utf8')
+    await git.add(['.'])
+    await git.commit('feature commit')
+
+    // Resolve the simulated remote from the test repo, not the real cwd
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(tmpDir)
+    const envBackup = process.env.CANOPYCMS_REMOTE_URL
+    delete process.env.CANOPYCMS_REMOTE_URL
+    try {
+      const workspacePath = path.join(tmpDir, '.canopy-dev', 'content-branches', 'main')
+      const manager = await GitManager.initializeWorkspace({
+        workspacePath,
+        branchName: 'main',
+        mode: 'dev',
+        baseBranch: 'feature/postdates-remote',
+        branchType: 'content',
+        gitBotAuthorName: 'Test Bot',
+        gitBotAuthorEmail: 'bot@test.local',
+      })
+      expect(manager).toBeDefined()
+      const wsGit = simpleGit({ baseDir: workspacePath })
+      const current = (await wsGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
+      expect(current).toBe('main')
+    } finally {
+      cwdSpy.mockRestore()
+      if (envBackup !== undefined) process.env.CANOPYCMS_REMOTE_URL = envBackup
+    }
+  })
+
   it('waits for a cross-process lock before provisioning the remote', async () => {
     // The in-memory lock only serializes within one process. Build tools (e.g.
     // Next.js static generation) provision from parallel worker *processes*, so
