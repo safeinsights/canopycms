@@ -19,9 +19,43 @@ export interface DraftUpdateMessage {
   isLoading?: unknown
 }
 
-export const sendDraftUpdate = (iframe: HTMLIFrameElement | null, message: DraftUpdateMessage) => {
+/**
+ * Resolve a (possibly relative) URL to an origin for postMessage targeting.
+ * Falls back to the page's own origin, so same-origin editor/preview setups
+ * need no configuration.
+ */
+export const resolveMessageOrigin = (url?: string): string => {
+  if (typeof window === 'undefined') return ''
+  if (!url) return window.location.origin
+  try {
+    return new URL(url, window.location.href).origin
+  } catch {
+    return window.location.origin
+  }
+}
+
+/**
+ * True only for messages from the embedding editor window with the expected origin.
+ *
+ * Security: preview hooks feed message data into the host site's renderer (often
+ * MDX evaluation), so accepting a message from an arbitrary window would let any
+ * page with a handle on this window (e.g. via window.open) execute content in the
+ * site's origin. Messages must come from the direct parent frame AND match the
+ * expected editor origin (same-origin unless `editorOrigin` is configured).
+ */
+export const isTrustedEditorMessage = (event: MessageEvent, editorOrigin?: string): boolean =>
+  typeof window !== 'undefined' &&
+  window.parent !== window &&
+  event.origin === resolveMessageOrigin(editorOrigin) &&
+  event.source === window.parent
+
+export const sendDraftUpdate = (
+  iframe: HTMLIFrameElement | null,
+  message: DraftUpdateMessage,
+  targetOrigin?: string,
+) => {
   if (!iframe?.contentWindow) return
-  iframe.contentWindow.postMessage(message, '*')
+  iframe.contentWindow.postMessage(message, targetOrigin ?? resolveMessageOrigin(iframe.src))
 }
 
 export interface PreviewFocusMessage {
@@ -45,11 +79,17 @@ const resolvePreviewPath = (explicit?: string): string => {
   return `${window.location.pathname}${window.location.search}`
 }
 
-export const useCanopyPreview = <T,>(opts: { path?: string; initialData: T }) => {
+export const useCanopyPreview = <T,>(opts: {
+  path?: string
+  initialData: T
+  /** Editor origin to trust for preview messages. Defaults to this page's own origin. */
+  editorOrigin?: string
+}) => {
   const resolvedPath = resolvePreviewPath(opts.path)
-  const { data, isLoading } = usePreviewData<T>(resolvedPath, opts.initialData)
-  const highlightEnabled = usePreviewHighlight()
-  usePreviewFocusEmitter(resolvedPath)
+  const bridgeOpts = { editorOrigin: opts.editorOrigin }
+  const { data, isLoading } = usePreviewData<T>(resolvedPath, opts.initialData, bridgeOpts)
+  const highlightEnabled = usePreviewHighlight(bridgeOpts)
+  usePreviewFocusEmitter(resolvedPath, bridgeOpts)
 
   const fieldProps = (canopyPath: string | CanopyPathSegment[]) => ({
     'data-canopy-path': Array.isArray(canopyPath) ? formatCanopyPath(canopyPath) : canopyPath,
@@ -65,12 +105,18 @@ export const useCanopyPreview = <T,>(opts: { path?: string; initialData: T }) =>
 export const usePreviewData = <T,>(
   path: string,
   initialData: T,
+  opts?: { editorOrigin?: string },
 ): { data: T; isLoading: Record<string, boolean> } => {
   const [data, setData] = useState<T>(initialData)
   const [isLoading, setIsLoading] = useState<Record<string, boolean>>({})
+  const editorOrigin = opts?.editorOrigin
 
   useEffect(() => {
+    // Only listen when actually framed by an editor; a standalone page (including
+    // one opened via window.open from a hostile site) must never accept drafts.
+    if (window.parent === window) return
     const handler = (event: MessageEvent) => {
+      if (!isTrustedEditorMessage(event, editorOrigin)) return
       const msg = event.data as DraftUpdateMessage
       if (!msg || msg.type !== CANOPY_PREVIEW_MESSAGE || msg.path !== path) return
       setData(msg.data as T)
@@ -82,11 +128,12 @@ export const usePreviewData = <T,>(
     // Notify parent that this preview page is ready to receive draft updates.
     // This is needed because onLoad in the parent fires before React effects run,
     // so the first postMessage from the parent arrives before this listener is set up.
-    if (window.parent !== window) {
-      window.parent.postMessage({ type: CANOPY_PREVIEW_READY, path }, '*')
-    }
+    window.parent.postMessage(
+      { type: CANOPY_PREVIEW_READY, path },
+      resolveMessageOrigin(editorOrigin),
+    )
     return () => window.removeEventListener('message', handler)
-  }, [path])
+  }, [path, editorOrigin])
 
   return { data, isLoading }
 }
@@ -94,8 +141,9 @@ export const usePreviewData = <T,>(
 /**
  * Hook for preview pages to listen for highlight mode and toggle an outline on clickable elements.
  */
-export const usePreviewHighlight = () => {
+export const usePreviewHighlight = (opts?: { editorOrigin?: string }) => {
   const [enabled, setEnabled] = useState(false)
+  const editorOrigin = opts?.editorOrigin
 
   useEffect(() => {
     const styleId = 'canopycms-preview-highlight-style'
@@ -115,14 +163,16 @@ export const usePreviewHighlight = () => {
   }, [enabled])
 
   useEffect(() => {
+    if (window.parent === window) return
     const handler = (event: MessageEvent) => {
+      if (!isTrustedEditorMessage(event, editorOrigin)) return
       const msg = event.data as HighlightMessage
       if (msg?.type !== CANOPY_PREVIEW_HIGHLIGHT) return
       setEnabled(Boolean(msg.enabled))
     }
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
-  }, [])
+  }, [editorOrigin])
 
   return enabled
 }
@@ -130,24 +180,26 @@ export const usePreviewHighlight = () => {
 /**
  * Hook for preview pages to emit focus messages when elements with data-canopy-path are clicked.
  */
-export const usePreviewFocusEmitter = (entryPath: string) => {
+export const usePreviewFocusEmitter = (entryPath: string, opts?: { editorOrigin?: string }) => {
+  const editorOrigin = opts?.editorOrigin
   useEffect(() => {
+    if (window.parent === window) return
     const handleClick = (event: MouseEvent) => {
       const target = event.target as HTMLElement | null
       if (!target) return
       const el = target.closest<HTMLElement>('[data-canopy-path]')
       const fieldPath = el?.dataset.canopyPath
-      if (!fieldPath || !window.parent) return
+      if (!fieldPath) return
       const msg: PreviewFocusMessage = {
         type: CANOPY_PREVIEW_FOCUS,
         entryPath,
         fieldPath,
       }
-      window.parent.postMessage(msg, '*')
+      window.parent.postMessage(msg, resolveMessageOrigin(editorOrigin))
     }
     document.addEventListener('click', handleClick)
     return () => document.removeEventListener('click', handleClick)
-  }, [entryPath])
+  }, [entryPath, editorOrigin])
 }
 
 /**
@@ -172,6 +224,10 @@ export const PreviewFrame = ({
   highlightEnabled?: boolean
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)
+  // Pin the preview origin from the src prop: outbound messages target it (never '*'),
+  // and inbound messages must come from it. An iframe that navigates cross-origin
+  // silently stops participating in the bridge.
+  const previewOrigin = resolveMessageOrigin(src)
   // Show progress bar while waiting for the preview's ready handshake.
   const [syncPending, setSyncPending] = useState(data !== undefined)
 
@@ -195,12 +251,16 @@ export const PreviewFrame = ({
 
   const post = () => {
     if (data === undefined) return
-    sendDraftUpdate(iframeRef.current, {
-      type: CANOPY_PREVIEW_MESSAGE,
-      path,
-      data,
-      isLoading,
-    })
+    sendDraftUpdate(
+      iframeRef.current,
+      {
+        type: CANOPY_PREVIEW_MESSAGE,
+        path,
+        data,
+        isLoading,
+      },
+      previewOrigin,
+    )
   }
   const postHighlight = () => {
     if (!iframeRef.current?.contentWindow) return
@@ -208,7 +268,7 @@ export const PreviewFrame = ({
       type: CANOPY_PREVIEW_HIGHLIGHT,
       enabled: Boolean(highlightEnabled),
     }
-    iframeRef.current.contentWindow.postMessage(msg, '*')
+    iframeRef.current.contentWindow.postMessage(msg, previewOrigin)
   }
 
   // Keep refs pointing at the latest closures so the ready handler below never goes stale.
@@ -235,6 +295,8 @@ export const PreviewFrame = ({
   useEffect(() => {
     const handleReady = (event: MessageEvent) => {
       if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return
+      // Source check alone is insufficient if the iframe navigated cross-origin.
+      if (event.origin !== previewOrigin) return
       if ((event.data as { type?: string })?.type === CANOPY_PREVIEW_READY) {
         postRef.current()
         postHighlightRef.current()
@@ -243,7 +305,7 @@ export const PreviewFrame = ({
     }
     window.addEventListener('message', handleReady)
     return () => window.removeEventListener('message', handleReady)
-  }, [])
+  }, [previewOrigin])
 
   return (
     <div className={className} style={{ position: 'relative', overflow: 'hidden', ...style }}>
