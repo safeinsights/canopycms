@@ -31,6 +31,7 @@ A schema-driven, branch-aware content management system for git-backed, statical
 - [Using the Editor](#using-the-editor)
 - [Adopter Touchpoints Summary](#adopter-touchpoints-summary)
 - [Local Development Sync](#local-development-sync)
+- [Migrating Existing Content](#migrating-existing-content)
 - [Environment Variables](#environment-variables)
 - [Documentation](#documentation)
 
@@ -404,7 +405,8 @@ For production deployments that need networkless JWT verification (e.g., AWS Lam
       "schema": "schemaRegistryKey",    // Required: key from schema registry
       "maxItems": 1               // Optional: limit instances (1 = singleton-like)
     }
-  ]
+  ],
+  "order": ["<contentId>", ...]   // Optional: explicit item ordering; omitted/empty = alphabetical
 }
 ```
 
@@ -589,8 +591,41 @@ Available schemas: author, home, doc
 | `media`               | `MediaConfig`          | No       | -           | Asset storage configuration (local, s3, or lfs)                                                                                                                                                                                                                  |
 | `editor`              | `EditorConfig`         | No       | -           | Editor UI customization options                                                                                                                                                                                                                                  |
 | `dev`                 | `DevConfig`            | No       | -           | Dev-mode-only behavior. `dev.contentSync: 'off' \| 'warn'` (default `'warn'`) controls how the dev server detects/reports working-tree edits vs. the served branch clone (see [Local Development Sync](#local-development-sync)). Ignored when `mode !== 'dev'`. |
+| `validateEntry`       | `ValidateEntryHook`    | No       | -           | Save-time validation hook, run server-side before the entry file is written. Return `level: 'error'` issues to reject the save, or `'warning'` issues to surface alongside it. See [Save-Time Validation](#save-time-validation-validateentry).                  |
 
 **Note**: Schemas are declared in TypeScript with `defineEntrySchema`, registered with `createEntrySchemaRegistry`, and referenced from `.collection.json` files alongside your content. See the [Schema Registry and References](#schema-references-system) section for details.
+
+### Save-Time Validation (`validateEntry`)
+
+Schema validation keeps field shapes clean, but it can't know that a markdown body must, say, compile as MDX for your production build to succeed. The optional `validateEntry` hook lets the site refuse (or flag) saves that would break it:
+
+```typescript
+// canopycms.config.ts
+import { defineCanopyConfig, type EntryValidationIssue } from 'canopycms'
+import { compile } from '@mdx-js/mdx'
+
+export default defineCanopyConfig({
+  // ...
+  validateEntry: async ({ format, body }): Promise<EntryValidationIssue[]> => {
+    if ((format === 'mdx' || format === 'md') && body) {
+      try {
+        await compile(body)
+      } catch (err) {
+        return [
+          {
+            level: 'error', // 'error' rejects the save; 'warning' saves but notifies
+            fieldPath: 'body',
+            message: `MDX failed to compile: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ]
+      }
+    }
+    return []
+  },
+})
+```
+
+The hook receives `{ entryPath, branch, format, data, body }` for every editor save. `error` issues reject the save with the message shown to the editor; `warning` issues let the save through and appear as a notification. Pair it with the preview error channel (see [Live Preview](#live-preview)) so authors see compile failures while typing, not just at save time.
 
 ### Operating Modes
 
@@ -653,6 +688,24 @@ This is useful when both you and the editor have made changes to the same branch
 ```bash
 npx canopycms sync abort
 ```
+
+> All project-bound CLI commands (`sync`, `migrate`, `generate-ai-content`, `worker run-once`) resolve the project root by walking up from the current directory to the nearest `canopycms.config.ts`, like git does — running them from a subdirectory works.
+
+### Migrating Existing Content
+
+Adopting CanopyCMS on a site with existing content? `canopycms migrate` converts a plain content tree into CanopyCMS conventions — entry files become `{type}.{slug}.{id}.{ext}`, content-bearing directories get ID suffixes and a `.collection.json`, and the root gets one when entry files live directly in it:
+
+```bash
+npx canopycms migrate --entry-type doc --format md --schema docSchema --dry-run
+npx canopycms migrate --entry-type doc --format md --schema docSchema
+```
+
+- `--dry-run` prints the full rename/create plan without touching anything; omitted flags are prompted for.
+- Only files of the chosen format are migrated. Assets, other formats, and directories without matching content are left untouched.
+- Re-running is a no-op: already-conforming names are skipped.
+- Entry order is left unset (alphabetical). Source-specific ordering conventions (e.g. Nextra `_meta.json`) are out of scope — apply those with a follow-up script if needed.
+
+After migrating, make sure the schema key you chose (e.g. `docSchema`) exists in your entry schema registry.
 
 ### Schema Definition
 
@@ -1833,6 +1886,31 @@ Access control uses three layers:
 ### Live Preview
 
 The editor shows a live preview of your actual site pages in an iframe. Changes update immediately via postMessage. Clicking elements in the preview focuses the corresponding form field.
+
+**Security model.** Preview pages only accept messages when they are actually framed, and only from their direct parent window with a matching origin — same-origin by default. A standalone page (including one opened via `window.open` from a hostile site) never accepts draft data. If your editor is deployed on a different origin than the site, pass it explicitly:
+
+```typescript
+const { data, fieldProps } = useCanopyPreview<DocContent>({
+  initialData,
+  editorOrigin: 'https://editor.example.com', // only needed for cross-origin editor deployments
+})
+```
+
+We also recommend serving your site with `Cross-Origin-Opener-Policy: same-origin` where your hosting allows — it severs `window.opener` handles entirely (the bridge is safe without it, but defense in depth is cheap).
+
+**Reporting draft errors.** If your page compiles the draft body (e.g. MDX) and keeps the last good render on failure, the author sees a stale-but-fine preview while the draft is broken. Use `reportError` to tell the editor, which surfaces an alert next to the preview:
+
+```typescript
+const { data, reportError } = useCanopyPreview<DocContent>({ initialData })
+
+useEffect(() => {
+  compileMdx(data.body)
+    .then(() => reportError(null)) // clears a previously reported error
+    .catch((err) => reportError(`MDX failed to compile: ${err.message}`, 'body'))
+}, [data.body, reportError])
+```
+
+Pair this with the [`validateEntry` hook](#save-time-validation-validateentry) to also reject such saves server-side.
 
 ## AI-Ready Content
 
