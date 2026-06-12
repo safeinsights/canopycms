@@ -47,8 +47,11 @@ export function getErrorMessage(err: unknown): string {
  */
 export function sanitizeErrorMessage(message: string): string {
   let result = message
-  // Credentials in URLs: scheme://user:token@host or scheme://token@host
-  result = result.replace(/(\w+:\/\/)[^/\s@]+@/g, '$1***@')
+  // Credentials in URLs: scheme://user:token@host or scheme://token@host.
+  // Anchored on the literal `://` (leaving the scheme untouched) — a `\w+`
+  // scheme prefix would backtrack polynomially on long word-character runs
+  // (CodeQL js/polynomial-redos).
+  result = result.replace(/(:\/\/)[^/\s@]+@/g, '$1***@')
   // Paths under the project root become relative (split/join avoids regex
   // escaping issues with arbitrary cwd values). The bare-cwd replacement is
   // anchored to a token boundary so sibling directories that merely share
