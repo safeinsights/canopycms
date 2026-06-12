@@ -581,7 +581,7 @@ CanopyCMS distinguishes between two branch config fields:
 
 **Auto-detection in dev mode:**
 
-`defaultActiveBranch` is auto-detected from the current git HEAD at service initialization (`detectDefaultActiveBranch()` in `services.ts`) and refreshed per-request via `refreshActiveBranch()` (with a 5-second cache). This means if you switch from `main` to `my-feature` while the dev server is running, the CMS silently starts serving content from the `my-feature` workspace — no restart needed. The workspace is lazily created on the first content request if it doesn't exist.
+`defaultActiveBranch` is auto-detected from the current git HEAD at service initialization (`createActiveBranchDetector()` in `services.ts`) and refreshed per-request via `refreshActiveBranch()` (with a 5-second cache). Both the HTTP API handler and `getCanopy()`/`getContext()` perform this refresh (previously only the HTTP handler did), so server-component reads follow branch switches too. This means if you switch from `main` to `my-feature` while the dev server is running, the CMS silently starts serving content from the `my-feature` workspace — no restart needed. The workspace is lazily created on the first content request if it doesn't exist. Static deployments (`deployedAs: 'static'`) never shell out to git for branch detection — they fall back to `defaultBaseBranch ?? 'main'`.
 
 This only affects non-editor content serving (public site, `getCanopy()`, AI content). The editor is pinned to its own branch via URL params and stores drafts per-branch in localStorage.
 
@@ -604,7 +604,7 @@ Content-serving code uses the pattern `config.defaultActiveBranch ?? config.defa
 
 **Impact on sync CLI:**
 
-The `canopycms sync` command defaults to the current git branch (via `detectCurrentBranch()`) and auto-creates workspaces on push with `selectBranch({ autoCreate: true })`. This means `sync push` on a new branch will create a workspace automatically, matching the `defaultActiveBranch` auto-detection behavior.
+The `canopycms sync` command defaults to the current git branch (via `detectCurrentBranch()`) and auto-creates workspaces on push with `selectBranch({ autoCreate: true })`. This means `sync push` on a new branch will create a workspace automatically, matching the `defaultActiveBranch` auto-detection behavior. Note that content validation runs before the auto-create — a precondition failure throws a typed `SyncError` (stderr + exit 1) without creating the workspace.
 
 **In tests:**
 
@@ -2125,6 +2125,37 @@ it('hides conflict notice when prop is absent', () => {
 
 **Why this pattern:** Conflict detection happens server-side (worker rebase writes `conflictFiles` to branch metadata). The editor reads this metadata and passes `conflictNotice` as a boolean prop to the form. Testing both the server-side detection (real git tests) and the client-side display (component tests) ensures the full conflict flow works end-to-end.
 
+### Testing postMessage Listeners (Framed-Window Simulation)
+
+The preview-bridge listeners validate both `event.origin` and `event.source === window.parent`, so jsdom tests can't just dispatch a bare `MessageEvent` — the source check needs a genuine `WindowProxy` distinct from the test window. Use the `simulateFramed()` pattern from `src/editor/preview-bridge.test.tsx`:
+
+```typescript
+const simulateFramed = () => {
+  const host = document.createElement('iframe') // Real iframe → real WindowProxy
+  document.body.appendChild(host)
+  const parentWin = host.contentWindow as Window
+  Object.defineProperty(window, 'parent', { configurable: true, get: () => parentWin })
+  vi.spyOn(parentWin, 'postMessage').mockImplementation(() => {})
+  return parentWin
+}
+
+afterEach(() => {
+  cleanup()
+  Object.defineProperty(window, 'parent', { configurable: true, get: () => window }) // Restore
+  document.querySelectorAll('iframe').forEach((el) => el.remove())
+  vi.restoreAllMocks()
+})
+
+// Dispatch with explicit origin AND source — both are validated
+const event = new MessageEvent('message', {
+  data: { type: CANOPY_PREVIEW_UPDATE /* ... */ },
+  origin: window.location.origin,
+  source: parentWin,
+})
+```
+
+**Why this pattern:** `window.parent` is read-only in jsdom, so it must be redefined via `Object.defineProperty` (and restored in `afterEach`). Faking the source with a plain object fails the `WindowProxy` identity check; appending a real `<iframe>` and using its `contentWindow` gives the listener an authentic parent window to compare against. Tests that omit `source` (or pass the wrong window) double as negative tests for the trust check.
+
 ### Expecting Console Messages
 
 When testing code that intentionally logs to `console.error`, `console.warn`, or `console.log`, use the `mockConsole()` utility to:
@@ -2592,6 +2623,8 @@ The dist tests will fail if `pnpm build` has not been run first, since they depe
 The `canopycms sync` command provides bidirectional content sync between the developer's working tree and CMS branch workspaces in `.canopy-dev/content-branches/`. Implementation is in `src/cli/sync.ts`.
 
 **Why this exists:** In dev mode, the CMS works against branch workspaces (`.canopy-dev/content-branches/`). When a developer edits content files directly in their working tree, the CMS does not see those changes. Conversely, when content is edited through the CMS UI, the developer's working tree is not updated. `canopycms sync` bridges this gap.
+
+**Failure idiom: throw typed errors, let the entrypoint exit.** Precondition failures in `sync` and `migrate` throw typed errors (`SyncError` in `cli/sync.ts`, `MigrateError` in `cli/migrate.ts`) rather than printing warnings and exiting 0. The `main().catch` in `cli/cli.ts` converts any thrown error into `Error: <message>` on stderr plus exit code 1. When adding a new CLI precondition, throw a typed error with an actionable message — don't `console.warn` + `process.exit(0)`. **Project root resolution:** project-bound commands (`sync`, `migrate`, `worker run-once`, `generate-ai-content`) resolve the project root by walking up from cwd to the nearest `canopycms.config.ts` (`findProjectRoot()` in `cli/project-root.ts`), so they work from subdirectories and fail fast with a clear error when run outside a project.
 
 **Commands:**
 

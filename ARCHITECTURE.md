@@ -585,6 +585,7 @@ Each collection folder can contain a `.collection.json` file that defines:
 
 - Collection name and label
 - Entry type configurations (array of typed content definitions)
+- Optional child ordering (an `order` array of content IDs; when omitted or empty, children sort alphabetically)
 
 **Structure:**
 
@@ -881,9 +882,10 @@ CanopyCMS distinguishes between two branch concepts that serve different purpose
 - If explicitly configured, the configured value is used in both modes
 - In dev mode, `defaultActiveBranch` is auto-detected from the current git HEAD (the branch the developer has checked out)
 - In prod mode, `defaultActiveBranch` falls back to `defaultBaseBranch` (typically `main`)
+- Static deployments (`deployedAs: 'static'`) skip detection and per-request refresh entirely — a static export serves from the checkout, so there is no git HEAD to track and no git calls are made
 - The detected value is set in the config at service creation time, and refreshed per-request via `refreshActiveBranch()` (dev mode only, with a 5-second cache to avoid excessive git calls)
 
-**Per-request branch tracking:** In dev mode, the handler calls `refreshActiveBranch()` on every request. If the developer switches git branches, the active branch silently updates — no server restart needed. The workspace for the new branch is lazily created on the first content request via the handler's auto-create path (`BranchWorkspaceManager.openOrCreateBranch`). This only affects non-editor content serving (the public dev site, `getCanopy()`, AI content); the editor is pinned to its own branch via URL params and has branch-specific drafts in localStorage.
+**Per-request branch tracking:** In dev mode, every content-serving entry point — the API handler and the context factory behind `getCanopy()` — calls `refreshActiveBranch()` on each request. If the developer switches git branches, the active branch silently updates — no server restart needed. The workspace for the new branch is lazily created on the first content request via the handler's auto-create path (`BranchWorkspaceManager.openOrCreateBranch`). This only affects non-editor content serving (the public dev site, `getCanopy()`, AI content); the editor is pinned to its own branch via URL params and has branch-specific drafts in localStorage.
 
 **Fallback chain:** Throughout the system, content-serving code resolves the active branch as `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. The handler auto-creates workspaces for `defaultActiveBranch` on demand, ensuring the active branch is always ready to serve content.
 
@@ -1028,11 +1030,15 @@ npx canopycms worker run-once
 
 This processes pending tasks, refreshes the auth cache, and exits. It simulates what the EC2 worker daemon does continuously in production.
 
+#### Project-Bound CLI Commands
+
+CLI commands that operate on an existing project (`sync`, `migrate`, `generate-ai-content`, `worker run-once`) resolve the project root by walking up from the current directory to the nearest `canopycms.config.ts` — the same way git discovers `.git`. Running from a subdirectory works, and CMS state (e.g. `.canopy-dev/`) is never scattered into the wrong directory. Running outside a project is a hard failure: the command prints an error and exits non-zero rather than guessing. The same hard-failure stance applies to other CLI preconditions (missing content directory, unknown branch workspace), so scripts and CI can rely on exit codes.
+
 #### Content Sync CLI
 
 In dev mode, the developer's working tree and the CMS editor operate on separate git structures. The developer edits files in their normal repo, while the editor works through branch workspaces cloned from the local bare remote. These two worlds can drift apart: the developer might update content files directly, or an editor might publish changes through the CMS that the developer wants to pull back into their repo.
 
-The `sync` command bridges this gap with bidirectional content synchronization between the developer's working tree and a specific branch workspace. It uses subcommands (`sync push`, `sync pull`, `sync both`, `sync abort`) to make each operation explicit. If no `--branch` flag is provided, sync auto-detects the current git branch from HEAD and targets that workspace. If the workspace does not yet exist for push operations, sync auto-creates it (cloning from the local bare remote), so developers can immediately push content into a new branch without manual workspace setup.
+The `sync` command bridges this gap with bidirectional content synchronization between the developer's working tree and a specific branch workspace. It uses subcommands (`sync push`, `sync pull`, `sync both`, `sync abort`) to make each operation explicit. If no `--branch` flag is provided, sync auto-detects the current git branch from HEAD and targets that workspace. If the workspace does not yet exist for push operations, sync auto-creates it (cloning from the local bare remote), so developers can immediately push content into a new branch without manual workspace setup. Content validation happens before this auto-creation — a push with nothing to push (e.g. a missing or misconfigured content directory) fails fast without leaving a freshly provisioned workspace behind.
 
 - **Push** (`npx canopycms sync push`): Copies the developer's current working-tree content directly into the selected branch workspace and commits it there. This is useful after the developer makes direct content edits outside the CMS. Push does not update the local bare remote; `remote.git` stays current through the normal publish/submit mechanisms.
 
@@ -1047,6 +1053,10 @@ The `sync` command bridges this gap with bidirectional content synchronization b
 **Why a separate sync step?** The CMS editor intentionally does not write directly to the developer's repo. Branch workspaces act as a boundary between the developer's git state and the CMS's editing state. This isolation prevents the CMS from creating unexpected commits or modifying the developer's index. The sync command gives the developer explicit control over when content crosses that boundary.
 
 **Why sync does not touch remote.git:** Earlier designs had push update the local bare remote and fan out fetches to all branch workspaces. This was removed because the sync command's purpose is narrow: move content between the developer's working tree and a single branch workspace. The bare remote is kept current by the existing publish and submit flows, and mixing those responsibilities in sync created confusing semantics (especially for the "both" direction).
+
+#### Content Migration CLI
+
+The `migrate` command (`npx canopycms migrate`) converts an existing plain content tree into CanopyCMS conventions: entry files and collection directories are renamed to embed stable content IDs, and `.collection.json` meta files are scaffolded for the root and each collection. Only files of the chosen format are touched — assets and other formats are left alone — and already-conforming names are skipped, so re-running is a no-op. Source-specific ordering conventions (e.g. Nextra's `_meta.json`) are deliberately out of scope: migrated collections fall back to alphabetical ordering, which adopters can refine afterward through the editor. This gives sites with pre-existing content (docs sites, blogs) a one-command on-ramp instead of hand-renaming every file.
 
 ### Dev Content Divergence Detection
 
@@ -1430,6 +1440,15 @@ This pattern complements the general git service methods by addressing the uniqu
 4. Each save writes directly to files in the branch workspace
 5. Live preview shows changes immediately
 
+### Save-Time Validation
+
+Saves run through server-side validation in the content write handler:
+
+- **Adopter validation hook**: The config can supply a `validateEntry` hook — an adopter-defined function that runs before the entry file is written. The hook returns issues at two severities: `error` issues reject the save (HTTP 422 carrying the hook's message, nothing written to disk), while `warning` issues let the save proceed and ride back on the write response, where the editor surfaces them as notifications. This gives adopters site-specific rules (cross-field constraints, content conventions, link policies) enforced for every write, not just well-behaved clients.
+- **Entry-link validation**: Alongside the write, body content and markdown fields are scanned for `entry:ID` links whose targets no longer exist. These produce warnings only — saves are never blocked by a broken inline link (see [Entry Links](#entry-links-inline-content-links)).
+
+**Why a config hook rather than a new integration point?** Adopter touchpoints are deliberately limited to config + Editor + one API route. `validateEntry` lives inside the existing config touchpoint, so adopters gain a save-time extension point without any new wiring between their app and CanopyCMS.
+
 ### Submitting for Review
 
 1. User clicks "Submit"
@@ -1650,6 +1669,18 @@ The editor provides a rich editing experience with schema-driven forms, block-ba
 **Server imports**: Adopting apps also import from `canopycms/server` for content reading and API setup.
 
 **Live preview**: The editor can show a live preview of content changes. The preview is an iframe that loads your actual site pages, and the editor communicates with it via postMessage. When you edit a field, the preview updates immediately. Clicking on elements in the preview focuses the corresponding form field. This preview bridge enables real-time feedback without page reloads.
+
+### Preview Bridge Trust Model
+
+The preview bridge is a postMessage channel between two windows, and the site side of that channel feeds incoming draft data straight into the host site's renderer (often MDX evaluation). An unvalidated message listener would therefore let any window with a handle on a preview page (e.g. via `window.open`) execute arbitrary content in the site's origin. Trust is explicit on both sides of the bridge:
+
+- **Site-side preview hooks** (`useCanopyPreview` and the lower-level preview hooks) attach message listeners only when the page is actually framed, and accept a message only if it comes from the direct parent frame (`event.source === window.parent`) AND its origin matches the expected editor origin. The expected origin defaults to the page's own origin, so same-origin editor/preview setups need no configuration; deployments that serve the editor from a different origin pass an optional `editorOrigin` to the hooks.
+- **Editor-side listeners** (the preview frame's ready/error handler, the comment system's preview-focus handler) apply the same source-plus-origin validation to messages arriving from the preview iframe.
+- **All outbound bridge messages** target a concrete origin — derived from the iframe `src` on the editor side, and the configured (or same-) editor origin on the site side — never the `'*'` wildcard. Draft content cannot be delivered to a frame that has navigated elsewhere.
+
+### Preview Error Reporting
+
+The bridge also carries a preview-to-editor error channel. When a draft fails to compile or render (e.g. malformed MDX), the preview page calls the `reportError` helper returned by `useCanopyPreview`, optionally tagging the offending field, and calls it again with `null` once the draft renders cleanly. The editor surfaces the report as an alert over the preview pane, so authors see why the preview is broken instead of a blank or stale frame. Without this channel, a render error inside the iframe is invisible to the editor — the iframe simply stops updating.
 
 ### State Management
 
@@ -1951,6 +1982,10 @@ When installed from npm (not symlinked), the React aliases are harmless -- they 
 - Optionally wrap the core API handler for framework-specific routing
 
 See `canopycms-next` as a reference implementation. Creating adapters for Express, Fastify, Hono, or other frameworks follows the same minimal pattern.
+
+### Save-Time Validation Hook
+
+The configuration accepts a `validateEntry` hook for adopter-defined, server-side validation of every editor save (see [Save-Time Validation](#save-time-validation)). Unlike auth plugins and framework adapters, this extension point requires no separate package: it is a deliberate config-surface extension that stays within the existing config touchpoint, preserving the config + Editor + one-API-route integration contract.
 
 ## Key Design Decisions
 
