@@ -4,7 +4,7 @@
  * CanopyCMS CLI entrypoint.
  *
  * Routes commands to their implementations:
- *   init, init-deploy, worker, generate-ai-content, sync
+ *   init, init-deploy, worker, generate-ai-content, sync, migrate
  *
  * Command implementations live in separate files (init.ts, sync.ts, etc.)
  * and are dynamically imported to keep startup fast.
@@ -19,8 +19,17 @@ import type { AuthPlugin } from '../auth/plugin'
 /** Parse raw CLI args into structured flags and positional command. Exported for testing. */
 export function parseArgs(rawArgs: string[]) {
   const argv = minimist(rawArgs, {
-    boolean: ['force', 'non-interactive'],
-    string: ['app-dir', 'branch', 'content-root', 'output', 'config'],
+    boolean: ['force', 'non-interactive', 'dry-run'],
+    string: [
+      'app-dir',
+      'branch',
+      'content-root',
+      'output',
+      'config',
+      'entry-type',
+      'format',
+      'schema',
+    ],
     alias: { f: 'force' },
   })
   const flags = argv as Record<string, string | boolean>
@@ -184,6 +193,20 @@ async function main() {
       contentRoot: typeof flags['content-root'] === 'string' ? flags['content-root'] : undefined,
       force: flags['force'] === true,
     })
+  } else if (command === 'migrate') {
+    const { migrate } = await import('./migrate')
+    await migrate({
+      projectDir: await requireProjectRoot('migrate'),
+      contentRoot: typeof flags['content-root'] === 'string' ? flags['content-root'] : undefined,
+      entryType: typeof flags['entry-type'] === 'string' ? flags['entry-type'] : undefined,
+      format:
+        typeof flags['format'] === 'string'
+          ? (flags['format'] as import('./migrate').MigrateFormat)
+          : undefined,
+      schema: typeof flags['schema'] === 'string' ? flags['schema'] : undefined,
+      dryRun: flags['dry-run'] === true,
+      force: flags['force'] === true,
+    })
   } else {
     console.log('CanopyCMS CLI')
     console.log('')
@@ -209,6 +232,16 @@ async function main() {
     console.log('    pull                  Pull content from a branch workspace')
     console.log('    both                  3-way merge between working tree and workspace')
     console.log('    abort                 Abort a failed merge in a branch workspace')
+    console.log('')
+    console.log(
+      '  migrate                 Convert an existing content tree to CanopyCMS conventions',
+    )
+    console.log('    --content-root <path> Content directory (default: content)')
+    console.log('    --entry-type <name>   Entry type name (e.g. doc)')
+    console.log('    --format <fmt>        File format to migrate: md|mdx|json|yaml')
+    console.log('    --schema <key>        Entry schema registry key (e.g. docSchema)')
+    console.log('    --dry-run             Print the plan without changing anything')
+    console.log('    --force               Skip confirmation prompts')
     process.exit(0)
   }
 }
