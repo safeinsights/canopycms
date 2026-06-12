@@ -329,10 +329,22 @@ export class GitManager {
             `CanopyCMS dev base snapshot of ${options.baseBranch}:${options.subdirectory}`,
           ])
         ).trim()
-        await sourceGit.push(tempRemoteName, `${commit}:refs/heads/${options.baseBranch}`)
+        // --no-verify: this is internal plumbing into the simulated remote;
+        // the adopter's pre-push hooks (husky etc.) must not block it
+        await sourceGit.raw([
+          'push',
+          '--no-verify',
+          tempRemoteName,
+          `${commit}:refs/heads/${options.baseBranch}`,
+        ])
       } else {
-        // Normal push of entire repo
-        await sourceGit.push(tempRemoteName, `${options.baseBranch}:${options.baseBranch}`)
+        // Normal push of entire repo (--no-verify: see above)
+        await sourceGit.raw([
+          'push',
+          '--no-verify',
+          tempRemoteName,
+          `${options.baseBranch}:${options.baseBranch}`,
+        ])
       }
     } finally {
       try {

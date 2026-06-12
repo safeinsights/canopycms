@@ -180,7 +180,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         setBranches([])
         return
       }
-      if (!result.ok) throw new Error(`Failed to load branches: ${result.status}`)
+      if (!result.ok) {
+        // Surface the server's reason (e.g. workspace provisioning failures
+        // now arrive as 503s with the underlying git error)
+        throw new Error(result.error ?? `Failed to load branches: ${result.status}`)
+      }
       const list = result.data?.branches ?? []
       setBranches(list)
       // No branch pinned via URL or client config — adopt the server's
@@ -190,7 +194,15 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       }
     } catch (err) {
       console.error(err)
-      notifications.show({ message: 'Failed to load branches', color: 'red' })
+      const message = err instanceof Error ? err.message : 'Failed to load branches'
+      // Fixed id: retries update the existing toast instead of stacking; sticky
+      // because the editor cannot function without the branch list.
+      notifications.show({
+        id: 'canopy-branches-load-failed',
+        message,
+        color: 'red',
+        autoClose: false,
+      })
     } finally {
       options.setBusy(false)
     }

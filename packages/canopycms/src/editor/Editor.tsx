@@ -833,7 +833,9 @@ export const Editor: React.FC<EditorProps> = ({
         }}
       >
         <Text size="sm" c="dimmed">
-          Select an item to start editing.
+          {!branchNameState && busy
+            ? 'Setting up your branch workspace…'
+            : 'Select an item to start editing.'}
         </Text>
       </Paper>
     )
@@ -909,7 +911,11 @@ export const Editor: React.FC<EditorProps> = ({
                 }
                 form={
                   !currentEntry ? (
-                    <CenteredMessage>Select an item to start editing.</CenteredMessage>
+                    <CenteredMessage>
+                      {!branchNameState && busy
+                        ? 'Setting up your branch workspace…'
+                        : 'Select an item to start editing.'}
+                    </CenteredMessage>
                   ) : currentEntry.canEdit === false ? (
                     <CenteredMessage>
                       You don&apos;t have permission to edit this content.

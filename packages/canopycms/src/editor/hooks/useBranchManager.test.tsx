@@ -185,6 +185,29 @@ describe('useBranchManager', () => {
     restore()
   })
 
+  it('surfaces the server error message when loading branches fails', async () => {
+    const { restore } = setupMockConsole(['error'])
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      error: "Branch workspace provisioning failed for 'main': clone failed",
+    })
+
+    renderHook(() => useBranchManager(defaultOptions), { wrapper })
+
+    await waitFor(() => {
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "Branch workspace provisioning failed for 'main': clone failed",
+          color: 'red',
+        }),
+      )
+    })
+
+    restore()
+  })
+
   it('computes currentBranch and branchStatus', async () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,

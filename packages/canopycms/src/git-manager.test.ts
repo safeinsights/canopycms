@@ -236,6 +236,30 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     expect(cloneFiles).not.toContain('packages')
   })
 
+  it('seeds the remote even when the source repo has a failing pre-push hook', async () => {
+    // The seeding push is internal plumbing — adopter hooks (husky etc.)
+    // must not block it (--no-verify)
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(tmpDir, 'test.txt'), 'hello', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial commit')
+
+    const hookPath = path.join(tmpDir, '.git', 'hooks', 'pre-push')
+    await fs.writeFile(hookPath, '#!/bin/sh\necho "hook ran" >&2\nexit 1\n', { mode: 0o755 })
+
+    const remotePath = path.join(tmpDir, 'remote.git')
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath,
+      sourcePath: tmpDir,
+      baseBranch: 'main',
+    })
+
+    const remoteGit = simpleGit({ baseDir: remotePath })
+    const branches = await remoteGit.raw(['branch', '--list', 'main'])
+    expect(branches).toContain('main')
+  })
+
   it('seeds a subdirectory remote from baseBranch even when HEAD is elsewhere', async () => {
     // The seed must snapshot `<baseBranch>:<subdirectory>`, not the checked-out
     // HEAD — an explicitly configured base must win over the working branch.
