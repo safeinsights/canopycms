@@ -359,8 +359,10 @@ describe('useEntryManager', () => {
       data: { format: 'mdx', data: {} },
     })
 
-    // Mock entries.list for the refresh after create
-    mockClient.entries.list.mockResolvedValueOnce({
+    // Stable mock so both the mount-effect refresh and the post-create refresh
+    // see the new entry — otherwise the mount refresh consumes a single
+    // mockResolvedValueOnce and the create refresh silently misses navigation.
+    mockClient.entries.list.mockResolvedValue({
       ok: true,
       status: 200,
       data: {
@@ -370,10 +372,13 @@ describe('useEntryManager', () => {
             ...mockCollectionItem,
             logicalPath: unsafeAsLogicalPath('new-post'),
             slug: unsafeAsSlug('new-post'),
+            // collectionPath must match the modal collection ('content/posts') for
+            // the create flow's collectionPath+slug navigation lookup to find it.
+            collectionPath: unsafeAsLogicalPath('content/posts'),
             physicalPath: unsafeAsPhysicalPath('/content/posts/new-post'),
           },
         ],
-        pagination: { hasMore: false, limit: 100 },
+        pagination: { hasMore: false, limit: 200 },
       },
     })
 
@@ -400,6 +405,8 @@ describe('useEntryManager', () => {
       }),
     )
     expect(result.current.createModalOpen).toBe(false)
+    // The create flow navigates to the newly created entry
+    expect(result.current.selectedPath).toBe('new-post')
   })
 
   it('closes modal without creating entry', async () => {
@@ -716,6 +723,54 @@ describe('useEntryManager', () => {
       expect(result.current.entries).toHaveLength(2)
     })
     expect(result.current.entries.map((e) => e.path)).toEqual(['entry1', 'entry2'])
+  })
+
+  it('a superseded refresh does not overwrite newer entries state', async () => {
+    const itemForSlug = (slug: string) => ({
+      ...mockCollectionItem,
+      slug: unsafeAsSlug(slug),
+      logicalPath: unsafeAsLogicalPath(slug),
+    })
+    const page = (slug: string) => ({
+      ok: true as const,
+      status: 200,
+      data: { entries: [itemForSlug(slug)], pagination: { hasMore: false, limit: 200 } },
+    })
+
+    // Each entries.list call parks on a deferred we resolve by hand, so we can
+    // settle the two refreshes out of the order they were started.
+    type ListResult = Awaited<ReturnType<typeof mockClient.entries.list>>
+    const resolvers: Array<(v: ListResult) => void> = []
+    mockClient.entries.list.mockImplementation(
+      () => new Promise<ListResult>((resolve) => resolvers.push(resolve)),
+    )
+
+    // Empty branch suppresses the mount-effect refresh, isolating the two manual ones.
+    const { result } = renderHook(() => useEntryManager({ ...defaultOptions, branchName: '' }), {
+      wrapper,
+    })
+
+    let firstRefresh: Promise<unknown> = Promise.resolve()
+    let secondRefresh: Promise<unknown> = Promise.resolve()
+    await act(async () => {
+      firstRefresh = result.current.refreshEntries('main') // seq 1
+      secondRefresh = result.current.refreshEntries('main') // seq 2 (the winner)
+      await waitFor(() => expect(resolvers).toHaveLength(2))
+    })
+
+    // Settle the SECOND (newest) refresh first — it should commit.
+    await act(async () => {
+      resolvers[1](page('newest'))
+      await secondRefresh
+    })
+    expect(result.current.entries.map((e) => e.path)).toEqual(['newest'])
+
+    // Now settle the FIRST (stale) refresh — its commit must be skipped.
+    await act(async () => {
+      resolvers[0](page('stale'))
+      await firstRefresh
+    })
+    expect(result.current.entries.map((e) => e.path)).toEqual(['newest'])
   })
 })
 

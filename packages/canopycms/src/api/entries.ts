@@ -10,12 +10,17 @@ import { isNotFoundError } from '../utils/error'
 import { resolveEntryTitle } from '../utils/title-field'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema, queryBooleanSchema } from './validators'
+import { MAX_ENTRIES_PER_PAGE, DEFAULT_ENTRIES_LIMIT } from './entries-constants'
 import { SchemaOps } from '../schema/schema-store'
 import {
   listCollectionEntries as listCollectionEntriesShared,
   sortByOrder,
   type CollectionListItem,
 } from '../content-listing'
+
+// Re-export pagination constants from the dependency-free module so they remain
+// part of the entries API surface without pulling server deps into client bundles.
+export { MAX_ENTRIES_PER_PAGE, DEFAULT_ENTRIES_LIMIT } from './entries-constants'
 
 /**
  * Summary of an entry type for client display.
@@ -207,8 +212,7 @@ const listEntriesHandler = async (
     targetCollections = [match]
   }
 
-  const maxLimit = 200
-  const limit = Math.min(Math.max(params.limit ?? 50, 1), maxLimit)
+  const limit = Math.min(Math.max(params.limit ?? DEFAULT_ENTRIES_LIMIT, 1), MAX_ENTRIES_PER_PAGE)
   // Offset-based pagination: items may be skipped or duplicated if content changes between pages.
   const offset = Number.isFinite(Number(params.cursor)) ? Number(params.cursor) : 0
   const search = params.q?.toLowerCase()
@@ -285,11 +289,10 @@ export const listEntries = defineEndpoint({
   responseType: 'EntriesResponse',
   response: {} as EntriesResponse,
   defaultMockData: {
-    collections: [],
     entries: [],
     pagination: {
       hasMore: false,
-      limit: 50,
+      limit: DEFAULT_ENTRIES_LIMIT,
     },
   },
   guards: ['schema'] as const,

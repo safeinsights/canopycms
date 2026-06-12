@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
+import { MAX_ENTRIES_PER_PAGE } from '../../api/entries-constants'
 import type { CollectionItem, ListEntriesResponse } from '../../api/entries'
 import type { WriteContentBody } from '../../api/content'
 import type { EditorEntry, EditorCollection } from '../Editor'
@@ -24,8 +25,8 @@ export class SaveApiError extends Error {
   }
 }
 
-/** Page size for entry list requests — matches the server's maxLimit in api/entries.ts. */
-const ENTRIES_PAGE_LIMIT = 200
+/** Page size for entry list requests — the server's per-page cap, imported to avoid drift. */
+const ENTRIES_PAGE_LIMIT = MAX_ENTRIES_PER_PAGE
 /** Safety cap on pagination: 50 pages x 200 = 10,000 entries. */
 const MAX_ENTRY_PAGES = 50
 
