@@ -142,7 +142,7 @@ export async function init(options: InitOptions): Promise<void> {
   // Generate files
   await writeFile(
     path.join(projectDir, 'canopycms.config.ts'),
-    await canopyCmsConfig({ mode }),
+    await canopyCmsConfig({ mode, staticBuild }),
     writeOpts,
   )
   await writeFile(
@@ -165,8 +165,9 @@ export async function init(options: InitOptions): Promise<void> {
   )
   if (ai) {
     await writeFile(path.join(projectDir, appDir, 'ai/config.ts'), await aiConfig(), writeOpts)
+    // Use serverRouteExt: a dynamic route handler in the static export build breaks output:'export'
     await writeFile(
-      path.join(projectDir, appDir, 'ai/[...path]/route.ts'),
+      path.join(projectDir, appDir, `ai/[...path]/${serverRouteExt}`),
       await aiRoute({ configImport: configImportPath(appDir, 2) }),
       writeOpts,
     )
@@ -206,6 +207,14 @@ export async function init(options: InitOptions): Promise<void> {
       '',
       '3. Run: npm run dev',
       '4. Visit: http://localhost:3000/edit',
+      ...(staticBuild
+        ? [
+            '',
+            'Dual-build commands:',
+            '   CANOPY_BUILD=static npm run build   # public static export',
+            '   CANOPY_BUILD=cms npm run build      # CMS server build',
+          ]
+        : []),
     ].join('\n'),
     'Next steps',
   )
