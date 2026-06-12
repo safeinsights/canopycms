@@ -11,7 +11,7 @@ import {
 
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
-import { isNotFoundError } from './utils/error'
+import { getErrorMessage, isNotFoundError } from './utils/error'
 import { detectHeadBranch } from './utils/git'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 
@@ -105,8 +105,12 @@ export class GitManager {
    * This is idempotent - if the remote already exists, it will not be recreated.
    *
    * The remote is seeded with the current state of the baseBranch (e.g., 'main').
-   * If you need to change the baseBranch or reset the simulation, delete
-   * `.canopycms/remote.git` and `.canopycms/branches` and restart.
+   * When the remote already exists but is missing the requested baseBranch
+   * (dev-mode branch auto-detect makes this routine: any git branch created
+   * after the remote was first seeded), that branch is pushed from the source
+   * repo on demand. Branches that already exist in the remote are never
+   * updated here — the CMS pushes editor state into this remote, and a
+   * refresh from the source repo would clobber it.
    *
    * @throws Error if not a git repo, no commits, or baseBranch doesn't exist
    */
@@ -117,26 +121,15 @@ export class GitManager {
     subdirectory?: string
   }): Promise<void> {
     // Serialize access per remote path to prevent race conditions
-    // when multiple requests try to initialize the same remote simultaneously
+    // when multiple requests try to initialize the same remote simultaneously.
+    // After waiting, still proceed: the finished initialization may have seeded
+    // a different baseBranch than the one this caller needs.
     const existingLock = remoteInitLocks.get(options.remotePath)
     if (existingLock) {
       log.debug('git', 'Waiting for existing remote initialization', {
         remotePath: options.remotePath,
       })
       await existingLock
-      // After waiting, verify the remote was created successfully
-      // If not, fall through to try again (the lock was cleaned up)
-      try {
-        const stat = await fs.stat(options.remotePath)
-        if (stat.isDirectory()) {
-          log.debug('git', 'Remote exists after waiting for lock')
-          return
-        }
-      } catch (err: unknown) {
-        if (!isNotFoundError(err)) throw err
-        // Remote doesn't exist, fall through to create it
-        log.debug('git', 'Remote does not exist after lock, will retry initialization')
-      }
     }
 
     // Create new lock promise
@@ -156,16 +149,22 @@ export class GitManager {
         const remoteParent = path.dirname(options.remotePath)
         releaseLock = await acquireProvisioningLock(remoteParent, '.remote-init.lock')
 
-        // Check if already exists (idempotent) — another process may have
-        // finished provisioning while we waited for the lock.
+        // Check if already exists — another process may have finished
+        // provisioning while we waited for the lock.
+        let remoteExists = false
         try {
           const stat = await fs.stat(options.remotePath)
-          if (stat.isDirectory()) {
-            log.debug('git', 'Remote already exists, skipping')
-            return
-          }
+          remoteExists = stat.isDirectory()
         } catch (err: unknown) {
           if (!isNotFoundError(err)) throw err
+        }
+
+        if (
+          remoteExists &&
+          (await GitManager.bareRemoteHasBranch(options.remotePath, options.baseBranch))
+        ) {
+          log.debug('git', 'Remote already has base branch, skipping')
+          return
         }
 
         // Find the actual git root directory
@@ -218,55 +217,32 @@ export class GitManager {
           )
         }
 
-        // Create bare remote (parent dir already ensured above, under the lock)
-        log.debug('git', 'Creating bare remote repository')
-        await simpleGit().raw([
-          'init',
-          '--bare',
-          `--initial-branch=${options.baseBranch}`,
-          options.remotePath,
-        ])
+        if (remoteExists) {
+          // Refresh path: the remote predates this base branch (e.g. it was seeded
+          // months ago and the developer has since created/switched branches).
+          // Push just the missing branch; existing branches are never touched.
+          log.debug('git', 'Existing remote is missing base branch — pushing it from source', {
+            remotePath: options.remotePath,
+            baseBranch: options.baseBranch,
+          })
+        } else {
+          // Create bare remote (parent dir already ensured above, under the lock)
+          log.debug('git', 'Creating bare remote repository')
+          await simpleGit().raw([
+            'init',
+            '--bare',
+            `--initial-branch=${options.baseBranch}`,
+            options.remotePath,
+          ])
+        }
 
         // Push baseBranch to remote (not current HEAD)
-        const tempRemoteName = `__canopycms_init_${Date.now()}__`
-        try {
-          await sourceGit.addRemote(tempRemoteName, options.remotePath)
-
-          if (options.subdirectory) {
-            // For subdirectory pushes, use git subtree split
-            // This creates a synthetic history with only the subdirectory content
-            const splitBranch = `__canopycms_split_${Date.now()}__`
-            try {
-              await sourceGit.raw([
-                'subtree',
-                'split',
-                '--prefix',
-                options.subdirectory,
-                '-b',
-                splitBranch,
-              ])
-              await sourceGit.push(tempRemoteName, `${splitBranch}:${options.baseBranch}`)
-              await sourceGit.raw(['branch', '-D', splitBranch])
-            } catch (err) {
-              // Clean up split branch if it exists
-              try {
-                await sourceGit.raw(['branch', '-D', splitBranch])
-              } catch {
-                // ignore
-              }
-              throw err
-            }
-          } else {
-            // Normal push of entire repo
-            await sourceGit.push(tempRemoteName, `${options.baseBranch}:${options.baseBranch}`)
-          }
-        } finally {
-          try {
-            await sourceGit.removeRemote(tempRemoteName)
-          } catch {
-            // ignore cleanup errors
-          }
-        }
+        await GitManager.pushBranchToLocalRemote({
+          sourceGit,
+          remotePath: options.remotePath,
+          baseBranch: options.baseBranch,
+          subdirectory: options.subdirectory,
+        })
 
         log.debug('git', 'Remote initialization complete')
       } finally {
@@ -287,6 +263,85 @@ export class GitManager {
 
     // Wait for initialization to complete
     await lockPromise
+  }
+
+  /**
+   * Whether a bare repository already has a local branch of the given name.
+   *
+   * Runs git with an explicit `--git-dir` instead of a cwd inside the repo:
+   * environments with `safe.bareRepository=explicit` (sandboxed/CI git setups)
+   * refuse cwd-based discovery of bare repos but expressly allow `--git-dir`.
+   * `branch --list` exits 0 whether or not the branch exists (no
+   * exception-based control flow — also why `rev-parse --verify --quiet`
+   * can't be used: simple-git only fails a task on stderr output, and --quiet
+   * suppresses exactly that). A failure here therefore means the remote
+   * itself is unreadable and is surfaced, NOT treated as "branch absent" —
+   * that would route to the push path against a repo we couldn't even read.
+   */
+  private static async bareRemoteHasBranch(remotePath: string, branch: string): Promise<boolean> {
+    let output: string
+    try {
+      output = await simpleGit().raw(['--git-dir', remotePath, 'branch', '--list', branch])
+    } catch (err) {
+      throw new Error(`Cannot inspect simulated remote at ${remotePath}: ${getErrorMessage(err)}`)
+    }
+    return output
+      .split('\n')
+      .map((line) => line.replace(/^[*+]\s*/, '').trim())
+      .includes(branch)
+  }
+
+  /**
+   * Push baseBranch from the source repo into the local bare remote via a
+   * temporary remote. With `subdirectory`, pushes a `git subtree split` of that
+   * prefix instead (synthetic history containing only the subdirectory).
+   */
+  private static async pushBranchToLocalRemote(options: {
+    sourceGit: SimpleGit
+    remotePath: string
+    baseBranch: string
+    subdirectory?: string
+  }): Promise<void> {
+    const { sourceGit } = options
+    const tempRemoteName = `__canopycms_init_${Date.now()}__`
+    try {
+      await sourceGit.addRemote(tempRemoteName, options.remotePath)
+
+      if (options.subdirectory) {
+        // For subdirectory pushes, use git subtree split
+        // This creates a synthetic history with only the subdirectory content
+        const splitBranch = `__canopycms_split_${Date.now()}__`
+        try {
+          await sourceGit.raw([
+            'subtree',
+            'split',
+            '--prefix',
+            options.subdirectory,
+            '-b',
+            splitBranch,
+          ])
+          await sourceGit.push(tempRemoteName, `${splitBranch}:${options.baseBranch}`)
+          await sourceGit.raw(['branch', '-D', splitBranch])
+        } catch (err) {
+          // Clean up split branch if it exists
+          try {
+            await sourceGit.raw(['branch', '-D', splitBranch])
+          } catch {
+            // ignore
+          }
+          throw err
+        }
+      } else {
+        // Normal push of entire repo
+        await sourceGit.push(tempRemoteName, `${options.baseBranch}:${options.baseBranch}`)
+      }
+    } finally {
+      try {
+        await sourceGit.removeRemote(tempRemoteName)
+      } catch {
+        // ignore cleanup errors
+      }
+    }
   }
 
   /**
@@ -454,7 +509,16 @@ export class GitManager {
       }
 
       // Clone repository (automatically configures 'origin' remote)
-      await GitManager.cloneRepo(remoteUrl, options.workspacePath, baseBranch)
+      try {
+        await GitManager.cloneRepo(remoteUrl, options.workspacePath, baseBranch)
+      } catch (err) {
+        // The raw git error ("Cloning into <workspace>… branch <base> not found")
+        // mixes the workspace name and the base branch — spell both out.
+        throw new Error(
+          `Failed to clone branch workspace at ${options.workspacePath} ` +
+            `from ${remoteUrl} (base branch '${baseBranch}'): ${getErrorMessage(err)}`,
+        )
+      }
       justCloned = true
 
       // Mark as managed immediately after clone so ensureRemote guard works.

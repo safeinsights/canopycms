@@ -142,6 +142,11 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 - `reportError(message, fieldPath)` surfaces an alert over the preview pane (done)
 - Follow-up: when `fieldPath` is present, also outline/highlight the matching form field (reuse the click-to-focus mechanics)
 
+### 18. Converge workspace origin URL when opening existing workspaces
+
+- `ensureRemote` only runs on workspace creation; a workspace with a legacy/wrong origin (e.g. pre-prod-sim-rename artifact pointing at real GitHub, observed by docs-site-proto) keeps it forever
+- Consider re-running remote configuration on workspace open (cost: extra git calls per request) or a one-time startup sweep over `content-branches/*`
+
 ## Completed
 
 - **Deployment Infrastructure** ✅

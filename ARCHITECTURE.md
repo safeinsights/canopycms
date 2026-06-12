@@ -971,7 +971,7 @@ This architecture eliminates NAT Gateway ($32/month) and keeps all secrets on th
 
 Both `prod` and `dev` modes use a local bare git repository as the "remote" for all branch workspace operations. Branch workspaces clone from and push to this bare repo using `file://` URLs.
 
-- **dev**: Auto-created at `.canopy-dev/remote.git` from the local checkout
+- **dev**: Auto-created at `.canopy-dev/remote.git` from the local checkout. Branch auto-detect means workspaces are routinely cloned from base branches that postdate the remote's creation, so a base branch missing from the existing remote is pushed from the source repo on demand. Branches already present in the remote are never updated this way — the CMS pushes editor state into the remote, and a refresh from the source repo would clobber it.
 - **prod**: Created by the EC2 worker at `{workspaceRoot}/remote.git`, synced with GitHub
 
 CanopyCMS auto-detects `remote.git` at the workspace root (via `autoDetectRemotePath` in the operating mode strategy). No explicit `CANOPYCMS_REMOTE_URL` env var needed if `remote.git` exists.
