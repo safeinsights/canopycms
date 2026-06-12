@@ -187,6 +187,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       }
       const list = result.data?.branches ?? []
       setBranches(list)
+      // A previous failure may have left the sticky error toast up; clear it
+      // now that loading succeeded (provisioning failures are often transient).
+      notifications.hide('canopy-branches-load-failed')
       // No branch pinned via URL or client config — adopt the server's
       // effective default (the detected active branch in dev mode).
       if (!branchName && result.data?.defaultBranch) {

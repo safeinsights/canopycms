@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { getErrorMessage, isNodeError, isNotFoundError, isPermissionError } from './error'
+import {
+  getErrorMessage,
+  isNodeError,
+  isNotFoundError,
+  isPermissionError,
+  sanitizeErrorMessage,
+} from './error'
 
 describe('error utilities', () => {
   describe('getErrorMessage', () => {
@@ -87,6 +93,43 @@ describe('error utilities', () => {
 
     it('returns false for errors without code', () => {
       expect(isPermissionError(new Error('Permission denied'))).toBe(false)
+    })
+  })
+
+  describe('sanitizeErrorMessage', () => {
+    it('redacts credentials embedded in URLs', () => {
+      const msg = 'failed to fetch https://x-access-token:ghp_abc123@github.com/org/repo.git'
+      expect(sanitizeErrorMessage(msg)).toBe('failed to fetch https://***@github.com/org/repo.git')
+    })
+
+    it('redacts userless token credentials in URLs', () => {
+      const msg = 'push to https://ghp_abc123@github.com/org/repo.git failed'
+      expect(sanitizeErrorMessage(msg)).toBe('push to https://***@github.com/org/repo.git failed')
+    })
+
+    it('keeps credential-free URLs intact', () => {
+      const msg = 'cloning https://github.com/org/repo.git'
+      expect(sanitizeErrorMessage(msg)).toBe(msg)
+    })
+
+    it('relativizes paths under the current working directory', () => {
+      const msg = `cannot lock ${process.cwd()}/.canopy-dev/remote.git`
+      expect(sanitizeErrorMessage(msg)).toBe('cannot lock .canopy-dev/remote.git')
+    })
+
+    it('redacts absolute paths outside the working directory', () => {
+      const msg = "destination path '/mnt/efs/workspace/main' already exists"
+      expect(sanitizeErrorMessage(msg)).toBe("destination path '<path>' already exists")
+    })
+
+    it('redacts Windows drive paths', () => {
+      const msg = 'cannot open C:\\Users\\bob\\repo\\file.txt here'
+      expect(sanitizeErrorMessage(msg)).toBe('cannot open <path> here')
+    })
+
+    it('leaves branch names with slashes alone', () => {
+      const msg = "base branch 'fix/unify-base-branch-resolution' does not exist locally"
+      expect(sanitizeErrorMessage(msg)).toBe(msg)
     })
   })
 })
