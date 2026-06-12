@@ -183,6 +183,11 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
       if (!result.ok) throw new Error(`Failed to load branches: ${result.status}`)
       const list = result.data?.branches ?? []
       setBranches(list)
+      // No branch pinned via URL or client config — adopt the server's
+      // effective default (the detected active branch in dev mode).
+      if (!branchName && result.data?.defaultBranch) {
+        setBranchName(result.data.defaultBranch)
+      }
     } catch (err) {
       console.error(err)
       notifications.show({ message: 'Failed to load branches', color: 'red' })

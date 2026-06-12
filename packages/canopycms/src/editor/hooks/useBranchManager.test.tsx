@@ -120,6 +120,40 @@ describe('useBranchManager', () => {
     expect(mockSetBusy).toHaveBeenCalledWith(false)
   })
 
+  it('adopts the server default branch when no branch is pinned', async () => {
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches, defaultBranch: 'feature-x' },
+    })
+
+    const { result } = renderHook(
+      () => useBranchManager({ ...defaultOptions, initialBranch: '' }),
+      { wrapper },
+    )
+
+    await waitFor(() => {
+      expect(result.current.branchName).toBe('feature-x')
+    })
+  })
+
+  it('keeps a pinned branch even when the server reports a different default', async () => {
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches, defaultBranch: 'feature-x' },
+    })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.branches).toEqual(mockBranches)
+    })
+    expect(result.current.branchName).toBe('main')
+  })
+
   it('handles branch load returning 404 gracefully', async () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: false,

@@ -180,9 +180,28 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     // Authenticate and convert to CanopyUser
     const authResult = await options.authPlugin.authenticate(req)
 
-    // Load internal groups from main branch and merge with user groups
+    // Load internal groups from the base branch and merge with user groups.
+    // This getBranchContext call also auto-creates the base/active workspace
+    // on first request — if that provisioning fails, every endpoint would
+    // otherwise return confusing empty results, so fail loudly instead.
     const baseBranch = apiCtx.services.config.defaultBaseBranch ?? 'main'
-    const mainBranchContext = await apiCtx.getBranchContext(baseBranch)
+    let mainBranchContext: BranchContext | null
+    try {
+      mainBranchContext = await apiCtx.getBranchContext(baseBranch)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error(
+        `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${message}`,
+      )
+      return jsonResponse(
+        {
+          ok: false,
+          status: 503,
+          error: `Branch workspace provisioning failed for '${baseBranch}': ${message}`,
+        },
+        503,
+      )
+    }
     const operatingMode = apiCtx.services.config.mode
     const internalGroups = mainBranchContext
       ? await loadInternalGroups(

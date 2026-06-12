@@ -167,8 +167,8 @@ export class GitManager {
           return
         }
 
-        // Find the actual git root directory
-        // git subtree requires being run from the toplevel of the working tree
+        // Find the actual git root directory — the subdirectory snapshot path
+        // (`<branch>:<subdirectory>`) is relative to the repository toplevel
         let gitRoot = options.sourcePath
         try {
           const sourceGit = simpleGit({ baseDir: options.sourcePath })
@@ -293,8 +293,12 @@ export class GitManager {
 
   /**
    * Push baseBranch from the source repo into the local bare remote via a
-   * temporary remote. With `subdirectory`, pushes a `git subtree split` of that
-   * prefix instead (synthetic history containing only the subdirectory).
+   * temporary remote. With `subdirectory`, pushes a single snapshot commit of
+   * that subdirectory's tree at baseBranch instead of the full history:
+   * `git subtree split` forks subprocesses per commit (minutes on large
+   * repos), and the simulated remote never needs history — branches already
+   * present are never updated, and editor state is committed on top of the
+   * seed.
    */
   private static async pushBranchToLocalRemote(options: {
     sourceGit: SimpleGit
@@ -308,29 +312,24 @@ export class GitManager {
       await sourceGit.addRemote(tempRemoteName, options.remotePath)
 
       if (options.subdirectory) {
-        // For subdirectory pushes, use git subtree split
-        // This creates a synthetic history with only the subdirectory content
-        const splitBranch = `__canopycms_split_${Date.now()}__`
-        try {
+        // Snapshot the subdirectory tree at baseBranch (not HEAD) and push it
+        // as a single root commit.
+        const tree = (
+          await sourceGit.raw(['rev-parse', `${options.baseBranch}:${options.subdirectory}`])
+        ).trim()
+        const commit = (
           await sourceGit.raw([
-            'subtree',
-            'split',
-            '--prefix',
-            options.subdirectory,
-            '-b',
-            splitBranch,
+            '-c',
+            'user.name=CanopyCMS',
+            '-c',
+            'user.email=canopycms@localhost',
+            'commit-tree',
+            tree,
+            '-m',
+            `CanopyCMS dev base snapshot of ${options.baseBranch}:${options.subdirectory}`,
           ])
-          await sourceGit.push(tempRemoteName, `${splitBranch}:${options.baseBranch}`)
-          await sourceGit.raw(['branch', '-D', splitBranch])
-        } catch (err) {
-          // Clean up split branch if it exists
-          try {
-            await sourceGit.raw(['branch', '-D', splitBranch])
-          } catch {
-            // ignore
-          }
-          throw err
-        }
+        ).trim()
+        await sourceGit.push(tempRemoteName, `${commit}:refs/heads/${options.baseBranch}`)
       } else {
         // Normal push of entire repo
         await sourceGit.push(tempRemoteName, `${options.baseBranch}:${options.baseBranch}`)

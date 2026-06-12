@@ -82,7 +82,7 @@ The codebase uses a modular structure with clear separation:
 
 | Endpoint                          | Handler               | Purpose                                                                                                                                                                                                                                           |
 | --------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| /api/canopycms/branches           | branch.ts             | Create/list branches                                                                                                                                                                                                                              |
+| /api/canopycms/branches           | branch.ts             | Create/list branches; `BranchListResponse` includes optional `defaultBranch` — the server's effective default branch (detected active branch in dev), read per-request in `listBranchesHandler`                                                   |
 | /api/canopycms/branch-status      | branch-status.ts      | Get status, submit PR                                                                                                                                                                                                                             |
 | /api/canopycms/branch-withdraw    | branch-withdraw.ts    | Withdraw PR                                                                                                                                                                                                                                       |
 | /api/canopycms/branch-review      | branch-review.ts      | Request changes                                                                                                                                                                                                                                   |
@@ -641,20 +641,20 @@ const { schema, sources } = await resolveSchema(contentRoot, entrySchemaRegistry
 
 **Location**: packages/canopycms/src/editor/hooks/
 
-| Hook                   | Purpose                                                                                                  |
-| ---------------------- | -------------------------------------------------------------------------------------------------------- |
-| useBranchManager       | Branch switching and creation                                                                            |
-| useBranchActions       | Branch workflow actions (submit, withdraw, merge)                                                        |
-| useEntryManager        | Entry loading and saving                                                                                 |
-| useDraftManager        | Draft state persistence (localStorage)                                                                   |
-| useCommentSystem       | Comment CRUD operations                                                                                  |
-| useGroupManager        | Group management operations                                                                              |
-| usePermissionManager   | Permission management operations                                                                         |
-| useEditorLayout        | Editor panel layout state                                                                                |
-| useUserContext         | Current user context                                                                                     |
-| useUserMetadata        | User metadata fetching                                                                                   |
-| useReferenceResolution | Resolve reference IDs to display values                                                                  |
-| useEntryLinkResolution | Resolve `entry:ID` patterns in preview data before PreviewFrame; client-side URL map from editor entries |
+| Hook                   | Purpose                                                                                                               |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| useBranchManager       | Branch switching and creation; `loadBranches()` adopts `defaultBranch` from the branches API when no branch is pinned |
+| useBranchActions       | Branch workflow actions (submit, withdraw, merge)                                                                     |
+| useEntryManager        | Entry loading and saving                                                                                              |
+| useDraftManager        | Draft state persistence (localStorage)                                                                                |
+| useCommentSystem       | Comment CRUD operations                                                                                               |
+| useGroupManager        | Group management operations                                                                                           |
+| usePermissionManager   | Permission management operations                                                                                      |
+| useEditorLayout        | Editor panel layout state                                                                                             |
+| useUserContext         | Current user context                                                                                                  |
+| useUserMetadata        | User metadata fetching                                                                                                |
+| useReferenceResolution | Resolve reference IDs to display values                                                                               |
+| useEntryLinkResolution | Resolve `entry:ID` patterns in preview data before PreviewFrame; client-side URL map from editor entries              |
 
 ### Conflict Notice
 
@@ -693,6 +693,7 @@ Conflict indicators appear at two levels:
 - "use client" required for browser components
 - Export client components via canopycms/client
 - Draft state persists in localStorage per branch/entry
+- Branch selection: `CanopyEditorPage`/`CanopyEditor` have no 'main' fallback — with no pinned branch (URL/config) the editor starts branchless and adopts the server's `defaultBranch` from the branches API (`useBranchManager.loadBranches()`); explicit URL/config pins are never overridden
 
 **Fields**: packages/canopycms/src/editor/fields/
 
@@ -741,16 +742,16 @@ All site-side hooks accept optional `{ editorOrigin }`. **Security model**: site
 
 ### Key Files
 
-| File                     | Purpose                                                                                                                                                                                                                                                     |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| git-manager.ts           | Wrapper around simple-git; static `initializeWorkspace()` resolves the fork point via `resolveBaseBranch` (utils/git.ts)                                                                                                                                    |
-| branch-registry.ts       | Branch tracking (BranchRegistry class, cache-based listing)                                                                                                                                                                                                 |
-| branch-workspace.ts      | Workspace management (BranchWorkspaceManager class); `openOrCreateBranch` resolves the fork point via `resolveBaseBranch` (utils/git.ts) and records it as `baseBranch` in branch metadata; `ensureGitWorkspace` (private) requires a `baseBranch` argument |
-| branch-metadata.ts       | Branch metadata with concurrency safety (in-memory per-path locking, atomic writes, optimistic locking with version/writeId, retry-on-conflict); `save()` treats `baseBranch` as immutable after creation (existing value always wins)                      |
-| branch-schema-cache.ts   | Per-branch schema caching with invalidation (always file-based; stale-marker pattern)                                                                                                                                                                       |
-| settings-workspace.ts    | Settings branch workspace management                                                                                                                                                                                                                        |
-| settings-branch-utils.ts | Settings branch utility helpers                                                                                                                                                                                                                             |
-| github-service.ts        | GitHub API integration (PR creation, etc.)                                                                                                                                                                                                                  |
+| File                     | Purpose                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| git-manager.ts           | Wrapper around simple-git; static `initializeWorkspace()` resolves the fork point via `resolveBaseBranch` (utils/git.ts); dev simulated-remote seeding (private `pushBranchToLocalRemote`) with `subdirectory` pushes a single `git commit-tree` snapshot of `<baseBranch>:<subdirectory>` (replaced `git subtree split`, which was O(history) and split HEAD instead of baseBranch) |
+| branch-registry.ts       | Branch tracking (BranchRegistry class, cache-based listing)                                                                                                                                                                                                                                                                                                                          |
+| branch-workspace.ts      | Workspace management (BranchWorkspaceManager class); `openOrCreateBranch` resolves the fork point via `resolveBaseBranch` (utils/git.ts) and records it as `baseBranch` in branch metadata; `ensureGitWorkspace` (private) requires a `baseBranch` argument                                                                                                                          |
+| branch-metadata.ts       | Branch metadata with concurrency safety (in-memory per-path locking, atomic writes, optimistic locking with version/writeId, retry-on-conflict); `save()` treats `baseBranch` as immutable after creation (existing value always wins)                                                                                                                                               |
+| branch-schema-cache.ts   | Per-branch schema caching with invalidation (always file-based; stale-marker pattern)                                                                                                                                                                                                                                                                                                |
+| settings-workspace.ts    | Settings branch workspace management                                                                                                                                                                                                                                                                                                                                                 |
+| settings-branch-utils.ts | Settings branch utility helpers                                                                                                                                                                                                                                                                                                                                                      |
+| github-service.ts        | GitHub API integration (PR creation, etc.)                                                                                                                                                                                                                                                                                                                                           |
 
 ### Key Types
 
@@ -1067,11 +1068,11 @@ Lightweight, read-only AI content serving. Does not require auth or the editor A
 
 **Location**: packages/canopycms/src/http/
 
-| File       | Purpose                             |
-| ---------- | ----------------------------------- |
-| types.ts   | CanopyRequest, CanopyResponse types |
-| router.ts  | Route matching and dispatch         |
-| handler.ts | Request handler factory             |
+| File       | Purpose                                                                                                                                                                                  |
+| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| types.ts   | CanopyRequest, CanopyResponse types                                                                                                                                                      |
+| router.ts  | Route matching and dispatch                                                                                                                                                              |
+| handler.ts | Request handler factory; first-request base-branch workspace provisioning failure returns 503 with the provisioning error message (plus console.error) instead of an unhandled rejection |
 
 ## Test Utilities
 
@@ -1120,6 +1121,8 @@ apps/example1/
   middleware.ts                             # Auth protection
   next.config.mjs                          # Next.js config (withCanopy)
 ```
+
+**Dev scripts**: `pnpm reset-sim` removes `.canopy-dev/` (local dev workspaces + simulated remote).
 
 ## Test Organization
 

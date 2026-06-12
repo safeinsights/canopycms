@@ -144,6 +144,33 @@ describe('createCanopyRequestHandler', () => {
     expect(response.body).toHaveProperty('error', 'Not found')
   })
 
+  it('returns 503 with context when base-branch workspace provisioning fails', async () => {
+    const services: any = createMockServices()
+    const authPlugin = createMockAuthPlugin()
+
+    const handler = createCanopyRequestHandler({
+      services,
+      authPlugin,
+      getBranchContext: async () => {
+        throw new Error('clone failed: remote branch not found')
+      },
+    })
+
+    const req = createMockRequest({
+      method: 'GET',
+      url: 'http://localhost:3000/api/canopycms/branches',
+    })
+
+    const response = await handler(req, ['branches'])
+
+    expect(response.status).toBe(503)
+    expect(response.body).toHaveProperty('ok', false)
+    expect((response.body as { error?: string }).error).toContain('provisioning failed')
+    expect((response.body as { error?: string }).error).toContain(
+      'clone failed: remote branch not found',
+    )
+  })
+
   it('returns 401 for unauthenticated requests', async () => {
     const services: any = createMockServices()
     const authPlugin = createRejectingAuthPlugin('No token')

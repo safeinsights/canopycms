@@ -353,6 +353,23 @@ describe('branch api', () => {
     expect(res.ok).toBe(true)
     expect(res.data?.branches).toHaveLength(0)
   })
+
+  it('reports the effective default branch for all users', async () => {
+    const expected =
+      baseCtx.services.config.defaultActiveBranch ??
+      baseCtx.services.config.defaultBaseBranch ??
+      'main'
+
+    const admin = await listBranches(baseCtx, {
+      user: { type: 'authenticated', userId: 'admin', groups: [RESERVED_GROUPS.ADMINS] },
+    })
+    expect(admin.data?.defaultBranch).toBe(expected)
+
+    const nobody = await listBranches(baseCtx, {
+      user: { type: 'authenticated', userId: 'nobody', groups: [] },
+    })
+    expect(nobody.data?.defaultBranch).toBe(expected)
+  })
 })
 
 describe('canDeleteBranch', () => {

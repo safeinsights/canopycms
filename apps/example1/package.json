@@ -11,7 +11,7 @@
     "lint": "eslint app/",
     "typecheck": "tsc --noEmit",
     "test": "echo \"No tests for example app yet\"",
-    "reset-sim": "rm -rf .canopycms"
+    "reset-sim": "rm -rf .canopy-dev"
   },
   "dependencies": {
     "@clerk/backend": "^2.33.3",
