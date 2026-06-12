@@ -157,3 +157,12 @@ export const permissionPathSchema = z
     }
     return result.path
   }) as unknown as z.ZodType<PermissionPath>
+
+/**
+ * Zod schema for boolean GET query params. HTTP query strings always arrive as
+ * strings, so this accepts 'true'/'false' alongside real booleans (programmatic
+ * validate() calls). NOT z.coerce.boolean(), which coerces 'false' to true.
+ */
+export const queryBooleanSchema = z
+  .union([z.boolean(), z.enum(['true', 'false'])])
+  .transform((v) => v === true || v === 'true')

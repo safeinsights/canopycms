@@ -1350,3 +1350,61 @@ describe('deleteEntry', () => {
     expect(res.error).toContain('Invalid entry path format')
   })
 })
+
+describe('listEntries.validate (HTTP query params)', () => {
+  // Query-string values reach validate() as strings (http/handler.ts parseQueryParams),
+  // unlike the typed params the handler tests above pass directly.
+  it('coerces limit strings to numbers', () => {
+    const result = listEntries.validate({ params: { branch: 'main', limit: '200' } })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect((result.params as { limit?: number }).limit).toBe(200)
+    }
+  })
+
+  it('rejects non-numeric and non-positive limits', () => {
+    expect(listEntries.validate({ params: { branch: 'main', limit: 'abc' } }).ok).toBe(false)
+    expect(listEntries.validate({ params: { branch: 'main', limit: '0' } }).ok).toBe(false)
+    expect(listEntries.validate({ params: { branch: 'main', limit: '2.5' } }).ok).toBe(false)
+  })
+
+  it('coerces recursive strings to booleans', () => {
+    const trueResult = listEntries.validate({ params: { branch: 'main', recursive: 'true' } })
+    expect(trueResult.ok).toBe(true)
+    if (trueResult.ok) {
+      expect((trueResult.params as { recursive?: boolean }).recursive).toBe(true)
+    }
+
+    const falseResult = listEntries.validate({ params: { branch: 'main', recursive: 'false' } })
+    expect(falseResult.ok).toBe(true)
+    if (falseResult.ok) {
+      expect((falseResult.params as { recursive?: boolean }).recursive).toBe(false)
+    }
+  })
+
+  it('rejects recursive values other than true/false', () => {
+    expect(listEntries.validate({ params: { branch: 'main', recursive: '1' } }).ok).toBe(false)
+  })
+
+  it('leaves absent optional params undefined', () => {
+    const result = listEntries.validate({ params: { branch: 'main' } })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const params = result.params as { limit?: number; recursive?: boolean }
+      expect(params.limit).toBeUndefined()
+      expect(params.recursive).toBeUndefined()
+    }
+  })
+
+  it('still accepts native typed params (programmatic validate)', () => {
+    const result = listEntries.validate({
+      params: { branch: 'main', limit: 50, recursive: true } as unknown as Record<string, string>,
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const params = result.params as { limit?: number; recursive?: boolean }
+      expect(params.limit).toBe(50)
+      expect(params.recursive).toBe(true)
+    }
+  })
+})

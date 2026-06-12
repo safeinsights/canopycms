@@ -6,6 +6,7 @@ import {
   contentIdSchema,
   slugSchema,
   permissionPathSchema,
+  queryBooleanSchema,
 } from './validators'
 
 describe('API validators', () => {
@@ -255,6 +256,25 @@ describe('API validators', () => {
           expect(error.errors.length).toBeGreaterThanOrEqual(1)
         }
       }
+    })
+  })
+
+  describe('queryBooleanSchema', () => {
+    it('passes through real booleans', () => {
+      expect(queryBooleanSchema.parse(true)).toBe(true)
+      expect(queryBooleanSchema.parse(false)).toBe(false)
+    })
+
+    it('coerces query-string values', () => {
+      expect(queryBooleanSchema.parse('true')).toBe(true)
+      // The case z.coerce.boolean() gets wrong: any non-empty string -> true
+      expect(queryBooleanSchema.parse('false')).toBe(false)
+    })
+
+    it('rejects other strings', () => {
+      expect(() => queryBooleanSchema.parse('1')).toThrow()
+      expect(() => queryBooleanSchema.parse('yes')).toThrow()
+      expect(() => queryBooleanSchema.parse('')).toThrow()
     })
   })
 })

@@ -62,7 +62,13 @@ export interface WireCollectionConfig {
   readonly order?: readonly string[]
 }
 
-/** Flat schema item in wire format */
+/**
+ * Flat schema item in wire format.
+ *
+ * Collection items intentionally carry NO nested `collections` subtree: child
+ * collections appear as their own flat items, linked via `parentPath`.
+ * Embedding subtrees would re-serialize every collection once per ancestor.
+ */
 export type WireFlatSchemaItem =
   | {
       type: 'collection'
@@ -72,7 +78,6 @@ export type WireFlatSchemaItem =
       contentId?: ContentId
       parentPath?: LogicalPath
       entries?: readonly WireEntryType[]
-      collections?: readonly WireCollectionConfig[]
       order?: readonly string[]
     }
   | {
@@ -175,9 +180,6 @@ function toWireFlatSchema(items: FlatSchemaItem[], registry: Registry): WireFlat
         ...(item.parentPath !== undefined && { parentPath: item.parentPath }),
         ...(item.entries && {
           entries: item.entries.map((et) => toWireEntryType(et, registry)),
-        }),
-        ...(item.collections && {
-          collections: item.collections.map((c) => toWireCollection(c, registry)),
         }),
         ...(item.order && { order: item.order }),
       }

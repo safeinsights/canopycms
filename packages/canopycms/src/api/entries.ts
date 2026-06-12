@@ -9,7 +9,7 @@ import { normalizeFilesystemPath, parseSlug, parseLogicalPath } from '../paths'
 import { isNotFoundError } from '../utils/error'
 import { resolveEntryTitle } from '../utils/title-field'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from '../paths/types'
-import { branchNameSchema, logicalPathSchema } from './validators'
+import { branchNameSchema, logicalPathSchema, queryBooleanSchema } from './validators'
 import { SchemaOps } from '../schema/schema-store'
 import {
   listCollectionEntries as listCollectionEntriesShared,
@@ -72,10 +72,11 @@ export type EntriesResponse = ApiResponse<ListEntriesResponse>
 const listEntriesParamsSchema = z.object({
   branch: branchNameSchema,
   collection: logicalPathSchema.optional(),
-  limit: z.number().optional(),
+  // GET query params arrive as strings — coerce instead of rejecting them
+  limit: z.coerce.number().int().min(1).optional(),
   cursor: z.string().optional(),
   q: z.string().optional(),
-  recursive: z.boolean().optional(),
+  recursive: queryBooleanSchema.optional(),
 })
 
 /** Extract a display title from entry data using the centralized fallback chain. */

@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useEntryManager } from './useEntryManager'
+import { useEntryManager, listAllEntries } from './useEntryManager'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { MockApiClient } from '../../api/__test__/mock-client'
 import {
@@ -285,7 +285,7 @@ describe('useEntryManager', () => {
       expect(result.current.entries).toHaveLength(2)
     })
 
-    expect(mockClient.entries.list).toHaveBeenCalledWith({ branch: 'main' })
+    expect(mockClient.entries.list).toHaveBeenCalledWith({ branch: 'main', limit: '200' })
   })
 
   it('refreshEntries returns the refreshed entries list', async () => {
@@ -681,5 +681,114 @@ describe('useEntryManager', () => {
       expect.objectContaining({ branch: 'feature-branch' }),
       expect.not.objectContaining({ expectedVersion: expect.anything() }),
     )
+  })
+
+  it('refreshEntries merges all pages into entries state', async () => {
+    const page2Item = {
+      ...mockCollectionItem,
+      slug: unsafeAsSlug('test2'),
+      logicalPath: unsafeAsLogicalPath('entry2'),
+    }
+    // Mount effect + manual refresh both paginate; serve two pages per refresh
+    mockClient.entries.list.mockImplementation((params: Record<string, string>) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        data:
+          params.cursor === '200'
+            ? { entries: [page2Item], pagination: { hasMore: false, limit: 200 } }
+            : {
+                entries: [mockCollectionItem],
+                pagination: { cursor: '200', hasMore: true, limit: 200 },
+              },
+      }),
+    )
+
+    const { result } = renderHook(() => useEntryManager(defaultOptions), {
+      wrapper,
+    })
+
+    await act(async () => {
+      await result.current.refreshEntries()
+    })
+
+    await waitFor(() => {
+      expect(result.current.entries).toHaveLength(2)
+    })
+    expect(result.current.entries.map((e) => e.path)).toEqual(['entry1', 'entry2'])
+  })
+})
+
+describe('listAllEntries', () => {
+  const makeItem = (slug: string) => ({
+    logicalPath: unsafeAsLogicalPath(`content/posts/${slug}`),
+    contentId: unsafeAsContentId('abc123XYZ789'),
+    slug: unsafeAsSlug(slug),
+    collectionPath: unsafeAsLogicalPath('posts'),
+    collectionName: 'posts',
+    format: 'mdx' as const,
+    entryType: 'post',
+    physicalPath: unsafeAsPhysicalPath(`/content/posts/${slug}`),
+  })
+
+  const pageResponse = (slugs: string[], nextCursor?: string) => ({
+    ok: true,
+    status: 200,
+    data: {
+      entries: slugs.map(makeItem),
+      pagination: { cursor: nextCursor, hasMore: Boolean(nextCursor), limit: 200 },
+    },
+  })
+
+  it('follows the cursor across pages and accumulates entries', async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(pageResponse(['a', 'b'], '200'))
+      .mockResolvedValueOnce(pageResponse(['c', 'd'], '400'))
+      .mockResolvedValueOnce(pageResponse(['e']))
+    const client = { entries: { list } }
+
+    const result = await listAllEntries(client as Parameters<typeof listAllEntries>[0], 'main')
+
+    expect(result.truncated).toBe(false)
+    expect(result.entries.map((e) => e.slug)).toEqual(['a', 'b', 'c', 'd', 'e'])
+    expect(list).toHaveBeenNthCalledWith(1, { branch: 'main', limit: '200' })
+    expect(list).toHaveBeenNthCalledWith(2, { branch: 'main', limit: '200', cursor: '200' })
+    expect(list).toHaveBeenNthCalledWith(3, { branch: 'main', limit: '200', cursor: '400' })
+  })
+
+  it('dedupes entries repeated across pages by logicalPath', async () => {
+    // Offset cursors can resend an item if content shifts between requests
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(pageResponse(['a', 'b'], '200'))
+      .mockResolvedValueOnce(pageResponse(['b', 'c']))
+    const client = { entries: { list } }
+
+    const result = await listAllEntries(client as Parameters<typeof listAllEntries>[0], 'main')
+
+    expect(result.entries.map((e) => e.slug)).toEqual(['a', 'b', 'c'])
+  })
+
+  it('rejects the whole call when a page fetch fails', async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(pageResponse(['a'], '200'))
+      .mockResolvedValueOnce({ ok: false, status: 500 })
+    const client = { entries: { list } }
+
+    await expect(
+      listAllEntries(client as Parameters<typeof listAllEntries>[0], 'main'),
+    ).rejects.toThrow('Refresh failed: 500')
+  })
+
+  it('stops at the safety cap and reports truncation', async () => {
+    const list = vi.fn().mockResolvedValue(pageResponse(['a'], '200'))
+    const client = { entries: { list } }
+
+    const result = await listAllEntries(client as Parameters<typeof listAllEntries>[0], 'main')
+
+    expect(result.truncated).toBe(true)
+    expect(list).toHaveBeenCalledTimes(50)
   })
 })
