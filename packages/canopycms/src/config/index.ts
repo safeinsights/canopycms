@@ -59,6 +59,10 @@ export type {
   FlatSchemaItem,
   CanopyClientConfig,
   ClientOnlyFields,
+  // Save-time validation hook
+  EntryValidationIssue,
+  ValidateEntryInput,
+  ValidateEntryHook,
 } from './types'
 
 // Re-export type constants

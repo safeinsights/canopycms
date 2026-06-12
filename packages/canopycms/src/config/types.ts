@@ -262,6 +262,34 @@ export interface DevConfig {
   contentSync?: DevContentSyncMode
 }
 
+/** Issue returned by the `validateEntry` hook. `error` rejects the save; `warning` is returned with it. */
+export interface EntryValidationIssue {
+  level: 'error' | 'warning'
+  message: string
+  /** Path of the offending field (e.g. 'body'), when known. */
+  fieldPath?: string
+}
+
+/** Input passed to the `validateEntry` hook on every editor save. */
+export interface ValidateEntryInput {
+  /** Logical entry path including the content root (e.g. 'content/posts/hello-world'). */
+  entryPath: string
+  branch: string
+  format: 'md' | 'mdx' | 'json' | 'yaml'
+  data: Record<string, unknown>
+  /** Markdown body for md/mdx formats. */
+  body?: string
+}
+
+/**
+ * Adopter-defined save-time validation (e.g. "body must compile as MDX" so a bad
+ * draft can't break the site's production build). Runs server-side before the
+ * entry file is written.
+ */
+export type ValidateEntryHook = (
+  input: ValidateEntryInput,
+) => EntryValidationIssue[] | Promise<EntryValidationIssue[]>
+
 /**
  * Validated CanopyConfig - the runtime configuration object.
  */
@@ -289,6 +317,8 @@ export interface CanopyConfig {
   authPlugin?: AuthPlugin
   /** Custom URL resolver for entry links. Overrides the default URL computation. */
   entryLinkUrl?: EntryLinkUrlResolver
+  /** Save-time validation hook. 'error' issues reject the save; 'warning' issues are returned with it. */
+  validateEntry?: ValidateEntryHook
   /** Dev-mode-only behavior (content-sync divergence detection). Ignored when mode !== 'dev'. */
   dev?: DevConfig
 }
@@ -320,6 +350,8 @@ export interface CanopyConfigInput {
   authPlugin?: AuthPlugin
   /** Custom URL resolver for entry links. Overrides the default URL computation. */
   entryLinkUrl?: EntryLinkUrlResolver
+  /** Save-time validation hook. 'error' issues reject the save; 'warning' issues are returned with it. */
+  validateEntry?: ValidateEntryHook
   /** Dev-mode-only behavior (content-sync divergence detection). Ignored when mode !== 'dev'. */
   dev?: DevConfig
 }

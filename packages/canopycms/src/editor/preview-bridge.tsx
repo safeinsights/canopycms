@@ -1,7 +1,7 @@
 'use client'
 
 import type { CSSProperties } from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { formatCanopyPath, type CanopyPathSegment } from './canopy-path'
 
@@ -11,6 +11,7 @@ export const CANOPY_PREVIEW_MESSAGE = 'canopycms:draft:update'
 export const CANOPY_PREVIEW_FOCUS = 'canopycms:preview:focus'
 export const CANOPY_PREVIEW_HIGHLIGHT = 'canopycms:preview:highlight'
 export const CANOPY_PREVIEW_READY = 'canopycms:preview:ready'
+export const CANOPY_PREVIEW_ERROR = 'canopycms:preview:error'
 
 export interface DraftUpdateMessage {
   type: typeof CANOPY_PREVIEW_MESSAGE
@@ -70,6 +71,17 @@ export interface HighlightMessage {
 }
 
 /**
+ * Preview → editor report that the current draft fails to compile/render
+ * (e.g. malformed MDX). `message: null` clears a previously reported error.
+ */
+export interface PreviewErrorMessage {
+  type: typeof CANOPY_PREVIEW_ERROR
+  path: string
+  message: string | null
+  fieldPath?: string
+}
+
+/**
  * Convenience hook that wires draft updates, focus emitter, and highlight toggling together.
  * Returns live data plus helpers for setting data-canopy-path attributes.
  */
@@ -86,7 +98,8 @@ export const useCanopyPreview = <T,>(opts: {
   editorOrigin?: string
 }) => {
   const resolvedPath = resolvePreviewPath(opts.path)
-  const bridgeOpts = { editorOrigin: opts.editorOrigin }
+  const editorOrigin = opts.editorOrigin
+  const bridgeOpts = { editorOrigin }
   const { data, isLoading } = usePreviewData<T>(resolvedPath, opts.initialData, bridgeOpts)
   const highlightEnabled = usePreviewHighlight(bridgeOpts)
   usePreviewFocusEmitter(resolvedPath, bridgeOpts)
@@ -95,7 +108,26 @@ export const useCanopyPreview = <T,>(opts: {
     'data-canopy-path': Array.isArray(canopyPath) ? formatCanopyPath(canopyPath) : canopyPath,
   })
 
-  return { data, isLoading, highlightEnabled, fieldProps }
+  /**
+   * Report that the current draft fails to compile/render (the editor surfaces it
+   * next to the preview). Call with null once the draft renders cleanly again.
+   * No-op outside an editor frame.
+   */
+  const reportError = useCallback(
+    (message: string | null, fieldPath?: string) => {
+      if (typeof window === 'undefined' || window.parent === window) return
+      const msg: PreviewErrorMessage = {
+        type: CANOPY_PREVIEW_ERROR,
+        path: resolvedPath,
+        message,
+        ...(fieldPath !== undefined ? { fieldPath } : {}),
+      }
+      window.parent.postMessage(msg, resolveMessageOrigin(editorOrigin))
+    },
+    [resolvedPath, editorOrigin],
+  )
+
+  return { data, isLoading, highlightEnabled, fieldProps, reportError }
 }
 
 /**
@@ -214,6 +246,7 @@ export const PreviewFrame = ({
   className,
   style,
   highlightEnabled,
+  onPreviewError,
 }: {
   src: string
   path: string
@@ -222,6 +255,8 @@ export const PreviewFrame = ({
   className?: string
   style?: CSSProperties
   highlightEnabled?: boolean
+  /** Called when the preview reports a draft compile/render error; null clears it. */
+  onPreviewError?: (error: { message: string; fieldPath?: string } | null) => void
 }) => {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   // Pin the preview origin from the src prop: outbound messages target it (never '*'),
@@ -271,12 +306,14 @@ export const PreviewFrame = ({
     iframeRef.current.contentWindow.postMessage(msg, previewOrigin)
   }
 
-  // Keep refs pointing at the latest closures so the ready handler below never goes stale.
+  // Keep refs pointing at the latest closures so the message handler below never goes stale.
   const postRef = useRef(post)
   const postHighlightRef = useRef(postHighlight)
+  const onPreviewErrorRef = useRef(onPreviewError)
   useEffect(() => {
     postRef.current = post
     postHighlightRef.current = postHighlight
+    onPreviewErrorRef.current = onPreviewError
   })
 
   useEffect(() => {
@@ -293,18 +330,26 @@ export const PreviewFrame = ({
   // it sends CANOPY_PREVIEW_READY. We respond with the current data so the preview
   // receives the draft even if it wasn't ready when onLoad fired.
   useEffect(() => {
-    const handleReady = (event: MessageEvent) => {
+    const handleMessage = (event: MessageEvent) => {
       if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return
       // Source check alone is insufficient if the iframe navigated cross-origin.
       if (event.origin !== previewOrigin) return
-      if ((event.data as { type?: string })?.type === CANOPY_PREVIEW_READY) {
+      const type = (event.data as { type?: string })?.type
+      if (type === CANOPY_PREVIEW_READY) {
         postRef.current()
         postHighlightRef.current()
         setSyncPending(false)
+      } else if (type === CANOPY_PREVIEW_ERROR) {
+        const msg = event.data as PreviewErrorMessage
+        onPreviewErrorRef.current?.(
+          msg.message == null
+            ? null
+            : { message: msg.message, ...(msg.fieldPath ? { fieldPath: msg.fieldPath } : {}) },
+        )
       }
     }
-    window.addEventListener('message', handleReady)
-    return () => window.removeEventListener('message', handleReady)
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
   }, [previewOrigin])
 
   return (

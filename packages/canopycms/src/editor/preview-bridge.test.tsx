@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  CANOPY_PREVIEW_ERROR,
   CANOPY_PREVIEW_FOCUS,
   CANOPY_PREVIEW_HIGHLIGHT,
   CANOPY_PREVIEW_MESSAGE,
@@ -349,5 +350,84 @@ describe('PreviewFrame', () => {
         window.location.origin,
       ),
     )
+  })
+})
+
+describe('preview error channel', () => {
+  const ErrorReporter = ({ error }: { error: string | null }) => {
+    const { reportError } = useCanopyPreview<{ value: string }>({
+      initialData: { value: 'x' },
+      path: '/posts/err',
+    })
+    return <button data-testid="report" onClick={() => reportError(error, 'body')} />
+  }
+
+  it('reportError posts to the editor origin when framed', () => {
+    const parentWin = simulateFramed()
+    const { getByTestId } = render(<ErrorReporter error="MDX failed to compile" />)
+
+    fireEvent.click(getByTestId('report'))
+
+    expect(parentWin.postMessage).toHaveBeenCalledWith(
+      {
+        type: CANOPY_PREVIEW_ERROR,
+        path: '/posts/err',
+        message: 'MDX failed to compile',
+        fieldPath: 'body',
+      },
+      window.location.origin,
+    )
+  })
+
+  it('reportError is a no-op when not framed', () => {
+    const { getByTestId } = render(<ErrorReporter error="MDX failed to compile" />)
+    fireEvent.click(getByTestId('report'))
+    // Nothing to assert beyond not throwing: there is no parent to post to.
+  })
+
+  it('PreviewFrame surfaces trusted error reports and clears on null', async () => {
+    const onPreviewError = vi.fn()
+    const { container } = render(
+      <PreviewFrame src="/preview/x" path="/x" data={{ v: 1 }} onPreviewError={onPreviewError} />,
+    )
+    const iframe = container.querySelector('iframe') as HTMLIFrameElement
+
+    // Wrong origin: ignored
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: CANOPY_PREVIEW_ERROR, path: '/x', message: 'forged' },
+        origin: 'https://evil.example',
+        source: iframe.contentWindow,
+      }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(onPreviewError).not.toHaveBeenCalled()
+
+    // Trusted error report
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: {
+          type: CANOPY_PREVIEW_ERROR,
+          path: '/x',
+          message: 'compile failed',
+          fieldPath: 'body',
+        },
+        origin: window.location.origin,
+        source: iframe.contentWindow,
+      }),
+    )
+    await waitFor(() =>
+      expect(onPreviewError).toHaveBeenCalledWith({ message: 'compile failed', fieldPath: 'body' }),
+    )
+
+    // Null clears
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: CANOPY_PREVIEW_ERROR, path: '/x', message: null },
+        origin: window.location.origin,
+        source: iframe.contentWindow,
+      }),
+    )
+    await waitFor(() => expect(onPreviewError).toHaveBeenLastCalledWith(null))
   })
 })
