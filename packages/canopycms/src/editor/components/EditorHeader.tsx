@@ -344,7 +344,6 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     size="xs"
                     leftSection={<GoGitBranch size={16} />}
                     rightSection={<MdKeyboardArrowDown size={14} />}
-                    disabled={!branchName}
                     loading={!branchName && busy}
                     data-testid="branch-dropdown-button"
                   >

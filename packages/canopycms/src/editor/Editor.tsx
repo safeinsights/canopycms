@@ -877,7 +877,13 @@ export const Editor: React.FC<EditorProps> = ({
           onEntrySelect={setSelectedPath}
           onBranchReloadData={handleReloadBranchData}
           onBranchDiscardDrafts={handleDiscardDrafts}
-          onBranchManagerOpen={() => setBranchManagerOpen(true)}
+          onBranchManagerOpen={() => {
+            setBranchManagerOpen(true)
+            // Branchless = the initial load failed or found nothing; opening
+            // the manager doubles as the retry (adopts the server default on
+            // success and clears the sticky error toast).
+            if (!branchNameState) loadBranches().catch(console.error)
+          }}
           onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
           onSave={handleSave}
           onSubmit={() => branchNameState && handleSubmit(branchNameState)}

@@ -176,7 +176,9 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     try {
       const result = await apiClient.branches.list()
       if (result.status === 404) {
-        // No branch endpoint available; stay branchless until user selects/creates via other means.
+        // No branch endpoint available; stay branchless. The branch dropdown
+        // stays clickable so the user can open Manage Branches (which also
+        // retries this load) and create or select a branch from there.
         setBranches([])
         return
       }

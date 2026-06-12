@@ -50,13 +50,24 @@ export function sanitizeErrorMessage(message: string): string {
   // Credentials in URLs: scheme://user:token@host or scheme://token@host
   result = result.replace(/(\w+:\/\/)[^/\s@]+@/g, '$1***@')
   // Paths under the project root become relative (split/join avoids regex
-  // escaping issues with arbitrary cwd values)
+  // escaping issues with arbitrary cwd values). The bare-cwd replacement is
+  // anchored to a token boundary so sibling directories that merely share
+  // the cwd prefix (e.g. `${cwd}-other/…`) stay absolute and get fully
+  // redacted below instead of leaking a mangled remainder.
   const cwd = process.cwd()
   if (cwd !== '/') {
-    result = result.split(`${cwd}/`).join('').split(cwd).join('.')
+    result = result.split(`${cwd}/`).join('')
+    const cwdPattern = cwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    result = result.replace(new RegExp(`${cwdPattern}(?=[\\s'"),:;]|$)`, 'g'), '.')
   }
+  // Quoted absolute paths (git quotes most paths in its messages): redact
+  // the whole quoted span, spaces included.
+  result = result.replace(/'\/[^']*'/g, "'<path>'").replace(/"\/[^"]*"/g, '"<path>"')
   // Remaining absolute POSIX paths (outside cwd, e.g. /mnt/efs/…). The
-  // leading boundary keeps URL slashes (`https://host/…`) untouched.
+  // leading boundary keeps URL slashes (`https://host/…`) untouched. Known
+  // limitation: an UNQUOTED path containing spaces is only redacted up to
+  // the first space — spaces are legal both inside paths and as message
+  // separators, so this is not generally solvable here.
   result = result.replace(/(^|[\s'"(=])\/(?:[^/\s'")]+\/)+[^/\s'")]*/g, '$1<path>')
   // Windows drive paths
   result = result.replace(/[A-Za-z]:\\[^\s'")]+/g, '<path>')

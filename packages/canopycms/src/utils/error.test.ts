@@ -117,6 +117,26 @@ describe('error utilities', () => {
       expect(sanitizeErrorMessage(msg)).toBe('cannot lock .canopy-dev/remote.git')
     })
 
+    it('replaces the bare cwd itself with a dot', () => {
+      const msg = `not a git repository: ${process.cwd()}`
+      expect(sanitizeErrorMessage(msg)).toBe('not a git repository: .')
+    })
+
+    it('fully redacts sibling paths that share the cwd prefix', () => {
+      const msg = `error in ${process.cwd()}-other/secret/file.txt here`
+      expect(sanitizeErrorMessage(msg)).toBe('error in <path> here')
+    })
+
+    it('redacts quoted absolute paths even when they contain spaces', () => {
+      const msg = "destination path '/Users/bob/My Documents/repo' already exists"
+      expect(sanitizeErrorMessage(msg)).toBe("destination path '<path>' already exists")
+    })
+
+    it('only redacts unquoted spaced paths up to the first space (known limitation)', () => {
+      const msg = 'cannot open /Users/bob/My Documents/repo/file.txt now'
+      expect(sanitizeErrorMessage(msg)).toBe('cannot open <path> Documents/repo/file.txt now')
+    })
+
     it('redacts absolute paths outside the working directory', () => {
       const msg = "destination path '/mnt/efs/workspace/main' already exists"
       expect(sanitizeErrorMessage(msg)).toBe("destination path '<path>' already exists")
