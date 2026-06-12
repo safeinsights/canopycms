@@ -36,6 +36,14 @@ export const resolveMessageOrigin = (url?: string): string => {
 }
 
 /**
+ * Opaque origins (sandboxed iframes, data: URLs) serialize to the string 'null':
+ * never trust them for inbound messages, and never post to them — every window in
+ * a sandboxed embed shares that string, so it identifies nothing, and postMessage
+ * throws on a literal 'null' targetOrigin. '' covers the SSR fallback.
+ */
+const isOpaqueOrigin = (origin: string): boolean => origin === 'null' || origin === ''
+
+/**
  * True only for messages from the embedding editor window with the expected origin.
  *
  * Security: preview hooks feed message data into the host site's renderer (often
@@ -44,11 +52,12 @@ export const resolveMessageOrigin = (url?: string): string => {
  * site's origin. Messages must come from the direct parent frame AND match the
  * expected editor origin (same-origin unless `editorOrigin` is configured).
  */
-export const isTrustedEditorMessage = (event: MessageEvent, editorOrigin?: string): boolean =>
-  typeof window !== 'undefined' &&
-  window.parent !== window &&
-  event.origin === resolveMessageOrigin(editorOrigin) &&
-  event.source === window.parent
+export const isTrustedEditorMessage = (event: MessageEvent, editorOrigin?: string): boolean => {
+  if (typeof window === 'undefined' || window.parent === window) return false
+  const expected = resolveMessageOrigin(editorOrigin)
+  if (isOpaqueOrigin(expected)) return false
+  return event.origin === expected && event.source === window.parent
+}
 
 export const sendDraftUpdate = (
   iframe: HTMLIFrameElement | null,
@@ -56,7 +65,9 @@ export const sendDraftUpdate = (
   targetOrigin?: string,
 ) => {
   if (!iframe?.contentWindow) return
-  iframe.contentWindow.postMessage(message, targetOrigin ?? resolveMessageOrigin(iframe.src))
+  const target = targetOrigin ?? resolveMessageOrigin(iframe.src)
+  if (isOpaqueOrigin(target)) return
+  iframe.contentWindow.postMessage(message, target)
 }
 
 export interface PreviewFocusMessage {
@@ -116,13 +127,15 @@ export const useCanopyPreview = <T,>(opts: {
   const reportError = useCallback(
     (message: string | null, fieldPath?: string) => {
       if (typeof window === 'undefined' || window.parent === window) return
+      const target = resolveMessageOrigin(editorOrigin)
+      if (isOpaqueOrigin(target)) return
       const msg: PreviewErrorMessage = {
         type: CANOPY_PREVIEW_ERROR,
         path: resolvedPath,
         message,
         ...(fieldPath !== undefined ? { fieldPath } : {}),
       }
-      window.parent.postMessage(msg, resolveMessageOrigin(editorOrigin))
+      window.parent.postMessage(msg, target)
     },
     [resolvedPath, editorOrigin],
   )
@@ -160,10 +173,10 @@ export const usePreviewData = <T,>(
     // Notify parent that this preview page is ready to receive draft updates.
     // This is needed because onLoad in the parent fires before React effects run,
     // so the first postMessage from the parent arrives before this listener is set up.
-    window.parent.postMessage(
-      { type: CANOPY_PREVIEW_READY, path },
-      resolveMessageOrigin(editorOrigin),
-    )
+    const target = resolveMessageOrigin(editorOrigin)
+    if (!isOpaqueOrigin(target)) {
+      window.parent.postMessage({ type: CANOPY_PREVIEW_READY, path }, target)
+    }
     return () => window.removeEventListener('message', handler)
   }, [path, editorOrigin])
 
@@ -222,12 +235,14 @@ export const usePreviewFocusEmitter = (entryPath: string, opts?: { editorOrigin?
       const el = target.closest<HTMLElement>('[data-canopy-path]')
       const fieldPath = el?.dataset.canopyPath
       if (!fieldPath) return
+      const targetOrigin = resolveMessageOrigin(editorOrigin)
+      if (isOpaqueOrigin(targetOrigin)) return
       const msg: PreviewFocusMessage = {
         type: CANOPY_PREVIEW_FOCUS,
         entryPath,
         fieldPath,
       }
-      window.parent.postMessage(msg, resolveMessageOrigin(editorOrigin))
+      window.parent.postMessage(msg, targetOrigin)
     }
     document.addEventListener('click', handleClick)
     return () => document.removeEventListener('click', handleClick)
@@ -299,6 +314,7 @@ export const PreviewFrame = ({
   }
   const postHighlight = () => {
     if (!iframeRef.current?.contentWindow) return
+    if (isOpaqueOrigin(previewOrigin)) return
     const msg: HighlightMessage = {
       type: CANOPY_PREVIEW_HIGHLIGHT,
       enabled: Boolean(highlightEnabled),
@@ -333,18 +349,22 @@ export const PreviewFrame = ({
     const handleMessage = (event: MessageEvent) => {
       if (!iframeRef.current || event.source !== iframeRef.current.contentWindow) return
       // Source check alone is insufficient if the iframe navigated cross-origin.
-      if (event.origin !== previewOrigin) return
+      if (isOpaqueOrigin(previewOrigin) || event.origin !== previewOrigin) return
       const type = (event.data as { type?: string })?.type
       if (type === CANOPY_PREVIEW_READY) {
         postRef.current()
         postHighlightRef.current()
         setSyncPending(false)
       } else if (type === CANOPY_PREVIEW_ERROR) {
-        const msg = event.data as PreviewErrorMessage
+        const msg = event.data as Partial<PreviewErrorMessage>
+        // Shape-check the payload: an adopter passing an Error object (instead of
+        // err.message) must not crash the editor when rendered as a React child.
+        if (msg.message != null && typeof msg.message !== 'string') return
+        const fieldPath = typeof msg.fieldPath === 'string' ? msg.fieldPath : undefined
         onPreviewErrorRef.current?.(
           msg.message == null
             ? null
-            : { message: msg.message, ...(msg.fieldPath ? { fieldPath: msg.fieldPath } : {}) },
+            : { message: msg.message, ...(fieldPath ? { fieldPath } : {}) },
         )
       }
     }

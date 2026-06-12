@@ -202,15 +202,21 @@ describe('content api', () => {
       const hook = vi.fn().mockResolvedValue([])
       ctx.services.config.validateEntry = hook
 
-      const res = await writeContent(ctx, writeReq, writeParams, {
-        format: 'mdx',
-        data: { title: 'hi' },
-        body: '# Hello',
-      })
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'post' },
+        {
+          format: 'mdx',
+          data: { title: 'hi' },
+          body: '# Hello',
+        },
+      )
       expect(res.ok).toBe(true)
       expect(hook).toHaveBeenCalledWith({
         entryPath: 'content/posts/hello',
         branch: 'feature/x',
+        entryType: 'post',
         format: 'mdx',
         data: { title: 'hi' },
         body: '# Hello',

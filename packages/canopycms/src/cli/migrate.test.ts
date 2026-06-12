@@ -190,13 +190,69 @@ describe('canopycms migrate', () => {
     const rootEntries = await fs.readdir(contentDir)
     expect(rootEntries).toContain('data.json')
   })
+
+  it('migrates underscore names to slugs the public read path accepts', async () => {
+    projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-migrate-test-'))
+    const contentDir = path.join(projectDir, 'content')
+    await fs.mkdir(contentDir, { recursive: true })
+    await fs.writeFile(path.join(contentDir, 'my_post.md'), '# Post\n')
+
+    await migrate(defaultOpts(projectDir))
+
+    const rootEntries = await fs.readdir(contentDir)
+    const doc = rootEntries.find((n) => n.endsWith('.md'))
+    expectEntryFileName(doc as string, 'doc', 'my-post', 'md')
+  })
+
+  it('rejects an entry type that would corrupt the filename grammar', async () => {
+    projectDir = await setupPlainTree()
+    await expect(migrate({ ...defaultOpts(projectDir), entryType: 'my.doc' })).rejects.toThrow(
+      /Invalid entry type/,
+    )
+    await expect(migrate({ ...defaultOpts(projectDir), entryType: 'a/b' })).rejects.toThrow(
+      /Invalid entry type/,
+    )
+  })
+
+  it('renames files whose names merely contain an ID-like segment', async () => {
+    projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-migrate-test-'))
+    const contentDir = path.join(projectDir, 'content')
+    await fs.mkdir(contentDir, { recursive: true })
+    // "attachments1" is 12 valid Base58 chars but this is NOT a conforming
+    // {type}.{slug}.{id}.{ext} name — it must still be migrated
+    await fs.writeFile(path.join(contentDir, 'report.attachments1.md'), '# R\n')
+
+    await migrate(defaultOpts(projectDir))
+
+    const rootEntries = await fs.readdir(contentDir)
+    const doc = rootEntries.find((n) => n.endsWith('.md'))
+    expectEntryFileName(doc as string, 'doc', 'report-attachments1', 'md')
+  })
+
+  it('accepts .yml files when migrating yaml format', async () => {
+    projectDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-migrate-test-'))
+    const contentDir = path.join(projectDir, 'content')
+    await fs.mkdir(contentDir, { recursive: true })
+    await fs.writeFile(path.join(contentDir, 'settings.yml'), 'a: 1\n')
+
+    await migrate({ ...defaultOpts(projectDir), format: 'yaml' })
+
+    const rootEntries = await fs.readdir(contentDir)
+    const entry = rootEntries.find((n) => n.endsWith('.yml'))
+    expectEntryFileName(entry as string, 'doc', 'settings', 'yml')
+  })
 })
 
 describe('slugifyName', () => {
   it('lowercases and replaces unsafe characters', () => {
     expect(slugifyName('Getting Started')).toBe('getting-started')
     expect(slugifyName('FAQ & Help!')).toBe('faq-help')
-    expect(slugifyName('already-fine_name')).toBe('already-fine_name')
+    expect(slugifyName('already-fine-name')).toBe('already-fine-name')
+  })
+
+  it('replaces underscores — parseSlug rejects them on the public read path', () => {
+    expect(slugifyName('my_post')).toBe('my-post')
+    expect(slugifyName('_drafts')).toBe('drafts')
   })
 
   it('never returns an empty slug', () => {

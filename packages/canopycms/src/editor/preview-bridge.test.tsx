@@ -430,4 +430,60 @@ describe('preview error channel', () => {
     )
     await waitFor(() => expect(onPreviewError).toHaveBeenLastCalledWith(null))
   })
+
+  it('ignores error reports whose message is not a string', async () => {
+    const onPreviewError = vi.fn()
+    const { container } = render(
+      <PreviewFrame src="/preview/x" path="/x" data={{ v: 1 }} onPreviewError={onPreviewError} />,
+    )
+    const iframe = container.querySelector('iframe') as HTMLIFrameElement
+
+    // An adopter mistake like reportError(err) would put an object here —
+    // forwarding it would crash the editor when rendered as a React child
+    window.dispatchEvent(
+      new MessageEvent('message', {
+        data: { type: CANOPY_PREVIEW_ERROR, path: '/x', message: { name: 'Error' } },
+        origin: window.location.origin,
+        source: iframe.contentWindow,
+      }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(onPreviewError).not.toHaveBeenCalled()
+  })
+})
+
+describe('opaque-origin (sandboxed embed) handling', () => {
+  // 'data:' URLs resolve to the opaque origin string 'null' — the same value
+  // every window in a sandboxed embed reports, so it must never be trusted.
+  const OPAQUE_URL = 'data:text/plain,x'
+
+  it('resolveMessageOrigin resolves data: URLs to the opaque origin string', () => {
+    expect(resolveMessageOrigin(OPAQUE_URL)).toBe('null')
+  })
+
+  it('isTrustedEditorMessage rejects matching opaque origins', () => {
+    const parentWin = simulateFramed()
+    const event = new MessageEvent('message', {
+      data: {},
+      origin: 'null',
+      source: parentWin,
+    })
+    expect(isTrustedEditorMessage(event, OPAQUE_URL)).toBe(false)
+  })
+
+  it('reportError does not post when the editor origin is opaque', () => {
+    const parentWin = simulateFramed()
+    const Reporter = () => {
+      const { reportError } = useCanopyPreview<{ v: number }>({
+        initialData: { v: 1 },
+        path: '/posts/opaque',
+        editorOrigin: OPAQUE_URL,
+      })
+      return <button data-testid="report" onClick={() => reportError('boom')} />
+    }
+    const { getByTestId } = render(<Reporter />)
+    ;(parentWin.postMessage as ReturnType<typeof vi.fn>).mockClear() // ignore READY handshake attempts
+    fireEvent.click(getByTestId('report'))
+    expect(parentWin.postMessage).not.toHaveBeenCalled()
+  })
 })

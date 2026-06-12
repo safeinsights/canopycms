@@ -231,6 +231,7 @@ const writeContentHandler = async (
       issues = await validateEntry({
         entryPath: logicalPathSegments.join('/'),
         branch: params.branch,
+        ...(params.entryType ? { entryType: params.entryType } : {}),
         format: body.format,
         data: body.data ?? {},
         body: body.body,
@@ -243,11 +244,12 @@ const writeContentHandler = async (
       return {
         ok: false,
         status: 422,
+        // '; '-joined: the editor shows this in a notification, which collapses newlines
         error: errors
           .map((issue) =>
             issue.fieldPath ? `${issue.fieldPath}: ${issue.message}` : issue.message,
           )
-          .join('\n'),
+          .join('; '),
       }
     }
     const warnings = issues.filter((issue) => issue.level === 'warning')

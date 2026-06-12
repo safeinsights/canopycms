@@ -227,7 +227,9 @@ export function useCommentSystem(options: UseCommentSystemOptions): UseCommentSy
   // Listen for field focus messages from preview frame
   useEffect(() => {
     const handleFocus = (event: MessageEvent) => {
-      // Only accept messages from the preview's origin (same-origin when previewSrc is relative)
+      // Only accept messages from the preview's origin (same-origin when previewSrc is
+      // relative). Origin-only by design: this hook has no handle on the preview iframe
+      // for a source check, and the message can at most scroll/focus a form field.
       if (event.origin !== resolveMessageOrigin(options.currentEntry?.previewSrc)) return
       const msg = event.data as {
         type?: string

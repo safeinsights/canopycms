@@ -17,8 +17,9 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import * as p from '@clack/prompts'
 
-import { generateId } from '../id'
+import { generateId, isValidId } from '../id'
 import { extractIdFromFilename } from '../content-id-index'
+import { parseSlug } from '../paths'
 import { filePathExists } from '../utils/fs'
 import { loadCollectionMetaFiles } from '../schema'
 import { getErrorMessage } from '../utils/error'
@@ -54,14 +55,41 @@ type MigrateOp =
   | { kind: 'rename'; from: string; to: string }
   | { kind: 'write'; filePath: string; content: string }
 
-/** Normalize a file/directory base name into a slug accepted by the content store. */
+/**
+ * Normalize a file/directory base name into a slug the whole CMS accepts.
+ * Must satisfy parseSlug (/^[a-z0-9][a-z0-9-]*$/) — underscores are NOT allowed:
+ * the editor would save them but the public read path (readByUrlPath/read)
+ * rejects them, leaving migrated pages unreachable.
+ */
 export function slugifyName(name: string): string {
   const slug = name
     .toLowerCase()
-    .replace(/[^a-z0-9-_]+/g, '-')
+    .replace(/[^a-z0-9-]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '')
   return slug || 'item'
+}
+
+/** Slugify and assert the result is valid for the content store — fail the plan, not the tree. */
+function toValidSlug(name: string): string {
+  const slug = slugifyName(name)
+  const parsed = parseSlug(slug)
+  if (!parsed.ok) {
+    throw new MigrateError(
+      `Cannot derive a valid slug from "${name}" (got "${slug}"): ${parsed.error}`,
+    )
+  }
+  return slug
+}
+
+/**
+ * Already-conforming entry file: {type}.{slug}.{id}.{ext} — requires the full
+ * 4-part shape, not just any embedded ID, so a coincidental 12-char Base58
+ * segment (e.g. "report.attachments1.md") still gets migrated.
+ */
+function isConformingEntryFile(fileName: string): boolean {
+  const parts = fileName.split('.')
+  return parts.length >= 4 && isValidId(parts[parts.length - 2])
 }
 
 /** Strip a trailing .<12-char-id> from a directory name, if present. */
@@ -106,17 +134,19 @@ async function planDirectory(dirPath: string, isRoot: boolean, ctx: PlanContext)
       hasContent = true
       ops.push(...sub.ops)
       if (!extractIdFromFilename(entry.name)) {
-        const newName = `${slugifyName(entry.name)}.${generateId()}`
+        const newName = `${toValidSlug(entry.name)}.${generateId()}`
         ops.push({ kind: 'rename', from: subPath, to: path.join(dirPath, newName) })
       }
     } else if (entry.isFile()) {
       const ext = path.extname(entry.name).slice(1)
-      if (ext !== ctx.format) continue
+      // 'yaml' format also matches the common .yml extension (kept as-is in the rename)
+      const matchesFormat = ext === ctx.format || (ctx.format === 'yaml' && ext === 'yml')
+      if (!matchesFormat) continue
       hasOwnFiles = true
       hasContent = true
-      if (!extractIdFromFilename(entry.name)) {
+      if (!isConformingEntryFile(entry.name)) {
         const base = entry.name.slice(0, -(ext.length + 1))
-        const newName = `${ctx.entryType}.${slugifyName(base)}.${generateId()}.${ext}`
+        const newName = `${ctx.entryType}.${toValidSlug(base)}.${generateId()}.${ext}`
         ops.push({
           kind: 'rename',
           from: path.join(dirPath, entry.name),
@@ -134,7 +164,7 @@ async function planDirectory(dirPath: string, isRoot: boolean, ctx: PlanContext)
     const entryTypeMeta = { name: ctx.entryType, format: ctx.format, schema: ctx.schema }
     const meta = isRoot
       ? { entries: [entryTypeMeta] }
-      : { name: slugifyName(stripDirIdSuffix(path.basename(dirPath))), entries: [entryTypeMeta] }
+      : { name: toValidSlug(stripDirIdSuffix(path.basename(dirPath))), entries: [entryTypeMeta] }
     ops.push({ kind: 'write', filePath: metaPath, content: JSON.stringify(meta, null, 2) + '\n' })
   }
 
@@ -173,6 +203,14 @@ export async function migrate(options: MigrateOptions): Promise<{ opCount: numbe
       return { opCount: 0 }
     }
     entryType = result
+  }
+  // The entry type is interpolated into {type}.{slug}.{id}.{ext} filenames — an
+  // invalid value (dots, slashes, uppercase) would corrupt the filename grammar
+  // or escape the target directory.
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(entryType)) {
+    throw new MigrateError(
+      `Invalid entry type "${entryType}" — use lowercase letters, digits, and hyphens (e.g. "doc").`,
+    )
   }
 
   let format = options.format

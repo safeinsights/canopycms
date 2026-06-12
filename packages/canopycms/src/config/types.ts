@@ -275,6 +275,8 @@ export interface ValidateEntryInput {
   /** Logical entry path including the content root (e.g. 'content/posts/hello-world'). */
   entryPath: string
   branch: string
+  /** Entry type name when the editor specifies one (collections with multiple entry types). */
+  entryType?: string
   format: 'md' | 'mdx' | 'json' | 'yaml'
   data: Record<string, unknown>
   /** Markdown body for md/mdx formats. */

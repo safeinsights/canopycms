@@ -1,7 +1,7 @@
 # Block commits with CI-only git identities outside CI (see .github/workflows/ci.yml).
 # A repo-local `git config user.name "CI Bot"` once leaked 200+ wrongly-attributed commits.
 if [ -z "$CI" ]; then
-  ident="$(git var GIT_COMMITTER_IDENT) $(git var GIT_AUTHOR_IDENT)"
+  ident="$(git var GIT_COMMITTER_IDENT 2>/dev/null) $(git var GIT_AUTHOR_IDENT 2>/dev/null)"
   case "$ident" in
     *"CI Bot"* | *"ci@canopycms.test"*)
       echo "pre-commit: refusing to commit as a CI-only identity." >&2
