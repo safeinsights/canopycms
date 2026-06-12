@@ -267,16 +267,28 @@ export class GitManager {
 
   /**
    * Whether a bare repository already has a local branch of the given name.
-   * Uses branch listing rather than `rev-parse --verify --quiet`: simple-git only
-   * fails a task when git writes to stderr, and --quiet suppresses exactly that.
+   *
+   * Runs git with an explicit `--git-dir` instead of a cwd inside the repo:
+   * environments with `safe.bareRepository=explicit` (sandboxed/CI git setups)
+   * refuse cwd-based discovery of bare repos but expressly allow `--git-dir`.
+   * `branch --list` exits 0 whether or not the branch exists (no
+   * exception-based control flow — also why `rev-parse --verify --quiet`
+   * can't be used: simple-git only fails a task on stderr output, and --quiet
+   * suppresses exactly that). A failure here therefore means the remote
+   * itself is unreadable and is surfaced, NOT treated as "branch absent" —
+   * that would route to the push path against a repo we couldn't even read.
    */
   private static async bareRemoteHasBranch(remotePath: string, branch: string): Promise<boolean> {
+    let output: string
     try {
-      const branches = await simpleGit({ baseDir: remotePath }).branchLocal()
-      return branches.all.includes(branch)
-    } catch {
-      return false
+      output = await simpleGit().raw(['--git-dir', remotePath, 'branch', '--list', branch])
+    } catch (err) {
+      throw new Error(`Cannot inspect simulated remote at ${remotePath}: ${getErrorMessage(err)}`)
     }
+    return output
+      .split('\n')
+      .map((line) => line.replace(/^[*+]\s*/, '').trim())
+      .includes(branch)
   }
 
   /**
