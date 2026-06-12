@@ -82,7 +82,7 @@ The codebase uses a modular structure with clear separation:
 
 | Endpoint                          | Handler               | Purpose                                                                                                                                                                                                                                           |
 | --------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| /api/canopycms/branches           | branch.ts             | Create/list branches                                                                                                                                                                                                                              |
+| /api/canopycms/branches           | branch.ts             | Create/list branches; `BranchListResponse` includes optional `defaultBranch` — the server's effective default branch (detected active branch in dev), read per-request in `listBranchesHandler`                                                   |
 | /api/canopycms/branch-status      | branch-status.ts      | Get status, submit PR                                                                                                                                                                                                                             |
 | /api/canopycms/branch-withdraw    | branch-withdraw.ts    | Withdraw PR                                                                                                                                                                                                                                       |
 | /api/canopycms/branch-review      | branch-review.ts      | Request changes                                                                                                                                                                                                                                   |
@@ -641,20 +641,20 @@ const { schema, sources } = await resolveSchema(contentRoot, entrySchemaRegistry
 
 **Location**: packages/canopycms/src/editor/hooks/
 
-| Hook                   | Purpose                                                                                                  |
-| ---------------------- | -------------------------------------------------------------------------------------------------------- |
-| useBranchManager       | Branch switching and creation                                                                            |
-| useBranchActions       | Branch workflow actions (submit, withdraw, merge)                                                        |
-| useEntryManager        | Entry loading and saving                                                                                 |
-| useDraftManager        | Draft state persistence (localStorage)                                                                   |
-| useCommentSystem       | Comment CRUD operations                                                                                  |
-| useGroupManager        | Group management operations                                                                              |
-| usePermissionManager   | Permission management operations                                                                         |
-| useEditorLayout        | Editor panel layout state                                                                                |
-| useUserContext         | Current user context                                                                                     |
-| useUserMetadata        | User metadata fetching                                                                                   |
-| useReferenceResolution | Resolve reference IDs to display values                                                                  |
-| useEntryLinkResolution | Resolve `entry:ID` patterns in preview data before PreviewFrame; client-side URL map from editor entries |
+| Hook                   | Purpose                                                                                                               |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| useBranchManager       | Branch switching and creation; `loadBranches()` adopts `defaultBranch` from the branches API when no branch is pinned |
+| useBranchActions       | Branch workflow actions (submit, withdraw, merge)                                                                     |
+| useEntryManager        | Entry loading and saving                                                                                              |
+| useDraftManager        | Draft state persistence (localStorage)                                                                                |
+| useCommentSystem       | Comment CRUD operations                                                                                               |
+| useGroupManager        | Group management operations                                                                                           |
+| usePermissionManager   | Permission management operations                                                                                      |
+| useEditorLayout        | Editor panel layout state                                                                                             |
+| useUserContext         | Current user context                                                                                                  |
+| useUserMetadata        | User metadata fetching                                                                                                |
+| useReferenceResolution | Resolve reference IDs to display values                                                                               |
+| useEntryLinkResolution | Resolve `entry:ID` patterns in preview data before PreviewFrame; client-side URL map from editor entries              |
 
 ### Conflict Notice
 
@@ -693,6 +693,7 @@ Conflict indicators appear at two levels:
 - "use client" required for browser components
 - Export client components via canopycms/client
 - Draft state persists in localStorage per branch/entry
+- Branch selection: `CanopyEditorPage`/`CanopyEditor` have no 'main' fallback — with no pinned branch (URL/config) the editor starts branchless and adopts the server's `defaultBranch` from the branches API (`useBranchManager.loadBranches()`); explicit URL/config pins are never overridden
 
 **Fields**: packages/canopycms/src/editor/fields/
 
@@ -741,21 +742,21 @@ All site-side hooks accept optional `{ editorOrigin }`. **Security model**: site
 
 ### Key Files
 
-| File                     | Purpose                                                                                                                                         |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| git-manager.ts           | Wrapper around simple-git                                                                                                                       |
-| branch-registry.ts       | Branch tracking (BranchRegistry class, cache-based listing)                                                                                     |
-| branch-workspace.ts      | Workspace management (BranchWorkspaceManager class)                                                                                             |
-| branch-metadata.ts       | Branch metadata with concurrency safety (in-memory per-path locking, atomic writes, optimistic locking with version/writeId, retry-on-conflict) |
-| branch-schema-cache.ts   | Per-branch schema caching with invalidation (always file-based; stale-marker pattern)                                                           |
-| settings-workspace.ts    | Settings branch workspace management                                                                                                            |
-| settings-branch-utils.ts | Settings branch utility helpers                                                                                                                 |
-| github-service.ts        | GitHub API integration (PR creation, etc.)                                                                                                      |
+| File                     | Purpose                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| git-manager.ts           | Wrapper around simple-git; static `initializeWorkspace()` resolves the fork point via `resolveBaseBranch` (utils/git.ts); dev simulated-remote seeding (private `pushBranchToLocalRemote`) with `subdirectory` pushes a single `git commit-tree` snapshot of `<baseBranch>:<subdirectory>` (replaced `git subtree split`, which was O(history) and split HEAD instead of baseBranch) |
+| branch-registry.ts       | Branch tracking (BranchRegistry class, cache-based listing)                                                                                                                                                                                                                                                                                                                          |
+| branch-workspace.ts      | Workspace management (BranchWorkspaceManager class); `openOrCreateBranch` resolves the fork point via `resolveBaseBranch` (utils/git.ts) and records it as `baseBranch` in branch metadata; `ensureGitWorkspace` (private) requires a `baseBranch` argument                                                                                                                          |
+| branch-metadata.ts       | Branch metadata with concurrency safety (in-memory per-path locking, atomic writes, optimistic locking with version/writeId, retry-on-conflict); `save()` treats `baseBranch` as immutable after creation (existing value always wins)                                                                                                                                               |
+| branch-schema-cache.ts   | Per-branch schema caching with invalidation (always file-based; stale-marker pattern)                                                                                                                                                                                                                                                                                                |
+| settings-workspace.ts    | Settings branch workspace management                                                                                                                                                                                                                                                                                                                                                 |
+| settings-branch-utils.ts | Settings branch utility helpers                                                                                                                                                                                                                                                                                                                                                      |
+| github-service.ts        | GitHub API integration (PR creation, etc.)                                                                                                                                                                                                                                                                                                                                           |
 
 ### Key Types
 
 - BranchContext - Branch state with paths (branchRoot, baseRoot) and metadata
-- BranchMetadata - Branch info (name, status, access, timestamps, conflictStatus, conflictFiles)
+- BranchMetadata - Branch info (name, status, access, timestamps, baseBranch — fork point recorded at creation, immutable afterwards (enforced in branch-metadata.ts save()), conflictStatus, conflictFiles)
 - BranchPaths - Path information (baseRoot, branchRoot)
 - SyncStatus - 'synced' | 'pending-sync' | 'sync-failed' (for async task queue)
 
@@ -773,7 +774,7 @@ All site-side hooks accept optional `{ editorOrigin }`. **Security model**: site
 **Operating Modes** (`OperatingMode = 'prod' | 'dev'`):
 
 - `prod`: Branch clones on persistent filesystem (e.g., EFS at `/mnt/efs/workspace`). Full PR workflow, real GitHub integration, task-queue-based git ops. Env var: `CANOPYCMS_WORKSPACE_ROOT`.
-- `dev`: Branch clones in `.canopy-dev/` (gitignored). Full-featured branching and git ops (same as prod), but no real GitHub PRs (`supportsPullRequests()` → false). Auto-detects current git HEAD branch as `defaultActiveBranch` when not explicitly configured.
+- `dev`: Branch clones in `.canopy-dev/` (gitignored). Full-featured branching and git ops (same as prod), but no real GitHub PRs (`supportsPullRequests()` → false). Auto-detects current git HEAD branch as `defaultActiveBranch` and `defaultBaseBranch` (fork point) when not explicitly configured.
 
 **Strategy classes**:
 
@@ -860,7 +861,7 @@ await ctx.services.submitBranch({ context })
 
 **GitManager.add()**: Accepts `string | string[]` for convenience.
 
-**Default active branch** (`services.ts` → `detectDefaultActiveBranch()`): Determines which workspace to serve content from. If `defaultActiveBranch` is explicitly set in config, that value is used in both modes. In `dev` mode, auto-detects from the current git HEAD (`git rev-parse --abbrev-ref HEAD`). In `prod` mode, falls back to `defaultBaseBranch ?? 'main'`. The resolved value is baked into `config.defaultActiveBranch` during `createServices()` so all downstream code uses the same value. `content-reader.ts` uses `defaultActiveBranch` as its default branch. `services.refreshActiveBranch()` re-detects git HEAD in dev mode (5s TTL cache) and updates `services.config.defaultActiveBranch`; it short-circuits when mode !== 'dev', when `defaultActiveBranch` is explicitly configured, or when `deployedAs: 'static'`. Called by `getContext()` and the HTTP handler before each request.
+**Branch identity** (`services.ts` → `createActiveBranchDetector()`): Service creation resolves and bakes BOTH branch-identity fields into config so all downstream code reads one consistent value. `defaultActiveBranch` (which workspace to serve content from): explicit config wins in both modes; `dev` auto-detects from git HEAD (`git rev-parse --abbrev-ref HEAD`, 5s TTL cache); `prod` falls back to `defaultBaseBranch ?? 'main'`. `defaultBaseBranch` (fork point for new editing branches): explicit config wins; `dev` follows the same HEAD detection when unset; otherwise `'main'` (matching `resolveBaseBranch` in utils/git.ts, the canonical definition used by workspace provisioning). `content-reader.ts` uses `defaultActiveBranch` as its default branch. `services.refreshActiveBranch()` re-detects git HEAD in dev mode and refreshes both fields (each only when not explicitly configured); it short-circuits when mode !== 'dev', when both fields are explicitly configured, or when `deployedAs: 'static'`. Called by `getContext()` and the HTTP handler before each request. `createTestCanopyServices` pins both fields (`defaultBaseBranch ?? 'main'`, `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`) to avoid HEAD detection in tests. Git-operating service methods (`commitFiles`, `submitBranch`) prefer the branch's recorded `context.branch.baseBranch` over the config value.
 
 ## Path Utilities Module
 
@@ -1004,18 +1005,18 @@ Cross-cutting feature for linking between content entries using `entry:CONTENT_I
 
 **Subpath export**: `canopycms/utils/error` — `error.ts` is exposed as a package subpath (in both dev exports and `publishConfig.exports`) for adopter/satellite use.
 
-| File                    | Purpose                                                                                                                                                                                                                                                                                                            |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| error.ts                | Type-safe error handling (getErrorMessage, isNodeError, isNotFoundError, isFileExistsError); also exported via `canopycms/utils/error`                                                                                                                                                                             |
-| debug.ts                | Debug logging utilities (createDebugLogger)                                                                                                                                                                                                                                                                        |
-| format.ts               | Content format utilities (getFormatExtension, isDataOnlyFormat); supports md/mdx/json/yaml                                                                                                                                                                                                                         |
-| atomic-write.ts         | Atomic file writes via temp-file + rename (prevents corruption on NFS/EFS)                                                                                                                                                                                                                                         |
-| body-field.ts           | Body field validation (countBodyFields, findInvalidBodyFields) for isBody schema flag; all three functions use `flattenGroupFields` to traverse inline groups transparently                                                                                                                                        |
-| title-field.ts          | Title field utilities (resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists) for isTitle schema flag                                                                                                                                                                                                  |
-| flatten-group-fields.ts | `flattenGroupFields(fields)` — recursively flattens inline `type: 'group'` fields into a flat `FieldConfig[]` for data-layer iteration; used by body-field.ts, json-to-markdown.ts, useReferenceResolution, and client-reference-resolver; not needed when using `traverseFields()` (which already handles groups) |
-| git.ts                  | `detectHeadBranch()` — detect current HEAD branch name via simple-git; used by services.ts and ai/resolve-branch.ts                                                                                                                                                                                                |
-| fs.ts                   | Filesystem helpers (filePathExists)                                                                                                                                                                                                                                                                                |
-| sanitize-href.ts        | Sanitize untrusted URLs for href attributes; allows only http/https protocols (sanitizeHref)                                                                                                                                                                                                                       |
+| File                    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| error.ts                | Type-safe error handling (getErrorMessage, isNodeError, isNotFoundError, isFileExistsError); also exported via `canopycms/utils/error`. `sanitizeErrorMessage(message)` redacts known-sensitive shapes from client-facing error messages (git stderr is unbounded, so shapes are redacted rather than messages enumerated): URL-embedded credentials → `***@`, paths under process.cwd() → relative, absolute paths outside cwd → `<path>`, Windows drive paths → `<path>`; log the original server-side and send the sanitized form to clients (used by http/handler.ts 503 path) |
+| debug.ts                | Debug logging utilities (createDebugLogger)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| format.ts               | Content format utilities (getFormatExtension, isDataOnlyFormat); supports md/mdx/json/yaml                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| atomic-write.ts         | Atomic file writes via temp-file + rename (prevents corruption on NFS/EFS)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| body-field.ts           | Body field validation (countBodyFields, findInvalidBodyFields) for isBody schema flag; all three functions use `flattenGroupFields` to traverse inline groups transparently                                                                                                                                                                                                                                                                                                                                                                                                        |
+| title-field.ts          | Title field utilities (resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists) for isTitle schema flag                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| flatten-group-fields.ts | `flattenGroupFields(fields)` — recursively flattens inline `type: 'group'` fields into a flat `FieldConfig[]` for data-layer iteration; used by body-field.ts, json-to-markdown.ts, useReferenceResolution, and client-reference-resolver; not needed when using `traverseFields()` (which already handles groups)                                                                                                                                                                                                                                                                 |
+| git.ts                  | `detectHeadBranch()` — detect current HEAD branch name via simple-git (used by services.ts and ai/resolve-branch.ts); `resolveBaseBranch({ defaultBaseBranch?, mode, detectFrom? })` — canonical resolver for the base branch (fork point): explicit config wins, dev mode detects git HEAD, otherwise `'main'`; used by GitManager.initializeWorkspace and BranchWorkspaceManager.openOrCreateBranch                                                                                                                                                                              |
+| fs.ts                   | Filesystem helpers (filePathExists)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| sanitize-href.ts        | Sanitize untrusted URLs for href attributes; allows only http/https protocols (sanitizeHref)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 **Error Handling Pattern**:
 
@@ -1067,11 +1068,11 @@ Lightweight, read-only AI content serving. Does not require auth or the editor A
 
 **Location**: packages/canopycms/src/http/
 
-| File       | Purpose                             |
-| ---------- | ----------------------------------- |
-| types.ts   | CanopyRequest, CanopyResponse types |
-| router.ts  | Route matching and dispatch         |
-| handler.ts | Request handler factory             |
+| File       | Purpose                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| types.ts   | CanopyRequest, CanopyResponse types                                                                                                                                                                                                                                                                                                                                                                            |
+| router.ts  | Route matching and dispatch                                                                                                                                                                                                                                                                                                                                                                                    |
+| handler.ts | Request handler factory; rejects anonymous callers (401) immediately after authentication, BEFORE base-branch workspace provisioning, so they can neither trigger provisioning nor read provisioning errors; first-request provisioning failure returns 503 with the error message sanitized via `sanitizeErrorMessage` (full message goes to server logs via console.error) instead of an unhandled rejection |
 
 ## Test Utilities
 
@@ -1120,6 +1121,8 @@ apps/example1/
   middleware.ts                             # Auth protection
   next.config.mjs                          # Next.js config (withCanopy)
 ```
+
+**Dev scripts**: `pnpm reset-sim` removes `.canopy-dev/` (local dev workspaces + simulated remote).
 
 ## Test Organization
 

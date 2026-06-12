@@ -23,6 +23,8 @@ export interface BranchMetadata {
   createdBy: CanopyUserId
   createdAt: string
   updatedAt: string
+  /** Fork point this branch was created from; recorded at creation, immutable. */
+  baseBranch?: string
   pullRequestUrl?: string
   pullRequestNumber?: number
   /** Sync status for async GitHub operations (used when Lambda has no internet) */

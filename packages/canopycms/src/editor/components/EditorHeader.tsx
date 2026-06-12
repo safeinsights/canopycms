@@ -344,10 +344,10 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     size="xs"
                     leftSection={<GoGitBranch size={16} />}
                     rightSection={<MdKeyboardArrowDown size={14} />}
-                    disabled={!branchName}
+                    loading={!branchName && busy}
                     data-testid="branch-dropdown-button"
                   >
-                    {branchName || 'No branch selected'}
+                    {branchName || (busy ? 'Loading branches…' : 'No branch selected')}
                   </Button>
                 </Menu.Target>
                 <Menu.Dropdown data-testid="branch-menu">

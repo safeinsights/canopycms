@@ -128,6 +128,8 @@ describe('BranchWorkspaceManager', () => {
     const meta = JSON.parse(await fs.readFile(metaFile, 'utf8'))
     expect(meta.branch.name).toBe('feature-foo')
     expect(meta.branch.title).toBe('Foo Feature')
+    // The fork point is recorded at creation
+    expect(meta.branch.baseBranch).toBe('main')
     expect(workspace.branchRoot).toBeDefined()
     expect(workspace.baseRoot).toBe(expectedBranchesRoot)
 
@@ -135,6 +137,23 @@ describe('BranchWorkspaceManager', () => {
     const registry = new BranchRegistry(expectedBranchesRoot)
     const entry = await registry.get('feature-foo')
     expect(entry?.branch.name).toBe('feature-foo')
+
+    // The recorded fork point is immutable: re-opening the branch with a
+    // different configured base must not move it
+    const reopenManager = new BranchWorkspaceManager(
+      defineCanopyTestConfig({
+        defaultBaseBranch: 'other-base',
+        defaultRemoteUrl: remotePath,
+        schema: { collections: [] },
+      }),
+    )
+    const reopened = await reopenManager.openOrCreateBranch({
+      branchName: 'feature/foo',
+      mode: 'dev',
+      basePathOverride: root,
+      createdBy: 'user-2',
+    })
+    expect(reopened.branch.baseBranch).toBe('main')
   })
 
   it('clones a remote and checks out the branch when remoteUrl is provided', async () => {

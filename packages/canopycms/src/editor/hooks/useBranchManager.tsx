@@ -176,16 +176,38 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
     try {
       const result = await apiClient.branches.list()
       if (result.status === 404) {
-        // No branch endpoint available; stay branchless until user selects/creates via other means.
+        // No branch endpoint available; stay branchless. The branch dropdown
+        // stays clickable so the user can open Manage Branches (which also
+        // retries this load) and create or select a branch from there.
         setBranches([])
         return
       }
-      if (!result.ok) throw new Error(`Failed to load branches: ${result.status}`)
+      if (!result.ok) {
+        // Surface the server's reason (e.g. workspace provisioning failures
+        // now arrive as 503s with the underlying git error)
+        throw new Error(result.error ?? `Failed to load branches: ${result.status}`)
+      }
       const list = result.data?.branches ?? []
       setBranches(list)
+      // A previous failure may have left the sticky error toast up; clear it
+      // now that loading succeeded (provisioning failures are often transient).
+      notifications.hide('canopy-branches-load-failed')
+      // No branch pinned via URL or client config — adopt the server's
+      // effective default (the detected active branch in dev mode).
+      if (!branchName && result.data?.defaultBranch) {
+        setBranchName(result.data.defaultBranch)
+      }
     } catch (err) {
       console.error(err)
-      notifications.show({ message: 'Failed to load branches', color: 'red' })
+      const message = err instanceof Error ? err.message : 'Failed to load branches'
+      // Fixed id: retries update the existing toast instead of stacking; sticky
+      // because the editor cannot function without the branch list.
+      notifications.show({
+        id: 'canopy-branches-load-failed',
+        message,
+        color: 'red',
+        autoClose: false,
+      })
     } finally {
       options.setBusy(false)
     }

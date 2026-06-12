@@ -833,7 +833,9 @@ export const Editor: React.FC<EditorProps> = ({
         }}
       >
         <Text size="sm" c="dimmed">
-          Select an item to start editing.
+          {!branchNameState && busy
+            ? 'Setting up your branch workspace…'
+            : 'Select an item to start editing.'}
         </Text>
       </Paper>
     )
@@ -875,7 +877,13 @@ export const Editor: React.FC<EditorProps> = ({
           onEntrySelect={setSelectedPath}
           onBranchReloadData={handleReloadBranchData}
           onBranchDiscardDrafts={handleDiscardDrafts}
-          onBranchManagerOpen={() => setBranchManagerOpen(true)}
+          onBranchManagerOpen={() => {
+            setBranchManagerOpen(true)
+            // Branchless = the initial load failed or found nothing; opening
+            // the manager doubles as the retry (adopts the server default on
+            // success and clears the sticky error toast).
+            if (!branchNameState) loadBranches().catch(console.error)
+          }}
           onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
           onSave={handleSave}
           onSubmit={() => branchNameState && handleSubmit(branchNameState)}
@@ -909,7 +917,11 @@ export const Editor: React.FC<EditorProps> = ({
                 }
                 form={
                   !currentEntry ? (
-                    <CenteredMessage>Select an item to start editing.</CenteredMessage>
+                    <CenteredMessage>
+                      {!branchNameState && busy
+                        ? 'Setting up your branch workspace…'
+                        : 'Select an item to start editing.'}
+                    </CenteredMessage>
                   ) : currentEntry.canEdit === false ? (
                     <CenteredMessage>
                       You don&apos;t have permission to edit this content.

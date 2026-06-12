@@ -50,6 +50,9 @@ export const CanopyConfigSchema = z
     media: mediaSchema.optional(),
     defaultBranchAccess: defaultBranchAccessSchema.optional(),
     defaultPathAccess: defaultPathAccessSchema.optional(),
+    // .optional() deliberately defeats defaultBaseBranchSchema's .default('main'):
+    // unset must stay undefined after parsing so dev mode can detect the fork
+    // point from git HEAD (see resolveBaseBranch in utils/git.ts).
     defaultBaseBranch: defaultBaseBranchSchema.optional(),
     defaultActiveBranch: z.string().min(1).optional(),
     defaultRemoteName: defaultRemoteNameSchema.optional(),

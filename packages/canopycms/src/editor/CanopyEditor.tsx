@@ -41,8 +41,10 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
     }),
     [config],
   )
+  // Empty string = branchless start; useBranchManager adopts the server's
+  // detected default branch on the first branches.list() load.
   const resolvedBranchName =
-    branchName ?? config.defaultActiveBranch ?? config.defaultBaseBranch ?? 'main'
+    branchName ?? config.defaultActiveBranch ?? config.defaultBaseBranch ?? ''
   const resolvedTitle = config.editor?.title ?? 'CanopyCMS Editor'
   const resolvedSubtitle = config.editor?.subtitle
   const resolvedTheme = (config.editor?.theme as EditorProps['themeOptions']) ?? undefined

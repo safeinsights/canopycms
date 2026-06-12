@@ -10,6 +10,7 @@ import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { authResultToCanopyUser } from '../user'
 import { loadInternalGroups, RESERVED_GROUPS } from '../authorization'
 import { clientOperatingStrategy } from '../operating-mode'
+import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
 
 let warnedNoAdmins = false
 
@@ -180,9 +181,40 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     // Authenticate and convert to CanopyUser
     const authResult = await options.authPlugin.authenticate(req)
 
-    // Load internal groups from main branch and merge with user groups
+    // API routes require authentication. Reject anonymous callers BEFORE any
+    // workspace provisioning below, so they can neither trigger expensive git
+    // operations nor read provisioning error details.
+    if (!authResult.success || !authResult.user) {
+      return jsonResponse(
+        { ok: false, status: 401, error: authResult.error ?? 'Unauthorized' },
+        401,
+      )
+    }
+
+    // Load internal groups from the base branch and merge with user groups.
+    // This getBranchContext call also auto-creates the base/active workspace
+    // on first request — if that provisioning fails, every endpoint would
+    // otherwise return confusing empty results, so fail loudly instead.
     const baseBranch = apiCtx.services.config.defaultBaseBranch ?? 'main'
-    const mainBranchContext = await apiCtx.getBranchContext(baseBranch)
+    let mainBranchContext: BranchContext | null
+    try {
+      mainBranchContext = await apiCtx.getBranchContext(baseBranch)
+    } catch (err) {
+      const message = getErrorMessage(err)
+      // Full detail to server logs; sanitized detail to the (authenticated)
+      // client — git errors can embed credentials and filesystem paths.
+      console.error(
+        `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${message}`,
+      )
+      return jsonResponse(
+        {
+          ok: false,
+          status: 503,
+          error: `Branch workspace provisioning failed for '${baseBranch}': ${sanitizeErrorMessage(message)}`,
+        },
+        503,
+      )
+    }
     const operatingMode = apiCtx.services.config.mode
     const internalGroups = mainBranchContext
       ? await loadInternalGroups(

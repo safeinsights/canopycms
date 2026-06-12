@@ -7,8 +7,11 @@ export const CanopyEditorPage = (config: CanopyClientConfig) => {
   }: {
     searchParams?: { branch?: string; entry?: string }
   }) => {
+    // No 'main' fallback: when nothing pins a branch, the editor starts
+    // branchless and adopts the server's detected default from the branches
+    // API (see useBranchManager.loadBranches).
     const branchName =
-      searchParams?.branch ?? config.defaultActiveBranch ?? config.defaultBaseBranch ?? 'main'
+      searchParams?.branch ?? config.defaultActiveBranch ?? config.defaultBaseBranch
     const initialSelectedId = searchParams?.entry
     return (
       <CanopyEditor

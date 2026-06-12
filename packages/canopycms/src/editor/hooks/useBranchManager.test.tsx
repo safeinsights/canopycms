@@ -24,6 +24,7 @@ vi.mock('../../api', async () => {
 vi.mock('@mantine/notifications', () => ({
   notifications: {
     show: vi.fn(),
+    hide: vi.fn(),
   },
 }))
 
@@ -120,6 +121,61 @@ describe('useBranchManager', () => {
     expect(mockSetBusy).toHaveBeenCalledWith(false)
   })
 
+  it('adopts the server default branch when no branch is pinned', async () => {
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches, defaultBranch: 'feature-x' },
+    })
+
+    const { result } = renderHook(
+      () => useBranchManager({ ...defaultOptions, initialBranch: '' }),
+      { wrapper },
+    )
+
+    await waitFor(() => {
+      expect(result.current.branchName).toBe('feature-x')
+    })
+  })
+
+  it('keeps a pinned branch even when the server reports a different default', async () => {
+    mockClient.branches.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { branches: mockBranches, defaultBranch: 'feature-x' },
+    })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.branches).toEqual(mockBranches)
+    })
+    expect(result.current.branchName).toBe('main')
+  })
+
+  it('clears the sticky error toast once a later load succeeds', async () => {
+    const { restore } = setupMockConsole(['error'])
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.branches.list
+      .mockResolvedValueOnce({ ok: false, status: 503, error: 'provisioning failed' })
+      .mockResolvedValue({ ok: true, status: 200, data: { branches: mockBranches } })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), { wrapper })
+
+    await waitFor(() => {
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'canopy-branches-load-failed' }),
+      )
+    })
+
+    await act(() => result.current.loadBranches())
+
+    expect(notifications.hide).toHaveBeenCalledWith('canopy-branches-load-failed')
+    restore()
+  })
+
   it('handles branch load returning 404 gracefully', async () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: false,
@@ -146,6 +202,29 @@ describe('useBranchManager', () => {
 
     await waitFor(() => {
       expect(mockSetBusy).toHaveBeenCalledWith(false)
+    })
+
+    restore()
+  })
+
+  it('surfaces the server error message when loading branches fails', async () => {
+    const { restore } = setupMockConsole(['error'])
+    const { notifications } = await import('@mantine/notifications')
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      error: "Branch workspace provisioning failed for 'main': clone failed",
+    })
+
+    renderHook(() => useBranchManager(defaultOptions), { wrapper })
+
+    await waitFor(() => {
+      expect(notifications.show).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: "Branch workspace provisioning failed for 'main': clone failed",
+          color: 'red',
+        }),
+      )
     })
 
     restore()

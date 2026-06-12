@@ -31,6 +31,53 @@ export function getErrorMessage(err: unknown): string {
 }
 
 /**
+ * Redact sensitive material from an error message before sending it to API
+ * clients. Log the ORIGINAL message server-side; send the sanitized one.
+ *
+ * Git/filesystem errors are unbounded (stderr varies by git version, locale,
+ * and hooks can print anything), so enumerating safe messages is not
+ * feasible. Instead, redact the known-sensitive SHAPES that can appear in
+ * any of them:
+ * - credentials embedded in URLs (`https://x-access-token:tok@github.com/…`)
+ * - absolute filesystem paths (workspace roots, EFS mounts, home directories)
+ *
+ * Paths under the current working directory are shortened to relative form
+ * (CMS-internal layout like `.canopy-dev/remote.git` is useful for debugging
+ * and not sensitive); absolute paths outside it are replaced with `<path>`.
+ */
+export function sanitizeErrorMessage(message: string): string {
+  let result = message
+  // Credentials in URLs: scheme://user:token@host or scheme://token@host.
+  // Anchored on the literal `://` (leaving the scheme untouched) — a `\w+`
+  // scheme prefix would backtrack polynomially on long word-character runs
+  // (CodeQL js/polynomial-redos).
+  result = result.replace(/(:\/\/)[^/\s@]+@/g, '$1***@')
+  // Paths under the project root become relative (split/join avoids regex
+  // escaping issues with arbitrary cwd values). The bare-cwd replacement is
+  // anchored to a token boundary so sibling directories that merely share
+  // the cwd prefix (e.g. `${cwd}-other/…`) stay absolute and get fully
+  // redacted below instead of leaking a mangled remainder.
+  const cwd = process.cwd()
+  if (cwd !== '/') {
+    result = result.split(`${cwd}/`).join('')
+    const cwdPattern = cwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    result = result.replace(new RegExp(`${cwdPattern}(?=[\\s'"),:;]|$)`, 'g'), '.')
+  }
+  // Quoted absolute paths (git quotes most paths in its messages): redact
+  // the whole quoted span, spaces included.
+  result = result.replace(/'\/[^']*'/g, "'<path>'").replace(/"\/[^"]*"/g, '"<path>"')
+  // Remaining absolute POSIX paths (outside cwd, e.g. /mnt/efs/…). The
+  // leading boundary keeps URL slashes (`https://host/…`) untouched. Known
+  // limitation: an UNQUOTED path containing spaces is only redacted up to
+  // the first space — spaces are legal both inside paths and as message
+  // separators, so this is not generally solvable here.
+  result = result.replace(/(^|[\s'"(=])\/(?:[^/\s'")]+\/)+[^/\s'")]*/g, '$1<path>')
+  // Windows drive paths
+  result = result.replace(/[A-Za-z]:\\[^\s'")]+/g, '<path>')
+  return result
+}
+
+/**
  * Type guard to check if an error is a Node.js system error with a code property.
  *
  * @param err - The caught error (unknown type)

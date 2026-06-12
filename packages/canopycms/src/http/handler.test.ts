@@ -144,6 +144,89 @@ describe('createCanopyRequestHandler', () => {
     expect(response.body).toHaveProperty('error', 'Not found')
   })
 
+  it('rejects anonymous requests before triggering workspace provisioning', async () => {
+    const services: any = createMockServices()
+    const authPlugin = createRejectingAuthPlugin('No token')
+    const getBranchContext = vi.fn(async () => {
+      throw new Error('provisioning should never run for anonymous callers')
+    })
+
+    const handler = createCanopyRequestHandler({
+      services,
+      authPlugin,
+      getBranchContext,
+    })
+
+    const req = createMockRequest({
+      method: 'GET',
+      url: 'http://localhost:3000/api/canopycms/branches',
+    })
+
+    const response = await handler(req, ['branches'])
+
+    expect(response.status).toBe(401)
+    expect(getBranchContext).not.toHaveBeenCalled()
+  })
+
+  it('sanitizes credentials and absolute paths out of provisioning errors', async () => {
+    const services: any = createMockServices()
+    const authPlugin = createMockAuthPlugin()
+
+    const handler = createCanopyRequestHandler({
+      services,
+      authPlugin,
+      getBranchContext: async () => {
+        throw new Error(
+          `Failed to clone branch workspace 'main' into /mnt/efs/workspace/main ` +
+            `from https://x-access-token:ghp_secret123@github.com/org/repo.git ` +
+            `(base branch 'main'): fatal: could not read from remote`,
+        )
+      },
+    })
+
+    const req = createMockRequest({
+      method: 'GET',
+      url: 'http://localhost:3000/api/canopycms/branches',
+    })
+
+    const response = await handler(req, ['branches'])
+
+    expect(response.status).toBe(503)
+    const error = (response.body as { error?: string }).error ?? ''
+    expect(error).not.toContain('ghp_secret123')
+    expect(error).not.toContain('/mnt/efs')
+    expect(error).toContain('***@github.com')
+    expect(error).toContain('<path>')
+    expect(error).toContain('could not read from remote')
+  })
+
+  it('returns 503 with context when base-branch workspace provisioning fails', async () => {
+    const services: any = createMockServices()
+    const authPlugin = createMockAuthPlugin()
+
+    const handler = createCanopyRequestHandler({
+      services,
+      authPlugin,
+      getBranchContext: async () => {
+        throw new Error('clone failed: remote branch not found')
+      },
+    })
+
+    const req = createMockRequest({
+      method: 'GET',
+      url: 'http://localhost:3000/api/canopycms/branches',
+    })
+
+    const response = await handler(req, ['branches'])
+
+    expect(response.status).toBe(503)
+    expect(response.body).toHaveProperty('ok', false)
+    expect((response.body as { error?: string }).error).toContain('provisioning failed')
+    expect((response.body as { error?: string }).error).toContain(
+      'clone failed: remote branch not found',
+    )
+  })
+
   it('returns 401 for unauthenticated requests', async () => {
     const services: any = createMockServices()
     const authPlugin = createRejectingAuthPlugin('No token')

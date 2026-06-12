@@ -9,6 +9,7 @@ import type { OperatingMode } from './operating-mode'
 import { operatingStrategy } from './operating-mode'
 import { GitManager } from './git-manager'
 import { createDebugLogger } from './utils/debug'
+import { resolveBaseBranch } from './utils/git'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'BranchWorkspace' })
@@ -42,6 +43,7 @@ export class BranchWorkspaceManager {
     branchRoot: string
     branchName: string
     mode: OperatingMode
+    baseBranch: string
     remoteUrl?: string
   }) {
     return log.timed('workspace', 'ensureGitWorkspace', async () => {
@@ -76,7 +78,7 @@ export class BranchWorkspaceManager {
             workspacePath: options.branchRoot,
             branchName: options.branchName,
             mode: options.mode,
-            baseBranch: this.config.defaultBaseBranch,
+            baseBranch: options.baseBranch,
             sourceRoot: this.config.sourceRoot,
             defaultRemoteUrl: this.config.defaultRemoteUrl,
             remoteUrl: options.remoteUrl,
@@ -120,10 +122,21 @@ export class BranchWorkspaceManager {
       basePathOverride,
     })
 
+    // Resolve the fork point once so the workspace clone and the recorded
+    // metadata are guaranteed to agree (config value, or dev-mode git HEAD).
+    const baseBranch = await resolveBaseBranch({
+      defaultBaseBranch: this.config.defaultBaseBranch,
+      mode,
+      detectFrom: this.config.sourceRoot
+        ? path.resolve(process.cwd(), this.config.sourceRoot)
+        : undefined,
+    })
+
     await this.ensureGitWorkspace({
       branchRoot,
       branchName: safeName,
       mode,
+      baseBranch,
       remoteUrl,
     })
 
@@ -136,6 +149,7 @@ export class BranchWorkspaceManager {
         description,
         access,
         createdBy,
+        baseBranch,
       },
     })
 

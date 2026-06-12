@@ -18,7 +18,15 @@ const log = createDebugLogger({ prefix: 'BranchAPI' })
 export type BranchResponse = ApiResponse<{ branch: BranchMetadata }>
 
 /** Response type for listing branches */
-export type BranchListResponse = ApiResponse<{ branches: BranchMetadata[] }>
+export type BranchListResponse = ApiResponse<{
+  branches: BranchMetadata[]
+  /**
+   * The server's effective default branch (the detected active branch in dev
+   * mode). Clients without an explicitly pinned branch should open this one.
+   * Optional on the wire so older servers remain compatible.
+   */
+  defaultBranch?: string
+}>
 
 /** Response type for branch deletion */
 export type BranchDeleteResponse = ApiResponse<{ deleted: boolean }>
@@ -129,14 +137,16 @@ export const createBranchHandler = async (
       }
     }
 
-    // Load path permissions from the main branch's JSON file
-    const mainBranch = ctx.services.config.defaultBaseBranch ?? 'main'
-    const mainBranchContext = await ctx.getBranchContext(mainBranch)
+    // Load path permissions from the base branch's JSON file (the resolved
+    // fork point — baked into config at service creation; dev-mode git HEAD
+    // when not explicitly configured)
+    const baseBranch = ctx.services.config.defaultBaseBranch ?? 'main'
+    const baseBranchContext = await ctx.getBranchContext(baseBranch)
 
     let pathPermissions: PathPermission[] = []
-    if (mainBranchContext) {
+    if (baseBranchContext) {
       const operatingMode = ctx.services.config.mode
-      pathPermissions = await loadPathPermissions(mainBranchContext.branchRoot, operatingMode)
+      pathPermissions = await loadPathPermissions(baseBranchContext.branchRoot, operatingMode)
     }
 
     // Check if user can create branches
@@ -180,12 +190,17 @@ export const listBranchesHandler = async (
 
   const allBranches = await ctx.services.registry.list()
 
+  // The branch the editor should open when none is pinned via URL/config.
+  // Read per-request so dev-mode refreshActiveBranch() updates are reflected.
+  const defaultBranch =
+    ctx.services.config.defaultActiveBranch ?? ctx.services.config.defaultBaseBranch ?? 'main'
+
   // Admins and Reviewers see all branches
   if (isPrivileged(req.user.groups)) {
     return {
       ok: true,
       status: 200,
-      data: { branches: allBranches.map((c) => c.branch) },
+      data: { branches: allBranches.map((c) => c.branch), defaultBranch },
     }
   }
 
@@ -214,7 +229,7 @@ export const listBranchesHandler = async (
   return {
     ok: true,
     status: 200,
-    data: { branches: visibleBranches.map((c) => c.branch) },
+    data: { branches: visibleBranches.map((c) => c.branch), defaultBranch },
   }
 }
 

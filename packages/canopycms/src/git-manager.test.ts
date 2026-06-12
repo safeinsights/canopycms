@@ -196,8 +196,8 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     expect(finalSha).toBe(editorSha)
   })
 
-  it('pushes a missing base branch into an existing subtree-split remote (sourceRoot)', async () => {
-    // Refresh path through the subdirectory/subtree-split variant
+  it('pushes a missing base branch into an existing subdirectory-snapshot remote (sourceRoot)', async () => {
+    // Refresh path through the subdirectory/snapshot variant
     const git = await initTestRepo(tmpDir)
     await git.raw(['branch', '-M', 'main'])
     const subdir = path.join(tmpDir, 'packages/example')
@@ -234,6 +234,62 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     expect(cloneFiles).toContain('test.txt')
     expect(cloneFiles).toContain('feature.txt')
     expect(cloneFiles).not.toContain('packages')
+  })
+
+  it('seeds the remote even when the source repo has a failing pre-push hook', async () => {
+    // The seeding push is internal plumbing — adopter hooks (husky etc.)
+    // must not block it (--no-verify)
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(tmpDir, 'test.txt'), 'hello', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial commit')
+
+    const hookPath = path.join(tmpDir, '.git', 'hooks', 'pre-push')
+    await fs.writeFile(hookPath, '#!/bin/sh\necho "hook ran" >&2\nexit 1\n', { mode: 0o755 })
+
+    const remotePath = path.join(tmpDir, 'remote.git')
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath,
+      sourcePath: tmpDir,
+      baseBranch: 'main',
+    })
+
+    const remoteGit = simpleGit({ baseDir: remotePath })
+    const branches = await remoteGit.raw(['branch', '--list', 'main'])
+    expect(branches).toContain('main')
+  })
+
+  it('seeds a subdirectory remote from baseBranch even when HEAD is elsewhere', async () => {
+    // The seed must snapshot `<baseBranch>:<subdirectory>`, not the checked-out
+    // HEAD — an explicitly configured base must win over the working branch.
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    const subdir = path.join(tmpDir, 'packages/example')
+    await fs.mkdir(subdir, { recursive: true })
+    await fs.writeFile(path.join(subdir, 'base.txt'), 'base', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial commit')
+
+    // HEAD moves to a feature branch with extra subdirectory content
+    await git.checkoutLocalBranch('feature/extra')
+    await fs.writeFile(path.join(subdir, 'extra.txt'), 'extra', 'utf8')
+    await git.add(['.'])
+    await git.commit('feature commit')
+
+    const remotePath = path.join(tmpDir, 'remote.git')
+    await GitManager.ensureLocalSimulatedRemote({
+      remotePath,
+      sourcePath: tmpDir,
+      baseBranch: 'main',
+      subdirectory: 'packages/example',
+    })
+
+    const clonePath = path.join(tmpDir, 'clone-base')
+    await simpleGit().clone(remotePath, clonePath, ['--branch', 'main'])
+    const cloneFiles = await fs.readdir(clonePath)
+    expect(cloneFiles).toContain('base.txt')
+    expect(cloneFiles).not.toContain('extra.txt')
   })
 
   it('initializeWorkspace clones a workspace whose base branch postdates the remote', async () => {

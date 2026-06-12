@@ -12,7 +12,7 @@ import {
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNotFoundError } from './utils/error'
-import { detectHeadBranch } from './utils/git'
+import { resolveBaseBranch } from './utils/git'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -167,8 +167,8 @@ export class GitManager {
           return
         }
 
-        // Find the actual git root directory
-        // git subtree requires being run from the toplevel of the working tree
+        // Find the actual git root directory — the subdirectory snapshot path
+        // (`<branch>:<subdirectory>`) is relative to the repository toplevel
         let gitRoot = options.sourcePath
         try {
           const sourceGit = simpleGit({ baseDir: options.sourcePath })
@@ -293,8 +293,12 @@ export class GitManager {
 
   /**
    * Push baseBranch from the source repo into the local bare remote via a
-   * temporary remote. With `subdirectory`, pushes a `git subtree split` of that
-   * prefix instead (synthetic history containing only the subdirectory).
+   * temporary remote. With `subdirectory`, pushes a single snapshot commit of
+   * that subdirectory's tree at baseBranch instead of the full history:
+   * `git subtree split` forks subprocesses per commit (minutes on large
+   * repos), and the simulated remote never needs history — branches already
+   * present are never updated, and editor state is committed on top of the
+   * seed.
    */
   private static async pushBranchToLocalRemote(options: {
     sourceGit: SimpleGit
@@ -308,32 +312,39 @@ export class GitManager {
       await sourceGit.addRemote(tempRemoteName, options.remotePath)
 
       if (options.subdirectory) {
-        // For subdirectory pushes, use git subtree split
-        // This creates a synthetic history with only the subdirectory content
-        const splitBranch = `__canopycms_split_${Date.now()}__`
-        try {
+        // Snapshot the subdirectory tree at baseBranch (not HEAD) and push it
+        // as a single root commit.
+        const tree = (
+          await sourceGit.raw(['rev-parse', `${options.baseBranch}:${options.subdirectory}`])
+        ).trim()
+        const commit = (
           await sourceGit.raw([
-            'subtree',
-            'split',
-            '--prefix',
-            options.subdirectory,
-            '-b',
-            splitBranch,
+            '-c',
+            'user.name=CanopyCMS',
+            '-c',
+            'user.email=canopycms@localhost',
+            'commit-tree',
+            tree,
+            '-m',
+            `CanopyCMS dev base snapshot of ${options.baseBranch}:${options.subdirectory}`,
           ])
-          await sourceGit.push(tempRemoteName, `${splitBranch}:${options.baseBranch}`)
-          await sourceGit.raw(['branch', '-D', splitBranch])
-        } catch (err) {
-          // Clean up split branch if it exists
-          try {
-            await sourceGit.raw(['branch', '-D', splitBranch])
-          } catch {
-            // ignore
-          }
-          throw err
-        }
+        ).trim()
+        // --no-verify: this is internal plumbing into the simulated remote;
+        // the adopter's pre-push hooks (husky etc.) must not block it
+        await sourceGit.raw([
+          'push',
+          '--no-verify',
+          tempRemoteName,
+          `${commit}:refs/heads/${options.baseBranch}`,
+        ])
       } else {
-        // Normal push of entire repo
-        await sourceGit.push(tempRemoteName, `${options.baseBranch}:${options.baseBranch}`)
+        // Normal push of entire repo (--no-verify: see above)
+        await sourceGit.raw([
+          'push',
+          '--no-verify',
+          tempRemoteName,
+          `${options.baseBranch}:${options.baseBranch}`,
+        ])
       }
     } finally {
       try {
@@ -454,15 +465,15 @@ export class GitManager {
    * @returns Configured GitManager instance for the workspace
    */
   static async initializeWorkspace(options: InitializeWorkspaceOptions): Promise<GitManager> {
-    // In dev mode, auto-detect the current HEAD branch when baseBranch is not explicitly set
-    let baseBranch = options.baseBranch
-    if (!baseBranch && options.mode === 'dev') {
-      const sourceRoot = options.sourceRoot
+    // Resolve the fork point through the shared resolver (dev mode detects the
+    // current HEAD when baseBranch is not explicitly set).
+    const baseBranch = await resolveBaseBranch({
+      defaultBaseBranch: options.baseBranch,
+      mode: options.mode,
+      detectFrom: options.sourceRoot
         ? path.resolve(process.cwd(), options.sourceRoot)
-        : process.cwd()
-      baseBranch = await detectHeadBranch(sourceRoot)
-    }
-    baseBranch = baseBranch ?? 'main'
+        : process.cwd(),
+    })
     const remoteName = options.remoteName ?? 'origin'
 
     // 1. Check if git already initialized (with traversal protection)
