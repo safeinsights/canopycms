@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
-import type { ListEntriesResponse } from '../../api/entries'
+import { MAX_ENTRIES_PER_PAGE } from '../../api/entries-constants'
+import type { CollectionItem, ListEntriesResponse } from '../../api/entries'
 import type { WriteContentBody } from '../../api/content'
 import type { EditorEntry, EditorCollection } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
@@ -11,7 +12,7 @@ import {
   normalizeContentPayload,
 } from '../editor-utils'
 import { isDataOnlyFormat } from '../../utils/format'
-import { useApiClient } from '../context'
+import { useApiClient, type ApiClient } from '../context'
 
 /** Thrown by saveEntry when the API returns a non-200 response. Carries the HTTP status so callers can distinguish conflict (409) and validation rejection (422) from other errors. */
 export class SaveApiError extends Error {
@@ -22,6 +23,41 @@ export class SaveApiError extends Error {
     super(serverMessage || `Save failed: ${status}`)
     this.name = 'SaveApiError'
   }
+}
+
+/** Page size for entry list requests — the server's per-page cap, imported to avoid drift. */
+const ENTRIES_PAGE_LIMIT = MAX_ENTRIES_PER_PAGE
+/** Safety cap on pagination: 50 pages x 200 = 10,000 entries. */
+const MAX_ENTRY_PAGES = 50
+
+/**
+ * Fetch every entry on a branch by following the list endpoint's pagination
+ * cursor. Deduped by logicalPath: the cursor is offset-based, so an item can
+ * repeat across pages if content changes between requests.
+ *
+ * Exported for direct unit testing.
+ */
+export async function listAllEntries(
+  apiClient: { entries: Pick<ApiClient['entries'], 'list'> },
+  branch: string,
+): Promise<{ entries: CollectionItem[]; truncated: boolean }> {
+  const byPath = new Map<string, CollectionItem>()
+  let cursor: string | undefined
+  for (let page = 0; page < MAX_ENTRY_PAGES; page++) {
+    const result = await apiClient.entries.list({
+      branch,
+      limit: String(ENTRIES_PAGE_LIMIT),
+      ...(cursor !== undefined ? { cursor } : {}),
+    })
+    if (!result.ok || !result.data) throw new Error(`Refresh failed: ${result.status}`)
+    const data = result.data as ListEntriesResponse
+    for (const entry of data.entries) byPath.set(entry.logicalPath, entry)
+    if (!data.pagination?.hasMore || !data.pagination.cursor) {
+      return { entries: [...byPath.values()], truncated: false }
+    }
+    cursor = data.pagination.cursor
+  }
+  return { entries: [...byPath.values()], truncated: true }
 }
 
 export interface UseEntryManagerOptions {
@@ -102,6 +138,8 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const hasSyncedFromUrl = useRef(false)
   // OCC version tokens keyed by contentId — captured on load, sent on save
   const entryVersionsRef = useRef<Map<string, number>>(new Map())
+  // Monotonic token so a stale refresh (e.g. superseded by a branch switch) doesn't commit state
+  const refreshSeqRef = useRef(0)
 
   // Entry create modal state
   const [createModalOpen, setCreateModalOpen] = useState(false)
@@ -200,6 +238,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
   const refreshEntries = async (branch: string = options.branchName): Promise<EditorEntry[]> => {
     if (!branch) return []
+    const seq = ++refreshSeqRef.current
 
     // Fetch schema from schema API
     const schemaResult = await apiClient.schema.get({ branch })
@@ -217,23 +256,37 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     // Dynamic import: lazy-load heavier editor config; only needed after API data arrives
     const { buildEditorCollections } = await import('../editor-config')
     const collections = buildEditorCollections(hydratedFlatSchema)
-    setCollectionsState(collections)
 
-    // Fetch entries from entries API
-    const result = await apiClient.entries.list({ branch })
-    if (!result.ok) throw new Error(`Refresh failed: ${result.status}`)
-    const data = result.data as ListEntriesResponse
+    // Fetch ALL entries, following the pagination cursor
+    const { entries: allEntries, truncated } = await listAllEntries(apiClient, branch)
+    if (truncated) {
+      console.warn(
+        `Entry list truncated at ${MAX_ENTRY_PAGES * ENTRIES_PAGE_LIMIT} entries for branch "${branch}"`,
+      )
+      notifications.show({
+        title: 'Entry list truncated',
+        message: `Showing the first ${(MAX_ENTRY_PAGES * ENTRIES_PAGE_LIMIT).toLocaleString()} entries.`,
+        color: 'yellow',
+      })
+    }
 
     // Build entries with resolved schemas from flatSchema
     const refreshed = buildEntriesFromListResponse({
-      response: data,
+      response: {
+        entries: allEntries,
+        pagination: { hasMore: false, limit: ENTRIES_PAGE_LIMIT },
+      },
       branchName: branch,
       resolvePreviewSrc: (entry) => options.resolvePreviewSrc(entry) ?? '',
       contentRoot: options.contentRoot || 'content',
       flatSchema: hydratedFlatSchema,
     })
 
-    setEntriesState(refreshed)
+    // Commit collections + entries together, and only if no newer refresh started meanwhile
+    if (seq === refreshSeqRef.current) {
+      setCollectionsState(collections)
+      setEntriesState(refreshed)
+    }
     return refreshed
   }
 

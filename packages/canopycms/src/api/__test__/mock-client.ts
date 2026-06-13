@@ -74,7 +74,7 @@ export function createMockApiClient(): MockApiClient {
   },
 
   entries: {
-    list: vi.fn().mockResolvedValue(mockSuccess({"collections":[],"entries":[],"pagination":{"hasMore":false,"limit":50}})),
+    list: vi.fn().mockResolvedValue(mockSuccess({"entries":[],"pagination":{"hasMore":false,"limit":50}})),
     delete: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
   },
 
@@ -245,7 +245,7 @@ export function mockResolveReferencesResponse(): ResolveReferencesResponse {
  * Create a EntriesResponse for testing
  */
 export function mockEntriesResponse(): EntriesResponse {
-  return mockSuccess({"collections":[],"entries":[],"pagination":{"hasMore":false,"limit":50}})
+  return mockSuccess({"entries":[],"pagination":{"hasMore":false,"limit":50}})
 }
 
 /**

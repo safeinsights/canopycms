@@ -130,6 +130,57 @@ describe('Schema API', () => {
       })
     })
 
+    it('should not embed nested collection subtrees in flat collection items', async () => {
+      // flattenSchema keeps the nested config on in-memory items; the wire format
+      // must drop it — children are linked via parentPath, not embedded subtrees.
+      const guideEntry = {
+        name: 'guide',
+        format: 'json' as const,
+        schema: [],
+        schemaRef: 'postSchema',
+      }
+      const nestedFlatSchema: FlatSchemaItem[] = [
+        {
+          type: 'collection',
+          logicalPath: 'docs' as LogicalPath,
+          name: 'docs',
+          entries: [{ name: 'post', format: 'json', schema: [], schemaRef: 'postSchema' }],
+          collections: [{ name: 'guides', path: 'guides', entries: [guideEntry] }],
+          order: ['id1'],
+        },
+        {
+          type: 'collection',
+          logicalPath: 'docs/guides' as LogicalPath,
+          name: 'guides',
+          parentPath: 'docs' as LogicalPath,
+          entries: [guideEntry],
+        },
+      ]
+      vi.mocked(mockCtx.getBranchContext).mockResolvedValue({
+        branchRoot: '/test/branch',
+        branchName: 'main',
+        flatSchema: nestedFlatSchema,
+      } as unknown as Awaited<ReturnType<ApiContext['getBranchContext']>>)
+
+      const result = await getSchema.handler(mockCtx, mockReq, {
+        branch: unsafeAsBranchName('main'),
+      })
+
+      expect(result.ok).toBe(true)
+      const items = result.data?.flatSchema ?? []
+
+      const parent = items.find((i) => i.logicalPath === 'docs')
+      expect(parent).toBeDefined()
+      expect(parent).not.toHaveProperty('collections')
+      // entries and order stay embedded — consumers use them
+      expect(parent).toMatchObject({ order: ['id1'] })
+      expect(parent && 'entries' in parent && parent.entries).toHaveLength(1)
+
+      // The child still arrives as its own flat item, linked via parentPath
+      const child = items.find((i) => i.logicalPath === 'docs/guides')
+      expect(child).toMatchObject({ type: 'collection', name: 'guides', parentPath: 'docs' })
+    })
+
     it('should return 404 for non-existent branch', async () => {
       vi.mocked(mockCtx.getBranchContext).mockResolvedValue(null)
 

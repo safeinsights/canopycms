@@ -107,6 +107,65 @@ describe('listEntries', () => {
     expect(res.data?.entries.some((e) => e.slug === 'hidden')).toBe(false)
   })
 
+  it('clamps an over-large limit to the server maximum (200)', async () => {
+    const root = await tmpDir()
+    await fs.mkdir(path.join(root, 'content/posts'), { recursive: true })
+    await fs.writeFile(
+      path.join(root, 'content/posts/entry.first.abc123def456.json'),
+      JSON.stringify({ title: 'First Post' }),
+      'utf8',
+    )
+
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ defaultBranchAccess: 'allow', schema })
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
+    })
+
+    const ctx = createMockApiContext({
+      services: { config, checkBranchAccess, checkContentAccess },
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
+    })
+
+    // Request well above the 200 cap; handler clamps rather than 400s or echoes it back.
+    const res = await listEntries.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('main'), limit: 500 },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.pagination.limit).toBe(200)
+  })
+
   it('returns 404 when branch is missing', async () => {
     const ctx = createMockApiContext({ branchContext: null })
     const res = await listEntries.handler(
@@ -1348,5 +1407,63 @@ describe('deleteEntry', () => {
     expect(res.ok).toBe(false)
     expect(res.status).toBe(400)
     expect(res.error).toContain('Invalid entry path format')
+  })
+})
+
+describe('listEntries.validate (HTTP query params)', () => {
+  // Query-string values reach validate() as strings (http/handler.ts parseQueryParams),
+  // unlike the typed params the handler tests above pass directly.
+  it('coerces limit strings to numbers', () => {
+    const result = listEntries.validate({ params: { branch: 'main', limit: '200' } })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      expect((result.params as { limit?: number }).limit).toBe(200)
+    }
+  })
+
+  it('rejects non-numeric and non-positive limits', () => {
+    expect(listEntries.validate({ params: { branch: 'main', limit: 'abc' } }).ok).toBe(false)
+    expect(listEntries.validate({ params: { branch: 'main', limit: '0' } }).ok).toBe(false)
+    expect(listEntries.validate({ params: { branch: 'main', limit: '2.5' } }).ok).toBe(false)
+  })
+
+  it('coerces recursive strings to booleans', () => {
+    const trueResult = listEntries.validate({ params: { branch: 'main', recursive: 'true' } })
+    expect(trueResult.ok).toBe(true)
+    if (trueResult.ok) {
+      expect((trueResult.params as { recursive?: boolean }).recursive).toBe(true)
+    }
+
+    const falseResult = listEntries.validate({ params: { branch: 'main', recursive: 'false' } })
+    expect(falseResult.ok).toBe(true)
+    if (falseResult.ok) {
+      expect((falseResult.params as { recursive?: boolean }).recursive).toBe(false)
+    }
+  })
+
+  it('rejects recursive values other than true/false', () => {
+    expect(listEntries.validate({ params: { branch: 'main', recursive: '1' } }).ok).toBe(false)
+  })
+
+  it('leaves absent optional params undefined', () => {
+    const result = listEntries.validate({ params: { branch: 'main' } })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const params = result.params as { limit?: number; recursive?: boolean }
+      expect(params.limit).toBeUndefined()
+      expect(params.recursive).toBeUndefined()
+    }
+  })
+
+  it('still accepts native typed params (programmatic validate)', () => {
+    const result = listEntries.validate({
+      params: { branch: 'main', limit: 50, recursive: true } as unknown as Record<string, string>,
+    })
+    expect(result.ok).toBe(true)
+    if (result.ok) {
+      const params = result.params as { limit?: number; recursive?: boolean }
+      expect(params.limit).toBe(50)
+      expect(params.recursive).toBe(true)
+    }
   })
 })

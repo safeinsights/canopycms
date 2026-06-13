@@ -57,6 +57,7 @@ Priority levels:
 | [init-respects-adopter-conventions.md](init-respects-adopter-conventions.md)       | `canopycms init` should detect adopter's Prettier config + package manager and match them in generated files + next-steps |
 | [static-export-sitemap.md](static-export-sitemap.md)                               | Static-export sitemap helper: enumerate published entries + singletons → `sitemap.xml` (framework-agnostic core + Next adapter) |
 | [static-export-seo-metadata.md](static-export-seo-metadata.md)                     | Static-export SEO metadata helper + recommended SEO field group → Next `Metadata`                                          |
+| [entry-navigator-scalability.md](entry-navigator-scalability.md)                   | Editor navigator loads all entries up front with a hard 10,000 ceiling; move to collection-scoped/lazy loading (+ keyset cursor) |
 
 ---
 
