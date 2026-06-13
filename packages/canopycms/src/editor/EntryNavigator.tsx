@@ -8,6 +8,7 @@ import {
   Badge,
   Box,
   Group,
+  Loader,
   Menu,
   ScrollArea,
   Stack,
@@ -80,6 +81,8 @@ export interface EntryNavigatorProps {
   ) => void
   /** If provided, this collection path's node is hidden but its children are rendered at the top level */
   hiddenRootPath?: string
+  /** When true and the tree is empty, show a loading indicator instead of "No content" */
+  loading?: boolean
 }
 
 export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
@@ -94,6 +97,7 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
   onRenameEntry,
   onReorderEntry,
   hiddenRootPath,
+  loading,
 }) => {
   const selectedNodeRef = useRef<HTMLDivElement>(null)
   const hasScrolledRef = useRef(false)
@@ -643,9 +647,18 @@ export const EntryNavigator: React.FC<EntryNavigatorProps> = ({
     >
       <ScrollArea type="auto" offsetScrollbars style={{ flex: 1 }}>
         {treeData.length === 0 ? (
-          <Text size="xs" c="dimmed" py="sm">
-            No content
-          </Text>
+          loading ? (
+            <Group gap="xs" py="sm">
+              <Loader size="xs" />
+              <Text size="xs" c="dimmed">
+                Loading content…
+              </Text>
+            </Group>
+          ) : (
+            <Text size="xs" c="dimmed" py="sm">
+              No content
+            </Text>
+          )
         ) : (
           <Box py="sm">
             <Tree

@@ -234,6 +234,7 @@ export const Editor: React.FC<EditorProps> = ({
     entries: entriesState,
     collections: collectionsFromApi,
     currentEntry,
+    entriesInitializing,
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,
@@ -835,7 +836,9 @@ export const Editor: React.FC<EditorProps> = ({
         <Text size="sm" c="dimmed">
           {!branchNameState && busy
             ? 'Setting up your branch workspace…'
-            : 'Select an item to start editing.'}
+            : entriesInitializing
+              ? 'Loading content…'
+              : 'Select an item to start editing.'}
         </Text>
       </Paper>
     )
@@ -920,7 +923,9 @@ export const Editor: React.FC<EditorProps> = ({
                     <CenteredMessage>
                       {!branchNameState && busy
                         ? 'Setting up your branch workspace…'
-                        : 'Select an item to start editing.'}
+                        : entriesInitializing
+                          ? 'Loading content…'
+                          : 'Select an item to start editing.'}
                     </CenteredMessage>
                   ) : currentEntry.canEdit === false ? (
                     <CenteredMessage>
@@ -1074,6 +1079,7 @@ export const Editor: React.FC<EditorProps> = ({
                   onRenameEntry={handleRenameEntry}
                   onReorderEntry={handleReorderEntry}
                   hiddenRootPath={hiddenRootPath}
+                  loading={entriesInitializing}
                 />
               </Box>
             </Drawer.Body>

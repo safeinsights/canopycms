@@ -7,8 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { defineCanopyTestConfig } from '../config-test'
 import { flattenSchema } from '../config'
 import { createCheckBranchAccess } from '../authorization'
-import { createCheckContentAccess } from '../authorization'
-import { unsafeAsPermissionPath } from '../authorization/test-utils'
+import { unsafeAsPermissionPath, createTestContentAccess } from '../authorization/test-utils'
 import type { PathPermission } from '../config'
 import { listEntries } from './entries'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
@@ -69,7 +68,7 @@ describe('listEntries', () => {
     const mockLoadPermissions = vi.fn().mockResolvedValue(pathRules)
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
@@ -82,6 +81,7 @@ describe('listEntries', () => {
         config,
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({
@@ -134,7 +134,7 @@ describe('listEntries', () => {
 
     const config = defineCanopyTestConfig({ defaultBranchAccess: 'allow', schema })
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
@@ -143,7 +143,7 @@ describe('listEntries', () => {
     })
 
     const ctx = createMockApiContext({
-      services: { config, checkBranchAccess, checkContentAccess },
+      services: { config, checkBranchAccess, checkContentAccess, createContentAccessChecker },
       branchContext: {
         ...createMockBranchContext({
           branchName: 'main',
@@ -271,7 +271,7 @@ describe('listEntries', () => {
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
@@ -284,6 +284,7 @@ describe('listEntries', () => {
         config,
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({
@@ -403,7 +404,7 @@ describe('listEntries', () => {
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: async () => [],
       defaultPathAccess: 'allow',
@@ -416,6 +417,7 @@ describe('listEntries', () => {
         config,
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({
@@ -490,7 +492,7 @@ describe('listEntries', () => {
     const mockLoadPermissions = vi.fn().mockResolvedValue(pathRules)
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: mockLoadPermissions,
       defaultPathAccess: 'allow',
@@ -503,6 +505,7 @@ describe('listEntries', () => {
         config,
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({
@@ -595,7 +598,7 @@ describe('listEntries', () => {
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
@@ -609,6 +612,7 @@ describe('listEntries', () => {
         entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({
@@ -734,7 +738,7 @@ describe('listEntries', () => {
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
@@ -748,6 +752,7 @@ describe('listEntries', () => {
         entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({
@@ -793,6 +798,158 @@ describe('listEntries', () => {
     const postEntry = res.data?.entries.find((e) => e.slug === 'first')
     expect(postEntry).toBeDefined()
     expect(postEntry?.collectionPath).toBe('content/posts')
+  })
+
+  it('loads permissions and the settings root once per request across many collections', async () => {
+    const root = await tmpDir()
+    // Distinct 12-char Base58 content IDs per file (the on-disk filename format requires
+    // them; Base58 excludes 0/O/I/l).
+    const collections = [
+      { name: 'posts', ids: ['pst111aaa222', 'pst333bbb444'] },
+      { name: 'pages', ids: ['pag111aaa222', 'pag333bbb444'] },
+      { name: 'news', ids: ['nws111aaa222', 'nws333bbb444'] },
+    ]
+    for (const { name, ids } of collections) {
+      await fs.mkdir(path.join(root, `content/${name}`), { recursive: true })
+      await fs.writeFile(
+        path.join(root, `content/${name}/entry.a.${ids[0]}.json`),
+        JSON.stringify({ title: `${name} A` }),
+        'utf8',
+      )
+      await fs.writeFile(
+        path.join(root, `content/${name}/entry.b.${ids[1]}.json`),
+        JSON.stringify({ title: `${name} B` }),
+        'utf8',
+      )
+    }
+
+    const schema = {
+      collections: collections.map(({ name }) => ({
+        name,
+        path: name,
+        entries: [
+          {
+            name: 'entry',
+            format: 'json' as const,
+            schema: [{ name: 'title', type: 'string' as const }],
+          },
+        ],
+      })),
+    } as const
+
+    const config = defineCanopyTestConfig({ defaultBranchAccess: 'allow', schema })
+
+    // Spy on the request-constant work: it must run once per request, not once per entry.
+    const loadPathPermissions = vi.fn().mockResolvedValue([])
+    const getSettingsBranchRoot = vi.fn().mockResolvedValue('/mock/settings')
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
+      checkBranchAccess,
+      loadPathPermissions,
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+      getSettingsBranchRoot,
+    })
+
+    const ctx = createMockApiContext({
+      services: { config, checkBranchAccess, checkContentAccess, createContentAccessChecker },
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
+    })
+
+    const res = await listEntries.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('main'), limit: 100 },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.entries).toHaveLength(6)
+    // The whole point of the batch checker: loaded once, not once per entry (6) or per check (12).
+    expect(loadPathPermissions).toHaveBeenCalledTimes(1)
+    expect(getSettingsBranchRoot).toHaveBeenCalledTimes(1)
+  })
+
+  it('paginates after access filtering so a denied first entry does not consume the page', async () => {
+    const root = await tmpDir()
+    await fs.mkdir(path.join(root, 'content/posts'), { recursive: true })
+    // 'denied' sorts before 'visible' alphabetically, so a slice-before-filter bug would
+    // return an empty page for limit=1.
+    await fs.writeFile(
+      path.join(root, 'content/posts/entry.denied.aaa111bbb222.json'),
+      JSON.stringify({ title: 'Denied' }),
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(root, 'content/posts/entry.visible.ccc333ddd444.json'),
+      JSON.stringify({ title: 'Visible' }),
+      'utf8',
+    )
+
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ defaultBranchAccess: 'allow', schema })
+
+    const pathRules: PathPermission[] = [
+      {
+        path: unsafeAsPermissionPath('content/posts/entry.denied.aaa111bbb222.json'),
+        read: { allowedUsers: ['other'] },
+      },
+    ]
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue(pathRules),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
+    })
+
+    const ctx = createMockApiContext({
+      services: { config, checkBranchAccess, checkContentAccess, createContentAccessChecker },
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
+    })
+
+    const res = await listEntries.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('main'), limit: 1 },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.entries).toHaveLength(1)
+    expect(res.data?.entries[0]?.slug).toBe('visible')
+    // Only one readable entry exists, so there is no next page.
+    expect(res.data?.pagination.hasMore).toBe(false)
   })
 })
 
@@ -853,7 +1010,7 @@ describe('sortEntriesByOrder', () => {
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
@@ -867,6 +1024,7 @@ describe('sortEntriesByOrder', () => {
         entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({
@@ -949,7 +1107,7 @@ describe('sortEntriesByOrder', () => {
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
@@ -963,6 +1121,7 @@ describe('sortEntriesByOrder', () => {
         entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({
@@ -1070,7 +1229,7 @@ describe('dynamic collection discovery', () => {
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
@@ -1084,6 +1243,7 @@ describe('dynamic collection discovery', () => {
         entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({
@@ -1150,7 +1310,7 @@ describe('deleteEntry', () => {
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
@@ -1164,6 +1324,7 @@ describe('deleteEntry', () => {
         entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({
@@ -1241,7 +1402,7 @@ describe('deleteEntry', () => {
     ]
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: vi.fn().mockResolvedValue(pathRules),
       defaultPathAccess: 'allow',
@@ -1255,6 +1416,7 @@ describe('deleteEntry', () => {
         entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({
@@ -1314,7 +1476,7 @@ describe('deleteEntry', () => {
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
@@ -1328,6 +1490,7 @@ describe('deleteEntry', () => {
         entrySchemaRegistry: entrySchemaRegistry,
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({
@@ -1366,7 +1529,7 @@ describe('deleteEntry', () => {
     })
 
     const checkBranchAccess = createCheckBranchAccess('allow')
-    const checkContentAccess = createCheckContentAccess({
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
       checkBranchAccess,
       loadPathPermissions: vi.fn().mockResolvedValue([]),
       defaultPathAccess: 'allow',
@@ -1380,6 +1543,7 @@ describe('deleteEntry', () => {
         entrySchemaRegistry: {},
         checkBranchAccess,
         checkContentAccess,
+        createContentAccessChecker,
       },
       branchContext: {
         ...createMockBranchContext({

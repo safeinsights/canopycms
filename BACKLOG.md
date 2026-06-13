@@ -147,6 +147,12 @@ Prioritized work items for CanopyCMS development. See [AGENTS.md](AGENTS.md) for
 - `ensureRemote` only runs on workspace creation; a workspace with a legacy/wrong origin (e.g. pre-prod-sim-rename artifact pointing at real GitHub, observed by docs-site-proto) keeps it forever
 - Consider re-running remote configuration on workspace open (cost: extra git calls per request) or a one-time startup sweep over `content-branches/*`
 
+### 19. Bounded concurrency for content listing (only if EFS throttling appears)
+
+- Content listing fans out file reads with **unbounded** `Promise.all`: across collections (`content-listing.ts` `listEntries`, `api/entries.ts` non-recursive + recursive paths) and across files within a collection (`content-listing.ts` `listCollectionEntries`). The editor's initial entry list (no `collection` param) reads every entry file in the whole content tree concurrently.
+- This is **intentional and consistent** across all listing sites (verified in branch review of `fix/entries-list-perf-and-loading-state`, 2026-06); it is the point of the per-request batch-auth optimization. `MAX_ENTRIES_PER_PAGE` caps the response, not the FS fan-out. On local FS (dev) it is fine.
+- Risk is prod EFS only: a very large tree could hit throttling / EMFILE. **Do not band-aid one call site** — if it ever bites, add a single shared bounded-concurrency helper (e.g. `p-limit`, ~16–32) applied uniformly to all three listing sites. The repo has no concurrency helper today, so this is a deliberate, holistic change.
+
 ## Completed
 
 - **Deployment Infrastructure** ✅

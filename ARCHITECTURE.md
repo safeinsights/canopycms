@@ -1238,6 +1238,10 @@ Glob patterns (e.g., `content/posts/**`) restrict who can edit specific content 
 
 Combines branch and path checks into a single decision. Returns detailed denial reasons for debugging. The `checkContentAccess` function in `content.ts` is the main entry point for most authorization checks.
 
+**Per-request batch checking**: Resolving content access involves request-constant work — verifying branch access, resolving the settings-branch root, and loading the permission rules. When a single request authorizes many paths (for example, listing entries across dozens of collections), repeating that setup per path is wasteful: an entry-listing endpoint that re-loaded permissions and re-resolved the settings root once per entry took tens of seconds for a branch with many collections. The `createContentAccessChecker` factory (exposed on `CanopyServices`) does the request-constant work once and returns a synchronous per-path checker, so each authorization decision is a cheap in-memory rule match. The single-call `checkContentAccess` API is unchanged and now delegates to this batch primitive.
+
+**Why per-request scope rather than a process-global cache?** A global permissions cache would risk serving stale ACLs after a permissions edit — a security-sensitive failure that would require explicit invalidation. Per-request scope sidesteps invalidation entirely and mirrors the prod Lambda model, where there is no cross-request state to cache anyway.
+
 **Reserved groups** provide consistent roles:
 
 - **admins**: Full access to all operations

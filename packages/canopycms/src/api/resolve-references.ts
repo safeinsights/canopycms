@@ -48,6 +48,16 @@ const resolveReferencesHandler = async (
   // Resolve each ID to full document
   const resolver = new ReferenceResolver(store, idIndex)
 
+  // Build the access checker once: permissions are loaded a single time and reused
+  // for every id, instead of re-loading per id inside the loop. A failure here
+  // (e.g. settings workspace unavailable) surfaces as a handler error rather than
+  // being silently swallowed per id.
+  const checkAccess = await ctx.services.createContentAccessChecker(
+    branchContext,
+    branchContext.branchRoot,
+    req.user,
+  )
+
   const resolved: Record<string, unknown> = {}
 
   for (const id of ids) {
@@ -56,13 +66,7 @@ const resolveReferencesHandler = async (
       if (result && result.exists && result.collection && result.slug) {
         // Check path-level read permission before returning content
         const resolvedPath = await store.resolveDocumentPath(result.collection, result.slug)
-        const access = await ctx.services.checkContentAccess(
-          branchContext,
-          branchContext.branchRoot,
-          resolvedPath.relativePath,
-          req.user,
-          'read',
-        )
+        const access = checkAccess(resolvedPath.relativePath, 'read')
         if (!access.allowed) continue
 
         const doc = await store.read(result.collection, result.slug)

@@ -29,3 +29,18 @@ export async function initTestRepo(
   await git.addConfig('user.email', options?.userEmail ?? 'test@canopycms.test')
   return git
 }
+
+/**
+ * Open a simple-git client for inspecting or configuring a **bare** repository
+ * (e.g. a test's simulated remote) by its path.
+ *
+ * Git refuses to discover a bare repo from a cwd inside it when
+ * `safe.bareRepository=explicit` is set — sandboxed/CI git environments inject this
+ * (via `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_*`), so a plain `simpleGit({ baseDir: bare })`
+ * fails with "cannot use bare repository". This client sets `safe.bareRepository=all`
+ * for its own git invocations, which is safe because the path is one the test created —
+ * the same reason GitManager inspects bare remotes with an explicit `--git-dir`.
+ */
+export function openBareRepo(remotePath: string): SimpleGit {
+  return simpleGit({ baseDir: remotePath, config: ['safe.bareRepository=all'] })
+}

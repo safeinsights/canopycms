@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { createCheckBranchAccess, createCheckContentAccess, RESERVED_GROUPS } from '../'
+import {
+  createCheckBranchAccess,
+  createCheckContentAccess,
+  createContentAccessChecker,
+  RESERVED_GROUPS,
+  type ContentAccessDeps,
+} from '../'
 import { unsafeAsPermissionPath } from '../test-utils'
 import type { PathPermission } from '../../config'
 import { unsafeAsPhysicalPath } from '../../paths/test-utils'
@@ -143,5 +149,67 @@ describe('checkContentAccess', () => {
     expect(res.allowed).toBe(true)
     expect(res.path.allowed).toBe(true)
     expect(res.path.reason).toBe('no_rule_match')
+  })
+})
+
+describe('createContentAccessChecker', () => {
+  const deps = (overrides?: Partial<ContentAccessDeps>): ContentAccessDeps => ({
+    checkBranchAccess: createCheckBranchAccess('allow'),
+    loadPathPermissions: vi.fn().mockResolvedValue(pathRules),
+    defaultPathAccess: 'allow',
+    mode: 'dev',
+    getSettingsBranchRoot: () => Promise.resolve('/repo'),
+    ...overrides,
+  })
+
+  it('loads permissions and the settings root once regardless of how many paths are checked', async () => {
+    const loadPathPermissions = vi.fn().mockResolvedValue(pathRules)
+    const getSettingsBranchRoot = vi.fn().mockResolvedValue('/repo')
+    const check = await createContentAccessChecker(
+      deps({ loadPathPermissions, getSettingsBranchRoot }),
+      branchContext,
+      '/repo',
+      { type: 'authenticated', userId: 'u1', groups: [] },
+    )
+
+    for (let i = 0; i < 5; i++) {
+      check(unsafeAsPhysicalPath(`content/pages/foo-${i}.md`), 'read')
+      check(unsafeAsPhysicalPath(`content/pages/foo-${i}.md`), 'edit')
+    }
+
+    expect(loadPathPermissions).toHaveBeenCalledTimes(1)
+    expect(loadPathPermissions).toHaveBeenCalledWith('/repo', 'dev')
+    expect(getSettingsBranchRoot).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns the same result as checkContentAccess for the same inputs', async () => {
+    const user = { type: 'authenticated' as const, userId: 'u1', groups: [] }
+    const path = unsafeAsPhysicalPath('content/admin/secret.md')
+
+    const single = await createCheckContentAccess(deps())(
+      branchContext,
+      '/repo',
+      path,
+      user,
+      'edit',
+    )
+    const check = await createContentAccessChecker(deps(), branchContext, '/repo', user)
+
+    expect(check(path, 'edit')).toEqual(single)
+  })
+
+  it('throws when a separate settings branch is required but getSettingsBranchRoot is missing', async () => {
+    await expect(
+      createContentAccessChecker(
+        deps({ getSettingsBranchRoot: undefined }),
+        branchContext,
+        '/repo',
+        {
+          type: 'authenticated',
+          userId: 'u1',
+          groups: [],
+        },
+      ),
+    ).rejects.toThrow('getSettingsBranchRoot is required')
   })
 })

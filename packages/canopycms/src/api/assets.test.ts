@@ -1,39 +1,19 @@
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 
 import { ASSET_ROUTES } from './assets'
 import type { ApiContext } from './types'
 import { RESERVED_GROUPS } from '../authorization'
+import { createMockApiContext } from '../test-utils'
 
 // Extract handlers for testing
 const listAssets = ASSET_ROUTES.list.handler
 const uploadAsset = ASSET_ROUTES.upload.handler
 const deleteAsset = ASSET_ROUTES.delete.handler
 
+// Default mock services already allow branch + content access; only the asset store
+// and a branch-not-found getBranchContext are asset-specific.
 const makeCtx = (): ApiContext => ({
-  services: {
-    config: { schema: [] } as any,
-    entrySchemaRegistry: {},
-    branchSchemaCache: {
-      getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
-      invalidate: vi.fn().mockResolvedValue(undefined),
-    } as any,
-    checkBranchAccess: () => ({ allowed: true, reason: 'no_acl' }),
-    checkPathAccess: undefined as any,
-    checkContentAccess: async () => ({
-      allowed: true,
-      branch: { allowed: true, reason: 'no_acl' },
-      path: { allowed: true, reason: 'no_acl' },
-    }),
-    createGitManagerFor: undefined as any,
-    bootstrapAdminIds: new Set<string>(),
-    registry: undefined as any,
-    commitFiles: vi.fn(),
-    submitBranch: vi.fn(),
-    commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
-    getSettingsBranchRoot: vi.fn().mockResolvedValue('/mock/settings'),
-    refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
-  },
-  getBranchContext: async () => null,
+  ...createMockApiContext({ branchContext: null }),
   assetStore: {
     list: async () => [{ key: 'a.png', url: 'http://cdn/a.png' }],
     upload: async (key) => ({ key }),

@@ -7,7 +7,9 @@ import {
   createCheckPathAccess,
   createCheckBranchAccess,
   createCheckContentAccess,
+  createContentAccessChecker,
   loadPathPermissions,
+  type ContentAccessChecker,
 } from './authorization'
 import { GitManager, GitConflictError } from './git-manager'
 import { BranchRegistry } from './branch-registry'
@@ -86,6 +88,16 @@ export interface CanopyServices {
   ) => ReturnType<ReturnType<typeof createCheckBranchAccess>>
   checkPathAccess: ReturnType<typeof createCheckPathAccess>
   checkContentAccess: ReturnType<typeof createCheckContentAccess>
+  /**
+   * Build a batch content-access checker that loads permissions once and returns
+   * a synchronous per-path checker. Use this when checking many paths in a single
+   * request (e.g. listing entries) to avoid re-loading permissions per path.
+   */
+  createContentAccessChecker: (
+    context: BranchContext,
+    branchRoot: string,
+    user: CanopyUser,
+  ) => Promise<ContentAccessChecker>
   createGitManagerFor: (
     repoPath: string,
     opts?: { baseBranch?: string; remote?: string },
@@ -244,13 +256,20 @@ async function _createCanopyServicesInternal(
       return settingsRoot
     })
 
-  const checkContentAccess = createCheckContentAccess({
+  const contentAccessDeps = {
     checkBranchAccess,
     loadPathPermissions,
     defaultPathAccess: config.defaultPathAccess ?? 'deny',
     mode: config.mode,
     getSettingsBranchRoot,
-  })
+  }
+  const checkContentAccess = createCheckContentAccess(contentAccessDeps)
+  const createContentAccessCheckerBound = (
+    context: BranchContext,
+    branchRoot: string,
+    user: CanopyUser,
+  ): Promise<ContentAccessChecker> =>
+    createContentAccessChecker(contentAccessDeps, context, branchRoot, user)
   const configDefaults = getConfigDefaults()
   const createGitManagerFor = (repoPath: string, opts?: { baseBranch?: string; remote?: string }) =>
     new GitManager({
@@ -432,6 +451,7 @@ async function _createCanopyServicesInternal(
     checkBranchAccess,
     checkPathAccess,
     checkContentAccess,
+    createContentAccessChecker: createContentAccessCheckerBound,
     createGitManagerFor,
     registry,
     githubService,

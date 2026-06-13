@@ -78,6 +78,8 @@ export interface UseEntryManagerReturn {
   setEntries: (entries: EditorEntry[]) => void
   collections: EditorCollection[]
   currentEntry: EditorEntry | undefined
+  /** True while the first entry load for the current branch is in flight (initial load, per branch). */
+  entriesInitializing: boolean
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
   refreshEntries: (branch?: string) => Promise<EditorEntry[]>
@@ -130,6 +132,15 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const [collectionsState, setCollectionsState] = useState<EditorCollection[]>(
     options.collections || [],
   )
+  // True while the first entry load for the current branch is in flight. Seeded from the
+  // initial branch so it is already true on the first render (before the load effect runs),
+  // which lets the empty editor pane / navigator show "Loading…" instead of briefly flashing
+  // "Select an item…" / "No content". Reset per branch and cleared when the load settles, so a
+  // genuinely empty branch falls back to the normal empty state rather than a stuck loader.
+  // Distinct from the shared `setBusy` flag, which also covers saves/renames once content loads.
+  const [entriesInitializing, setEntriesInitializing] = useState<boolean>(() =>
+    Boolean(options.branchName),
+  )
 
   // Initialize with prop value or empty (URL sync happens in effect after mount)
   const [selectedPath, setSelectedPath] = useState<string>(options.initialSelectedId ?? '')
@@ -140,6 +151,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const entryVersionsRef = useRef<Map<string, number>>(new Map())
   // Monotonic token so a stale refresh (e.g. superseded by a branch switch) doesn't commit state
   const refreshSeqRef = useRef(0)
+  // Separate token for the branch-change load below: a superseded load's `.finally`
+  // must not clear the loading flags while the newer branch is still loading.
+  const branchLoadSeqRef = useRef(0)
 
   // Entry create modal state
   const [createModalOpen, setCreateModalOpen] = useState(false)
@@ -428,11 +442,20 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         entryVersionsRef.current.clear()
       }
 
-      // Refresh entries for new branch
+      // Refresh entries for new branch. Guard the cleanup with a per-branch-load
+      // token: on a rapid A→B switch where A resolves after B starts, A's `.finally`
+      // must not clear the loading flags while B is still in flight (which would
+      // reintroduce the very flash entriesInitializing exists to prevent).
+      const loadSeq = ++branchLoadSeqRef.current
       options.setBusy(true)
+      setEntriesInitializing(true)
       refreshEntries(options.branchName)
         .catch(console.error)
-        .finally(() => options.setBusy(false))
+        .finally(() => {
+          if (loadSeq !== branchLoadSeqRef.current) return
+          options.setBusy(false)
+          setEntriesInitializing(false)
+        })
     }
   }, [options.branchName])
 
@@ -479,6 +502,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     setEntries: setEntriesState,
     collections: collectionsState,
     currentEntry,
+    entriesInitializing,
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,

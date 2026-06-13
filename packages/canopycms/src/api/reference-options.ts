@@ -103,18 +103,19 @@ const getReferenceOptionsHandler = async (
     entryTypes,
   )
 
-  // Filter by path-level read permissions
+  // Filter by path-level read permissions. Build the access checker once so
+  // permissions are loaded a single time and reused for every option, instead of
+  // re-loading per option inside the loop.
+  const checkAccess = await ctx.services.createContentAccessChecker(
+    branchContext,
+    branchContext.branchRoot,
+    req.user,
+  )
   const options = []
   for (const option of allOptions) {
     const location = idIndex.findById(option.id as ContentId)
     if (!location) continue
-    const access = await ctx.services.checkContentAccess(
-      branchContext,
-      branchContext.branchRoot,
-      location.relativePath,
-      req.user,
-      'read',
-    )
+    const access = checkAccess(location.relativePath, 'read')
     if (!access.allowed) continue
     options.push(option)
   }

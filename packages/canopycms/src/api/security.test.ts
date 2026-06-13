@@ -134,6 +134,50 @@ describe('Security: Branch access checks', () => {
         expect(result.data!.options).toHaveLength(0)
       }
     })
+
+    it('builds the content-access checker once per request, not once per option', async () => {
+      // Three options, all readable: the per-request batch checker must be built once,
+      // not once per option (guards against reintroducing per-item permission loads).
+      const { ContentStore } = await import('../content-store')
+      const { ReferenceResolver } = await import('../reference-resolver')
+      // Regular function expressions: the mocks are invoked with `new`, so arrow
+      // functions (non-constructable) would throw "is not a constructor".
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return {
+          idIndex: vi.fn().mockResolvedValue({
+            findById: vi.fn().mockReturnValue({ relativePath: 'posts/hello' }),
+          }),
+        } as unknown as InstanceType<typeof ContentStore>
+      })
+      vi.mocked(ReferenceResolver).mockImplementationOnce(function () {
+        return {
+          loadReferenceOptions: vi
+            .fn()
+            .mockResolvedValue([{ id: 'id1' }, { id: 'id2' }, { id: 'id3' }]),
+        } as unknown as InstanceType<typeof ReferenceResolver>
+      })
+
+      const checkerSpy = vi.fn().mockResolvedValue(() => ({ allowed: true, branch: {}, path: {} }))
+      const ctx = createMockApiContext({
+        branchContext: { ...branchContext, flatSchema: mockFlatSchema },
+        allowBranchAccess: true,
+        services: { createContentAccessChecker: checkerSpy },
+      })
+      const req = {
+        user: createMockUser(),
+        query: { collections: 'posts', displayField: 'title' },
+      } as unknown as ApiRequest
+
+      const result = await REFERENCE_OPTIONS_ROUTES.get.handler(ctx, req, {
+        branch: unsafeAsBranchName('secret-branch'),
+      })
+
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.data!.options).toHaveLength(3)
+      }
+      expect(checkerSpy).toHaveBeenCalledTimes(1)
+    })
   })
 
   describe('resolve-references endpoint', () => {
@@ -177,6 +221,31 @@ describe('Security: Branch access checks', () => {
       if (result.ok) {
         expect(Object.keys(result.data!.resolved)).toHaveLength(0)
       }
+    })
+
+    it('surfaces a settings-root failure instead of silently returning empty results', async () => {
+      // The checker is now built once before the loop (outside the per-id try/catch). A
+      // settings-workspace failure during that build must surface, not be swallowed into
+      // a 200 with an empty resolved map (which would be indistinguishable from "no refs").
+      const ctx = createMockApiContext({
+        branchContext: { ...branchContext, flatSchema: mockFlatSchema },
+        allowBranchAccess: true,
+        services: {
+          createContentAccessChecker: vi
+            .fn()
+            .mockRejectedValue(new Error('settings workspace unavailable')),
+        },
+      })
+      const req = { user: createMockUser() } as unknown as ApiRequest
+
+      await expect(
+        RESOLVE_REFERENCES_ROUTES.post.handler(
+          ctx,
+          req,
+          { branch: unsafeAsBranchName('secret-branch') },
+          { ids: ['a1b2c3d4e5f6' as ContentId] },
+        ),
+      ).rejects.toThrow('settings workspace unavailable')
     })
   })
 
