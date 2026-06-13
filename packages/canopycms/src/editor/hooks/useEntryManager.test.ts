@@ -332,6 +332,48 @@ describe('useEntryManager', () => {
     expect(result.current.selectedPath).toBe('entry1')
   })
 
+  describe('entriesInitializing', () => {
+    it('is seeded true on mount with a branch, then clears once the initial load settles', async () => {
+      mockClient.entries.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { entries: [], pagination: { hasMore: false, limit: 100 } },
+      })
+
+      const { result } = renderHook(() => useEntryManager(defaultOptions), { wrapper })
+
+      // Seeded from the branch prop, before the post-mount load effect resolves — this is
+      // what lets the empty pane / navigator show "Loading…" instead of flashing first.
+      expect(result.current.entriesInitializing).toBe(true)
+
+      await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+    })
+
+    it('clears after the load settles even when the branch has no entries (no stuck loader)', async () => {
+      mockClient.entries.list.mockResolvedValue({
+        ok: true,
+        status: 200,
+        data: { entries: [], pagination: { hasMore: false, limit: 100 } },
+      })
+
+      const { result } = renderHook(
+        () => useEntryManager({ ...defaultOptions, initialEntries: [] }),
+        { wrapper },
+      )
+
+      await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+      expect(result.current.entries).toHaveLength(0)
+    })
+
+    it('is false on mount when there is no branch to load', () => {
+      const { result } = renderHook(() => useEntryManager({ ...defaultOptions, branchName: '' }), {
+        wrapper,
+      })
+
+      expect(result.current.entriesInitializing).toBe(false)
+    })
+  })
+
   it('opens create modal when creating entry', async () => {
     const { result } = renderHook(() => useEntryManager(defaultOptions), {
       wrapper,

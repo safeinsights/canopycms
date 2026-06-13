@@ -230,6 +230,8 @@ const listEntriesHandler = async (
       // Non-recursive mode: list entries from target collections. Collections are
       // listed in parallel (mirrors the shared listEntries in content-listing.ts);
       // Promise.all preserves array order, so entry ordering matches a serial loop.
+      // The fan-out is intentionally unbounded and consistent across all listing
+      // sites; bounding it is deferred unless prod EFS throttling appears (BACKLOG #19).
       const collections = targetCollections.filter((item) => item.type === 'collection')
       const perCollection = await Promise.all(
         collections.map(async (item) => {

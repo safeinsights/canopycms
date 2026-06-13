@@ -78,6 +78,8 @@ export interface UseEntryManagerReturn {
   setEntries: (entries: EditorEntry[]) => void
   collections: EditorCollection[]
   currentEntry: EditorEntry | undefined
+  /** True while the first entry load for the current branch is in flight (initial load, per branch). */
+  entriesInitializing: boolean
   navigatorOpen: boolean
   setNavigatorOpen: (open: boolean) => void
   refreshEntries: (branch?: string) => Promise<EditorEntry[]>
@@ -129,6 +131,15 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const [entriesState, setEntriesState] = useState<EditorEntry[]>(options.initialEntries)
   const [collectionsState, setCollectionsState] = useState<EditorCollection[]>(
     options.collections || [],
+  )
+  // True while the first entry load for the current branch is in flight. Seeded from the
+  // initial branch so it is already true on the first render (before the load effect runs),
+  // which lets the empty editor pane / navigator show "Loading…" instead of briefly flashing
+  // "Select an item…" / "No content". Reset per branch and cleared when the load settles, so a
+  // genuinely empty branch falls back to the normal empty state rather than a stuck loader.
+  // Distinct from the shared `setBusy` flag, which also covers saves/renames once content loads.
+  const [entriesInitializing, setEntriesInitializing] = useState<boolean>(() =>
+    Boolean(options.branchName),
   )
 
   // Initialize with prop value or empty (URL sync happens in effect after mount)
@@ -430,9 +441,13 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
 
       // Refresh entries for new branch
       options.setBusy(true)
+      setEntriesInitializing(true)
       refreshEntries(options.branchName)
         .catch(console.error)
-        .finally(() => options.setBusy(false))
+        .finally(() => {
+          options.setBusy(false)
+          setEntriesInitializing(false)
+        })
     }
   }, [options.branchName])
 
@@ -479,6 +494,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
     setEntries: setEntriesState,
     collections: collectionsState,
     currentEntry,
+    entriesInitializing,
     navigatorOpen,
     setNavigatorOpen,
     refreshEntries,
