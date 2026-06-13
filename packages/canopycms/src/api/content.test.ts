@@ -64,6 +64,9 @@ const allowedCtx = (): ApiContext => ({
     checkBranchAccess: vi.fn(),
     checkPathAccess: undefined as any,
     checkContentAccess: vi.fn().mockReturnValue({ allowed: true, branch: {}, path: {} }),
+    createContentAccessChecker: vi
+      .fn()
+      .mockResolvedValue(() => ({ allowed: true, branch: {}, path: {} })),
     createGitManagerFor: undefined as any,
     bootstrapAdminIds: new Set<string>(),
     registry: undefined as any,
@@ -101,6 +104,9 @@ describe('content api', () => {
         checkBranchAccess: vi.fn(),
         checkPathAccess: undefined as any,
         checkContentAccess: vi.fn().mockReturnValue({ allowed: false, branch: {}, path: {} }),
+        createContentAccessChecker: vi
+          .fn()
+          .mockResolvedValue(() => ({ allowed: false, branch: {}, path: {} })),
         createGitManagerFor: undefined as any,
         bootstrapAdminIds: new Set<string>(),
         registry: undefined as any,
@@ -318,6 +324,9 @@ describe('content api', () => {
           checkBranchAccess: vi.fn(),
           checkPathAccess: undefined as any,
           checkContentAccess: vi.fn().mockReturnValue({ allowed: false, branch: {}, path: {} }),
+          createContentAccessChecker: vi
+            .fn()
+            .mockResolvedValue(() => ({ allowed: false, branch: {}, path: {} })),
           createGitManagerFor: undefined as any,
           bootstrapAdminIds: new Set<string>(),
           registry: undefined as any,
@@ -369,6 +378,9 @@ describe('content api', () => {
           checkBranchAccess: vi.fn(),
           checkPathAccess: undefined as any,
           checkContentAccess: vi.fn().mockReturnValue({ allowed: true, branch: {}, path: {} }),
+          createContentAccessChecker: vi
+            .fn()
+            .mockResolvedValue(() => ({ allowed: true, branch: {}, path: {} })),
           createGitManagerFor: undefined as any,
           bootstrapAdminIds: new Set<string>(),
           registry: undefined as any,

@@ -17,6 +17,7 @@ import {
   sortByOrder,
   type CollectionListItem,
 } from '../content-listing'
+import type { ContentAccessChecker } from '../authorization'
 
 // Re-export pagination constants from the dependency-free module so they remain
 // part of the entries API surface without pulling server deps into client bundles.
@@ -151,32 +152,23 @@ const listCollectionEntriesRecursive = async (
   return results.flat()
 }
 
-/** Apply access control and search filtering to a list of entries. */
-const filterWithAccessControl = async (
+/**
+ * Apply access control and search filtering to a list of entries.
+ *
+ * Uses a pre-built batch checker (see `createContentAccessChecker`) so permissions
+ * are loaded once per request, not per entry. The read + edit checks are now cheap
+ * synchronous calls.
+ */
+const filterWithAccessControl = (
   items: CollectionItem[],
-  branchContext: BranchContextWithSchema,
-  root: string,
-  ctx: ApiContext,
-  req: ApiRequest,
+  checkAccess: ContentAccessChecker,
   search: string | undefined,
-): Promise<CollectionItem[]> => {
+): CollectionItem[] => {
   const results: CollectionItem[] = []
   for (const item of items) {
-    const readAccess = await ctx.services.checkContentAccess(
-      branchContext,
-      root,
-      item.physicalPath,
-      req.user,
-      'read',
-    )
+    const readAccess = checkAccess(item.physicalPath, 'read')
     if (!readAccess.allowed) continue
-    const editAccess = await ctx.services.checkContentAccess(
-      branchContext,
-      root,
-      item.physicalPath,
-      req.user,
-      'edit',
-    )
+    const editAccess = checkAccess(item.physicalPath, 'edit')
     if (search) {
       const haystack = `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
       if (!haystack.includes(search)) continue
@@ -220,39 +212,39 @@ const listEntriesHandler = async (
 
   let entries: CollectionItem[] = []
 
-  if (recursive && targetPath) {
-    // Recursive mode: list entries from target collection and all its children
-    try {
+  try {
+    // Build the access checker once per request: permissions (and, in modes with a
+    // separate settings branch, the settings workspace) are loaded a single time and
+    // reused for every entry, instead of re-loading per entry inside the loop.
+    const checkAccess = await ctx.services.createContentAccessChecker(branchContext, root, req.user)
+
+    if (recursive && targetPath) {
+      // Recursive mode: list entries from target collection and all its children
       const items = await listCollectionEntriesRecursive(root, targetPath, flatCollections)
       // For recursive mode, we can't easily apply per-collection ordering
       // Sort alphabetically for now (ordering is collection-specific)
       items.sort((a, b) => a.slug.localeCompare(b.slug))
-      entries = await filterWithAccessControl(items, branchContext, root, ctx, req, search)
-    } catch (err) {
-      if (err instanceof ContentStoreError) {
-        return { ok: false, status: 400, error: err.message }
-      }
-      throw err
+      entries = filterWithAccessControl(items, checkAccess, search)
+    } else {
+      // Non-recursive mode: list entries from target collections. Collections are
+      // listed in parallel (mirrors the shared listEntries in content-listing.ts);
+      // Promise.all preserves array order, so entry ordering matches a serial loop.
+      const collections = targetCollections.filter((item) => item.type === 'collection')
+      const perCollection = await Promise.all(
+        collections.map(async (item) => {
+          const items = await listCollectionEntries(root, item)
+          // Sort by collection's order array (items in order first, then alphabetically)
+          sortByOrder(items, item.order, (i) => i.slug)
+          return filterWithAccessControl(items, checkAccess, search)
+        }),
+      )
+      entries = perCollection.flat()
     }
-  } else {
-    // Non-recursive mode: list entries from target collections
-    for (const item of targetCollections) {
-      // Only process collections (skip entry-types as they are metadata, not navigable nodes)
-      if (item.type !== 'collection') continue
-
-      try {
-        const items = await listCollectionEntries(root, item)
-        // Sort by collection's order array (items in order first, then alphabetically)
-        sortByOrder(items, item.order, (i) => i.slug)
-        const filtered = await filterWithAccessControl(items, branchContext, root, ctx, req, search)
-        entries.push(...filtered)
-      } catch (err) {
-        if (err instanceof ContentStoreError) {
-          return { ok: false, status: 400, error: err.message }
-        }
-        throw err
-      }
+  } catch (err) {
+    if (err instanceof ContentStoreError) {
+      return { ok: false, status: 400, error: err.message }
     }
+    throw err
   }
 
   const paged = entries.slice(offset, offset + limit)

@@ -112,6 +112,29 @@ describe('EntryNavigator', () => {
     })
   })
 
+  describe('loading state', () => {
+    it('shows a loading indicator instead of "No content" when loading with an empty tree', () => {
+      renderEntryNavigator({ loading: true })
+      expect(screen.getByText('Loading content…')).toBeTruthy()
+      expect(screen.queryByText('No content')).toBeNull()
+    })
+
+    it('shows "No content" when not loading and the tree is empty', () => {
+      renderEntryNavigator({ loading: false })
+      expect(screen.getByText('No content')).toBeTruthy()
+      expect(screen.queryByText('Loading content…')).toBeNull()
+    })
+
+    it('shows content (not the loader) once items have loaded, even if loading is still true', () => {
+      renderEntryNavigator({
+        loading: true,
+        items: [{ path: unsafeAsLogicalPath('posts/hello'), label: 'Hello World' }],
+      })
+      expect(screen.getByText('Hello World')).toBeTruthy()
+      expect(screen.queryByText('Loading content…')).toBeNull()
+    })
+  })
+
   describe('collection context menu', () => {
     it('shows context menu button on collections with actions', async () => {
       const collections: EntryNavCollection[] = [

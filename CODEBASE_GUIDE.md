@@ -176,15 +176,16 @@ For Lambda/production environments where the auth provider API is unreachable (n
 
 This module provides unified access control with a layered architecture:
 
-| File         | Purpose                                                         |
-| ------------ | --------------------------------------------------------------- |
-| content.ts   | Main entry - combined branch + path access (checkContentAccess) |
-| branch.ts    | Branch-level access control (checkBranchAccessWithDefault)      |
-| path.ts      | Path-level permissions (checkPathAccess)                        |
-| helpers.ts   | Utility functions (isAdmin, isReviewer, isPrivileged)           |
-| types.ts     | Type definitions (BranchAccessResult, ContentAccessResult)      |
-| permissions/ | Permissions file schema (Zod) and loader                        |
-| groups/      | Groups file schema (Zod) and loader                             |
+| File          | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| content.ts    | Main entry - combined branch + path access (`checkContentAccess`); also `createContentAccessChecker(deps, context, branchRoot, user)` — batch primitive that loads permissions (and resolves the settings branch root) once per request and returns a synchronous per-path checker `(relativePath, level) => ContentAccessResult` (type `ContentAccessChecker`); `checkContentAccess` delegates to it (signature/behavior unchanged) |
+| branch.ts     | Branch-level access control (checkBranchAccessWithDefault)                                                                                                                                                                                                                                                                                                                                                                           |
+| path.ts       | Path-level permissions (checkPathAccess)                                                                                                                                                                                                                                                                                                                                                                                             |
+| helpers.ts    | Utility functions (isAdmin, isReviewer, isPrivileged)                                                                                                                                                                                                                                                                                                                                                                                |
+| types.ts      | Type definitions (BranchAccessResult, ContentAccessResult)                                                                                                                                                                                                                                                                                                                                                                           |
+| permissions/  | Permissions file schema (Zod) and loader                                                                                                                                                                                                                                                                                                                                                                                             |
+| groups/       | Groups file schema (Zod) and loader                                                                                                                                                                                                                                                                                                                                                                                                  |
+| test-utils.ts | `unsafeAsPermissionPath`; `createTestContentAccess(deps)` builds both `checkContentAccess` and `createContentAccessChecker` from one deps object (mirrors `services.ts` binding)                                                                                                                                                                                                                                                     |
 
 **Usage Pattern**:
 
@@ -203,6 +204,8 @@ if (result.allowed) {
   // User can edit the file
 }
 ```
+
+**Batch primitive**: `createContentAccessChecker` (also exposed as `services.createContentAccessChecker(context, branchRoot, user)`) loads permissions once and returns a synchronous per-path checker. Used by listing endpoints (`api/entries.ts`, `api/resolve-references.ts`, `api/reference-options.ts`) to avoid re-loading permissions per entry.
 
 ### Permission Model
 
@@ -664,6 +667,8 @@ Conflict indicators appear at two levels:
 - **Per-collection (navigator)**: `EntryNavCollection` has an optional `conflictNotice?: boolean` field. When true, `EntryNavigator.tsx` renders an orange "conflict" badge next to the collection name. `Editor.tsx` computes this by matching each collection's `contentId` against `currentBranch.conflictFiles`.
 
 `EditorCollection` now carries `contentId?: ContentId` (threaded from `FlatSchemaItem` via `buildEditorCollections` in `editor-config.ts`).
+
+`EntryNavigator.tsx` accepts a `loading?: boolean` prop: when true and the tree is empty it shows a loading indicator instead of the "No content" empty state.
 
 ### Permission Manager
 

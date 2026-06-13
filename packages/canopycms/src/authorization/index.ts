@@ -39,7 +39,12 @@ export type {
 export { parsePermissionPath } from './validation'
 
 // Main content access (recommended for most cases)
-export { checkContentAccess, createCheckContentAccess } from './content'
+export {
+  checkContentAccess,
+  createCheckContentAccess,
+  createContentAccessChecker,
+  type ContentAccessChecker,
+} from './content'
 
 // Branch-level access
 export {

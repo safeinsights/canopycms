@@ -150,6 +150,7 @@ export interface MockServicesOptions {
   checkBranchAccess?: any
   checkPathAccess?: any
   checkContentAccess?: any
+  createContentAccessChecker?: any
   createGitManagerFor?: any
   registry?: any
   githubService?: any
@@ -196,6 +197,9 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
     checkContentAccess:
       options.checkContentAccess ??
       vi.fn().mockResolvedValue({ allowed: true, branch: {}, path: {} }),
+    createContentAccessChecker:
+      options.createContentAccessChecker ??
+      vi.fn().mockResolvedValue(() => ({ allowed: true, branch: {}, path: {} })),
     createGitManagerFor: options.createGitManagerFor ?? vi.fn(() => createMockGitManager()),
     registry: options.registry ?? (undefined as any),
     githubService: options.githubService,
@@ -258,11 +262,13 @@ export function createMockApiContext(options: MockApiContextOptions = {}): ApiCo
   }
 
   if (options.allowContentAccess !== undefined) {
-    servicesOptions.checkContentAccess = vi.fn().mockResolvedValue({
+    const result = {
       allowed: options.allowContentAccess,
       branch: {},
       path: {},
-    })
+    }
+    servicesOptions.checkContentAccess = vi.fn().mockResolvedValue(result)
+    servicesOptions.createContentAccessChecker = vi.fn().mockResolvedValue(() => result)
   }
 
   // Merge with user-provided services

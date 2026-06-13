@@ -24,6 +24,11 @@ const makeCtx = (): ApiContext => ({
       branch: { allowed: true, reason: 'no_acl' },
       path: { allowed: true, reason: 'no_acl' },
     }),
+    createContentAccessChecker: async () => () => ({
+      allowed: true,
+      branch: { allowed: true, reason: 'no_acl' },
+      path: { allowed: true, reason: 'no_acl' },
+    }),
     createGitManagerFor: undefined as any,
     bootstrapAdminIds: new Set<string>(),
     registry: undefined as any,
