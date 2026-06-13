@@ -168,11 +168,12 @@ const filterWithAccessControl = (
   for (const item of items) {
     const readAccess = checkAccess(item.physicalPath, 'read')
     if (!readAccess.allowed) continue
-    const editAccess = checkAccess(item.physicalPath, 'edit')
     if (search) {
       const haystack = `${item.slug} ${item.title ?? ''} ${item.collectionName ?? ''}`.toLowerCase()
       if (!haystack.includes(search)) continue
     }
+    // Compute edit access only for items that survive the read + search filters.
+    const editAccess = checkAccess(item.physicalPath, 'edit')
     results.push({ ...item, canEdit: editAccess.allowed })
   }
   return results
