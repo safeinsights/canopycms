@@ -151,6 +151,9 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
   const entryVersionsRef = useRef<Map<string, number>>(new Map())
   // Monotonic token so a stale refresh (e.g. superseded by a branch switch) doesn't commit state
   const refreshSeqRef = useRef(0)
+  // Separate token for the branch-change load below: a superseded load's `.finally`
+  // must not clear the loading flags while the newer branch is still loading.
+  const branchLoadSeqRef = useRef(0)
 
   // Entry create modal state
   const [createModalOpen, setCreateModalOpen] = useState(false)
@@ -439,12 +442,17 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
         entryVersionsRef.current.clear()
       }
 
-      // Refresh entries for new branch
+      // Refresh entries for new branch. Guard the cleanup with a per-branch-load
+      // token: on a rapid A→B switch where A resolves after B starts, A's `.finally`
+      // must not clear the loading flags while B is still in flight (which would
+      // reintroduce the very flash entriesInitializing exists to prevent).
+      const loadSeq = ++branchLoadSeqRef.current
       options.setBusy(true)
       setEntriesInitializing(true)
       refreshEntries(options.branchName)
         .catch(console.error)
         .finally(() => {
+          if (loadSeq !== branchLoadSeqRef.current) return
           options.setBusy(false)
           setEntriesInitializing(false)
         })

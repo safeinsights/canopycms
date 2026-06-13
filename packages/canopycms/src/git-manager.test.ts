@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
 import { GitManager, GitConflictError } from './git-manager'
-import { initTestRepo } from './test-utils'
+import { initTestRepo, openBareRepo } from './test-utils'
 
 describe('GitManager.ensureLocalSimulatedRemote', () => {
   let tmpDir: string
@@ -40,7 +40,7 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     const remoteStat = await fs.stat(remotePath)
     expect(remoteStat.isDirectory()).toBe(true)
 
-    const remoteGit = simpleGit({ baseDir: remotePath })
+    const remoteGit = openBareRepo(remotePath)
     const branches = await remoteGit.branch()
     expect(branches.all).toContain('main')
   })
@@ -110,7 +110,7 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
       baseBranch: 'feature/new-work',
     })
 
-    const remoteGit = simpleGit({ baseDir: remotePath })
+    const remoteGit = openBareRepo(remotePath)
     const remoteSha = (await remoteGit.revparse(['refs/heads/feature/new-work'])).trim()
     expect(remoteSha).toBe(sourceSha)
     // main is still there too
@@ -133,7 +133,7 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
       sourcePath: tmpDir,
       baseBranch: 'main',
     })
-    const remoteGit = simpleGit({ baseDir: remotePath })
+    const remoteGit = openBareRepo(remotePath)
     const seededSha = (await remoteGit.revparse(['refs/heads/main'])).trim()
 
     // Source main moves ahead
@@ -177,7 +177,7 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     await wsGit.add(['.'])
     await wsGit.commit('editor save')
     await wsGit.push('origin', 'main')
-    const remoteGit = simpleGit({ baseDir: remotePath })
+    const remoteGit = openBareRepo(remotePath)
     const editorSha = (await remoteGit.revparse(['refs/heads/main'])).trim()
 
     // Source main diverges with a different commit
@@ -255,7 +255,7 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
       baseBranch: 'main',
     })
 
-    const remoteGit = simpleGit({ baseDir: remotePath })
+    const remoteGit = openBareRepo(remotePath)
     const branches = await remoteGit.raw(['branch', '--list', 'main'])
     expect(branches).toContain('main')
   })
@@ -370,7 +370,7 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     await ensurePromise
 
     expect((await fs.stat(remotePath)).isDirectory()).toBe(true)
-    const remoteGit = simpleGit({ baseDir: remotePath })
+    const remoteGit = openBareRepo(remotePath)
     expect((await remoteGit.branch()).all).toContain('main')
   })
 
@@ -446,7 +446,7 @@ describe('GitManager.ensureLocalSimulatedRemote', () => {
     })
 
     // Assert: remote has main, not feature
-    const remoteGit = simpleGit({ baseDir: remotePath })
+    const remoteGit = openBareRepo(remotePath)
     const branches = await remoteGit.branch()
     expect(branches.all).toContain('main')
     expect(branches.all).not.toContain('feature')
@@ -597,9 +597,7 @@ describe('GitManager.resolveRemoteUrl', () => {
       expect(remoteStat.isDirectory()).toBe(true)
 
       // Verify remote contains main branch
-      const remoteGit = simpleGit({
-        baseDir: path.join(actualSubdir, '.canopy-dev/remote.git'),
-      })
+      const remoteGit = openBareRepo(path.join(actualSubdir, '.canopy-dev/remote.git'))
       const branches = await remoteGit.branch()
       expect(branches.all).toContain('main')
 
@@ -1070,7 +1068,7 @@ async function setupMergeConflict(tmpDir: string): Promise<{
 
   // Bare remote — set HEAD before any pushes so clones know the default branch
   await fs.mkdir(remotePath, { recursive: true })
-  const bareGit = simpleGit({ baseDir: remotePath })
+  const bareGit = openBareRepo(remotePath)
   await bareGit.init(true)
   await bareGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
 
@@ -1131,7 +1129,7 @@ async function setupRebaseConflict(tmpDir: string): Promise<{
 
   // Bare remote — set HEAD before any pushes so clones know the default branch
   await fs.mkdir(remotePath, { recursive: true })
-  const bareGit = simpleGit({ baseDir: remotePath })
+  const bareGit = openBareRepo(remotePath)
   await bareGit.init(true)
   await bareGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
 
@@ -1318,7 +1316,7 @@ describe('GitManager conflict handling', () => {
 
     // Independent bare remote with its own commit history
     await fs.mkdir(remotePath, { recursive: true })
-    const bareGit = simpleGit({ baseDir: remotePath })
+    const bareGit = openBareRepo(remotePath)
     await bareGit.init(true)
     await bareGit.raw(['symbolic-ref', 'HEAD', `refs/heads/${branch}`])
     const seedPath = path.join(dir, 'seed')

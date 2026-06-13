@@ -372,6 +372,52 @@ describe('useEntryManager', () => {
 
       expect(result.current.entriesInitializing).toBe(false)
     })
+
+    it('stays true when a superseded branch load settles before the current one', async () => {
+      // Park each entries.list call on a hand-resolved deferred so the two branch
+      // loads can settle out of the order they started.
+      type ListResult = Awaited<ReturnType<typeof mockClient.entries.list>>
+      const resolvers: Array<(v: ListResult) => void> = []
+      mockClient.entries.list.mockImplementation(
+        () => new Promise<ListResult>((resolve) => resolvers.push(resolve)),
+      )
+      const emptyPage = {
+        ok: true as const,
+        status: 200,
+        data: { entries: [], pagination: { hasMore: false, limit: 200 } },
+      }
+
+      // Mount on a branch (load 1 = the soon-superseded one), wait for it to park at
+      // entries.list, then switch branches (load 2 = the current one) so both are in
+      // flight together: resolvers[0] = superseded load, resolvers[1] = current load.
+      const { result, rerender } = renderHook((props) => useEntryManager(props), {
+        wrapper,
+        initialProps: { ...defaultOptions, initialEntries: [], branchName: 'main' },
+      })
+
+      await waitFor(() => expect(resolvers).toHaveLength(1))
+      expect(result.current.entriesInitializing).toBe(true)
+
+      await act(async () => {
+        rerender({ ...defaultOptions, initialEntries: [], branchName: 'other' })
+      })
+      await waitFor(() => expect(resolvers).toHaveLength(2))
+      expect(result.current.entriesInitializing).toBe(true)
+
+      // Settle the SUPERSEDED load first. Its `.finally` is seq-guarded, so it must
+      // NOT clear the flag while the current branch is still loading.
+      await act(async () => {
+        resolvers[0](emptyPage)
+        await new Promise((r) => setTimeout(r, 0))
+      })
+      expect(result.current.entriesInitializing).toBe(true)
+
+      // Settle the current load — now the flag clears.
+      await act(async () => {
+        resolvers[1](emptyPage)
+      })
+      await waitFor(() => expect(result.current.entriesInitializing).toBe(false))
+    })
   })
 
   it('opens create modal when creating entry', async () => {
