@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { CONTENT_ROUTES } from './content'
 import type { ApiContext } from './types'
 import { unsafeAsBranchName, unsafeAsLogicalPath, unsafeAsSlug } from '../paths/test-utils'
+import { createMockApiContext } from '../test-utils'
 
 // Extract handlers for testing
 const readContent = CONTENT_ROUTES.read.handler
@@ -53,83 +54,34 @@ const mockFlatSchema = [
   },
 ]
 
-const allowedCtx = (): ApiContext => ({
-  services: {
-    config: { schema: [] } as any,
-    entrySchemaRegistry: {},
-    branchSchemaCache: {
-      getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
-      invalidate: vi.fn().mockResolvedValue(undefined),
-    } as any,
-    checkBranchAccess: vi.fn(),
-    checkPathAccess: undefined as any,
-    checkContentAccess: vi.fn().mockReturnValue({ allowed: true, branch: {}, path: {} }),
-    createContentAccessChecker: vi
-      .fn()
-      .mockResolvedValue(() => ({ allowed: true, branch: {}, path: {} })),
-    createGitManagerFor: undefined as any,
-    bootstrapAdminIds: new Set<string>(),
-    registry: undefined as any,
-    commitFiles: vi.fn(),
-    submitBranch: vi.fn(),
-    commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
-    getSettingsBranchRoot: vi.fn().mockResolvedValue('/mock/settings'),
-    refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
+// Branch context the content handlers resolve via getBranchContext — carries the
+// flatSchema they read. Access control is mocked separately via allowContentAccess.
+const branchContextWithSchema = {
+  baseRoot: '/tmp/base',
+  branchRoot: '/tmp/base/feature-x',
+  flatSchema: mockFlatSchema,
+  branch: {
+    name: 'feature/x',
+    status: 'editing',
+    access: {},
+    createdBy: 'u1',
+    createdAt: 'now',
+    updatedAt: 'now',
   },
-  getBranchContext: vi.fn().mockResolvedValue({
-    baseRoot: '/tmp/base',
-    branchRoot: '/tmp/base/feature-x',
-    flatSchema: mockFlatSchema,
-    branch: {
-      name: 'feature/x',
-      status: 'editing',
-      access: {},
-      createdBy: 'u1',
-      createdAt: 'now',
-      updatedAt: 'now',
-    },
-  }),
-})
+}
+
+const allowedCtx = (): ApiContext =>
+  createMockApiContext({
+    allowContentAccess: true,
+    getBranchContext: vi.fn().mockResolvedValue(branchContextWithSchema),
+  })
 
 describe('content api', () => {
   it('forbids when access denied', async () => {
-    const ctx: ApiContext = {
-      services: {
-        config: { schema: [] } as any,
-        entrySchemaRegistry: {},
-        branchSchemaCache: {
-          getSchema: vi.fn().mockResolvedValue({ schema: { collections: [] }, flatSchema: [] }),
-          invalidate: vi.fn().mockResolvedValue(undefined),
-        } as any,
-        checkBranchAccess: vi.fn(),
-        checkPathAccess: undefined as any,
-        checkContentAccess: vi.fn().mockReturnValue({ allowed: false, branch: {}, path: {} }),
-        createContentAccessChecker: vi
-          .fn()
-          .mockResolvedValue(() => ({ allowed: false, branch: {}, path: {} })),
-        createGitManagerFor: undefined as any,
-        bootstrapAdminIds: new Set<string>(),
-        registry: undefined as any,
-        commitFiles: vi.fn(),
-        submitBranch: vi.fn(),
-        commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
-        getSettingsBranchRoot: vi.fn().mockResolvedValue('/tmp/settings'),
-        refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
-      },
-      getBranchContext: vi.fn().mockResolvedValue({
-        baseRoot: '/tmp/base',
-        branchRoot: '/tmp/base/feature-x',
-        flatSchema: mockFlatSchema,
-        branch: {
-          name: 'feature/x',
-          status: 'editing',
-          access: {},
-          createdBy: 'u1',
-          createdAt: 'now',
-          updatedAt: 'now',
-        },
-      }),
-    }
+    const ctx = createMockApiContext({
+      allowContentAccess: false,
+      getBranchContext: vi.fn().mockResolvedValue(branchContextWithSchema),
+    })
     const res = await readContent(
       ctx,
       { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -310,46 +262,10 @@ describe('content api', () => {
     })
 
     it('forbids rename when access denied', async () => {
-      const ctx: ApiContext = {
-        services: {
-          config: { schema: [] } as any,
-          entrySchemaRegistry: {},
-          branchSchemaCache: {
-            getSchema: vi.fn().mockResolvedValue({
-              schema: { collections: [] },
-              flatSchema: [],
-            }),
-            invalidate: vi.fn().mockResolvedValue(undefined),
-          } as any,
-          checkBranchAccess: vi.fn(),
-          checkPathAccess: undefined as any,
-          checkContentAccess: vi.fn().mockReturnValue({ allowed: false, branch: {}, path: {} }),
-          createContentAccessChecker: vi
-            .fn()
-            .mockResolvedValue(() => ({ allowed: false, branch: {}, path: {} })),
-          createGitManagerFor: undefined as any,
-          bootstrapAdminIds: new Set<string>(),
-          registry: undefined as any,
-          commitFiles: vi.fn(),
-          submitBranch: vi.fn(),
-          commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
-          getSettingsBranchRoot: vi.fn().mockResolvedValue('/tmp/settings'),
-          refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
-        },
-        getBranchContext: vi.fn().mockResolvedValue({
-          baseRoot: '/tmp/base',
-          branchRoot: '/tmp/base/feature-x',
-          flatSchema: mockFlatSchema,
-          branch: {
-            name: 'feature/x',
-            status: 'editing',
-            access: {},
-            createdBy: 'u1',
-            createdAt: 'now',
-            updatedAt: 'now',
-          },
-        }),
-      }
+      const ctx = createMockApiContext({
+        allowContentAccess: false,
+        getBranchContext: vi.fn().mockResolvedValue(branchContextWithSchema),
+      })
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },
@@ -364,34 +280,7 @@ describe('content api', () => {
     })
 
     it('returns 404 when branch not found', async () => {
-      const ctx: ApiContext = {
-        services: {
-          config: { schema: [] } as any,
-          entrySchemaRegistry: {},
-          branchSchemaCache: {
-            getSchema: vi.fn().mockResolvedValue({
-              schema: { collections: [] },
-              flatSchema: [],
-            }),
-            invalidate: vi.fn().mockResolvedValue(undefined),
-          } as any,
-          checkBranchAccess: vi.fn(),
-          checkPathAccess: undefined as any,
-          checkContentAccess: vi.fn().mockReturnValue({ allowed: true, branch: {}, path: {} }),
-          createContentAccessChecker: vi
-            .fn()
-            .mockResolvedValue(() => ({ allowed: true, branch: {}, path: {} })),
-          createGitManagerFor: undefined as any,
-          bootstrapAdminIds: new Set<string>(),
-          registry: undefined as any,
-          commitFiles: vi.fn(),
-          submitBranch: vi.fn(),
-          commitToSettingsBranch: vi.fn().mockResolvedValue({ committed: true, pushed: true }),
-          getSettingsBranchRoot: vi.fn().mockResolvedValue('/tmp/settings'),
-          refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
-        },
-        getBranchContext: vi.fn().mockResolvedValue(null),
-      }
+      const ctx = createMockApiContext({ branchContext: null })
       const res = await renameEntry(
         ctx,
         { user: { type: 'authenticated', userId: 'u1', groups: [] } },

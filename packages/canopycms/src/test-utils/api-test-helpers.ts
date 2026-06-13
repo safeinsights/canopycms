@@ -141,24 +141,15 @@ export function createMockGitManager(): {
 }
 
 /**
- * Options for creating mock CanopyServices
+ * Options for creating mock CanopyServices.
+ *
+ * Mirrors {@link CanopyServices} with every field optional (and `config` accepted as a
+ * partial). Unspecified fields get sensible `vi.fn()` defaults in {@link createMockServices}.
+ * Typed against the real service shapes so a wrong-shape override is caught at compile time
+ * (vitest mocks remain assignable since `vi.fn()` is callable with any signature).
  */
-export interface MockServicesOptions {
+export interface MockServicesOptions extends Partial<Omit<CanopyServices, 'config'>> {
   config?: Partial<CanopyConfig>
-  entrySchemaRegistry?: any
-  branchSchemaCache?: any
-  checkBranchAccess?: any
-  checkPathAccess?: any
-  checkContentAccess?: any
-  createContentAccessChecker?: any
-  createGitManagerFor?: any
-  registry?: any
-  githubService?: any
-  bootstrapAdminIds?: Set<string>
-  commitFiles?: any
-  submitBranch?: any
-  commitToSettingsBranch?: any
-  getSettingsBranchRoot?: any
 }
 
 /**
@@ -200,7 +191,10 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
     createContentAccessChecker:
       options.createContentAccessChecker ??
       vi.fn().mockResolvedValue(() => ({ allowed: true, branch: {}, path: {} })),
-    createGitManagerFor: options.createGitManagerFor ?? vi.fn(() => createMockGitManager()),
+    createGitManagerFor:
+      options.createGitManagerFor ??
+      // The mock GitManager is intentionally partial (only the methods tests exercise).
+      (vi.fn(() => createMockGitManager()) as unknown as CanopyServices['createGitManagerFor']),
     registry: options.registry ?? (undefined as any),
     githubService: options.githubService,
     bootstrapAdminIds: options.bootstrapAdminIds ?? new Set<string>(),
@@ -211,7 +205,7 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
       vi.fn().mockResolvedValue({ committed: true, pushed: true }),
     getSettingsBranchRoot:
       options.getSettingsBranchRoot ?? vi.fn().mockResolvedValue('/mock/settings'),
-    refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
+    refreshActiveBranch: options.refreshActiveBranch ?? vi.fn().mockResolvedValue(undefined),
   }
 }
 
