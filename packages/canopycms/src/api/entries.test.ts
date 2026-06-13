@@ -107,6 +107,65 @@ describe('listEntries', () => {
     expect(res.data?.entries.some((e) => e.slug === 'hidden')).toBe(false)
   })
 
+  it('clamps an over-large limit to the server maximum (200)', async () => {
+    const root = await tmpDir()
+    await fs.mkdir(path.join(root, 'content/posts'), { recursive: true })
+    await fs.writeFile(
+      path.join(root, 'content/posts/entry.first.abc123def456.json'),
+      JSON.stringify({ title: 'First Post' }),
+      'utf8',
+    )
+
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'entry',
+              format: 'json' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const config = defineCanopyTestConfig({ defaultBranchAccess: 'allow', schema })
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const checkContentAccess = createCheckContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
+    })
+
+    const ctx = createMockApiContext({
+      services: { config, checkBranchAccess, checkContentAccess },
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
+    })
+
+    // Request well above the 200 cap; handler clamps rather than 400s or echoes it back.
+    const res = await listEntries.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('main'), limit: 500 },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.pagination.limit).toBe(200)
+  })
+
   it('returns 404 when branch is missing', async () => {
     const ctx = createMockApiContext({ branchContext: null })
     const res = await listEntries.handler(
