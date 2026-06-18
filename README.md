@@ -1927,6 +1927,8 @@ CanopyCMS can serve your content as clean markdown for AI consumption (LLM tools
 
 All content is included by default (opt-out exclusion model). You can exclude specific collections, entry types, or entries matching a custom predicate.
 
+Fields are converted from your schema to markdown automatically. Arrays of **flat records** (object-list fields whose subfields are all single-line scalars -- string/number/boolean/datetime/select/reference/image) render as a compact markdown **table**; lists whose items contain nested objects, sub-lists, or long-form text keep an expanded heading-per-item form. Use `fieldTransforms` (below) to fully customize any field's rendering.
+
 ### Option 1: Route Handler (Runtime)
 
 Serve AI content dynamically from a Next.js catch-all route. Content is generated on first request and cached (in dev mode, regenerated on every request).

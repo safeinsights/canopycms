@@ -340,7 +340,7 @@ describe('entryToMarkdown', () => {
       expect(md).not.toContain('## Tags')
     })
 
-    it('renders object list fields as numbered subsections', () => {
+    it('renders flat object list fields as a markdown table (not numbered subsections)', () => {
       const entry = makeEntry({
         fields: [
           {
@@ -363,10 +363,103 @@ describe('entryToMarkdown', () => {
       })
       const md = entryToMarkdown(entry)
       expect(md).toContain('## Authors')
-      expect(md).toContain('### Authors 1')
-      expect(md).toContain('Alice')
-      expect(md).toContain('### Authors 2')
-      expect(md).toContain('Bob')
+      // Table form: header (schema order), separator, one row per item
+      expect(md).toContain('| Name | Email |')
+      expect(md).toContain('| --- | --- |')
+      expect(md).toContain('| Alice | alice@example.com |')
+      expect(md).toContain('| Bob | bob@example.com |')
+      // No nested ordinal headings
+      expect(md).not.toContain('### Authors 1')
+    })
+
+    it('uses empty cells for keys absent on some items', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'facts',
+            type: 'object',
+            label: 'Quick Facts',
+            list: true,
+            fields: [
+              { name: 'label', type: 'string', label: 'Label' },
+              { name: 'value', type: 'string', label: 'Value' },
+            ],
+          },
+        ],
+        data: {
+          facts: [{ label: 'Students', value: '~10,000' }, { label: 'Time span' }],
+        },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('| Students | ~10,000 |')
+      expect(md).toContain('| Time span |  |')
+    })
+
+    it('renders typed cell values (boolean, select) compactly in the table', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'rows',
+            type: 'object',
+            label: 'Rows',
+            list: true,
+            fields: [
+              { name: 'active', type: 'boolean', label: 'Active' },
+              {
+                name: 'tier',
+                type: 'select',
+                label: 'Tier',
+                options: [{ value: 'gold', label: 'Gold' }],
+              },
+            ],
+          },
+        ],
+        data: { rows: [{ active: true, tier: 'gold' }] },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('| Active | Tier |')
+      expect(md).toContain('| Yes | Gold |')
+    })
+
+    it('escapes pipes and newlines in table cells', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'rows',
+            type: 'object',
+            label: 'Rows',
+            list: true,
+            fields: [{ name: 'text', type: 'string', label: 'Text' }],
+          },
+        ],
+        data: { rows: [{ text: 'a | b\nc' }] },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('| a \\| b c |')
+    })
+
+    it('keeps numbered subsections when items contain nested lists/objects', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'tables',
+            type: 'object',
+            label: 'Tables',
+            list: true,
+            fields: [
+              { name: 'id', type: 'string', label: 'Id' },
+              { name: 'columns', type: 'string', label: 'Columns', list: true },
+            ],
+          },
+        ],
+        data: {
+          tables: [{ id: 'events', columns: ['a', 'b'] }],
+        },
+      })
+      const md = entryToMarkdown(entry)
+      // A nested list subfield disqualifies the table; fall back to subsections.
+      expect(md).toContain('### Tables 1')
+      expect(md).not.toContain('| Id | Columns |')
     })
   })
 
