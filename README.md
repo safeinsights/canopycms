@@ -2032,6 +2032,20 @@ const aiConfig = defineAIContentConfig({
   bodyTransforms: {
     guideline: (body) => body.replace(/\s*\|\|[^\n]+/g, ''),
   },
+
+  // Per-entry-type transforms that append markdown -- e.g. fold a colocated, machine-generated
+  // sibling artifact into the generated output. Keyed by entry type; runs once per entry (may be
+  // async). Return a string to append after the entry's body/fields, or undefined to append nothing.
+  // Unlike bodyTransforms, these fire for every format, including data-only JSON/YAML entries.
+  entryTransforms: {
+    dataset: async (entry, { contentId, readSibling }) => {
+      // readSibling reads a file colocated with the entry; path-safety/IO stay inside Canopy and
+      // the entry's absolute filesystem path is never exposed. Returns null when the file is absent.
+      const raw = await readSibling(`${contentId}.profile.json`)
+      if (!raw) return
+      return renderProfileSchema(entry.data, JSON.parse(raw)) // your own merge + renderer
+    },
+  },
 })
 ```
 
@@ -2042,6 +2056,14 @@ const aiConfig = defineAIContentConfig({
 3. **`bodyTransforms`** -- the full body string is passed through the entry-type-specific transform for final cleanup
 
 `componentTransforms` are keyed by component name and apply globally across all entry types (since MDX components are project-wide). `bodyTransforms` are keyed by entry type name and are useful for stripping entry-type-specific syntax that does not belong in AI output.
+
+**`entryTransforms`** run once per entry and append their returned markdown after the entry's body/fields -- and that appended content automatically flows into the per-entry file, the collection `all.md`, and any bundle the entry belongs to. Unlike `bodyTransforms`, they fire for **every** format, including data-only JSON/YAML entries. Reach for them when an entry should export its own Canopy content **plus** a colocated, machine-generated neighbor (e.g. `<contentId>.profile.json`). Notes:
+
+- **`contentId`** is the entry's stable Base58 ID -- the same id embedded in the entry's filename, and invariant when an editor renames the slug. Use it to name sibling artifacts so they stay matched to the entry across slug changes.
+- **`readSibling(name)`** reads a bare filename colocated in the entry's directory; it rejects slashes, `..`, and absolute paths, and resolves `null` for a missing file. The entry's absolute path is never handed out, so it cannot leak into the published `/ai/` output.
+- **The transform sees one entry, not the whole tree.** Cross-entry context (e.g. an index of all entries for resolving links between them) must be built in your own config code.
+- **Appended content is published.** It is served at `/ai/...`, so do not append secrets or PII a public reader should not see.
+- **Sibling files must exist where the exporter reads.** The static build reads your repo checkout; the runtime route handler reads the branch clone -- so commit the sibling artifacts into your content tree if you rely on the runtime handler.
 
 Pass the config to either delivery mechanism:
 

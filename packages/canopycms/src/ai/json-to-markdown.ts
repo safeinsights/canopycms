@@ -43,6 +43,13 @@ export function entryToMarkdown(entry: AIEntry, config?: AIContentConfig): strin
     parts.push(...renderJsonEntry(entry, config, skipFields))
   }
 
+  // Markdown appended by an entry transform (e.g. a folded-in sibling artifact). Computed once
+  // upstream, so it flows into the per-entry file, the collection all.md, and bundles alike.
+  if (entry.appendedSections) {
+    parts.push(entry.appendedSections.trim())
+    parts.push('')
+  }
+
   return parts.join('\n')
 }
 

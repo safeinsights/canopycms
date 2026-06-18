@@ -18,4 +18,14 @@ export const aiContentConfig = defineAIContentConfig({
   //     },
   //   },
   // ],
+  // Optional: fold a colocated, machine-generated sibling artifact into an entry's AI markdown.
+  // Runs once per entry; the appended section flows into the per-entry file, all.md, and bundles.
+  // readSibling reads a file next to the entry (traversal-guarded; null if missing).
+  // entryTransforms: {
+  //   dataset: async (entry, { contentId, readSibling }) => {
+  //     const raw = await readSibling(`${contentId}.profile.json`)
+  //     if (!raw) return
+  //     return renderProfileSchema(entry.data, JSON.parse(raw)) // your own merge + renderer
+  //   },
+  // },
 })

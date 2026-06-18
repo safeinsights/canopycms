@@ -56,7 +56,7 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `validation/` - Validation utilities (field traversal, reference validation, entry link validation)
 - `utils/` - Shared utilities (error handling, debug, atomic file writes, title-field: resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists)
 - `worker/` - CmsWorker daemon, task queue, deployment infrastructure
-- `ai/` - AI-ready content generation (markdown converter, engine, route handler)
+- `ai/` - AI-ready content generation (markdown converter, engine, route handler); transforms (field/component/body) + entry transforms with traversal-guarded `readSibling` for folding in colocated sibling artifacts
 - `build/` - Static build utilities (write AI content files to disk)
 - `static/` - Framework-agnostic static-generation helpers (collectStaticPaths; sitemap/SEO deferred)
 - `cli/` - CLI commands (`init`, `init-deploy`, `worker run-once`, `generate-ai-content`, `sync`, `migrate`); project-root discovery (`project-root.ts`)

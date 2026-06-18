@@ -7,14 +7,20 @@
  */
 
 import path from 'node:path'
+import fs from 'node:fs/promises'
 
 import { minimatch } from 'minimatch'
 
 import type { ContentStore, ContentDocument, MarkdownDocument } from '../content-store'
 import type { FlatSchemaItem, EntryTypeConfig } from '../config'
 import { isDataOnlyFormat } from '../utils/format'
-import { extractEntryTypeFromFilename, type ContentIdIndex } from '../content-id-index'
-import { getErrorMessage } from '../utils/error'
+import {
+  extractEntryTypeFromFilename,
+  extractIdFromFilename,
+  type ContentIdIndex,
+} from '../content-id-index'
+import { hasTraversalSequence } from '../paths'
+import { getErrorMessage, isNodeError } from '../utils/error'
 import { entryToMarkdown } from './json-to-markdown'
 import { resolveEntryLinksInText, type EntryLinkUrlResolver } from '../entry-link-resolver'
 import type {
@@ -25,6 +31,7 @@ import type {
   AIManifestCollection,
   AIManifestEntry,
   AIManifestBundle,
+  EntryTransformContext,
 } from './types'
 
 // ---------------------------------------------------------------------------
@@ -216,6 +223,14 @@ async function processCollection(
       // Check predicate exclusion
       if (config?.exclude?.where?.(aiEntry)) continue
 
+      // Fold in adopter-supplied markdown (e.g. a colocated sibling artifact), once per entry
+      await runEntryTransform(
+        aiEntry,
+        doc.absolutePath,
+        extractIdFromFilename(path.basename(listEntry.relativePath)),
+        config,
+      )
+
       entries.push(aiEntry)
 
       // Write individual entry file
@@ -333,6 +348,14 @@ async function processRootEntries(
 
       if (config?.exclude?.where?.(aiEntry)) continue
 
+      // Fold in adopter-supplied markdown (e.g. a colocated sibling artifact), once per entry
+      await runEntryTransform(
+        aiEntry,
+        doc.absolutePath,
+        extractIdFromFilename(path.basename(listEntry.relativePath)),
+        config,
+      )
+
       entries.push(aiEntry)
 
       const entryFilePath = `${listEntry.slug}.md`
@@ -405,6 +428,69 @@ function docToAIEntry(
     data: doc.data,
     body: !isDataOnlyFormat(doc.format) ? (doc as MarkdownDocument).body : undefined,
     fields: entryTypeConfig.schema,
+  }
+}
+
+/**
+ * Build a sibling-file reader bound to a single directory. The returned function reads a bare
+ * filename colocated in `dir`, refusing anything that could escape it (slashes, `..`, absolute
+ * paths). Resolves `null` when the file is missing or is not a regular file. Path-safety and IO
+ * stay inside the package — the absolute path is never handed to the caller.
+ */
+function makeReadSibling(dir: string): (name: string) => Promise<string | null> {
+  const resolvedDir = path.resolve(dir)
+  return async (name: string): Promise<string | null> => {
+    if (
+      !name ||
+      name.includes('/') ||
+      name.includes('\\') ||
+      path.isAbsolute(name) ||
+      hasTraversalSequence(name)
+    ) {
+      return null
+    }
+    const abs = path.resolve(resolvedDir, name)
+    // Defense in depth: the resolved file must sit directly inside `dir`.
+    if (path.dirname(abs) !== resolvedDir) return null
+    try {
+      const stats = await fs.stat(abs)
+      if (!stats.isFile()) return null
+      return await fs.readFile(abs, 'utf8')
+    } catch (err) {
+      if (isNodeError(err) && (err.code === 'ENOENT' || err.code === 'ENOTDIR')) return null
+      throw err
+    }
+  }
+}
+
+/**
+ * Run the configured entry transform (if any), caching its returned markdown on
+ * `entry.appendedSections`. The transform receives the entry's content ID and a directory-bound
+ * `readSibling`. Runs once per entry; the cached result is reused across the per-entry file, the
+ * collection `all.md`, and any bundle that includes this entry. A throwing transform is logged and
+ * skipped — the entry still renders without the appended section (distinct from an unreadable
+ * entry, which is skipped entirely upstream).
+ */
+async function runEntryTransform(
+  entry: AIEntry,
+  absolutePath: string,
+  contentId: string | null,
+  config?: AIContentConfig,
+): Promise<void> {
+  const transform = config?.entryTransforms?.[entry.entryType]
+  if (!transform) return
+  const ctx: EntryTransformContext = {
+    contentId: contentId ?? '',
+    readSibling: makeReadSibling(path.dirname(absolutePath)),
+  }
+  try {
+    const appended = await transform(entry, ctx)
+    if (appended) entry.appendedSections = appended
+  } catch (err) {
+    console.warn(
+      `AI content: entry transform for "${entry.slug}" (${entry.entryType}) failed:`,
+      getErrorMessage(err),
+    )
   }
 }
 

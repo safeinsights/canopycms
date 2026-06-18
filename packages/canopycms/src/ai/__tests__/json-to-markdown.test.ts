@@ -693,4 +693,48 @@ describe('entryToMarkdown', () => {
       expect(md).not.toContain('|| Start')
     })
   })
+
+  describe('appendedSections', () => {
+    it('appends the section after a JSON entry body', () => {
+      const entry = makeEntry({
+        format: 'json',
+        fields: [{ name: 'summary', type: 'string', label: 'Summary' }],
+        data: { summary: 'Base content' },
+        appendedSections: '## Appended\n\nExtra info.',
+      })
+      const md = entryToMarkdown(entry)
+      const summaryIdx = md.indexOf('Base content')
+      const appendedIdx = md.indexOf('## Appended')
+      expect(summaryIdx).toBeGreaterThanOrEqual(0)
+      expect(appendedIdx).toBeGreaterThan(summaryIdx) // appended at the end
+      expect(md).toContain('Extra info.')
+    })
+
+    it('appends the section after an MD/MDX entry body', () => {
+      const entry = makeEntry({
+        format: 'md',
+        fields: [{ name: 'title', type: 'string' }],
+        data: { title: 'Doc' },
+        body: 'Body text here.',
+        appendedSections: '## Appended',
+      })
+      const md = entryToMarkdown(entry)
+      expect(md.indexOf('## Appended')).toBeGreaterThan(md.indexOf('Body text here.'))
+    })
+
+    it('leaves output unchanged when appendedSections is undefined', () => {
+      const base = makeEntry({
+        format: 'json',
+        fields: [{ name: 'summary', type: 'string', label: 'Summary' }],
+        data: { summary: 'Base content' },
+      })
+      const withUndefined = makeEntry({
+        format: 'json',
+        fields: [{ name: 'summary', type: 'string', label: 'Summary' }],
+        data: { summary: 'Base content' },
+        appendedSections: undefined,
+      })
+      expect(entryToMarkdown(withUndefined)).toBe(entryToMarkdown(base))
+    })
+  })
 })
