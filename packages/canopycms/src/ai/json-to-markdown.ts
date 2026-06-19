@@ -343,9 +343,12 @@ function formatCellValue(field: FieldConfig, value: unknown): string {
   }
 }
 
-/** Escape a value for a GFM table cell: pipes are escaped and newlines collapsed to spaces. */
+/** Escape a value for a GFM table cell: backslashes and pipes are escaped, newlines collapsed. */
 function escapeTableCell(value: string): string {
+  // Escape backslashes first so an already-present backslash can't consume the pipe escape we add
+  // (source `a\|b` must become `a\\\|b`, not `a\\|b` — the latter leaves `|` as a column delimiter).
   return value
+    .replace(/\\/g, '\\\\')
     .replace(/\|/g, '\\|')
     .replace(/\r?\n+/g, ' ')
     .trim()

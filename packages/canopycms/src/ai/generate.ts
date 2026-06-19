@@ -453,7 +453,9 @@ function makeReadSibling(dir: string): (name: string) => Promise<string | null> 
     // Defense in depth: the resolved file must sit directly inside `dir`.
     if (path.dirname(abs) !== resolvedDir) return null
     try {
-      const stats = await fs.stat(abs)
+      // lstat (not stat) so a symlink in the entry dir can't redirect the read outside it:
+      // lstat reports the link itself, whose isFile() is false, so it's rejected as a non-file.
+      const stats = await fs.lstat(abs)
       if (!stats.isFile()) return null
       return await fs.readFile(abs, 'utf8')
     } catch (err) {

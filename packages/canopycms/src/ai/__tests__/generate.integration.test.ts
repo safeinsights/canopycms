@@ -678,6 +678,35 @@ describe('generateAIContent', () => {
       expect(md).not.toContain('TOPSECRET')
     })
 
+    it('readSibling does not follow a symlink that points outside the entry dir', async () => {
+      const { dir } = await entryLocation(store, root, 'content/settings', 'site')
+      // A secret outside the entry directory...
+      const secretPath = path.join(path.dirname(dir), 'secret.txt')
+      await fs.writeFile(secretPath, 'TOPSECRET', 'utf8')
+      // ...reachable via a symlink whose name is a bare filename inside the entry dir.
+      await fs.symlink(secretPath, path.join(dir, 'link.json'))
+
+      const aiConfig: AIContentConfig = {
+        entryTransforms: {
+          setting: async (_entry, { readSibling }) => {
+            const raw = await readSibling('link.json')
+            return `## Link\n\n${raw === null ? 'null' : raw}`
+          },
+        },
+      }
+
+      const result = await generateAIContent({
+        store,
+        flatSchema: flat,
+        contentRoot: config.contentRoot,
+        config: aiConfig,
+      })
+
+      const md = result.files.get('settings/site.md')!
+      expect(md).toContain('null')
+      expect(md).not.toContain('TOPSECRET')
+    })
+
     it('a throwing transform is logged and skipped without dropping the entry', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 

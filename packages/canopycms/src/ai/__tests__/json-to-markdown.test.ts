@@ -438,6 +438,28 @@ describe('entryToMarkdown', () => {
       expect(md).toContain('| a \\| b c |')
     })
 
+    it('escapes a literal backslash before a pipe so the cell is not split', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'rows',
+            type: 'object',
+            label: 'Rows',
+            list: true,
+            fields: [{ name: 'text', type: 'string', label: 'Text' }],
+          },
+        ],
+        // Source value is `a\|b` (backslash, then pipe).
+        data: { rows: [{ text: 'a\\|b' }] },
+      })
+      const md = entryToMarkdown(entry)
+      // Backslash escaped first, then pipe → `\\` + `\|`, i.e. three backslashes then a pipe.
+      // GFM renders this as a literal `\` then a literal `|` inside one cell (row not split).
+      expect(md).toContain('| a\\\\\\|b |')
+      // The buggy form (`\\` + bare `|`) would split the row — make sure it's gone.
+      expect(md).not.toContain('| a\\\\|b |')
+    })
+
     it('keeps numbered subsections when items contain nested lists/objects', () => {
       const entry = makeEntry({
         fields: [
