@@ -421,6 +421,26 @@ describe('entryToMarkdown', () => {
       expect(md).toContain('| Yes | Gold |')
     })
 
+    it('renders image cell values as image markdown (consistent with standalone)', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'logos',
+            type: 'object',
+            label: 'Logos',
+            list: true,
+            fields: [
+              { name: 'name', type: 'string', label: 'Name' },
+              { name: 'src', type: 'image', label: 'Src' },
+            ],
+          },
+        ],
+        data: { logos: [{ name: 'Acme', src: '/logo.png' }] },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('| Acme | ![](/logo.png) |')
+    })
+
     it('escapes pipes and newlines in table cells', () => {
       const entry = makeEntry({
         fields: [

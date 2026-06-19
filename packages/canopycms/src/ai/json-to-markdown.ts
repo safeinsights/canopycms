@@ -289,8 +289,10 @@ const FLAT_CELL_TYPES = new Set([
 
 /**
  * True when an object list field's items are flat records — every subfield is a single-line scalar
- * (no nested lists/objects/blocks, no multi-line text/code). Such lists render as a table; anything
- * else keeps the nested heading-per-item form.
+ * *field type* (no sub-lists, nested objects/blocks, or multi-line text/code types). Such lists
+ * render as a table; anything else keeps the nested heading-per-item form. This is a schema-level
+ * check: it classifies by declared field type, not by inspecting values (a `string` field whose
+ * value happens to be long still qualifies and is collapsed into one cell).
  */
 function isFlatObjectList(field: FieldConfig): field is ObjectFieldConfig {
   if (field.type !== 'object') return false
@@ -338,6 +340,9 @@ function formatCellValue(field: FieldConfig, value: unknown): string {
       return Array.isArray(value)
         ? value.map((v) => resolveSelectLabel(field as SelectFieldConfig, v)).join(', ')
         : resolveSelectLabel(field as SelectFieldConfig, value)
+    case 'image':
+      // Match the standalone image rendering (renderField) so a table cell stays an image reference.
+      return `![](${String(value)})`
     default:
       return String(value)
   }
