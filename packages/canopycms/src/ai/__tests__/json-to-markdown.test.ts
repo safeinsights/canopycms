@@ -340,7 +340,7 @@ describe('entryToMarkdown', () => {
       expect(md).not.toContain('## Tags')
     })
 
-    it('renders object list fields as numbered subsections', () => {
+    it('renders flat object list fields as a markdown table (not numbered subsections)', () => {
       const entry = makeEntry({
         fields: [
           {
@@ -363,10 +363,145 @@ describe('entryToMarkdown', () => {
       })
       const md = entryToMarkdown(entry)
       expect(md).toContain('## Authors')
-      expect(md).toContain('### Authors 1')
-      expect(md).toContain('Alice')
-      expect(md).toContain('### Authors 2')
-      expect(md).toContain('Bob')
+      // Table form: header (schema order), separator, one row per item
+      expect(md).toContain('| Name | Email |')
+      expect(md).toContain('| --- | --- |')
+      expect(md).toContain('| Alice | alice@example.com |')
+      expect(md).toContain('| Bob | bob@example.com |')
+      // No nested ordinal headings
+      expect(md).not.toContain('### Authors 1')
+    })
+
+    it('uses empty cells for keys absent on some items', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'facts',
+            type: 'object',
+            label: 'Quick Facts',
+            list: true,
+            fields: [
+              { name: 'label', type: 'string', label: 'Label' },
+              { name: 'value', type: 'string', label: 'Value' },
+            ],
+          },
+        ],
+        data: {
+          facts: [{ label: 'Students', value: '~10,000' }, { label: 'Time span' }],
+        },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('| Students | ~10,000 |')
+      expect(md).toContain('| Time span |  |')
+    })
+
+    it('renders typed cell values (boolean, select) compactly in the table', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'rows',
+            type: 'object',
+            label: 'Rows',
+            list: true,
+            fields: [
+              { name: 'active', type: 'boolean', label: 'Active' },
+              {
+                name: 'tier',
+                type: 'select',
+                label: 'Tier',
+                options: [{ value: 'gold', label: 'Gold' }],
+              },
+            ],
+          },
+        ],
+        data: { rows: [{ active: true, tier: 'gold' }] },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('| Active | Tier |')
+      expect(md).toContain('| Yes | Gold |')
+    })
+
+    it('renders image cell values as image markdown (consistent with standalone)', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'logos',
+            type: 'object',
+            label: 'Logos',
+            list: true,
+            fields: [
+              { name: 'name', type: 'string', label: 'Name' },
+              { name: 'src', type: 'image', label: 'Src' },
+            ],
+          },
+        ],
+        data: { logos: [{ name: 'Acme', src: '/logo.png' }] },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('| Acme | ![](/logo.png) |')
+    })
+
+    it('escapes pipes and newlines in table cells', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'rows',
+            type: 'object',
+            label: 'Rows',
+            list: true,
+            fields: [{ name: 'text', type: 'string', label: 'Text' }],
+          },
+        ],
+        data: { rows: [{ text: 'a | b\nc' }] },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('| a \\| b c |')
+    })
+
+    it('escapes a literal backslash before a pipe so the cell is not split', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'rows',
+            type: 'object',
+            label: 'Rows',
+            list: true,
+            fields: [{ name: 'text', type: 'string', label: 'Text' }],
+          },
+        ],
+        // Source value is `a\|b` (backslash, then pipe).
+        data: { rows: [{ text: 'a\\|b' }] },
+      })
+      const md = entryToMarkdown(entry)
+      // Backslash escaped first, then pipe → `\\` + `\|`, i.e. three backslashes then a pipe.
+      // GFM renders this as a literal `\` then a literal `|` inside one cell (row not split).
+      expect(md).toContain('| a\\\\\\|b |')
+      // The buggy form (`\\` + bare `|`) would split the row — make sure it's gone.
+      expect(md).not.toContain('| a\\\\|b |')
+    })
+
+    it('keeps numbered subsections when items contain nested lists/objects', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'tables',
+            type: 'object',
+            label: 'Tables',
+            list: true,
+            fields: [
+              { name: 'id', type: 'string', label: 'Id' },
+              { name: 'columns', type: 'string', label: 'Columns', list: true },
+            ],
+          },
+        ],
+        data: {
+          tables: [{ id: 'events', columns: ['a', 'b'] }],
+        },
+      })
+      const md = entryToMarkdown(entry)
+      // A nested list subfield disqualifies the table; fall back to subsections.
+      expect(md).toContain('### Tables 1')
+      expect(md).not.toContain('| Id | Columns |')
     })
   })
 
@@ -691,6 +826,50 @@ describe('entryToMarkdown', () => {
       // Heading metadata stripped
       expect(md).toContain('## Getting Started')
       expect(md).not.toContain('|| Start')
+    })
+  })
+
+  describe('appendedSections', () => {
+    it('appends the section after a JSON entry body', () => {
+      const entry = makeEntry({
+        format: 'json',
+        fields: [{ name: 'summary', type: 'string', label: 'Summary' }],
+        data: { summary: 'Base content' },
+        appendedSections: '## Appended\n\nExtra info.',
+      })
+      const md = entryToMarkdown(entry)
+      const summaryIdx = md.indexOf('Base content')
+      const appendedIdx = md.indexOf('## Appended')
+      expect(summaryIdx).toBeGreaterThanOrEqual(0)
+      expect(appendedIdx).toBeGreaterThan(summaryIdx) // appended at the end
+      expect(md).toContain('Extra info.')
+    })
+
+    it('appends the section after an MD/MDX entry body', () => {
+      const entry = makeEntry({
+        format: 'md',
+        fields: [{ name: 'title', type: 'string' }],
+        data: { title: 'Doc' },
+        body: 'Body text here.',
+        appendedSections: '## Appended',
+      })
+      const md = entryToMarkdown(entry)
+      expect(md.indexOf('## Appended')).toBeGreaterThan(md.indexOf('Body text here.'))
+    })
+
+    it('leaves output unchanged when appendedSections is undefined', () => {
+      const base = makeEntry({
+        format: 'json',
+        fields: [{ name: 'summary', type: 'string', label: 'Summary' }],
+        data: { summary: 'Base content' },
+      })
+      const withUndefined = makeEntry({
+        format: 'json',
+        fields: [{ name: 'summary', type: 'string', label: 'Summary' }],
+        data: { summary: 'Base content' },
+        appendedSections: undefined,
+      })
+      expect(entryToMarkdown(withUndefined)).toBe(entryToMarkdown(base))
     })
   })
 })

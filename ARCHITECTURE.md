@@ -1795,7 +1795,20 @@ The generation engine walks the schema tree, reads each entry from the content s
 - **MD/MDX entries**: Frontmatter fields are rendered as labeled metadata, and the markdown body is appended verbatim.
 - **JSON/YAML entries**: All fields undergo schema-driven conversion. Each field type (string, boolean, image, code, select, reference, object, block) has a dedicated rendering strategy that produces idiomatic markdown.
 - **Field descriptions**: The `description` field on schema configs (collections, entry types, blocks, and fields) is included in the markdown output, giving AI consumers semantic context about each field's purpose.
-- **Field transforms**: Adopters can provide custom per-entry-type, per-field markdown override functions for cases where the default conversion is insufficient (e.g., rendering a complex data structure as a table).
+
+The engine also exposes several adopter extension points that customize or augment the conversion. They form a layered pipeline:
+
+- **Field transforms**: Per-entry-type, per-field markdown override functions for cases where the default conversion is insufficient (e.g., rendering a complex data structure as a table).
+- **Component transforms** and **body transforms**: Applied to MD/MDX bodies only. Component transforms rewrite individual MDX components; body transforms then operate on the whole body after component rewriting.
+- **Entry transforms**: A per-entry-type function that runs once per entry and returns markdown to append after the entry's body/fields. Unlike body transforms, entry transforms fire for every format, including data-only JSON/YAML entries. The appended section is computed once and reused across the per-entry file, the collection rollup, and any bundle containing the entry (the same entry object carries the cached result through all three outputs). A throwing entry transform is logged and skipped; the entry still renders without the appended section.
+
+#### Reading Colocated Sibling Artifacts
+
+An entry transform receives a context exposing the entry's stable content ID and a `readSibling` reader. `readSibling` reads a file colocated in the entry's directory by bare filename (no slashes, no `..`, not absolute) and returns its contents or `null` if missing. This lets an adopter fold a machine-generated artifact that lives next to an entry (named by content ID, which is invariant under slug edits) into the exported markdown.
+
+Canopy performs the IO and path-safety check internally; the entry's absolute filesystem path is never exposed to the transform, so it cannot leak into the published `/ai/` output. This makes the AI exporter symmetric with the page-render path, where a build context exposes a colocated artifact's location via `meta.physicalPath`.
+
+The transform is intentionally per-entry-isolated: it sees one entry plus its colocated files, never other entries. Cross-entry context (e.g. an index of all entries) must be assembled adopter-side.
 
 ### Output Structure
 
@@ -1830,7 +1843,7 @@ AI content generation is configured via a `defineAIContentConfig()` helper that 
 
 - **Exclusions**: Collections to skip, entry types to skip globally, and a custom predicate for fine-grained filtering.
 - **Bundles**: Named filtered views with collection, entry type, path glob, and predicate filters.
-- **Field transforms**: Per-entry-type, per-field markdown override functions.
+- **Transforms**: The layered transform pipeline -- field transforms, component transforms, body transforms, and entry transforms (see [Content Transformation](#content-transformation)).
 
 ### Package Entrypoints
 
@@ -2781,3 +2794,11 @@ The AI content generator uses schema field definitions to produce structured mar
 **Field description propagation**: The `description` field on schema configs gives AI consumers semantic context about each field's purpose. This metadata exists in the schema but not in the raw content files.
 
 **Custom transforms**: The field transform system lets adopters override the default conversion for specific fields (e.g., rendering a complex data structure as a markdown table). This extensibility point would not exist with a raw JSON export.
+
+### Why is reading sibling artifacts a transform primitive, not a content-model concept?
+
+Entry transforms can read files colocated with an entry via a directory-bound `readSibling` reader, rather than CanopyCMS modeling "sibling artifacts" as a first-class part of the content model.
+
+**Parity with the render path, minimally**: The page-render path already lets adopters read a colocated artifact via a build context's `meta.physicalPath`. `readSibling` gives the AI exporter the same capability with the smallest possible primitive -- Canopy owns the IO and path-safety, and the entry's absolute path is never exposed (so it cannot leak into published `/ai/` output).
+
+**Why not a first-class sibling-artifact concept?** Modeling sibling artifacts in the content model itself was considered and deliberately deferred. It is premature for a single adopter and raises unresolved questions about how such artifacts interact with the editor UI, schema validation, and the branch workflow. The transform primitive solves the immediate need without committing the content model to those answers.

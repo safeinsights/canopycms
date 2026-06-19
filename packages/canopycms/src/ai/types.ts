@@ -138,6 +138,58 @@ export type BodyTransformFn = (body: string, entry: AIEntryMeta) => string
 export type BodyTransforms = Record<string, BodyTransformFn>
 
 /**
+ * Context passed to an entry transform. Lets an adopter fold a colocated machine-generated
+ * sibling artifact (e.g. `<contentId>.profile.json`) into the generated markdown — the AI-export
+ * counterpart of reading a sibling from `meta.physicalPath` in a page render.
+ *
+ * The transform sees a single entry plus its colocated sibling *files*; it cannot see other
+ * entries. Cross-entry context (e.g. an index of all entries) must be built adopter-side.
+ */
+export interface EntryTransformContext {
+  /**
+   * Stable content ID (Base58) of this entry — matches the id embedded in the entry's filename
+   * and is invariant under slug edits. Use it to name sibling artifacts.
+   */
+  contentId: string
+  /**
+   * Read a sibling file colocated in this entry's directory. `name` must be a bare filename —
+   * no slashes, no `..`, not absolute. Resolves to the file's UTF-8 contents, or `null` if the
+   * file is missing or is not a regular file. Path-safety and IO are performed inside Canopy;
+   * the entry's absolute filesystem path is never exposed (it must not leak into published output).
+   */
+  readSibling: (name: string) => Promise<string | null>
+}
+
+/**
+ * Per-entry-type transform. Runs once per entry at generation time (may be async). Return a
+ * markdown string to APPEND after the entry's body/fields, or `undefined` to append nothing.
+ * Append-only by design — `entryToMarkdown` remains the sole owner of base serialization.
+ *
+ * Unlike `bodyTransforms` (which fire only for MD/MDX bodies), entry transforms fire for every
+ * format, including data-only JSON/YAML entries.
+ *
+ * @example
+ * ```ts
+ * {
+ *   dataset: async (entry, { contentId, readSibling }) => {
+ *     const raw = await readSibling(`${contentId}.profile.json`)
+ *     if (!raw) return
+ *     return renderProfileSchema(entry.data, JSON.parse(raw))
+ *   },
+ * }
+ * ```
+ */
+export type EntryTransformFn = (
+  entry: AIEntry,
+  ctx: EntryTransformContext,
+) => Promise<string | undefined> | string | undefined
+
+/**
+ * Entry transform overrides, keyed by entry type name.
+ */
+export type EntryTransforms = Record<string, EntryTransformFn>
+
+/**
  * Main AI content configuration. Shared by route handler and build utility.
  */
 export interface AIContentConfig {
@@ -151,6 +203,8 @@ export interface AIContentConfig {
   componentTransforms?: ComponentTransforms
   /** Per-entry-type body transforms (applied after componentTransforms) */
   bodyTransforms?: BodyTransforms
+  /** Per-entry-type transforms that append markdown (e.g. folding in a colocated sibling artifact) */
+  entryTransforms?: EntryTransforms
 }
 
 /**
@@ -212,4 +266,10 @@ export interface AIEntry extends AIEntryMeta {
   body?: string
   /** Schema fields for this entry type */
   fields: readonly FieldConfig[]
+  /**
+   * Markdown produced by an entry transform, appended after the entry's body/fields.
+   * Computed once at generation time and reused across the per-entry file, the collection
+   * `all.md`, and any bundle that includes this entry. Internal — not part of `AIEntryMeta`.
+   */
+  appendedSections?: string
 }

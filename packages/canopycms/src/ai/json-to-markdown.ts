@@ -43,6 +43,13 @@ export function entryToMarkdown(entry: AIEntry, config?: AIContentConfig): strin
     parts.push(...renderJsonEntry(entry, config, skipFields))
   }
 
+  // Markdown appended by an entry transform (e.g. a folded-in sibling artifact). Computed once
+  // upstream, so it flows into the per-entry file, the collection all.md, and bundles alike.
+  if (entry.appendedSections) {
+    parts.push(entry.appendedSections.trim())
+    parts.push('')
+  }
+
   return parts.join('\n')
 }
 
@@ -231,6 +238,14 @@ function renderListField(
 ): string {
   if (values.length === 0) return ''
 
+  // Arrays of flat records (object items whose subfields are all single-line scalars) render far
+  // more compactly — and more scannably for an AI — as a markdown table than as nested ordinal
+  // headings. Genuinely nested items (subfields that are lists/objects/blocks/long text) keep the
+  // heading-per-item fallback below.
+  if (field.type === 'object' && isFlatObjectList(field)) {
+    return renderObjectListTable(field, values, label, heading, descriptionLine)
+  }
+
   const isComplex = field.type === 'object' || field.type === 'block'
 
   if (isComplex) {
@@ -259,6 +274,89 @@ function renderListField(
   // For primitive types, render as markdown list
   const items = values.map((v) => `- ${formatInlineValue(field, v)}`).join('\n')
   return `${heading} ${label}${descriptionLine}\n\n${items}`
+}
+
+/** Subfield types that render to a single line and so fit cleanly in a table cell. */
+const FLAT_CELL_TYPES = new Set([
+  'string',
+  'number',
+  'datetime',
+  'boolean',
+  'select',
+  'reference',
+  'image',
+])
+
+/**
+ * True when an object list field's items are flat records — every subfield is a single-line scalar
+ * *field type* (no sub-lists, nested objects/blocks, or multi-line text/code types). Such lists
+ * render as a table; anything else keeps the nested heading-per-item form. This is a schema-level
+ * check: it classifies by declared field type, not by inspecting values (a `string` field whose
+ * value happens to be long still qualifies and is collapsed into one cell).
+ */
+function isFlatObjectList(field: FieldConfig): field is ObjectFieldConfig {
+  if (field.type !== 'object') return false
+  const subFields = (field as ObjectFieldConfig).fields
+  if (!subFields || subFields.length === 0) return false
+  return subFields.every((f) => !('list' in f && f.list) && FLAT_CELL_TYPES.has(f.type))
+}
+
+/**
+ * Render an array of flat object records as a GFM table. Columns are the subfields in schema order;
+ * absent values become empty cells; pipes and newlines in cells are escaped.
+ */
+function renderObjectListTable(
+  field: ObjectFieldConfig,
+  values: unknown[],
+  label: string,
+  heading: string,
+  descriptionLine: string,
+): string {
+  const columns = field.fields
+  const headerRow = `| ${columns.map((f) => escapeTableCell(f.label || f.name)).join(' | ')} |`
+  const separatorRow = `| ${columns.map(() => '---').join(' | ')} |`
+  const dataRows = values.map((item) => {
+    const record =
+      typeof item === 'object' && item !== null ? (item as Record<string, unknown>) : {}
+    const cells = columns.map((f) => {
+      const v = record[f.name]
+      if (v === undefined || v === null) return ''
+      return escapeTableCell(formatCellValue(f, v))
+    })
+    return `| ${cells.join(' | ')} |`
+  })
+  const table = [headerRow, separatorRow, ...dataRows].join('\n')
+  return `${heading} ${label}${descriptionLine}\n\n${table}`
+}
+
+/** Render a single scalar subfield value to its one-line table-cell form. */
+function formatCellValue(field: FieldConfig, value: unknown): string {
+  switch (field.type) {
+    case 'boolean':
+      return value ? 'Yes' : 'No'
+    case 'reference':
+      return formatReference(value)
+    case 'select':
+      return Array.isArray(value)
+        ? value.map((v) => resolveSelectLabel(field as SelectFieldConfig, v)).join(', ')
+        : resolveSelectLabel(field as SelectFieldConfig, value)
+    case 'image':
+      // Match the standalone image rendering (renderField) so a table cell stays an image reference.
+      return `![](${String(value)})`
+    default:
+      return String(value)
+  }
+}
+
+/** Escape a value for a GFM table cell: backslashes and pipes are escaped, newlines collapsed. */
+function escapeTableCell(value: string): string {
+  // Escape backslashes first so an already-present backslash can't consume the pipe escape we add
+  // (source `a\|b` must become `a\\\|b`, not `a\\|b` — the latter leaves `|` as a column delimiter).
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n+/g, ' ')
+    .trim()
 }
 
 /**

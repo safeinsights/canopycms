@@ -2,14 +2,26 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest'
 
 import { defineCanopyTestConfig } from '../../config-test'
 import { flattenSchema } from '../../config'
 import { ContentStore } from '../../content-store'
+import { extractIdFromFilename } from '../../content-id-index'
 import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
 import { generateAIContent } from '../generate'
 import type { AIContentConfig, AIManifest } from '../types'
+
+/** Locate an entry's physical directory + content ID so a sibling file can be written next to it. */
+async function entryLocation(store: ContentStore, root: string, collection: string, slug: string) {
+  const listed = await store.getCollectionEntryPaths(unsafeAsLogicalPath(collection))
+  const entry = listed.find((e) => e.slug === slug)
+  if (!entry) throw new Error(`entry not found: ${collection}/${slug}`)
+  return {
+    dir: path.dirname(path.join(root, entry.relativePath)),
+    contentId: extractIdFromFilename(path.basename(entry.relativePath)) as string,
+  }
+}
 
 const tmpDir = () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-ai-'))
 
@@ -490,6 +502,233 @@ describe('generateAIContent', () => {
 
       const settingMd = result.files.get('settings/site.md')!
       expect(settingMd).toContain('Custom: TestSite')
+    })
+  })
+
+  describe('entry transforms', () => {
+    afterEach(() => {
+      vi.restoreAllMocks()
+    })
+
+    it('appends a sibling-derived section to a data-only (JSON) entry', async () => {
+      const { dir } = await entryLocation(store, root, 'content/settings', 'site')
+      await fs.writeFile(
+        path.join(dir, 'profile.json'),
+        JSON.stringify({ columns: ['id', 'name'] }),
+        'utf8',
+      )
+
+      const aiConfig: AIContentConfig = {
+        entryTransforms: {
+          setting: async (_entry, { readSibling }) => {
+            const raw = await readSibling('profile.json')
+            if (!raw) return
+            const data = JSON.parse(raw) as { columns: string[] }
+            return `## Profile\n\nColumns: ${data.columns.join(', ')}`
+          },
+        },
+      }
+
+      const result = await generateAIContent({
+        store,
+        flatSchema: flat,
+        contentRoot: config.contentRoot,
+        config: aiConfig,
+      })
+
+      const settingMd = result.files.get('settings/site.md')!
+      expect(settingMd).toContain('TestSite') // base schema fields still rendered
+      expect(settingMd).toContain('## Profile')
+      expect(settingMd).toContain('Columns: id, name')
+    })
+
+    it('flows the appended section into all.md and bundles (computed once)', async () => {
+      const { dir } = await entryLocation(store, root, 'content/settings', 'site')
+      await fs.writeFile(path.join(dir, 'profile.json'), '{}', 'utf8')
+
+      const calledFor: string[] = []
+      const aiConfig: AIContentConfig = {
+        entryTransforms: {
+          setting: async (entry, { readSibling }) => {
+            calledFor.push(entry.slug)
+            await readSibling('profile.json')
+            return '## Appended Marker'
+          },
+        },
+        bundles: [{ name: 'settings-bundle', filter: { entryTypes: ['setting'] } }],
+      }
+
+      const result = await generateAIContent({
+        store,
+        flatSchema: flat,
+        contentRoot: config.contentRoot,
+        config: aiConfig,
+      })
+
+      // Same section in the per-entry file, the collection all.md, and the bundle...
+      expect(result.files.get('settings/site.md')!).toContain('## Appended Marker')
+      expect(result.files.get('settings/all.md')!).toContain('## Appended Marker')
+      expect(result.files.get('bundles/settings-bundle.md')!).toContain('## Appended Marker')
+
+      // ...but the transform ran exactly once for the single setting entry (not per output file).
+      expect(calledFor).toEqual(['site'])
+    })
+
+    it('appends to MD/MDX entries too', async () => {
+      const aiConfig: AIContentConfig = {
+        entryTransforms: {
+          post: () => '## Extra For Posts',
+        },
+      }
+
+      const result = await generateAIContent({
+        store,
+        flatSchema: flat,
+        contentRoot: config.contentRoot,
+        config: aiConfig,
+      })
+
+      const postMd = result.files.get('posts/hello-world.md')!
+      expect(postMd).toContain('# Hello') // body still present
+      expect(postMd).toContain('## Extra For Posts')
+    })
+
+    it('resolves the sibling by content ID (ctx.contentId)', async () => {
+      const { dir, contentId } = await entryLocation(store, root, 'content/settings', 'site')
+      await fs.writeFile(
+        path.join(dir, `${contentId}.profile.json`),
+        JSON.stringify({ ok: true }),
+        'utf8',
+      )
+
+      const aiConfig: AIContentConfig = {
+        entryTransforms: {
+          setting: async (_entry, { contentId: id, readSibling }) => {
+            const raw = await readSibling(`${id}.profile.json`)
+            return raw ? `## ById\n\n${raw}` : '## NoMatch'
+          },
+        },
+      }
+
+      const result = await generateAIContent({
+        store,
+        flatSchema: flat,
+        contentRoot: config.contentRoot,
+        config: aiConfig,
+      })
+
+      const settingMd = result.files.get('settings/site.md')!
+      expect(settingMd).toContain('## ById')
+      expect(settingMd).toContain('"ok":true')
+    })
+
+    it('missing sibling resolves null; entry renders unchanged vs no transform', async () => {
+      const aiConfig: AIContentConfig = {
+        entryTransforms: {
+          setting: async (_entry, { readSibling }) => {
+            const raw = await readSibling('does-not-exist.json')
+            return raw ? '## Should Not Appear' : undefined
+          },
+        },
+      }
+
+      const withTransform = await generateAIContent({
+        store,
+        flatSchema: flat,
+        contentRoot: config.contentRoot,
+        config: aiConfig,
+      })
+      const baseline = await generateAIContent({
+        store,
+        flatSchema: flat,
+        contentRoot: config.contentRoot,
+      })
+
+      const md = withTransform.files.get('settings/site.md')!
+      expect(md).not.toContain('Should Not Appear')
+      // undefined append must not alter output (no stray separators/whitespace)
+      expect(md).toBe(baseline.files.get('settings/site.md')!)
+    })
+
+    it('readSibling refuses path traversal and never reads outside the entry dir', async () => {
+      const { dir } = await entryLocation(store, root, 'content/settings', 'site')
+      // Plant a secret one level above the entry directory.
+      await fs.writeFile(path.join(path.dirname(dir), 'secret.json'), 'TOPSECRET', 'utf8')
+
+      const probes = ['../secret.json', '/etc/hostname', 'a/b.json', '..\\secret.json', '..']
+
+      const aiConfig: AIContentConfig = {
+        entryTransforms: {
+          setting: async (_entry, { readSibling }) => {
+            const results = await Promise.all(probes.map((p) => readSibling(p)))
+            return `## Guard\n\n${results.map((r) => (r === null ? 'null' : 'READ')).join(',')}`
+          },
+        },
+      }
+
+      const result = await generateAIContent({
+        store,
+        flatSchema: flat,
+        contentRoot: config.contentRoot,
+        config: aiConfig,
+      })
+
+      const md = result.files.get('settings/site.md')!
+      expect(md).toContain('null,null,null,null,null')
+      expect(md).not.toContain('TOPSECRET')
+    })
+
+    it('readSibling does not follow a symlink that points outside the entry dir', async () => {
+      const { dir } = await entryLocation(store, root, 'content/settings', 'site')
+      // A secret outside the entry directory...
+      const secretPath = path.join(path.dirname(dir), 'secret.txt')
+      await fs.writeFile(secretPath, 'TOPSECRET', 'utf8')
+      // ...reachable via a symlink whose name is a bare filename inside the entry dir.
+      await fs.symlink(secretPath, path.join(dir, 'link.json'))
+
+      const aiConfig: AIContentConfig = {
+        entryTransforms: {
+          setting: async (_entry, { readSibling }) => {
+            const raw = await readSibling('link.json')
+            return `## Link\n\n${raw === null ? 'null' : raw}`
+          },
+        },
+      }
+
+      const result = await generateAIContent({
+        store,
+        flatSchema: flat,
+        contentRoot: config.contentRoot,
+        config: aiConfig,
+      })
+
+      const md = result.files.get('settings/site.md')!
+      expect(md).toContain('null')
+      expect(md).not.toContain('TOPSECRET')
+    })
+
+    it('a throwing transform is logged and skipped without dropping the entry', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const aiConfig: AIContentConfig = {
+        entryTransforms: {
+          setting: () => {
+            throw new Error('boom')
+          },
+        },
+      }
+
+      const result = await generateAIContent({
+        store,
+        flatSchema: flat,
+        contentRoot: config.contentRoot,
+        config: aiConfig,
+      })
+
+      // Entry still rendered with its normal content, just no appended section.
+      const md = result.files.get('settings/site.md')!
+      expect(md).toContain('TestSite')
+      expect(warn).toHaveBeenCalled()
     })
   })
 })
