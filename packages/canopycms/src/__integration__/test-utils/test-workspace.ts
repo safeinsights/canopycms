@@ -3,6 +3,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
 import { vi } from 'vitest'
+import type { InternalGroup } from '../../authorization'
 import type { CanopyConfig } from '../../config'
 import { defineCanopyTestConfig } from '../../config-test'
 import { initTestRepo } from '../../test-utils'
@@ -18,6 +19,17 @@ import { initTestRepo } from '../../test-utils'
 export async function initBareRepo(remotePath: string, defaultBranch = 'main') {
   await simpleGit().raw(['init', '--bare', `--initial-branch=${defaultBranch}`, remotePath])
   return simpleGit({ baseDir: remotePath })
+}
+
+export interface TestWorkspaceOptions {
+  /**
+   * Internal groups to seed into groups.json on the main branch.
+   *
+   * Reserved group IDs (Admins/Reviewers) supplied by an auth provider are
+   * stripped for security (SEC-H1), so tests that need a privileged persona
+   * must grant membership through internal groups (or bootstrap admin IDs).
+   */
+  internalGroups?: InternalGroup[]
 }
 
 export interface TestWorkspace {
@@ -55,6 +67,7 @@ const suppressedWarnings: (string | RegExp)[] = [
 
 export async function createTestWorkspace(
   configOverrides?: Partial<Parameters<typeof defineCanopyTestConfig>[0]>,
+  options?: TestWorkspaceOptions,
 ): Promise<TestWorkspace> {
   // Suppress known CanopyCMS warnings that are expected in integration tests
   const originalWarn = console.warn
@@ -87,6 +100,23 @@ export async function createTestWorkspace(
 
     // Create initial commit with README
     await fs.writeFile(path.join(seedPath, 'README.md'), '# Test Repository\n', 'utf8')
+
+    // Seed internal groups (groups.json) so privileged personas get their
+    // reserved-group membership from a Canopy-managed source (SEC-H1)
+    if (options?.internalGroups) {
+      const groupsFile = {
+        version: 1,
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'test-setup',
+        groups: options.internalGroups,
+      }
+      await fs.writeFile(
+        path.join(seedPath, 'groups.json'),
+        JSON.stringify(groupsFile, null, 2),
+        'utf8',
+      )
+    }
+
     await seedGit.add(['.'])
     await seedGit.commit('Initial commit')
 

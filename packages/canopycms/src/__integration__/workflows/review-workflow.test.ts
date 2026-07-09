@@ -7,7 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 
 import { createTestWorkspace, type TestWorkspace } from '../test-utils/test-workspace'
-import { createMockAuthPlugin } from '../test-utils/multi-user'
+import { createMockAuthPlugin, TEST_INTERNAL_GROUPS } from '../test-utils/multi-user'
 import { createApiClient } from '../test-utils/api-client'
 import { BLOG_SCHEMA } from '../fixtures/schemas'
 import type { BranchResponse } from '../../api/branch'
@@ -24,9 +24,14 @@ describe('Review Workflow Integration', () => {
   let adminClient: Awaited<ReturnType<typeof createApiClient>>
 
   beforeEach(async () => {
-    workspace = await createTestWorkspace({
-      schema: BLOG_SCHEMA,
-    })
+    workspace = await createTestWorkspace(
+      {
+        schema: BLOG_SCHEMA,
+      },
+      // Reserved provider groups are stripped (SEC-H1); privileged personas
+      // get their Admins/Reviewers membership from internal groups
+      { internalGroups: TEST_INTERNAL_GROUPS },
+    )
 
     editorClient = await createApiClient({
       config: workspace.config,
