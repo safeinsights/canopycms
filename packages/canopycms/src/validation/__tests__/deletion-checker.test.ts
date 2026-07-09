@@ -126,4 +126,75 @@ describe('DeletionChecker.findIdInData', () => {
     expect(result.canDelete).toBe(false)
     expect(result.referencedBy[0].fields).toContain('content[0].link')
   })
+
+  describe('real { template, value } block shape (SCH-H-block / COMPOUND-3)', () => {
+    // Real block data as produced by the editor is { template, value } — the
+    // previous `_type` discriminator missed every real block, so an entry
+    // referenced only from inside a block could be deleted, leaving a
+    // dangling reference that breaks the build.
+    const schema: FieldConfig[] = [
+      {
+        name: 'content',
+        type: 'block',
+        label: 'Content',
+        templates: [
+          {
+            name: 'callout',
+            label: 'Callout',
+            fields: [{ name: 'link', type: 'reference', label: 'Link', collections: ['pages'] }],
+          },
+        ],
+      },
+    ]
+
+    it('blocks deletion when the entry is referenced only inside a block', async () => {
+      const checker = makeChecker(schema, {
+        post1: { content: [{ template: 'callout', value: { link: TARGET_ID } }] },
+      })
+      const result = await checker.canDelete(TARGET_ID)
+      expect(result.canDelete).toBe(false)
+      expect(result.referencedBy[0].fields).toContain('content[0].link')
+    })
+
+    it('blocks deletion for a reference nested in an object inside a block', async () => {
+      const nestedSchema: FieldConfig[] = [
+        {
+          name: 'content',
+          type: 'block',
+          label: 'Content',
+          templates: [
+            {
+              name: 'hero',
+              label: 'Hero',
+              fields: [
+                {
+                  name: 'cta',
+                  type: 'object',
+                  label: 'CTA',
+                  fields: [
+                    { name: 'target', type: 'reference', label: 'Target', collections: ['pages'] },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ]
+      const checker = makeChecker(nestedSchema, {
+        post1: { content: [{ template: 'hero', value: { cta: { target: TARGET_ID } } }] },
+      })
+      const result = await checker.canDelete(TARGET_ID)
+      expect(result.canDelete).toBe(false)
+      expect(result.referencedBy[0].fields).toContain('content[0].cta.target')
+    })
+
+    it('still allows deletion when blocks reference other entries', async () => {
+      const checker = makeChecker(schema, {
+        post1: { content: [{ template: 'callout', value: { link: 'other-id-123' } }] },
+      })
+      const result = await checker.canDelete(TARGET_ID)
+      expect(result.canDelete).toBe(true)
+      expect(result.referencedBy).toHaveLength(0)
+    })
+  })
 })
