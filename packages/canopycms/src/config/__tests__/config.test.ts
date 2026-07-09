@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import type { CanopyConfigFragment, CollectionConfig } from '../types'
+import type { CanopyConfigFragment, CollectionConfig, ValidateEntryHook } from '../types'
 import type { ContentId } from '../../paths/types'
+import type { AuthPlugin } from '../../auth/plugin'
 import { ROOT_COLLECTION_ID } from '../../paths/types'
 import { composeCanopyConfig, defineCanopyConfig } from '../helpers'
 import { flattenSchema } from '../flatten'
+import { mediaSchema } from '../schemas/media'
 import {
   ensureSelectFieldsHaveOptions,
   ensureReferenceFieldsHaveScope,
@@ -18,9 +20,41 @@ const gitAuthor = {
   gitBotAuthorEmail: 'bot@example.com',
 }
 
+// Minimal stub satisfying the AuthPlugin interface, for fragment-merge tests (SCH-H2).
+const fakeAuthPlugin: AuthPlugin = {
+  authenticate: async () => ({ success: false, error: 'not implemented' }),
+  searchUsers: async () => [],
+  getUserMetadata: async () => null,
+  getGroupMetadata: async () => null,
+  listGroups: async () => [],
+}
+
+const fakeValidateEntry: ValidateEntryHook = async () => []
+
 describe('config validation', () => {
   it('accepts a minimal config', () => {
     expect(() => validateCanopyConfig({ ...gitAuthor })).not.toThrow()
+  })
+
+  // SCH-M1: defaultBranchAccess/defaultPathAccess must resolve to 'deny' (fail closed),
+  // not undefined, when omitted. An outer .optional() around a .default('deny') schema
+  // previously short-circuited before the inner default ran.
+  it('defaults defaultBranchAccess and defaultPathAccess to "deny" when omitted', () => {
+    const config = validateCanopyConfig({ ...gitAuthor })
+
+    expect(config.defaultBranchAccess).toBe('deny')
+    expect(config.defaultPathAccess).toBe('deny')
+  })
+
+  it('still allows an explicit "allow" for defaultBranchAccess/defaultPathAccess', () => {
+    const config = validateCanopyConfig({
+      ...gitAuthor,
+      defaultBranchAccess: 'allow',
+      defaultPathAccess: 'allow',
+    })
+
+    expect(config.defaultBranchAccess).toBe('allow')
+    expect(config.defaultPathAccess).toBe('allow')
   })
 
   it('rejects unknown fields (strict mode)', () => {
@@ -44,6 +78,52 @@ describe('config validation', () => {
     const config = composeCanopyConfig(posts, pages)
 
     expect(config.media?.adapter).toBe('local')
+  })
+
+  // SCH-H2: composeCanopyConfig previously only merged a hand-picked subset of fragment
+  // keys, silently dropping authPlugin/validateEntry (and others) even though they're
+  // typed on CanopyConfigFragment. Verify the full fragment is merged.
+  it('preserves authPlugin, validateEntry, and other previously-dropped fields through composeCanopyConfig', () => {
+    const base: CanopyConfigFragment = {
+      ...gitAuthor,
+      authPlugin: fakeAuthPlugin,
+      validateEntry: fakeValidateEntry,
+      githubTokenEnvVar: 'MY_BOT_TOKEN',
+      deployedAs: 'static',
+      settingsBranch: 'canopy-settings',
+      autoCreateSettingsPR: true,
+      editor: { title: 'My Editor' },
+      entryLinkUrl: () => '/some/url',
+    }
+
+    const config = composeCanopyConfig(base)
+
+    expect(config.authPlugin).toBe(fakeAuthPlugin)
+    expect(config.validateEntry).toBe(fakeValidateEntry)
+    expect(config.githubTokenEnvVar).toBe('MY_BOT_TOKEN')
+    expect(config.deployedAs).toBe('static')
+    expect(config.settingsBranch).toBe('canopy-settings')
+    expect(config.autoCreateSettingsPR).toBe(true)
+    expect(config.editor?.title).toBe('My Editor')
+    expect(typeof config.entryLinkUrl).toBe('function')
+  })
+
+  it('lets a later fragment override an earlier fragment field-by-field', () => {
+    const first: CanopyConfigFragment = {
+      ...gitAuthor,
+      settingsBranch: 'first-branch',
+      deployedAs: 'static',
+    }
+    const second: CanopyConfigFragment = {
+      settingsBranch: 'second-branch',
+    }
+
+    const config = composeCanopyConfig(first, second)
+
+    // Later fragment's explicit value wins...
+    expect(config.settingsBranch).toBe('second-branch')
+    // ...but a field the later fragment never mentions is not clobbered by undefined.
+    expect(config.deployedAs).toBe('static')
   })
 
   it('flattens nested paths relative to parents', () => {
@@ -776,5 +856,55 @@ describe('ensureNoFlattenedFieldNameCollisions', () => {
         },
       ]),
     ).toThrow('Field name collision')
+  })
+})
+
+// SCH-H1: mediaSchema must be a discriminated union keyed on `adapter` so each adapter's
+// required fields are enforced. Previously (plain z.union) a malformed s3 config could
+// fall through to a looser branch, silently stripping fields (e.g. `bucket`) instead of
+// failing validation.
+describe('mediaSchema', () => {
+  it('rejects a malformed s3 config missing region', () => {
+    expect(() => mediaSchema.parse({ adapter: 's3', bucket: 'x' })).toThrow()
+  })
+
+  it('rejects a malformed s3 config missing bucket', () => {
+    expect(() => mediaSchema.parse({ adapter: 's3', region: 'us-east-1' })).toThrow()
+  })
+
+  it('parses a valid s3 config with all fields intact', () => {
+    const result = mediaSchema.parse({
+      adapter: 's3',
+      bucket: 'my-bucket',
+      region: 'us-east-1',
+      publicBaseUrl: 'https://cdn.example.com',
+    })
+
+    expect(result).toEqual({
+      adapter: 's3',
+      bucket: 'my-bucket',
+      region: 'us-east-1',
+      publicBaseUrl: 'https://cdn.example.com',
+    })
+  })
+
+  it('parses a valid local config with all fields intact', () => {
+    const result = mediaSchema.parse({
+      adapter: 'local',
+      publicBaseUrl: 'https://cdn.example.com',
+    })
+
+    expect(result).toEqual({
+      adapter: 'local',
+      publicBaseUrl: 'https://cdn.example.com',
+    })
+  })
+
+  it('parses a minimal local config without publicBaseUrl', () => {
+    expect(mediaSchema.parse({ adapter: 'local' })).toEqual({ adapter: 'local' })
+  })
+
+  it('rejects an unknown adapter name', () => {
+    expect(() => mediaSchema.parse({ adapter: 'cloudinary' })).toThrow()
   })
 })

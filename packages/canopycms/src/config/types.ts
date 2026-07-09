@@ -145,12 +145,13 @@ export type FieldConfig =
   | InlineGroupFieldConfig
   | CustomFieldConfig
 
-// Media configuration
+// Media configuration.
+// Kept in sync with the discriminated `mediaSchema` in config/schemas/media.ts — only
+// implemented adapters get a literal branch here (see BACKLOG.md "Asset adapters").
 export type MediaConfig =
   | { adapter: 'local'; publicBaseUrl?: string }
   | { adapter: 's3'; bucket: string; region: string; publicBaseUrl?: string }
   | { adapter: 'lfs'; publicBaseUrl?: string }
-  | { adapter: string; publicBaseUrl?: string }
 
 /**
  * Field definitions for one entry type — the array of FieldConfig that
