@@ -947,6 +947,118 @@ describe('GitManager traversal protection', () => {
   })
 })
 
+// SEC-H2: leading-hyphen branch names must not be reinterpreted as git
+// options at the git-manager call sites. parseBranchName() is the primary
+// defense (see paths/validation.test.ts); these tests exercise GitManager's
+// own defense-in-depth (--end-of-options separators) directly, bypassing
+// application-level validation on purpose to prove it holds even if a
+// caller's validation were ever skipped or bypassed.
+describe('GitManager branch name argument safety (SEC-H2)', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-git-test-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('checkoutBranch still switches to an existing local branch (no regression)', async () => {
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(tmpDir, 'a.txt'), 'a', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial')
+    await git.checkoutLocalBranch('feature')
+    await git.checkout('main')
+
+    const manager = new GitManager({ repoPath: tmpDir, baseBranch: 'main' })
+    await manager.checkoutBranch('feature')
+
+    const status = await manager.status()
+    expect(status.current).toBe('feature')
+  })
+
+  it('checkoutBranch still creates a new branch from the remote base branch (no regression)', async () => {
+    const remotePath = path.join(tmpDir, 'remote.git')
+    await fs.mkdir(remotePath, { recursive: true })
+    const bareGit = openBareRepo(remotePath)
+    await bareGit.init(true)
+    await bareGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
+
+    const seedPath = path.join(tmpDir, 'seed')
+    await fs.mkdir(seedPath, { recursive: true })
+    const seedGit = await initTestRepo(seedPath)
+    await seedGit.raw(['symbolic-ref', 'HEAD', 'refs/heads/main'])
+    await fs.writeFile(path.join(seedPath, 'marker.txt'), 'from-main', 'utf8')
+    await seedGit.add(['.'])
+    await seedGit.commit('initial')
+    await seedGit.addRemote('origin', remotePath)
+    await seedGit.push('origin', 'main')
+
+    const localPath = path.join(tmpDir, 'local')
+    await simpleGit().clone(remotePath, localPath)
+    const manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
+
+    await manager.checkoutBranch('feature-new')
+
+    const status = await manager.status()
+    expect(status.current).toBe('feature-new')
+    const content = await fs.readFile(path.join(localPath, 'marker.txt'), 'utf8')
+    expect(content).toBe('from-main')
+  })
+
+  it('push() treats a hostile-looking branch name as literal refspec data, not a git option', async () => {
+    const remotePath = path.join(tmpDir, 'remote.git')
+    await fs.mkdir(remotePath, { recursive: true })
+    const bareGit = openBareRepo(remotePath)
+    await bareGit.init(true)
+
+    const localPath = path.join(tmpDir, 'local')
+    await fs.mkdir(localPath, { recursive: true })
+    const git = await initTestRepo(localPath)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(localPath, 'a.txt'), 'a', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial')
+    await git.addRemote('origin', remotePath)
+
+    const manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
+
+    // A pre-fix push() would have let git parse "--sentinel-marker" as an
+    // (unknown) option -- "error: unknown option `sentinel-marker...'" --
+    // instead of a literal refspec. With the --end-of-options guard, git
+    // treats it as ref data and reports it as a refspec that doesn't match
+    // any local ref, proving the option-injection path is closed.
+    await expect(manager.push('--sentinel-marker')).rejects.toThrow(
+      /src refspec .* does not match any/i,
+    )
+  })
+
+  it('forcePush() treats a hostile-looking branch name as literal refspec data, not a git option', async () => {
+    const remotePath = path.join(tmpDir, 'remote.git')
+    await fs.mkdir(remotePath, { recursive: true })
+    const bareGit = openBareRepo(remotePath)
+    await bareGit.init(true)
+
+    const localPath = path.join(tmpDir, 'local')
+    await fs.mkdir(localPath, { recursive: true })
+    const git = await initTestRepo(localPath)
+    await git.raw(['branch', '-M', 'main'])
+    await fs.writeFile(path.join(localPath, 'a.txt'), 'a', 'utf8')
+    await git.add(['.'])
+    await git.commit('initial')
+    await git.addRemote('origin', remotePath)
+
+    const manager = new GitManager({ repoPath: localPath, baseBranch: 'main' })
+
+    await expect(manager.forcePush('--sentinel-marker')).rejects.toThrow(
+      /src refspec .* does not match any/i,
+    )
+  })
+})
+
 describe('GitManager.initializeWorkspace gitExcludePattern', () => {
   let tmpDir: string
 
