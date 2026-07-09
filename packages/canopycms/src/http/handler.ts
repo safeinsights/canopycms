@@ -167,7 +167,13 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     return apiCtxPromise
   }
 
-  return async (
+  // Core request-handling logic, wrapped below by a top-level try/catch (API-C1).
+  // getContext()/refreshActiveBranch()/authenticate()/match.handler() are NOT
+  // individually try/catched here, and some handlers deliberately re-throw
+  // unrecognized errors (e.g. api/content.ts, api/entries.ts) — without an outer
+  // boundary, an unhandled throw would escape the framework adapter as a generic
+  // 500 that breaks the uniform { ok, status, error } contract the editor depends on.
+  const handleRequest = async (
     req: CanopyRequest,
     pathSegments: string[],
   ): Promise<CanopyResponse<ApiResponse>> => {
@@ -306,6 +312,20 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         mergedParams as unknown,
       )
       return jsonResponse(result, result.status)
+    }
+  }
+
+  return async (
+    req: CanopyRequest,
+    pathSegments: string[],
+  ): Promise<CanopyResponse<ApiResponse>> => {
+    try {
+      return await handleRequest(req, pathSegments)
+    } catch (err) {
+      // Last-resort boundary (API-C1): see handleRequest's doc comment above.
+      const message = getErrorMessage(err)
+      console.error('CanopyCMS: Unhandled error in API request handler:', message)
+      return jsonResponse({ ok: false, status: 500, error: sanitizeErrorMessage(message) }, 500)
     }
   }
 }

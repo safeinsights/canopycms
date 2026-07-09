@@ -13,6 +13,7 @@ import {
 import { defineEndpoint } from './route-builder'
 import { getSettingsBranchContext, commitSettings } from './settings-helpers'
 import { generateId } from '../id'
+import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
 
 /** Response type for getting internal groups */
 export type InternalGroupsResponse = ApiResponse<{ groups: InternalGroup[] }>
@@ -128,7 +129,7 @@ const getInternalGroupsHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'Failed to load groups',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
@@ -266,7 +267,7 @@ const updateInternalGroupsHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'Failed to save groups',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
@@ -305,7 +306,7 @@ const searchExternalGroupsHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'External group search failed',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }

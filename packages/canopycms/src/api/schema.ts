@@ -16,7 +16,7 @@ import path from 'node:path'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContext, BranchContextWithSchema } from '../types'
 import { defineEndpoint } from './route-builder'
-import { getErrorMessage } from '../utils/error'
+import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
 import { branchNameSchema, logicalPathSchema } from './validators'
 import {
   SchemaOps,
@@ -476,7 +476,7 @@ const createCollectionHandler = async (
     return {
       ok: false,
       status: 400,
-      error: getErrorMessage(err),
+      error: sanitizeErrorMessage(getErrorMessage(err)),
     }
   }
 }
@@ -514,7 +514,7 @@ const updateCollectionHandler = async (
     return {
       ok: false,
       status: 400,
-      error: getErrorMessage(err),
+      error: sanitizeErrorMessage(getErrorMessage(err)),
     }
   }
 }
@@ -551,7 +551,7 @@ const deleteCollectionHandler = async (
     return {
       ok: false,
       status: 400,
-      error: getErrorMessage(err),
+      error: sanitizeErrorMessage(getErrorMessage(err)),
     }
   }
 }
@@ -589,7 +589,7 @@ const addEntryTypeHandler = async (
     return {
       ok: false,
       status: 400,
-      error: getErrorMessage(err),
+      error: sanitizeErrorMessage(getErrorMessage(err)),
     }
   }
 }
@@ -649,7 +649,7 @@ const updateEntryTypeHandler = async (
     return {
       ok: false,
       status: 400,
-      error: getErrorMessage(err),
+      error: sanitizeErrorMessage(getErrorMessage(err)),
     }
   }
 }
@@ -686,7 +686,7 @@ const removeEntryTypeHandler = async (
     return {
       ok: false,
       status: 400,
-      error: getErrorMessage(err),
+      error: sanitizeErrorMessage(getErrorMessage(err)),
     }
   }
 }
@@ -724,7 +724,7 @@ const updateOrderHandler = async (
     return {
       ok: false,
       status: 400,
-      error: getErrorMessage(err),
+      error: sanitizeErrorMessage(getErrorMessage(err)),
     }
   }
 }
@@ -754,7 +754,7 @@ const invalidateSchemaCacheHandler = async (
     return {
       ok: false,
       status: 500,
-      error: getErrorMessage(err),
+      error: sanitizeErrorMessage(getErrorMessage(err)),
     }
   }
 }

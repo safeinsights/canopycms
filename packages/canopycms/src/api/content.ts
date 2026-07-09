@@ -14,7 +14,7 @@ import { validateEntryLinks } from '../validation/entry-link-validator'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
 import type { Slug, PhysicalPath } from '../paths'
 import type { BranchContextWithSchema } from '../types'
-import { getErrorMessage, isNotFoundError } from '../utils/error'
+import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { isDataOnlyFormat } from '../utils/format'
 
 /**
@@ -154,7 +154,7 @@ const readContentHandler = async (
     relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
-    return { ok: false, status: 400, error: message }
+    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 
   const access = await ctx.services.checkContentAccess(
@@ -206,7 +206,7 @@ const writeContentHandler = async (
     relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
-    return { ok: false, status: 400, error: message }
+    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 
   const access = await ctx.services.checkContentAccess(
@@ -237,7 +237,11 @@ const writeContentHandler = async (
         body: body.body,
       })
     } catch (err) {
-      return { ok: false, status: 500, error: `validateEntry hook failed: ${getErrorMessage(err)}` }
+      return {
+        ok: false,
+        status: 500,
+        error: `validateEntry hook failed: ${sanitizeErrorMessage(getErrorMessage(err))}`,
+      }
     }
     const errors = issues.filter((issue) => issue.level === 'error')
     if (errors.length > 0) {
@@ -298,7 +302,7 @@ const writeContentHandler = async (
       }
     }
     const message = err instanceof ContentStoreError ? err.message : 'Write failed'
-    return { ok: false, status: 400, error: message }
+    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 }
 
@@ -327,7 +331,7 @@ const validateReferencesHandler = async (
     relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
-    return { ok: false, status: 400, error: message }
+    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 
   const access = await ctx.services.checkContentAccess(
@@ -412,7 +416,7 @@ const renameEntryHandler = async (
     relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
-    return { ok: false, status: 400, error: message }
+    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 
   // Check edit permission on current path
@@ -433,7 +437,7 @@ const renameEntryHandler = async (
     return { ok: true, status: 200, data: { newPath: result.newPath } }
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Rename failed'
-    return { ok: false, status: 400, error: message }
+    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 }
 

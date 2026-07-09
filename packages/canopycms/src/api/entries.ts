@@ -6,7 +6,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContextWithSchema } from '../types'
 import { defineEndpoint } from './route-builder'
 import { normalizeFilesystemPath, parseSlug, parseLogicalPath } from '../paths'
-import { isNotFoundError } from '../utils/error'
+import { isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { resolveEntryTitle } from '../utils/title-field'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema, queryBooleanSchema } from './validators'
@@ -245,7 +245,7 @@ const listEntriesHandler = async (
     }
   } catch (err) {
     if (err instanceof ContentStoreError) {
-      return { ok: false, status: 400, error: err.message }
+      return { ok: false, status: 400, error: sanitizeErrorMessage(err.message) }
     }
     throw err
   }
@@ -436,7 +436,7 @@ const deleteEntryHandler = async (
     return {
       ok: false,
       status: 500,
-      error: err instanceof Error ? err.message : 'Failed to delete entry',
+      error: sanitizeErrorMessage(err instanceof Error ? err.message : 'Failed to delete entry'),
     }
   }
 }

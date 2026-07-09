@@ -7,6 +7,7 @@ import { loadPathPermissions, savePathPermissions, loadPermissionsFile } from '.
 import { permissionPathSchema } from './validators'
 import { defineEndpoint } from './route-builder'
 import { getSettingsBranchContext, commitSettings } from './settings-helpers'
+import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
 
 /** Response type for getting permissions */
 export type PermissionsResponse = ApiResponse<{ permissions: PathPermission[] }>
@@ -82,7 +83,7 @@ const getPermissionsHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'Failed to load permissions',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
@@ -149,7 +150,7 @@ const updatePermissionsHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'Failed to save permissions',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
@@ -178,7 +179,7 @@ const searchUsersHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'User search failed',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
@@ -203,7 +204,7 @@ const listGroupsHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'Group list failed',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
@@ -229,7 +230,7 @@ const getUserMetadataHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'Failed to get user metadata',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
