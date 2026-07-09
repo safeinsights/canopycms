@@ -4,12 +4,18 @@ import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import config from '../../canopycms.config'
 import { entrySchemaRegistry } from '../schemas'
 
+// Auth plugin selection — fails closed. The dev plugin performs NO real credential
+// verification, so it is only ever used when mode is 'dev'. In prod, Clerk is always
+// used: if CLERK_SECRET_KEY is missing, createClerkAuthPlugin throws at startup
+// instead of silently falling back to unauthenticated dev auth.
+const authPlugin =
+  config.server.mode === 'prod' || process.env.CANOPY_AUTH_MODE === 'clerk'
+    ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })
+    : createDevAuthPlugin()
+
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
-  authPlugin:
-    process.env.CANOPY_AUTH_MODE === 'clerk'
-      ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })
-      : createDevAuthPlugin(),
+  authPlugin,
   entrySchemaRegistry,
 })
 
