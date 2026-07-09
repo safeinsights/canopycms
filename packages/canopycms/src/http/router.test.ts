@@ -1,0 +1,172 @@
+import { describe, expect, it } from 'vitest'
+import { createCanopyRouter, matchRoute, type RouteDefinition } from './router'
+
+/** Build a minimal RouteDefinition for synthetic precedence tests. */
+const route = (
+  method: RouteDefinition['method'],
+  pattern: readonly string[],
+  tag: string,
+): RouteDefinition => ({
+  method,
+  pattern,
+  // Each route gets its own handler function, tagged so tests can identify
+  // which route matched without relying on reference equality of a shared
+  // closure (a single shared handler would have its tag overwritten by
+  // whichever `route(...)` call ran last).
+  handler: Object.assign(async () => ({ ok: true as const, status: 200 as const, data: {} }), {
+    tag,
+  }),
+})
+
+const tagOf = (match: ReturnType<typeof matchRoute>): string | undefined =>
+  match ? (match.handler as unknown as { tag?: string }).tag : undefined
+
+describe('matchRoute - static vs dynamic vs catch-all precedence (SEC-H3)', () => {
+  it('prefers a static segment over a :param at the same position, regardless of registration order', () => {
+    const routes = [route('DELETE', [':branch'], 'branch'), route('DELETE', ['assets'], 'assets')]
+
+    expect(tagOf(matchRoute(routes, 'DELETE', ['assets']))).toBe('assets')
+    expect(tagOf(matchRoute(routes, 'DELETE', ['some-branch']))).toBe('branch')
+  })
+
+  it('prefers the static segment even when it is registered AFTER the dynamic one', () => {
+    // Same as above but with the static route registered second, mirroring
+    // the real bug: BRANCH_ROUTES (:branch) is registered before
+    // ASSET_ROUTES (assets) in buildCanopyRoutes().
+    const routes = [route('DELETE', [':branch'], 'branch'), route('DELETE', ['assets'], 'assets')]
+    expect(tagOf(matchRoute(routes, 'DELETE', ['assets']))).toBe('assets')
+  })
+
+  it('prefers a :param over a ...catchall at the same position', () => {
+    const routes = [
+      route('GET', [':branch', '...rest'], 'catchall'),
+      route('GET', [':branch', ':section'], 'dynamic'),
+    ]
+
+    // Both can match a 2-segment path; the fully-dynamic (non-catchall)
+    // route is more specific and should win.
+    expect(tagOf(matchRoute(routes, 'GET', ['main', 'content']))).toBe('dynamic')
+    // Only the catch-all route can match a 3-segment path.
+    expect(tagOf(matchRoute(routes, 'GET', ['main', 'content', 'extra']))).toBe('catchall')
+  })
+
+  it('prefers a static segment over a ...catchall at the same position', () => {
+    const routes = [
+      route('GET', [':branch', '...rest'], 'catchall'),
+      route('GET', [':branch', 'content'], 'static'),
+    ]
+
+    expect(tagOf(matchRoute(routes, 'GET', ['main', 'content']))).toBe('static')
+    expect(tagOf(matchRoute(routes, 'GET', ['main', 'other']))).toBe('catchall')
+  })
+
+  it('falls back to registration order when two routes are equally specific (ambiguous duplicate)', () => {
+    const routes = [
+      route('GET', [':branch'], 'first'),
+      route('GET', [':branch'], 'second'), // structurally identical - should never happen in practice
+    ]
+    expect(tagOf(matchRoute(routes, 'GET', ['main']))).toBe('first')
+  })
+
+  it('only matches routes for the requested HTTP method', () => {
+    const routes = [
+      route('GET', ['assets'], 'get-assets'),
+      route('DELETE', ['assets'], 'delete-assets'),
+    ]
+    expect(tagOf(matchRoute(routes, 'DELETE', ['assets']))).toBe('delete-assets')
+    expect(tagOf(matchRoute(routes, 'GET', ['assets']))).toBe('get-assets')
+  })
+
+  it('returns null when no route matches', () => {
+    const routes = [route('GET', ['assets'], 'get-assets')]
+    expect(matchRoute(routes, 'GET', ['unknown'])).toBeNull()
+    expect(matchRoute(routes, 'POST', ['assets'])).toBeNull()
+  })
+
+  it('extracts params correctly for the winning route, not a shadowed route', () => {
+    const routes = [route('DELETE', [':branch'], 'branch'), route('DELETE', ['assets'], 'assets')]
+    const match = matchRoute(routes, 'DELETE', ['assets'])
+    // The static /assets route has no params - if the dynamic :branch route
+    // had incorrectly won, params would contain { branch: 'assets' }.
+    expect(match?.params).toEqual({})
+  })
+})
+
+describe('createCanopyRouter - real route table (SEC-H3 regression)', () => {
+  it('dispatches DELETE /assets to the asset delete handler, not the branch delete handler', () => {
+    const router = createCanopyRouter()
+
+    const assetsRoute = router.routes.find(
+      (r) => r.method === 'DELETE' && r.pattern.join('/') === 'assets',
+    )
+    const branchRoute = router.routes.find(
+      (r) => r.method === 'DELETE' && r.pattern.join('/') === ':branch',
+    )
+    expect(assetsRoute).toBeDefined()
+    expect(branchRoute).toBeDefined()
+
+    const match = router.match('DELETE', ['assets'])
+    expect(match).not.toBeNull()
+    expect(match?.handler).toBe(assetsRoute?.handler)
+    expect(match?.handler).not.toBe(branchRoute?.handler)
+    expect(match?.params).toEqual({})
+  })
+
+  it('still dispatches DELETE /:branch to the branch delete handler for a non-"assets" segment', () => {
+    const router = createCanopyRouter()
+
+    const branchRoute = router.routes.find(
+      (r) => r.method === 'DELETE' && r.pattern.join('/') === ':branch',
+    )
+    expect(branchRoute).toBeDefined()
+
+    const match = router.match('DELETE', ['some-branch'])
+    expect(match).not.toBeNull()
+    expect(match?.handler).toBe(branchRoute?.handler)
+    expect(match?.params).toEqual({ branch: 'some-branch' })
+  })
+
+  it('resolves GET /branches (static) without leaking a :branch param', () => {
+    const router = createCanopyRouter()
+    const match = router.match('GET', ['branches'])
+    expect(match).not.toBeNull()
+    expect(match?.params).toEqual({})
+  })
+
+  it('resolves POST /assets to the upload handler', () => {
+    const router = createCanopyRouter()
+    const uploadRoute = router.routes.find(
+      (r) => r.method === 'POST' && r.pattern.join('/') === 'assets',
+    )
+    expect(uploadRoute).toBeDefined()
+
+    const match = router.match('POST', ['assets'])
+    expect(match?.handler).toBe(uploadRoute?.handler)
+  })
+
+  it('resolves GET /whoami (static) correctly', () => {
+    const router = createCanopyRouter()
+    const match = router.match('GET', ['whoami'])
+    expect(match).not.toBeNull()
+    expect(match?.params).toEqual({})
+  })
+
+  it('resolves PATCH /:branch/access with a branch param', () => {
+    const router = createCanopyRouter()
+    const match = router.match('PATCH', ['my-branch', 'access'])
+    expect(match).not.toBeNull()
+    expect(match?.params).toEqual({ branch: 'my-branch' })
+  })
+
+  it('resolves a catch-all route (/:branch/content/...path) and extracts the full sub-path', () => {
+    const router = createCanopyRouter()
+    const match = router.match('GET', ['main', 'content', 'posts', 'hello'])
+    expect(match).not.toBeNull()
+    expect(match?.params).toEqual({ branch: 'main', path: 'posts/hello' })
+  })
+
+  it('returns null for unknown method/path combinations', () => {
+    const router = createCanopyRouter()
+    expect(router.match('DELETE', ['unknown', 'nested', 'path'])).toBeNull()
+  })
+})

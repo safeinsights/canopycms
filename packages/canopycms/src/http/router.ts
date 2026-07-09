@@ -134,6 +134,92 @@ const matchPattern = (
 }
 
 /**
+ * Specificity rank of a pattern segment. Higher wins.
+ * A literal ("static") segment is more specific than a `:param`, which is
+ * more specific than a `...catchall`.
+ */
+const STATIC_RANK = 2
+const DYNAMIC_RANK = 1
+const CATCHALL_RANK = 0
+
+/**
+ * Rank of the pattern segment governing position `index`.
+ * A catch-all at or before `index` governs every position from there on
+ * (in this codebase a catch-all is always the last pattern segment, so it
+ * effectively "consumes" every subsequent position).
+ */
+const segmentRankAt = (pattern: readonly string[], index: number): number => {
+  for (let i = 0; i <= index && i < pattern.length; i++) {
+    if (pattern[i].startsWith('...')) return CATCHALL_RANK
+  }
+  if (index >= pattern.length) return CATCHALL_RANK
+  return pattern[index].startsWith(':') ? DYNAMIC_RANK : STATIC_RANK
+}
+
+/**
+ * Compare two route patterns for specificity, position by position, for
+ * routes that both matched the same actual segments.
+ *
+ * Returns a negative number if `a` is more specific than `b`, positive if
+ * `b` is more specific than `a`, and 0 if they are tied (in which case the
+ * caller should keep whichever route it already picked, so registration
+ * order acts as the final, deterministic tiebreaker).
+ */
+const compareSpecificity = (a: readonly string[], b: readonly string[]): number => {
+  const maxLen = Math.max(a.length, b.length)
+  for (let i = 0; i < maxLen; i++) {
+    const rankA = segmentRankAt(a, i)
+    const rankB = segmentRankAt(b, i)
+    if (rankA !== rankB) return rankB - rankA
+    // Once both patterns are consuming a catch-all, no further position can
+    // distinguish them.
+    if (rankA === CATCHALL_RANK) break
+  }
+  return 0
+}
+
+/**
+ * Find the most specific matching route for a method + path.
+ *
+ * Scans every route (not just the first structural match) so that route
+ * *registration order* can never let a broad dynamic route (e.g. `:branch`)
+ * shadow a narrower, differently-guarded static route (e.g. `assets`) that
+ * happens to be registered later. Exported standalone (rather than inlined
+ * into `createCanopyRouter`) so the precedence rule can be unit-tested
+ * against synthetic route tables, independent of the real API surface.
+ */
+export function matchRoute(
+  routes: readonly RouteDefinition[],
+  method: string,
+  segments: string[],
+): RouteMatch | null {
+  const upperMethod = method.toUpperCase()
+
+  let best: { route: RouteDefinition; params: Record<string, string> } | null = null
+
+  for (const route of routes) {
+    if (route.method !== upperMethod) continue
+
+    const match = matchPattern(route.pattern, segments)
+    if (!match) continue
+
+    // Among all routes that match this request, pick the most specific one
+    // (static segments beat :params, which beat ...catchalls).
+    if (!best || compareSpecificity(route.pattern, best.route.pattern) < 0) {
+      best = { route, params: match.params }
+    }
+  }
+
+  if (!best) return null
+
+  return {
+    handler: best.route.handler,
+    params: best.params,
+    validate: best.route.validate, // Include validation function if present
+  }
+}
+
+/**
  * Create the standard Canopy router with all API routes.
  */
 export function createCanopyRouter(): CanopyRouter {
@@ -141,24 +227,6 @@ export function createCanopyRouter(): CanopyRouter {
 
   return {
     routes,
-
-    match(method: string, segments: string[]): RouteMatch | null {
-      const upperMethod = method.toUpperCase()
-
-      for (const route of routes) {
-        if (route.method !== upperMethod) continue
-
-        const match = matchPattern(route.pattern, segments)
-        if (match) {
-          return {
-            handler: route.handler,
-            params: match.params,
-            validate: route.validate, // Include validation function if present
-          }
-        }
-      }
-
-      return null
-    },
+    match: (method: string, segments: string[]) => matchRoute(routes, method, segments),
   }
 }
