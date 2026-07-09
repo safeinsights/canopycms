@@ -16,7 +16,7 @@ The codebase has a strong engineering foundation with disciplined boundaries, bu
 - Central authentication before provisioning; all authz decisions server-enforced (no client-trusted authz).
 - No XSS sinks: no `dangerouslySetInnerHTML`/`innerHTML`/`eval` in editor UI; editor-controlled links sanitized (`sanitizeHref`); markdown escaping handled.
 - No editor CSS leakage into host apps (scoped styles only).
-- Branded path types with containment guards on the *content* write path.
+- Branded path types with containment guards on the _content_ write path.
 - Only 3 `any`s, all eslint-disabled and commented. Typecheck, lint, and CI all green.
 
 **Problem concentrations:**
@@ -59,7 +59,7 @@ The codebase has a strong engineering foundation with disciplined boundaries, bu
 
 ### [DEP-C1] Lambda cannot mount EFS: security group missing egress (prod won't boot)
 
-`cms-service.ts:148-155`: `lambdaSg` is `allowAllOutbound: false` with only the EFS *ingress* rule; the Lambda *egress* rule to EFS:2049 is absent. The worker correctly has both (`:189-190`). Every Lambda request fails to reach `/mnt/efs`.
+`cms-service.ts:148-155`: `lambdaSg` is `allowAllOutbound: false` with only the EFS _ingress_ rule; the Lambda _egress_ rule to EFS:2049 is absent. The worker correctly has both (`:189-190`). Every Lambda request fails to reach `/mnt/efs`.
 **Fix:** `lambdaSg.addEgressRule(efsSg, ec2.Port.tcp(2049))`.
 
 ### [DEP-C4] Worker crash-loops: `@aws-sdk` externalized from bundle but never installed on EC2
@@ -81,7 +81,7 @@ Two workers could double-process the queue. Not yet first-hand verified — veri
 
 ### Security & authorization
 
-- **[SEC-H1] Privilege escalation via provider-supplied group names.** `user.ts:94` seeds `groups` from `authResult.user.externalGroups`; `authorization/helpers.ts:31,38` grant admin/reviewer by `groups.includes('Admins'/'Reviewers')`. Reserved IDs are unprefixed and guessable; nothing strips them from externalGroups. Any provider with human-controllable group identifiers (a Clerk org *named* Admins, a GitHub team, SAML/LDAP group) → self-escalation. Mitigated today only because the shipped Clerk plugin maps opaque `org_…` IDs. **Fix:** derive privilege solely from internal groups + `bootstrapAdminIds`; strip reserved IDs from externalGroups before merge.
+- **[SEC-H1] Privilege escalation via provider-supplied group names.** `user.ts:94` seeds `groups` from `authResult.user.externalGroups`; `authorization/helpers.ts:31,38` grant admin/reviewer by `groups.includes('Admins'/'Reviewers')`. Reserved IDs are unprefixed and guessable; nothing strips them from externalGroups. Any provider with human-controllable group identifiers (a Clerk org _named_ Admins, a GitHub team, SAML/LDAP group) → self-escalation. Mitigated today only because the shipped Clerk plugin maps opaque `org_…` IDs. **Fix:** derive privilege solely from internal groups + `bootstrapAdminIds`; strip reserved IDs from externalGroups before merge.
 - **[SEC-H2] `parseBranchName` permits leading `-` → git argument injection.** `paths/validation.ts:278-322` rejects `..`, slashes, spaces, control/`~^:?*[\` chars, but not a leading `-`. Confirmed reachable: names flow into `git.checkout(branch)` (`git-manager.ts:609`), `checkoutBranch` (`:620`), `checkout(['-B', branch, base])` (`:625`), and the push refspec (`:701`) — no `--` separator at any call site. simple-git uses spawn (no shell), so not shell RCE, but git treats leading `-` as options (classic option injection). **Fix:** reject names starting with `-`; disallow bare `HEAD`/`@`; add `--` separators at git-manager call sites.
 - **[SEC-H3] Route precedence: `DELETE /:branch` shadows `DELETE /assets`.** The router matches first-in-declaration-order (`router.ts:145-162`); BRANCH_ROUTES are registered before ASSET_ROUTES (`router.ts:74-86`). `DELETE /assets` matches the branch pattern `[':branch']` with `branch = 'assets'` and never reaches admin-guarded `deleteAsset` (`assets.ts:135-145`). Asset deletion is dead code; the general class is a dynamic route shadowing a differently-guarded static route (latent authz bypass). **Fix:** match static segments before dynamic regardless of registration order.
 
