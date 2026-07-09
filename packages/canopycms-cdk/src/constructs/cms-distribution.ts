@@ -1,7 +1,6 @@
 import { Construct } from 'constructs'
 import {
   Duration,
-  Fn,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_certificatemanager as acm,
@@ -72,13 +71,12 @@ export class CanopyCmsDistribution extends Construct {
     // CloudFront Distribution
     // ========================================================================
 
-    // Extract the domain from the Function URL (https://xxx.lambda-url.region.on.aws)
-    const functionUrlDomain = extractFunctionUrlDomain(props.functionUrl)
-
-    // Origin: Lambda Function URL
-    const origin = new origins.HttpOrigin(functionUrlDomain, {
-      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
-    })
+    // Origin: Lambda Function URL secured with Origin Access Control (OAC).
+    // CloudFront signs each origin request with SigV4 so the AWS_IAM-protected
+    // Function URL only accepts traffic from this distribution — direct hits to
+    // the Function URL are rejected (DEP-H2). withOriginAccessControl creates
+    // the OAC and grants CloudFront lambda:InvokeFunctionUrl automatically.
+    const origin = origins.FunctionUrlOrigin.withOriginAccessControl(props.functionUrl)
 
     // Cache policy for API/editor routes: no caching, forward all headers
     const noCachePolicy = new cloudfront.CachePolicy(this, 'NoCachePolicy', {
@@ -137,15 +135,4 @@ export class CanopyCmsDistribution extends Construct {
       target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(this.distribution)),
     })
   }
-}
-
-/**
- * Extract the domain from a Lambda Function URL.
- * The URL is like https://xxx.lambda-url.region.on.aws/
- * We need just the domain part for CloudFront origin.
- */
-function extractFunctionUrlDomain(functionUrl: lambda.FunctionUrl): string {
-  // Function URL is a Token at synth time, so we use Fn.select + Fn.split
-  // to extract the domain from the URL: https://xxx.lambda-url.region.on.aws/
-  return Fn.select(2, Fn.split('/', functionUrl.url))
 }
