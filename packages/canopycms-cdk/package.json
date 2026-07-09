@@ -30,9 +30,9 @@
   },
   "scripts": {
     "build": "tsc",
-    "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=worker/dist/index.js --external:@aws-sdk/*",
+    "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=worker/dist/index.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "lint": "eslint src/",
-    "test": "echo \"No tests yet\"",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
