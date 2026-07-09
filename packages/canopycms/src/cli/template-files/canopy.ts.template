@@ -3,9 +3,10 @@ import { createNextCanopyContext, type GenerateContentStaticParamsOptions } from
 import config from '{{CONFIG_IMPORT}}'
 import { entrySchemaRegistry } from '../schemas'
 
+{{AUTH_PLUGIN_SETUP}}
 const canopyContextPromise = createNextCanopyContext({
   config: config.server,
-  authPlugin: {{AUTH_PLUGIN}},
+  authPlugin,
   entrySchemaRegistry,
 })
 

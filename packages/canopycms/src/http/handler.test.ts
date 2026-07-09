@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { createCanopyRequestHandler } from './handler'
 import type { CanopyRequest } from './types'
 import type { AuthPlugin } from '../auth/plugin'
+import type { CanopyConfig } from '../config'
+import type { CanopyServices } from '../services'
 import { mockConsole } from '../test-utils/console-spy'
 
 // Mock the BranchWorkspaceManager to avoid git operations
@@ -357,5 +359,50 @@ describe('createCanopyRequestHandler', () => {
 
     const req = createMockRequest()
     await expect(handler(req, ['branches'])).rejects.toThrow('config or services is required')
+  })
+
+  describe('auth plugin mode guard (SEC-C1)', () => {
+    /** Same shape as DevAuthPlugin: insecure marker AND verifyTokenOnly implemented. */
+    const insecureDevPlugin: AuthPlugin = {
+      ...createMockAuthPlugin(),
+      insecureDevOnly: true,
+      verifyTokenOnly: async () => ({ userId: 'dev_user' }),
+    }
+
+    const prodConfig = { mode: 'prod', deployedAs: 'server' } as CanopyConfig
+    const devConfig = { mode: 'dev', deployedAs: 'server' } as CanopyConfig
+
+    it('throws at creation when an insecure dev-only plugin is configured with mode prod', () => {
+      expect(() =>
+        createCanopyRequestHandler({ config: prodConfig, authPlugin: insecureDevPlugin }),
+      ).toThrow(/dev\/insecure auth plugin.*mode: 'prod'/)
+    })
+
+    it('throws when prod mode comes from pre-built services', () => {
+      const base = createMockServices()
+      const services = {
+        ...base,
+        config: { ...base.config, mode: 'prod' as const },
+      } as unknown as CanopyServices
+      expect(() => createCanopyRequestHandler({ services, authPlugin: insecureDevPlugin })).toThrow(
+        /dev\/insecure auth plugin/,
+      )
+    })
+
+    it('accepts the same insecure plugin in dev mode', () => {
+      expect(() =>
+        createCanopyRequestHandler({ config: devConfig, authPlugin: insecureDevPlugin }),
+      ).not.toThrow()
+    })
+
+    it('accepts a verifying plugin (verifyTokenOnly, no marker) in prod', () => {
+      const verifyingPlugin: AuthPlugin = {
+        ...createMockAuthPlugin(),
+        verifyTokenOnly: async () => ({ userId: 'real_user' }),
+      }
+      expect(() =>
+        createCanopyRequestHandler({ config: prodConfig, authPlugin: verifyingPlugin }),
+      ).not.toThrow()
+    })
   })
 })

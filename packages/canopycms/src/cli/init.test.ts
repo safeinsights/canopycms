@@ -134,6 +134,17 @@ describe('canopycms init', () => {
     expect(canopy).toContain('createDevAuthPlugin')
   })
 
+  it('clerk canopy.ts fails closed: prod always uses Clerk, never dev auth (SEC-C1)', async () => {
+    await init(defaultOpts(tmpDir, { authProvider: 'clerk' }))
+
+    const canopy = await fs.readFile(path.join(tmpDir, 'app/lib/canopy.ts'), 'utf-8')
+    // Plugin selection must consider the operating mode, not just an env var:
+    // prod picks Clerk even when CANOPY_AUTH_MODE is unset/misspelled/dropped.
+    expect(canopy).toContain("config.server.mode === 'prod' ||")
+    // The old footgun keyed selection on the env var ALONE (dev fallback in prod).
+    expect(canopy).not.toMatch(/authPlugin[:=]\s*\n?\s*process\.env\.CANOPY_AUTH_MODE/)
+  })
+
   it('generates passthrough middleware by default', async () => {
     await init(defaultOpts(tmpDir))
 

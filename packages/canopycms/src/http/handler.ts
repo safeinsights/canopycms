@@ -2,7 +2,7 @@ import type { CanopyRequest, CanopyResponse } from './types'
 import { jsonResponse } from './types'
 import { createCanopyRouter } from './router'
 import type { ApiContext, ApiResponse } from '../api/types'
-import type { AuthPlugin } from '../auth/plugin'
+import { assertAuthPluginAllowedForMode, type AuthPlugin } from '../auth/plugin'
 import { createCanopyServices, type CanopyServices } from '../services'
 import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
@@ -151,6 +151,11 @@ export type CanopyRequestHandler = (
  * ```
  */
 export function createCanopyRequestHandler(options: CanopyHandlerOptions): CanopyRequestHandler {
+  // Fail closed (SEC-C1): a dev/insecure auth plugin must never serve prod traffic.
+  // Throws at handler creation time so misconfigured deployments fail at startup.
+  const mode = options.services?.config.mode ?? options.config?.mode
+  assertAuthPluginAllowedForMode(options.authPlugin, mode)
+
   const router = createCanopyRouter()
 
   // Build context once at initialization, not per-request
