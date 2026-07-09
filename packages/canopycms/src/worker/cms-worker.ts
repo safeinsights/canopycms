@@ -446,6 +446,11 @@ export class CmsWorker {
         return { prNumber }
       }
       case 'push-and-create-or-update-pr': {
+        // GIT-H1: idempotent create-or-update. Used for both content-branch
+        // submits and settings-branch syncs so a retry after a crash (task
+        // completed on GitHub but branch metadata never recorded the PR
+        // number) recovers the existing PR instead of hitting the 422 that
+        // a blind `pulls.create` would throw on a duplicate head+base.
         const branch = requireString(payload, 'branch')
         await this.pushBranchToGitHub(branch)
 
@@ -460,11 +465,23 @@ export class CmsWorker {
         })
 
         if (existingPRs.data.length > 0) {
-          const existing = existingPRs.data[0]
+          // GIT-M5: GitHub disallows more than one open PR for a given
+          // head+base pair, so this should always be a single match. Guard
+          // against blindly trusting array order anyway.
+          let existing = existingPRs.data[0]
+          if (existingPRs.data.length > 1) {
+            existing = [...existingPRs.data].sort(
+              (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+            )[0]
+            console.warn(
+              `Found ${existingPRs.data.length} open PRs for ${branch}; updating the most recently updated (#${existing.number})`,
+            )
+          }
           await this.octokit.pulls.update({
             owner: this.config.githubOwner,
             repo: this.config.githubRepo,
             pull_number: existing.number,
+            title: optionalString(payload, 'title', `Submit ${branch}`),
             body: optionalString(payload, 'body', ''),
             request: { signal },
           })
@@ -477,7 +494,7 @@ export class CmsWorker {
           repo: this.config.githubRepo,
           head: branch,
           base: optionalString(payload, 'baseBranch', this.baseBranch),
-          title: optionalString(payload, 'title', `Settings update`),
+          title: optionalString(payload, 'title', `Submit ${branch}`),
           body: optionalString(payload, 'body', ''),
           request: { signal },
         })

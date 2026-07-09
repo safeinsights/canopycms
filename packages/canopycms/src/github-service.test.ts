@@ -130,6 +130,7 @@ describe('GitHubService', () => {
           create: vi.fn(),
           update: vi.fn(),
           get: vi.fn(),
+          list: vi.fn(),
         },
         graphql: vi.fn(),
         git: {
@@ -199,6 +200,115 @@ describe('GitHubService', () => {
             draft: true,
           }),
         )
+      })
+    })
+
+    describe('createOrUpdatePR (GIT-H1)', () => {
+      it('creates a new PR when none exists', async () => {
+        mockOctokit.pulls.list.mockResolvedValue({ data: [] })
+        mockOctokit.pulls.create.mockResolvedValue({
+          data: {
+            number: 42,
+            html_url: 'https://github.com/test-owner/test-repo/pull/42',
+          },
+        })
+
+        const result = await service.createOrUpdatePR({
+          head: 'feature-branch',
+          base: 'main',
+          title: 'Submit feature-branch',
+          body: 'Body text',
+        })
+
+        expect(result).toEqual({
+          number: 42,
+          url: 'https://github.com/test-owner/test-repo/pull/42',
+        })
+        expect(mockOctokit.pulls.list).toHaveBeenCalledWith({
+          owner: 'test-owner',
+          repo: 'test-repo',
+          head: 'test-owner:feature-branch',
+          base: 'main',
+          state: 'open',
+        })
+        expect(mockOctokit.pulls.create).toHaveBeenCalledWith({
+          owner: 'test-owner',
+          repo: 'test-repo',
+          head: 'feature-branch',
+          base: 'main',
+          title: 'Submit feature-branch',
+          body: 'Body text',
+        })
+        expect(mockOctokit.pulls.update).not.toHaveBeenCalled()
+      })
+
+      it('updates the existing open PR instead of erroring when one already exists (idempotent submit)', async () => {
+        // Simulates: a prior submit created PR #7 on GitHub, but the
+        // process crashed before persisting pullRequestNumber to branch
+        // metadata. A re-submit calls createOrUpdatePR again with no known
+        // PR number and must recover PR #7 rather than 422 on a duplicate
+        // create — the bug (GIT-H1) this fix closes.
+        mockOctokit.pulls.list.mockResolvedValue({
+          data: [
+            {
+              number: 7,
+              html_url: 'https://github.com/test-owner/test-repo/pull/7',
+              updated_at: '2026-01-01T00:00:00Z',
+            },
+          ],
+        })
+
+        const result = await service.createOrUpdatePR({
+          head: 'feature-branch',
+          base: 'main',
+          title: 'Submit feature-branch',
+          body: 'Updated body',
+        })
+
+        expect(result).toEqual({
+          number: 7,
+          url: 'https://github.com/test-owner/test-repo/pull/7',
+        })
+        expect(mockOctokit.pulls.create).not.toHaveBeenCalled()
+        expect(mockOctokit.pulls.update).toHaveBeenCalledWith({
+          owner: 'test-owner',
+          repo: 'test-repo',
+          pull_number: 7,
+          title: 'Submit feature-branch',
+          body: 'Updated body',
+        })
+      })
+
+      it('warns and picks the most recently updated PR if more than one open PR is found (GIT-M5)', async () => {
+        const consoleSpy = mockConsole()
+        mockOctokit.pulls.list.mockResolvedValue({
+          data: [
+            {
+              number: 5,
+              html_url: 'https://github.com/test-owner/test-repo/pull/5',
+              updated_at: '2026-01-01T00:00:00Z',
+            },
+            {
+              number: 9,
+              html_url: 'https://github.com/test-owner/test-repo/pull/9',
+              updated_at: '2026-02-01T00:00:00Z',
+            },
+          ],
+        })
+
+        const result = await service.createOrUpdatePR({
+          head: 'feature-branch',
+          base: 'main',
+          title: 'Submit feature-branch',
+          body: 'Body',
+        })
+
+        expect(result.number).toBe(9)
+        expect(mockOctokit.pulls.update).toHaveBeenCalledWith(
+          expect.objectContaining({ pull_number: 9 }),
+        )
+        expect(consoleSpy).toHaveWarned('Found 2 open PRs')
+        consoleSpy.restore()
       })
     })
 
