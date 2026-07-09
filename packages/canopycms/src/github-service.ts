@@ -77,16 +77,23 @@ export class GitHubService {
   }
 
   /**
-   * Create or update a pull request
-   * If a PR already exists from head to base, update it. Otherwise, create a new one.
+   * Create or update a pull request (idempotent — GIT-H1).
+   *
+   * If an open PR already exists from head to base, update it and return its
+   * number/url instead of erroring. This makes PR submission safely
+   * retryable: if a caller crashes after GitHub creates the PR but before it
+   * persists the returned PR number, calling this again recovers the
+   * existing PR instead of hitting the 422 that `createPullRequest` would
+   * throw on a duplicate, which previously wedged the branch in
+   * 'sync-failed' permanently.
    */
   async createOrUpdatePR(options: {
     head: string
     base: string
     title: string
     body: string
-  }): Promise<string> {
-    // Check if PR already exists
+  }): Promise<{ number: number; url: string }> {
+    // Check if an open PR already exists for this head/base
     const existingPRs = await this.octokit.pulls.list({
       owner: this.owner,
       repo: this.repo,
@@ -96,15 +103,28 @@ export class GitHubService {
     })
 
     if (existingPRs.data.length > 0) {
-      // Update existing PR
-      const pr = existingPRs.data[0]
+      // GIT-M5: GitHub disallows more than one open PR for a given
+      // head+base pair, so this should always be a single match. Guard
+      // against blindly trusting array order anyway — if more than one is
+      // ever returned, warn and prefer the most recently updated instead of
+      // an arbitrary one.
+      let pr = existingPRs.data[0]
+      if (existingPRs.data.length > 1) {
+        pr = [...existingPRs.data].sort(
+          (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+        )[0]
+        console.warn(
+          `CanopyCMS: Found ${existingPRs.data.length} open PRs for ${options.head} -> ${options.base}; updating the most recently updated (#${pr.number})`,
+        )
+      }
       await this.octokit.pulls.update({
         owner: this.owner,
         repo: this.repo,
         pull_number: pr.number,
+        title: options.title,
         body: options.body,
       })
-      return pr.html_url
+      return { number: pr.number, url: pr.html_url }
     }
 
     // Create new PR
@@ -117,7 +137,7 @@ export class GitHubService {
       body: options.body,
     })
 
-    return pr.data.html_url
+    return { number: pr.data.number, url: pr.data.html_url }
   }
 
   /**

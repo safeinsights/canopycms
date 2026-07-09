@@ -4,7 +4,7 @@
  * Integration-level tests (rebase, task queue) live in the sibling test files.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -333,5 +333,143 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
     )
     expect(failed.error).toMatch(/missing required string field: branch/)
     expect(failed.retryCount).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// push-and-create-or-update-pr: idempotent PR submission (GIT-H1)
+//
+// The worker path must never blindly call pulls.create for a submit — if a
+// prior attempt already created the PR on GitHub but crashed before this
+// task completed and branch metadata recorded pullRequestNumber, a retry (or
+// a fresh submit that re-enqueues the task) must recover the existing PR
+// instead of 422-ing on a duplicate head+base, which would permanently wedge
+// the branch in 'sync-failed'.
+// ---------------------------------------------------------------------------
+
+type PrWorkerInternals = {
+  running: boolean
+  octokit: {
+    pulls: {
+      list: ReturnType<typeof vi.fn>
+      create: ReturnType<typeof vi.fn>
+      update: ReturnType<typeof vi.fn>
+    }
+  }
+  pushBranchToGitHub(branch: string): Promise<void>
+}
+
+describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
+  let tmpDir: string
+  let taskDir: string
+  let contentBranchesPath: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-pr-test-'))
+    taskDir = path.join(tmpDir, '.tasks')
+    contentBranchesPath = path.join(tmpDir, 'content-branches')
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const fileExists = async (p: string) => {
+    try {
+      await fs.stat(p)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const makePrWorker = () => {
+    const worker = new CmsWorker({
+      workspacePath: tmpDir,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      taskTimeoutMs: 2000,
+    })
+    const internals = worker as unknown as PrWorkerInternals
+    // Real git push is out of scope here (covered by pushBranchToGitHub's
+    // own tests elsewhere); stub it so only the PR-creation logic is exercised.
+    internals.pushBranchToGitHub = vi.fn().mockResolvedValue(undefined)
+    internals.octokit = {
+      pulls: {
+        list: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+      },
+    }
+    internals.running = true
+    return { worker, internals }
+  }
+
+  const setupBranchDir = (branch: string) =>
+    fs.mkdir(path.join(contentBranchesPath, branch), { recursive: true })
+
+  const readBranchMeta = (branch: string) =>
+    fs
+      .readFile(path.join(contentBranchesPath, branch, '.canopy-meta', 'branch.json'), 'utf-8')
+      .then(JSON.parse)
+
+  it('recovers an orphaned PR instead of creating a duplicate, and records its number', async () => {
+    // Simulates the GIT-H1 crash scenario: PR #77 already exists on GitHub
+    // from a prior attempt, but branch metadata never got pullRequestNumber
+    // (the process died first). This task carries no known PR number either.
+    const { worker, internals } = makePrWorker()
+    await setupBranchDir('feature-x')
+
+    internals.octokit.pulls.list.mockResolvedValue({
+      data: [
+        {
+          number: 77,
+          html_url: 'https://github.com/test-owner/test-repo/pull/77',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+    })
+
+    const id = await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: { branch: 'feature-x', title: 'Submit feature-x', body: 'desc' },
+    })
+
+    await worker.processTaskQueue()
+
+    expect(internals.octokit.pulls.create).not.toHaveBeenCalled()
+    expect(internals.octokit.pulls.update).toHaveBeenCalledWith(
+      expect.objectContaining({ pull_number: 77 }),
+    )
+    expect(await fileExists(path.join(taskDir, 'failed', `${id}.json`))).toBe(false)
+
+    const meta = await readBranchMeta('feature-x')
+    expect(meta.branch.pullRequestNumber).toBe(77)
+    expect(meta.branch.syncStatus).toBe('synced')
+  })
+
+  it('creates a new PR on first submit and records its number', async () => {
+    const { worker, internals } = makePrWorker()
+    await setupBranchDir('feature-new')
+
+    internals.octokit.pulls.list.mockResolvedValue({ data: [] })
+    internals.octokit.pulls.create.mockResolvedValue({
+      data: { number: 42, html_url: 'https://github.com/test-owner/test-repo/pull/42' },
+    })
+
+    await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: { branch: 'feature-new', title: 'Submit feature-new', body: 'desc' },
+    })
+
+    await worker.processTaskQueue()
+
+    expect(internals.octokit.pulls.update).not.toHaveBeenCalled()
+    expect(internals.octokit.pulls.create).toHaveBeenCalled()
+
+    const meta = await readBranchMeta('feature-new')
+    expect(meta.branch.pullRequestNumber).toBe(42)
+    expect(meta.branch.syncStatus).toBe('synced')
   })
 })

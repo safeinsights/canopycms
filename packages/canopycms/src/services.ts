@@ -393,12 +393,13 @@ async function _createCanopyServicesInternal(
         if (githubService) {
           let prUrl: string | undefined
           try {
-            prUrl = await githubService.createOrUpdatePR({
+            const result = await githubService.createOrUpdatePR({
               head: settingsBranch,
               base: config.defaultBaseBranch ?? 'main',
               title: 'Update permissions and groups',
               body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
             })
+            prUrl = result.url
           } catch (err) {
             console.warn('Failed to create/update PR:', err)
             return { committed: true, pushed: true, syncStatus: 'sync-failed' }
