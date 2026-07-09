@@ -48,8 +48,12 @@ export const editorConfigSchema = z.object({
 export const CanopyConfigSchema = z
   .object({
     media: mediaSchema.optional(),
-    defaultBranchAccess: defaultBranchAccessSchema.optional(),
-    defaultPathAccess: defaultPathAccessSchema.optional(),
+    // No outer .optional() here: defaultBranchAccessSchema/defaultPathAccessSchema already
+    // have .default('deny'), so the field is optional on input but always resolves to
+    // 'allow'/'deny' (never undefined) on output. An outer .optional() would short-circuit
+    // before the inner default runs, defeating the fail-closed default (SCH-M1).
+    defaultBranchAccess: defaultBranchAccessSchema,
+    defaultPathAccess: defaultPathAccessSchema,
     // .optional() deliberately defeats defaultBaseBranchSchema's .default('main'):
     // unset must stay undefined after parsing so dev mode can detect the fork
     // point from git HEAD (see resolveBaseBranch in utils/git.ts).
