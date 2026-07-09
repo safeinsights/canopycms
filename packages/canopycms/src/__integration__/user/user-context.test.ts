@@ -54,9 +54,22 @@ describe('User Context API Integration', () => {
   let reviewerClient: Awaited<ReturnType<typeof createApiClient>>
 
   beforeEach(async () => {
-    workspace = await createTestWorkspace({
-      schema: BLOG_SCHEMA,
-    })
+    workspace = await createTestWorkspace(
+      {
+        schema: BLOG_SCHEMA,
+      },
+      // Reserved provider groups are stripped (SEC-H1); reviewer personas get
+      // their Reviewers membership from the internal group instead
+      {
+        internalGroups: [
+          {
+            id: 'Reviewers',
+            name: 'Reviewers',
+            members: ['test-reviewer', 'test-multi-group-user'],
+          },
+        ],
+      },
+    )
 
     // Create API clients for different users with different group memberships
     adminClient = await createApiClient({

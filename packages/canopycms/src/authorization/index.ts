@@ -61,6 +61,7 @@ export {
   RESERVED_GROUPS,
   type ReservedGroupId,
   isReservedGroup,
+  stripReservedGroups,
   isAdmin,
   isReviewer,
   isPrivileged,

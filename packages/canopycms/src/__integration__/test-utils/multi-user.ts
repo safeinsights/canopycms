@@ -1,4 +1,5 @@
 import type { AuthPlugin } from '../../auth/plugin'
+import type { InternalGroup } from '../../authorization'
 import type { AuthenticatedUser } from '../../user'
 import type { UserSearchResult, GroupMetadata, AuthenticationResult } from '../../auth/types'
 import type { CanopyUserId, CanopyGroupId } from '../../types'
@@ -41,6 +42,21 @@ export const TEST_USERS: Record<TestUserRole, TestUser> = {
 }
 
 /**
+ * Internal groups granting the privileged test personas their reserved-group
+ * membership.
+ *
+ * Reserved group IDs (Admins/Reviewers) coming from an auth provider are
+ * stripped for security (SEC-H1), so tests that authenticate through
+ * createMockAuthPlugin() must seed these via
+ * `createTestWorkspace(config, { internalGroups: TEST_INTERNAL_GROUPS })`
+ * for the admin/reviewer personas to actually hold privilege.
+ */
+export const TEST_INTERNAL_GROUPS: InternalGroup[] = [
+  { id: 'Admins', name: 'Admins', members: [TEST_USERS.admin.userId] },
+  { id: 'Reviewers', name: 'Reviewers', members: [TEST_USERS.reviewer.userId] },
+]
+
+/**
  * Convert test user persona to AuthenticatedUser
  */
 export function createTestUser(role: TestUserRole): AuthenticatedUser {
@@ -57,6 +73,12 @@ export function createTestUser(role: TestUserRole): AuthenticatedUser {
 /**
  * Create a mock auth plugin for integration tests.
  * Allows switching between test users to simulate multi-user scenarios.
+ *
+ * Note: the persona's groups are returned as externalGroups (provider
+ * groups). Reserved IDs (Admins/Reviewers) are stripped from those by
+ * authResultToCanopyUser (SEC-H1); privileged personas gain their reserved
+ * membership from TEST_INTERNAL_GROUPS (or, for admin, the
+ * CANOPY_BOOTSTRAP_ADMIN_IDS test env), not from these external groups.
  */
 export function createMockAuthPlugin(currentRole: TestUserRole): AuthPlugin {
   return {
