@@ -188,11 +188,13 @@ export function CollectionEditor({
 
   // Validate form
   const validate = useCallback((): boolean => {
-    if (!isEditMode && !formData.name.trim()) {
+    if (!formData.name.trim()) {
       setValidationError('Name is required')
       return false
     }
-    if (!isEditMode && !/^[a-z][a-z0-9-]*$/.test(formData.name)) {
+    // Enforced in both create and edit mode (UI-M3): the server rejects
+    // unsafe names, but validate here for immediate feedback.
+    if (!/^[a-z][a-z0-9-]*$/.test(formData.name)) {
       setValidationError(
         'Name must start with a letter and contain only lowercase letters, numbers, and hyphens',
       )
@@ -359,7 +361,7 @@ export function CollectionEditor({
             placeholder="posts"
             value={formData.name}
             onChange={(e) => updateField('name', e.target.value)}
-            required={!isEditMode}
+            required
           />
 
           {/* Label */}

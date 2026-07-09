@@ -81,8 +81,21 @@ const MAX_NAME_LENGTH = 64
 /** Max length for labels */
 const MAX_LABEL_LENGTH = 128
 
+/**
+ * Safe pattern for names and slugs that become filesystem path segments.
+ * Blocks path traversal (".."), separators, dots, and other unsafe characters.
+ * Keep in sync with the client-side validation in the schema editor components.
+ */
+const SAFE_NAME_PATTERN = /^[a-z][a-z0-9-]*$/
+const SAFE_NAME_MESSAGE =
+  'must start with a letter and contain only lowercase letters, numbers, and hyphens'
+
 const entryTypeInputSchema = z.object({
-  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  name: z
+    .string()
+    .min(1)
+    .max(MAX_NAME_LENGTH)
+    .regex(SAFE_NAME_PATTERN, `Entry type name ${SAFE_NAME_MESSAGE}`),
   label: z.string().max(MAX_LABEL_LENGTH).optional(),
   format: z.enum(['md', 'mdx', 'json', 'yaml']),
   schema: z.string().min(1),
@@ -91,16 +104,31 @@ const entryTypeInputSchema = z.object({
 })
 
 const createCollectionInputSchema = z.object({
-  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  name: z
+    .string()
+    .min(1)
+    .max(MAX_NAME_LENGTH)
+    .regex(SAFE_NAME_PATTERN, `Collection name ${SAFE_NAME_MESSAGE}`),
   label: z.string().max(MAX_LABEL_LENGTH).optional(),
   parentPath: z.string().optional(),
   entries: z.array(entryTypeInputSchema).min(1, 'Collection must have at least one entry type'),
 })
 
 const updateCollectionInputSchema = z.object({
-  name: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
+  name: z
+    .string()
+    .min(1)
+    .max(MAX_NAME_LENGTH)
+    .regex(SAFE_NAME_PATTERN, `Collection name ${SAFE_NAME_MESSAGE}`)
+    .optional(),
   label: z.string().max(MAX_LABEL_LENGTH).optional(),
-  slug: z.string().min(1).max(MAX_NAME_LENGTH).optional(), // Directory name (e.g., "posts" in "posts.{id}/")
+  // Directory name (e.g., "posts" in "posts.{id}/")
+  slug: z
+    .string()
+    .min(1)
+    .max(MAX_NAME_LENGTH)
+    .regex(SAFE_NAME_PATTERN, `Slug ${SAFE_NAME_MESSAGE}`)
+    .optional(),
   order: z.array(z.string()).optional(),
 })
 
@@ -323,6 +351,14 @@ export class SchemaOps {
     const dirName = `${input.name}.${contentId}`
     const physicalPath = path.join(parentPhysicalPath, dirName)
 
+    // Defense-in-depth (SCH-C1): the name pattern above already prevents
+    // traversal, but independently assert the resolved path stays within the
+    // content root before any filesystem write.
+    const containment = this.validatePath(physicalPath)
+    if (!containment.valid) {
+      throw new Error(`Invalid collection path: ${containment.error}`)
+    }
+
     // Create directory
     await fs.mkdir(physicalPath, { recursive: true })
 
@@ -441,10 +477,8 @@ export class SchemaOps {
       // Only rename if slug is actually different
       if (updates.slug !== currentSlug) {
         // Validate new slug (alphanumeric + hyphens, lowercase)
-        if (!/^[a-z][a-z0-9-]*$/.test(updates.slug)) {
-          throw new Error(
-            'Slug must start with a letter and contain only lowercase letters, numbers, and hyphens',
-          )
+        if (!SAFE_NAME_PATTERN.test(updates.slug)) {
+          throw new Error(`Slug ${SAFE_NAME_MESSAGE}`)
         }
 
         // Build new path with new slug + same ID
