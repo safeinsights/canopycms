@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
+import lockfile from 'proper-lockfile'
 import { Octokit } from '@octokit/rest'
 import {
   dequeueTask,
@@ -15,7 +16,7 @@ import type { Task } from './task-queue'
 import { getBranchMetadataFileManager, BranchMetadataFileManager } from '../branch-metadata'
 import { extractIdFromFilename } from '../content-id-index'
 import { type ContentId, ROOT_COLLECTION_ID } from '../paths/types'
-import { isFileExistsError } from '../utils/error'
+import { getErrorMessage, isNodeError } from '../utils/error'
 
 /**
  * Auth cache refresh function type.
@@ -55,22 +56,70 @@ export interface CmsWorkerConfig {
   maxRetries?: number
   /** Content root directory name relative to repo root (default: 'content') */
   contentRoot?: string
+  /**
+   * Worker lock staleness TTL in ms (default: 60000, minimum 2000).
+   * The holder refreshes the lock heartbeat at half this interval; a lock
+   * whose heartbeat is older than this is considered abandoned and taken
+   * over by the next worker to start.
+   */
+  lockStaleMs?: number
 }
 
 const DEFAULT_TASK_TIMEOUT = 60_000
 const DEFAULT_MAX_RETRIES = 3
+const DEFAULT_LOCK_STALE_MS = 60_000
+
+/**
+ * An error inherent to the task itself (malformed payload, unknown action):
+ * retrying can never succeed, so the task should fail fast instead of
+ * burning its retry budget.
+ */
+export class PermanentTaskError extends Error {}
+
+/**
+ * Classify a task failure as permanent (fail fast) or transient (retry).
+ *
+ * Transient — worth retrying with backoff:
+ * - network errors / anything without an HTTP status (git failures included:
+ *   most push/fetch failures are connectivity or contention and the retry
+ *   budget bounds the pathological cases)
+ * - HTTP 408 (request timeout) and 429 (rate limited)
+ * - HTTP 5xx (server-side, usually recovers)
+ *
+ * Permanent — retrying the identical request cannot succeed:
+ * - PermanentTaskError (malformed payload, unknown action)
+ * - other HTTP 4xx (e.g. 401/403/404/422): the request itself is bad
+ */
+export function isPermanentTaskFailure(err: unknown): boolean {
+  if (err instanceof PermanentTaskError) return true
+  const status = getHttpStatus(err)
+  if (status === null) return false
+  if (status === 408 || status === 429) return false
+  return status >= 400 && status < 500
+}
+
+/** Extract an HTTP status from an error, if present (Octokit RequestError shape). */
+function getHttpStatus(err: unknown): number | null {
+  if (err instanceof Error && 'status' in err) {
+    const status = (err as { status: unknown }).status
+    if (typeof status === 'number') return status
+  }
+  return null
+}
 
 // Payload validation helpers — fail fast with clear errors instead of silent `as` casts
 
 function requireString(payload: Record<string, unknown>, key: string): string {
   const val = payload[key]
-  if (typeof val !== 'string') throw new Error(`Task payload missing required string field: ${key}`)
+  if (typeof val !== 'string')
+    throw new PermanentTaskError(`Task payload missing required string field: ${key}`)
   return val
 }
 
 function requireNumber(payload: Record<string, unknown>, key: string): number {
   const val = payload[key]
-  if (typeof val !== 'number') throw new Error(`Task payload missing required number field: ${key}`)
+  if (typeof val !== 'number')
+    throw new PermanentTaskError(`Task payload missing required number field: ${key}`)
   return val
 }
 
@@ -103,6 +152,8 @@ export class CmsWorker {
   private taskTimeoutMs: number
   private maxRetries: number
   private lockFilePath: string
+  private lockStaleMs: number
+  private releaseLockFn: (() => Promise<void>) | null = null
   private contentRoot: string
   private log = cmsTaskQueueLogger
 
@@ -116,6 +167,7 @@ export class CmsWorker {
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
     this.lockFilePath = path.join(config.workspacePath, '.tasks', '.worker-lock')
+    this.lockStaleMs = config.lockStaleMs ?? DEFAULT_LOCK_STALE_MS
     this.contentRoot = config.contentRoot ?? 'content'
   }
 
@@ -181,76 +233,58 @@ export class CmsWorker {
   }
 
   /**
-   * Acquire an EFS-based lock file to prevent concurrent workers.
-   * Uses O_CREAT|O_EXCL for atomic file creation.
-   * Stale locks (older than 10 minutes with no running PID) are overwritten.
+   * Acquire the cross-host worker lock (DEP-C2).
+   *
+   * The task queue is single-consumer (see task-queue/task-queue.ts): two
+   * concurrent workers would double-process tasks (duplicate pushes, duplicate
+   * PRs). The workspace lives on a shared filesystem (EFS), so mutual
+   * exclusion must be sound ACROSS HOSTS — a PID liveness probe
+   * (`process.kill(pid, 0)`) only means something on the holder's own machine
+   * and must never participate in staleness decisions.
+   *
+   * proper-lockfile provides a heartbeat lease with no PID involved: the lock
+   * is a directory created atomically (mkdir — atomic on NFS/EFS), the holder
+   * refreshes its mtime every lockStaleMs/2, and the lock is considered
+   * abandoned — and taken over — only when that heartbeat is older than
+   * lockStaleMs. Liveness is judged purely by heartbeat freshness.
+   *
+   * No acquire retries: a second worker exits immediately, matching daemon
+   * semantics (the supervisor restarts it later). After a crash, the dead
+   * holder's heartbeat expires within lockStaleMs and the next start succeeds.
    */
   private async acquireLock(): Promise<void> {
-    await fs.mkdir(path.dirname(this.lockFilePath), { recursive: true })
-
-    const lockContent = JSON.stringify({
-      pid: process.pid,
-      timestamp: new Date().toISOString(),
-    })
-
-    // Try atomic create first
+    await fs.mkdir(this.taskDir, { recursive: true })
     try {
-      const handle = await fs.open(this.lockFilePath, 'wx')
-      await handle.writeFile(lockContent, 'utf-8')
-      await handle.close()
-      return
+      this.releaseLockFn = await lockfile.lock(this.taskDir, {
+        lockfilePath: this.lockFilePath,
+        stale: this.lockStaleMs,
+        onCompromised: (err) => {
+          // Our heartbeat could not be maintained (lock deleted or taken
+          // over). Another worker may now be consuming the queue — stop
+          // processing to preserve the single-consumer invariant.
+          console.error('Worker lock compromised, shutting down:', getErrorMessage(err))
+          this.releaseLockFn = null // the lock is already lost; nothing to release
+          void this.stop()
+        },
+      })
     } catch (err) {
-      if (!isFileExistsError(err)) throw err
-    }
-
-    // Lock file exists — check staleness
-    try {
-      const content = await fs.readFile(this.lockFilePath, 'utf-8')
-      const { pid, timestamp } = JSON.parse(content) as {
-        pid: number
-        timestamp: string
-      }
-      const lockAgeMs = Date.now() - new Date(timestamp).getTime()
-      const pidAlive = this.isPidAlive(pid)
-
-      if (pidAlive && lockAgeMs < 10 * 60_000) {
-        throw new Error(`Another worker is running (PID ${pid}, locked at ${timestamp}). Exiting.`)
-      }
-
-      console.log(`Overwriting stale lock (PID ${pid}, age ${Math.round(lockAgeMs / 1000)}s)`)
-    } catch (err) {
-      if (err instanceof Error && err.message.startsWith('Another worker')) throw err
-      // Lock file is corrupt or unreadable — overwrite it
-    }
-
-    // Stale or corrupt lock — unlink and retry with atomic create
-    await fs.unlink(this.lockFilePath).catch(() => {})
-    try {
-      const handle = await fs.open(this.lockFilePath, 'wx')
-      await handle.writeFile(lockContent, 'utf-8')
-      await handle.close()
-    } catch (err) {
-      if (isFileExistsError(err)) {
-        throw new Error('Another worker acquired the lock during stale lock recovery. Exiting.')
+      if (isNodeError(err) && err.code === 'ELOCKED') {
+        throw new Error(
+          `Another worker is running (lock ${this.lockFilePath} has a heartbeat fresher than ${this.lockStaleMs}ms). Exiting.`,
+        )
       }
       throw err
     }
   }
 
   private async releaseLock(): Promise<void> {
+    const release = this.releaseLockFn
+    this.releaseLockFn = null
+    if (!release) return
     try {
-      await fs.unlink(this.lockFilePath)
+      await release()
     } catch {
-      // Lock file already gone
-    }
-  }
-
-  private isPidAlive(pid: number): boolean {
-    try {
-      process.kill(pid, 0)
-      return true
-    } catch {
-      return false
+      // Lock already released or compromised
     }
   }
 
@@ -316,18 +350,26 @@ export class CmsWorker {
         await completeTask(this.taskDir, task.id, result, this.log)
         await this.updateBranchMetadata(task, result)
       } catch (err) {
-        const message = err instanceof Error ? err.message : 'Unknown error'
+        const message = getErrorMessage(err)
         console.error(`Task ${task.id} (${task.action}) failed:`, message)
 
+        // DEP-L1: only transient failures (network, 429/5xx, timeouts) are
+        // worth retrying; permanent ones (malformed payload, other 4xx) would
+        // just burn the retry budget on an identical doomed request.
+        const permanent = isPermanentTaskFailure(err)
         const retryCount = task.retryCount ?? 0
         const maxRetries = task.maxRetries ?? this.maxRetries
-        if (retryCount < maxRetries) {
+        if (!permanent && retryCount < maxRetries) {
           await retryTask(this.taskDir, task.id, message, this.log)
           console.log(`  Will retry (attempt ${retryCount + 1}/${maxRetries})`)
         } else {
           await failTask(this.taskDir, task.id, message, this.log)
           await this.updateBranchMetadataOnFailure(task, message)
-          console.error(`  Permanently failed after ${maxRetries} retries`)
+          console.error(
+            permanent
+              ? '  Permanently failed (non-retryable error)'
+              : `  Permanently failed after ${maxRetries} retries`,
+          )
         }
       }
       processed++
@@ -335,14 +377,30 @@ export class CmsWorker {
   }
 
   /**
-   * Execute a task with a timeout. Uses AbortController to cancel
-   * the underlying operation if the timeout fires.
+   * Execute a task bounded by taskTimeoutMs (DEP-H1). Two layers:
+   * - An AbortSignal cancels Octokit HTTP calls promptly.
+   * - A Promise.race rejects when the timeout fires, so work that cannot
+   *   observe the signal (git subprocesses via simple-git) still fails the
+   *   attempt and the worker moves on instead of stalling forever.
+   * pushBranchToGitHub additionally kills stalled git processes via
+   * simple-git's block timeout, so a hung push doesn't leak a process.
    */
   private async executeTaskWithTimeout(task: Task): Promise<Record<string, unknown>> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.taskTimeoutMs)
     try {
-      return await this.executeTask(task, controller.signal)
+      const work = this.executeTask(task, controller.signal)
+      // If the timeout wins the race, the losing promise must not surface an
+      // unhandled rejection when it eventually settles.
+      work.catch(() => {})
+      const timedOut = new Promise<never>((_, reject) => {
+        controller.signal.addEventListener(
+          'abort',
+          () => reject(new Error(`Task timed out after ${this.taskTimeoutMs}ms`)),
+          { once: true },
+        )
+      })
+      return await Promise.race([work, timedOut])
     } finally {
       clearTimeout(timer)
     }
@@ -465,7 +523,7 @@ export class CmsWorker {
         return { deleted: true }
       }
       default:
-        throw new Error(`Unknown task action: ${action}`)
+        throw new PermanentTaskError(`Unknown task action: ${action}`)
     }
   }
 
@@ -532,7 +590,13 @@ export class CmsWorker {
   }
 
   private async pushBranchToGitHub(branch: string): Promise<void> {
-    const git = simpleGit({ baseDir: this.remoteGitPath })
+    const git = simpleGit({
+      baseDir: this.remoteGitPath,
+      // DEP-H1: kill the git process if it produces no output for
+      // taskTimeoutMs (network stall, credential prompt) instead of letting
+      // it hang past the task timeout.
+      timeout: { block: this.taskTimeoutMs },
+    })
     // Pass URL directly to avoid persisting the token in remote.git/config
     await git.push(this.buildGitHubUrl(), branch)
     console.log(`Pushed ${branch} to GitHub`)
@@ -567,7 +631,13 @@ export class CmsWorker {
     if (!this.running) return
 
     console.log('Syncing git...')
-    const git = simpleGit({ baseDir: this.remoteGitPath })
+    const git = simpleGit({
+      baseDir: this.remoteGitPath,
+      // DEP-H1: a hung fetch/push would stall the sync loop forever
+      // (scheduleLoop only reschedules after completion). The block timeout
+      // is inactivity-based, so a slow-but-flowing transfer is unaffected.
+      timeout: { block: this.taskTimeoutMs },
+    })
 
     // Fetch all branches from GitHub using direct URL (no named remote)
     // We use raw git commands since simple-git's fetch() with a URL
