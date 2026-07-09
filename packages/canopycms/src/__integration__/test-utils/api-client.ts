@@ -4,6 +4,7 @@
  */
 
 import type { CanopyRequest } from '../../http/types'
+import { BranchWorkspaceManager } from '../../branch-workspace'
 import { createCanopyRequestHandler } from '../../http/handler'
 import { createTestServices } from '../../config-test'
 import type { CreateCanopyServicesOptions } from '../../services'
@@ -45,9 +46,21 @@ export async function createApiClient(options: ApiClientOptions) {
       if (!services.registry) {
         throw new Error('Branch registry not available in dev mode')
       }
-      const context = await services.registry.get(branchName)
+      let context = await services.registry.get(branchName)
       if (!context) {
-        return null
+        // Mirror the production default getBranchContext: auto-provision the
+        // base branch workspace on first request so main-branch settings
+        // (e.g. internal groups for privileged roles) can be loaded.
+        const baseBranch = services.config.defaultBaseBranch ?? 'main'
+        if (branchName !== baseBranch) {
+          return null
+        }
+        const manager = new BranchWorkspaceManager(services.config)
+        context = await manager.openOrCreateBranch({
+          branchName,
+          mode: services.config.mode,
+          createdBy: 'canopycms-system',
+        })
       }
 
       // Load per-branch schema if requested

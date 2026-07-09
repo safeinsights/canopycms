@@ -3,7 +3,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { defineCanopyTestConfig, createTestServices } from './config-test'
 import { createCanopyServices, getBootstrapAdminIds } from './services'
 import { authResultToCanopyUser } from './user'
-import { RESERVED_GROUPS } from './authorization'
+import { RESERVED_GROUPS, isAdmin, isReviewer } from './authorization'
 import type { AuthenticationResult } from './auth/types'
 import type { InternalGroup } from './authorization'
 import { unsafeAsPhysicalPath } from './paths/test-utils'
@@ -337,16 +337,18 @@ describe('authResultToCanopyUser with bootstrap admins', () => {
     }
   })
 
-  it('does not duplicate Admins group if already present', () => {
+  it('does not duplicate Admins group when bootstrap admin is also in internal Admins group', () => {
     const bootstrapAdminIds = new Set(['admin_1'])
     const authResult: AuthenticationResult = {
       success: true,
       user: {
         userId: 'admin_1',
-        externalGroups: [RESERVED_GROUPS.ADMINS],
       },
     }
-    const user = authResultToCanopyUser(authResult, bootstrapAdminIds)
+    const internalGroups: InternalGroup[] = [
+      { id: RESERVED_GROUPS.ADMINS, name: RESERVED_GROUPS.ADMINS, members: ['admin_1'] },
+    ]
+    const user = authResultToCanopyUser(authResult, bootstrapAdminIds, internalGroups)
 
     expect(user.type).toBe('authenticated')
     if (user.type === 'authenticated') {
@@ -417,18 +419,16 @@ describe('authResultToCanopyUser with internal groups', () => {
       success: true,
       user: {
         userId: 'user-1',
-        externalGroups: ['Reviewers'], // Already in external
+        externalGroups: ['team-a'], // Already in external
       },
     }
-    const internalGroups: InternalGroup[] = [
-      { id: 'Reviewers', name: 'Reviewers', members: ['user-1'] },
-    ]
+    const internalGroups: InternalGroup[] = [{ id: 'team-a', name: 'Team A', members: ['user-1'] }]
 
     const user = authResultToCanopyUser(authResult, bootstrapAdminIds, internalGroups)
 
     expect(user.type).toBe('authenticated')
     if (user.type === 'authenticated') {
-      expect(user.groups).toEqual(['Reviewers']) // Not duplicated
+      expect(user.groups).toEqual(['team-a']) // Not duplicated
     }
   })
 
@@ -493,6 +493,143 @@ describe('authResultToCanopyUser with internal groups', () => {
     expect(user.type).toBe('authenticated')
     if (user.type === 'authenticated') {
       expect(user.groups).toEqual(['team-a'])
+    }
+  })
+})
+
+describe('authResultToCanopyUser reserved group escalation (SEC-H1)', () => {
+  it('does not grant admin from a provider-supplied Admins group', () => {
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user-1',
+        externalGroups: [RESERVED_GROUPS.ADMINS],
+      },
+    }
+
+    const user = authResultToCanopyUser(authResult, new Set<string>(), [])
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(user.groups).not.toContain(RESERVED_GROUPS.ADMINS)
+      expect(isAdmin(user.groups)).toBe(false)
+    }
+  })
+
+  it('does not grant reviewer from a provider-supplied Reviewers group', () => {
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user-1',
+        externalGroups: [RESERVED_GROUPS.REVIEWERS],
+      },
+    }
+
+    const user = authResultToCanopyUser(authResult, new Set<string>(), [])
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(user.groups).not.toContain(RESERVED_GROUPS.REVIEWERS)
+      expect(isReviewer(user.groups)).toBe(false)
+    }
+  })
+
+  it('strips all reserved IDs but preserves ordinary external groups', () => {
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user-1',
+        externalGroups: [RESERVED_GROUPS.ADMINS, 'team-a', RESERVED_GROUPS.REVIEWERS, 'team-b'],
+      },
+    }
+
+    const user = authResultToCanopyUser(authResult, new Set<string>(), [])
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(user.groups).toEqual(['team-a', 'team-b'])
+      expect(isAdmin(user.groups)).toBe(false)
+      expect(isReviewer(user.groups)).toBe(false)
+    }
+  })
+
+  it('grants admin via internal Admins group membership', () => {
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user-1',
+        externalGroups: ['team-a'],
+      },
+    }
+    const internalGroups: InternalGroup[] = [
+      { id: RESERVED_GROUPS.ADMINS, name: RESERVED_GROUPS.ADMINS, members: ['user-1'] },
+    ]
+
+    const user = authResultToCanopyUser(authResult, new Set<string>(), internalGroups)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(isAdmin(user.groups)).toBe(true)
+      expect(user.groups).toContain('team-a')
+    }
+  })
+
+  it('grants reviewer via internal Reviewers group membership', () => {
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user-1',
+      },
+    }
+    const internalGroups: InternalGroup[] = [
+      { id: RESERVED_GROUPS.REVIEWERS, name: RESERVED_GROUPS.REVIEWERS, members: ['user-1'] },
+    ]
+
+    const user = authResultToCanopyUser(authResult, new Set<string>(), internalGroups)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(isReviewer(user.groups)).toBe(true)
+      expect(isAdmin(user.groups)).toBe(false)
+    }
+  })
+
+  it('grants admin via bootstrapAdminIds even when the provider also claims Admins', () => {
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'admin-1',
+        externalGroups: [RESERVED_GROUPS.ADMINS],
+      },
+    }
+
+    const user = authResultToCanopyUser(authResult, new Set(['admin-1']), [])
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(isAdmin(user.groups)).toBe(true)
+      const adminCount = user.groups.filter((g) => g === RESERVED_GROUPS.ADMINS).length
+      expect(adminCount).toBe(1)
+    }
+  })
+
+  it('does not treat internal group membership of other users as privilege', () => {
+    const authResult: AuthenticationResult = {
+      success: true,
+      user: {
+        userId: 'user-1',
+        externalGroups: [RESERVED_GROUPS.ADMINS],
+      },
+    }
+    const internalGroups: InternalGroup[] = [
+      { id: RESERVED_GROUPS.ADMINS, name: RESERVED_GROUPS.ADMINS, members: ['someone-else'] },
+    ]
+
+    const user = authResultToCanopyUser(authResult, new Set<string>(), internalGroups)
+
+    expect(user.type).toBe('authenticated')
+    if (user.type === 'authenticated') {
+      expect(isAdmin(user.groups)).toBe(false)
     }
   })
 })

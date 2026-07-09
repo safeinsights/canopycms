@@ -1,7 +1,7 @@
 import type { CanopyUserId, CanopyGroupId } from './types'
 import type { AuthenticationResult } from './auth/types'
 // Import from client-safe subpaths to avoid pulling in server-only loader code
-import { RESERVED_GROUPS } from './authorization/helpers'
+import { RESERVED_GROUPS, stripReservedGroups } from './authorization/helpers'
 import type { InternalGroup } from './authorization/groups/schema'
 
 /**
@@ -53,7 +53,11 @@ export const isAuthenticatedUser = (user: CanopyUser): user is AuthenticatedUser
   user.type === 'authenticated'
 
 /**
- * Create an authenticated user from auth provider data
+ * Create an authenticated user from auth provider data.
+ *
+ * SECURITY: `groups` is trusted verbatim. Never pass provider-supplied
+ * external groups here — use authResultToCanopyUser(), which strips reserved
+ * privileged IDs (Admins/Reviewers) from external groups before merging.
  */
 export const createAuthenticatedUser = (data: {
   userId: CanopyUserId
@@ -90,8 +94,12 @@ export function authResultToCanopyUser(
     return ANONYMOUS_USER
   }
 
-  // Step 1: Start with external groups from auth provider
-  const groups = [...(authResult.user.externalGroups ?? [])]
+  // Step 1: Start with external groups from the auth provider.
+  // SECURITY (SEC-H1): reserved privileged group IDs (Admins/Reviewers) are
+  // stripped here so a provider-controlled group name can never grant
+  // CanopyCMS privilege. Reserved membership is only added below, from
+  // bootstrapAdminIds and Canopy-managed internal groups.
+  const groups = stripReservedGroups(authResult.user.externalGroups ?? [])
 
   // Step 2: Add Admins group if user is in bootstrap admin list
   if (bootstrapAdminIds.has(authResult.user.userId) && !groups.includes(RESERVED_GROUPS.ADMINS)) {
