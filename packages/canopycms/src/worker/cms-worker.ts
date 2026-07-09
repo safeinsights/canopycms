@@ -15,6 +15,7 @@ import {
 import type { Task } from './task-queue'
 import { getBranchMetadataFileManager, BranchMetadataFileManager } from '../branch-metadata'
 import { extractIdFromFilename } from '../content-id-index'
+import { invalidateContentIndexesForRoot } from '../content-index-registry'
 import { type ContentId, ROOT_COLLECTION_ID } from '../paths/types'
 import { getErrorMessage, isNodeError } from '../utils/error'
 
@@ -812,6 +813,11 @@ export class CmsWorker {
           await branchGit.rebase(['--abort']).catch(() => {})
           continue
         }
+
+        // The rebase rewrote the branch clone's working tree — mark any in-process
+        // ContentStore ID indexes rooted here stale so lookups rebuild from disk.
+        // (In-process only; other processes sharing this filesystem are not covered.)
+        invalidateContentIndexesForRoot(branchPath)
 
         // Convert file paths to ContentIds — immutable, survives slug renames.
         // Entry files have IDs in their filename (e.g., "post.slug.a1b2c3d4e5f6.mdx").

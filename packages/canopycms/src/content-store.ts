@@ -23,6 +23,7 @@ import {
   extractEntryTypeFromFilename,
   resolveCollectionPath,
 } from './content-id-index'
+import { registerContentIndexForInvalidation } from './content-index-registry'
 import { generateId } from './id'
 import { isNodeError } from './utils/error'
 import { asRecord, getFormatExtension } from './utils/format'
@@ -121,22 +122,57 @@ export class ContentStore {
   private readonly root: string
   private readonly schemaIndex: Map<string, FlatSchemaItem>
   private readonly _idIndex: ContentIdIndex
-  private indexLoaded: boolean = false
+  /** Bumped by invalidateIndex(); when it differs from loadedIndexGeneration the index is stale. */
+  private indexGeneration = 0
+  private loadedIndexGeneration = -1
+  /** In-flight index build, shared by concurrent idIndex() callers so scans never interleave. */
+  private indexBuild: Promise<void> | null = null
 
   constructor(root: string, flatSchema: FlatSchemaItem[]) {
     this.root = path.resolve(root)
     this.schemaIndex = new Map(flatSchema.map((item) => [item.logicalPath, item]))
     this._idIndex = new ContentIdIndex(this.root)
+    registerContentIndexForInvalidation(this.root, this)
   }
 
   /**
-   * Get the ID index, ensuring it's loaded first.
-   * This getter automatically loads the index on first access.
+   * Mark the ID index stale so the next idIndex() access rebuilds it from disk.
+   *
+   * Called (via content-index-registry) after in-process operations that change the
+   * working tree underneath this store — git checkout/merge/rebase, the worker's
+   * rebase loop, and sync-core's content replacement. Without this, ID→path lookups
+   * keep resolving to pre-mutation paths and saves can target moved/deleted files.
+   *
+   * Cheap: only bumps a generation counter; the rebuild happens lazily.
+   */
+  public invalidateIndex(): void {
+    this.indexGeneration++
+  }
+
+  /**
+   * Get the ID index, ensuring it's loaded and current first.
+   * Loads lazily on first access and rebuilds after invalidateIndex(); repeated
+   * accesses with no intervening invalidation reuse the already-built index.
    */
   public async idIndex(): Promise<ContentIdIndex> {
-    if (!this.indexLoaded) {
-      await this._idIndex.buildFromFilenames('content')
-      this.indexLoaded = true
+    while (this.loadedIndexGeneration !== this.indexGeneration) {
+      if (this.indexBuild) {
+        // Another caller is already rebuilding — wait, then re-check freshness.
+        await this.indexBuild
+        continue
+      }
+      const generation = this.indexGeneration
+      this.indexBuild = (async () => {
+        this._idIndex.clear()
+        await this._idIndex.buildFromFilenames('content')
+      })()
+      try {
+        await this.indexBuild
+      } finally {
+        this.indexBuild = null
+      }
+      // If invalidateIndex() ran mid-build the generations won't match and we rebuild.
+      this.loadedIndexGeneration = generation
     }
     return this._idIndex
   }
