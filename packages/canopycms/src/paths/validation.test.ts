@@ -362,6 +362,47 @@ describe('path validation utilities', () => {
       const result = parseBranchName('a'.repeat(250))
       expect(result.ok).toBe(true)
     })
+
+    it('rejects branch names starting with a hyphen', () => {
+      const leadingHyphen = ['-foo', '--output=x', '-B', '-']
+      leadingHyphen.forEach((name) => {
+        const result = parseBranchName(name)
+        expect(result.ok).toBe(false)
+        if (!result.ok) {
+          expect(result.error).toContain('start with "-"')
+        }
+      })
+    })
+
+    it('accepts branch names that merely contain a hyphen', () => {
+      const validNames = ['my-branch', 'feature/foo-bar', 'a-b-c']
+      validNames.forEach((name) => {
+        const result = parseBranchName(name)
+        expect(result.ok).toBe(true)
+      })
+    })
+
+    it('rejects bare reserved refs "HEAD" and "@"', () => {
+      let result = parseBranchName('HEAD')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('HEAD')
+      }
+
+      result = parseBranchName('@')
+      expect(result.ok).toBe(false)
+      if (!result.ok) {
+        expect(result.error).toContain('@')
+      }
+    })
+
+    it('accepts branch names that merely contain HEAD as a substring', () => {
+      const validNames = ['HEADer', 'release-HEAD', 'my-@-branch']
+      validNames.forEach((name) => {
+        const result = parseBranchName(name)
+        expect(result.ok).toBe(true)
+      })
+    })
   })
 
   describe('parseSlug', () => {

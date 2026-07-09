@@ -606,6 +606,14 @@ export class GitManager {
   async checkoutBranch(branch: string): Promise<void> {
     const branches = await this.git.branch()
     if (branches.all.includes(branch)) {
+      // No `--`/`--end-of-options` separator here: a bare `--` switches
+      // `git checkout` into pathspec-restore mode instead of switching
+      // branches (breaking this call), and `--end-of-options` is not
+      // honored by `git checkout` on git versions still in the field
+      // (e.g. Apple's bundled git 2.39.5 treats it as a literal, unmatched
+      // pathspec rather than an options terminator). Safety instead relies
+      // on parseBranchName() rejecting a leading hyphen before `branch`
+      // ever reaches here.
       await this.git.checkout(branch)
       return
     }
@@ -617,6 +625,11 @@ export class GitManager {
       // Best-effort; will fall back to local base branch below if fetch fails
     }
     try {
+      // `-b`/`-B` consume the very next token as their literal branch-name
+      // value (not subject to option re-scanning), and git independently
+      // rejects a leading-hyphen value there ("... is not a valid branch
+      // name") — verified on both a modern git and Apple's bundled git
+      // 2.39.5. So `branch` needs no separator here either.
       await this.git.checkoutBranch(branch, remoteRef)
       return
     } catch {
@@ -698,7 +711,18 @@ export class GitManager {
     const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
     // Use explicit refspec (local:remote) so push works for new branches
     // that don't yet exist in the remote (e.g., orphan settings branches).
-    await this.git.push(this.remote, `${target}:${target}`, ['--set-upstream'])
+    // Built via raw() (rather than the push() wrapper) so --end-of-options
+    // can be placed immediately before the positional remote/refspec
+    // arguments, guarding against a refspec starting with '-' being parsed
+    // as a git option (e.g. --receive-pack=...). Real flags must precede
+    // --end-of-options, since everything after it is treated as positional.
+    await this.git.raw([
+      'push',
+      '--set-upstream',
+      '--end-of-options',
+      this.remote,
+      `${target}:${target}`,
+    ])
   }
 
   async ensureAuthor(author: { name: string; email: string }): Promise<void> {
@@ -773,7 +797,8 @@ export class GitManager {
    */
   async forcePush(branch?: string): Promise<void> {
     const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
-    await this.git.push(this.remote, target, ['--force-with-lease'])
+    // See push() above for why raw() + --end-of-options is used here.
+    await this.git.raw(['push', '--force-with-lease', '--end-of-options', this.remote, target])
   }
 
   /**
@@ -845,12 +870,18 @@ export class GitManager {
     const branches = await this.git.branch()
     if (branches.all.includes(branchName)) {
       log.debug('git', 'Orphan branch already exists', { branchName })
-      // Checkout the existing branch
+      // No separator here — see checkoutBranch() above for why plain
+      // `git checkout <branch>` can't safely take one. branchName is always
+      // an internal/config-derived settings-branch name, never user input
+      // (see createOrphanSettingsBranch's callers).
       await this.git.checkout(branchName)
       return
     }
 
-    // Create orphan branch (--orphan creates a branch with no parent/history)
+    // Create orphan branch (--orphan creates a branch with no parent/history).
+    // branchName is consumed as --orphan's literal argument value (like -b/-B
+    // above), so it can't be reinterpreted as a flag; git's own ref-name
+    // validation additionally rejects a leading-hyphen value here.
     await this.git.raw(['checkout', '--orphan', branchName])
 
     // Remove all files from index (orphan checkout keeps working tree)
