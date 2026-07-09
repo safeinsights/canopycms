@@ -5,7 +5,10 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit } from 'simple-git'
 
+import { flattenSchema } from './config'
+import { ContentStore } from './content-store'
 import { GitManager, GitConflictError } from './git-manager'
+import { generateId } from './id'
 import { initTestRepo, openBareRepo } from './test-utils'
 
 describe('GitManager.ensureLocalSimulatedRemote', () => {
@@ -1477,3 +1480,63 @@ describe('GitManager conflict handling', () => {
     // failure that doesn't also involve conflicts.
   })
 }, 30_000)
+
+describe('GitManager content-index invalidation', () => {
+  let tmpDir: string
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-git-idx-'))
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('checkoutBranch invalidates in-process ContentStore indexes for the repo', async () => {
+    const schema = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              schema: [{ name: 'title', type: 'string' as const }],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    // Repo with one entry on main...
+    const git = await initTestRepo(tmpDir)
+    await git.raw(['branch', '-M', 'main'])
+    const contentDir = path.join(tmpDir, 'content')
+    await fs.mkdir(contentDir, { recursive: true })
+    const id = generateId()
+    const oldFile = path.join(contentDir, `post.hello.${id}.md`)
+    await fs.writeFile(oldFile, '---\ntitle: Hello\n---\nBody', 'utf8')
+    await git.add(['.'])
+    await git.commit('add hello entry')
+
+    // ...and a feature branch where the same entry lives at a different path (renamed slug)
+    await git.checkoutLocalBranch('feature')
+    await git.raw(['mv', oldFile, path.join(contentDir, `post.renamed.${id}.md`)])
+    await git.commit('rename entry on feature')
+    await git.checkout('main')
+
+    // Warm a store's ID index while main is checked out
+    const store = new ContentStore(tmpDir, flattenSchema(schema, 'content'))
+    expect((await store.idIndex()).findById(id)?.relativePath).toContain('post.hello.')
+
+    // A branch checkout swaps the working tree underneath the store...
+    const manager = new GitManager({ repoPath: tmpDir, baseBranch: 'main' })
+    await manager.checkoutBranch('feature')
+
+    // ...and the next lookup must resolve the NEW path, not the stale pre-checkout one.
+    const location = (await store.idIndex()).findById(id)
+    expect(location?.relativePath).toContain('post.renamed.')
+    expect(location?.relativePath).not.toContain('post.hello.')
+  })
+})

@@ -7,6 +7,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
+import { invalidateContentIndexesForRoot } from './content-index-registry'
 import { filePathExists } from './utils/fs'
 
 /** Git tag marking the last known sync point, used as the merge base for `sync both` 3-way merges. */
@@ -184,6 +185,10 @@ export async function pushContentToWorkspace(
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
     throw err
   }
+
+  // The workspace content dir was replaced wholesale — mark any in-process
+  // ContentStore ID indexes rooted at this workspace stale (in-process only).
+  invalidateContentIndexesForRoot(branchPath)
 
   const wsGit = simpleGit({ baseDir: branchPath })
   await wsGit.add('-A')

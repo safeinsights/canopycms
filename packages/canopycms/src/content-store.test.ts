@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from './config-test'
 import { flattenSchema } from './config'
+import { ContentIdIndex } from './content-id-index'
+import { invalidateContentIndexesForRoot } from './content-index-registry'
 import { ContentStore, ContentStoreError, ContentConflictError } from './content-store'
 import { generateId } from './id'
 import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
@@ -1495,5 +1497,147 @@ describe('ContentStore OCC', () => {
     } finally {
       statSpy.mockRestore()
     }
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ID index invalidation (in-process staleness after checkout/pull/rebase/sync)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContentStore index invalidation', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          {
+            name: 'post',
+            format: 'md' as const,
+            schema: [{ name: 'title', type: 'string' as const }],
+          },
+        ],
+      },
+    ],
+  } as const
+
+  const makeStore = async (root?: string) => {
+    const resolvedRoot = root ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-idx-')))
+    const config = defineCanopyTestConfig({ schema })
+    return {
+      root: resolvedRoot,
+      store: new ContentStore(resolvedRoot, flattenSchema(schema, config.contentRoot)),
+    }
+  }
+
+  /** Write an entry, warm the index, then rename its file on disk behind the store's back. */
+  const writeAndRenameOnDisk = async (store: ContentStore, oldSlug: string, newSlug: string) => {
+    const doc = await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug(oldSlug), {
+      format: 'md',
+      data: { title: 'T' },
+      body: 'Body',
+    })
+    const id = await store.getIdForEntry(
+      unsafeAsLogicalPath('content/posts'),
+      unsafeAsSlug(oldSlug),
+    )
+    if (!id) throw new Error('expected id for written entry')
+    // Simulate a checkout/pullBase/rebase swapping files underneath the store:
+    // rename the entry file to a new slug without going through the store.
+    await fs.rename(doc.absolutePath, doc.absolutePath.replace(oldSlug, newSlug))
+    return id
+  }
+
+  it('rebuilds the index after invalidateIndex so lookups return the new path', async () => {
+    const { store } = await makeStore()
+    const id = await writeAndRenameOnDisk(store, 'hello-world', 'renamed-entry')
+
+    // Pre-invalidation the index is stale: it still resolves the old path.
+    const staleLocation = (await store.idIndex()).findById(id)
+    expect(staleLocation?.relativePath).toContain('hello-world')
+
+    store.invalidateIndex()
+
+    // Post-invalidation the lookup resolves the NEW on-disk path, not the stale one.
+    const freshLocation = (await store.idIndex()).findById(id)
+    expect(freshLocation?.relativePath).toContain('renamed-entry')
+    expect(freshLocation?.relativePath).not.toContain('hello-world')
+    expect(freshLocation?.slug).toBe('renamed-entry')
+
+    // And readById follows the new path end to end.
+    const doc = await store.readById(id)
+    expect(doc?.relativePath).toContain('renamed-entry')
+  })
+
+  it('does not rebuild the index on repeated reads without an intervening invalidation', async () => {
+    const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+    try {
+      const { store } = await makeStore()
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('a'), {
+        format: 'md',
+        data: { title: 'A' },
+        body: 'Body',
+      })
+      const buildsAfterWrite = buildSpy.mock.calls.length
+      expect(buildsAfterWrite).toBe(1)
+
+      // Ordinary repeated reads — including concurrent index accesses — reuse the index.
+      await store.read(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('a'))
+      await store.read(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('a'))
+      await Promise.all([store.idIndex(), store.idIndex(), store.idIndex()])
+      expect(buildSpy.mock.calls.length).toBe(buildsAfterWrite)
+
+      // Invalidation triggers exactly one rebuild on next access.
+      store.invalidateIndex()
+      await store.idIndex()
+      expect(buildSpy.mock.calls.length).toBe(buildsAfterWrite + 1)
+      await store.idIndex()
+      expect(buildSpy.mock.calls.length).toBe(buildsAfterWrite + 1)
+    } finally {
+      buildSpy.mockRestore()
+    }
+  })
+
+  it('concurrent idIndex() calls after invalidation share one rebuild and do not collide', async () => {
+    const { store } = await makeStore()
+    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('b'), {
+      format: 'md',
+      data: { title: 'B' },
+      body: 'Body',
+    })
+    await store.idIndex()
+
+    const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+    try {
+      store.invalidateIndex()
+      // Without clear-before-rebuild (or with interleaved scans) this would throw
+      // "ID collision detected" for every unchanged file.
+      await Promise.all([store.idIndex(), store.idIndex(), store.idIndex()])
+      expect(buildSpy.mock.calls.length).toBe(1)
+    } finally {
+      buildSpy.mockRestore()
+    }
+  })
+
+  it('invalidateContentIndexesForRoot invalidates stores at or under the root, not others', async () => {
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-idx-reg-'))
+    const nestedRoot = path.join(base, 'clone')
+    await fs.mkdir(nestedRoot, { recursive: true })
+    const { store: nestedStore } = await makeStore(nestedRoot)
+    const { store: otherStore } = await makeStore()
+
+    const nestedId = await writeAndRenameOnDisk(nestedStore, 'nested-old', 'nested-new')
+    const otherId = await writeAndRenameOnDisk(otherStore, 'other-old', 'other-new')
+
+    // Warm both indexes (both now stale relative to disk).
+    expect((await nestedStore.idIndex()).findById(nestedId)?.relativePath).toContain('nested-old')
+    expect((await otherStore.idIndex()).findById(otherId)?.relativePath).toContain('other-old')
+
+    // Invalidating an ANCESTOR of the nested store's root reaches it (prefix match)...
+    invalidateContentIndexesForRoot(base)
+    expect((await nestedStore.idIndex()).findById(nestedId)?.relativePath).toContain('nested-new')
+
+    // ...but leaves stores under unrelated roots untouched (still stale).
+    expect((await otherStore.idIndex()).findById(otherId)?.relativePath).toContain('other-old')
   })
 })

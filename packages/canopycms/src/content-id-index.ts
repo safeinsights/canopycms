@@ -81,6 +81,17 @@ export class ContentIdIndex {
     await this.scanDirectory(startPath)
   }
 
+  /**
+   * Reset the index to empty. Must be called before rebuilding via
+   * buildFromFilenames() after the working tree changed — rebuilding on top of
+   * existing entries would trip collision detection for every unchanged file.
+   */
+  clear(): void {
+    this.idToLocation.clear()
+    this.pathToId.clear()
+    this.byCollection.clear()
+  }
+
   private async scanDirectory(relativePath: string): Promise<void> {
     const absoluteDir = path.join(this.root, relativePath)
 

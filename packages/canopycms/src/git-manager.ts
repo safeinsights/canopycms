@@ -9,6 +9,7 @@ import {
   type StatusResult,
 } from 'simple-git'
 
+import { invalidateContentIndexesForRoot } from './content-index-registry'
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNotFoundError } from './utils/error'
@@ -603,7 +604,29 @@ export class GitManager {
     }
   }
 
+  /**
+   * Mark in-process ContentStore ID indexes rooted at (or under) this repo as stale.
+   * Called after operations that mutate the working tree (checkout/merge/rebase) so
+   * ID→path lookups don't keep resolving to pre-mutation paths. Invoked in `finally`
+   * blocks because even failed merges/rebases may have touched the tree before
+   * aborting; invalidation is a cheap counter bump, so over-invalidating is safe.
+   *
+   * In-process scope only — other processes sharing the filesystem (e.g. worker vs
+   * Lambda on EFS) are not covered.
+   */
+  private invalidateContentIndexes(): void {
+    invalidateContentIndexesForRoot(this.repoPath)
+  }
+
   async checkoutBranch(branch: string): Promise<void> {
+    try {
+      await this.checkoutBranchInner(branch)
+    } finally {
+      this.invalidateContentIndexes()
+    }
+  }
+
+  private async checkoutBranchInner(branch: string): Promise<void> {
     const branches = await this.git.branch()
     if (branches.all.includes(branch)) {
       // No `--`/`--end-of-options` separator here: a bare `--` switches
@@ -643,6 +666,14 @@ export class GitManager {
   }
 
   async pullBase(): Promise<void> {
+    try {
+      await this.pullBaseInner()
+    } finally {
+      this.invalidateContentIndexes()
+    }
+  }
+
+  private async pullBaseInner(): Promise<void> {
     await this.git.fetch(this.remote, this.baseBranch)
     try {
       await this.git.merge([`${this.remote}/${this.baseBranch}`])
@@ -663,6 +694,14 @@ export class GitManager {
   }
 
   async pullCurrentBranch(): Promise<void> {
+    try {
+      await this.pullCurrentBranchInner()
+    } finally {
+      this.invalidateContentIndexes()
+    }
+  }
+
+  private async pullCurrentBranchInner(): Promise<void> {
     const branches = await this.git.branch()
     const currentBranch = branches.current
     await this.git.fetch(this.remote, currentBranch)
@@ -682,6 +721,14 @@ export class GitManager {
   }
 
   async rebaseOntoBase(): Promise<void> {
+    try {
+      await this.rebaseOntoBaseInner()
+    } finally {
+      this.invalidateContentIndexes()
+    }
+  }
+
+  private async rebaseOntoBaseInner(): Promise<void> {
     await this.git.fetch(this.remote, this.baseBranch)
     try {
       await this.git.rebase([`${this.remote}/${this.baseBranch}`])
@@ -861,6 +908,18 @@ export class GitManager {
    * @param initialFiles - Files to commit to the new branch (e.g., { 'permissions.json': '{}', 'groups.json': '{}' })
    */
   async createOrphanSettingsBranch(
+    branchName: string,
+    initialFiles: Record<string, string>,
+  ): Promise<void> {
+    try {
+      await this.createOrphanSettingsBranchInner(branchName, initialFiles)
+    } finally {
+      // Both branches of Inner swap the working tree (checkout / checkout --orphan)
+      this.invalidateContentIndexes()
+    }
+  }
+
+  private async createOrphanSettingsBranchInner(
     branchName: string,
     initialFiles: Record<string, string>,
   ): Promise<void> {
