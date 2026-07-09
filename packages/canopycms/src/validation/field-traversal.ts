@@ -32,18 +32,52 @@ export interface TraversalContext {
 export type FieldVisitor<T> = (context: TraversalContext) => T[]
 
 /**
- * Get the nested fields for a block template by looking up _type.
+ * A block item resolved to its template fields and the data record that
+ * holds the nested field values.
  */
-function getBlockTemplateFields(
+export interface ResolvedBlockItem {
+  /** The template's field schema */
+  fields: FieldConfig[]
+  /** The record containing the block's nested field values */
+  data: Record<string, unknown>
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+/**
+ * Resolve a block item to its template fields and nested data record.
+ *
+ * Real block data — as produced by the editor (BlockField.tsx) and persisted
+ * by ContentStore — has the shape `{ template: string, value: {...} }`:
+ * the template name lives on `template` and the nested field values live
+ * under `value`. A `_type` discriminator with inline field values is also
+ * accepted defensively (mirroring ai/json-to-markdown.ts).
+ *
+ * Returns undefined when the item has no resolvable template.
+ */
+export function resolveBlockItem(
   blockField: BlockFieldConfig,
   item: Record<string, unknown>,
-): FieldConfig[] | undefined {
-  const blockType = item._type as string | undefined
-  if (!blockType) return undefined
+): ResolvedBlockItem | undefined {
+  const templateName =
+    typeof item.template === 'string'
+      ? item.template
+      : typeof item._type === 'string'
+        ? item._type
+        : undefined
+  if (!templateName) return undefined
 
   // Block fields use 'templates' property
-  const template = blockField.templates?.find((t) => t.name === blockType)
-  return template?.fields
+  const template = blockField.templates?.find((t) => t.name === templateName)
+  if (!template?.fields) return undefined
+
+  // Nested field values live under `value` in the canonical shape; fall back
+  // to the item itself for the inline `_type` shape.
+  const data = isPlainRecord(item.value) ? item.value : item
+
+  return { fields: template.fields, data }
 }
 
 /**
@@ -134,12 +168,12 @@ export function traverseFields<T>(
       if (Array.isArray(value)) {
         value.forEach((item, index) => {
           if (typeof item === 'object' && item !== null) {
-            const blockFields = getBlockTemplateFields(blockField, item as Record<string, unknown>)
-            if (blockFields) {
+            const resolved = resolveBlockItem(blockField, item as Record<string, unknown>)
+            if (resolved) {
               results.push(
                 ...traverseFields(
-                  blockFields,
-                  item as Record<string, unknown>,
+                  resolved.fields,
+                  resolved.data,
                   visitor,
                   `${fieldPath}[${index}]`,
                 ),

@@ -7,6 +7,7 @@ import type {
   BlockFieldConfig,
 } from '../config'
 import { type LogicalPath, type Slug, type PhysicalPath } from '../paths'
+import { resolveBlockItem } from './field-traversal'
 
 export interface ReferenceInfo {
   entryPath: string
@@ -182,19 +183,19 @@ export class DeletionChecker {
           }
         }
       } else if (field.type === 'block') {
-        // Handle block fields
+        // Handle block fields — real block items are { template, value }, with
+        // nested field values under `value` (resolved by resolveBlockItem)
         const blockField = field as BlockFieldConfig
         if (Array.isArray(value)) {
           value.forEach((item, index) => {
             if (typeof item === 'object' && item !== null) {
-              const blockType = (item as Record<string, unknown>)._type
-              const blockDef = blockField.templates?.find((b) => b.name === blockType)
-              if (blockDef && blockDef.fields) {
+              const resolved = resolveBlockItem(blockField, item as Record<string, unknown>)
+              if (resolved) {
                 found.push(
                   ...this.findIdInData(
-                    item as Record<string, unknown>,
+                    resolved.data,
                     targetId,
-                    blockDef.fields,
+                    resolved.fields,
                     `${fieldPath}[${index}]`,
                   ),
                 )
