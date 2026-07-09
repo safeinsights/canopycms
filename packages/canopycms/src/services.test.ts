@@ -25,6 +25,7 @@ function createMockGitInstance(overrides?: {
   branches?: string[]
   fetch?: ReturnType<typeof vi.fn>
   push?: ReturnType<typeof vi.fn>
+  raw?: ReturnType<typeof vi.fn>
   /** Extra properties merged into the mock (e.g., addConfig, listConfig). */
   extra?: Record<string, unknown>
 }) {
@@ -40,6 +41,9 @@ function createMockGitInstance(overrides?: {
     add: vi.fn().mockResolvedValue(undefined),
     commit: vi.fn().mockResolvedValue(undefined),
     push: overrides?.push ?? vi.fn(),
+    // GitManager.push()/forcePush() route through raw() so --end-of-options can
+    // guard the positional refspec (SEC-H2); mock it here for those paths.
+    raw: overrides?.raw ?? vi.fn().mockResolvedValue(''),
     revparse: vi.fn().mockResolvedValue('main'),
     ...overrides?.extra,
   }
@@ -546,11 +550,11 @@ describe('commitToSettingsBranch', () => {
 
   it('should use configured settingsBranch value', async () => {
     const fetchMock = vi.fn().mockResolvedValue(undefined)
-    const pushMock = vi.fn().mockResolvedValue(undefined)
+    const rawMock = vi.fn().mockResolvedValue('')
     const mock = createMockGitInstance({
       currentBranch: 'custom-settings-branch',
       fetch: fetchMock,
-      push: pushMock,
+      raw: rawMock,
       extra: {
         addConfig: vi.fn().mockResolvedValue(undefined),
         listConfig: vi.fn().mockResolvedValue({
@@ -578,6 +582,8 @@ describe('commitToSettingsBranch', () => {
     })
 
     expect(fetchMock).toHaveBeenCalledWith('origin', 'custom-settings-branch')
-    expect(pushMock).toHaveBeenCalled()
+    // push() now goes through raw(['push', ...]) to place --end-of-options
+    // before the positional refspec (SEC-H2 guard).
+    expect(rawMock).toHaveBeenCalledWith(expect.arrayContaining(['push', '--end-of-options']))
   })
 })
