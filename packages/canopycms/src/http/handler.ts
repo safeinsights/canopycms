@@ -158,11 +158,17 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
 
   const router = createCanopyRouter()
 
-  // Build context once at initialization, not per-request
+  // Build context once (memoized) and reuse across requests in the same warm
+  // container/process. On rejection (e.g. transient cold-start / EFS not yet
+  // mounted), the cache is cleared (API-H3) so the NEXT request retries
+  // buildContext() instead of replaying the same rejection forever.
   let apiCtxPromise: Promise<ApiContext> | null = null
   const getContext = () => {
     if (!apiCtxPromise) {
-      apiCtxPromise = buildContext(options)
+      apiCtxPromise = buildContext(options).catch((err: unknown) => {
+        apiCtxPromise = null
+        throw err
+      })
     }
     return apiCtxPromise
   }
