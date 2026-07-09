@@ -279,7 +279,7 @@ describe('permissions API', () => {
 
       const result = await searchUsers(mockContext, req, {
         q: 'test',
-        limit: '5',
+        limit: 5,
       })
 
       expect(result.ok).toBe(true)
@@ -349,6 +349,14 @@ describe('permissions API', () => {
       if (!validationResult.ok) {
         expect(validationResult.error).toContain('q')
       }
+    })
+
+    it('rejects a non-numeric limit instead of silently becoming NaN (API-M2)', () => {
+      const endpoint = PERMISSION_ROUTES.searchUsers
+
+      const validationResult = endpoint.validate({ params: { q: 'test', limit: 'not-a-number' } })
+
+      expect(validationResult.ok).toBe(false)
     })
   })
 

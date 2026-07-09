@@ -102,10 +102,26 @@ const writeContentParamsSchema = z.object({
   entryType: z.string().optional(), // Optional entry type name for collections with multiple entry types
 })
 
+/**
+ * Bounds on write/validate payload size (API-M1): content body text and
+ * structured field data are otherwise unbounded, letting any authenticated
+ * caller force arbitrarily large writes/validation work. These caps are
+ * generous for real content (a long MDX article, a large field-data object)
+ * while keeping worst-case request size bounded.
+ */
+const MAX_CONTENT_BODY_CHARS = 2_000_000 // ~2MB of markdown/mdx body text
+const MAX_CONTENT_DATA_BYTES = 2_000_000 // ~2MB of structured field data (serialized)
+
+const boundedContentDataSchema = z
+  .record(z.unknown())
+  .refine((data) => JSON.stringify(data).length <= MAX_CONTENT_DATA_BYTES, {
+    message: `data payload exceeds maximum size of ${MAX_CONTENT_DATA_BYTES} bytes`,
+  })
+
 const writeContentBodySchema = z.object({
   format: z.enum(['json', 'md', 'mdx', 'yaml']),
-  data: z.record(z.unknown()).optional(),
-  body: z.string().optional(),
+  data: boundedContentDataSchema.optional(),
+  body: z.string().max(MAX_CONTENT_BODY_CHARS).optional(),
   expectedVersion: z.number().optional(),
 })
 
@@ -116,7 +132,7 @@ const validateReferencesParamsSchema = z.object({
 })
 
 const validateReferencesBodySchema = z.object({
-  data: z.record(z.unknown()),
+  data: boundedContentDataSchema,
 })
 
 const renameEntryParamsSchema = z.object({

@@ -46,7 +46,10 @@ const updatePermissionsBodySchema = z.object({
 
 const searchUsersParamsSchema = z.object({
   q: z.string(),
-  limit: z.string().optional(),
+  // Coerced + range-checked (consistent with api/entries.ts's listEntriesParamsSchema)
+  // rather than z.string() + an unchecked parseInt(), which silently produced NaN
+  // for a non-numeric limit (API-M2).
+  limit: z.coerce.number().int().min(1).optional(),
 })
 
 const getUserMetadataParamsSchema = z.object({
@@ -180,7 +183,7 @@ const searchUsersHandler = async (
   }
 
   const query = params.q
-  const limit = params.limit ? parseInt(params.limit, 10) : undefined
+  const limit = params.limit
 
   try {
     const users = await authPlugin.searchUsers(query, limit)

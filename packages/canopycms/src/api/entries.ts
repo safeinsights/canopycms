@@ -207,7 +207,11 @@ const listEntriesHandler = async (
 
   const limit = Math.min(Math.max(params.limit ?? DEFAULT_ENTRIES_LIMIT, 1), MAX_ENTRIES_PER_PAGE)
   // Offset-based pagination: items may be skipped or duplicated if content changes between pages.
-  const offset = Number.isFinite(Number(params.cursor)) ? Number(params.cursor) : 0
+  // Clamp to >= 0 (API-L1) - a negative cursor would otherwise flow straight into
+  // Array.slice(offset, offset + limit), which interprets negative indices as
+  // "from the end", returning unexpected/out-of-order results instead of erroring.
+  const parsedCursor = Number(params.cursor)
+  const offset = Number.isFinite(parsedCursor) ? Math.max(0, parsedCursor) : 0
   const search = params.q?.toLowerCase()
   const recursive = params.recursive ?? false
 
