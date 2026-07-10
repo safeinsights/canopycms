@@ -7,7 +7,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
-import { invalidateContentIndexesForRoot } from './content-index-registry'
+import { invalidateContentIndexesDurable } from './content-index-generation'
 import { filePathExists } from './utils/fs'
 
 /** Git tag marking the last known sync point, used as the merge base for `sync both` 3-way merges. */
@@ -186,21 +186,28 @@ export async function pushContentToWorkspace(
     throw err
   }
 
-  // The workspace content dir was replaced wholesale — mark any in-process
-  // ContentStore ID indexes rooted at this workspace stale (in-process only).
-  invalidateContentIndexesForRoot(branchPath)
+  // The content dir was replaced wholesale, so ContentStore ID indexes rooted
+  // at this workspace must be marked stale — in this process and (via the
+  // on-disk generation marker) in every other process sharing the filesystem.
+  // Done in the finally AFTER the git add/commit below: the marker lives under
+  // .canopy-meta/ inside the clone, and writing it first would stage it into
+  // the sync commit via `add -A` (production workspaces git-exclude
+  // .canopy-meta/, but this function shouldn't depend on that).
+  try {
+    const wsGit = simpleGit({ baseDir: branchPath })
+    await wsGit.add('-A')
+    const postStatus = await wsGit.status()
 
-  const wsGit = simpleGit({ baseDir: branchPath })
-  await wsGit.add('-A')
-  const postStatus = await wsGit.status()
+    if (postStatus.files.length === 0) {
+      if (baseTag) await wsGit.tag(['-f', baseTag])
+      return { fileCount: 0 }
+    }
 
-  if (postStatus.files.length === 0) {
+    await wsGit.commit(commitMessage ?? 'sync: update content from working tree')
     if (baseTag) await wsGit.tag(['-f', baseTag])
-    return { fileCount: 0 }
+
+    return { fileCount: postStatus.files.length }
+  } finally {
+    await invalidateContentIndexesDurable(branchPath)
   }
-
-  await wsGit.commit(commitMessage ?? 'sync: update content from working tree')
-  if (baseTag) await wsGit.tag(['-f', baseTag])
-
-  return { fileCount: postStatus.files.length }
 }

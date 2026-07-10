@@ -18,6 +18,7 @@ import { withLock } from '../utils/async-mutex'
 import type { ContentFormat } from '../config'
 import type { EntrySchemaRegistry } from './types'
 import { resolveCollectionPath } from '../content-id-index'
+import { invalidateContentIndexesDurable } from '../content-index-generation'
 import { generateId, isValidId } from '../id'
 import { createLogicalPath, validateAndNormalizePath } from '../paths'
 import type { LogicalPath, ContentId } from '../paths/types'
@@ -165,6 +166,18 @@ export class SchemaOps {
       const branchRoot = path.dirname(this.contentRoot)
       await this.services.branchSchemaCache.invalidate(branchRoot)
     }
+  }
+
+  /**
+   * Collection directory mutations (create/rename/delete) change paths the
+   * ContentId index tracks — collection dirs are indexed as {slug}.{id}/, and
+   * a dir rename re-paths every entry beneath it. Invalidate ContentStore ID
+   * indexes for this branch: in-process via the registry and cross-process via
+   * the on-disk generation marker. ContentStores (and the marker) are rooted
+   * at the branch root, the contentRoot's parent.
+   */
+  private async invalidateContentIdIndexes(): Promise<void> {
+    await invalidateContentIndexesDurable(path.dirname(this.contentRoot))
   }
 
   // --------------------------------------------------------------------------
@@ -361,6 +374,7 @@ export class SchemaOps {
 
     // Create directory
     await fs.mkdir(physicalPath, { recursive: true })
+    await this.invalidateContentIdIndexes()
 
     // Build collection meta with empty order array (required for ordering support)
     const meta: CollectionMetaFile = {
@@ -506,11 +520,12 @@ export class SchemaOps {
           // Ignore other errors (e.g., ENOENT if parent dir doesn't exist somehow)
         }
 
-        // Atomically rename the directory
+        // Atomically rename the directory — this re-paths every entry beneath
+        // it, so already-loaded ID indexes (here and in other processes) must
+        // be told to rebuild.
         await fs.rename(physicalPath, newPhysicalPath)
         finalPhysicalPath = newPhysicalPath
-
-        // Note: Content ID index will rebuild lazily on next access
+        await this.invalidateContentIdIndexes()
       }
     }
 
@@ -550,6 +565,7 @@ export class SchemaOps {
 
     // Delete the directory (including .collection.json)
     await fs.rm(physicalPath, { recursive: true })
+    await this.invalidateContentIdIndexes()
 
     // Invalidate schema cache after mutation
     await this.invalidateSchemaCache()
