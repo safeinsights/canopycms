@@ -53,7 +53,7 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `operating-mode/` - Operating mode strategies (prod, dev)
 - `api/` - API handlers (see [api/AGENTS.md](packages/canopycms/src/api/AGENTS.md) for API development guidelines)
 - `middleware/` - API middleware patterns (branch access guards); see also `api/guards.ts` for declarative guard system
-- `validation/` - Validation utilities (field traversal, reference validation, entry link validation)
+- `validation/` - Validation utilities (field traversal, reference validation, entry link validation, pure isomorphic entry schema validation in `entry-validator.ts` shared by the editor and the authoritative server write boundary)
 - `utils/` - Shared utilities (error handling, debug, atomic file writes, title-field: resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists)
 - `worker/` - CmsWorker daemon, task queue, deployment infrastructure
 - `ai/` - AI-ready content generation (markdown converter, engine, route handler); transforms (field/component/body) + entry transforms with traversal-guarded `readSibling` for folding in colocated sibling artifacts
