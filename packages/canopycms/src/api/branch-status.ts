@@ -10,6 +10,7 @@ import { markAsMerged } from './branch-merge'
 import { defineEndpoint } from './route-builder'
 import { canPerformWorkflowAction } from '../authorization'
 import { syncSubmitPr } from './github-sync'
+import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -48,11 +49,18 @@ const submitBranchForMergeHandler = async (
   try {
     await ctx.services.submitBranch({ context: branchContext })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Failed to push branch changes'
+    const message = getErrorMessage(err)
+    // Full detail (including branchRoot, an absolute path) to server logs only;
+    // the client only ever sees the sanitized form (API-H2) — git errors can
+    // embed credentials (e.g. x-access-token:TOKEN@github.com) and filesystem paths.
+    console.error(
+      `CanopyCMS: Failed to push branch changes (${branchContext.branchRoot}):`,
+      message,
+    )
     return {
       ok: false,
       status: 500,
-      error: `Failed to push branch changes (${branchContext.branchRoot}): ${message}`,
+      error: `Failed to push branch changes: ${sanitizeErrorMessage(message)}`,
     }
   }
 

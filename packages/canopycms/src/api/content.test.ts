@@ -374,4 +374,44 @@ describe('content api', () => {
       }
     })
   })
+
+  describe('payload size bounds (API-M1)', () => {
+    const params = { branch: 'main', path: 'content/posts/hello' }
+
+    it('rejects an oversized markdown body', () => {
+      const oversized = 'a'.repeat(2_000_001)
+      const result = CONTENT_ROUTES.write.validate({
+        params,
+        body: { format: 'md', body: oversized },
+      })
+      expect(result.ok).toBe(false)
+    })
+
+    it('accepts a body right at the size limit', () => {
+      const atLimit = 'a'.repeat(2_000_000)
+      const result = CONTENT_ROUTES.write.validate({
+        params,
+        body: { format: 'md', body: atLimit },
+      })
+      expect(result.ok).toBe(true)
+    })
+
+    it('rejects oversized structured data', () => {
+      const bigValue = 'x'.repeat(2_100_000)
+      const result = CONTENT_ROUTES.write.validate({
+        params,
+        body: { format: 'json', data: { field: bigValue } },
+      })
+      expect(result.ok).toBe(false)
+    })
+
+    it('rejects oversized data on the validate-references endpoint too', () => {
+      const bigValue = 'x'.repeat(2_100_000)
+      const result = CONTENT_ROUTES.validateReferences.validate({
+        params,
+        body: { data: { field: bigValue } },
+      })
+      expect(result.ok).toBe(false)
+    })
+  })
 })

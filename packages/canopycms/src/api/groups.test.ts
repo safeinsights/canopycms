@@ -199,6 +199,42 @@ describe('groups API', () => {
       // In dev mode (default), no git operations are performed
       expect(mockContext.services.commitFiles).not.toHaveBeenCalled()
     })
+
+    it('surfaces a non-200 failure when the settings commit is saved but not pushed (API-H1)', async () => {
+      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
+      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
+      mockContext.services.commitToSettingsBranch = vi.fn().mockResolvedValue({
+        committed: true,
+        pushed: false,
+        error: 'network unreachable',
+      })
+
+      const groups: InternalGroup[] = [
+        {
+          id: '' as CanopyGroupId,
+          name: 'Content Editors',
+          members: [],
+        },
+      ]
+
+      const req: ApiRequest = {
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1' as CanopyUserId,
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      }
+
+      const result = await updateInternalGroups(mockContext, req, { groups })
+
+      // Data was saved (saveInternalGroups ran) but the client must be told the
+      // push failed - it is NOT durably persisted and could be lost.
+      expect(groupsLoader.saveInternalGroups).toHaveBeenCalled()
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(502)
+      expect(result.error).toContain('network unreachable')
+    })
   })
 
   describe('searchExternalGroups', () => {

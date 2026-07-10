@@ -131,6 +131,38 @@ describe('Next.js adapter', () => {
 
       expect(response.status).toBe(404)
     })
+
+    it('returns a sanitized 500 envelope instead of throwing when coreHandler rejects (API-C1)', async () => {
+      const { createCanopyRequestHandler } = await import('canopycms/http')
+      vi.mocked(createCanopyRequestHandler).mockReturnValueOnce(async () => {
+        throw new Error(
+          `clone failed for /mnt/efs/workspace/main from ` +
+            `https://x-access-token:ghp_secret789@github.com/org/repo.git`,
+        )
+      })
+
+      const handler = createCanopyCatchAllHandler({
+        services: {} as any,
+        authPlugin: mockAuthPlugin,
+      })
+
+      const mockNextRequest = {
+        method: 'GET',
+        url: 'http://localhost:3000/api/canopycms/branches',
+        headers: { get: () => null },
+        json: async () => undefined,
+      } as any
+
+      const response: any = await handler(mockNextRequest, { params: { canopycms: ['branches'] } })
+
+      expect(response.status).toBe(500)
+      expect(response.body).toHaveProperty('ok', false)
+      const error = response.body.error ?? ''
+      expect(error).not.toContain('ghp_secret789')
+      expect(error).not.toContain('/mnt/efs')
+      expect(error).toContain('***@github.com')
+      expect(error).toContain('<path>')
+    })
   })
 })
 

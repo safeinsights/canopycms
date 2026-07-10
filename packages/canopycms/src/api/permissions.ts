@@ -7,6 +7,7 @@ import { loadPathPermissions, savePathPermissions, loadPermissionsFile } from '.
 import { permissionPathSchema } from './validators'
 import { defineEndpoint } from './route-builder'
 import { getSettingsBranchContext, commitSettings } from './settings-helpers'
+import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
 
 /** Response type for getting permissions */
 export type PermissionsResponse = ApiResponse<{ permissions: PathPermission[] }>
@@ -45,7 +46,10 @@ const updatePermissionsBodySchema = z.object({
 
 const searchUsersParamsSchema = z.object({
   q: z.string(),
-  limit: z.string().optional(),
+  // Coerced + range-checked (consistent with api/entries.ts's listEntriesParamsSchema)
+  // rather than z.string() + an unchecked parseInt(), which silently produced NaN
+  // for a non-numeric limit (API-M2).
+  limit: z.coerce.number().int().min(1).optional(),
 })
 
 const getUserMetadataParamsSchema = z.object({
@@ -82,7 +86,7 @@ const getPermissionsHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'Failed to load permissions',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
@@ -135,8 +139,10 @@ const updatePermissionsHandler = async (
       newContentVersion,
     )
 
-    // Commit and push (mode-aware)
-    await commitSettings(ctx, {
+    // Commit and push (mode-aware). A push failure means the change is saved
+    // to the branch working tree but NOT durably persisted (API-H1) - surface
+    // that to the client instead of reporting a bare 200.
+    const commitResult = await commitSettings(ctx, {
       context,
       branchRoot: context.branchRoot,
       fileName: 'permissions.json',
@@ -144,12 +150,20 @@ const updatePermissionsHandler = async (
       mode,
     })
 
+    if (!commitResult.pushed) {
+      return {
+        ok: false,
+        status: 502,
+        error: `Permissions were saved but failed to sync to git: ${commitResult.error ?? 'unknown error'}`,
+      }
+    }
+
     return { ok: true, status: 200, data: {} }
   } catch (error) {
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'Failed to save permissions',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
@@ -169,7 +183,7 @@ const searchUsersHandler = async (
   }
 
   const query = params.q
-  const limit = params.limit ? parseInt(params.limit, 10) : undefined
+  const limit = params.limit
 
   try {
     const users = await authPlugin.searchUsers(query, limit)
@@ -178,7 +192,7 @@ const searchUsersHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'User search failed',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
@@ -203,7 +217,7 @@ const listGroupsHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'Group list failed',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
@@ -229,7 +243,7 @@ const getUserMetadataHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'Failed to get user metadata',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }

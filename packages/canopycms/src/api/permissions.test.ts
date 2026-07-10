@@ -183,6 +183,41 @@ describe('permissions API', () => {
       expect(result.error).toBe('Admin access required')
     })
 
+    it('surfaces a non-200 failure when the settings commit is saved but not pushed (API-H1)', async () => {
+      mockContext.getBranchContext = vi.fn().mockResolvedValue(
+        createMockBranchContext({
+          branchName: 'main',
+          createdBy: 'admin-1',
+          access: { allowedUsers: [], allowedGroups: [] },
+          baseRoot: '/test/repo',
+          branchRoot: '/test/repo',
+          createdAt: '2024-01-01T00:00:00Z',
+          updatedAt: '2024-01-01T00:00:00Z',
+        }),
+      )
+      mockContext.services.commitToSettingsBranch = vi.fn().mockResolvedValue({
+        committed: true,
+        pushed: false,
+        error: 'network unreachable',
+      })
+
+      const req: ApiRequest = {
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      }
+
+      const result = await updatePermissions(mockContext, req, { permissions: [] })
+
+      // permissions.json was written, but the client must be told the push
+      // failed - it is NOT durably persisted and could be lost on redeploy.
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(502)
+      expect(result.error).toContain('network unreachable')
+    })
+
     it('requires permissions array in body', async () => {
       // Type as Partial to test runtime validation
       const req: ApiRequest = {
@@ -244,7 +279,7 @@ describe('permissions API', () => {
 
       const result = await searchUsers(mockContext, req, {
         q: 'test',
-        limit: '5',
+        limit: 5,
       })
 
       expect(result.ok).toBe(true)
@@ -314,6 +349,14 @@ describe('permissions API', () => {
       if (!validationResult.ok) {
         expect(validationResult.error).toContain('q')
       }
+    })
+
+    it('rejects a non-numeric limit instead of silently becoming NaN (API-M2)', () => {
+      const endpoint = PERMISSION_ROUTES.searchUsers
+
+      const validationResult = endpoint.validate({ params: { q: 'test', limit: 'not-a-number' } })
+
+      expect(validationResult.ok).toBe(false)
     })
   })
 

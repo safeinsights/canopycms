@@ -344,21 +344,78 @@ describe('createCanopyRequestHandler', () => {
     expect(response.status).toBe(200)
   })
 
-  it('throws error when no config or services provided', async () => {
+  it('returns a sanitized 500 envelope when no config or services provided (API-C1)', async () => {
     const authPlugin = createMockAuthPlugin()
 
     expect(() =>
       createCanopyRequestHandler({
         authPlugin,
       } as any),
-    ).not.toThrow() // Factory doesn't throw, handler will throw on first request
+    ).not.toThrow() // Factory doesn't throw; buildContext() throws lazily on first request
 
     const handler = createCanopyRequestHandler({
       authPlugin,
     } as any)
 
     const req = createMockRequest()
-    await expect(handler(req, ['branches'])).rejects.toThrow('config or services is required')
+    // The top-level error boundary (API-C1) catches this instead of letting it
+    // escape as an unhandled rejection / generic framework 500.
+    const response = await handler(req, ['branches'])
+    expect(response.status).toBe(500)
+    expect(response.body).toHaveProperty('ok', false)
+    expect((response.body as { error?: string }).error).toContain('config or services is required')
+  })
+
+  describe('unguarded error boundary (API-C1)', () => {
+    it('returns a sanitized 500 envelope when an unguarded call (e.g. refreshActiveBranch) throws', async () => {
+      const services: any = createMockServices()
+      services.refreshActiveBranch = vi
+        .fn()
+        .mockRejectedValue(new Error('boom: unexpected failure'))
+      const authPlugin = createMockAuthPlugin()
+
+      const handler = createCanopyRequestHandler({
+        services,
+        authPlugin,
+        getBranchContext: async () => null,
+      })
+
+      const req = createMockRequest()
+      const response = await handler(req, ['branches'])
+
+      expect(response.status).toBe(500)
+      expect(response.body).toHaveProperty('ok', false)
+      expect((response.body as { error?: string }).error).toContain('boom: unexpected failure')
+    })
+
+    it('sanitizes credentials and absolute paths from an unguarded handler-level error', async () => {
+      const services: any = createMockServices()
+      services.refreshActiveBranch = vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            `clone failed for /mnt/efs/workspace/main from ` +
+              `https://x-access-token:ghp_secret456@github.com/org/repo.git`,
+          ),
+        )
+      const authPlugin = createMockAuthPlugin()
+
+      const handler = createCanopyRequestHandler({
+        services,
+        authPlugin,
+        getBranchContext: async () => null,
+      })
+
+      const req = createMockRequest()
+      const response = await handler(req, ['branches'])
+
+      expect(response.status).toBe(500)
+      const error = (response.body as { error?: string }).error ?? ''
+      expect(error).not.toContain('ghp_secret456')
+      expect(error).not.toContain('/mnt/efs')
+      expect(error).toContain('***@github.com')
+      expect(error).toContain('<path>')
+    })
   })
 
   describe('auth plugin mode guard (SEC-C1)', () => {

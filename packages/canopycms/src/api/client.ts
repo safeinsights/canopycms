@@ -243,8 +243,8 @@ export class CanopyApiClient {
     /**
      * list - GET /assets
      */
-    list: (): Promise<AssetsListResponse> => {
-      return this.request('GET', '/assets')
+    list: (params: Record<string, string>): Promise<AssetsListResponse> => {
+      return this.request('GET', this.buildPath('/assets', params))
     },
 
     /**
@@ -257,8 +257,8 @@ export class CanopyApiClient {
     /**
      * delete - DELETE /assets
      */
-    delete: (): Promise<AssetDeleteResponse> => {
-      return this.request('DELETE', '/assets')
+    delete: (params: Record<string, string>): Promise<AssetDeleteResponse> => {
+      return this.request('DELETE', this.buildPath('/assets', params))
     },
   }
 

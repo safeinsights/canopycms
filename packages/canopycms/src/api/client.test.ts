@@ -328,6 +328,36 @@ describe('CanopyApiClient', () => {
         expect.anything(),
       )
     })
+
+    it('should forward prefix to assets.list (API-H4)', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, status: 200, data: { assets: [] } }),
+      })
+
+      const client = new CanopyApiClient({ fetch: mockFetch })
+      await client.assets.list({ prefix: 'images/' })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/canopycms/assets?prefix=images%2F',
+        expect.anything(),
+      )
+    })
+
+    it('should forward key to assets.delete (API-H4)', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, status: 200, data: { deleted: true } }),
+      })
+
+      const client = new CanopyApiClient({ fetch: mockFetch })
+      await client.assets.delete({ key: 'a.png' })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/canopycms/assets?key=a.png',
+        expect.objectContaining({ method: 'DELETE' }),
+      )
+    })
   })
 
   describe('createApiClient factory', () => {
