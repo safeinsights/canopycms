@@ -5,11 +5,18 @@ import {
   ContentStore,
   ContentStoreError,
   ContentConflictError,
+  getDefaultEntryType,
   type WriteInput,
 } from '../content-store'
 import type { EntrySchema, EntryTypeConfig, EntryValidationIssue, FlatSchemaItem } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
+import {
+  mergeBodyIntoData,
+  normalizeReferenceValues,
+  validateEntryData,
+  type EntryFieldError,
+} from '../validation/entry-validator'
 import { validateEntryLinks } from '../validation/entry-link-validator'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
 import type { Slug, PhysicalPath } from '../paths'
@@ -236,6 +243,109 @@ const writeContentHandler = async (
     return { ok: false, status: 403, error: 'Forbidden' }
   }
 
+  // ------------------------------------------------------------------
+  // Authoritative schema validation at the write boundary (COMPOUND-2).
+  //
+  // The server rejects structurally invalid entry data even when the client
+  // is bypassed: required fields, type/format correctness, non-empty required
+  // references (pure rules shared with the editor via validation/entry-validator),
+  // plus reference EXISTENCE (server-only: reads the content ID index) and
+  // EntryTypeConfig.maxItems at the create boundary (SCH-H3).
+  //
+  // One narrow carve-out: the editor's create flow scaffolds a brand-new entry
+  // by writing entirely empty data (`{}` and an empty body) and only then lets
+  // the user fill the form — so a create scaffold (target file does not exist
+  // yet AND the payload is completely empty) skips field validation. Any write
+  // carrying actual data, and every write to an existing entry, is validated.
+  // ------------------------------------------------------------------
+
+  // Resolve the entry-type config the store will write with (mirrors ContentStore.write)
+  let entryTypeConfig: EntryTypeConfig | undefined
+  let fields: EntrySchema = []
+  let maxItems: number | undefined
+  let entryTypeName: string | undefined
+  if (schemaItem.type === 'entry-type') {
+    fields = schemaItem.schema
+    maxItems = schemaItem.maxItems
+    entryTypeName = schemaItem.name
+  } else {
+    if (params.entryType) {
+      entryTypeConfig = schemaItem.entries?.find((e) => e.name === params.entryType)
+      if (!entryTypeConfig) {
+        return {
+          ok: false,
+          status: 400,
+          error: `Entry type '${params.entryType}' not found`,
+        }
+      }
+    } else {
+      entryTypeConfig = getDefaultEntryType(schemaItem.entries)
+    }
+    fields = entryTypeConfig?.schema ?? []
+    maxItems = entryTypeConfig?.maxItems
+    entryTypeName = entryTypeConfig?.name
+  }
+
+  const data = body.data ?? {}
+  const isDataOnly = isDataOnlyFormat(body.format)
+
+  try {
+    const exists = await store.documentExists(schemaItem.logicalPath, slug)
+
+    // SCH-H3: enforce maxItems server-side at the create boundary. The editor
+    // only gates its "Add" button; a direct API create (or two racing editors)
+    // could otherwise exceed the cap.
+    if (!exists && maxItems !== undefined && entryTypeName) {
+      const collectionPath =
+        schemaItem.type === 'entry-type' ? schemaItem.parentPath : schemaItem.logicalPath
+      const count = await store.countEntriesOfType(collectionPath, entryTypeName)
+      if (count >= maxItems) {
+        return {
+          ok: false,
+          status: 422,
+          error: `Cannot create entry: type "${entryTypeName}" allows at most ${maxItems} ${maxItems === 1 ? 'entry' : 'entries'}`,
+        }
+      }
+    }
+
+    const isCreateScaffold =
+      !exists && Object.keys(data).length === 0 && (isDataOnly || !body.body?.trim())
+
+    if (!isCreateScaffold) {
+      // Pure rules (shared with the editor). For md/mdx the body is validated
+      // as the schema's isBody field.
+      const dataForValidation = isDataOnly ? data : mergeBodyIntoData(fields, data, body.body ?? '')
+      const fieldErrors: EntryFieldError[] = validateEntryData(fields, dataForValidation)
+
+      // Reference existence (server-only: reads the content ID index). Editor
+      // payloads may still carry resolved `{ id, ... }` objects from a prior
+      // read, so collapse them to id strings before checking.
+      if (fieldErrors.length === 0) {
+        const idIndex = await store.idIndex()
+        const refValidator = new ReferenceValidator(idIndex, fields)
+        const refResult = await refValidator.validate(normalizeReferenceValues(fields, data))
+        fieldErrors.push(
+          ...refResult.errors.map((e) => ({ fieldPath: e.fieldPath, message: e.error })),
+        )
+      }
+
+      if (fieldErrors.length > 0) {
+        return {
+          ok: false,
+          status: 422,
+          // '; '-joined: the editor shows this in a notification, which collapses newlines
+          error: fieldErrors.map((e) => `${e.fieldPath}: ${e.message}`).join('; '),
+          fieldErrors,
+        }
+      }
+    }
+  } catch (err) {
+    if (err instanceof ContentStoreError) {
+      return { ok: false, status: 400, error: sanitizeErrorMessage(err.message) }
+    }
+    throw err
+  }
+
   // Adopter save-time validation, run BEFORE the file is written: 'error' issues
   // refuse the save (e.g. a body that would break the site's production build),
   // 'warning' issues are returned alongside the successful write.
@@ -292,17 +402,8 @@ const writeContentHandler = async (
 
     const result = await store.write(schemaItem.logicalPath, slug, writeInput, params.entryType)
 
-    // Validate entry links in body content (warnings only, don't block save)
-    // Resolve fields from schema: entry-type has .schema directly,
-    // collections need to look up the entry type by name
-    let fields: EntrySchema = []
-    if (schemaItem.type === 'entry-type') {
-      fields = schemaItem.schema
-    } else if (params.entryType) {
-      fields = schemaItem.entries?.find((e) => e.name === params.entryType)?.schema ?? []
-    } else if (schemaItem.entries?.length === 1) {
-      fields = schemaItem.entries[0].schema ?? []
-    }
+    // Validate entry links in body content (warnings only, don't block save).
+    // Reuses the entry-type fields resolved above for schema validation.
     const idIndex = await store.idIndex()
     const linkValidation = validateEntryLinks(body.data ?? {}, fields, idIndex, body.body)
     const entryLinkWarnings =

@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import type { Dirent } from 'node:fs'
 
 import matter from 'gray-matter'
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
@@ -92,7 +93,7 @@ export class ContentConflictError extends Error {
  * Get the default entry type from a collection's entries array.
  * Returns the entry marked as default, or the first one, or undefined if no entries.
  */
-function getDefaultEntryType(
+export function getDefaultEntryType(
   entries: readonly EntryTypeConfig[] | undefined,
 ): EntryTypeConfig | undefined {
   if (!entries || entries.length === 0) return undefined
@@ -625,6 +626,40 @@ export class ContentStore {
     const idIndex = await this.idIndex()
     const { relativePath } = await this.buildPaths(this.assertCollection(collectionPath), slug)
     return idIndex.findByPath(relativePath)
+  }
+
+  /**
+   * Check whether a document already exists on disk for this collection+slug.
+   * Used by the write boundary to distinguish creates from edits (create
+   * scaffolds and maxItems enforcement).
+   */
+  async documentExists(collectionPath: LogicalPath, slug: Slug | '' = ''): Promise<boolean> {
+    const schemaItem = this.assertSchemaItem(collectionPath)
+    const { absolutePath } = await this.buildPaths(schemaItem, slug)
+    try {
+      await fs.access(absolutePath)
+      return true
+    } catch (err) {
+      if (isNodeError(err) && err.code === 'ENOENT') return false
+      throw err
+    }
+  }
+
+  /**
+   * Count existing entries of a given entry type in a collection, by filename
+   * (entry filenames embed their type: `{type}.{slug}.{id}.{ext}`). Used to
+   * enforce `EntryTypeConfig.maxItems` server-side at the create boundary.
+   */
+  async countEntriesOfType(collectionPath: LogicalPath, entryTypeName: string): Promise<number> {
+    this.assertCollection(collectionPath)
+    const collectionRoot = await resolveCollectionPath(this.root, collectionPath)
+    if (!collectionRoot) return 0
+    const entries = await fs
+      .readdir(collectionRoot, { withFileTypes: true })
+      .catch((): Dirent[] => [])
+    return entries.filter(
+      (entry) => !entry.isDirectory() && extractEntryTypeFromFilename(entry.name) === entryTypeName,
+    ).length
   }
 
   /**

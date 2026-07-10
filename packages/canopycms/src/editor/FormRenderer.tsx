@@ -3,7 +3,7 @@
 import React from 'react'
 
 import { Alert, Button, Group, Paper, Stack, Text } from '@mantine/core'
-import { IconInfoCircle } from '@tabler/icons-react'
+import { IconAlertCircle, IconInfoCircle } from '@tabler/icons-react'
 
 import type {
   BlockFieldConfig,
@@ -79,6 +79,13 @@ export interface FormRendererProps {
   onLoadingStateChange?: (loadingState: FormValue) => void
   /** True when this entry's content conflicts with a recent change on the base branch */
   conflictNotice?: boolean
+  /**
+   * Per-field validation errors keyed by canonical canopy path (e.g.
+   * `blocks[0].title`). Rendered as a summary alert plus an inline message
+   * under each offending field. Produced by the save-path schema validation
+   * in useDraftManager (ED-H1) and by server 422 rejections.
+   */
+  fieldErrors?: Record<string, string>
 }
 
 export const FormRenderer: React.FC<FormRendererProps> = ({
@@ -98,6 +105,7 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   onResolvedValueChange,
   onLoadingStateChange,
   conflictNotice = false,
+  fieldErrors,
 }) => {
   // Use the extracted reference resolution hook for live preview
   useReferenceResolution({
@@ -108,7 +116,30 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
     onLoadingStateChange,
   })
 
+  // Wraps the rendered control with an inline validation message when this
+  // field has an active error (keyed by canonical canopy path, so errors land
+  // on nested object/block fields too). Passed down to BlockField/ObjectField
+  // so nested fields get the same decoration.
   const renderField = (
+    field: FieldConfig,
+    currentValue: unknown,
+    update: (v: unknown) => void,
+    path: Array<string | number>,
+  ) => {
+    const control = renderFieldControl(field, currentValue, update, path)
+    const error = fieldErrors?.[normalizeCanopyPath(path)]
+    if (!error) return control
+    return (
+      <Stack key={`error-${fieldKey(path)}`} gap={4}>
+        {control}
+        <Text size="xs" c="red" data-testid={`field-error-${fieldKey(path)}`}>
+          {error}
+        </Text>
+      </Stack>
+    )
+  }
+
+  const renderFieldControl = (
     field: FieldConfig,
     currentValue: unknown,
     update: (v: unknown) => void,
@@ -418,6 +449,24 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
         >
           Someone else has recently changed this page. You can keep editing — a reviewer will
           reconcile your changes when you submit.
+        </Alert>
+      )}
+
+      {fieldErrors && Object.keys(fieldErrors).length > 0 && (
+        <Alert
+          icon={<IconAlertCircle size={16} />}
+          color="red"
+          variant="light"
+          title="Fix these issues before saving"
+          data-testid="validation-alert"
+        >
+          <Stack gap={2}>
+            {Object.entries(fieldErrors).map(([path, message]) => (
+              <Text size="xs" key={path}>
+                {path}: {message}
+              </Text>
+            ))}
+          </Stack>
         </Alert>
       )}
 
