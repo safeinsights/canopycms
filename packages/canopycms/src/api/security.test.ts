@@ -43,9 +43,13 @@ vi.mock('../content-store', () => ({
       idIndex: vi.fn().mockResolvedValue({}),
       read: vi.fn().mockResolvedValue({ data: { title: 'Test' } }),
       resolveDocumentPath: vi.fn().mockResolvedValue({ relativePath: 'posts/hello' }),
+      documentExists: vi.fn().mockResolvedValue(false),
+      countEntriesOfType: vi.fn().mockResolvedValue(0),
     }
   }),
   ContentStoreError: class ContentStoreError extends Error {},
+  getDefaultEntryType: (entries: Array<{ default?: boolean }> | undefined) =>
+    entries && entries.length > 0 ? entries.find((e) => e.default) || entries[0] : undefined,
 }))
 
 // Mock ReferenceResolver

@@ -1641,3 +1641,54 @@ describe('ContentStore index invalidation', () => {
     expect((await otherStore.idIndex()).findById(otherId)?.relativePath).toContain('other-old')
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Write-boundary helpers: documentExists + countEntriesOfType (D4 / SCH-H3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContentStore documentExists / countEntriesOfType', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          { name: 'post', format: 'json' as const, schema: [], default: true },
+          { name: 'settings', format: 'json' as const, schema: [], maxItems: 1 },
+        ],
+      },
+    ],
+  } as const
+
+  const makeStore = async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
+    const config = defineCanopyTestConfig({ schema })
+    return new ContentStore(root, flattenSchema(schema, config.contentRoot))
+  }
+
+  it('reports existence of a document before and after write', async () => {
+    const store = await makeStore()
+    const posts = unsafeAsLogicalPath('content/posts')
+    expect(await store.documentExists(posts, unsafeAsSlug('hello'))).toBe(false)
+    await store.write(posts, unsafeAsSlug('hello'), { format: 'json', data: { a: 1 } })
+    expect(await store.documentExists(posts, unsafeAsSlug('hello'))).toBe(true)
+    expect(await store.documentExists(posts, unsafeAsSlug('other'))).toBe(false)
+  })
+
+  it('counts only entries of the requested entry type', async () => {
+    const store = await makeStore()
+    const posts = unsafeAsLogicalPath('content/posts')
+    expect(await store.countEntriesOfType(posts, 'post')).toBe(0)
+    await store.write(posts, unsafeAsSlug('one'), { format: 'json', data: {} }, 'post')
+    await store.write(posts, unsafeAsSlug('two'), { format: 'json', data: {} }, 'post')
+    await store.write(posts, unsafeAsSlug('main'), { format: 'json', data: {} }, 'settings')
+    expect(await store.countEntriesOfType(posts, 'post')).toBe(2)
+    expect(await store.countEntriesOfType(posts, 'settings')).toBe(1)
+    expect(await store.countEntriesOfType(posts, 'nope')).toBe(0)
+  })
+
+  it('returns 0 for a collection directory that does not exist yet', async () => {
+    const store = await makeStore()
+    expect(await store.countEntriesOfType(unsafeAsLogicalPath('content/posts'), 'post')).toBe(0)
+  })
+})

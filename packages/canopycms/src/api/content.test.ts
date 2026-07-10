@@ -15,7 +15,11 @@ vi.mock('../content-store', () => {
     ContentStore: vi.fn().mockImplementation(function () {
       return {
         resolvePath: vi.fn().mockReturnValue({
-          schemaItem: { logicalPath: 'content/posts', type: 'collection' },
+          schemaItem: {
+            logicalPath: 'content/posts',
+            type: 'collection',
+            entries: [{ name: 'post', format: 'json', schema: [], schemaRef: 'postSchema' }],
+          },
           slug: 'hello',
         }),
         resolveDocumentPath: vi.fn().mockReturnValue({
@@ -36,10 +40,14 @@ vi.mock('../content-store', () => {
         }),
         renameEntry: vi.fn().mockResolvedValue({ newPath: 'content/posts/new-slug' }),
         idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+        documentExists: vi.fn().mockResolvedValue(false),
+        countEntriesOfType: vi.fn().mockResolvedValue(0),
       }
     }),
     ContentStoreError: class ContentStoreError extends Error {},
     ContentConflictError: class ContentConflictError extends Error {},
+    getDefaultEntryType: (entries: Array<{ default?: boolean }> | undefined) =>
+      entries && entries.length > 0 ? entries.find((e) => e.default) || entries[0] : undefined,
   }
 })
 
@@ -133,6 +141,8 @@ describe('content api', () => {
       resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
       write: vi.fn().mockRejectedValue(new ContentConflictError()),
       idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+      documentExists: vi.fn().mockResolvedValue(true),
+      countEntriesOfType: vi.fn().mockResolvedValue(0),
     }
     vi.mocked(ContentStore).mockImplementationOnce(function () {
       return mockStore as any
@@ -197,6 +207,8 @@ describe('content api', () => {
           resolveDocumentPath: vi.fn().mockReturnValue({ relativePath: 'content/posts/hello' }),
           write: writeSpy,
           idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
+          documentExists: vi.fn().mockResolvedValue(false),
+          countEntriesOfType: vi.fn().mockResolvedValue(0),
         } as any
       })
 
@@ -412,6 +424,292 @@ describe('content api', () => {
         body: { data: { field: bigValue } },
       })
       expect(result.ok).toBe(false)
+    })
+  })
+
+  // ==========================================================================
+  // Write-boundary schema validation (COMPOUND-2) + maxItems (SCH-H3)
+  // ==========================================================================
+  describe('write boundary schema validation', () => {
+    const writeReq = { user: { type: 'authenticated' as const, userId: 'u1', groups: [] } }
+    const writeParams = {
+      branch: unsafeAsBranchName('feature/x'),
+      path: unsafeAsLogicalPath('posts/hello'),
+    }
+
+    const AUTHOR_ID = '5NVkkrB1MJUv' // exists in the mocked id index when listed in knownIds
+    const DANGLING_ID = 'Dang1ingRef2' // valid format, never in the index
+
+    const postSchema = [
+      { name: 'title', type: 'string', required: true },
+      { name: 'author', type: 'reference', required: true },
+      {
+        name: 'blocks',
+        type: 'block',
+        templates: [
+          {
+            name: 'quote',
+            fields: [
+              { name: 'text', type: 'string', required: true },
+              { name: 'source', type: 'reference' },
+            ],
+          },
+        ],
+      },
+    ]
+
+    /** Install a one-shot ContentStore mock with a real post schema. */
+    const mockStoreOnce = async (opts: {
+      exists?: boolean
+      count?: number
+      knownIds?: string[]
+      maxItems?: number
+    }) => {
+      const { ContentStore } = await import('../content-store')
+      const writeSpy = vi
+        .fn()
+        .mockResolvedValue({ collection: 'content/posts', format: 'json', data: {} })
+      const findById = vi.fn((id: string) =>
+        (opts.knownIds ?? []).includes(id)
+          ? {
+              type: 'entry',
+              relativePath: `authors.q52DCVPuH4ga/author.alice.${id}.json`,
+              collection: 'content/authors',
+              slug: 'alice',
+            }
+          : null,
+      )
+      vi.mocked(ContentStore).mockImplementationOnce(function () {
+        return {
+          resolvePath: vi.fn().mockReturnValue({
+            schemaItem: {
+              logicalPath: 'content/posts',
+              type: 'collection',
+              entries: [
+                {
+                  name: 'post',
+                  format: 'json',
+                  schema: postSchema,
+                  default: true,
+                  ...(opts.maxItems !== undefined ? { maxItems: opts.maxItems } : {}),
+                },
+              ],
+            },
+            slug: 'hello',
+          }),
+          resolveDocumentPath: vi.fn().mockResolvedValue({ relativePath: 'content/posts/hello' }),
+          documentExists: vi.fn().mockResolvedValue(opts.exists ?? true),
+          countEntriesOfType: vi.fn().mockResolvedValue(opts.count ?? 0),
+          idIndex: vi.fn().mockResolvedValue({ findById }),
+          write: writeSpy,
+        } as any
+      })
+      return { writeSpy }
+    }
+
+    it('rejects a save missing a required field with a per-field error', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: { author: AUTHOR_ID },
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([{ fieldPath: 'title', message: 'This field is required' }])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('rejects a save with a wrong-typed field', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: { title: 42, author: AUTHOR_ID },
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([{ fieldPath: 'title', message: 'Expected text' }])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('rejects a save with an empty required reference', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: { title: 'Hello', author: '' },
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([{ fieldPath: 'author', message: 'This field is required' }])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('rejects a save with a dangling (nonexistent) reference', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: { title: 'Hello', author: DANGLING_ID },
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([
+        { fieldPath: 'author', message: 'Referenced entry does not exist' },
+      ])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('saves a valid entry', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: { title: 'Hello', author: AUTHOR_ID },
+      })
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalled()
+    })
+
+    it('accepts a resolved reference object carried over from a read', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: { title: 'Hello', author: { id: AUTHOR_ID, slug: 'alice', name: 'Alice' } },
+      })
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalled()
+    })
+
+    it('rejects a block-nested missing required field (D1 traversal + D4 validation)', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: {
+          title: 'Hello',
+          author: AUTHOR_ID,
+          blocks: [{ template: 'quote', value: { text: '' } }],
+        },
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([
+        { fieldPath: 'blocks[0].text', message: 'This field is required' },
+      ])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('rejects a block-nested dangling reference', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ knownIds: [AUTHOR_ID] })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: {
+          title: 'Hello',
+          author: AUTHOR_ID,
+          blocks: [{ template: 'quote', value: { text: 'quoted', source: DANGLING_ID } }],
+        },
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([
+        { fieldPath: 'blocks[0].source', message: 'Referenced entry does not exist' },
+      ])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('allows the editor create scaffold (new entry, completely empty payload)', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ exists: false })
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'post' },
+        { format: 'json', data: {} },
+      )
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalled()
+    })
+
+    it('validates a create that carries data (no scaffold bypass)', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ exists: false })
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'post' },
+        { format: 'json', data: { title: '' } },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('rejects a create that would exceed maxItems (SCH-H3)', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({
+        exists: false,
+        maxItems: 1,
+        count: 1,
+        knownIds: [AUTHOR_ID],
+      })
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'post' },
+        { format: 'json', data: {} },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.error).toContain('allows at most 1 entry')
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('allows a create within the maxItems cap', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ exists: false, maxItems: 1, count: 0 })
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'post' },
+        { format: 'json', data: {} },
+      )
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalled()
+    })
+
+    it('does not apply maxItems to edits of an existing entry', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({
+        exists: true,
+        maxItems: 1,
+        count: 1,
+        knownIds: [AUTHOR_ID],
+      })
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'post' },
+        { format: 'json', data: { title: 'Hello', author: AUTHOR_ID } },
+      )
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalled()
+    })
+
+    it('returns 400 for an unknown entryType param', async () => {
+      const ctx = allowedCtx()
+      await mockStoreOnce({})
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'nope' },
+        { format: 'json', data: { title: 'Hello', author: AUTHOR_ID } },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(400)
     })
   })
 })
