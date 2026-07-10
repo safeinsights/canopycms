@@ -286,6 +286,7 @@ export const Editor: React.FC<EditorProps> = ({
     handleReload,
     isSelectedDirty,
     isAnyDirty,
+    fieldErrors,
   } = useDraftManager({
     branchName: branchNameState,
     selectedPath,
@@ -953,6 +954,7 @@ export const Editor: React.FC<EditorProps> = ({
                         highlightThreadId={highlightThreadId}
                         onAddComment={handleAddComment}
                         onResolveThread={handleResolveThread}
+                        fieldErrors={fieldErrors}
                         conflictNotice={
                           !!(
                             currentEntry?.contentId &&

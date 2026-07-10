@@ -12,13 +12,20 @@ import {
   normalizeContentPayload,
 } from '../editor-utils'
 import { isDataOnlyFormat } from '../../utils/format'
+import type { EntryFieldError } from '../../validation/entry-validator'
 import { useApiClient, type ApiClient } from '../context'
 
-/** Thrown by saveEntry when the API returns a non-200 response. Carries the HTTP status so callers can distinguish conflict (409) and validation rejection (422) from other errors. */
+/**
+ * Thrown by saveEntry when the API returns a non-200 response. Carries the
+ * HTTP status so callers can distinguish conflict (409) and validation
+ * rejection (422) from other errors, plus the server's structured per-field
+ * errors (when present) so the form can surface them next to the fields.
+ */
 export class SaveApiError extends Error {
   constructor(
     public readonly status: number,
     serverMessage?: string,
+    public readonly fieldErrors?: EntryFieldError[],
   ) {
     super(serverMessage || `Save failed: ${status}`)
     this.name = 'SaveApiError'
@@ -225,7 +232,7 @@ export function useEntryManager(options: UseEntryManagerOptions): UseEntryManage
       ...(expectedVersion !== undefined ? { expectedVersion } : {}),
     }
     const result = await apiClient.content.write(writeParams, writeBody)
-    if (!result.ok) throw new SaveApiError(result.status, result.error)
+    if (!result.ok) throw new SaveApiError(result.status, result.error, result.fieldErrors)
     // Update stored version token from write response
     if (entry.contentId && typeof result.data?.version === 'number') {
       entryVersionsRef.current.set(entry.contentId, result.data.version)
