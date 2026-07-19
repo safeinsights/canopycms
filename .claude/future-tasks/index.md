@@ -13,7 +13,7 @@ Priority levels:
 
 | File                                                               | Summary                                                                                                                                      |
 | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| [index-staleness-multiprocess.md](index-staleness-multiprocess.md) | ContentId index never invalidated after git ops (pullBase, rebase, checkout); index also diverges across processes; stale index → wrong-file saves |
+| [index-staleness-multiprocess.md](index-staleness-multiprocess.md) | RESOLVED — in-process invalidation (PR #91) + cross-process on-disk generation marker, suspicious-lookup backstop, and write existence guard (PR fix/content-index-cross-process). Residual NFS-caching windows documented in the file. |
 
 ---
 

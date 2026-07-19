@@ -10,9 +10,11 @@ import path from 'node:path'
  * loop, sync-core's content replacement — call invalidateContentIndexesForRoot() so the
  * next index access rebuilds from disk instead of serving stale ID→path mappings.
  *
- * SCOPE: in-process only. Two processes (e.g. Lambda + worker on shared EFS) each have
- * their own registry; a mutation in one process cannot invalidate indexes in another.
- * Cross-process divergence is a separate, still-open issue.
+ * SCOPE: in-process only — the zero-latency path for stores in the same process.
+ * Cross-process divergence (e.g. Lambda + worker on shared EFS, each with its own
+ * registry) is handled by the on-disk generation marker in
+ * content-index-generation.ts; invalidateContentIndexesDurable() there combines
+ * both scopes and is what mutation sites should call.
  *
  * Stores are held via WeakRef so short-lived (per-request) instances can be garbage
  * collected; a FinalizationRegistry prunes dead entries.

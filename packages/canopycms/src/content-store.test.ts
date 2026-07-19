@@ -7,6 +7,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { defineCanopyTestConfig } from './config-test'
 import { flattenSchema } from './config'
 import { ContentIdIndex } from './content-id-index'
+import {
+  bumpContentIndexGeneration,
+  invalidateContentIndexesDurable,
+} from './content-index-generation'
 import { invalidateContentIndexesForRoot } from './content-index-registry'
 import { ContentStore, ContentStoreError, ContentConflictError } from './content-store'
 import { generateId } from './id'
@@ -1639,6 +1643,263 @@ describe('ContentStore index invalidation', () => {
 
     // ...but leaves stores under unrelated roots untouched (still stale).
     expect((await otherStore.idIndex()).findById(otherId)?.relativePath).toContain('other-old')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-process index consistency (on-disk generation marker).
+// Two ContentStore instances on the SAME root model two processes sharing a
+// branch clone (Lambda + worker on EFS): ContentStore.write() never calls the
+// in-process registry, and the registry/withLock module state is inert across
+// same-root stores, so any second-store rebuild here provably comes from the
+// on-disk marker (or the suspicious-lookup backstop where stated).
+
+describe('ContentStore cross-process index consistency', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          {
+            name: 'post',
+            format: 'md' as const,
+            schema: [{ name: 'title', type: 'string' as const }],
+          },
+        ],
+      },
+    ],
+  } as const
+
+  const posts = unsafeAsLogicalPath('content/posts')
+
+  const makeStore = async (root?: string, indexFreshnessIntervalMs = 0) => {
+    const resolvedRoot = root ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-xproc-')))
+    const config = defineCanopyTestConfig({ schema })
+    return {
+      root: resolvedRoot,
+      store: new ContentStore(resolvedRoot, flattenSchema(schema, config.contentRoot), {
+        indexFreshnessIntervalMs,
+      }),
+    }
+  }
+
+  const writeEntry = (store: ContentStore, slug: string, existingId?: string) =>
+    store.write(
+      posts,
+      unsafeAsSlug(slug),
+      { format: 'md', data: { title: 'T' }, body: 'Body' },
+      undefined,
+      existingId as Parameters<ContentStore['write']>[4],
+    )
+
+  const getId = async (store: ContentStore, slug: string) => {
+    const id = await store.getIdForEntry(posts, unsafeAsSlug(slug))
+    if (!id) throw new Error(`expected id for entry ${slug}`)
+    return id
+  }
+
+  it('a write in one store becomes visible to a pre-built store on the same root', async () => {
+    const { root, store: storeA } = await makeStore()
+    const { store: storeB } = await makeStore(root)
+
+    // B builds its index BEFORE A writes — a lazy first scan must not be
+    // what makes the test pass.
+    await storeB.idIndex()
+
+    await writeEntry(storeA, 'fresh-entry')
+    const id = await getId(storeA, 'fresh-entry')
+
+    // B's next access probes the marker A bumped and rebuilds.
+    // (findById directly — readById would also engage the backstop.)
+    const location = (await storeB.idIndex()).findById(id)
+    expect(location?.slug).toBe('fresh-entry')
+  })
+
+  it('negative control: without a marker bump the other store stays stale; the bump alone heals it', async () => {
+    const { root, store: storeA } = await makeStore()
+    const { store: storeB } = await makeStore(root)
+    await writeEntry(storeA, 'seed') // creates content/posts on disk
+    await storeB.idIndex()
+
+    // Simulate a process that mutates files WITHOUT bumping the marker.
+    const manualId = generateId()
+    await fs.writeFile(
+      path.join(root, 'content', 'posts', `post.manual-entry.${manualId}.md`),
+      'Body',
+      'utf-8',
+    )
+
+    // Probe runs (interval 0) but the token is unchanged — B must NOT rescan.
+    expect((await storeB.idIndex()).findById(manualId)).toBeNull()
+
+    // The bump alone (no in-process registry involvement) makes B rebuild.
+    await bumpContentIndexGeneration(root)
+    expect((await storeB.idIndex()).findById(manualId)?.slug).toBe('manual-entry')
+  })
+
+  it('a slug rename in one store is resolved at the new path by the other store', async () => {
+    const { root, store: storeA } = await makeStore()
+    const { store: storeB } = await makeStore(root)
+    await writeEntry(storeA, 'old-slug')
+    const id = await getId(storeA, 'old-slug')
+    await storeB.idIndex()
+    expect((await storeB.idIndex()).findById(id)?.slug).toBe('old-slug')
+
+    await storeA.renameEntry(posts, unsafeAsSlug('old-slug'), unsafeAsSlug('new-slug'))
+
+    const location = (await storeB.idIndex()).findById(id)
+    expect(location?.slug).toBe('new-slug')
+    expect(location?.relativePath).not.toContain('old-slug')
+  })
+
+  it('a git-style on-disk mutation plus invalidateContentIndexesDurable reaches other stores', async () => {
+    const { root, store: storeA } = await makeStore()
+    const { store: storeB } = await makeStore(root)
+    const doc = await writeEntry(storeA, 'pre-rebase')
+    const id = await getId(storeA, 'pre-rebase')
+    await storeB.idIndex()
+
+    // Simulate a rebase/checkout swapping files underneath both stores,
+    // performed by a third process that calls the durable invalidation.
+    await fs.rename(doc.absolutePath, doc.absolutePath.replace('pre-rebase', 'post-rebase'))
+    await invalidateContentIndexesDurable(root)
+
+    expect((await storeB.idIndex()).findById(id)?.slug).toBe('post-rebase')
+  })
+
+  it('does not rebuild while the marker is unchanged, and throttles probes at the default interval', async () => {
+    const { root, store: storeA } = await makeStore()
+    const { store: storeB } = await makeStore(root)
+    await writeEntry(storeA, 'stable')
+    await storeB.idIndex()
+
+    const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+    try {
+      // Marker stable — repeated accesses on both stores probe (interval 0)
+      // but never rebuild.
+      await Promise.all([storeA.idIndex(), storeB.idIndex()])
+      await storeA.idIndex()
+      await storeB.idIndex()
+      expect(buildSpy).not.toHaveBeenCalled()
+
+      // A store with the default interval doesn't even see a fresh bump yet:
+      // its probe is throttled after the initial build.
+      const { store: throttled } = await makeStore(root, 1000)
+      await throttled.idIndex() // initial build (counts as a probe)
+      buildSpy.mockClear()
+      await bumpContentIndexGeneration(root)
+      await throttled.idIndex() // within the interval — probe throttled, no rebuild
+      expect(buildSpy).not.toHaveBeenCalled()
+    } finally {
+      buildSpy.mockRestore()
+    }
+  })
+
+  it('readById self-heals on an ID miss inside the residual window (no marker bump)', async () => {
+    const { root, store } = await makeStore()
+    await writeEntry(store, 'seed')
+    await store.idIndex()
+
+    // File appears without any bump — models the NFS attribute-cache window
+    // where another host's bump is not visible yet.
+    const manualId = generateId()
+    await fs.writeFile(
+      path.join(root, 'content', 'posts', `post.hidden-entry.${manualId}.md`),
+      'Body',
+      'utf-8',
+    )
+
+    const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+    try {
+      // Miss → one forced rebuild → resolves.
+      const doc = await store.readById(manualId as Parameters<ContentStore['readById']>[0])
+      expect(doc?.relativePath).toContain('hidden-entry')
+      expect(buildSpy).toHaveBeenCalledTimes(1)
+
+      // A genuinely dangling ID does not rebuild again within the allowance window.
+      const dangling = await store.readById(generateId() as Parameters<ContentStore['readById']>[0])
+      expect(dangling).toBeNull()
+      expect(buildSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      buildSpy.mockRestore()
+    }
+  })
+
+  it('readById self-heals on a stale hit whose file moved (no marker bump)', async () => {
+    const { store } = await makeStore()
+    const doc = await writeEntry(store, 'moves-away')
+    const id = await getId(store, 'moves-away')
+    await store.idIndex()
+
+    // Rename on disk without a bump: the index still hits, but the read ENOENTs.
+    await fs.rename(doc.absolutePath, doc.absolutePath.replace('moves-away', 'moved-here'))
+
+    const healed = await store.readById(id)
+    expect(healed?.relativePath).toContain('moved-here')
+  })
+
+  it('write() with existingId refuses to recreate an entry another store renamed', async () => {
+    const { root, store: storeA } = await makeStore()
+    // Large interval: models a store whose probe hasn't fired (residual window).
+    const { store: storeB } = await makeStore(root, 60_000)
+    await writeEntry(storeA, 'contested')
+    const id = await getId(storeA, 'contested')
+    await storeB.idIndex() // B's index now maps id → contested
+
+    await storeA.renameEntry(posts, unsafeAsSlug('contested'), unsafeAsSlug('relocated'))
+
+    // B, still stale, saves "in place" at the old slug — must conflict, not
+    // recreate the old file (which would leave two files with the same ID).
+    await expect(writeEntry(storeB, 'contested', id)).rejects.toThrow(ContentConflictError)
+    const files = await fs.readdir(path.join(root, 'content', 'posts'))
+    expect(files.filter((f) => f.includes(id))).toHaveLength(1)
+  })
+
+  it('write() with existingId recreates an entry another store deleted (last writer wins)', async () => {
+    const { root, store: storeA } = await makeStore()
+    const { store: storeB } = await makeStore(root, 60_000)
+    await writeEntry(storeA, 'doomed')
+    const id = await getId(storeA, 'doomed')
+    await storeB.idIndex()
+
+    await storeA.delete(posts, unsafeAsSlug('doomed'))
+
+    // The ID is nowhere on disk — recreating is an allowed last-writer-wins.
+    const recreated = await writeEntry(storeB, 'doomed', id)
+    expect(recreated.relativePath).toContain('doomed')
+    const files = await fs.readdir(path.join(root, 'content', 'posts'))
+    expect(files.filter((f) => f.includes(id))).toHaveLength(1)
+  })
+
+  it("a store's own writes never trigger a self-rescan (adopted token)", async () => {
+    const { store } = await makeStore() // interval 0: probes on every access
+    await writeEntry(store, 'first')
+    const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+    try {
+      await writeEntry(store, 'second')
+      await store.idIndex()
+      await store.read(posts, unsafeAsSlug('second'))
+      expect(buildSpy).not.toHaveBeenCalled()
+    } finally {
+      buildSpy.mockRestore()
+    }
+  })
+
+  it('rebuilds swap in a fresh index; in-flight holders keep a queryable snapshot', async () => {
+    const { store } = await makeStore()
+    await writeEntry(store, 'snapshot')
+    const id = await getId(store, 'snapshot')
+
+    const before = await store.idIndex()
+    store.invalidateIndex()
+    const after = await store.idIndex()
+
+    expect(after).not.toBe(before)
+    // The old snapshot was not cleared in place — holders across awaits still
+    // get consistent answers.
+    expect(before.findById(id)?.slug).toBe('snapshot')
+    expect(after.findById(id)?.slug).toBe('snapshot')
   })
 })
 

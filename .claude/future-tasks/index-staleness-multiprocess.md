@@ -1,163 +1,90 @@
 # Index Staleness and Multi-Process Consistency
 
-## Problem
+## Status: RESOLVED (in-process PR #91, cross-process PR "fix/content-index-cross-process") — residual windows documented below
 
-The `ContentIdIndex` maintains an in-memory mapping of content IDs to file paths. In multi-process environments (multiple Lambda instances, concurrent editors), the index can become stale when:
+The `ContentIdIndex` maintains an in-memory mapping of content IDs to file paths per
+`ContentStore` instance. It went stale when files changed underneath a store — by git
+operations in the same process, or by ANY mutation in another process sharing the
+filesystem (multiple warm Lambda containers + the EC2 worker on EFS; `canopy sync`
+CLI beside `next dev` locally).
 
-1. **Another process writes a new file**: Current process's index misses the new ID until rebuild
-2. **Slug changes cause file renames**: Old file remains on disk when `write()` creates a new file with different ID
-3. **Direct file deletions**: Files deleted outside `ContentStore.delete()` (e.g., git operations) leave stale entries in index
-4. **Race conditions**: Multiple processes creating entries simultaneously with unique IDs
-5. **Git operations rewrite working tree**: `pullBase`, `pullCurrentBranch`, `rebaseOntoBase`, `checkoutBranch` can change files on disk, but `indexLoaded` is a one-shot flag — the in-memory index is never invalidated after these operations. In a warm Lambda container or long-lived Next.js server, the index reflects pre-operation state indefinitely. This can cause saves to go to the wrong file. (`content-store.ts:108` — added in 2026-04 baseline review)
+## What was implemented
 
-Current behavior: Eventual consistency - processes continue with stale index until they happen to rebuild it.
+### In-process (PR #91, commit 9dce11a)
 
-## Impact
+- `content-index-registry.ts`: WeakRef registry keyed by resolved store root;
+  `invalidateContentIndexesForRoot(root)` marks stores at/under a root stale.
+- `ContentStore.idIndex()`: generation-counter lazy rebuild with in-flight dedup.
+- Hooked into git checkout/pullBase/pullCurrentBranch/rebaseOntoBase (in `finally`),
+  sync-core's content-dir swap, and the worker's rebase loop.
+- Slug-change cleanup in `write()` (old Option 3) had already landed.
 
-- **Severity**: Low for human editors (single concurrent edit rare)
-- **Risk**: Medium for automated systems or bulk operations
-- **User experience**: Entries might temporarily "disappear" until index rebuilds
+### Cross-process (this PR)
 
-## Related Code
+- **On-disk generation marker** (`content-index-generation.ts`): every mutation of
+  indexed files rewrites `{branchRoot}/.canopy-meta/content-index.generation` with a
+  fresh random token (atomic temp+rename). A random token instead of a counter: readers
+  only need "changed since I captured it", and a counter's read-modify-write silently
+  loses concurrent bumps without a lock.
+- **Single durable entry point** `invalidateContentIndexesDurable(root)` = bump marker
+  then in-process invalidation. Used by: GitManager working-tree ops, sync-core,
+  the worker's rebase, SchemaOps collection create/rename/delete (previously not
+  invalidating at all), and CLI `sync both`/`abort`/merge-abort paths (also previously
+  uncovered — and the CLI is a separate process, so only the marker reaches the dev server).
+- **Reader protocol** in `ContentStore.idIndex()`: throttled marker probe (default 1s,
+  `indexFreshnessIntervalMs` option) when otherwise fresh; the token is captured
+  *before* each scan and recorded only by the rebuild path, so a bump landing mid-scan
+  forces another rebuild. Rebuilds now build a fresh `ContentIdIndex` and swap it in
+  (never `clear()` in place), so in-flight holders keep a consistent snapshot.
+- **Self-adoption**: a store's own `write()`/`delete()`/`renameEntry()` bumps the
+  marker and adopts the written token (guarded: only when no rebuild raced), so own
+  writes never trigger a self-rescan.
+- **Suspicious-lookup backstop** (old Option 1, generalized): `readById` and reference
+  resolution force one un-throttled rebuild on an ID miss *or* an index hit whose file
+  is gone (ENOENT), then retry once. Time-boxed (5s window) so dangling IDs can't thrash.
+- **Write existence guard**: `write()` with a caller-supplied `existingId` whose target
+  file is missing consults the directory listing; if the ID actually lives at a
+  different slug (another process renamed it), it throws `ContentConflictError` instead
+  of recreating the old path — this closes the duplicate-ID-file corruption vector
+  (two files with the same embedded ID poison every rebuild with "ID collision detected").
+- Settings workspaces skip the marker (`skipIndexMarker` on GitManager): no ContentStore
+  ever roots there, and orphan settings branches must not accumulate untracked files.
+- CLI `sync` auto-created workspaces now get the `.canopy-meta/` git exclude
+  (`ensureGitExcludePattern`), like fully provisioned workspaces always did.
 
-- [content-id-index.ts:39-42](packages/canopycms/src/content-id-index.ts#L39-L42) - Documents the issue
-- [content-store.ts:356-422](packages/canopycms/src/content-store.ts#L356-L422) - `write()` doesn't clean up old files
-- [content-store.ts:68-74](packages/canopycms/src/content-store.ts#L68-L74) - Lazy index loading
+### Rejected options (from the original proposal)
 
-## Proposed Solutions
+- **Filesystem watcher (chokidar)**: dead end — inotify does not propagate across
+  hosts on NFS/EFS, and the prod deployment is exactly multiple hosts on EFS.
+- **Startup `validateIndex()`**: subsumed — every per-request store already scans
+  fresh on first access, and the backstop self-heals mid-request staleness.
 
-### Option 1: Automatic Rebuild on Miss (Defensive)
+## Residual staleness windows (accepted, documented in content-index-generation.ts)
 
-Add fallback logic when expected IDs aren't found:
+All bounded in practice by per-request ContentStore lifetimes (every construction site
+is request/call-scoped, so first access always scans fresh) and self-healed by the backstop:
 
-```typescript
-async findById(id: string): Promise<IdLocation | null> {
-  let location = this.idToLocation.get(id)
+- **(A) NFS attribute caching (benign direction)**: another host may not see a new
+  marker for up to the attribute-cache timeout (~3–60s on default EFS mounts; `noac`
+  not assumed). Stale token → stale index until the cache expires.
+- **(B) Probe throttle**: up to `indexFreshnessIntervalMs` (default 1s).
+- **(C) Self-adoption lost notification**: if a store's own bump lands after a
+  concurrent foreign bump, the foreign mutation is missed until the backstop fires or
+  the store dies; window = last token observation → own bump rename.
+- **(E) Fresh-token/stale-scan (malignant direction, cross-host only)**: NFS
+  revalidates the marker file on open, but a rebuild's `readdir`s may be served from
+  dentry/attribute caches — a scan can record a NEW token against PRE-mutation
+  listings, leaving that store confidently stale until the next bump. Structurally
+  unfixable with a filesystem marker; bounded by per-request lifetimes + backstop.
 
-  // If not found, try rebuilding index once
-  if (!location && !this.hasRebuiltOnce) {
-    await this.buildFromFilenames('content')
-    this.hasRebuiltOnce = true
-    location = this.idToLocation.get(id)
-  }
+## Small follow-ups (not blocking)
 
-  return location || null
-}
-```
-
-**Pros**: Self-healing, no adopter changes needed
-**Cons**: Performance hit on first miss, could mask bugs
-
-### Option 2: Filesystem Watcher for Index Updates
-
-Use `chokidar` (already a dependency) to watch for file changes and incrementally update the index:
-
-```typescript
-private watcher?: FSWatcher
-
-async startWatching(): Promise<void> {
-  this.watcher = chokidar.watch(this.root, {
-    ignored: /(^|[\/\\])\.|_ids_/,
-    persistent: true
-  })
-
-  this.watcher
-    .on('add', (path) => this.handleFileAdded(path))
-    .on('unlink', (path) => this.handleFileDeleted(path))
-    .on('rename', (oldPath, newPath) => this.handleFileRenamed(oldPath, newPath))
-}
-```
-
-**Pros**: Real-time updates, efficient
-**Cons**: Complexity, needs lifecycle management, might not work across processes on same filesystem
-
-### Option 3: Cleanup Old Files on Slug Change
-
-In `ContentStore.write()`, detect if the entry exists with a different path and delete the old file:
-
-```typescript
-async write(collectionPath: string, slug: string, input: WriteInput): Promise<ContentDocument> {
-  // ... existing code ...
-
-  if (id) {
-    const existing = idIndex.findById(id)
-    if (existing && existing.relativePath !== relativePath) {
-      // Slug changed - delete old file
-      const oldAbsolutePath = path.join(this.root, existing.relativePath)
-      await fs.unlink(oldAbsolutePath).catch(() => {
-        // Ignore if already deleted
-      })
-    }
-  }
-
-  // ... write new file and update index ...
-}
-```
-
-**Pros**: Prevents orphaned files
-**Cons**: Could be surprising if user expects old file to remain
-
-### Option 4: Index Validation on Startup
-
-Add a method to check if indexed files still exist and remove stale entries:
-
-```typescript
-async validateIndex(): Promise<{ removed: number; errors: string[] }> {
-  const removed: string[] = []
-  const errors: string[] = []
-
-  for (const [id, location] of this.idToLocation) {
-    const absolutePath = path.join(this.root, location.relativePath)
-    try {
-      await fs.access(absolutePath)
-    } catch {
-      // File doesn't exist - remove from index
-      this.remove(id)
-      removed.push(id)
-    }
-  }
-
-  return { removed: removed.length, errors }
-}
-```
-
-**Pros**: Simple, catches deletions from any source
-**Cons**: I/O cost, doesn't help with missing entries (only removes stale ones)
-
-## Recommended Approach
-
-Combine **Option 3** (cleanup on slug change) and **Option 4** (validation on startup):
-
-1. **Short-term**: Implement Option 3 to prevent orphaned files during normal operations
-2. **Medium-term**: Add Option 4 and call it during `idIndex()` initialization in prod mode
-3. **Long-term**: Consider Option 1 as a defensive fallback if issues persist
-
-## Implementation Checklist
-
-- [ ] Add cleanup logic in `ContentStore.write()` to detect and remove old files on slug change
-- [ ] Add `validateIndex()` method to `ContentIdIndex`
-- [ ] Call `validateIndex()` during lazy index load in prod mode (not dev, to avoid thrashing)
-- [ ] Add tests for slug change scenarios
-- [ ] Add tests for validation with missing files
-- [ ] Add telemetry/logging when stale entries are found
-- [ ] Document the behavior in adopter guide
-
-## Testing Strategy
-
-1. **Unit tests**: Test slug change cleanup and validation separately
-2. **Integration tests**: Simulate multi-process scenarios:
-   - Two ContentStore instances pointing to same filesystem
-   - One writes, other reads immediately
-   - Verify eventual consistency behavior
-3. **Manual testing**: Test with actual EFS in AWS Lambda environment
-
-## Telemetry/Monitoring
-
-Add metrics to track:
-
-- Index rebuild frequency
-- Stale entries removed during validation
-- Time spent in validation
-- Cache hit/miss ratio for findById lookups
-
-This helps understand if the issue becomes a real problem in production.
+- A collision-poisoned tree (duplicate embedded IDs on disk, e.g. hand-edited) still
+  makes every rebuild throw, 500ing the branch until fixed. The write existence guard
+  prevents the CMS from *creating* that state, but a degrade-to-first-wins-with-warning
+  rebuild could make it recoverable. Pre-existing behavior, unchanged.
+- Worker rebase abort paths skip invalidation when the abort itself fails (tree state
+  unknown); benign when abort succeeds. Pre-existing.
+- Lock keys are still physical paths, not content IDs — see
+  [content-store-lock-key.md](content-store-lock-key.md) (P2, unchanged by this work;
+  the existence guard removes the worst consequence of that race).
