@@ -29,8 +29,11 @@ import { NextResponse } from 'next/server'
 // API calls, and the core fails closed in prod mode, but this defense-in-depth
 // redirect is gone). The warning below only helps you notice the mismatch.
 
+let warnedAuthModeMismatch = false
+
 export default function middleware() {
-  if (process.env.CANOPY_AUTH_MODE === 'clerk') {
+  if (process.env.CANOPY_AUTH_MODE === 'clerk' && !warnedAuthModeMismatch) {
+    warnedAuthModeMismatch = true
     console.warn(
       '[canopycms] CANOPY_AUTH_MODE=clerk is set, but middleware.ts is still the dev ' +
         'passthrough generated for dev auth. Replace this file with the Clerk middleware ' +

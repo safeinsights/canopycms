@@ -1839,6 +1839,105 @@ describe('ContentStore cross-process index consistency', () => {
     expect(healed?.relativePath).toContain('moved-here')
   })
 
+  it('resolveSingleReference heals every miss in a list:true reference batch, not just the first', async () => {
+    // A dedicated schema: a `posts` entry with a list:true reference field
+    // pointing at `authors` entries, so resolving one post fans out into a
+    // Promise.all batch of resolveSingleReference calls (content-store.ts
+    // resolveReferencesInData, the `field.list && Array.isArray(value)` path).
+    const refSchema = {
+      collections: [
+        {
+          name: 'authors',
+          path: 'authors',
+          entries: [
+            {
+              name: 'author',
+              format: 'md' as const,
+              schema: [{ name: 'name', type: 'string' as const }],
+            },
+          ],
+        },
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              schema: [
+                { name: 'title', type: 'string' as const },
+                { name: 'contributors', type: 'reference' as const, list: true },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema: refSchema })
+    const store = new ContentStore(root, flattenSchema(refSchema, config.contentRoot))
+
+    const authorsPath = unsafeAsLogicalPath('content/authors')
+    const postsPath = unsafeAsLogicalPath('content/posts')
+
+    const authorSlugs = ['author-a', 'author-b', 'author-c']
+    const authorIds: string[] = []
+    const authorDocs: Awaited<ReturnType<typeof store.write>>[] = []
+    for (const slug of authorSlugs) {
+      const doc = await store.write(authorsPath, unsafeAsSlug(slug), {
+        format: 'md',
+        data: { name: slug },
+        body: '',
+      })
+      authorDocs.push(doc)
+      const id = await store.getIdForEntry(authorsPath, unsafeAsSlug(slug))
+      if (!id) throw new Error(`expected id for author ${slug}`)
+      authorIds.push(id)
+    }
+
+    await store.write(postsPath, unsafeAsSlug('the-post'), {
+      format: 'md',
+      data: { title: 'The Post', contributors: authorIds },
+      body: 'Body',
+    })
+
+    // Build the index BEFORE the external mutation, so all three author
+    // lookups miss against the same stale snapshot when the post is resolved.
+    await store.idIndex()
+
+    // Move all three referenced entries on disk behind the store's back, with
+    // no marker bump -- same external-mutation shape as 'readById self-heals
+    // on a stale hit whose file moved' above, just applied to every reference
+    // in the batch instead of just one.
+    for (let i = 0; i < authorDocs.length; i++) {
+      await fs.rename(
+        authorDocs[i].absolutePath,
+        authorDocs[i].absolutePath.replace(authorSlugs[i], `${authorSlugs[i]}-moved`),
+      )
+    }
+
+    const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+    try {
+      const doc = await store.read(postsPath, unsafeAsSlug('the-post'))
+      if (doc.format !== 'md' && doc.format !== 'mdx') throw new Error('expected markdown')
+      const resolvedContributors = doc.data.contributors as Array<Record<string, unknown> | null>
+
+      // Every reference in the batch must heal -- not just the first caller
+      // to win the throttled forced refresh.
+      expect(resolvedContributors).toHaveLength(3)
+      authorSlugs.forEach((slug, i) => {
+        expect(resolvedContributors[i]).not.toBeNull()
+        expect(resolvedContributors[i]?.slug).toBe(`${slug}-moved`)
+      })
+
+      // The forced rebuild itself stays throttled to once for the whole batch.
+      expect(buildSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      buildSpy.mockRestore()
+    }
+  })
+
   it('write() with existingId refuses to recreate an entry another store renamed', async () => {
     const { root, store: storeA } = await makeStore()
     // Large interval: models a store whose probe hasn't fired (residual window).

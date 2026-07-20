@@ -280,10 +280,14 @@ export class ContentStore {
   /**
    * Backstop for the residual staleness windows of the cross-process marker
    * (NFS attribute caching, probe throttle, self-adoption — see
-   * content-index-generation.ts): force one un-throttled rebuild in response
-   * to a suspicious lookup (an ID miss, or an index hit whose file is gone).
-   * Time-boxed so genuinely dangling IDs cost at most one rescan per window.
-   * Returns true if a refresh was performed.
+   * content-index-generation.ts): force one rebuild in response to a
+   * suspicious lookup (an ID miss, or an index hit whose file is gone), but
+   * throttle how often a caller can force one. Time-boxed so genuinely
+   * dangling IDs cost at most one rescan per window. Returns true if a
+   * refresh was performed by THIS call; callers that lose the throttle race
+   * still benefit — idIndex() dedupes concurrent builds, so a caller that won
+   * the race rebuilds the index for everyone, and callers should still retry
+   * their lookup against the live index regardless of this return value.
    */
   private async refreshIndexForSuspiciousLookup(): Promise<boolean> {
     const now = Date.now()
@@ -1175,7 +1179,14 @@ export class ContentStore {
    *
    * Suspicious results (ID missing from the index, or an index hit whose file
    * is gone) trigger one forced index refresh and a retry — self-healing for
-   * mutations by other processes inside the marker's residual windows.
+   * mutations by other processes inside the marker's residual windows. The
+   * forced refresh itself is throttled (see refreshIndexForSuspiciousLookup),
+   * but the retry against the live index always runs regardless of whether
+   * this call won the throttle race: when a `list: true` reference array is
+   * resolved via Promise.all, every miss shares the same stale snapshot, and
+   * idIndex() dedupes concurrent builds — so a sibling call that wins the
+   * throttle and rebuilds heals every other miss in the same batch, not just
+   * the first.
    */
   private async resolveSingleReference(
     id: string,
@@ -1183,7 +1194,11 @@ export class ContentStore {
   ): Promise<Record<string, unknown> | null> {
     const first = await this.resolveSingleReferenceOnce(id, idIndex)
     if (first !== STALE_LOOKUP) return first
-    if (!(await this.refreshIndexForSuspiciousLookup())) return null
+    // Force a rebuild (throttled). Even when this caller loses the throttle,
+    // retry against the live index: a sibling lookup in the same batch may have
+    // won it and invalidated/rebuilt (idIndex() dedupes in-flight builds), so
+    // every miss in a Promise.all batch heals, not just the first.
+    await this.refreshIndexForSuspiciousLookup()
     const second = await this.resolveSingleReferenceOnce(id, await this.idIndex())
     return second === STALE_LOOKUP ? null : second
   }

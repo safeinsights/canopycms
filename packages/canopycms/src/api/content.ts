@@ -121,9 +121,14 @@ const MAX_CONTENT_DATA_BYTES = 2_000_000 // ~2MB of structured field data (seria
 
 const boundedContentDataSchema = z
   .record(z.unknown())
-  .refine((data) => JSON.stringify(data).length <= MAX_CONTENT_DATA_BYTES, {
-    message: `data payload exceeds maximum size of ${MAX_CONTENT_DATA_BYTES} bytes`,
-  })
+  // TextEncoder measures actual UTF-8 bytes; String#length counts UTF-16 code
+  // units and undercounts multi-byte content by up to 3x.
+  .refine(
+    (data) => new TextEncoder().encode(JSON.stringify(data)).length <= MAX_CONTENT_DATA_BYTES,
+    {
+      message: `data payload exceeds maximum size of ${MAX_CONTENT_DATA_BYTES} bytes`,
+    },
+  )
 
 const writeContentBodySchema = z.object({
   format: z.enum(['json', 'md', 'mdx', 'yaml']),
@@ -319,8 +324,10 @@ const writeContentHandler = async (
     const exists = await store.documentExists(schemaItem.logicalPath, slug)
 
     // SCH-H3: enforce maxItems server-side at the create boundary. The editor
-    // only gates its "Add" button; a direct API create (or two racing editors)
-    // could otherwise exceed the cap.
+    // only gates its "Add" button; a direct API create could otherwise exceed
+    // the cap. Best-effort under concurrency: the count-then-create below is
+    // not atomic, so two simultaneous creates can still race past the cap —
+    // the guard's real target is the single-request direct-API bypass.
     if (!exists && maxItems !== undefined && entryTypeName) {
       const collectionPath =
         schemaItem.type === 'entry-type' ? schemaItem.parentPath : schemaItem.logicalPath

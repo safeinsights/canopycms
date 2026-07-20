@@ -85,17 +85,24 @@ export class PermanentTaskError extends Error {}
  *   most push/fetch failures are connectivity or contention and the retry
  *   budget bounds the pathological cases)
  * - HTTP 408 (request timeout) and 429 (rate limited)
+ * - HTTP 403 that carries a rate-limit signal (see `isRateLimitSignal403`):
+ *   GitHub returns 403, not 429, for both primary and secondary/abuse rate
+ *   limits, and our Octokit instance has no throttling/retry plugin — without
+ *   this carve-out a rate-limited push-and-create-or-update-pr task would
+ *   fail permanently and wedge the branch (`sync-failed`, no retry).
  * - HTTP 5xx (server-side, usually recovers)
  *
  * Permanent — retrying the identical request cannot succeed:
  * - PermanentTaskError (malformed payload, unknown action)
- * - other HTTP 4xx (e.g. 401/403/404/422): the request itself is bad
+ * - other HTTP 4xx (e.g. 401/404/422): the request itself is bad
+ * - plain HTTP 403 with no rate-limit signal: a real permission denial
  */
 export function isPermanentTaskFailure(err: unknown): boolean {
   if (err instanceof PermanentTaskError) return true
   const status = getHttpStatus(err)
   if (status === null) return false
   if (status === 408 || status === 429) return false
+  if (status === 403 && isRateLimitSignal403(err)) return false
   return status >= 400 && status < 500
 }
 
@@ -106,6 +113,33 @@ function getHttpStatus(err: unknown): number | null {
     if (typeof status === 'number') return status
   }
   return null
+}
+
+/** Narrow an unknown value to a response-headers record, if present (Octokit lowercases header names). */
+function getResponseHeaders(err: unknown): Record<string, unknown> | null {
+  if (typeof err !== 'object' || err === null || !('response' in err)) return null
+  const response = (err as { response: unknown }).response
+  if (typeof response !== 'object' || response === null || !('headers' in response)) return null
+  const headers = (response as { headers: unknown }).headers
+  if (typeof headers !== 'object' || headers === null) return null
+  return headers as Record<string, unknown>
+}
+
+/**
+ * Detect whether a 403 is a GitHub rate-limit response rather than a plain
+ * permission denial. GitHub signals rate limiting on 403s three ways: the
+ * primary limit zeroes out `x-ratelimit-remaining`, secondary/abuse limits
+ * often include a `retry-after` header, and both cases produce a message
+ * containing "rate limit" (e.g. "You have exceeded a secondary rate limit").
+ */
+function isRateLimitSignal403(err: unknown): boolean {
+  const headers = getResponseHeaders(err)
+  if (headers) {
+    if (headers['x-ratelimit-remaining'] === '0') return true
+    if (typeof headers['retry-after'] === 'string' && headers['retry-after'].length > 0) return true
+  }
+  if (err instanceof Error && /rate limit/i.test(err.message)) return true
+  return false
 }
 
 // Payload validation helpers — fail fast with clear errors instead of silent `as` casts
@@ -252,6 +286,11 @@ export class CmsWorker {
    * No acquire retries: a second worker exits immediately, matching daemon
    * semantics (the supervisor restarts it later). After a crash, the dead
    * holder's heartbeat expires within lockStaleMs and the next start succeeds.
+   *
+   * Staleness is judged by comparing the lock's mtime against the local
+   * clock, so correct cross-host takeover assumes reasonable clock agreement
+   * between hosts (e.g. NTP); with the default TTL, ordinary clock skew is
+   * negligible, but a host with a badly wrong clock could misjudge liveness.
    */
   private async acquireLock(): Promise<void> {
     await fs.mkdir(this.taskDir, { recursive: true })

@@ -38,6 +38,7 @@ Priority levels:
 
 | File                                                                               | Summary                                                                                                                    |
 | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| [assets-media-system.md](assets-media-system.md)                                   | Assets/media system design (agreed 2026-07-19): S3 content-addressed storage, presigned direct upload, sharp pipeline, image field + media manager, CDK asset bucket |
 | [content-store-lock-key.md](content-store-lock-key.md)                             | Use content ID (not physical path) as lock key in ContentStore — immune to rename races; new-entry fallback to logical key |
 | [validate-entry-type-names.md](validate-entry-type-names.md)                       | Reference fields can specify non-existent `entryType` names; add config-time validation                                    |
 | [rename-collection-name-to-key.md](rename-collection-name-to-key.md)               | Rename `collection.name` → `collection.key` to clarify its machine-readable role                                           |
@@ -61,6 +62,7 @@ Priority levels:
 | [static-export-sitemap.md](static-export-sitemap.md)                               | Static-export sitemap helper: enumerate published entries + singletons → `sitemap.xml` (framework-agnostic core + Next adapter) |
 | [static-export-seo-metadata.md](static-export-seo-metadata.md)                     | Static-export SEO metadata helper + recommended SEO field group → Next `Metadata`                                          |
 | [entry-navigator-scalability.md](entry-navigator-scalability.md)                   | Editor navigator loads all entries up front with a hard 10,000 ceiling; move to collection-scoped/lazy loading (+ keyset cursor) |
+| [pr106-review-followups.md](pr106-review-followups.md)                             | Deferred items from the PR #106 integration review: mode-default decision, lazy Clerk plugin vs pipeline secret, insecureDevOnly allowlist, worker PR-logic dedup, editor lows, test gaps |
 
 ---
 

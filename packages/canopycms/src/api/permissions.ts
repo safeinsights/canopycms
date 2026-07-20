@@ -5,6 +5,7 @@ import type { PathPermission } from '../config'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
 import { loadPathPermissions, savePathPermissions, loadPermissionsFile } from '../authorization'
 import { permissionPathSchema } from './validators'
+import { MAX_ENTRIES_PER_PAGE } from './entries-constants'
 import { defineEndpoint } from './route-builder'
 import { getSettingsBranchContext, commitSettings } from './settings-helpers'
 import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
@@ -48,8 +49,9 @@ const searchUsersParamsSchema = z.object({
   q: z.string(),
   // Coerced + range-checked (consistent with api/entries.ts's listEntriesParamsSchema)
   // rather than z.string() + an unchecked parseInt(), which silently produced NaN
-  // for a non-numeric limit (API-M2).
-  limit: z.coerce.number().int().min(1).optional(),
+  // for a non-numeric limit (API-M2). Capped like listEntries so a caller cannot
+  // request an unbounded page from the auth provider.
+  limit: z.coerce.number().int().min(1).max(MAX_ENTRIES_PER_PAGE).optional(),
 })
 
 const getUserMetadataParamsSchema = z.object({

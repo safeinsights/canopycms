@@ -28,6 +28,7 @@ import {
 } from '../sync-core'
 import { invalidateContentIndexesDurable } from '../content-index-generation'
 import { ensureGitExcludePattern } from '../git-manager'
+import { operatingStrategy } from '../operating-mode'
 
 export interface SyncOptions {
   projectDir: string
@@ -122,8 +123,10 @@ async function selectBranch(
       // Runtime metadata (.canopy-meta/: branch metadata, comments, the
       // content-index generation marker) must never be staged by sync's
       // `add -A`. Fully provisioned workspaces get this exclude from
-      // GitManager.initializeWorkspace; this minimal one needs it too.
-      await ensureGitExcludePattern(branchPath, '.canopy-meta/')
+      // GitManager.initializeWorkspace; this minimal one needs it too. Sync is
+      // dev-mode-only (see branchesDir), so ask the dev strategy for the
+      // pattern rather than hardcoding it.
+      await ensureGitExcludePattern(branchPath, operatingStrategy('dev').getGitExcludePattern())
       p.log.info(`Created branch workspace: ${branchName}`)
     } else {
       const available = branches.length > 0 ? ` Available branches: ${branches.join(', ')}` : ''

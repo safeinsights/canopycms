@@ -7,7 +7,14 @@ import { useClerkAuthConfig } from 'canopycms-auth-clerk/client'
 import { NextCanopyEditorPage } from 'canopycms-next/client'
 import config from '{{CONFIG_IMPORT}}'
 
-const authMode = process.env.NEXT_PUBLIC_CANOPY_AUTH_MODE || 'dev'
+// Mirrors the server-side selection in canopy.ts: in prod mode Clerk is always
+// used. Keying this off NEXT_PUBLIC_CANOPY_AUTH_MODE alone would let a prod
+// deploy that forgets the env var send dev-auth headers at a server that
+// (correctly) enforces Clerk JWTs — every editor call rejected, no warning.
+const authMode =
+  config.client().mode === 'prod' || process.env.NEXT_PUBLIC_CANOPY_AUTH_MODE === 'clerk'
+    ? 'clerk'
+    : 'dev'
 
 function EditPageWithAuth({ authConfig }: { authConfig: Pick<CanopyClientConfig, 'editor'> }) {
   const [EditorPage] = useState(() => NextCanopyEditorPage(config.client(authConfig)))

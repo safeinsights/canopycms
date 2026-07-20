@@ -10,7 +10,7 @@ import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { authResultToCanopyUser } from '../user'
 import { loadInternalGroups, RESERVED_GROUPS } from '../authorization'
 import { clientOperatingStrategy } from '../operating-mode'
-import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
+import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 
 let warnedNoAdmins = false
 
@@ -218,10 +218,11 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       mainBranchContext = await apiCtx.getBranchContext(baseBranch)
     } catch (err) {
       const message = getErrorMessage(err)
-      // Full detail to server logs; sanitized detail to the (authenticated)
-      // client — git errors can embed credentials and filesystem paths.
+      // Full path detail to server logs; sanitized detail to the
+      // (authenticated) client. Credentials (git errors can embed them) are
+      // redacted even from server logs.
       console.error(
-        `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${message}`,
+        `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${redactCredentials(message)}`,
       )
       return jsonResponse(
         {

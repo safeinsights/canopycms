@@ -10,7 +10,7 @@ import { markAsMerged } from './branch-merge'
 import { defineEndpoint } from './route-builder'
 import { canPerformWorkflowAction } from '../authorization'
 import { syncSubmitPr } from './github-sync'
-import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
+import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 
 // Re-export for client generation
 export type { BranchMergeResponse } from './branch-merge'
@@ -50,12 +50,13 @@ const submitBranchForMergeHandler = async (
     await ctx.services.submitBranch({ context: branchContext })
   } catch (err) {
     const message = getErrorMessage(err)
-    // Full detail (including branchRoot, an absolute path) to server logs only;
-    // the client only ever sees the sanitized form (API-H2) — git errors can
-    // embed credentials (e.g. x-access-token:TOKEN@github.com) and filesystem paths.
+    // Full path detail (including branchRoot, an absolute path) to server logs
+    // only; the client only ever sees the sanitized form (API-H2). Credentials
+    // (e.g. x-access-token:TOKEN@github.com in git errors) are redacted even
+    // from server logs — a live installation token must never persist in logs.
     console.error(
       `CanopyCMS: Failed to push branch changes (${branchContext.branchRoot}):`,
-      message,
+      redactCredentials(message),
     )
     return {
       ok: false,

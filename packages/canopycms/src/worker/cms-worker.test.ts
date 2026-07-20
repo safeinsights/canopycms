@@ -220,7 +220,14 @@ describe('CmsWorker task timeout (DEP-H1)', () => {
 // ---------------------------------------------------------------------------
 
 describe('isPermanentTaskFailure (DEP-L1)', () => {
-  const withStatus = (status: number) => Object.assign(new Error(`HTTP ${status}`), { status })
+  const withStatus = (
+    status: number,
+    opts?: { message?: string; headers?: Record<string, string> },
+  ) =>
+    Object.assign(new Error(opts?.message ?? `HTTP ${status}`), {
+      status,
+      ...(opts?.headers ? { response: { headers: opts.headers } } : {}),
+    })
 
   it('classifies PermanentTaskError as permanent', () => {
     expect(isPermanentTaskFailure(new PermanentTaskError('bad payload'))).toBe(true)
@@ -239,6 +246,30 @@ describe('isPermanentTaskFailure (DEP-L1)', () => {
     expect(isPermanentTaskFailure(withStatus(503))).toBe(false)
     expect(isPermanentTaskFailure(new Error('socket hang up'))).toBe(false)
     expect(isPermanentTaskFailure('weird string error')).toBe(false)
+  })
+
+  it('classifies a bare 403 with no rate-limit signal as permanent', () => {
+    expect(isPermanentTaskFailure(withStatus(403))).toBe(true)
+  })
+
+  it('classifies a 403 with x-ratelimit-remaining: 0 as transient', () => {
+    expect(
+      isPermanentTaskFailure(withStatus(403, { headers: { 'x-ratelimit-remaining': '0' } })),
+    ).toBe(false)
+  })
+
+  it('classifies a 403 with a retry-after header as transient', () => {
+    expect(isPermanentTaskFailure(withStatus(403, { headers: { 'retry-after': '60' } }))).toBe(
+      false,
+    )
+  })
+
+  it('classifies a 403 with a secondary rate limit message as transient', () => {
+    expect(
+      isPermanentTaskFailure(
+        withStatus(403, { message: 'You have exceeded a secondary rate limit' }),
+      ),
+    ).toBe(false)
   })
 })
 

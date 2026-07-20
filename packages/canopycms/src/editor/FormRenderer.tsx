@@ -128,13 +128,14 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
   ) => {
     const control = renderFieldControl(field, currentValue, update, path)
     const error = fieldErrors?.[normalizeCanopyPath(path)]
-    if (!error) return control
     return (
-      <Stack key={`error-${fieldKey(path)}`} gap={4}>
+      <Stack key={fieldKey(path)} gap={4}>
         {control}
-        <Text size="xs" c="red" data-testid={`field-error-${fieldKey(path)}`}>
-          {error}
-        </Text>
+        {error && (
+          <Text size="xs" c="red" data-testid={`field-error-${fieldKey(path)}`}>
+            {error}
+          </Text>
+        )}
       </Stack>
     )
   }
