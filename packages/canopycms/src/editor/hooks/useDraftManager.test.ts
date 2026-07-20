@@ -571,4 +571,53 @@ describe('useDraftManager', () => {
       consoleErrorSpy.mockRestore()
     })
   })
+
+  it('never persists the previous branch drafts under the new branch storage key', () => {
+    const setItemSpy = vi.spyOn(window.localStorage, 'setItem')
+    const { result, rerender } = renderHook((props) => useDraftManager(props), {
+      initialProps: defaultOptions,
+    })
+
+    act(() => {
+      result.current.setDrafts({ abc123def456: { title: 'Branch A draft' } })
+    })
+
+    act(() => {
+      rerender({ ...defaultOptions, branchName: 'feature' })
+    })
+
+    const leakedWrites = setItemSpy.mock.calls.filter(
+      ([key, value]) => key === 'canopycms:drafts:feature' && value.includes('Branch A draft'),
+    )
+    expect(leakedWrites).toHaveLength(0)
+  })
+
+  it('merges drafts from another tab without overwriting local edits', () => {
+    const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+    act(() => {
+      result.current.setDrafts({ abc123def456: { title: 'Local draft' } })
+    })
+
+    act(() => {
+      window.localStorage.setItem(
+        'canopycms:drafts:main',
+        JSON.stringify({
+          abc123def456: { title: 'Other tab draft for same entry' },
+          xyz789uvw123: { title: 'Other tab draft for different entry' },
+        }),
+      )
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: 'canopycms:drafts:main',
+          newValue: window.localStorage.getItem('canopycms:drafts:main'),
+        }),
+      )
+    })
+
+    expect(result.current.drafts.abc123def456).toEqual({ title: 'Local draft' })
+    expect(result.current.drafts.xyz789uvw123).toEqual({
+      title: 'Other tab draft for different entry',
+    })
+  })
 })
