@@ -45,6 +45,7 @@ import type {
 import type { LogicalPath } from '../../paths/types'
 import { EntryTypeEditor } from './EntryTypeEditor'
 import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal'
+import { getErrorMessage } from '../../utils/error'
 
 // ============================================================================
 // Types
@@ -87,14 +88,17 @@ export interface CollectionEditorProps {
   availableSchemas: string[]
   /** Called when save is clicked for collection create/update */
   onSave: (data: CreateCollectionInput | UpdateCollectionInput, isNew: boolean) => void
-  /** Called when an entry type is added (edit mode only) */
-  onAddEntryType?: (collectionPath: LogicalPath, entryType: CreateEntryTypeInput) => void
-  /** Called when an entry type is updated (edit mode only) */
+  /** Called when an entry type is added (edit mode only); resolves to whether the save succeeded */
+  onAddEntryType?: (
+    collectionPath: LogicalPath,
+    entryType: CreateEntryTypeInput,
+  ) => Promise<boolean>
+  /** Called when an entry type is updated (edit mode only); resolves to whether the save succeeded */
   onUpdateEntryType?: (
     collectionPath: LogicalPath,
     entryTypeName: string,
     updates: Partial<CreateEntryTypeInput>,
-  ) => void
+  ) => Promise<boolean>
   /** Called when an entry type is removed (edit mode only) */
   onRemoveEntryType?: (collectionPath: LogicalPath, entryTypeName: string) => void
   /** Called when modal is closed */
@@ -141,6 +145,8 @@ export function CollectionEditor({
   const [entryTypeEditorOpen, setEntryTypeEditorOpen] = useState(false)
   const [editingEntryType, setEditingEntryType] = useState<ExistingEntryType | null>(null)
   const [editingEntryTypeIndex, setEditingEntryTypeIndex] = useState<number | null>(null)
+  const [entryTypeSaving, setEntryTypeSaving] = useState(false)
+  const [entryTypeError, setEntryTypeError] = useState<string | null>(null)
 
   // Delete entry type confirmation state
   const [deleteEntryTypeModalOpen, setDeleteEntryTypeModalOpen] = useState(false)
@@ -150,7 +156,6 @@ export function CollectionEditor({
   } | null>(null)
 
   // Reset form when modal opens or editing item changes
-  /* eslint-disable react-hooks/set-state-in-effect -- intentional: sync form state from props on open */
   useEffect(() => {
     if (isOpen) {
       if (editingCollection) {
@@ -175,7 +180,6 @@ export function CollectionEditor({
       setValidationError(null)
     }
   }, [isOpen, editingCollection])
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Update a form field
   const updateField = useCallback(
@@ -252,26 +256,45 @@ export function CollectionEditor({
   const handleOpenAddEntryType = useCallback(() => {
     setEditingEntryType(null)
     setEditingEntryTypeIndex(null)
+    setEntryTypeError(null)
     setEntryTypeEditorOpen(true)
   }, [])
 
   const handleOpenEditEntryType = useCallback((entryType: ExistingEntryType, index: number) => {
     setEditingEntryType(entryType)
     setEditingEntryTypeIndex(index)
+    setEntryTypeError(null)
     setEntryTypeEditorOpen(true)
   }, [])
 
   const handleEntryTypeSave = useCallback(
-    (data: CreateEntryTypeInput | Partial<CreateEntryTypeInput>, isNew: boolean) => {
+    async (data: CreateEntryTypeInput | Partial<CreateEntryTypeInput>, isNew: boolean) => {
       if (isEditMode && editingCollection) {
         // In edit mode, delegate to parent handlers
-        if (isNew) {
-          onAddEntryType?.(editingCollection.logicalPath, data as CreateEntryTypeInput)
-        } else if (editingEntryType) {
-          onUpdateEntryType?.(editingCollection.logicalPath, editingEntryType.name, data)
+        setEntryTypeSaving(true)
+        setEntryTypeError(null)
+        try {
+          const success = isNew
+            ? await onAddEntryType?.(editingCollection.logicalPath, data as CreateEntryTypeInput)
+            : editingEntryType
+              ? await onUpdateEntryType?.(
+                  editingCollection.logicalPath,
+                  editingEntryType.name,
+                  data,
+                )
+              : true
+          if (!success) {
+            setEntryTypeError('Failed to save entry type. Please try again.')
+            return
+          }
+        } catch (err) {
+          setEntryTypeError(getErrorMessage(err))
+          return
+        } finally {
+          setEntryTypeSaving(false)
         }
       } else {
-        // In create mode, manage entries locally
+        // In create mode, manage entries locally (no server round trip)
         if (isNew) {
           setFormData((prev) => ({
             ...prev,
@@ -494,7 +517,10 @@ export function CollectionEditor({
           setEntryTypeEditorOpen(false)
           setEditingEntryType(null)
           setEditingEntryTypeIndex(null)
+          setEntryTypeError(null)
         }}
+        isSaving={entryTypeSaving}
+        error={entryTypeError}
       />
 
       {/* Delete Entry Type Confirmation Modal */}
