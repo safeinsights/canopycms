@@ -831,6 +831,31 @@ export class ContentStore {
   }
 
   /**
+   * Resolve the actual on-disk entry type of an existing collection entry, by
+   * inspecting its filename directly. Entry filenames embed their type
+   * (`{type}.{slug}.{id}.{ext}`) and it is immutable after creation — see the
+   * existing-file lookup in buildPaths(), which this mirrors. Returns
+   * undefined if no entry exists yet at this slug.
+   *
+   * Used at the API write boundary (api/content.ts) to validate an existing
+   * entry's payload against ITS real schema rather than a caller-supplied (or
+   * omitted/spoofed) `entryType` param — ContentStore.write() preserves the
+   * on-disk type regardless of what's requested, so validation must agree
+   * with what will actually be written (post-review M2).
+   *
+   * Cheap: one buildPaths() resolution plus a stat, no file content is read —
+   * same cost class as documentExists().
+   */
+  async getExistingEntryType(
+    collectionPath: LogicalPath,
+    slug: Slug | '' = '',
+  ): Promise<string | undefined> {
+    const schemaItem = this.assertCollection(collectionPath)
+    const { absolutePath, entryTypeName } = await this.buildPaths(schemaItem, slug)
+    return (await filePathExists(absolutePath)) ? entryTypeName : undefined
+  }
+
+  /**
    * Count existing entries of a given entry type in a collection, by filename
    * (entry filenames embed their type: `{type}.{slug}.{id}.{ext}`). Used to
    * enforce `EntryTypeConfig.maxItems` server-side at the create boundary.

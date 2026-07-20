@@ -1953,3 +1953,49 @@ describe('ContentStore documentExists / countEntriesOfType', () => {
     expect(await store.countEntriesOfType(unsafeAsLogicalPath('content/posts'), 'post')).toBe(0)
   })
 })
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getExistingEntryType (post-review M2): resolve an existing entry's real,
+// filename-embedded type without a full read.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContentStore getExistingEntryType', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          { name: 'post', format: 'json' as const, schema: [], default: true },
+          { name: 'settings', format: 'json' as const, schema: [], maxItems: 1 },
+        ],
+      },
+    ],
+  } as const
+
+  const makeStore = async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
+    const config = defineCanopyTestConfig({ schema })
+    return new ContentStore(root, flattenSchema(schema, config.contentRoot))
+  }
+
+  it('returns undefined when no entry exists yet at this slug', async () => {
+    const store = await makeStore()
+    const posts = unsafeAsLogicalPath('content/posts')
+    expect(await store.getExistingEntryType(posts, unsafeAsSlug('hello'))).toBeUndefined()
+  })
+
+  it('returns the non-default entry type embedded in an existing filename', async () => {
+    const store = await makeStore()
+    const posts = unsafeAsLogicalPath('content/posts')
+    await store.write(posts, unsafeAsSlug('main'), { format: 'json', data: {} }, 'settings')
+    expect(await store.getExistingEntryType(posts, unsafeAsSlug('main'))).toBe('settings')
+  })
+
+  it('returns the default entry type when that is what was written', async () => {
+    const store = await makeStore()
+    const posts = unsafeAsLogicalPath('content/posts')
+    await store.write(posts, unsafeAsSlug('hello'), { format: 'json', data: {} }, 'post')
+    expect(await store.getExistingEntryType(posts, unsafeAsSlug('hello'))).toBe('post')
+  })
+})
