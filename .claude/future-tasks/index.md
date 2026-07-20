@@ -89,4 +89,4 @@ Small findings not worth dedicated task files; fix opportunistically:
 - `MediaConfig.publicBaseUrl` accepts any string in TS but Zod enforces URL format — `config/types.ts:152-154` (still open at 2026-07 re-review)
 - `listAssets` endpoint has no auth guard beyond the handler-level authn check — decide whether asset key enumeration is acceptable for all authenticated users (still open at 2026-07 re-review)
 
-Fixed on the 2026-07 review branch: getErrorMessage sweep (G1), `CanopyConfigSchema` schema-field drift, `relativePathSchema` per-segment traversal check, `composeCanopyConfig` dead spread (superseded by the full-fragment merge in PR #90).
+Fixed on the 2026-07 review branch: `CanopyConfigSchema` schema-field drift, `relativePathSchema` per-segment traversal check, `composeCanopyConfig` dead spread (superseded by the full-fragment merge in PR #90). The getErrorMessage sweep (G1) replaced the exact-semantic `String(err)` occurrences; sites with custom fallback strings or raw-object console logging were deliberately retained (getErrorMessage has no fallback parameter — widening it is an optional follow-up noted in the G1 PR).
