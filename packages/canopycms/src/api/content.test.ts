@@ -41,6 +41,7 @@ vi.mock('../content-store', () => {
         renameEntry: vi.fn().mockResolvedValue({ newPath: 'content/posts/new-slug' }),
         idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
         documentExists: vi.fn().mockResolvedValue(false),
+        getExistingEntryType: vi.fn().mockResolvedValue(undefined),
         countEntriesOfType: vi.fn().mockResolvedValue(0),
       }
     }),
@@ -142,6 +143,7 @@ describe('content api', () => {
       write: vi.fn().mockRejectedValue(new ContentConflictError()),
       idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
       documentExists: vi.fn().mockResolvedValue(true),
+      getExistingEntryType: vi.fn().mockResolvedValue(undefined),
       countEntriesOfType: vi.fn().mockResolvedValue(0),
     }
     vi.mocked(ContentStore).mockImplementationOnce(function () {
@@ -208,6 +210,7 @@ describe('content api', () => {
           write: writeSpy,
           idIndex: vi.fn().mockResolvedValue({ findById: vi.fn().mockReturnValue(null) }),
           documentExists: vi.fn().mockResolvedValue(false),
+          getExistingEntryType: vi.fn().mockResolvedValue(undefined),
           countEntriesOfType: vi.fn().mockResolvedValue(0),
         } as any
       })
@@ -458,12 +461,19 @@ describe('content api', () => {
       },
     ]
 
+    // A second, non-default entry type sharing the 'posts' collection — used
+    // to prove validation resolves the entry's REAL on-disk type rather than
+    // params.entryType / the default (post-review M2).
+    const settingsSchema = [{ name: 'siteName', type: 'string', required: true }]
+
     /** Install a one-shot ContentStore mock with a real post schema. */
     const mockStoreOnce = async (opts: {
       exists?: boolean
       count?: number
       knownIds?: string[]
       maxItems?: number
+      /** On-disk entry type of the existing entry (only meaningful when exists !== false). Defaults to 'post'. */
+      existingEntryType?: string
     }) => {
       const { ContentStore } = await import('../content-store')
       const writeSpy = vi
@@ -479,6 +489,8 @@ describe('content api', () => {
             }
           : null,
       )
+      const exists = opts.exists ?? true
+      const existingEntryType = exists ? (opts.existingEntryType ?? 'post') : undefined
       vi.mocked(ContentStore).mockImplementationOnce(function () {
         return {
           resolvePath: vi.fn().mockReturnValue({
@@ -493,12 +505,14 @@ describe('content api', () => {
                   default: true,
                   ...(opts.maxItems !== undefined ? { maxItems: opts.maxItems } : {}),
                 },
+                { name: 'settings', format: 'json', schema: settingsSchema },
               ],
             },
             slug: 'hello',
           }),
           resolveDocumentPath: vi.fn().mockResolvedValue({ relativePath: 'content/posts/hello' }),
-          documentExists: vi.fn().mockResolvedValue(opts.exists ?? true),
+          documentExists: vi.fn().mockResolvedValue(exists),
+          getExistingEntryType: vi.fn().mockResolvedValue(existingEntryType),
           countEntriesOfType: vi.fn().mockResolvedValue(opts.count ?? 0),
           idIndex: vi.fn().mockResolvedValue({ findById }),
           write: writeSpy,
@@ -710,6 +724,69 @@ describe('content api', () => {
       )
       expect(res.ok).toBe(false)
       expect(res.status).toBe(400)
+    })
+
+    // ---------------------------------------------------------------------
+    // Existing entry type resolution (post-review M2): ContentStore.write
+    // preserves an existing entry's on-disk type regardless of what's
+    // requested, so validation must resolve the SAME type before writing —
+    // otherwise a direct API caller could bypass required-field validation
+    // for the entry's real schema, or have a valid payload wrongly rejected.
+    // ---------------------------------------------------------------------
+
+    it('validates an existing non-default-type entry against its real type when entryType is omitted', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ existingEntryType: 'settings' })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: {}, // missing required 'siteName' for the settings schema
+      })
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(422)
+      expect(res.fieldErrors).toEqual([
+        { fieldPath: 'siteName', message: 'This field is required' },
+      ])
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('accepts a valid payload for an existing non-default-type entry when entryType is omitted', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ existingEntryType: 'settings' })
+      const res = await writeContent(ctx, writeReq, writeParams, {
+        format: 'json',
+        data: { siteName: 'My Site' },
+      })
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalled()
+    })
+
+    it('rejects a conflicting entryType param against an existing entry with 409', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ existingEntryType: 'settings' })
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'post' },
+        { format: 'json', data: { siteName: 'My Site' } },
+      )
+      expect(res.ok).toBe(false)
+      expect(res.status).toBe(409)
+      expect(res.error).toContain('settings')
+      expect(res.error).toContain('post')
+      expect(writeSpy).not.toHaveBeenCalled()
+    })
+
+    it('does not conflict when entryType matches the existing entry (editor path unchanged)', async () => {
+      const ctx = allowedCtx()
+      const { writeSpy } = await mockStoreOnce({ existingEntryType: 'settings' })
+      const res = await writeContent(
+        ctx,
+        writeReq,
+        { ...writeParams, entryType: 'settings' },
+        { format: 'json', data: { siteName: 'My Site' } },
+      )
+      expect(res.ok).toBe(true)
+      expect(writeSpy).toHaveBeenCalled()
     })
   })
 })

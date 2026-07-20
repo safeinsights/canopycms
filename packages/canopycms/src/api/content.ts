@@ -269,21 +269,47 @@ const writeContentHandler = async (
     maxItems = schemaItem.maxItems
     entryTypeName = schemaItem.name
   } else {
+    // An entryType param naming an unknown type is always a bad request,
+    // regardless of whether the target entry exists yet.
     if (params.entryType) {
-      entryTypeConfig = schemaItem.entries?.find((e) => e.name === params.entryType)
-      if (!entryTypeConfig) {
+      const requestedConfig = schemaItem.entries?.find((e) => e.name === params.entryType)
+      if (!requestedConfig) {
         return {
           ok: false,
           status: 400,
           error: `Entry type '${params.entryType}' not found`,
         }
       }
+    }
+
+    // For an existing entry, validate against its REAL on-disk type. Entry
+    // filenames embed the type (`{type}.{slug}.{id}.{ext}`) and
+    // ContentStore.write() preserves it regardless of what's requested (see
+    // buildPaths in content-store.ts) — so resolving from params.entryType
+    // or the default here instead would let a direct API write validate a
+    // payload against the WRONG entry type's schema (post-review M2). The
+    // editor always sends the entry's real entryType, so this only changes
+    // behavior for non-editor callers.
+    const existingEntryType = await store.getExistingEntryType(schemaItem.logicalPath, slug)
+    if (existingEntryType) {
+      if (params.entryType && params.entryType !== existingEntryType) {
+        return {
+          ok: false,
+          status: 409,
+          error: `Entry type conflict: entry already exists with type '${existingEntryType}', but request specified '${params.entryType}'`,
+        }
+      }
+      entryTypeConfig = schemaItem.entries?.find((e) => e.name === existingEntryType)
+      entryTypeName = existingEntryType
+    } else if (params.entryType) {
+      entryTypeConfig = schemaItem.entries?.find((e) => e.name === params.entryType)
+      entryTypeName = entryTypeConfig?.name
     } else {
       entryTypeConfig = getDefaultEntryType(schemaItem.entries)
+      entryTypeName = entryTypeConfig?.name
     }
     fields = entryTypeConfig?.schema ?? []
     maxItems = entryTypeConfig?.maxItems
-    entryTypeName = entryTypeConfig?.name
   }
 
   const data = body.data ?? {}
@@ -400,7 +426,10 @@ const writeContentHandler = async (
           expectedVersion: body.expectedVersion,
         }
 
-    const result = await store.write(schemaItem.logicalPath, slug, writeInput, params.entryType)
+    // Pass the resolved entryTypeName (not the raw, possibly-omitted
+    // params.entryType) so the store's own format check agrees with the type
+    // we just validated against.
+    const result = await store.write(schemaItem.logicalPath, slug, writeInput, entryTypeName)
 
     // Validate entry links in body content (warnings only, don't block save).
     // Reuses the entry-type fields resolved above for schema validation.
