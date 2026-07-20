@@ -41,40 +41,6 @@ export const ANONYMOUS_USER: AnonymousUser = Object.freeze({
 }) as AnonymousUser
 
 /**
- * Type guard for anonymous user
- */
-export const isAnonymousUser = (user: CanopyUser): user is AnonymousUser =>
-  user.type === 'anonymous'
-
-/**
- * Type guard for authenticated user
- */
-export const isAuthenticatedUser = (user: CanopyUser): user is AuthenticatedUser =>
-  user.type === 'authenticated'
-
-/**
- * Create an authenticated user from auth provider data.
- *
- * SECURITY: `groups` is trusted verbatim. Never pass provider-supplied
- * external groups here — use authResultToCanopyUser(), which strips reserved
- * privileged IDs (Admins/Reviewers) from external groups before merging.
- */
-export const createAuthenticatedUser = (data: {
-  userId: CanopyUserId
-  groups?: CanopyGroupId[]
-  email?: string
-  name?: string
-  avatarUrl?: string
-}): AuthenticatedUser => ({
-  type: 'authenticated',
-  userId: data.userId,
-  groups: data.groups ?? [],
-  email: data.email,
-  name: data.name,
-  avatarUrl: data.avatarUrl,
-})
-
-/**
  * Convert authentication result to CanopyUser.
  * Applies bootstrap admin groups, merges internal groups, and returns ANONYMOUS_USER if not authenticated.
  *
