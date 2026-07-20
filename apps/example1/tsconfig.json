@@ -10,10 +10,6 @@
     "noEmit": true,
     "incremental": true,
     "types": ["@types/node", "@types/react", "@types/react-dom"],
-    "paths": {
-      "canopycms": ["../../packages/canopycms/src/index.ts"],
-      "canopycms/*": ["../../packages/canopycms/src/*"]
-    },
     "lib": ["dom", "dom.iterable", "esnext"],
     "isolatedModules": true,
     "plugins": [

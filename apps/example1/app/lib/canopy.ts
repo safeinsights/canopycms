@@ -1,4 +1,8 @@
-import { createNextCanopyContext, type GenerateContentStaticParamsOptions } from 'canopycms-next'
+import {
+  createNextCanopyContext,
+  type GenerateContentStaticParamsOptions,
+  type NextCanopyContextResult,
+} from 'canopycms-next'
 import { createClerkAuthPlugin } from 'canopycms-auth-clerk'
 import { createDevAuthPlugin } from 'canopycms-auth-dev'
 import config from '../../canopycms.config'
@@ -27,7 +31,7 @@ export const getCanopy = async () => {
 
 // Phase-selecting reads: filesystem-direct at build time, branch-aware (ACL-enforced) at request time.
 // Recommended for resolving a page by URL/path in a [...slug] / [slug] route — correct in both phases.
-export const readByUrlPath = async <T = unknown>(
+export const readByUrlPath: NextCanopyContextResult['readByUrlPath'] = async <T = unknown>(
   urlPath: string,
   options?: { branch?: string; resolveReferences?: boolean },
 ) => {
@@ -35,7 +39,7 @@ export const readByUrlPath = async <T = unknown>(
   return context.readByUrlPath<T>(urlPath, options)
 }
 
-export const read = async <T = unknown>(input: {
+export const read: NextCanopyContextResult['read'] = async <T = unknown>(input: {
   entryPath: string
   slug?: string
   branch?: string
