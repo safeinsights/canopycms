@@ -14,6 +14,7 @@
 
 import { CmsWorker } from 'canopycms/worker/cms-worker'
 import { refreshClerkCache } from 'canopycms-auth-clerk/cache-writer'
+import { getErrorMessage } from 'canopycms/utils/error'
 import path from 'node:path'
 
 async function getSecret(secretArn: string, retries = 3): Promise<string> {
@@ -103,6 +104,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Fatal error:', err instanceof Error ? err.message : String(err))
+  console.error('Fatal error:', getErrorMessage(err))
   process.exit(1)
 })
