@@ -201,3 +201,21 @@ Fixes land as small feature branches off the integration branch **`review/baseli
 - **G — Hygiene (P2/P3):** G1 getErrorMessage sweep; G2 dead code; G3 deps + documented overrides; G4 lint warnings + test-timeout config + auth-clerk react peerDep.
 
 **Punted to `.claude/future-tasks/` (bigger design work):** EFS cross-process concurrency epic (index cross-process divergence, cache-regen races GIT-M1/M2, branch-metadata NFS settle GIT-M4, content-store lock-key) as one coordinated design; test-gap backfill for top-risk untested modules; editor-async-patterns cancellation + SWR dedup + editor-state-context migration; dual-build CI fixture; DEP-C2 worker-HA follow-through.
+
+---
+
+## Fix-phase outcome (2026-07-19)
+
+All clusters above landed on `review/baseline-2026-07` as reviewed, squash-merged PRs:
+
+| Cluster              | PRs                                                                                                                                            |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| A — Security         | #81 (SEC-C1), #82 (SCH-C1+UI-M3), #83 (SEC-H1), #84 (SEC-H2), #85 (SEC-H3, + router tests)                                                     |
+| B — CDK              | #86 (DEP-C1/C4/H2), #87 (DEP-C2/H1/L1 — lock verified unsound and replaced with a lease)                                                       |
+| C — API              | #92 (C1–C5 combined)                                                                                                                           |
+| D — Data integrity   | #88 (D1), #89 (D2), #90 (D5), #91 (D3 in-process), #93 (D4), #94 (cross-process index — originally punted, done via on-disk generation marker) |
+| E — Editor UX        | #100 (E1), #97 (E2+E4), #98 (E3)                                                                                                               |
+| F — Adopter surfaces | #99 (F1), #96 (F2 — option B: honest docs + mismatch warning), #95 (F3)                                                                        |
+| G — Hygiene          | #101 (G2), #102 (G4 — lint now 0 warnings), #103 (G3 — overrides documented), G1 sweep in its own PR                                           |
+
+Still open by design (filed in `.claude/future-tasks/`): EFS cross-process concurrency epic (GIT-M1/M2/M3/M4 + content-store-lock-key), dual-build CI fixture (ADO-H1), test-gap backfill, editor-async-patterns/SWR/editor-state-context, and the remaining known issues listed in the index.
