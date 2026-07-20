@@ -1,7 +1,7 @@
 'use client'
 
 import { Modal, Stack, Paper, Group, Avatar, Text, Badge } from '@mantine/core'
-import { MdCheck } from 'react-icons/md'
+import { IconCheck } from '@tabler/icons-react'
 import { DEFAULT_USERS } from './dev-defaults'
 import { setDevUserCookie } from './cookie-utils'
 
@@ -43,7 +43,7 @@ export function UserSwitcherModal({ opened, onClose, currentUserId }: Props) {
                   </Text>
                 </div>
               </Group>
-              {user.userId === currentUserId && <MdCheck size={20} />}
+              {user.userId === currentUserId && <IconCheck size={20} />}
             </Group>
 
             {user.externalGroups.length > 0 && (

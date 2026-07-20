@@ -1,7 +1,6 @@
 import { forwardRef } from 'react'
 import { Badge, Box, Button, Group, Menu, Paper, Stack, Text, Title, Tooltip } from '@mantine/core'
-import { MdFolderOpen, MdKeyboardArrowDown } from 'react-icons/md'
-import { GoGitBranch } from 'react-icons/go'
+import { IconFolderOpen, IconChevronDown, IconGitBranch } from '@tabler/icons-react'
 import type { OperatingMode } from '../../operating-mode'
 import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
@@ -278,8 +277,8 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     variant="outline"
                     color="gray"
                     size="xs"
-                    leftSection={<MdFolderOpen size={16} />}
-                    rightSection={<MdKeyboardArrowDown size={14} />}
+                    leftSection={<IconFolderOpen size={16} />}
+                    rightSection={<IconChevronDown size={14} />}
                   >
                     {currentEntry?.label ?? 'No file selected'}
                   </Button>
@@ -342,8 +341,8 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                     variant="outline"
                     color="gray"
                     size="xs"
-                    leftSection={<GoGitBranch size={16} />}
-                    rightSection={<MdKeyboardArrowDown size={14} />}
+                    leftSection={<IconGitBranch size={16} />}
+                    rightSection={<IconChevronDown size={14} />}
                     loading={!branchName && busy}
                     data-testid="branch-dropdown-button"
                   >

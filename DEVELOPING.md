@@ -2687,6 +2687,21 @@ git commit -m "Update posts"
 npx canopycms sync both
 ```
 
+## Dependency Overrides (`pnpm.overrides`)
+
+Root `package.json` pins several transitive dependencies under `pnpm.overrides` to force in a security fix ahead of whatever version the direct dependency tree would otherwise resolve. JSON can't hold comments, so the rationale for each pin lives here — check this table before removing or loosening any of them, and re-check `pnpm why <pkg>` still resolves to a non-vulnerable version if you do.
+
+| Override                 | Advisory                                                                      | Reason                                                                                                                                                |
+| ------------------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ws@^8.20.1`             | GHSA-58qx-3vcg-4xpx (CVE-2026-45736)                                          | Uninitialized memory disclosure in `ws` before 8.20.1; pin forces the patched version.                                                                |
+| `uuid@^11.1.1`           | GHSA-w5hq-g745-h8pq (CVE-2026-41907)                                          | Missing buffer bounds check in `uuid` v3/v5/v6 when a `buf` is supplied; fixed in 11.1.1.                                                             |
+| `js-cookie@^3.0.7`       | GHSA-qjx8-664m-686j (CVE-2026-46625)                                          | Per-instance prototype hijack in `assign()` enables cookie-attribute injection in <=3.0.5.                                                            |
+| `fast-xml-parser@^5.7.0` | GHSA-gh4j-gqv2-49f6 (CVE-2026-41650)                                          | XMLBuilder XML comment/CDATA injection via unescaped delimiters, fixed in 5.7.0.                                                                      |
+| `brace-expansion@^2.0.3` | GHSA-v6h2-p8h4-qcjw (CVE-2025-5889)                                           | ReDoS in `brace-expansion`'s `expand()`; pin keeps the 2.x line above the vulnerable <=2.0.1 range.                                                   |
+| `picomatch@^4.0.4`       | GHSA-c2c7-rcm5-vvqj (CVE-2026-33671) and GHSA-3v7f-55p6-f55p (CVE-2026-33672) | ReDoS via extglob quantifiers and a POSIX-character-class method-injection bug, both fixed in 4.0.4.                                                  |
+| `postcss@^8.5.10`        | GHSA-qx2v-qp2m-jg93 (CVE-2026-41305)                                          | XSS via unescaped `</style>` in PostCSS's CSS stringify output, fixed in 8.5.10.                                                                      |
+| `yaml@1@^1.10.3`         | GHSA-48c2-rrv3-qjmp (CVE-2026-33532)                                          | Stack overflow via deeply nested YAML collections; pins the legacy `yaml` 1.x line (still pulled in transitively) above the vulnerable <1.10.3 range. |
+
 ## Quality Checks
 
 Before handoff, run typecheck and tests:
