@@ -154,6 +154,17 @@ describe('canopycms init', () => {
     expect(mw).toContain('export default function middleware()')
   })
 
+  it('passthrough middleware warns when CANOPY_AUTH_MODE=clerk but middleware was not regenerated', async () => {
+    await init(defaultOpts(tmpDir))
+
+    // ADO-M1: middleware.ts is frozen at init time and does not read CANOPY_AUTH_MODE
+    // at runtime like canopy.ts/edit page do. It should at least warn about the
+    // mismatch so an adopter who flips the env var without swapping this file notices.
+    const mw = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
+    expect(mw).toContain("process.env.CANOPY_AUTH_MODE === 'clerk'")
+    expect(mw).toContain('console.warn')
+  })
+
   it('generates clerk middleware when authProvider is clerk', async () => {
     await init(defaultOpts(tmpDir, { authProvider: 'clerk' }))
 
