@@ -39,7 +39,7 @@
     "node": ">=18"
   },
   "peerDependencies": {
-    "aws-cdk-lib": "^2.150.0",
+    "aws-cdk-lib": "^2.168.0",
     "constructs": "^10.0.0"
   },
   "peerDependenciesMeta": {
@@ -53,7 +53,7 @@
   "devDependencies": {
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
-    "aws-cdk-lib": "^2.150.0",
+    "aws-cdk-lib": "^2.168.0",
     "canopycms": "workspace:*",
     "canopycms-auth-clerk": "workspace:*",
     "@aws-sdk/client-secrets-manager": "^3.600.0",

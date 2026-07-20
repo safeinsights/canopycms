@@ -395,7 +395,7 @@ importers:
         specifier: ^18.3.12
         version: 18.3.28
       aws-cdk-lib:
-        specifier: ^2.150.0
+        specifier: ^2.168.0
         version: 2.244.0(constructs@10.6.0)
       canopycms:
         specifier: workspace:*
