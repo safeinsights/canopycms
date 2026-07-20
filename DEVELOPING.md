@@ -1603,6 +1603,19 @@ pnpm --filter canopycms exec vitest run --coverage
 pnpm --filter canopycms exec vitest
 ```
 
+`packages/canopycms/vitest.config.ts` defines two vitest projects: `node` (everything
+outside `src/editor/**`, run under the `node` environment) and `editor` (jsdom, for
+React component tests). Git-heavy integration suites (`git-manager.test.ts`,
+`branch-workspace`-style tests, `role-permissions.test.ts`, and similar) spawn real
+`git` subprocesses per test, which is slow on macOS (process-spawn overhead is much
+higher there than on Linux). The `node` project's `testTimeout` is raised to 30s to
+absorb that on slower/loaded local machines; the `editor` project intentionally keeps
+the default 5s timeout since jsdom component tests don't shell out to git and a longer
+timeout there would just mask real hangs. CI runs on ubuntu and is fast enough that this
+headroom isn't needed there, but CI remains the source of truth for any timing-sensitive
+test behavior -- don't tune assertions to make a slow local run pass if CI already
+passes.
+
 ### Integration Test Structure
 
 Integration tests are in `src/__integration__/` with shared fixtures and utilities:
