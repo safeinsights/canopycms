@@ -1,7 +1,12 @@
 import { ActionIcon, Menu, Paper, Stack } from '@mantine/core'
-import { MdAccountCircle, MdLogout, MdSettings } from 'react-icons/md'
-import { PiColumnsDuotone, PiRowsDuotone } from 'react-icons/pi'
-import { LuSquareDashed } from 'react-icons/lu'
+import {
+  IconUserCircle,
+  IconLogout,
+  IconSettings,
+  IconLayoutColumns,
+  IconLayoutRows,
+  IconSquareDashed,
+} from '@tabler/icons-react'
 import type { PaneLayout } from '../EditorPanes'
 
 /**
@@ -130,7 +135,7 @@ export function EditorSidebar({
           aria-label="Toggle layout"
           onClick={() => onLayoutChange(layout === 'side' ? 'stacked' : 'side')}
         >
-          {layout === 'side' ? <PiRowsDuotone size={18} /> : <PiColumnsDuotone size={18} />}
+          {layout === 'side' ? <IconLayoutRows size={18} /> : <IconLayoutColumns size={18} />}
         </ActionIcon>
 
         <ActionIcon
@@ -142,14 +147,14 @@ export function EditorSidebar({
           aria-label="Toggle highlights"
           onClick={onHighlightToggle}
         >
-          <LuSquareDashed size={18} />
+          <IconSquareDashed size={18} />
         </ActionIcon>
       </Stack>
       <Stack gap="xs" align="center">
         <Menu shadow="md" width={200} position="left">
           <Menu.Target>
             <ActionIcon variant="subtle" size="lg" radius="md" aria-label="Settings">
-              <MdSettings size={18} />
+              <IconSettings size={18} />
             </ActionIcon>
           </Menu.Target>
           <Menu.Dropdown>
@@ -171,7 +176,7 @@ export function EditorSidebar({
                 aria-label="Account"
                 onClick={onAccountClick}
               >
-                <MdAccountCircle size={18} />
+                <IconUserCircle size={18} />
               </ActionIcon>
             )}
             {onLogoutClick && (
@@ -182,7 +187,7 @@ export function EditorSidebar({
                 aria-label="Sign out"
                 onClick={onLogoutClick}
               >
-                <MdLogout size={18} />
+                <IconLogout size={18} />
               </ActionIcon>
             )}
           </>
