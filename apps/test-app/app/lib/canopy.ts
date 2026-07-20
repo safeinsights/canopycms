@@ -46,6 +46,13 @@ export const contentStaticParams = async (options?: GenerateContentStaticParamsO
   return context.generateContentStaticParams(options)
 }
 
+// Advanced escape hatch: the build context bypasses all ACLs (synthetic admin) and throws if used at
+// request time on a production server. Prefer readByUrlPath/read/contentStaticParams above.
+export const getCanopyForBuild = async () => {
+  const context = await canopyContextPromise
+  return context.getCanopyForBuild()
+}
+
 // Export for API routes
 export const getHandler = async () => {
   const context = await canopyContextPromise
