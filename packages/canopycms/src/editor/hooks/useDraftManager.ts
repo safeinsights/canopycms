@@ -158,9 +158,42 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
   }, [storageKey])
 
+  // Merge in drafts written by another tab for the same branch. Only fills
+  // in keys missing locally, so it never clobbers this tab's in-memory edits.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== storageKey || !event.newValue) return
+      try {
+        const parsed = JSON.parse(event.newValue) as Record<string, FormValue>
+        setDrafts((prev) => {
+          const missing = Object.keys(parsed).filter((id) => !(id in prev))
+          if (missing.length === 0) return prev
+          const merged = { ...prev }
+          for (const id of missing) merged[id] = parsed[id]
+          return merged
+        })
+      } catch (err) {
+        console.warn('Failed to merge drafts from another tab', err)
+      }
+    }
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [storageKey])
+
+  // Tracks which storage key the current in-memory `drafts` were loaded for.
+  // Lags one render behind a branch switch (it only updates once `drafts`
+  // itself has been reset/restored for the new key), which is what lets the
+  // persist effect below detect and skip the stale write.
+  const draftsStorageKeyRef = useRef(storageKey)
+  useEffect(() => {
+    draftsStorageKeyRef.current = storageKey
+  }, [drafts])
+
   // Persist drafts to localStorage whenever they change
   useEffect(() => {
     if (typeof window === 'undefined') return
+    if (draftsStorageKeyRef.current !== storageKey) return
     try {
       window.localStorage.setItem(storageKey, JSON.stringify(drafts))
     } catch (err) {
