@@ -21,14 +21,15 @@ Priority levels:
 
 | File                                                                         | Summary                                                                                                                       |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| [preview-bridge-security.md](preview-bridge-security.md)                     | `postMessage` handlers don't validate `event.source`; any script can inject draft-update messages                             |
+| [preview-bridge-security.md](preview-bridge-security.md)                     | RESOLVED — source + origin checks landed in preview-bridge.tsx (verified at 2026-07 baseline re-review)                       |
+| [efs-cross-process-concurrency.md](efs-cross-process-concurrency.md)         | EPIC: remaining Lambda↔worker EFS races — uncoordinated cache regeneration (branch-registry, branch-schema-cache), branch-metadata write-verify missing NFS settle, comment-store missing in-process lock |
 | [editor-async-patterns.md](editor-async-patterns.md)                         | `ReferenceField` refetches on every render; `useReferenceResolution` and `loadEntry` have no cancellation for stale responses |
 | [stale-draft-prevents-content-load.md](stale-draft-prevents-content-load.md) | Stale localStorage draft permanently blocks fresh content load with no user indication                                        |
 | [dual-react-problem.md](dual-react-problem.md)                               | Dual React instance crash when adopters use `file:` references in their Next.js app                                           |
-| [e2e-reset-race-condition.md](e2e-reset-race-condition.md)                   | ENOENT errors during e2e test reset due to file deletion/recreation timing                                                    |
+| [e2e-reset-race-condition.md](e2e-reset-race-condition.md)                   | RESOLVED — 404-on-ENOENT in api/content.ts + reset polling gates (verified at 2026-07 baseline re-review)                     |
 | [flaky-comment-store-tests.md](flaky-comment-store-tests.md)                 | Race conditions in concurrent comment store tests require retry workarounds                                                   |
 | [swr.md](swr.md)                                                             | Multiple independent `useEffect` hooks fire duplicate API calls on initial editor load; SWR would deduplicate                 |
-| [content-store-validation.md](content-store-validation.md)                   | Schema validation not enforced at the API write boundary; unvalidated data can be saved                                       |
+| [content-store-validation.md](content-store-validation.md)                   | RESOLVED — authoritative write-boundary validation + client pre-save errors via shared entry-validator (PR #93)               |
 | [editor-state-context-migration.md](editor-state-context-migration.md)       | Complete migration of `Editor.tsx` inline state to `EditorStateContext`                                                       |
 
 ---
@@ -51,7 +52,9 @@ Priority levels:
 | [dev-settings-per-branch.md](dev-settings-per-branch.md)                           | Dev-mode settings (groups, permissions) isolated per git branch                                                            |
 | [partner-data-in-subcollections.md](partner-data-in-subcollections.md)             | Move partner YAML into partner sub-collection directories                                                                  |
 | [split-large-files.md](split-large-files.md)                                       | Extract wire-format conversion, reference resolution, and index logic into focused modules                                 |
-| [deletion-checker-refactor.md](deletion-checker-refactor.md)                       | Refactor `DeletionChecker` to use `traverseFields` — eliminates duplicated traversal logic that has caused bugs twice      |
+| [deletion-checker-refactor.md](deletion-checker-refactor.md)                       | Refactor `DeletionChecker` to use `traverseFields` — the duplicated block-shape logic bit again (fixed a third time in PR #88); the duplication itself remains |
+| [dual-build-ci.md](dual-build-ci.md)                                               | CI fixture running both deploy shapes (`CANOPY_BUILD` static + editor builds) — withCanopy/deployedAs regressions currently uncaught |
+| [test-gap-backfill.md](test-gap-backfill.md)                                       | Targeted tests for top-risk untested modules (route-builder, meta-loader, operating-mode strategies, authz loaders, settings-workspace, …) |
 | [adopt-changesets.md](adopt-changesets.md)                                         | Replace auto-patch publishing with changesets for deliberate semantic versioning                                           |
 | [audit-logging.md](audit-logging.md)                                               | Audit trail for permission/group changes with query API and notifications                                                  |
 | [init-respects-adopter-conventions.md](init-respects-adopter-conventions.md)       | `canopycms init` should detect adopter's Prettier config + package manager and match them in generated files + next-steps |
@@ -83,9 +86,7 @@ Priority levels:
 
 Small findings not worth dedicated task files; fix opportunistically:
 
-- `getErrorMessage()` pattern: 45 inline `err instanceof Error ? err.message : '...'` across 21 files — use `getErrorMessage()` from `utils/error.ts` instead (`worker/cms-worker.ts` has 9, `api/permissions.ts` has 5)
-- `CanopyConfigSchema` includes `schema` field that `CanopyConfig` TS type doesn't — Zod/TS drift in `config/schemas/config.ts:42`
-- `relativePathSchema` path-traversal check uses `includes('..')` (substring) not segment equality — `config/schemas/collection.ts:15`
-- `MediaConfig.publicBaseUrl` accepts any string in TS but Zod enforces URL format — `config/types.ts:133`
-- `composeCanopyConfig` has dead conditional spread for `gitBotAuthorName` at `config/helpers.ts:165` — remove it
-- `listAssets` endpoint has no auth guard beyond the handler-level authn check — decide whether asset key enumeration is acceptable for all authenticated users
+- `MediaConfig.publicBaseUrl` accepts any string in TS but Zod enforces URL format — `config/types.ts:152-154` (still open at 2026-07 re-review)
+- `listAssets` endpoint has no auth guard beyond the handler-level authn check — decide whether asset key enumeration is acceptable for all authenticated users (still open at 2026-07 re-review)
+
+Fixed on the 2026-07 review branch: getErrorMessage sweep (G1), `CanopyConfigSchema` schema-field drift, `relativePathSchema` per-segment traversal check, `composeCanopyConfig` dead spread (superseded by the full-fragment merge in PR #90).
