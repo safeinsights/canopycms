@@ -8,6 +8,7 @@ import type {
   UpdateEntryTypeInput,
 } from '../../api'
 import type { LogicalPath, ContentId } from '../../paths/types'
+import { getErrorMessage } from '../../utils/error'
 
 export interface UseSchemaManagerOptions {
   branchName: string
@@ -74,7 +75,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
 
   const handleError = useCallback((message: string, error: unknown) => {
     console.error(message, error)
-    const errorMessage = error instanceof Error ? error.message : String(error)
+    const errorMessage = getErrorMessage(error)
     notifications.show({
       title: 'Error',
       message: `${message}: ${errorMessage}`,
