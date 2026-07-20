@@ -61,6 +61,10 @@ export function sanitizeErrorMessage(message: string): string {
   if (cwd !== '/') {
     result = result.split(`${cwd}/`).join('')
     const cwdPattern = cwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    // cwdPattern is process.cwd() (server-controlled, not attacker/entry-content
+    // data) with regex metacharacters escaped by the literal regex above, so
+    // this cannot be used to inject an attacker-chosen pattern.
+    // eslint-disable-next-line security/detect-non-literal-regexp
     result = result.replace(new RegExp(`${cwdPattern}(?=[\\s'"),:;]|$)`, 'g'), '.')
   }
   // Quoted absolute paths (git quotes most paths in its messages): redact
@@ -71,6 +75,15 @@ export function sanitizeErrorMessage(message: string): string {
   // limitation: an UNQUOTED path containing spaces is only redacted up to
   // the first space — spaces are legal both inside paths and as message
   // separators, so this is not generally solvable here.
+  //
+  // The repeated group `(?:[^/\s'")]+\/)+` looks nested-quantifier-shaped, but
+  // the inner character class excludes `/`, so each repetition can only end at
+  // a literal `/` boundary in the input: there is exactly one way to decompose
+  // any matched string into repetitions (no same-substring ambiguity), so this
+  // does not backtrack catastrophically. Verified empirically with inputs up
+  // to 400k chars (adversarial runs of non-slash chars, with and without
+  // trailing slashes): scaling stayed linear, not quadratic/exponential.
+  // eslint-disable-next-line security/detect-unsafe-regex
   result = result.replace(/(^|[\s'"(=])\/(?:[^/\s'")]+\/)+[^/\s'")]*/g, '$1<path>')
   // Windows drive paths
   result = result.replace(/[A-Za-z]:\\[^\s'")]+/g, '<path>')

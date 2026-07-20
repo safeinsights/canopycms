@@ -18,6 +18,12 @@ export default defineConfig({
           environment: 'node',
           include: ['src/**/*.test.{ts,tsx}'],
           exclude: [...configDefaults.exclude, 'src/editor/**'],
+          // Git-heavy integration suites (git-manager, branch-workspace,
+          // role-permissions) spawn real git subprocesses per test and can
+          // exceed the 5s default on slower/loaded machines (e.g. local
+          // macOS). CI (ubuntu) doesn't need this headroom but isn't hurt by
+          // it either.
+          testTimeout: 30000,
         },
       },
       {
