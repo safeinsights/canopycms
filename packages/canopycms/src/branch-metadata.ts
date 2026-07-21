@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -6,8 +5,14 @@ import type { BranchContext, BranchMetadata, BranchStatus } from './types'
 import { BranchRegistry } from './branch-registry'
 import { resolveBranchPath } from './paths'
 import { type OperatingMode } from './operating-mode'
-import { isFileExistsError, isNotFoundError } from './utils/error'
+import { isNotFoundError } from './utils/error'
 import { withLock } from './utils/async-mutex'
+import {
+  writeOccJsonFile,
+  withOccRetry,
+  withOccFileLock,
+  OccWriteConflictError,
+} from './utils/occ-json-write'
 
 const BRANCH_META_DIR = '.canopy-meta'
 const BRANCH_META_FILE = 'branch.json'
@@ -28,15 +33,44 @@ export class BranchMetadataConflictError extends Error {
   }
 }
 
+/**
+ * Manages branch.json — branch status and access ACLs, both security-adjacent
+ * state — under `.canopy-meta/` in a branch workspace.
+ *
+ * save() is protected by three layers, outermost to innermost (identical
+ * structure to {@link CommentStore}'s withMutation, see comment-store.ts):
+ *
+ * 1. {@link withLock} - an in-process FIFO mutex keyed by the resolved file
+ *    path. Serializes concurrent mutators on the SAME process/host
+ *    deterministically.
+ * 2. {@link withOccFileLock} - a server-enforced, cross-process/cross-host
+ *    lock (proper-lockfile, mkdir-based). This is the actual fix for lost
+ *    branch-status/ACL updates across two warm Lambda containers (or a
+ *    Lambda + the EC2 worker) on EFS: rename-based OCC verification alone
+ *    relies on a read-back that can be served from the writer's own local
+ *    NFS dentry/attribute cache, so a foreign writer's rename can stay
+ *    invisible for that cache's window (commonly 3-60s) and both writers
+ *    conclude they won. A settle delay does not help — the cache window
+ *    dwarfs any sleep worth paying — only server-enforced mutual exclusion
+ *    does. Given branch.json carries status + ACLs, silently losing an
+ *    update here is a correctness/security issue, not just a UX glitch.
+ * 3. {@link withOccRetry} around {@link writeOccJsonFile} - version/writeId
+ *    based optimistic concurrency control. With layers 1-2 in place this is
+ *    now a defense-in-depth backstop only, not the primary safety mechanism.
+ *
+ * See `utils/occ-json-write.ts` for full guarantee documentation of layers 2-3.
+ */
 export class BranchMetadataFileManager {
   private readonly branchRoot: string
   private readonly filePath: string
   private readonly baseRoot: string
+  private readonly settleMs: number | undefined
 
-  private constructor(branchRoot: string, baseRoot: string) {
+  private constructor(branchRoot: string, baseRoot: string, options?: { settleMs?: number }) {
     this.branchRoot = path.resolve(branchRoot)
     this.filePath = path.join(this.branchRoot, BRANCH_META_DIR, BRANCH_META_FILE)
     this.baseRoot = baseRoot
+    this.settleMs = options?.settleMs
   }
 
   /**
@@ -60,8 +94,12 @@ export class BranchMetadataFileManager {
    * Get a BranchMetadataFileManager instance configured for registry invalidation.
    * Use this in API handlers to ensure registry cache is invalidated on updates.
    */
-  static get(branchRoot: string, baseRoot: string): BranchMetadataFileManager {
-    return new BranchMetadataFileManager(branchRoot, baseRoot)
+  static get(
+    branchRoot: string,
+    baseRoot: string,
+    options?: { settleMs?: number },
+  ): BranchMetadataFileManager {
+    return new BranchMetadataFileManager(branchRoot, baseRoot, options)
   }
 
   private async load(): Promise<{ meta: BranchMetadataFile | null; version: number | null }> {
@@ -79,145 +117,89 @@ export class BranchMetadataFileManager {
   }
 
   /**
-   * Atomic write using temp-file + rename + post-write verification.
-   * Follows the same pattern as CommentStore for EFS/NFS safety.
+   * Write branch.json via the shared OCC helper, with the schemaVersion
+   * default applied here (payload shaping stays branch-metadata's concern).
+   *
+   * Throws the helper's raw {@link OccWriteConflictError} so the surrounding
+   * {@link withOccRetry} in save() recognizes and retries it; translation to
+   * the public `BranchMetadataConflictError` contract happens at the save()
+   * boundary, after retries are exhausted (translating earlier would make
+   * withOccRetry's default predicate miss it, since it only recognizes the
+   * raw error type).
+   *
+   * branch-metadata historically writes WITH a trailing newline, unlike
+   * comment-store; `trailingNewline: true` preserves that.
    */
   private async write(
     meta: BranchMetadataFile,
     expectedVersion: number | null,
   ): Promise<{ version: number; writeId: string }> {
-    const newVersion = expectedVersion === null ? 1 : expectedVersion + 1
-    const writeId = randomUUID()
     const payload = {
       ...meta,
       schemaVersion: meta.schemaVersion ?? CURRENT_SCHEMA_VERSION,
-      version: newVersion,
-      writeId,
     }
+    return writeOccJsonFile(this.filePath, payload, {
+      expectedVersion,
+      settleMs: this.settleMs,
+      trailingNewline: true,
+    })
+  }
 
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true })
-
-    const content = JSON.stringify(payload, null, 2) + '\n'
-
-    if (expectedVersion === null) {
-      // New file: use temp-file + rename for atomicity, then link(target) to detect EEXIST races.
-      // Plain writeFile({flag:'wx'}) is not atomic — a crash mid-write leaves a partial file
-      // that makes JSON.parse fail on next startup, permanently breaking the branch.
-      const tempPath = `${this.filePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
-      await fs.writeFile(tempPath, content, 'utf-8')
-      try {
-        // link() is atomic and fails with EEXIST if the target already exists,
-        // giving us the same exclusive-create semantics as wx without the atomicity risk.
-        await fs.link(tempPath, this.filePath)
-      } catch (err: unknown) {
-        await fs.unlink(tempPath).catch(() => {})
-        if (isFileExistsError(err)) {
-          throw new BranchMetadataConflictError()
-        }
-        throw err
-      }
-      await fs.unlink(tempPath).catch(() => {})
-      return { version: newVersion, writeId }
-    }
-
-    // Existing file: temp write + atomic rename + verification
-    const tempPath = `${this.filePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
-    await fs.writeFile(tempPath, content, 'utf-8')
-
+  /**
+   * Run a save cycle under the full lock + OCC-retry stack described in the
+   * class doc comment. A conflict that survives every retry surfaces as the
+   * public `BranchMetadataConflictError`.
+   */
+  async save(incoming: BranchMetadataUpdate): Promise<BranchMetadataFile> {
     try {
-      // Fast-fail optimization: check version before rename to avoid unnecessary
-      // rename + verify cycle. Not a correctness guarantee — the post-write
-      // writeId verification below is what actually detects cross-process races.
-      let currentVersion: number | null = null
-      try {
-        const current = JSON.parse(await fs.readFile(this.filePath, 'utf-8')) as {
-          version?: number
-        }
-        currentVersion = current.version ?? 0
-      } catch {
-        currentVersion = null
-      }
+      return await withLock(this.filePath, () =>
+        withOccFileLock(this.filePath, () =>
+          withOccRetry(async () => {
+            const { meta: existing, version } = await this.load()
+            const now = new Date().toISOString()
 
-      if (currentVersion !== expectedVersion) {
-        throw new BranchMetadataConflictError()
-      }
+            const defaults: BranchMetadata = {
+              name: 'unknown',
+              status: 'editing' as BranchStatus,
+              access: {},
+              createdBy: 'unknown',
+              createdAt: now,
+              updatedAt: now,
+            }
 
-      // Atomic rename
-      await fs.rename(tempPath, this.filePath)
-
-      // Post-write verification: confirm our write landed (catches cross-process races)
-      const afterWrite = JSON.parse(await fs.readFile(this.filePath, 'utf-8')) as {
-        writeId?: string
-      }
-      if (afterWrite.writeId !== writeId) {
-        throw new BranchMetadataConflictError()
-      }
+            const merged: BranchMetadataFile = {
+              schemaVersion: CURRENT_SCHEMA_VERSION,
+              version: version ?? 0,
+              branch: {
+                ...defaults,
+                ...existing?.branch,
+                ...incoming.branch,
+                access: {
+                  ...existing?.branch?.access,
+                  ...incoming.branch?.access,
+                },
+                // Immutable after creation
+                createdBy:
+                  existing?.branch.createdBy ?? incoming.branch?.createdBy ?? defaults.createdBy,
+                createdAt: existing?.branch.createdAt ?? defaults.createdAt,
+                // Fork point is recorded once at creation; later saves must not move it
+                baseBranch: existing?.branch.baseBranch ?? incoming.branch?.baseBranch,
+              },
+            }
+            const written = await this.write(merged, version)
+            merged.version = written.version
+            merged.writeId = written.writeId
+            await this.invalidateRegistry()
+            return merged
+          }),
+        ),
+      )
     } catch (err) {
-      await fs.unlink(tempPath).catch(() => {})
+      if (err instanceof OccWriteConflictError) {
+        throw new BranchMetadataConflictError()
+      }
       throw err
     }
-
-    return { version: newVersion, writeId }
-  }
-
-  private async withRetry<T>(operation: () => Promise<T>, maxAttempts = 5): Promise<T> {
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        return await operation()
-      } catch (err) {
-        if (err instanceof BranchMetadataConflictError && attempt < maxAttempts) {
-          const baseDelay = Math.min(10 * Math.pow(2, attempt - 1), 100)
-          const jitter = Math.random() * baseDelay
-          await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter))
-          continue
-        }
-        throw err
-      }
-    }
-    throw new Error('Unreachable')
-  }
-
-  async save(incoming: BranchMetadataUpdate): Promise<BranchMetadataFile> {
-    return withLock(this.filePath, () =>
-      this.withRetry(async () => {
-        const { meta: existing, version } = await this.load()
-        const now = new Date().toISOString()
-
-        const defaults: BranchMetadata = {
-          name: 'unknown',
-          status: 'editing' as BranchStatus,
-          access: {},
-          createdBy: 'unknown',
-          createdAt: now,
-          updatedAt: now,
-        }
-
-        const merged: BranchMetadataFile = {
-          schemaVersion: CURRENT_SCHEMA_VERSION,
-          version: version ?? 0,
-          branch: {
-            ...defaults,
-            ...existing?.branch,
-            ...incoming.branch,
-            access: {
-              ...existing?.branch?.access,
-              ...incoming.branch?.access,
-            },
-            // Immutable after creation
-            createdBy:
-              existing?.branch.createdBy ?? incoming.branch?.createdBy ?? defaults.createdBy,
-            createdAt: existing?.branch.createdAt ?? defaults.createdAt,
-            // Fork point is recorded once at creation; later saves must not move it
-            baseBranch: existing?.branch.baseBranch ?? incoming.branch?.baseBranch,
-          },
-        }
-        const written = await this.write(merged, version)
-        merged.version = written.version
-        merged.writeId = written.writeId
-        await this.invalidateRegistry()
-        return merged
-      }),
-    )
   }
 
   /**
@@ -245,8 +227,9 @@ export interface BranchMetadataUpdate {
 export const getBranchMetadataFileManager = (
   branchRoot: string,
   baseRoot: string,
+  options?: { settleMs?: number },
 ): BranchMetadataFileManager => {
-  return BranchMetadataFileManager.get(branchRoot, baseRoot)
+  return BranchMetadataFileManager.get(branchRoot, baseRoot, options)
 }
 
 /**
