@@ -116,13 +116,18 @@ async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
  *   eager re-resolve (window-E mitigation, mirroring BranchRegistry's
  *   eager regen) lives one level up in SchemaOps.invalidateSchemaCache()
  *   (schema/schema-store.ts), which has those arguments and calls
- *   getSchema() right after invalidating - so every SchemaOps mutation
- *   re-resolves on the mutating host, whose scan is necessarily coherent
- *   with the mutation it just made. (The editor's follow-up schema GET is
- *   a separate Lambda invocation with no container affinity, so it could
- *   not serve this purpose.) Callers of invalidate() that bypass SchemaOps
- *   (api/schema.ts's explicit invalidate endpoint; the bulk-mutation bump
- *   in invalidateBranchContentCaches) accept the lazy next-read regen.
+ *   {@link resolveAndPersist} (NOT getSchema()) right after invalidating -
+ *   so every SchemaOps mutation re-resolves on the mutating host via a scan
+ *   that is GUARANTEED to run, not merely likely to run. getSchema() would
+ *   be the wrong call here: its cache-read fast path can short-circuit
+ *   through a snapshot a DIFFERENT concurrent host just wrote (see
+ *   resolveAndPersist()'s doc comment for the exact race), silently
+ *   skipping the one scan this eager re-resolve exists to guarantee. (The
+ *   editor's follow-up schema GET is a separate Lambda invocation with no
+ *   container affinity, so it could not serve this purpose either.)
+ *   Callers of invalidate() that bypass SchemaOps (api/schema.ts's explicit
+ *   invalidate endpoint; the bulk-mutation bump in
+ *   invalidateBranchContentCaches) accept the lazy next-read regen.
  *
  * This is also why prod needs no mtime walk: the dev-only mtime check below
  * exists solely to catch hand edits to .collection.json made outside the CMS
@@ -251,8 +256,28 @@ export class BranchSchemaCache {
       }
     }
 
-    // Cache miss, stale, or build mode - resolve fresh.
-    //
+    // Cache miss, stale, or build mode - resolve fresh (and persist, subject
+    // to the same skip-persist rule) via the shared resolve half.
+    return this.resolveFreshAndPersist(branchRoot, entrySchemaRegistry, contentRootName, {
+      skipDiskCache,
+    })
+  }
+
+  /**
+   * Resolve the schema fresh from disk and persist it (subject to the
+   * skip-persist rule below), UNCONDITIONALLY -- never through the cache-read
+   * fast path in {@link loadFromCacheOrResolve}. Shared by that method's
+   * cache-miss fallback and by {@link resolveAndPersist}.
+   */
+  private async resolveFreshAndPersist(
+    branchRoot: string,
+    entrySchemaRegistry: EntrySchemaRegistry,
+    contentRootName: string,
+    options: { skipDiskCache: boolean },
+  ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
+    const { skipDiskCache } = options
+    const contentRoot = path.join(branchRoot, contentRootName)
+
     // Capture the marker strictly BEFORE resolving: a bump landing mid-resolve
     // then differs from the token recorded below, forcing a re-resolve on the
     // next read instead of silently persisting a snapshot that embeds a fresh
@@ -292,11 +317,19 @@ export class BranchSchemaCache {
           generation: read.token,
         }
 
-        // Atomic write: write to temp file, then rename
+        // Atomic write: write to temp file, then rename. Clean up the temp
+        // file on a failed rename (matches every other atomic write in the
+        // codebase, e.g. utils/atomic-write.ts) so a transient rename error
+        // doesn't leak a stray `.tmp` file into `.canopy-meta/` forever.
         await fs.mkdir(cacheDir, { recursive: true })
         const tmpPath = path.join(cacheDir, `schema-cache.tmp.${Date.now()}.${Math.random()}.json`)
         await fs.writeFile(tmpPath, JSON.stringify(newCache, null, 2), 'utf-8')
-        await fs.rename(tmpPath, cachePath)
+        try {
+          await fs.rename(tmpPath, cachePath)
+        } catch (err) {
+          await fs.unlink(tmpPath).catch(() => {})
+          throw err
+        }
       }
       // else: the marker couldn't be read for a reason other than "never
       // bumped" - we cannot attribute a token to this resolve, and stamping
@@ -308,6 +341,36 @@ export class BranchSchemaCache {
     }
 
     return { schema: result.schema, flatSchema }
+  }
+
+  /**
+   * Resolve the schema fresh from disk and persist it, SKIPPING the cache
+   * read entirely -- unlike {@link getSchema}, which can short-circuit
+   * through a cache HIT. That distinction matters for eager re-resolve after
+   * invalidation (see {@link invalidate}'s doc comment and
+   * `SchemaOps.invalidateSchemaCache()` in schema/schema-store.ts, the sole
+   * intended caller): the whole point of an eager re-resolve is to guarantee
+   * ONE scan that is coherent with the mutation this host just made. A plain
+   * `getSchema()` call right after `invalidate()` is NOT that guarantee --
+   * `getSchema()`'s cache-read fast path (`loadFromCacheOrResolve`) can still
+   * return a snapshot written by a DIFFERENT, concurrent host: if that
+   * foreign host's own eager re-resolve raced this one and embedded the
+   * (now-current) marker token over ITS OWN stale-NFS-cache scan (the
+   * window-E case this class's doc comment describes), this host's
+   * `getSchema()` would happily accept that foreign snapshot as "current"
+   * and skip the one scan this call was specifically trying to guarantee.
+   * `resolveAndPersist()` never reads the cache file at all, so it cannot be
+   * short-circuited that way.
+   */
+  async resolveAndPersist(
+    branchRoot: string,
+    entrySchemaRegistry: EntrySchemaRegistry,
+    contentRootName: string = 'content',
+  ): Promise<{ schema: RootCollectionConfig; flatSchema: FlatSchemaItem[] }> {
+    const skipDiskCache = this.skipDiskCache(branchRoot)
+    return this.resolveFreshAndPersist(branchRoot, entrySchemaRegistry, contentRootName, {
+      skipDiskCache,
+    })
   }
 
   /**

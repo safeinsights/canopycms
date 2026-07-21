@@ -130,9 +130,12 @@ over anything the old code wrote; the window closes when the old processes drain
 Bulk working-tree mutations (git checkout/merge/rebase, sync, CLI sync, migrate) go
 through `invalidateBranchContentCaches()` in content-index-generation.ts, which bumps
 the `content-index` **and** `schema` markers — a rebase can pull in upstream
-`.collection.json` changes, so both caches must be told. Content-only mutations use
-`invalidateContentIndexesDurable()`. Settings workspaces skip markers entirely
-(`skipIndexMarker` on GitManager).
+`.collection.json` changes, so both caches must be told. `invalidateContentIndexesDurable()`
+(content-index marker only) is the documented entry point for a FUTURE content-only bulk
+mutation site — it currently has zero production callers: `ContentStore`'s own
+write/delete/rename bump the marker directly via `recordOwnMutation()` ->
+`bumpContentIndexGeneration()`, not through this wrapper. Settings workspaces skip
+markers entirely (`skipIndexMarker` on GitManager).
 
 ## Residual staleness windows (accepted, bounded)
 

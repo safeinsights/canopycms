@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto'
 
 import lockfile from 'proper-lockfile'
 
-import { getErrorMessage, isFileExistsError } from './error'
+import { getErrorMessage, isFileExistsError, isNodeError } from './error'
 import { createDebugLogger } from './debug'
 
 const log = createDebugLogger({ prefix: 'OccJsonWrite' })
@@ -206,35 +206,63 @@ export async function withOccFileLock<T>(filePath: string, fn: () => Promise<T>)
   const dir = path.dirname(filePath)
   await fs.mkdir(dir, { recursive: true })
 
-  let release: () => Promise<void>
-  try {
-    release = await lockfile.lock(dir, {
-      lockfilePath: `${filePath}.lock`,
-      realpath: false,
-      stale: 10_000,
-      // The retry budget must exceed `stale`: a holder that died without
-      // releasing (kill -9) is only taken over once its lock goes stale, so
-      // waiters that give up sooner than that turn every crashed holder into
-      // ~10s of hard failures. Budget here sums to ~11.5s base (more with
-      // randomize), comfortably past one stale takeover.
-      retries: { retries: 11, factor: 1.6, minTimeout: 50, maxTimeout: 2000, randomize: true },
-      // A compromised lock (the lock dir vanished or refresh failed mid-hold,
-      // e.g. the branch directory containing it was deleted) must not crash
-      // the process, which is proper-lockfile's default. Our critical
-      // sections are short and idempotent-on-conflict (OCC verify inside);
-      // log and let the section finish.
-      onCompromised: (err) => {
-        log.warn('lock', `Lock compromised mid-hold for ${filePath}`, {
-          error: getErrorMessage(err),
-        })
-      },
-    })
-  } catch (err) {
-    // Exhausted the retry budget (or other acquisition failure): surface as
-    // the standard conflict type so adopters' boundary translation turns it
-    // into their public retriable conflict error instead of a raw ELOCKED
-    // leaking out as an opaque 500.
-    throw new OccWriteConflictError(`Could not acquire file lock: ${getErrorMessage(err)}`)
+  // Acquisition retries are OUR loop, not proper-lockfile's built-in
+  // `retries`: the built-in loop retries blindly on ANY error, so a waiter
+  // whose target directory was deleted mid-poll (deleteBranch's rm removing
+  // `.canopy-meta/` while a save is queued on its lock) would burn the whole
+  // multi-second budget re-hitting ENOENT before failing. Our loop retries
+  // only genuine contention (ELOCKED) and fails fast on ENOENT (the resource
+  // is gone — retrying cannot succeed and must not resurrect the directory).
+  //
+  // The retry budget must exceed `stale` (10s): a holder that died without
+  // releasing (kill -9) is only taken over once its lock goes stale, so
+  // waiters that give up sooner turn every crashed holder into ~10s of hard
+  // failures. Base delays 50ms * 1.6^n capped at 2s over 13 retries sum to
+  // ~13.5s, comfortably past one stale takeover; jitter only adds to that.
+  const MAX_ATTEMPTS = 14
+  let release: (() => Promise<void>) | null = null
+  for (let attempt = 1; release === null; attempt++) {
+    try {
+      // Lock the FILE, not the directory: proper-lockfile keys its
+      // module-level `locks{}` bookkeeping (release fn, refresh timer) by
+      // the resource path passed here. Two concurrent withOccFileLock calls
+      // for DIFFERENT files in the SAME directory (comments.json and
+      // branch.json both under one `.canopy-meta/`) would otherwise collide
+      // on that shared directory key: releasing one lock stops the other's
+      // refresh timer, marks it released internally, and leaks its on-disk
+      // `.lock` directory. `realpath: false` because the resource path need
+      // not exist on disk (brand-new files).
+      release = await lockfile.lock(filePath, {
+        lockfilePath: `${filePath}.lock`,
+        realpath: false,
+        stale: 10_000,
+        retries: 0,
+        // A compromised lock (the lock dir vanished or refresh failed
+        // mid-hold, e.g. the branch directory containing it was deleted)
+        // must not crash the process, which is proper-lockfile's default.
+        // Our critical sections are short and idempotent-on-conflict (OCC
+        // verify inside); log and let the section finish.
+        onCompromised: (err) => {
+          log.warn('lock', `Lock compromised mid-hold for ${filePath}`, {
+            error: getErrorMessage(err),
+          })
+        },
+      })
+    } catch (err) {
+      const code = isNodeError(err) ? err.code : undefined
+      const contended = code === 'ELOCKED'
+      if (!contended || attempt >= MAX_ATTEMPTS) {
+        // Non-contention failure (e.g. ENOENT: the directory was deleted
+        // under us) or budget exhausted: surface as the standard conflict
+        // type so adopters' boundary translation turns it into their public
+        // retriable conflict error instead of a raw ELOCKED/ENOENT leaking
+        // out as an opaque 500.
+        throw new OccWriteConflictError(`Could not acquire file lock: ${getErrorMessage(err)}`)
+      }
+      const baseDelay = Math.min(50 * Math.pow(1.6, attempt - 1), 2000)
+      const jitter = Math.random() * baseDelay
+      await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter))
+    }
   }
 
   try {

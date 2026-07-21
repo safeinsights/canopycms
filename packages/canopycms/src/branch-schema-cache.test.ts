@@ -394,6 +394,90 @@ describe('BranchSchemaCache', () => {
       const healedCache = JSON.parse(await fs.readFile(cachePath, 'utf-8'))
       expect(healedCache.generation).toBe(t1)
     })
+
+    it('cleans up the temp file when the atomic rename fails (item 7 fix)', async () => {
+      const registry = new BranchSchemaCache('prod')
+      const renameSpy = vi.spyOn(fs, 'rename').mockRejectedValueOnce(new Error('EIO: simulated'))
+
+      await expect(registry.getSchema(branchRoot, entrySchemaRegistry)).rejects.toThrow(
+        'EIO: simulated',
+      )
+      renameSpy.mockRestore()
+
+      const metaDir = path.join(branchRoot, '.canopy-meta')
+      const entries = await fs.readdir(metaDir).catch(() => [] as string[])
+      const leakedTempFiles = entries.filter((entry) => entry.includes('.tmp'))
+      expect(leakedTempFiles).toEqual([])
+    })
+  })
+
+  describe('resolveAndPersist (item 8 fix)', () => {
+    it('is not short-circuited by a foreign fresh-token/stale-scan snapshot, unlike getSchema()', async () => {
+      const registry = new BranchSchemaCache('prod')
+
+      // invalidate() bumps the marker to a fresh token T1.
+      await registry.invalidate(branchRoot)
+      const t1Read = await readResourceGeneration(branchRoot, 'schema')
+      if (!t1Read.ok) throw new Error('expected marker read to succeed')
+
+      // Change the real on-disk schema AFTER invalidating (simulating the
+      // mutation invalidateSchemaCache() is reacting to).
+      await writeCollectionMeta('Real current schema')
+
+      // Hand-write a cache file simulating a FOREIGN host's window-E
+      // snapshot: it embeds the CURRENT (fresh) token T1, but its `schema`
+      // is stale data that predates the mutation above -- exactly what a
+      // concurrent host's own eager re-resolve would produce if ITS scan
+      // was served from stale NFS caches. This is what "another host's
+      // bump" looks like on disk (see docs/concurrency.md's testing
+      // patterns: "overwrite the marker file directly").
+      await fs.mkdir(path.dirname(cachePath), { recursive: true })
+      await fs.writeFile(
+        cachePath,
+        JSON.stringify({
+          version: 3,
+          schema: { label: 'Foreign stale snapshot', entries: [] },
+          flatSchema: [],
+          cachedAt: new Date().toISOString(),
+          generation: t1Read.token,
+        }),
+      )
+
+      // getSchema()'s cache-read fast path would accept this foreign
+      // snapshot as current (token matches) and wrongly serve/re-persist
+      // the stale data -- demonstrating why invalidateSchemaCache() must
+      // not use it for the eager re-resolve.
+      const viaGetSchema = await registry.getSchema(branchRoot, entrySchemaRegistry)
+      expect(viaGetSchema.schema.label).toBe('Foreign stale snapshot')
+
+      // resolveAndPersist() never reads the cache file, so it always
+      // re-scans and overwrites the foreign snapshot with the real result.
+      const result = await registry.resolveAndPersist(branchRoot, entrySchemaRegistry)
+      expect(result.schema.label).toBe('Real current schema')
+
+      const onDisk = JSON.parse(await fs.readFile(cachePath, 'utf-8'))
+      expect(onDisk.schema.label).toBe('Real current schema')
+    })
+
+    it('honors skipDiskCache (build mode / project-root branchRoot) like loadFromCacheOrResolve does', async () => {
+      const registry = new BranchSchemaCache()
+
+      // Static deployments resolve branchRoot to process.cwd() -- simulate
+      // that the same way the "project root" suite above does.
+      const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(branchRoot)
+      try {
+        const result = await registry.resolveAndPersist(branchRoot, entrySchemaRegistry)
+        expect(result.schema.entries?.[0].name).toBe('page')
+
+        const metaExists = await fs
+          .access(path.join(branchRoot, '.canopy-meta'))
+          .then(() => true)
+          .catch(() => false)
+        expect(metaExists).toBe(false)
+      } finally {
+        cwdSpy.mockRestore()
+      }
+    })
   })
 
   describe('invalidate', () => {

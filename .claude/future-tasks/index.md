@@ -39,6 +39,7 @@ Priority levels:
 | File                                                                               | Summary                                                                                                                    |
 | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | [assets-media-system.md](assets-media-system.md)                                   | Assets/media system design (agreed 2026-07-19): S3 content-addressed storage, presigned direct upload, sharp pipeline, image field + media manager, CDK asset bucket |
+| [schema-store-rmw-protection.md](schema-store-rmw-protection.md)                   | `.collection.json` mutations in schema/schema-store.ts are read-modify-write with `withLock` covering only the final write; no OCC/lockfile — concurrent admin schema edits can lose updates cross-process |
 | [content-store-lock-key.md](content-store-lock-key.md)                             | RESOLVED — epic PR #116: readdir-derived namespaced content-ID lock keys, buildPaths inside the lock, create-slug keys      |
 | [validate-entry-type-names.md](validate-entry-type-names.md)                       | Reference fields can specify non-existent `entryType` names; add config-time validation                                    |
 | [rename-collection-name-to-key.md](rename-collection-name-to-key.md)               | Rename `collection.name` → `collection.key` to clarify its machine-readable role                                           |
@@ -80,6 +81,7 @@ Priority levels:
 | ------------------------------------------------ | ---------------------------------------------------------------------------- |
 | [ai-content-v2.md](ai-content-v2.md)             | `llms.txt` metadata, HTTP caching headers, selective rebuild for AI content  |
 | [schema-faq-glossary.md](schema-faq-glossary.md) | Dedicated FAQ and glossary schema collections for reuse across pages         |
+| [content-root-name-hardcoded.md](content-root-name-hardcoded.md) | `api/schema.ts`'s `getSchemaOps` and `api/entries.ts`'s `deleteEntry` hardcode `'content'` instead of honoring `config.contentRoot` like every other content-facing code path |
 | [FIXES.md](FIXES.md)                             | Older catch-all list; mostly superseded — review and migrate to proper files |
 
 ---

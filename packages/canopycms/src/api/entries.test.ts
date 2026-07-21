@@ -13,6 +13,8 @@ import { listEntries } from './entries'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
 import { loadCollectionMetaFiles, resolveCollectionReferences } from '../schema'
 import { unsafeAsBranchName, unsafeAsLogicalPath } from '../paths/test-utils'
+import { BranchSchemaCache, SCHEMA_GENERATION_RESOURCE } from '../branch-schema-cache'
+import { resourceGenerationPath } from '../resource-generation'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-entries-'))
 
@@ -1416,6 +1418,129 @@ describe('deleteEntry', () => {
     // Verify file was deleted
     const files = await fs.readdir(path.join(root, `content/posts.${postsId}`))
     expect(files.filter((f) => f.endsWith('.json') && f !== '.collection.json')).toHaveLength(0)
+  })
+
+  it('removes the deleted entry id from the collection order array and bumps the schema generation marker', async () => {
+    // Pins the 89f7885 fix: deleteEntry's order-update branch only runs when
+    // contentId is found + collection.type === 'collection' + collection.order
+    // is defined + the id is present in order. Before the fix, the SchemaOps
+    // used for the order update was constructed with branchRoot (instead of
+    // contentRoot) and without services, so its .collection.json write never
+    // bumped the schema generation marker -- every host durably served the
+    // stale cached order (still containing the deleted entry) until the next
+    // unrelated schema mutation.
+    const root = await tmpDir()
+
+    const postsId = 'q52DCVPuH4ga'
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), {
+      recursive: true,
+    })
+
+    const entryId = 'abc123def456'
+    const otherEntryId = 'other000id001'
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/.collection.json`),
+      JSON.stringify({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+        order: [entryId, otherEntryId],
+      }),
+      'utf8',
+    )
+
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.to-delete.${entryId}.json`),
+      JSON.stringify({ title: 'Delete Me' }),
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.keep-me.${otherEntryId}.json`),
+      JSON.stringify({ title: 'Keep Me' }),
+      'utf8',
+    )
+
+    const entrySchemaRegistry = {
+      postSchema: [{ name: 'title', type: 'string' }],
+    }
+    const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
+    const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema,
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
+    })
+
+    // A REAL BranchSchemaCache (not the default createMockServices() stub,
+    // whose branchSchemaCache is a vi.fn() that never touches disk) so
+    // SchemaOps.invalidateSchemaCache()'s bump + eager re-resolve actually
+    // read/write the on-disk generation marker below.
+    const branchSchemaCache = new BranchSchemaCache('dev')
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        entrySchemaRegistry: entrySchemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+        createContentAccessChecker,
+        branchSchemaCache,
+      },
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
+    })
+
+    const markerPath = resourceGenerationPath(root, SCHEMA_GENERATION_RESOURCE)
+    const markerExistedBefore = await fs
+      .stat(markerPath)
+      .then(() => true)
+      .catch(() => false)
+    expect(markerExistedBefore).toBe(false)
+
+    const { deleteEntry } = await import('./entries')
+
+    const res = await deleteEntry.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      {
+        branch: unsafeAsBranchName('main'),
+        entryPath: unsafeAsLogicalPath('content/posts/to-delete'),
+      },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.deleted).toBe(true)
+
+    // (a) the entry file is gone
+    const files = await fs.readdir(path.join(root, `content/posts.${postsId}`))
+    expect(files).not.toContain(`post.to-delete.${entryId}.json`)
+    expect(files).toContain(`post.keep-me.${otherEntryId}.json`)
+
+    // (b) .collection.json's order array no longer contains the deleted id
+    const meta = JSON.parse(
+      await fs.readFile(path.join(root, `content/posts.${postsId}/.collection.json`), 'utf8'),
+    ) as { order?: string[] }
+    expect(meta.order).toEqual([otherEntryId])
+
+    // (c) the schema generation marker was bumped by the order-update write
+    const markerAfter = await fs.readFile(markerPath, 'utf8')
+    expect(markerAfter.length).toBeGreaterThan(0)
   })
 
   it('returns 403 when user lacks edit permission', async () => {

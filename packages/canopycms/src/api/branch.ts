@@ -30,7 +30,15 @@ export type BranchListResponse = ApiResponse<{
 }>
 
 /** Response type for branch deletion */
-export type BranchDeleteResponse = ApiResponse<{ deleted: boolean }>
+export type BranchDeleteResponse = ApiResponse<{
+  deleted: boolean
+  /**
+   * Set when branch.json was removed (so the branch is logically gone from
+   * the registry) but the full directory removal failed -- an orphan clone
+   * persists on disk, invisible to the API, until manually cleaned up.
+   */
+  cleanupWarning?: string
+}>
 
 // ============================================================================
 // Zod Schemas for Validation
@@ -305,6 +313,7 @@ export const deleteBranchHandler = async (
   // live branch with no clone. The directory removal happens inside the
   // same hold so a racing save cannot slip between unlink and rm either.
   const metadataFile = path.join(branchContext.branchRoot, '.canopy-meta', 'branch.json')
+  let cleanupWarning: string | undefined
   try {
     await withOccFileLock(metadataFile, async () => {
       try {
@@ -318,11 +327,23 @@ export const deleteBranchHandler = async (
         }
       }
 
-      // In multi-branch modes, also delete the entire branch directory
+      // In multi-branch modes, also delete the entire branch directory.
+      // Retry transient EFS/NFS errors (ENOTEMPTY from a concurrent writer,
+      // EBUSY) a few times before giving up -- rm's failure must never be
+      // swallowed: metadata is gone either way (the branch is logically
+      // deleted and will no longer appear in listings), but silently
+      // succeeding here would leave a full orphan clone on disk with
+      // nothing in the API surfacing its existence.
       if (branchContext.branchRoot !== branchContext.baseRoot) {
         try {
-          await fs.rm(branchContext.branchRoot, { recursive: true, force: true })
+          await fs.rm(branchContext.branchRoot, {
+            recursive: true,
+            force: true,
+            maxRetries: 3,
+            retryDelay: 100,
+          })
         } catch (err: unknown) {
+          cleanupWarning = `Failed to fully remove branch directory: ${getErrorMessage(err)}`
           console.error(
             `CanopyCMS: Failed to delete branch directory for ${branchName}:`,
             getErrorMessage(err),
@@ -350,7 +371,11 @@ export const deleteBranchHandler = async (
   }
   await ctx.services.registry.invalidate()
 
-  return { ok: true, status: 200, data: { deleted: true } }
+  return {
+    ok: true,
+    status: 200,
+    data: { deleted: true, ...(cleanupWarning && { cleanupWarning }) },
+  }
 }
 
 export interface UpdateBranchAccessBody {
@@ -403,10 +428,17 @@ export const updateBranchAccessHandler = async (
     }
   }
 
-  // Build new access control
-  const newAccess: BranchAccessControl = {
-    ...branchContext.branch.access,
-  }
+  // Build the access DELTA from only the keys the caller actually supplied —
+  // never spread branchContext.branch.access (a snapshot resolved before
+  // this handler acquired anything) wholesale. save()'s field-level merge
+  // (branch-metadata.ts) takes the incoming access object's keys over the
+  // freshly-reloaded on-disk ones, so a full stale spread here would
+  // silently revert any key a concurrent request changed via the OTHER key
+  // in the gap between this handler's getBranchContext() and its save()
+  // call. An omitted key must be ABSENT from this object (not merely
+  // undefined-valued) so save()'s spread-merge leaves the on-disk value
+  // untouched; a supplied `[]` still comes through and clears the field.
+  const newAccess: BranchAccessControl = {}
   if (body.allowedUsers !== undefined) {
     newAccess.allowedUsers = body.allowedUsers
   }

@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   BranchMetadataFileManager,
+  BranchMetadataConflictError,
   getBranchMetadataFileManager,
   type BranchMetadataFile,
 } from './branch-metadata'
@@ -346,6 +347,65 @@ describe('BranchMetadataFileManager', () => {
       const raw = await fs.readFile(filePath, 'utf8')
       expect(() => JSON.parse(raw)).not.toThrow()
       expect(raw.endsWith('\n')).toBe(true)
+    })
+  })
+
+  describe('phantom-save guard (item 4b)', () => {
+    it('throws BranchMetadataConflictError when branchRoot has been removed before save()', async () => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const meta = createMeta(root, registryDir)
+
+      // Simulate deleteBranchHandler having already removed the entire
+      // branch directory (rm -rf) by the time this save() call -- whose
+      // branchContext was resolved earlier, before the delete -- reaches
+      // its own critical section.
+      await fs.rm(root, { recursive: true, force: true })
+
+      await expect(meta.save({ branch: { status: 'submitted' } })).rejects.toThrow(
+        BranchMetadataConflictError,
+      )
+      await expect(meta.save({ branch: { status: 'submitted' } })).rejects.toThrow(
+        'Branch no longer exists',
+      )
+
+      // The directory must not have been resurrected by the failed save.
+      const exists = await fs
+        .stat(root)
+        .then(() => true)
+        .catch(() => false)
+      expect(exists).toBe(false)
+    })
+
+    it('does not resurrect the directory tree as a side effect of the failed save', async () => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const meta = createMeta(root, registryDir)
+      await fs.rm(root, { recursive: true, force: true })
+
+      await meta.save({ branch: { status: 'submitted' } }).catch(() => {})
+
+      const metaDirExists = await fs
+        .stat(path.join(root, '.canopy-meta'))
+        .then(() => true)
+        .catch(() => false)
+      expect(metaDirExists).toBe(false)
+    })
+
+    it('creation flow still works: branch-workspace provisions the clone directory before save() runs', async () => {
+      // ensureBranchRoot() (branch-workspace.ts) does fs.mkdir(branchRoot,
+      // {recursive: true}) before ever calling metadata.save() -- mirror
+      // that ordering directly against the manager to confirm the new
+      // pre-check doesn't break brand-new branch creation.
+      const root = path.join(await tmpDir(), 'not-yet-created-branch')
+      const registryDir = await tmpDir()
+      await fs.mkdir(root, { recursive: true })
+
+      const meta = createMeta(root, registryDir)
+      const created = await meta.save({
+        branch: { name: 'feature/new', status: 'editing', createdBy: 'u1' },
+      })
+      expect(created.branch.name).toBe('feature/new')
     })
   })
 })

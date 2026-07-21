@@ -1608,6 +1608,220 @@ describe('ContentStore lock-key concurrency (PR F)', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Reclassification retry for delete()/renameEntry() (item 2 fix): the
+// pre-pass lock key can go stale between resolution and lock acquisition --
+// e.g. a concurrent renameEntry() moves the entry away and a brand-new,
+// different-ID entry lands at the same slug in the gap. Without re-deriving
+// the key from in-lock ground truth, the call would proceed under the WRONG
+// entry's lock, leaving the entry that's ACTUALLY at that slug unprotected
+// against a genuinely concurrent writer using its correct key.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Test subclass exposing a controlled pause right after delete()'s and
+ * renameEntry()'s pre-pass buildPaths() resolves, before either acquires a
+ * lock -- see ContentStore.afterPrePassForTesting()'s doc comment and
+ * branch-registry.test.ts's `BlockingRegistry` for the same idiom.
+ */
+class BlockingContentStore extends ContentStore {
+  private gate: Promise<void> | null = null
+  private resolveGate: (() => void) | null = null
+  private resolvePrePassReached: (() => void) | null = null
+  /** Resolves once the NEXT call's pre-pass has completed and it is parked. */
+  public prePassReached: Promise<void> | null = null
+
+  /** Arm a one-shot gate for the next delete()/renameEntry() call. */
+  armGate(): void {
+    this.gate = new Promise<void>((resolve) => {
+      this.resolveGate = resolve
+    })
+    this.prePassReached = new Promise<void>((resolve) => {
+      this.resolvePrePassReached = resolve
+    })
+  }
+
+  unblock(): void {
+    this.resolveGate?.()
+  }
+
+  protected async afterPrePassForTesting(): Promise<void> {
+    if (!this.gate) return
+    const gate = this.gate
+    const resolvePrePassReached = this.resolvePrePassReached
+    this.gate = null
+    this.resolvePrePassReached = null
+    resolvePrePassReached?.()
+    await gate
+  }
+}
+
+describe('ContentStore reclassification retry (item 2 fix)', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [{ name: 'post', format: 'json' as const, schema: [] }],
+      },
+    ],
+  } as const
+
+  const posts = unsafeAsLogicalPath('content/posts')
+  const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  const makeStore = async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema })
+    return {
+      root,
+      store: new BlockingContentStore(root, flattenSchema(schema, config.contentRoot)),
+    }
+  }
+
+  /**
+   * Gate the NEXT call to fs.unlink so it blocks until released -- used to
+   * park renameEntry() between its (real, unaffected) fs.link() call and its
+   * fs.unlink() of the source path, letting a concurrent write() run its
+   * critical section in that window.
+   */
+  const gateFsUnlink = () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const realUnlink = fs.unlink.bind(fs)
+    const spy = vi.spyOn(fs, 'unlink').mockImplementationOnce(async (...args) => {
+      await gate
+      return realUnlink(...(args as Parameters<typeof fs.unlink>))
+    })
+    return { release, spy }
+  }
+
+  it('renameEntry() retries under the corrected key so a concurrent write() on the entry actually at the slug is serialized, not lost (regression)', async () => {
+    const { root, store } = await makeStore()
+
+    // Entry X at slug 's'.
+    await store.write(posts, unsafeAsSlug('s'), { format: 'json', data: { title: 'X' } })
+    const idX = await store.getIdForEntry(posts, unsafeAsSlug('s'))
+    expect(idX).toBeTruthy()
+
+    // Arm the pre-pass gate: renameEntry(s -> u)'s pre-pass captures X's id
+    // and lock key, then parks BEFORE acquiring anything.
+    store.armGate()
+    const renamePromise = store.renameEntry(posts, unsafeAsSlug('s'), unsafeAsSlug('u'))
+    await store.prePassReached
+
+    // While parked: move X away (s -> t), then create a brand-new entry Y at
+    // the now-vacant slug 's'. Neither is blocked -- the parked call hasn't
+    // acquired any lock yet.
+    await store.renameEntry(posts, unsafeAsSlug('s'), unsafeAsSlug('t'))
+    await store.write(posts, unsafeAsSlug('s'), { format: 'json', data: { title: 'Y' } })
+    const idY = await store.getIdForEntry(posts, unsafeAsSlug('s'))
+    expect(idY).toBeTruthy()
+    expect(idY).not.toBe(idX)
+
+    // Gate fs.unlink so the resumed rename parks again -- this time between
+    // its fs.link() (unaffected) and fs.unlink() of Y's original path -- and
+    // release the pre-pass gate so it runs up to that point.
+    const { release: releaseUnlink } = gateFsUnlink()
+    store.unblock()
+    await tick()
+
+    // While the resumed rename is parked pre-unlink (Y's original file still
+    // exists, now hardlinked at both its old path and 'u'): fire a
+    // concurrent write() that edits Y in place. Its own pre-pass finds Y at
+    // slug 's' and picks Y's real lock key.
+    const concurrentWritePromise = store.write(posts, unsafeAsSlug('s'), {
+      format: 'json',
+      data: { title: 'Y-updated' },
+    })
+    await tick()
+
+    releaseUnlink()
+    await renamePromise
+    await concurrentWritePromise
+
+    // The fix: renameEntry() re-derives its key to Y's real id before doing
+    // any file work, so the concurrent write() -- keyed the same way --
+    // is genuinely serialized against it (queued behind the same mutex key),
+    // never overlapping. Y's original content survives intact at 'u';
+    // "Y-updated" lands as a distinct new entry at the now-vacated 's'
+    // (a legitimate, non-corrupting outcome), never silently lost.
+    const docAtU = await store.read(posts, unsafeAsSlug('u'))
+    expect(docAtU.data.title).toBe('Y')
+
+    const idAtS = await store.getIdForEntry(posts, unsafeAsSlug('s'))
+    expect(idAtS).toBeTruthy()
+    expect(idAtS).not.toBe(idY)
+    const docAtS = await store.read(posts, unsafeAsSlug('s'))
+    expect(docAtS.data.title).toBe('Y-updated')
+
+    const files = await fs.readdir(path.join(root, 'content', 'posts'))
+    expect(files.filter((f) => f.includes(idY!))).toHaveLength(1)
+    expect(files.filter((f) => f.includes(idX!))).toHaveLength(1)
+  })
+
+  it('delete() retries under the corrected key so a concurrent write() on the entry actually at the slug is serialized, not silently lost (regression)', async () => {
+    const { root, store } = await makeStore()
+
+    // Entry X at slug 's'.
+    await store.write(posts, unsafeAsSlug('s'), { format: 'json', data: { title: 'X' } })
+    const idX = await store.getIdForEntry(posts, unsafeAsSlug('s'))
+    expect(idX).toBeTruthy()
+
+    // Arm the pre-pass gate: delete('s')'s pre-pass captures X's id and lock
+    // key, then parks BEFORE acquiring anything.
+    store.armGate()
+    const deletePromise = store.delete(posts, unsafeAsSlug('s'))
+    await store.prePassReached
+
+    // While parked: move X away (s -> t), then create a brand-new entry Y at
+    // the now-vacant slug 's'.
+    await store.renameEntry(posts, unsafeAsSlug('s'), unsafeAsSlug('t'))
+    await store.write(posts, unsafeAsSlug('s'), { format: 'json', data: { title: 'Y' } })
+    const idY = await store.getIdForEntry(posts, unsafeAsSlug('s'))
+    expect(idY).toBeTruthy()
+
+    // Gate fs.unlink so the resumed delete() parks again -- this time right
+    // before it actually removes Y's file -- and release the pre-pass gate
+    // so it runs up to that point.
+    const { release: releaseUnlink } = gateFsUnlink()
+    store.unblock()
+    await tick()
+
+    // While the resumed delete is parked pre-unlink (Y's file still on
+    // disk): fire a concurrent write() that edits Y in place. Its own
+    // pre-pass finds Y at slug 's' and picks Y's real lock key.
+    const concurrentWritePromise = store.write(posts, unsafeAsSlug('s'), {
+      format: 'json',
+      data: { title: 'Y-updated' },
+    })
+    await tick()
+
+    releaseUnlink()
+    await deletePromise
+    await concurrentWritePromise
+
+    // The fix: delete() re-derives its key to Y's real id before touching
+    // any file, so the concurrent write() -- keyed the same way -- is
+    // genuinely serialized behind it: delete() runs to completion first
+    // (it was parked first), then the write's own in-lock re-resolution
+    // finds nothing left at 's' and correctly folds into a brand-new entry
+    // there. The update must never be silently destroyed by an in-flight
+    // unlink the write couldn't see coming.
+    const idAtS = await store.getIdForEntry(posts, unsafeAsSlug('s'))
+    expect(idAtS).toBeTruthy()
+    const docAtS = await store.read(posts, unsafeAsSlug('s'))
+    expect(docAtS.data.title).toBe('Y-updated')
+
+    const files = await fs.readdir(path.join(root, 'content', 'posts'))
+    expect(files.some((f) => f.includes(idY!))).toBe(false)
+    expect(files.filter((f) => f.includes(idX!))).toHaveLength(1)
+    expect(files.some((f) => f.includes('.t.'))).toBe(true)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // OCC (Optimistic Concurrency Control) version token
 // ─────────────────────────────────────────────────────────────────────────────
 

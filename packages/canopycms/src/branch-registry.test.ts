@@ -2,12 +2,36 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { BranchRegistry, type BranchRegistrySnapshot } from './branch-registry'
 import { getBranchMetadataFileManager } from './branch-metadata'
 import { resourceGenerationPath } from './resource-generation'
 import type { BranchContext } from './types'
+
+// Mutable hook state shared with the vi.mock factory below (vi.hoisted lets
+// it be referenced before the mock is hoisted above these imports). Used by
+// exactly one test (the invalidate() drain regression) to get a deterministic
+// signal for "the real marker bump has landed on disk" without racing real
+// fs I/O against real fs I/O -- see that test's comment for why a plain
+// unblock()-right-after-invalidate() ordering is not reliable here.
+const bumpHookState = vi.hoisted(() => ({ hook: null as (() => Promise<void>) | null }))
+
+vi.mock('./resource-generation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./resource-generation')>()
+  return {
+    ...actual,
+    bumpResourceGeneration: vi.fn(
+      async (...args: Parameters<typeof actual.bumpResourceGeneration>) => {
+        const result = await actual.bumpResourceGeneration(...args)
+        if (bumpHookState.hook) {
+          await bumpHookState.hook()
+        }
+        return result
+      },
+    ),
+  }
+})
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-registry-'))
 
@@ -444,6 +468,98 @@ describe('BranchRegistry', () => {
 
       const healedSnapshot = await readRegistrySnapshot(root)
       expect(healedSnapshot.generation).toBe(t1)
+    })
+
+    it('drains a same-instance in-flight scan (captured before invalidate) and reruns a fresh scan for the eager regen, rather than joining the stale one', async () => {
+      // Regression for the drain lines in invalidate() (`if (this.regenInFlight)
+      // await this.regenInFlight.catch(() => {})`): without them, invalidate()'s
+      // own eager regenerate() call would see `this.regenInFlight` still set
+      // (the blocked in-flight scan below) and simply return that SAME
+      // promise instead of starting a fresh one -- silently joining a scan
+      // that captured its token/state before this invalidate()'s bump and
+      // before the mutation performed while it was blocked.
+      const root = await tmpDir()
+      await createBranchWithMetadata(root, 'feature-a')
+      // createBranchWithMetadata's own save() already invalidated once, leaving
+      // a fresh cache in place. Delete it so the list() below actually has to
+      // scan (rather than short-circuiting on a cache hit).
+      await fs.rm(path.join(root, 'branches.json'))
+
+      const registry = new BlockingRegistry(root)
+
+      // Captures the pre-bump marker token, scans [feature-a] only, then
+      // blocks before returning -- simulating a scan already in flight when
+      // invalidate() is called on this SAME instance.
+      const staleListPromise = registry.list()
+      await registry.scanned
+
+      // Mutate directly (bypass save()'s own invalidate/registry, which
+      // would run on a fresh instance) so post-mutation state exists on disk
+      // while the blocked scan above is still pending.
+      await writeBranchMetadataDirectly(root, 'feature-b')
+
+      // Deterministically sequence invalidate()'s bump against the blocked
+      // scan's release. Calling registry.unblock() immediately after
+      // starting invalidate() is NOT reliable: both invalidate()'s marker
+      // bump and the blocked scan's post-release work (unlink + write +
+      // rename) are real fs I/O, so which one finishes first is a genuine
+      // race -- confirmed by running that version of this test in a loop
+      // and observing it pass even with the drain lines reverted. Instead,
+      // hook bumpResourceGeneration to signal once the bump has actually
+      // landed on disk, and hold invalidate() paused right after that (via
+      // continueInvalidate) until we've confirmed it -- so regenInFlight is
+      // guaranteed to still be the original (unreleased) scan promise at
+      // the moment invalidate() checks it, no matter how the microtask
+      // queue happens to interleave.
+      let resolveBumpSettled: () => void
+      const bumpSettled = new Promise<void>((resolve) => {
+        resolveBumpSettled = resolve
+      })
+      let resolveContinueInvalidate!: () => void
+      const continueInvalidate = new Promise<void>((resolve) => {
+        resolveContinueInvalidate = resolve
+      })
+      bumpHookState.hook = async () => {
+        resolveBumpSettled()
+        await continueInvalidate
+      }
+
+      const invalidatePromise = registry.invalidate()
+
+      // The marker is now durably bumped to T1 on disk; invalidate() itself
+      // is paused (inside the mocked bump call) and has NOT yet reached its
+      // regenInFlight check.
+      await bumpSettled
+
+      // Let invalidate() proceed to (drain, then) call regenerate(). The
+      // original scan's gate is still held, so regenInFlight is still that
+      // pending promise at this instant.
+      resolveContinueInvalidate()
+      // Now release the original scan. Whichever of the two microtask chains
+      // (invalidate()'s regenInFlight check vs. the scan's continuation) the
+      // engine happens to run first, the scan's continuation still needs
+      // multiple further real fs operations (unlink, write, rename) to
+      // settle its promise, while invalidate()'s check is a single
+      // synchronous branch -- so it always wins the race in practice.
+      registry.unblock()
+
+      // The original list() call resolves with its own (stale, pre-mutation)
+      // view -- this is expected; it captured state before feature-b existed.
+      const staleBranches = await staleListPromise
+      expect(staleBranches).toHaveLength(1)
+
+      await invalidatePromise
+      bumpHookState.hook = null
+
+      // If invalidate() joined the stale in-flight scan instead of draining
+      // it and running a fresh one, this would still show 1 branch and the
+      // OLD (pre-bump) token. A fresh scan after the drain reflects both the
+      // post-bump token and the post-mutation branch list.
+      const finalSnapshot = await readRegistrySnapshot(root)
+      expect(finalSnapshot.branches).toHaveLength(2)
+
+      const token = await fs.readFile(resourceGenerationPath(root, 'branch-registry'), 'utf8')
+      expect(finalSnapshot.generation).toBe(token)
     })
 
     it('no longer produces a branches.stale.json artifact (legacy rename scheme retired)', async () => {

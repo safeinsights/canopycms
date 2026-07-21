@@ -27,8 +27,8 @@ export interface BranchMetadataFile {
 const CURRENT_SCHEMA_VERSION = 1
 
 export class BranchMetadataConflictError extends Error {
-  constructor() {
-    super('Concurrent modification detected in branch metadata')
+  constructor(message = 'Concurrent modification detected in branch metadata') {
+    super(message)
     this.name = 'BranchMetadataConflictError'
   }
 }
@@ -149,8 +149,36 @@ export class BranchMetadataFileManager {
    * Run a save cycle under the full lock + OCC-retry stack described in the
    * class doc comment. A conflict that survives every retry surfaces as the
    * public `BranchMetadataConflictError`.
+   *
+   * Guards against a phantom-resurrection race with branch deletion: a
+   * caller's branchContext can be resolved BEFORE a concurrent
+   * deleteBranchHandler removes the branch directory, but this save() call
+   * only reaches here (and its own mkdir({recursive:true}) inside write())
+   * AFTER the removal. Without this check, that mkdir would silently
+   * recreate `.canopy-meta/` (and this save would recreate branch.json from
+   * defaults) inside a directory tree that no longer exists anywhere else --
+   * a registry entry with no clone behind it. Checking BEFORE the lock stack
+   * (rather than after) fails fast without paying for a lock acquisition on
+   * a doomed save.
+   *
+   * Residual window (accepted): a save that passes this check can still
+   * race a `rm` that starts moments later and is still mid-flight when this
+   * save's write lands, resurrecting the tree. Closing that fully would
+   * need a tombstone OUTSIDE the tree being removed -- the lockfile
+   * (`withOccFileLock`) this save takes next lives INSIDE `branchRoot`, so
+   * it cannot itself provide a wider guarantee than "the directory existed
+   * a moment ago."
    */
   async save(incoming: BranchMetadataUpdate): Promise<BranchMetadataFile> {
+    try {
+      await fs.stat(this.branchRoot)
+    } catch (err: unknown) {
+      if (isNotFoundError(err)) {
+        throw new BranchMetadataConflictError('Branch no longer exists')
+      }
+      throw err
+    }
+
     let saved: BranchMetadataFile
     try {
       saved = await withLock(this.filePath, () =>

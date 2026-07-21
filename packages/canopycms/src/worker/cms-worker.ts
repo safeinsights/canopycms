@@ -760,7 +760,26 @@ export class CmsWorker {
         const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
 
         if (behindCount === 0) {
-          // Already in sync — clear any stale conflict state
+          // Already in sync. This is the overwhelmingly common outcome per
+          // branch per cycle (most branches are caught up most of the
+          // time), so skip the save entirely when metadata already reflects
+          // a clean state -- every save() now eager-regenerates the branch
+          // registry (branch-metadata.ts's invalidateRegistry(), O(branch
+          // count) fs reads on EFS), so an unconditional save here turns
+          // every rebase cycle into O(N^2) registry work across N branches
+          // for what is otherwise a true no-op. Re-load fresh (not the
+          // `metaFile` snapshot from before the fetch/rev-list above) so a
+          // concurrent editor-driven metadata change during that window
+          // isn't clobbered by a stale skip decision.
+          const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
+          const conflictStatus = currentMeta?.branch.conflictStatus
+          const conflictFiles = currentMeta?.branch.conflictFiles
+          const alreadyClean =
+            (conflictStatus === undefined || conflictStatus === 'clean') &&
+            (conflictFiles === undefined || conflictFiles.length === 0)
+          if (alreadyClean) {
+            continue
+          }
           await meta.save({
             branch: {
               name: branchDir,

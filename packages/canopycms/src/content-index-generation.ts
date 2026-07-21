@@ -81,10 +81,20 @@ export async function readContentIndexGeneration(root: string): Promise<string |
 }
 
 /**
- * The single entry point for operations that mutate indexed files under a
- * branch-clone root: git working-tree mutations, content sync, collection
- * directory operations, CLI sync. Bumps the on-disk marker (cross-process),
- * then invalidates in-process registered stores.
+ * The designated entry point for a FUTURE content-only bulk mutation site —
+ * one that mutates indexed files under a branch-clone root broadly (not
+ * through a single known write/delete/rename call) but never touches schema.
+ * Bumps the on-disk content-index marker (cross-process), then invalidates
+ * in-process registered stores.
+ *
+ * Currently unused in production: `ContentStore`'s own write()/delete()/
+ * renameEntry() bump the marker directly via their `recordOwnMutation()` ->
+ * `bumpContentIndexGeneration()` call, not through this wrapper, and every
+ * existing bulk-mutation call site (git checkout/merge/rebase, sync, CLI
+ * sync, migrate) can touch `.collection.json` as a side effect, so those all
+ * use the combined `invalidateBranchContentCaches()` below instead. Kept as
+ * the documented, ready-to-use entry point for a future call site that is
+ * genuinely content-only.
  *
  * Bump-before-invalidate: the in-process invalidation triggers a rebuild on
  * next access, and that rebuild captures the marker token before scanning —
@@ -106,9 +116,13 @@ export async function invalidateContentIndexesDurable(root: string): Promise<voi
  * at `root` need to be told: the ContentId index (content-index-registry.ts)
  * AND the resolved-schema cache (branch-schema-cache.ts).
  *
- * `invalidateContentIndexesDurable` remains the entry point for mutations
- * that only ever touch content files, never schema (ContentStore's own
- * write/delete/rename paths) - those don't need the extra schema bump.
+ * `invalidateContentIndexesDurable` is the designated entry point for a
+ * future call site that only ever touches content files, never schema, and
+ * needs the durable-invalidation shape but not the extra schema bump.
+ * `ContentStore`'s own write/delete/rename paths don't call it either — they
+ * bump the content-index marker directly via `recordOwnMutation()` (see
+ * content-store.ts), since they already know exactly which mutation just
+ * happened and don't need a generic "some indexed files changed" entry point.
  *
  * Both marker bumps are "hint" flavor (bumpResourceGeneration's default,
  * `mustSucceed` not set): callers of this function are typically `finally`

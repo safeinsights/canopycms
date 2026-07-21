@@ -175,6 +175,14 @@ export class SchemaOps {
    * already restored correctness for every future reader, and a mutation
    * that leaves no valid schema behind (e.g. deleting the last collection)
    * must not fail the request over an uncacheable resolve.
+   *
+   * Uses `resolveAndPersist()`, NOT `getSchema()`: getSchema()'s cache-read
+   * fast path can return a snapshot a DIFFERENT, concurrent host just wrote
+   * (its own eager re-resolve, raced against this one, embedding the
+   * now-current marker token over ITS OWN stale-NFS-cache scan) — silently
+   * skipping the one scan this call exists to guarantee. resolveAndPersist()
+   * never reads the cache file, so it cannot be short-circuited that way.
+   * See BranchSchemaCache.resolveAndPersist()'s doc comment for the full race.
    */
   private async invalidateSchemaCache(): Promise<void> {
     if (!this.services) return
@@ -182,7 +190,7 @@ export class SchemaOps {
     const branchRoot = path.dirname(this.contentRoot)
     await this.services.branchSchemaCache.invalidate(branchRoot)
     try {
-      await this.services.branchSchemaCache.getSchema(
+      await this.services.branchSchemaCache.resolveAndPersist(
         branchRoot,
         this.entrySchemaRegistry,
         path.basename(this.contentRoot),
