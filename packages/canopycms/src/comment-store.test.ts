@@ -10,7 +10,7 @@ describe('CommentStore', () => {
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'comment-store-test-'))
-    store = new CommentStore(tmpDir)
+    store = new CommentStore(tmpDir, { settleMs: 0 })
   })
 
   afterEach(async () => {
@@ -280,7 +280,7 @@ describe('CommentStore', () => {
     })
 
     // Create new store instance pointing to same directory
-    const newStore = new CommentStore(tmpDir)
+    const newStore = new CommentStore(tmpDir, { settleMs: 0 })
     const threads = await newStore.listThreads()
 
     expect(threads).toHaveLength(1)
@@ -314,8 +314,8 @@ describe('CommentStore', () => {
 
   describe('concurrency', () => {
     it('handles concurrent addComment calls from different store instances', async () => {
-      const store1 = new CommentStore(tmpDir)
-      const store2 = new CommentStore(tmpDir)
+      const store1 = new CommentStore(tmpDir, { settleMs: 0 })
+      const store2 = new CommentStore(tmpDir, { settleMs: 0 })
 
       // Both add comments concurrently
       const results = await Promise.allSettled([
@@ -354,7 +354,7 @@ describe('CommentStore', () => {
       expect(texts).toEqual(['Comment 1', 'Comment 2'])
     })
 
-    it('handles concurrent resolveThread calls', { retry: 1 }, async () => {
+    it('handles concurrent resolveThread calls', async () => {
       // Create two threads first
       const thread1 = await store.addComment({
         userId: 'user1',
@@ -367,8 +367,8 @@ describe('CommentStore', () => {
         type: 'branch',
       })
 
-      const store1 = new CommentStore(tmpDir)
-      const store2 = new CommentStore(tmpDir)
+      const store1 = new CommentStore(tmpDir, { settleMs: 0 })
+      const store2 = new CommentStore(tmpDir, { settleMs: 0 })
 
       // Resolve both threads concurrently
       const [result1, result2] = await Promise.all([
@@ -386,7 +386,7 @@ describe('CommentStore', () => {
       expect(t2?.resolved).toBe(true)
     })
 
-    it('handles concurrent deleteThread calls', { retry: 1 }, async () => {
+    it('handles concurrent deleteThread calls', async () => {
       // Create two threads first
       const thread1 = await store.addComment({
         userId: 'user1',
@@ -399,8 +399,8 @@ describe('CommentStore', () => {
         type: 'branch',
       })
 
-      const store1 = new CommentStore(tmpDir)
-      const store2 = new CommentStore(tmpDir)
+      const store1 = new CommentStore(tmpDir, { settleMs: 0 })
+      const store2 = new CommentStore(tmpDir, { settleMs: 0 })
 
       // Delete both threads concurrently
       const [result1, result2] = await Promise.all([
@@ -416,9 +416,12 @@ describe('CommentStore', () => {
       expect(threads.length).toBe(0)
     })
 
-    it('handles high contention with many concurrent writes', { retry: 1 }, async () => {
+    it('handles high contention with many concurrent writes', async () => {
       const numConcurrent = 10
-      const stores = Array.from({ length: numConcurrent }, () => new CommentStore(tmpDir))
+      const stores = Array.from(
+        { length: numConcurrent },
+        () => new CommentStore(tmpDir, { settleMs: 0 }),
+      )
 
       // All add comments concurrently
       const results = await Promise.all(
@@ -437,6 +440,43 @@ describe('CommentStore', () => {
       // All comments should be present
       const threads = await store.listThreads()
       expect(threads.length).toBe(numConcurrent)
+    })
+
+    it('serializes writers across differently-spelled paths to the same branch root', async () => {
+      // path.resolve() must normalize both spellings to the same lock key,
+      // otherwise these two stores would race each other's load-modify-write
+      // cycle instead of being serialized by withLock.
+      const storeA = new CommentStore(tmpDir, { settleMs: 0 })
+      const storeB = new CommentStore(path.join(tmpDir, '.'), { settleMs: 0 })
+
+      const results = await Promise.all(
+        Array.from({ length: 10 }, (_, i) =>
+          (i % 2 === 0 ? storeA : storeB).addComment({
+            userId: `user${i}`,
+            text: `Comment ${i}`,
+            type: 'branch',
+          }),
+        ),
+      )
+
+      expect(results.every((r) => r.threadId && r.commentId)).toBe(true)
+
+      const threads = await storeA.listThreads()
+      expect(threads.length).toBe(10)
+    })
+
+    it('does not leak comments.json.lock artifacts after a mutate cycle', async () => {
+      const result = await store.addComment({
+        userId: 'user1',
+        text: 'First comment',
+        type: 'branch',
+      })
+      await store.resolveThread(result.threadId, 'reviewer1')
+
+      const metaDir = path.join(tmpDir, '.canopy-meta')
+      const entries = await fs.readdir(metaDir)
+      const lockArtifacts = entries.filter((name) => name.includes('.lock'))
+      expect(lockArtifacts).toEqual([])
     })
   })
 })
