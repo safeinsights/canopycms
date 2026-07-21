@@ -1445,6 +1445,169 @@ describe('ContentStore', () => {
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Content-ID lock keys (PR F): write()/delete()/renameEntry() lock on the
+// entry's permanent content ID (not the transient physical path), so a
+// concurrent rename can never leave the lock keyed on a path that's gone
+// stale. These tests force specific interleavings deterministically (no
+// timing-based flakiness) by gating renameEntry()'s fs.link() call behind a
+// controlled deferred: renameEntry() enqueues on the ID lock and blocks
+// inside it (holding the lock) until the test releases the gate, giving the
+// concurrent write()/delete() call time to run its own pre-pass and enqueue
+// behind the very same lock before anything is released.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContentStore lock-key concurrency (PR F)', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [{ name: 'post', format: 'json' as const, schema: [] }],
+      },
+    ],
+  } as const
+
+  const posts = unsafeAsLogicalPath('content/posts')
+
+  const makeStore = async () => {
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema })
+    return { root, store: new ContentStore(root, flattenSchema(schema, config.contentRoot)) }
+  }
+
+  /**
+   * Gate fs.link() (used only by renameEntry(), never by write()/delete()'s
+   * atomicWriteFile which goes through fs.rename) so a renameEntry() call can
+   * be parked mid-critical-section, still holding its lock, until the test
+   * explicitly releases it.
+   */
+  const gateFsLink = () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const realLink = fs.link.bind(fs)
+    const spy = vi.spyOn(fs, 'link').mockImplementationOnce(async (...args) => {
+      await gate
+      return realLink(...(args as Parameters<typeof fs.link>))
+    })
+    return { release, spy }
+  }
+
+  const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms))
+
+  it('regression: a write() racing a concurrent renameEntry() never duplicates the entry ID', async () => {
+    const { root, store } = await makeStore()
+
+    await store.write(posts, unsafeAsSlug('foo'), { format: 'json', data: { title: 'Original' } })
+    const id = await store.getIdForEntry(posts, unsafeAsSlug('foo'))
+    expect(id).toBeTruthy()
+
+    const { release, spy } = gateFsLink()
+
+    // Start the rename -- it reaches (and blocks inside) fs.link() while
+    // still holding the ID lock.
+    const renamePromise = store.renameEntry(posts, unsafeAsSlug('foo'), unsafeAsSlug('bar'))
+    await tick()
+
+    // Start a concurrent write() at the OLD slug. Its pre-pass runs before
+    // the rename has unlinked the old file (fs.link hasn't fired yet), so it
+    // discovers the same content ID and must enqueue on the SAME lock key,
+    // not race through on a stale absolute-path lock.
+    const writePromise = store.write(posts, unsafeAsSlug('foo'), {
+      format: 'json',
+      data: { title: 'Updated' },
+    })
+    await tick()
+
+    release()
+    await renamePromise
+    const writeResult = await writePromise.catch((err: unknown) => err)
+    spy.mockRestore()
+
+    // The renamed entry's ID must appear EXACTLY ONCE on disk -- the bug this
+    // PR fixes was write() recreating a second file embedding the same ID at
+    // the old (now-gone) path.
+    const files = await fs.readdir(path.join(root, 'content', 'posts'))
+    expect(files.filter((f) => f.includes(id!))).toHaveLength(1)
+    expect(files.some((f) => f.includes('bar'))).toBe(true)
+
+    // The concurrent write() must not have crashed with anything other than
+    // a clean, expected outcome: either it succeeded (the freed-up "foo" slug
+    // legitimately became a brand-new, distinct entry), or it failed with a
+    // ContentStoreError/ContentConflictError -- never an unhandled crash.
+    if (writeResult instanceof Error) {
+      expect(
+        writeResult instanceof ContentStoreError || writeResult instanceof ContentConflictError,
+      ).toBe(true)
+    } else {
+      const newId = await store.getIdForEntry(posts, unsafeAsSlug('foo'))
+      expect(newId).toBeTruthy()
+      expect(newId).not.toBe(id)
+    }
+  })
+
+  it('concurrent same-slug double-create in-process results in exactly one file', async () => {
+    const { root, store } = await makeStore()
+
+    const [first, second] = await Promise.allSettled([
+      store.write(posts, unsafeAsSlug('dup'), { format: 'json', data: { title: 'First' } }),
+      store.write(posts, unsafeAsSlug('dup'), { format: 'json', data: { title: 'Second' } }),
+    ])
+
+    // Current intended semantics (per write()'s in-lock re-resolution): the
+    // second call's buildPaths() re-run discovers the first call's
+    // just-written file and folds in as an edit -- last write wins, no error.
+    expect(first.status).toBe('fulfilled')
+    expect(second.status).toBe('fulfilled')
+
+    const files = await fs.readdir(path.join(root, 'content', 'posts'))
+    expect(files.filter((f) => f.includes('.dup.'))).toHaveLength(1)
+
+    const doc = await store.read(posts, unsafeAsSlug('dup'))
+    expect(['First', 'Second']).toContain(doc.data.title)
+  })
+
+  it('delete() racing a concurrent renameEntry() on the same entry serializes via the ID lock (no crash)', async () => {
+    const { root, store } = await makeStore()
+
+    await store.write(posts, unsafeAsSlug('foo'), { format: 'json', data: { title: 'Original' } })
+    const id = await store.getIdForEntry(posts, unsafeAsSlug('foo'))
+    expect(id).toBeTruthy()
+
+    const { release, spy } = gateFsLink()
+
+    const renamePromise = store.renameEntry(posts, unsafeAsSlug('foo'), unsafeAsSlug('bar'))
+    await tick()
+
+    // delete()'s pre-pass runs while rename still holds the ID lock (blocked
+    // at fs.link) -- it must enqueue behind the SAME key, not race ahead.
+    const deletePromise = store.delete(posts, unsafeAsSlug('foo'))
+    await tick()
+
+    release()
+    await renamePromise
+    const deleteResult = await deletePromise.catch((err: unknown) => err)
+    spy.mockRestore()
+
+    const files = await fs.readdir(path.join(root, 'content', 'posts'))
+
+    // Deterministic outcome: the rename always wins the fs.link gate (it was
+    // parked there first), so delete()'s in-lock re-resolution runs AFTER
+    // the rename has already moved "foo" to "bar" -- delete() finds nothing
+    // left at "foo" and fails cleanly (ENOENT), never a crash, and the
+    // renamed file survives untouched.
+    expect(deleteResult).toBeInstanceOf(Error)
+    if (deleteResult instanceof Error) {
+      const code = (deleteResult as NodeJS.ErrnoException).code
+      expect(code).toBe('ENOENT')
+    }
+    expect(files.filter((f) => f.includes(id!))).toHaveLength(1)
+    expect(files.some((f) => f.includes('bar'))).toBe(true)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
 // OCC (Optimistic Concurrency Control) version token
 // ─────────────────────────────────────────────────────────────────────────────
 
