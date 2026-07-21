@@ -2231,17 +2231,18 @@ The branch registry (`branches.json`) is a **read-only cache** for fast branch l
 
 **Design:**
 
-- When branch state changes, the registry cache is invalidated (atomic rename to `branches.stale.json`)
-- `list()` regenerates the cache on-demand by scanning branch directories
-- Concurrent regeneration is safe—all processes produce identical output from the same `branch.json` files
+- When branch state changes, `invalidate()` bumps a cross-process generation marker (see `resource-generation.ts`) under `.canopy-meta/branch-registry.generation`, then eagerly regenerates the snapshot on the mutating host
+- Each `branches.json` snapshot embeds the generation token it was built against; `list()` compares that token to the live marker and only regenerates when they differ
+- Concurrent regeneration within one process is deduped to a single scan; across processes, regeneration is still safe—all processes produce identical output from the same `branch.json` files
 - No write conflicts because the cache is never directly updated, only regenerated
+- `get()` forces one throttled fresh regeneration when a looked-up branch is missing from the cached snapshot, bounding staleness for the "branch exists but snapshot predates it" case
 
 **Why this design:**
 
 - **Single source of truth**: Eliminates synchronization bugs between `branch.json` and `branches.json`
-- **Atomic invalidation**: Prevents race conditions on concurrent updates
+- **Cross-process invalidation**: A marker bump is observed by every process sharing the root (warm Lambda containers + the EC2 worker on EFS), not just the process that mutated
 - **Lazy regeneration**: Amortizes the cost of directory scanning across reads
-- **Self-healing**: If the cache becomes corrupted or stale, the next read fixes it
+- **Self-healing**: If the cache becomes corrupted, stale, or resurrects an old snapshot (see the generation-token protocol in `resource-generation.ts`), the next read's marker comparison fixes it
 
 ### Why framework-agnostic context creation?
 
