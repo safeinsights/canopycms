@@ -25,11 +25,14 @@ this file records what was deliberately deferred and why.
 
 ## Defense-in-depth / refactors
 
-4. **`insecureDevOnly` is a denylist, not an allowlist** (`auth/plugin.ts`): a
-   third-party plugin that forgets the marker is accepted in prod. An
-   affirmative `verifiesCredentials: true` requirement would be strictly safer.
-   Breaking change to the plugin interface — batch with the next auth-plugin
-   API revision.
+4. ~~**`insecureDevOnly` is a denylist, not an allowlist**~~ — DONE: replaced
+   with an affirmative `verifiesCredentials?: boolean` allowlist marker on
+   `AuthPlugin` (`auth/plugin.ts`). `assertAuthPluginAllowedForMode` now
+   rejects any prod plugin that doesn't set `verifiesCredentials: true`
+   (absence fails closed). `insecureDevOnly` removed entirely; `DevAuthPlugin`
+   intentionally omits the new marker, `ClerkAuthPlugin` sets it, and
+   `CachingAuthPlugin`/`staticDeployAuthPlugin` forward/set it so wrapping
+   can't launder an insecure plugin past the guard.
 5. **Worker reimplements `createOrUpdatePR`** (`worker/cms-worker.ts` vs
    `github-service.ts`): two copies of the PR-idempotency logic can drift; the
    worker path also doesn't mark a pre-existing draft PR ready-for-review while

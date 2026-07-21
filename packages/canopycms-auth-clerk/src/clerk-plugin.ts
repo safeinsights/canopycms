@@ -121,6 +121,9 @@ export const extractToken = (headers: HeadersLike): string | null => {
  * Uses @clerk/backend for framework-agnostic JWT verification.
  */
 export class ClerkAuthPlugin implements AuthPlugin {
+  /** Verifies Clerk-issued JWTs via verifyToken — satisfies the prod allowlist guard. */
+  readonly verifiesCredentials = true
+
   private config: Required<Omit<ClerkAuthConfig, 'secretKey' | 'jwtKey' | 'authorizedParties'>> & {
     secretKey: string
     jwtKey?: string

@@ -39,43 +39,51 @@ const basePlugin: AuthPlugin = {
   listGroups: async () => [],
 }
 
-/** Same shape as DevAuthPlugin: insecure marker AND verifyTokenOnly implemented. */
-const insecureDevPlugin: AuthPlugin = {
+/** Same shape as DevAuthPlugin: verifyTokenOnly implemented, no verifiesCredentials marker. */
+const unmarkedDevPlugin: AuthPlugin = {
   ...basePlugin,
-  insecureDevOnly: true,
   verifyTokenOnly: async () => ({ userId: 'dev_user' }),
 }
 
-/** A verifying plugin (e.g. Clerk): verifyTokenOnly without the insecure marker. */
+/** A verifying plugin (e.g. Clerk): verifyTokenOnly AND verifiesCredentials: true. */
 const verifyingPlugin: AuthPlugin = {
   ...basePlugin,
+  verifiesCredentials: true,
   verifyTokenOnly: async () => ({ userId: 'real_user' }),
 }
 
 describe('createNextCanopyContext auth plugin guard (SEC-C1)', () => {
-  it('rejects an insecure dev-only auth plugin when mode is prod', async () => {
+  it('rejects an unmarked auth plugin when mode is prod', async () => {
     await expect(
       createNextCanopyContext({
         config: config({ mode: 'prod' }),
-        authPlugin: insecureDevPlugin,
+        authPlugin: unmarkedDevPlugin,
         entrySchemaRegistry: {},
       }),
-    ).rejects.toThrow(/dev\/insecure auth plugin.*mode: 'prod'/)
+    ).rejects.toThrow(/mode: 'prod'.*does not affirm.*verifiesCredentials/)
   })
 
-  it('accepts the same insecure plugin when mode is dev', async () => {
+  it('accepts the same unmarked plugin when mode is dev', async () => {
     const result = await createNextCanopyContext({
       config: config({ mode: 'dev' }),
-      authPlugin: insecureDevPlugin,
+      authPlugin: unmarkedDevPlugin,
       entrySchemaRegistry: {},
     })
     expect(result.handler).toBeTypeOf('function')
   })
 
-  it('accepts a verifying plugin (verifyTokenOnly, no marker) in prod', async () => {
+  it('accepts a verifying plugin (verifiesCredentials: true) in prod', async () => {
     const result = await createNextCanopyContext({
       config: config({ mode: 'prod' }),
       authPlugin: verifyingPlugin,
+      entrySchemaRegistry: {},
+    })
+    expect(result.handler).toBeTypeOf('function')
+  })
+
+  it('resolves for prod + deployedAs: static + no authPlugin (static stub passes the allowlist)', async () => {
+    const result = await createNextCanopyContext({
+      config: config({ mode: 'prod', deployedAs: 'static' }),
       entrySchemaRegistry: {},
     })
     expect(result.handler).toBeTypeOf('function')

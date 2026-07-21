@@ -12,47 +12,48 @@ const basePlugin: AuthPlugin = {
 }
 
 /**
- * Mirrors DevAuthPlugin's shape: marked insecure AND implements verifyTokenOnly,
- * proving the guard cannot rely on the absence of verifyTokenOnly.
+ * Mirrors DevAuthPlugin's shape: implements verifyTokenOnly but does NOT set
+ * verifiesCredentials, proving the guard cannot rely on the presence of
+ * verifyTokenOnly as a substitute signal.
  */
-const insecureDevPlugin: AuthPlugin = {
+const unmarkedDevPlugin: AuthPlugin = {
   ...basePlugin,
-  insecureDevOnly: true,
   verifyTokenOnly: async () => ({ userId: 'dev_user' }),
 }
 
-/** A verifying plugin (e.g. Clerk): has verifyTokenOnly, no insecure marker. */
+/** A verifying plugin (e.g. Clerk): has verifyTokenOnly AND verifiesCredentials: true. */
 const verifyingPlugin: AuthPlugin = {
   ...basePlugin,
+  verifiesCredentials: true,
   verifyTokenOnly: async () => ({ userId: 'real_user' }),
 }
 
 describe('assertAuthPluginAllowedForMode', () => {
-  it('throws when an insecure dev-only plugin is used with mode prod', () => {
-    expect(() => assertAuthPluginAllowedForMode(insecureDevPlugin, 'prod')).toThrow(
-      /dev\/insecure auth plugin.*mode: 'prod'/,
+  it('throws when a plugin without verifiesCredentials is used with mode prod', () => {
+    expect(() => assertAuthPluginAllowedForMode(unmarkedDevPlugin, 'prod')).toThrow(
+      /mode: 'prod'.*does not affirm.*verifiesCredentials/,
     )
   })
 
   it('mentions the remediation (verifying plugin) in the error message', () => {
-    expect(() => assertAuthPluginAllowedForMode(insecureDevPlugin, 'prod')).toThrow(
+    expect(() => assertAuthPluginAllowedForMode(unmarkedDevPlugin, 'prod')).toThrow(
       /createClerkAuthPlugin/,
     )
   })
 
-  it('accepts an insecure dev-only plugin in dev mode', () => {
-    expect(() => assertAuthPluginAllowedForMode(insecureDevPlugin, 'dev')).not.toThrow()
+  it('accepts an unmarked plugin in dev mode', () => {
+    expect(() => assertAuthPluginAllowedForMode(unmarkedDevPlugin, 'dev')).not.toThrow()
   })
 
-  it('accepts a verifying plugin (verifyTokenOnly, no marker) in prod', () => {
+  it('accepts a verifying plugin (verifiesCredentials: true) in prod', () => {
     expect(() => assertAuthPluginAllowedForMode(verifyingPlugin, 'prod')).not.toThrow()
   })
 
-  it('accepts a plain plugin without the marker in prod', () => {
-    expect(() => assertAuthPluginAllowedForMode(basePlugin, 'prod')).not.toThrow()
+  it('rejects a plain plugin without the marker in prod (allowlist, not denylist)', () => {
+    expect(() => assertAuthPluginAllowedForMode(basePlugin, 'prod')).toThrow(/verifiesCredentials/)
   })
 
   it('does nothing when mode is undefined (validated elsewhere)', () => {
-    expect(() => assertAuthPluginAllowedForMode(insecureDevPlugin, undefined)).not.toThrow()
+    expect(() => assertAuthPluginAllowedForMode(unmarkedDevPlugin, undefined)).not.toThrow()
   })
 })

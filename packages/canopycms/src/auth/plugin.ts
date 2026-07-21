@@ -8,13 +8,13 @@ import type { OperatingMode } from '../operating-mode/types'
  */
 export interface AuthPlugin {
   /**
-   * Marker for plugins that perform NO real credential verification (e.g. the
-   * dev plugin, which trusts request headers/cookies as-is). Plugins that set
-   * this to true must never be used in production: they are rejected by
-   * assertAuthPluginAllowedForMode() whenever the operating mode is 'prod'.
-   * Never set this on a plugin that cryptographically verifies its tokens.
+   * Affirmative allowlist marker: set to true ONLY on plugins that
+   * cryptographically verify credentials (e.g. Clerk JWT verification).
+   * assertAuthPluginAllowedForMode() rejects any plugin without this marker
+   * whenever the operating mode is 'prod' — absence fails closed, so a
+   * third-party plugin that forgets the marker is rejected, not accepted.
    */
-  readonly insecureDevOnly?: boolean
+  readonly verifiesCredentials?: boolean
 
   /**
    * Authenticate user from request context.
@@ -77,10 +77,12 @@ export interface AuthPlugin {
 export type AuthPluginFactory<TConfig = unknown> = (config: TConfig) => AuthPlugin
 
 /**
- * Fail closed: reject auth plugins that perform no real verification when the
- * CMS runs in production.
+ * Fail closed: only allow auth plugins that affirmatively declare real
+ * credential verification when the CMS runs in production.
  *
- * DevAuthPlugin (and any plugin marked `insecureDevOnly`) trusts request
+ * This is an allowlist, not a denylist: a plugin must set
+ * `verifiesCredentials: true` to pass this guard in prod. DevAuthPlugin (and
+ * any third-party plugin that forgets to set the marker) trusts request
  * headers/cookies without cryptographic verification, so accepting it with
  * mode 'prod' would let any caller impersonate any user — including admins —
  * by sending a header like `X-Test-User: admin`. Call this wherever an
@@ -90,19 +92,19 @@ export type AuthPluginFactory<TConfig = unknown> = (config: TConfig) => AuthPlug
  * Note: checking for the absence of verifyTokenOnly is NOT a substitute for
  * this marker — the dev plugin implements verifyTokenOnly too.
  *
- * @throws Error when mode is 'prod' and the plugin is marked insecureDevOnly
+ * @throws Error when mode is 'prod' and the plugin does not set `verifiesCredentials: true`
  */
 export function assertAuthPluginAllowedForMode(
   plugin: AuthPlugin,
   mode: OperatingMode | undefined,
 ): void {
-  if (mode === 'prod' && plugin.insecureDevOnly === true) {
+  if (mode === 'prod' && plugin.verifiesCredentials !== true) {
     throw new Error(
-      "CanopyCMS: a dev/insecure auth plugin was configured with mode: 'prod'. " +
-        'This plugin performs no real credential verification, so anyone could impersonate ' +
-        'any user (including admins). Configure a verifying auth plugin for production ' +
-        "(e.g. createClerkAuthPlugin from 'canopycms-auth-clerk' with CLERK_SECRET_KEY set), " +
-        "or run with mode: 'dev' for local development.",
+      "CanopyCMS: an auth plugin was configured with mode: 'prod' but does not affirm " +
+        '`verifiesCredentials: true`. This plugin performs no real credential verification, ' +
+        'so anyone could impersonate any user (including admins). Configure a verifying auth ' +
+        "plugin for production (e.g. createClerkAuthPlugin from 'canopycms-auth-clerk' with " +
+        "CLERK_SECRET_KEY set), or run with mode: 'dev' for local development.",
     )
   }
 }

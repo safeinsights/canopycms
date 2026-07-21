@@ -55,6 +55,13 @@ describe('ClerkAuthPlugin', () => {
       // Config is private, but we can test behavior
       expect(plugin).toBeDefined()
     })
+
+    it('sets verifiesCredentials: true (SEC-C1 allowlist marker)', () => {
+      // ClerkAuthPlugin verifies Clerk-issued JWTs, so it must affirm this marker for
+      // assertAuthPluginAllowedForMode to accept it in prod mode.
+      const plugin = new ClerkAuthPlugin()
+      expect(plugin.verifiesCredentials).toBe(true)
+    })
   })
 
   describe('authenticate', () => {

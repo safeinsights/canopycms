@@ -33,8 +33,15 @@ let warnedStaticMode = false
 /**
  * Stub auth plugin for static deployments where no real auth is needed.
  * Returns unauthenticated for all requests — API routes will return 401.
+ *
+ * `verifiesCredentials: true` is set here even though this plugin verifies nothing: it is an
+ * always-deny stub (authenticate() unconditionally fails), so it trivially satisfies the prod
+ * allowlist — it can never admit anyone. WITHOUT this marker, a mode: 'prod' + deployedAs:
+ * 'static' build (the supported zero-editor public build, which has no authPlugin at all) would
+ * throw at handler creation when assertAuthPluginAllowedForMode() runs against this stub.
  */
 const staticDeployAuthPlugin: AuthPlugin = {
+  verifiesCredentials: true,
   async authenticate() {
     return { success: false as const, error: 'No auth plugin configured (static deployment)' }
   },
@@ -225,6 +232,7 @@ export async function createNextCanopyContext(
         (ctx) => options.authPlugin!.verifyTokenOnly!(ctx),
         new FileBasedAuthCache(cachePath),
         lazyRefresher,
+        { verifiesCredentials: options.authPlugin!.verifiesCredentials === true },
       )
     }
     return options.authPlugin
