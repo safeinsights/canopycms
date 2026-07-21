@@ -11,7 +11,7 @@ import path from 'node:path'
 import matter from 'gray-matter'
 import { parse as yamlParse } from 'yaml'
 
-import type { ContentFormat, FlatSchemaItem, EntryTypeConfig } from './config'
+import type { ContentFormat, FlatSchemaItem, EntryTypeConfig, EntrySchema } from './config'
 import { findBodyFieldName } from './utils/body-field'
 import { asRecord, getFormatExtension } from './utils/format'
 import { resolveCollectionPath } from './content-id-index'
@@ -160,6 +160,8 @@ export interface ListEntriesItem<T = Record<string, unknown>> {
    * With extract: whatever the extract function returns.
    */
   data: T
+  /** Field definitions for this entry's type, when resolvable. */
+  schema?: EntrySchema
 }
 
 export interface ListEntriesOptions<T = Record<string, unknown>> {
@@ -257,6 +259,7 @@ export async function listEntries<T = Record<string, unknown>>(
         entryType: entry.entryType,
         format: entry.format,
         data,
+        schema: collection.entries?.find((e) => e.name === entry.entryType)?.schema,
       }
 
       if (filter && !filter(item)) continue
