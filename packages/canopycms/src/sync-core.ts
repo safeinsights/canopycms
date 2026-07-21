@@ -7,7 +7,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { simpleGit } from 'simple-git'
-import { invalidateContentIndexesDurable } from './content-index-generation'
+import { invalidateBranchContentCaches } from './content-index-generation'
 import { filePathExists } from './utils/fs'
 
 /** Git tag marking the last known sync point, used as the merge base for `sync both` 3-way merges. */
@@ -208,6 +208,6 @@ export async function pushContentToWorkspace(
 
     return { fileCount: postStatus.files.length }
   } finally {
-    await invalidateContentIndexesDurable(branchPath)
+    await invalidateBranchContentCaches(branchPath)
   }
 }
