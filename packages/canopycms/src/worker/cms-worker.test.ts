@@ -386,6 +386,7 @@ type PrWorkerInternals = {
       create: ReturnType<typeof vi.fn>
       update: ReturnType<typeof vi.fn>
     }
+    graphql: ReturnType<typeof vi.fn>
   }
   pushBranchToGitHub(branch: string): Promise<void>
 }
@@ -432,6 +433,7 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
         create: vi.fn(),
         update: vi.fn(),
       },
+      graphql: vi.fn(),
     }
     internals.running = true
     return { worker, internals }
@@ -501,6 +503,78 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
 
     const meta = await readBranchMeta('feature-new')
     expect(meta.branch.pullRequestNumber).toBe(42)
+    expect(meta.branch.syncStatus).toBe('synced')
+  })
+
+  it('converts an existing draft PR to ready when the payload carries markReadyIfDraft', async () => {
+    // Content submits (api/github-sync.ts) set markReadyIfDraft: true so a
+    // pre-existing draft PR is converted to ready-for-review on submit.
+    const { worker, internals } = makePrWorker()
+    await setupBranchDir('feature-draft')
+
+    internals.octokit.pulls.list.mockResolvedValue({
+      data: [
+        {
+          number: 88,
+          html_url: 'https://github.com/test-owner/test-repo/pull/88',
+          updated_at: '2026-01-01T00:00:00Z',
+          draft: true,
+          node_id: 'PR_draft_88',
+        },
+      ],
+    })
+
+    await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: {
+        branch: 'feature-draft',
+        title: 'Submit feature-draft',
+        body: 'desc',
+        markReadyIfDraft: true,
+      },
+    })
+
+    await worker.processTaskQueue()
+
+    expect(internals.octokit.graphql).toHaveBeenCalledWith(
+      expect.stringContaining('markPullRequestReadyForReview'),
+      expect.objectContaining({ pullRequestId: 'PR_draft_88' }),
+    )
+
+    const meta = await readBranchMeta('feature-draft')
+    expect(meta.branch.pullRequestNumber).toBe(88)
+    expect(meta.branch.syncStatus).toBe('synced')
+  })
+
+  it('leaves an existing draft PR alone when the payload has no markReadyIfDraft flag', async () => {
+    // Settings-branch syncs (services.ts) enqueue the same action without
+    // the flag, so an existing draft PR must not be converted.
+    const { worker, internals } = makePrWorker()
+    await setupBranchDir('settings-sync')
+
+    internals.octokit.pulls.list.mockResolvedValue({
+      data: [
+        {
+          number: 89,
+          html_url: 'https://github.com/test-owner/test-repo/pull/89',
+          updated_at: '2026-01-01T00:00:00Z',
+          draft: true,
+          node_id: 'PR_draft_89',
+        },
+      ],
+    })
+
+    await enqueueTask(taskDir, {
+      action: 'push-and-create-or-update-pr',
+      payload: { branch: 'settings-sync', title: 'Update settings', body: 'desc' },
+    })
+
+    await worker.processTaskQueue()
+
+    expect(internals.octokit.graphql).not.toHaveBeenCalled()
+
+    const meta = await readBranchMeta('settings-sync')
+    expect(meta.branch.pullRequestNumber).toBe(89)
     expect(meta.branch.syncStatus).toBe('synced')
   })
 })

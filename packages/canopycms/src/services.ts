@@ -398,6 +398,10 @@ async function _createCanopyServicesInternal(
         if (githubService) {
           let prUrl: string | undefined
           try {
+            // Settings-branch PRs deliberately never pass markReadyIfDraft:
+            // unlike content submits, a settings sync has no explicit "submit
+            // for review" step, so an existing draft PR here should stay
+            // draft until an admin is ready — don't "helpfully" enable this.
             const result = await githubService.createOrUpdatePR({
               head: settingsBranch,
               base: config.defaultBaseBranch ?? 'main',

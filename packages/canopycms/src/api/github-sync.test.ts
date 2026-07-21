@@ -196,7 +196,10 @@ describe('syncSubmitPr (GIT-H1)', () => {
 
       expect(mockEnqueueTask).toHaveBeenCalledWith(
         '/mock/.tasks',
-        expect.objectContaining({ action: 'push-and-create-or-update-pr' }),
+        expect.objectContaining({
+          action: 'push-and-create-or-update-pr',
+          payload: expect.objectContaining({ markReadyIfDraft: true }),
+        }),
       )
       expect(result.syncStatus).toBe('pending-sync')
     })
@@ -220,7 +223,10 @@ describe('syncSubmitPr (GIT-H1)', () => {
 
       expect(mockEnqueueTask).toHaveBeenCalledWith(
         '/mock/.tasks',
-        expect.objectContaining({ action: 'push-and-create-or-update-pr' }),
+        expect.objectContaining({
+          action: 'push-and-create-or-update-pr',
+          payload: expect.objectContaining({ markReadyIfDraft: true }),
+        }),
       )
     })
 

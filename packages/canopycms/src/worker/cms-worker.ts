@@ -13,6 +13,7 @@ import {
   cmsTaskQueueLogger,
 } from './task-queue'
 import type { Task } from './task-queue'
+import { createOrUpdatePullRequest, createCanopyOctokit } from '../github-service'
 import { getBranchMetadataFileManager, BranchMetadataFileManager } from '../branch-metadata'
 import { extractIdFromFilename } from '../content-id-index'
 import { invalidateContentIndexesDurable } from '../content-index-generation'
@@ -87,9 +88,12 @@ export class PermanentTaskError extends Error {}
  * - HTTP 408 (request timeout) and 429 (rate limited)
  * - HTTP 403 that carries a rate-limit signal (see `isRateLimitSignal403`):
  *   GitHub returns 403, not 429, for both primary and secondary/abuse rate
- *   limits, and our Octokit instance has no throttling/retry plugin — without
- *   this carve-out a rate-limited push-and-create-or-update-pr task would
- *   fail permanently and wedge the branch (`sync-failed`, no retry).
+ *   limits. The throttling plugin (see github-service.ts createCanopyOctokit)
+ *   proactively retries short waits, but this carve-out remains the safety
+ *   net for waits the plugin gives up on (`shouldRetryRateLimit`/
+ *   `shouldRetrySecondaryRateLimit`) and for errors it never sees — without
+ *   it a rate-limited push-and-create-or-update-pr task would fail
+ *   permanently and wedge the branch (`sync-failed`, no retry).
  * - HTTP 5xx (server-side, usually recovers)
  *
  * Permanent — retrying the identical request cannot succeed:
@@ -193,7 +197,7 @@ export class CmsWorker {
   private log = cmsTaskQueueLogger
 
   constructor(private config: CmsWorkerConfig) {
-    this.octokit = new Octokit({ auth: config.githubToken })
+    this.octokit = createCanopyOctokit({ auth: config.githubToken })
     this.taskDir = path.join(config.workspacePath, '.tasks')
     this.remoteGitPath = path.join(config.workspacePath, 'remote.git')
     this.contentBranchesPath = path.join(config.workspacePath, 'content-branches')
@@ -491,55 +495,31 @@ export class CmsWorker {
         // completed on GitHub but branch metadata never recorded the PR
         // number) recovers the existing PR instead of hitting the 422 that
         // a blind `pulls.create` would throw on a duplicate head+base.
+        // Delegates to the shared helper (also used by GitHubService's
+        // direct-API path) so the list->tiebreak->update/create logic and
+        // the draft->ready conversion live in one place.
         const branch = requireString(payload, 'branch')
         await this.pushBranchToGitHub(branch)
 
-        // Check if an open PR already exists for this branch
-        const existingPRs = await this.octokit.pulls.list({
-          owner: this.config.githubOwner,
-          repo: this.config.githubRepo,
-          head: `${this.config.githubOwner}:${branch}`,
-          base: optionalString(payload, 'baseBranch', this.baseBranch),
-          state: 'open',
-          request: { signal },
-        })
-
-        if (existingPRs.data.length > 0) {
-          // GIT-M5: GitHub disallows more than one open PR for a given
-          // head+base pair, so this should always be a single match. Guard
-          // against blindly trusting array order anyway.
-          let existing = existingPRs.data[0]
-          if (existingPRs.data.length > 1) {
-            existing = [...existingPRs.data].sort(
-              (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-            )[0]
-            console.warn(
-              `Found ${existingPRs.data.length} open PRs for ${branch}; updating the most recently updated (#${existing.number})`,
-            )
-          }
-          await this.octokit.pulls.update({
-            owner: this.config.githubOwner,
-            repo: this.config.githubRepo,
-            pull_number: existing.number,
-            title: optionalString(payload, 'title', `Submit ${branch}`),
-            body: optionalString(payload, 'body', ''),
-            request: { signal },
-          })
-          console.log(`Updated existing PR #${existing.number} for ${branch}`)
-          return { prUrl: existing.html_url, prNumber: existing.number }
-        }
-
-        const newPr = await this.octokit.pulls.create({
+        const result = await createOrUpdatePullRequest({
+          octokit: this.octokit,
           owner: this.config.githubOwner,
           repo: this.config.githubRepo,
           head: branch,
           base: optionalString(payload, 'baseBranch', this.baseBranch),
           title: optionalString(payload, 'title', `Submit ${branch}`),
           body: optionalString(payload, 'body', ''),
-          request: { signal },
+          // Content submits (api/github-sync.ts) set this; settings-branch
+          // syncs (services.ts) deliberately don't.
+          markReadyIfDraft: payload.markReadyIfDraft === true,
+          signal,
         })
-        console.log(`Created PR #${newPr.data.number} for ${branch}`)
-        return { prUrl: newPr.data.html_url, prNumber: newPr.data.number }
+        console.log(
+          result.created
+            ? `Created PR #${result.number} for ${branch}`
+            : `Updated existing PR #${result.number} for ${branch}`,
+        )
+        return { prUrl: result.url, prNumber: result.number }
       }
       case 'convert-to-draft': {
         const draftPrNumber = requireNumber(payload, 'pullRequestNumber')

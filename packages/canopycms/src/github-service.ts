@@ -1,6 +1,55 @@
 import { Octokit } from '@octokit/rest'
+import { throttling } from '@octokit/plugin-throttling'
 import type { CanopyConfig } from './config'
 import { operatingStrategy } from './operating-mode'
+
+const ThrottledOctokit = Octokit.plugin(throttling)
+
+/**
+ * Retry primary rate limits at most twice and only for short waits; beyond
+ * that, task-level retry/backoff (worker) or the caller's error path takes
+ * over. The worker's task timeout would abort a longer in-request wait
+ * anyway.
+ */
+export const shouldRetryRateLimit = (retryAfter: number, retryCount: number): boolean =>
+  retryCount < 2 && retryAfter <= 60
+
+/**
+ * Secondary (abuse-detection) rate limits are stricter to trip and usually
+ * signal we're hammering the API too fast — retry at most once, and only for
+ * a short wait.
+ */
+export const shouldRetrySecondaryRateLimit = (retryAfter: number, retryCount: number): boolean =>
+  retryCount < 1 && retryAfter <= 60
+
+/**
+ * Create an Octokit instance with the throttling plugin attached, so it
+ * proactively respects GitHub's `retry-after` guidance on rate limits
+ * instead of failing immediately (see cms-worker.ts isPermanentTaskFailure
+ * for the safety net this doesn't cover: exhausted plugin retries and
+ * errors the plugin never sees, like non-403 network failures).
+ */
+export function createCanopyOctokit(options: { auth: string }): Octokit {
+  return new ThrottledOctokit({
+    auth: options.auth,
+    throttle: {
+      onRateLimit: (retryAfter, requestOptions, _octokit, retryCount) => {
+        console.warn(
+          `CanopyCMS: GitHub primary rate limit hit for ${requestOptions.method} ${requestOptions.url} ` +
+            `(retryAfter=${retryAfter}s, retryCount=${retryCount})`,
+        )
+        return shouldRetryRateLimit(retryAfter, retryCount)
+      },
+      onSecondaryRateLimit: (retryAfter, requestOptions, _octokit, retryCount) => {
+        console.warn(
+          `CanopyCMS: GitHub secondary rate limit hit for ${requestOptions.method} ${requestOptions.url} ` +
+            `(retryAfter=${retryAfter}s, retryCount=${retryCount})`,
+        )
+        return shouldRetrySecondaryRateLimit(retryAfter, retryCount)
+      },
+    },
+  })
+}
 
 export interface GitHubServiceOptions {
   token: string
@@ -24,6 +73,118 @@ export interface PullRequestDetails {
   draft: boolean
 }
 
+export interface CreateOrUpdatePullRequestParams {
+  octokit: Octokit
+  owner: string
+  repo: string
+  head: string
+  base: string
+  title: string
+  body: string
+  /** Convert a pre-existing draft PR to ready-for-review after updating it. */
+  markReadyIfDraft?: boolean
+  /** Forwarded to all GitHub requests (worker task-timeout abort). */
+  signal?: AbortSignal
+}
+
+/**
+ * Create or update a pull request (idempotent — GIT-H1).
+ *
+ * If an open PR already exists from head to base, update it and return its
+ * number/url instead of erroring. This makes PR submission safely
+ * retryable: if a caller crashes after GitHub creates the PR but before it
+ * persists the returned PR number, calling this again recovers the
+ * existing PR instead of hitting the 422 that a blind create would throw on
+ * a duplicate, which previously wedged the branch in 'sync-failed'
+ * permanently.
+ *
+ * Shared by `GitHubService.createOrUpdatePR` (direct-API callers) and the
+ * worker's `push-and-create-or-update-pr` task, so the list->tiebreak->
+ * update/create logic and the draft->ready conversion live in one place.
+ */
+export async function createOrUpdatePullRequest(
+  params: CreateOrUpdatePullRequestParams,
+): Promise<{ number: number; url: string; created: boolean }> {
+  const { octokit, owner, repo, head, base, title, body, markReadyIfDraft, signal } = params
+  // CONDITIONAL spread: when no signal is passed, request objects below are
+  // byte-identical to the pre-refactor call sites (exact toHaveBeenCalledWith
+  // assertions in github-service.test.ts depend on this).
+  const requestOption = signal ? { request: { signal } } : {}
+
+  // Check if an open PR already exists for this head/base
+  const existingPRs = await octokit.pulls.list({
+    owner,
+    repo,
+    head: `${owner}:${head}`,
+    base,
+    state: 'open',
+    ...requestOption,
+  })
+
+  if (existingPRs.data.length > 0) {
+    // GIT-M5: GitHub disallows more than one open PR for a given
+    // head+base pair, so this should always be a single match. Guard
+    // against blindly trusting array order anyway — if more than one is
+    // ever returned, warn and prefer the most recently updated instead of
+    // an arbitrary one.
+    let existing = existingPRs.data[0]
+    if (existingPRs.data.length > 1) {
+      existing = [...existingPRs.data].sort(
+        (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
+      )[0]
+      console.warn(
+        `CanopyCMS: Found ${existingPRs.data.length} open PRs for ${head} -> ${base}; updating the most recently updated (#${existing.number})`,
+      )
+    }
+    await octokit.pulls.update({
+      owner,
+      repo,
+      pull_number: existing.number,
+      title,
+      body,
+      ...requestOption,
+    })
+
+    // Only a pre-existing PR can be a draft on this path — pulls.create
+    // above is never called with draft: true, so a newly created PR is
+    // never draft and needs no conversion.
+    if (markReadyIfDraft && existing.draft) {
+      // Use GraphQL API for draft conversion (not available in REST API).
+      // Read the node id straight off the list payload — no extra pulls.get.
+      await octokit.graphql(
+        `
+        mutation($pullRequestId: ID!) {
+          markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
+            pullRequest {
+              id
+            }
+          }
+        }
+      `,
+        {
+          pullRequestId: existing.node_id,
+          ...requestOption,
+        },
+      )
+    }
+
+    return { number: existing.number, url: existing.html_url, created: false }
+  }
+
+  // Create new PR
+  const pr = await octokit.pulls.create({
+    owner,
+    repo,
+    head,
+    base,
+    title,
+    body,
+    ...requestOption,
+  })
+
+  return { number: pr.data.number, url: pr.data.html_url, created: true }
+}
+
 /**
  * Service for interacting with GitHub API (pull requests, branches, etc.)
  */
@@ -34,7 +195,7 @@ export class GitHubService {
   private baseBranch: string
 
   constructor(options: GitHubServiceOptions) {
-    this.octokit = new Octokit({ auth: options.token })
+    this.octokit = createCanopyOctokit({ auth: options.token })
     this.owner = options.owner
     this.repo = options.repo
     this.baseBranch = options.baseBranch ?? 'main'
@@ -79,65 +240,30 @@ export class GitHubService {
   /**
    * Create or update a pull request (idempotent — GIT-H1).
    *
-   * If an open PR already exists from head to base, update it and return its
-   * number/url instead of erroring. This makes PR submission safely
-   * retryable: if a caller crashes after GitHub creates the PR but before it
-   * persists the returned PR number, calling this again recovers the
-   * existing PR instead of hitting the 422 that `createPullRequest` would
-   * throw on a duplicate, which previously wedged the branch in
-   * 'sync-failed' permanently.
+   * Thin delegate to the module-level `createOrUpdatePullRequest` helper
+   * (shared with the worker's `push-and-create-or-update-pr` task) bound to
+   * this instance's octokit/owner/repo. See that function's doc comment for
+   * the idempotency rationale.
    */
   async createOrUpdatePR(options: {
     head: string
     base: string
     title: string
     body: string
+    /** Convert a pre-existing draft PR to ready-for-review after updating it. */
+    markReadyIfDraft?: boolean
   }): Promise<{ number: number; url: string }> {
-    // Check if an open PR already exists for this head/base
-    const existingPRs = await this.octokit.pulls.list({
-      owner: this.owner,
-      repo: this.repo,
-      head: `${this.owner}:${options.head}`,
-      base: options.base,
-      state: 'open',
-    })
-
-    if (existingPRs.data.length > 0) {
-      // GIT-M5: GitHub disallows more than one open PR for a given
-      // head+base pair, so this should always be a single match. Guard
-      // against blindly trusting array order anyway — if more than one is
-      // ever returned, warn and prefer the most recently updated instead of
-      // an arbitrary one.
-      let pr = existingPRs.data[0]
-      if (existingPRs.data.length > 1) {
-        pr = [...existingPRs.data].sort(
-          (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime(),
-        )[0]
-        console.warn(
-          `CanopyCMS: Found ${existingPRs.data.length} open PRs for ${options.head} -> ${options.base}; updating the most recently updated (#${pr.number})`,
-        )
-      }
-      await this.octokit.pulls.update({
-        owner: this.owner,
-        repo: this.repo,
-        pull_number: pr.number,
-        title: options.title,
-        body: options.body,
-      })
-      return { number: pr.number, url: pr.html_url }
-    }
-
-    // Create new PR
-    const pr = await this.octokit.pulls.create({
+    const result = await createOrUpdatePullRequest({
+      octokit: this.octokit,
       owner: this.owner,
       repo: this.repo,
       head: options.head,
       base: options.base,
       title: options.title,
       body: options.body,
+      markReadyIfDraft: options.markReadyIfDraft,
     })
-
-    return { number: pr.data.number, url: pr.data.html_url }
+    return { number: result.number, url: result.url }
   }
 
   /**

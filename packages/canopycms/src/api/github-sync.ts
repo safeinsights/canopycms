@@ -100,6 +100,11 @@ export async function syncSubmitPr(
       // Target the fork point recorded at branch creation when available
       baseBranch: context.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
       pullRequestNumber: context.branch.pullRequestNumber,
+      // Content submits are an explicit "ready for review" action — convert
+      // a pre-existing draft PR to ready, unlike the settings-branch sync
+      // path (services.ts commitToSettingsBranch), which enqueues the same
+      // action without this flag.
+      markReadyIfDraft: true,
     },
   })
 }
