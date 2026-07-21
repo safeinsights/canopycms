@@ -16,12 +16,13 @@ this file records what was deliberately deferred and why.
    can persist in a schema-invalid empty state. Verify whether publish/static
    build re-validates (and rejects/skips) such entries, or whether an abandoned
    scaffold can ship to a static build. Add a build-time guard if not.
-3. **`CLERK_SECRET_KEY` required at module load in prod** (generated
-   `canopy.ts` + `clerk-plugin.ts`): the zero-editor public build keeps
-   `mode: 'prod'` and imports `canopy.ts` for reads, so it now needs the secret
-   at build/startup even though it uses no auth. Either confirm the deploy
-   pipeline provides it to the public build, or construct the Clerk plugin
-   lazily (first authenticated request) while keeping the fail-closed throw.
+3. ~~**`CLERK_SECRET_KEY` required at module load in prod**~~ — DONE:
+   `ClerkAuthPlugin` (`clerk-plugin.ts`) now defers `createClerkClient` and the
+   secret-key resolution to first authenticated use (memoized), instead of
+   constructing eagerly in the constructor. Construction stays cheap and
+   never throws, so the zero-editor static build can import `canopy.ts` for
+   reads without `CLERK_SECRET_KEY`. The fail-closed throw is preserved — it
+   now fires at the first authenticated call instead of at module load.
 
 ## Defense-in-depth / refactors
 
