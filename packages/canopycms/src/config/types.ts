@@ -341,7 +341,12 @@ export interface CanopyConfigInput {
   gitBotAuthorName: string
   gitBotAuthorEmail: string
   githubTokenEnvVar?: string
-  mode?: OperatingMode
+  /**
+   * Operating mode: 'prod' or 'dev'. Required — no default (SEC-C1). A prod deploy that
+   * omits this would otherwise silently run header-trusting dev auth semantics; the Zod
+   * schema fails validation loudly instead.
+   */
+  mode: OperatingMode
   /** How this build is deployed. 'static' = no request context, no auth. Default: 'server'. */
   deployedAs?: DeployedAs
   settingsBranch?: string

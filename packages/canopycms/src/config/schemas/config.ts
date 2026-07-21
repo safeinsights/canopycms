@@ -19,7 +19,7 @@ export const defaultRemoteUrlSchema = z.string().min(1)
 export const gitBotAuthorNameSchema = z.string().min(1)
 export const gitBotAuthorEmailSchema = z.string().email()
 export const githubTokenEnvVarSchema = z.string().default('GITHUB_BOT_TOKEN')
-export const operatingModeSchema = z.enum(['prod', 'dev']).default('dev')
+export const operatingModeSchema = z.enum(['prod', 'dev'])
 export const deployedAsSchema = z.enum(['static', 'server']).default('server')
 export const contentRootSchema = relativePathSchema.default('content')
 export const sourceRootSchema = z.string().min(1).optional()
@@ -64,7 +64,9 @@ export const CanopyConfigSchema = z
     gitBotAuthorName: gitBotAuthorNameSchema,
     gitBotAuthorEmail: gitBotAuthorEmailSchema,
     githubTokenEnvVar: githubTokenEnvVarSchema.optional(),
-    mode: operatingModeSchema, // Has .default(), so not optional in output type
+    // Required by design (follow-up to SEC-C1): a prod deploy that omits `mode` must fail
+    // validation loudly rather than silently running header-trusting dev auth semantics.
+    mode: operatingModeSchema,
     deployedAs: deployedAsSchema, // Has .default('server'), so always present after validation
     settingsBranch: z.string().optional(),
     autoCreateSettingsPR: z.boolean().optional(),
@@ -86,13 +88,14 @@ export const CanopyConfigSchema = z
 /** Default workspace path for prod mode (used when CANOPYCMS_WORKSPACE_ROOT is not set) */
 export const DEFAULT_PROD_WORKSPACE = '/mnt/efs/workspace'
 
+// Note: `mode` has no default by design (SEC-C1) and is intentionally omitted here —
+// operatingModeSchema.parse(undefined) would throw.
 export const getConfigDefaults = () => ({
   baseBranch: defaultBaseBranchSchema.parse(undefined),
   remoteName: defaultRemoteNameSchema.parse(undefined),
   pathAccess: defaultPathAccessSchema.parse(undefined),
   branchAccess: defaultBranchAccessSchema.parse(undefined),
   contentRoot: contentRootSchema.parse(undefined),
-  mode: operatingModeSchema.parse(undefined),
   githubTokenEnvVar: githubTokenEnvVarSchema.parse(undefined),
   deploymentName: deploymentNameSchema.parse(undefined),
   prodWorkspace: DEFAULT_PROD_WORKSPACE,

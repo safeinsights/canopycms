@@ -129,5 +129,8 @@ export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): Canop
     // clear error rather than a TS/runtime "missing required field" surprise.
     gitBotAuthorName: merged.gitBotAuthorName ?? '',
     gitBotAuthorEmail: merged.gitBotAuthorEmail ?? '',
+    // `mode` is intentionally NOT defaulted here (SEC-C1): if no fragment supplies it,
+    // this composes with mode omitted and Zod fails validation with a clear
+    // "mode: Required"-style error rather than silently falling back to dev semantics.
   })
 }

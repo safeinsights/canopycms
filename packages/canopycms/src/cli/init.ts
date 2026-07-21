@@ -280,6 +280,11 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
  * a real prod deployment would mask a broken config and cause the worker-run-once
  * prod-safety guard to fall through to the dev-only task-skip path.
  *
+ * Since `mode` is now schema-required (no default — SEC-C1), a config file that omits
+ * it fails Zod validation inside defineCanopyConfig at import time; that surfaces here
+ * as a jiti-import failure, caught and re-thrown loudly below rather than silently
+ * treated as absent.
+ *
  * Accepts the same shapes as `cli/generate-ai-content.ts`:
  * `export default defineCanopyConfig({...})` → reads `.default.server.mode`
  * `export const config = defineCanopyConfig({...})` → reads `.config.server.mode`
