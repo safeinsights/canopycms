@@ -519,23 +519,26 @@ export const Editor: React.FC<EditorProps> = ({
     isNew: boolean,
   ) => {
     setCollectionEditorError(null)
-    try {
-      if (isNew) {
-        const result = await createCollection(data as Parameters<typeof createCollection>[0])
-        if (result) {
-          handleCloseCollectionEditor()
-        }
-      } else if (editingCollection) {
-        const success = await updateCollection(
-          editingCollection.logicalPath,
-          data as Parameters<typeof updateCollection>[1],
-        )
-        if (success) {
-          handleCloseCollectionEditor()
-        }
+    // createCollection/updateCollection are contractually non-throwing (they
+    // return result objects — see useSchemaManager), so branch on `result.ok`
+    // instead of try/catch.
+    if (isNew) {
+      const result = await createCollection(data as Parameters<typeof createCollection>[0])
+      if (result.ok) {
+        handleCloseCollectionEditor()
+      } else {
+        setCollectionEditorError(result.error)
       }
-    } catch (err) {
-      setCollectionEditorError(err instanceof Error ? err.message : 'Operation failed')
+    } else if (editingCollection) {
+      const result = await updateCollection(
+        editingCollection.logicalPath,
+        data as Parameters<typeof updateCollection>[1],
+      )
+      if (result.ok) {
+        handleCloseCollectionEditor()
+      } else {
+        setCollectionEditorError(result.error)
+      }
     }
   }
 
@@ -565,8 +568,8 @@ export const Editor: React.FC<EditorProps> = ({
     if (!deletingEntryPath) return
     setDeleteInProgress(true)
     try {
-      const success = await deleteEntry(deletingEntryPath)
-      if (success && selectedPath === deletingEntryPath) {
+      const result = await deleteEntry(deletingEntryPath)
+      if (result.ok && selectedPath === deletingEntryPath) {
         // If we deleted the currently selected entry, clear selection
         setSelectedPath('')
       }

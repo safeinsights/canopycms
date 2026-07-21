@@ -15,31 +15,49 @@ export interface UseSchemaManagerOptions {
   onSchemaChange?: () => void
 }
 
+/**
+ * Result of a schema mutation that has no success payload. Callers branch on
+ * `ok` to get a real error message instead of a bare `false`/`null` — see
+ * PR #106 review follow-up item 7: `useSchemaManager` used to swallow every
+ * failure into a toast, leaving catch blocks in `Editor`/`CollectionEditor`
+ * with nothing but a hardcoded generic message (or no inline error at all).
+ * Result objects (rather than rethrowing) keep fire-and-forget call sites
+ * (e.g. `updateOrder` from a reorder click) compiling without turning them
+ * into unhandled rejections.
+ */
+export type SchemaOpResult = { ok: true } | { ok: false; error: string }
+
+/** Same shape as {@link SchemaOpResult}, plus a payload on success. */
+export type CreateCollectionResult =
+  | { ok: true; data: { collectionPath: LogicalPath; contentId: ContentId } }
+  | { ok: false; error: string }
+
 export interface UseSchemaManagerReturn {
   // Collection operations
-  createCollection: (
-    input: CreateCollectionInput,
-  ) => Promise<{ collectionPath: LogicalPath; contentId: ContentId } | null>
+  createCollection: (input: CreateCollectionInput) => Promise<CreateCollectionResult>
   updateCollection: (
     collectionPath: LogicalPath,
     updates: UpdateCollectionInput,
-  ) => Promise<boolean>
-  deleteCollection: (collectionPath: LogicalPath) => Promise<boolean>
+  ) => Promise<SchemaOpResult>
+  deleteCollection: (collectionPath: LogicalPath) => Promise<SchemaOpResult>
 
   // Entry type operations
-  addEntryType: (collectionPath: LogicalPath, entryType: CreateEntryTypeInput) => Promise<boolean>
+  addEntryType: (
+    collectionPath: LogicalPath,
+    entryType: CreateEntryTypeInput,
+  ) => Promise<SchemaOpResult>
   updateEntryType: (
     collectionPath: LogicalPath,
     entryTypeName: string,
     updates: UpdateEntryTypeInput,
-  ) => Promise<boolean>
-  removeEntryType: (collectionPath: LogicalPath, entryTypeName: string) => Promise<boolean>
+  ) => Promise<SchemaOpResult>
+  removeEntryType: (collectionPath: LogicalPath, entryTypeName: string) => Promise<SchemaOpResult>
 
   // Order operations
-  updateOrder: (collectionPath: LogicalPath, order: string[]) => Promise<boolean>
+  updateOrder: (collectionPath: LogicalPath, order: string[]) => Promise<SchemaOpResult>
 
   // Delete entry
-  deleteEntry: (entryPath: LogicalPath) => Promise<boolean>
+  deleteEntry: (entryPath: LogicalPath) => Promise<SchemaOpResult>
 
   // State
   isLoading: boolean
@@ -73,7 +91,10 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   const apiClient = useApiClient()
   const [isLoading, setIsLoading] = useState(false)
 
-  const handleError = useCallback((message: string, error: unknown) => {
+  // Toasts on every failure (relied on by fire-and-forget callers that ignore
+  // the returned result) and returns the underlying message so callers that
+  // do inspect the result can also surface it inline (e.g. in a modal).
+  const handleError = useCallback((message: string, error: unknown): string => {
     console.error(message, error)
     const errorMessage = getErrorMessage(error)
     notifications.show({
@@ -81,10 +102,11 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
       message: `${message}: ${errorMessage}`,
       color: 'red',
     })
+    return errorMessage
   }, [])
 
   const createCollection = useCallback(
-    async (input: CreateCollectionInput) => {
+    async (input: CreateCollectionInput): Promise<CreateCollectionResult> => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.createCollection(
@@ -99,10 +121,9 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           color: 'green',
         })
         options.onSchemaChange?.()
-        return result.data
+        return { ok: true, data: result.data }
       } catch (error) {
-        handleError('Failed to create collection', error)
-        return null
+        return { ok: false, error: handleError('Failed to create collection', error) }
       } finally {
         setIsLoading(false)
       }
@@ -111,7 +132,10 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const updateCollection = useCallback(
-    async (collectionPath: LogicalPath, updates: UpdateCollectionInput) => {
+    async (
+      collectionPath: LogicalPath,
+      updates: UpdateCollectionInput,
+    ): Promise<SchemaOpResult> => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.updateCollection(
@@ -126,10 +150,9 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           color: 'green',
         })
         await options.onSchemaChange?.()
-        return true
+        return { ok: true }
       } catch (error) {
-        handleError('Failed to update collection', error)
-        return false
+        return { ok: false, error: handleError('Failed to update collection', error) }
       } finally {
         setIsLoading(false)
       }
@@ -138,7 +161,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const deleteCollection = useCallback(
-    async (collectionPath: LogicalPath) => {
+    async (collectionPath: LogicalPath): Promise<SchemaOpResult> => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.deleteCollection({
@@ -153,10 +176,9 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           color: 'green',
         })
         options.onSchemaChange?.()
-        return true
+        return { ok: true }
       } catch (error) {
-        handleError('Failed to delete collection', error)
-        return false
+        return { ok: false, error: handleError('Failed to delete collection', error) }
       } finally {
         setIsLoading(false)
       }
@@ -165,7 +187,10 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const addEntryType = useCallback(
-    async (collectionPath: LogicalPath, entryType: CreateEntryTypeInput) => {
+    async (
+      collectionPath: LogicalPath,
+      entryType: CreateEntryTypeInput,
+    ): Promise<SchemaOpResult> => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.addEntryType(
@@ -180,10 +205,9 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           color: 'green',
         })
         options.onSchemaChange?.()
-        return true
+        return { ok: true }
       } catch (error) {
-        handleError('Failed to add entry type', error)
-        return false
+        return { ok: false, error: handleError('Failed to add entry type', error) }
       } finally {
         setIsLoading(false)
       }
@@ -192,7 +216,11 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const updateEntryType = useCallback(
-    async (collectionPath: LogicalPath, entryTypeName: string, updates: UpdateEntryTypeInput) => {
+    async (
+      collectionPath: LogicalPath,
+      entryTypeName: string,
+      updates: UpdateEntryTypeInput,
+    ): Promise<SchemaOpResult> => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.updateEntryType(
@@ -207,10 +235,9 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           color: 'green',
         })
         options.onSchemaChange?.()
-        return true
+        return { ok: true }
       } catch (error) {
-        handleError('Failed to update entry type', error)
-        return false
+        return { ok: false, error: handleError('Failed to update entry type', error) }
       } finally {
         setIsLoading(false)
       }
@@ -219,7 +246,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const removeEntryType = useCallback(
-    async (collectionPath: LogicalPath, entryTypeName: string) => {
+    async (collectionPath: LogicalPath, entryTypeName: string): Promise<SchemaOpResult> => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.removeEntryType({
@@ -235,10 +262,9 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           color: 'green',
         })
         options.onSchemaChange?.()
-        return true
+        return { ok: true }
       } catch (error) {
-        handleError('Failed to remove entry type', error)
-        return false
+        return { ok: false, error: handleError('Failed to remove entry type', error) }
       } finally {
         setIsLoading(false)
       }
@@ -247,7 +273,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const updateOrder = useCallback(
-    async (collectionPath: LogicalPath, order: string[]) => {
+    async (collectionPath: LogicalPath, order: string[]): Promise<SchemaOpResult> => {
       setIsLoading(true)
       try {
         const result = await apiClient.schema.updateOrder(
@@ -259,10 +285,9 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
         }
         // Silent success for order updates (common operation)
         options.onSchemaChange?.()
-        return true
+        return { ok: true }
       } catch (error) {
-        handleError('Failed to update order', error)
-        return false
+        return { ok: false, error: handleError('Failed to update order', error) }
       } finally {
         setIsLoading(false)
       }
@@ -271,7 +296,7 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
   )
 
   const deleteEntry = useCallback(
-    async (entryPath: LogicalPath) => {
+    async (entryPath: LogicalPath): Promise<SchemaOpResult> => {
       setIsLoading(true)
       try {
         const result = await apiClient.entries.delete({
@@ -286,10 +311,9 @@ export function useSchemaManager(options: UseSchemaManagerOptions): UseSchemaMan
           color: 'green',
         })
         options.onSchemaChange?.()
-        return true
+        return { ok: true }
       } catch (error) {
-        handleError('Failed to delete entry', error)
-        return false
+        return { ok: false, error: handleError('Failed to delete entry', error) }
       } finally {
         setIsLoading(false)
       }

@@ -50,7 +50,7 @@ describe('useSchemaManager', () => {
         { wrapper },
       )
 
-      let createResult: { collectionPath: string; contentId: string } | null = null
+      let createResult: Awaited<ReturnType<typeof result.current.createCollection>> | null = null
       await act(async () => {
         createResult = await result.current.createCollection({
           name: 'posts',
@@ -60,8 +60,11 @@ describe('useSchemaManager', () => {
       })
 
       expect(createResult).toEqual({
-        collectionPath: unsafeAsLogicalPath('posts'),
-        contentId: 'abc123def456',
+        ok: true,
+        data: {
+          collectionPath: unsafeAsLogicalPath('posts'),
+          contentId: 'abc123def456',
+        },
       })
       expect(mockClient.schema.createCollection).toHaveBeenCalledWith(
         { branch: 'main' },
@@ -74,14 +77,14 @@ describe('useSchemaManager', () => {
       expect(onSchemaChange).toHaveBeenCalled()
     })
 
-    it('returns null on error', async () => {
+    it('returns a failure result with the underlying error message', async () => {
       mockClient.schema.createCollection.mockResolvedValueOnce(
         mockError(400, 'Collection already exists'),
       )
 
       const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
 
-      let createResult: { collectionPath: string; contentId: string } | null = null
+      let createResult: Awaited<ReturnType<typeof result.current.createCollection>> | null = null
       await act(async () => {
         createResult = await result.current.createCollection({
           name: 'posts',
@@ -89,7 +92,7 @@ describe('useSchemaManager', () => {
         })
       })
 
-      expect(createResult).toBeNull()
+      expect(createResult).toEqual({ ok: false, error: 'Collection already exists' })
     })
   })
 
@@ -103,14 +106,17 @@ describe('useSchemaManager', () => {
         { wrapper },
       )
 
-      let updateResult = false
+      let updateResult: Awaited<ReturnType<typeof result.current.updateCollection>> = {
+        ok: false,
+        error: 'not called',
+      }
       await act(async () => {
         updateResult = await result.current.updateCollection(unsafeAsLogicalPath('posts'), {
           label: 'Blog Posts',
         })
       })
 
-      expect(updateResult).toBe(true)
+      expect(updateResult).toEqual({ ok: true })
       expect(mockClient.schema.updateCollection).toHaveBeenCalledWith(
         { branch: 'main', collectionPath: 'posts' },
         { label: 'Blog Posts' },
@@ -118,21 +124,21 @@ describe('useSchemaManager', () => {
       expect(onSchemaChange).toHaveBeenCalled()
     })
 
-    it('returns false on error', async () => {
+    it('returns a failure result with the underlying error message', async () => {
       mockClient.schema.updateCollection.mockResolvedValueOnce(
         mockError(404, 'Collection not found'),
       )
 
       const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
 
-      let updateResult = true
+      let updateResult: Awaited<ReturnType<typeof result.current.updateCollection>> = { ok: true }
       await act(async () => {
         updateResult = await result.current.updateCollection(unsafeAsLogicalPath('nonexistent'), {
           label: 'Test',
         })
       })
 
-      expect(updateResult).toBe(false)
+      expect(updateResult).toEqual({ ok: false, error: 'Collection not found' })
     })
   })
 
@@ -146,12 +152,15 @@ describe('useSchemaManager', () => {
         { wrapper },
       )
 
-      let deleteResult = false
+      let deleteResult: Awaited<ReturnType<typeof result.current.deleteCollection>> = {
+        ok: false,
+        error: 'not called',
+      }
       await act(async () => {
         deleteResult = await result.current.deleteCollection(unsafeAsLogicalPath('posts'))
       })
 
-      expect(deleteResult).toBe(true)
+      expect(deleteResult).toEqual({ ok: true })
       expect(mockClient.schema.deleteCollection).toHaveBeenCalledWith({
         branch: 'main',
         collectionPath: 'posts',
@@ -159,19 +168,19 @@ describe('useSchemaManager', () => {
       expect(onSchemaChange).toHaveBeenCalled()
     })
 
-    it('returns false when collection is not empty', async () => {
+    it('returns a failure result when collection is not empty', async () => {
       mockClient.schema.deleteCollection.mockResolvedValueOnce(
         mockError(400, 'Collection must be empty'),
       )
 
       const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
 
-      let deleteResult = true
+      let deleteResult: Awaited<ReturnType<typeof result.current.deleteCollection>> = { ok: true }
       await act(async () => {
         deleteResult = await result.current.deleteCollection(unsafeAsLogicalPath('posts'))
       })
 
-      expect(deleteResult).toBe(false)
+      expect(deleteResult).toEqual({ ok: false, error: 'Collection must be empty' })
     })
   })
 
@@ -185,7 +194,10 @@ describe('useSchemaManager', () => {
         { wrapper },
       )
 
-      let addResult = false
+      let addResult: Awaited<ReturnType<typeof result.current.addEntryType>> = {
+        ok: false,
+        error: 'not called',
+      }
       await act(async () => {
         addResult = await result.current.addEntryType(unsafeAsLogicalPath('posts'), {
           name: 'featured',
@@ -194,7 +206,7 @@ describe('useSchemaManager', () => {
         })
       })
 
-      expect(addResult).toBe(true)
+      expect(addResult).toEqual({ ok: true })
       expect(mockClient.schema.addEntryType).toHaveBeenCalledWith(
         { branch: 'main', collectionPath: 'posts' },
         { name: 'featured', format: 'mdx', schema: 'postSchema' },
@@ -209,7 +221,10 @@ describe('useSchemaManager', () => {
 
       const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
 
-      let updateResult = false
+      let updateResult: Awaited<ReturnType<typeof result.current.updateEntryType>> = {
+        ok: false,
+        error: 'not called',
+      }
       await act(async () => {
         updateResult = await result.current.updateEntryType(unsafeAsLogicalPath('posts'), 'post', {
           label: 'Blog Post',
@@ -217,7 +232,7 @@ describe('useSchemaManager', () => {
         })
       })
 
-      expect(updateResult).toBe(true)
+      expect(updateResult).toEqual({ ok: true })
       expect(mockClient.schema.updateEntryType).toHaveBeenCalledWith(
         { branch: 'main', collectionPath: 'posts', entryTypeName: 'post' },
         { label: 'Blog Post', maxItems: 100 },
@@ -231,7 +246,10 @@ describe('useSchemaManager', () => {
 
       const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
 
-      let removeResult = false
+      let removeResult: Awaited<ReturnType<typeof result.current.removeEntryType>> = {
+        ok: false,
+        error: 'not called',
+      }
       await act(async () => {
         removeResult = await result.current.removeEntryType(
           unsafeAsLogicalPath('posts'),
@@ -239,7 +257,7 @@ describe('useSchemaManager', () => {
         )
       })
 
-      expect(removeResult).toBe(true)
+      expect(removeResult).toEqual({ ok: true })
       expect(mockClient.schema.removeEntryType).toHaveBeenCalledWith({
         branch: 'main',
         collectionPath: 'posts',
@@ -247,19 +265,19 @@ describe('useSchemaManager', () => {
       })
     })
 
-    it('returns false when removing last entry type', async () => {
+    it('returns a failure result when removing the last entry type', async () => {
       mockClient.schema.removeEntryType.mockResolvedValueOnce(
         mockError(400, 'Cannot remove last entry type'),
       )
 
       const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
 
-      let removeResult = true
+      let removeResult: Awaited<ReturnType<typeof result.current.removeEntryType>> = { ok: true }
       await act(async () => {
         removeResult = await result.current.removeEntryType(unsafeAsLogicalPath('posts'), 'post')
       })
 
-      expect(removeResult).toBe(false)
+      expect(removeResult).toEqual({ ok: false, error: 'Cannot remove last entry type' })
     })
   })
 
@@ -273,7 +291,10 @@ describe('useSchemaManager', () => {
         { wrapper },
       )
 
-      let updateResult = false
+      let updateResult: Awaited<ReturnType<typeof result.current.updateOrder>> = {
+        ok: false,
+        error: 'not called',
+      }
       await act(async () => {
         updateResult = await result.current.updateOrder(unsafeAsLogicalPath('posts'), [
           'id3',
@@ -282,7 +303,7 @@ describe('useSchemaManager', () => {
         ])
       })
 
-      expect(updateResult).toBe(true)
+      expect(updateResult).toEqual({ ok: true })
       expect(mockClient.schema.updateOrder).toHaveBeenCalledWith(
         { branch: 'main', collectionPath: 'posts' },
         { order: ['id3', 'id1', 'id2'] },
@@ -301,12 +322,15 @@ describe('useSchemaManager', () => {
         { wrapper },
       )
 
-      let deleteResult = false
+      let deleteResult: Awaited<ReturnType<typeof result.current.deleteEntry>> = {
+        ok: false,
+        error: 'not called',
+      }
       await act(async () => {
         deleteResult = await result.current.deleteEntry(unsafeAsLogicalPath('posts/hello-world'))
       })
 
-      expect(deleteResult).toBe(true)
+      expect(deleteResult).toEqual({ ok: true })
       expect(mockClient.entries.delete).toHaveBeenCalledWith({
         branch: 'main',
         entryPath: 'posts/hello-world',
@@ -314,17 +338,17 @@ describe('useSchemaManager', () => {
       expect(onSchemaChange).toHaveBeenCalled()
     })
 
-    it('returns false when lacking permission', async () => {
+    it('returns a failure result when lacking permission', async () => {
       mockClient.entries.delete.mockResolvedValueOnce(mockError(403, 'Edit permission required'))
 
       const { result } = renderHook(() => useSchemaManager({ branchName: 'main' }), { wrapper })
 
-      let deleteResult = true
+      let deleteResult: Awaited<ReturnType<typeof result.current.deleteEntry>> = { ok: true }
       await act(async () => {
         deleteResult = await result.current.deleteEntry(unsafeAsLogicalPath('posts/protected'))
       })
 
-      expect(deleteResult).toBe(false)
+      expect(deleteResult).toEqual({ ok: false, error: 'Edit permission required' })
     })
   })
 

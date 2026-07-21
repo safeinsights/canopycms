@@ -570,6 +570,84 @@ describe('useDraftManager', () => {
       })
       consoleErrorSpy.mockRestore()
     })
+
+    it('clears fieldErrors immediately when switching to a different entry (no stale flash)', async () => {
+      const entryB: EditorEntry = {
+        ...validatedEntry,
+        path: unsafeAsLogicalPath('entry2'),
+        contentId: unsafeAsContentId('xyz789uvw123'),
+        label: 'Entry B',
+      }
+      const { result, rerender } = renderHook((props) => useDraftManager(props), {
+        initialProps: validatedOptions,
+      })
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: '', body: 'Content' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+      expect(result.current.fieldErrors).toEqual({ title: 'This field is required' })
+
+      // Switching the selected entry (as Editor does when the user picks a
+      // different entry in the nav) must not render even once with entry A's
+      // errors against entry B's now-reset preview.
+      rerender({ ...validatedOptions, currentEntry: entryB, selectedPath: 'entry2' })
+
+      expect(result.current.fieldErrors).toEqual({})
+    })
+
+    it('recomputes fieldErrors when the schema changes for the same entry, without another save', async () => {
+      const { result, rerender } = renderHook((props) => useDraftManager(props), {
+        initialProps: validatedOptions,
+      })
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: '', body: 'Content' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+      expect(result.current.fieldErrors).toEqual({ title: 'This field is required' })
+      expect(mockSaveEntry).not.toHaveBeenCalled()
+
+      // Same entry id, but the title field is no longer required.
+      const relaxedEntry: EditorEntry = {
+        ...validatedEntry,
+        schema: [{ name: 'title', type: 'string', required: false }, validatedEntry.schema[1]],
+      }
+      rerender({ ...validatedOptions, currentEntry: relaxedEntry })
+
+      expect(result.current.fieldErrors).toEqual({})
+      expect(mockSaveEntry).not.toHaveBeenCalled()
+    })
+
+    it('keeps the same fieldErrors object identity when the schema reference changes but is structurally equal', async () => {
+      const { result, rerender } = renderHook((props) => useDraftManager(props), {
+        initialProps: validatedOptions,
+      })
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: '', body: 'Content' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+      const firstErrors = result.current.fieldErrors
+      expect(firstErrors).toEqual({ title: 'This field is required' })
+
+      // New array/object reference, same content — simulates useEntryManager's
+      // `currentEntry` becoming a fresh object because `entriesState` was
+      // replaced (its `currentEntry` is a `useMemo` over `entriesState.find`).
+      const sameSchemaNewRef: EditorEntry = {
+        ...validatedEntry,
+        schema: [...validatedEntry.schema],
+      }
+      rerender({ ...validatedOptions, currentEntry: sameSchemaNewRef })
+
+      expect(result.current.fieldErrors).toBe(firstErrors)
+    })
   })
 
   it('never persists the previous branch drafts under the new branch storage key', () => {

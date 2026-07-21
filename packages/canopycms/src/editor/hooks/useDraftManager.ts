@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { EditorEntry } from '../Editor'
-import type { LogicalPath } from '../../paths/types'
+import type { ContentId, LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
 import { getNotificationDuration } from '../utils/env'
 import { validateEntryFormValue, type EntryFieldError } from '../../validation/entry-validator'
@@ -14,6 +14,25 @@ const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
     if (!(err.fieldPath in map)) map[err.fieldPath] = err.message
   }
   return map
+}
+
+/**
+ * True when two field-error maps have the same keys and values (order
+ * independent). Used to bail out of a state update with the same object
+ * reference when a recompute produces an equal-but-newly-allocated map, so
+ * consumers that memo on `fieldErrors` identity don't churn.
+ */
+export const shallowEqualRecord = (
+  a: Record<string, string>,
+  b: Record<string, string>,
+): boolean => {
+  const aKeys = Object.keys(a)
+  const bKeys = Object.keys(b)
+  if (aKeys.length !== bKeys.length) return false
+  for (const key of aKeys) {
+    if (a[key] !== b[key]) return false
+  }
+  return true
 }
 
 export interface UseDraftManagerOptions {
@@ -86,10 +105,16 @@ export interface UseDraftManagerReturn {
 export function useDraftManager(options: UseDraftManagerOptions): UseDraftManagerReturn {
   const [drafts, setDrafts] = useState<Record<string, FormValue>>(() => options.initialValues ?? {})
   const [loadedValues, setLoadedValues] = useState<Record<string, FormValue>>({})
-  // Per-field validation errors from a blocked/rejected save (ED-H1).
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
-  // Which entry the current fieldErrors belong to; null = no active errors.
-  const errorEntryRef = useRef<string | null>(null)
+  // Per-field validation errors from a blocked/rejected save (ED-H1), keyed by
+  // the entry they belong to. Keying by entry id — and deriving the exposed
+  // `fieldErrors` map below instead of clearing it in a separate effect after
+  // the entry switches — makes a stale-error flash against the newly-selected
+  // entry structurally impossible: there is no render where `errorState`
+  // exists but belongs to the wrong entry.
+  const [errorState, setErrorState] = useState<{
+    entryId: ContentId
+    errors: Record<string, string>
+  } | null>(null)
 
   const storageKey = useMemo(() => `canopycms:drafts:${options.branchName}`, [options.branchName])
 
@@ -98,6 +123,10 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
   const selectedValue = currentId ? drafts[currentId] : undefined
   const loadedValue = currentId ? loadedValues[currentId] : undefined
   const effectiveValue = selectedValue ?? loadedValue
+  const fieldErrors = useMemo(
+    () => (errorState && errorState.entryId === currentId ? errorState.errors : {}),
+    [errorState, currentId],
+  )
 
   // Number of draft entries that differ from their loaded server value.
   //
@@ -201,30 +230,43 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
   }, [drafts, storageKey])
 
-  // While field errors are showing, recompute them as the user edits so each
-  // error clears when its field is fixed; drop them entirely when the user
-  // moves to a different entry.
+  // While field errors are showing, recompute them as the user edits — or as
+  // the selected entry's schema/format changes while it stays open — so each
+  // error clears when its field is fixed or no longer required. Errors for a
+  // different entry are simply not visible (see the `fieldErrors` derivation
+  // above), so this effect only needs to keep `errorState` itself correct.
+  //
+  // Three things here are load-bearing against render loops/churn — see
+  // PR #106 review follow-up item 9:
+  //
+  // 1. `options.currentEntry?.schema`/`.format` are in the deps (not just
+  //    `effectiveValue`/`currentId`) so a schema change while the same entry
+  //    stays open re-validates instead of leaving stale errors.
+  // 2. The updater is FUNCTIONAL (reads/writes via the `prev` argument), so
+  //    `errorState` itself stays out of the dep array. Depending on
+  //    `errorState` would mean every write below re-triggers this effect.
+  // 3. `shallowEqualRecord` bails out by returning `prev` (the same object
+  //    reference) when the recomputed map is equal to the last one. This
+  //    matters because `options.currentEntry` is a NEW reference whenever
+  //    useEntryManager's `entriesState` is replaced (its `currentEntry` is a
+  //    `useMemo` over `entriesState.find(...)`), which would otherwise re-run
+  //    this effect on every entries refresh and allocate a new-but-equal
+  //    errors object each time — churning any consumer that memoizes on
+  //    `fieldErrors` identity.
+  //
+  // Note: server-only errors (e.g. reference existence) cannot be recomputed
+  // client-side and clear on edit; the server re-reports them on save.
   useEffect(() => {
-    if (errorEntryRef.current === null) return
-    if (errorEntryRef.current !== currentId) {
-      errorEntryRef.current = null
-      setFieldErrors({})
-      return
-    }
-    if (!options.currentEntry || !effectiveValue) return
-    // Note: server-only errors (e.g. reference existence) cannot be recomputed
-    // client-side and clear on edit; the server re-reports them on save.
-    setFieldErrors(
-      toFieldErrorMap(
-        validateEntryFormValue(
-          options.currentEntry.schema,
-          options.currentEntry.format,
-          effectiveValue,
-        ),
-      ),
-    )
-    // Deps intentionally limited: recompute only when the draft value or selected entry changes.
-  }, [effectiveValue, currentId])
+    const entry = options.currentEntry
+    const value = effectiveValue
+    setErrorState((prev) => {
+      if (!prev) return prev
+      if (prev.entryId !== currentId) return null // housekeeping only; already invisible via the derivation above
+      if (!entry || !value) return prev
+      const next = toFieldErrorMap(validateEntryFormValue(entry.schema, entry.format, value))
+      return shallowEqualRecord(prev.errors, next) ? prev : { entryId: prev.entryId, errors: next }
+    })
+  }, [effectiveValue, currentId, options.currentEntry?.schema, options.currentEntry?.format])
 
   const handleSave = async () => {
     if (!options.currentEntry || !effectiveValue || !currentId) return
@@ -238,8 +280,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       effectiveValue,
     )
     if (validationErrors.length > 0) {
-      errorEntryRef.current = currentId
-      setFieldErrors(toFieldErrorMap(validationErrors))
+      setErrorState({ entryId: currentId, errors: toFieldErrorMap(validationErrors) })
       notifications.show({
         title: 'Cannot save yet',
         message: `Fix ${validationErrors.length} validation ${validationErrors.length === 1 ? 'issue' : 'issues'} before saving`,
@@ -249,8 +290,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
       })
       return
     }
-    errorEntryRef.current = null
-    setFieldErrors({})
+    setErrorState(null)
 
     options.setBusy(true)
     try {
@@ -276,8 +316,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
         err.fieldErrors &&
         err.fieldErrors.length > 0
       ) {
-        errorEntryRef.current = currentId
-        setFieldErrors(toFieldErrorMap(err.fieldErrors))
+        setErrorState({ entryId: currentId, errors: toFieldErrorMap(err.fieldErrors) })
       }
       notifications.show({
         ...(isValidation ? { title: 'Save rejected' } : {}),
@@ -297,8 +336,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
   const handleDiscardDrafts = () => {
     setDrafts({})
-    errorEntryRef.current = null
-    setFieldErrors({})
+    setErrorState(null)
     try {
       if (typeof window !== 'undefined') {
         window.localStorage.removeItem(storageKey)
@@ -316,8 +354,7 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
   const handleDiscardFileDraft = () => {
     if (!currentId) return
-    errorEntryRef.current = null
-    setFieldErrors({})
+    setErrorState(null)
     setDrafts((prev) => {
       const next = { ...prev }
       delete next[currentId]
