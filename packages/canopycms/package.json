@@ -131,7 +131,6 @@
     "minimist": "^1.2.8",
     "pathe": "^1.1.2",
     "proper-lockfile": "^4.1.2",
-    "react-icons": "^5.5.0",
     "react-split-pane": "^0.1.92",
     "short-uuid": "^6.0.3",
     "simple-git": "^3.36.0",

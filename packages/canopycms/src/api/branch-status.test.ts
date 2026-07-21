@@ -82,4 +82,28 @@ describe('branch status api', () => {
     )
     expect(res.ok).toBe(true)
   })
+
+  it('sanitizes credentials and absolute paths when the push fails (API-H2)', async () => {
+    const ctx = makeCtx(true)
+    ctx.services.submitBranch = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          `push failed to https://x-access-token:ghp_leak123@github.com/org/repo.git ` +
+            `from /mnt/efs/workspace/feature-x`,
+        ),
+      )
+
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(500)
+    expect(res.error).not.toContain('ghp_leak123')
+    expect(res.error).not.toContain('/mnt/efs')
+    expect(res.error).toContain('***@github.com')
+  })
 })

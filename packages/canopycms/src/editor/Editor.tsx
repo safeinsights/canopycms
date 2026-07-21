@@ -267,10 +267,14 @@ export const Editor: React.FC<EditorProps> = ({
   // Use collections from API (falls back to props if not loaded yet)
   const activeCollections = collectionsFromApi.length > 0 ? collectionsFromApi : collections
 
-  // Clear any reported preview error when switching entries
+  // Reset preview state when switching entries so a stale previous entry's
+  // preview never lingers for entries whose FormRenderer doesn't mount
+  // (still loading, canEdit === false, or empty schema)
   useEffect(() => {
     setPreviewError(null)
-  }, [currentEntry?.path])
+    setPreviewData({})
+    setPreviewLoadingState({})
+  }, [currentEntry?.contentId])
 
   // 3. Draft manager (depends on branchNameState, selectedPath from useEntryManager)
   const {
@@ -286,6 +290,7 @@ export const Editor: React.FC<EditorProps> = ({
     handleReload,
     isSelectedDirty,
     isAnyDirty,
+    fieldErrors,
   } = useDraftManager({
     branchName: branchNameState,
     selectedPath,
@@ -953,6 +958,7 @@ export const Editor: React.FC<EditorProps> = ({
                         highlightThreadId={highlightThreadId}
                         onAddComment={handleAddComment}
                         onResolveThread={handleResolveThread}
+                        fieldErrors={fieldErrors}
                         conflictNotice={
                           !!(
                             currentEntry?.contentId &&

@@ -22,6 +22,7 @@ import {
 import type { CanopyConfig, AuthPlugin, CanopyUser, FieldConfig } from 'canopycms'
 import { authResultToCanopyUser } from 'canopycms'
 import type { InternalGroup } from 'canopycms/server'
+import { assertAuthPluginAllowedForMode } from 'canopycms/auth'
 import { CachingAuthPlugin, FileBasedAuthCache } from 'canopycms/auth/cache'
 import { createCanopyCatchAllHandler } from './adapter'
 import { collectStaticParams, type GenerateContentStaticParamsOptions } from './static'
@@ -186,6 +187,12 @@ export async function createNextCanopyContext(
       'CanopyCMS: authPlugin is required when deployedAs is "server". ' +
         'Set deployedAs: "static" in your canopy config, or provide an authPlugin.',
     )
+  }
+
+  // Fail closed (SEC-C1): a dev/insecure auth plugin must never serve prod traffic.
+  // Checked before any wrapping below — CachingAuthPlugin would otherwise hide the marker.
+  if (options.authPlugin) {
+    assertAuthPluginAllowedForMode(options.authPlugin, options.config.mode)
   }
 
   // Warn when running in static deployment mode so it is not accidentally set in a server build

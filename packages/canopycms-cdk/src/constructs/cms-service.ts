@@ -151,8 +151,12 @@ export class CanopyCmsService extends Construct {
       allowAllOutbound: false, // No internet access
     })
 
-    // Lambda → EFS
+    // Lambda ↔ EFS (ingress on EFS SG + egress on Lambda SG).
+    // The Lambda SG is allowAllOutbound: false, so without the explicit egress
+    // rule the NFS mount is blocked and every Lambda request fails to reach
+    // /mnt/efs (DEP-C1). Mirrors the worker's ingress+egress pair below.
     efsSg.addIngressRule(lambdaSg, ec2.Port.tcp(2049), 'Lambda NFS access')
+    lambdaSg.addEgressRule(efsSg, ec2.Port.tcp(2049), 'NFS to EFS')
 
     this.lambdaFunction = new lambda.DockerImageFunction(this, 'CmsFunction', {
       code: props.cmsDockerImage,
@@ -170,9 +174,14 @@ export class CanopyCmsService extends Construct {
       },
     })
 
-    // Function URL for CloudFront origin
+    // Function URL for CloudFront origin.
+    // AWS_IAM (not NONE): the URL must only be reachable through CloudFront,
+    // which signs origin requests via Origin Access Control (see
+    // CanopyCmsDistribution). With NONE, anyone who learns the URL hits the CMS
+    // directly, bypassing CloudFront (DEP-H2). Adopters wiring their own
+    // CloudFront must configure an OAC and grant it lambda:InvokeFunctionUrl.
     this.functionUrl = this.lambdaFunction.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.NONE,
+      authType: lambda.FunctionUrlAuthType.AWS_IAM,
     })
 
     // ========================================================================

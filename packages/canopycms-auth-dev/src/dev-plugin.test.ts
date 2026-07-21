@@ -21,6 +21,15 @@ function assertSuccess(result: AuthenticationResult): asserts result is Authenti
 }
 
 describe('DevAuthPlugin', () => {
+  describe('insecureDevOnly marker (SEC-C1)', () => {
+    it('is marked insecureDevOnly so core rejects it in prod mode', () => {
+      // This marker is what assertAuthPluginAllowedForMode (canopycms/auth) keys on.
+      // If it is ever removed, a prod deploy could silently accept X-Test-User headers.
+      expect(new DevAuthPlugin({}).insecureDevOnly).toBe(true)
+      expect(createDevAuthPlugin({ autoBootstrapAdmin: false }).insecureDevOnly).toBe(true)
+    })
+  })
+
   describe('authenticate', () => {
     it('returns default user when no headers provided', async () => {
       const plugin = new DevAuthPlugin({})

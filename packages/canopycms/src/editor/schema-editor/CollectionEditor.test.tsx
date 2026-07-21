@@ -197,6 +197,39 @@ describe('CollectionEditor', () => {
       expect(props.onSave).toHaveBeenCalledWith({ label: 'Updated Posts' }, false)
     })
 
+    it('validates name format in edit mode (UI-M3)', async () => {
+      const user = userEvent.setup()
+      const { props } = renderCollectionEditor({
+        editingCollection: existingCollection,
+      })
+
+      // Change the name to an unsafe value (uppercase + space + dot)
+      const nameInput = screen.getByLabelText(/^Name/)
+      await user.clear(nameInput)
+      await user.type(nameInput, 'Bad Name.evil')
+
+      await user.click(screen.getByRole('button', { name: /Save Changes/i }))
+
+      expect(screen.getByText(/must start with a letter/i)).toBeTruthy()
+      expect(props.onSave).not.toHaveBeenCalled()
+    })
+
+    it('rejects a name with path traversal in edit mode (UI-M3)', async () => {
+      const user = userEvent.setup()
+      const { props } = renderCollectionEditor({
+        editingCollection: existingCollection,
+      })
+
+      const nameInput = screen.getByLabelText(/^Name/)
+      await user.clear(nameInput)
+      await user.type(nameInput, '../evil')
+
+      await user.click(screen.getByRole('button', { name: /Save Changes/i }))
+
+      expect(screen.getByText(/must start with a letter/i)).toBeTruthy()
+      expect(props.onSave).not.toHaveBeenCalled()
+    })
+
     it('shows entry type count', () => {
       renderCollectionEditor({ editingCollection: existingCollection })
 

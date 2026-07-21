@@ -46,12 +46,7 @@ export function getErrorMessage(err: unknown): string {
  * and not sensitive); absolute paths outside it are replaced with `<path>`.
  */
 export function sanitizeErrorMessage(message: string): string {
-  let result = message
-  // Credentials in URLs: scheme://user:token@host or scheme://token@host.
-  // Anchored on the literal `://` (leaving the scheme untouched) — a `\w+`
-  // scheme prefix would backtrack polynomially on long word-character runs
-  // (CodeQL js/polynomial-redos).
-  result = result.replace(/(:\/\/)[^/\s@]+@/g, '$1***@')
+  let result = redactCredentials(message)
   // Paths under the project root become relative (split/join avoids regex
   // escaping issues with arbitrary cwd values). The bare-cwd replacement is
   // anchored to a token boundary so sibling directories that merely share
@@ -61,6 +56,10 @@ export function sanitizeErrorMessage(message: string): string {
   if (cwd !== '/') {
     result = result.split(`${cwd}/`).join('')
     const cwdPattern = cwd.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    // cwdPattern is process.cwd() (server-controlled, not attacker/entry-content
+    // data) with regex metacharacters escaped by the literal regex above, so
+    // this cannot be used to inject an attacker-chosen pattern.
+    // eslint-disable-next-line security/detect-non-literal-regexp
     result = result.replace(new RegExp(`${cwdPattern}(?=[\\s'"),:;]|$)`, 'g'), '.')
   }
   // Quoted absolute paths (git quotes most paths in its messages): redact
@@ -71,9 +70,39 @@ export function sanitizeErrorMessage(message: string): string {
   // limitation: an UNQUOTED path containing spaces is only redacted up to
   // the first space — spaces are legal both inside paths and as message
   // separators, so this is not generally solvable here.
-  result = result.replace(/(^|[\s'"(=])\/(?:[^/\s'")]+\/)+[^/\s'")]*/g, '$1<path>')
+  //
+  // The repeated group `(?:[^/\s'")]+\/)+` looks nested-quantifier-shaped, but
+  // the inner character class excludes `/`, so each repetition can only end at
+  // a literal `/` boundary in the input: there is exactly one way to decompose
+  // any matched string into repetitions (no same-substring ambiguity), so this
+  // does not backtrack catastrophically. Verified empirically with inputs up
+  // to 400k chars (adversarial runs of non-slash chars, with and without
+  // trailing slashes): scaling stayed linear, not quadratic/exponential.
+  // eslint-disable-next-line security/detect-unsafe-regex
+  result = result.replace(/(^|[\s'"(=:,[])\/(?:[^/\s'")]+\/)+[^/\s'")]*/g, '$1<path>')
   // Windows drive paths
   result = result.replace(/[A-Za-z]:\\[^\s'")]+/g, '<path>')
+  return result
+}
+
+/**
+ * Redact only credential material from a message, leaving filesystem paths
+ * intact. For server-side log lines that deliberately keep full path detail
+ * (server logs only, useful for debugging) but must never persist a live
+ * token — client-facing messages go through sanitizeErrorMessage instead,
+ * which calls this and then also redacts paths.
+ */
+export function redactCredentials(message: string): string {
+  let result = message
+  // Credentials in URLs: scheme://user:token@host or scheme://token@host.
+  // Anchored on the literal `://` (leaving the scheme untouched) — a `\w+`
+  // scheme prefix would backtrack polynomially on long word-character runs
+  // (CodeQL js/polynomial-redos).
+  result = result.replace(/(:\/\/)[^/\s@]+@/g, '$1***@')
+  // Bare token shapes (defense-in-depth for messages that embed a token
+  // outside URL userinfo): GitHub token prefixes and Bearer values.
+  result = result.replace(/\b(?:gh[pousr]|github_pat)_[A-Za-z0-9_]{8,}/g, '***')
+  result = result.replace(/\b(Bearer\s+)[A-Za-z0-9._~+/=-]{8,}/g, '$1***')
   return result
 }
 

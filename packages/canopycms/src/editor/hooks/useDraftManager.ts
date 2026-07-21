@@ -4,7 +4,17 @@ import type { EditorEntry } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import type { FormValue } from '../FormRenderer'
 import { getNotificationDuration } from '../utils/env'
+import { validateEntryFormValue, type EntryFieldError } from '../../validation/entry-validator'
 import { SaveApiError } from './useEntryManager'
+
+/** Collapse a list of per-field errors into a path → message map (first error per path wins). */
+const toFieldErrorMap = (errors: EntryFieldError[]): Record<string, string> => {
+  const map: Record<string, string> = {}
+  for (const err of errors) {
+    if (!(err.fieldPath in map)) map[err.fieldPath] = err.message
+  }
+  return map
+}
 
 export interface UseDraftManagerOptions {
   branchName: string
@@ -34,6 +44,14 @@ export interface UseDraftManagerReturn {
   isDirtyForEntry: (entryPath: string) => boolean
   isSelectedDirty: () => boolean
   isAnyDirty: () => boolean
+  /**
+   * Per-field validation errors for the selected entry, keyed by canonical
+   * canopy path (e.g. `blocks[0].title`). Populated when a save is blocked by
+   * client-side schema validation (ED-H1) or rejected by the server (422);
+   * cleared when the entry changes, and recomputed as the user edits so
+   * errors disappear as fields are fixed.
+   */
+  fieldErrors: Record<string, string>
 }
 
 /**
@@ -68,6 +86,10 @@ export interface UseDraftManagerReturn {
 export function useDraftManager(options: UseDraftManagerOptions): UseDraftManagerReturn {
   const [drafts, setDrafts] = useState<Record<string, FormValue>>(() => options.initialValues ?? {})
   const [loadedValues, setLoadedValues] = useState<Record<string, FormValue>>({})
+  // Per-field validation errors from a blocked/rejected save (ED-H1).
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  // Which entry the current fieldErrors belong to; null = no active errors.
+  const errorEntryRef = useRef<string | null>(null)
 
   const storageKey = useMemo(() => `canopycms:drafts:${options.branchName}`, [options.branchName])
 
@@ -136,9 +158,42 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
   }, [storageKey])
 
+  // Merge in drafts written by another tab for the same branch. Only fills
+  // in keys missing locally, so it never clobbers this tab's in-memory edits.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== storageKey || !event.newValue) return
+      try {
+        const parsed = JSON.parse(event.newValue) as Record<string, FormValue>
+        setDrafts((prev) => {
+          const missing = Object.keys(parsed).filter((id) => !(id in prev))
+          if (missing.length === 0) return prev
+          const merged = { ...prev }
+          for (const id of missing) merged[id] = parsed[id]
+          return merged
+        })
+      } catch (err) {
+        console.warn('Failed to merge drafts from another tab', err)
+      }
+    }
+    window.addEventListener('storage', handleStorage)
+    return () => window.removeEventListener('storage', handleStorage)
+  }, [storageKey])
+
+  // Tracks which storage key the current in-memory `drafts` were loaded for.
+  // Lags one render behind a branch switch (it only updates once `drafts`
+  // itself has been reset/restored for the new key), which is what lets the
+  // persist effect below detect and skip the stale write.
+  const draftsStorageKeyRef = useRef(storageKey)
+  useEffect(() => {
+    draftsStorageKeyRef.current = storageKey
+  }, [drafts])
+
   // Persist drafts to localStorage whenever they change
   useEffect(() => {
     if (typeof window === 'undefined') return
+    if (draftsStorageKeyRef.current !== storageKey) return
     try {
       window.localStorage.setItem(storageKey, JSON.stringify(drafts))
     } catch (err) {
@@ -146,8 +201,57 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     }
   }, [drafts, storageKey])
 
+  // While field errors are showing, recompute them as the user edits so each
+  // error clears when its field is fixed; drop them entirely when the user
+  // moves to a different entry.
+  useEffect(() => {
+    if (errorEntryRef.current === null) return
+    if (errorEntryRef.current !== currentId) {
+      errorEntryRef.current = null
+      setFieldErrors({})
+      return
+    }
+    if (!options.currentEntry || !effectiveValue) return
+    // Note: server-only errors (e.g. reference existence) cannot be recomputed
+    // client-side and clear on edit; the server re-reports them on save.
+    setFieldErrors(
+      toFieldErrorMap(
+        validateEntryFormValue(
+          options.currentEntry.schema,
+          options.currentEntry.format,
+          effectiveValue,
+        ),
+      ),
+    )
+    // Deps intentionally limited: recompute only when the draft value or selected entry changes.
+  }, [effectiveValue, currentId])
+
   const handleSave = async () => {
     if (!options.currentEntry || !effectiveValue || !currentId) return
+
+    // Client-side pre-save validation (ED-H1): the same pure schema rules the
+    // server enforces authoritatively at the write boundary. Blocks the save
+    // and surfaces per-field errors in the form instead of a green "Saved".
+    const validationErrors = validateEntryFormValue(
+      options.currentEntry.schema,
+      options.currentEntry.format,
+      effectiveValue,
+    )
+    if (validationErrors.length > 0) {
+      errorEntryRef.current = currentId
+      setFieldErrors(toFieldErrorMap(validationErrors))
+      notifications.show({
+        title: 'Cannot save yet',
+        message: `Fix ${validationErrors.length} validation ${validationErrors.length === 1 ? 'issue' : 'issues'} before saving`,
+        color: 'red',
+        autoClose: getNotificationDuration(6000),
+        withCloseButton: true,
+      })
+      return
+    }
+    errorEntryRef.current = null
+    setFieldErrors({})
+
     options.setBusy(true)
     try {
       const saved = await options.saveEntry(options.currentEntry, effectiveValue)
@@ -162,8 +266,19 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     } catch (err) {
       console.error(err)
       const isConflict = err instanceof SaveApiError && err.status === 409
-      // 422 = rejected by the adopter's validateEntry hook; show its message
+      // 422 = rejected by server-side schema validation or the adopter's
+      // validateEntry hook; show its message and map per-field errors (e.g.
+      // reference existence, which only the server can check) into the form.
       const isValidation = err instanceof SaveApiError && err.status === 422
+      if (
+        err instanceof SaveApiError &&
+        err.status === 422 &&
+        err.fieldErrors &&
+        err.fieldErrors.length > 0
+      ) {
+        errorEntryRef.current = currentId
+        setFieldErrors(toFieldErrorMap(err.fieldErrors))
+      }
       notifications.show({
         ...(isValidation ? { title: 'Save rejected' } : {}),
         message: isConflict
@@ -182,6 +297,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
   const handleDiscardDrafts = () => {
     setDrafts({})
+    errorEntryRef.current = null
+    setFieldErrors({})
     try {
       if (typeof window !== 'undefined') {
         window.localStorage.removeItem(storageKey)
@@ -199,6 +316,8 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
 
   const handleDiscardFileDraft = () => {
     if (!currentId) return
+    errorEntryRef.current = null
+    setFieldErrors({})
     setDrafts((prev) => {
       const next = { ...prev }
       delete next[currentId]
@@ -296,5 +415,6 @@ export function useDraftManager(options: UseDraftManagerOptions): UseDraftManage
     isDirtyForEntry,
     isSelectedDirty,
     isAnyDirty,
+    fieldErrors,
   }
 }

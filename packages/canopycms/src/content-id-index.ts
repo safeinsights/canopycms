@@ -53,15 +53,21 @@ export interface IdLocation {
  * - Write operations that change filenames are atomic (rename is atomic)
  * - Read operations always reflect current filesystem state after index rebuild
  *
+ * **How staleness is bounded:**
+ * - Same process: mutation sites invalidate registered ContentStores directly
+ *   (content-index-registry.ts); the next access rebuilds.
+ * - Other processes: mutation sites bump an on-disk generation marker
+ *   (content-index-generation.ts) that ContentStore probes on access, so
+ *   stale indexes converge within the probe interval plus NFS caching delay.
+ * - Residual windows self-heal via ContentStore's suspicious-lookup rebuild
+ *   (ID miss or index hit whose file is gone).
+ *
  * **Race condition handling:**
  * - Multiple processes creating entries simultaneously: Each generates a unique ID,
  *   collisions detected during index build (fail fast)
- * - One process writes, another reads: Reader's stale index might miss new IDs until
- *   next rebuild. This is acceptable - eventual consistency.
- * - Index drift: Rare, but processes can rebuild index if they detect missing IDs
- *
- * For most use cases (CMS with human editors), race conditions are unlikely and
- * eventual consistency is sufficient.
+ * - ContentStore.write() refuses to recreate an entry file whose ID the
+ *   directory listing places at a different slug (existence guard), so stale
+ *   indexes cannot manufacture duplicate-ID files.
  */
 export class ContentIdIndex {
   private idToLocation: Map<string, IdLocation> = new Map()

@@ -82,6 +82,12 @@ async function setupTestWorkspace(): Promise<{
   await branchGit.addConfig('user.email', 'bot@canopycms.local')
   await branchGit.checkoutLocalBranch('test-branch')
 
+  // Mirror production workspaces: GitManager.initializeWorkspace excludes
+  // .canopy-meta/ (runtime metadata incl. the content-index generation marker)
+  // from git so sync's `add -A` never stages it.
+  await fs.mkdir(path.join(branchPath, '.git', 'info'), { recursive: true })
+  await fs.appendFile(path.join(branchPath, '.git', 'info', 'exclude'), '.canopy-meta/\n', 'utf-8')
+
   return { projectDir, remotePath, branchPath }
 }
 

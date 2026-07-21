@@ -153,6 +153,11 @@ export function extractEntryLinkIds(text: string): Array<{ id: string; anchor?: 
 
   for (const part of parts) {
     if (part.isCode) continue
+    // Source is ENTRY_LINK_PATTERN.source, a fixed compile-time pattern (see
+    // line 33), not attacker-controlled input. A fresh instance is created per
+    // part so the stateful `lastIndex` from the shared `g`-flagged
+    // ENTRY_LINK_PATTERN isn't mutated by this exec() loop.
+    // eslint-disable-next-line security/detect-non-literal-regexp
     const regex = new RegExp(ENTRY_LINK_PATTERN.source, 'g')
     let match
     while ((match = regex.exec(part.text)) !== null) {

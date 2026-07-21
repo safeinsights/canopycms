@@ -176,3 +176,79 @@ describe('ReferenceValidator entryTypes', () => {
     })
   })
 })
+
+describe('ReferenceValidator block-nested references (SCH-H-block)', () => {
+  // Real block data is { template, value } (see editor BlockField.tsx). The
+  // traversal previously keyed off `_type`, so reference IDs inside blocks
+  // were never validated on save — bad IDs passed silently (COMPOUND-2).
+  let idIndex: ContentIdIndex
+  const pageId = 'g1h2j3k4m5n6'
+
+  const schema: FieldConfig[] = [
+    {
+      name: 'sections',
+      type: 'block',
+      label: 'Sections',
+      templates: [
+        {
+          name: 'callout',
+          label: 'Callout',
+          fields: [
+            {
+              name: 'link',
+              type: 'reference',
+              label: 'Link',
+              collections: ['content/pages'],
+            } as ReferenceFieldConfig,
+          ],
+        },
+      ],
+    } as FieldConfig,
+  ]
+
+  beforeEach(() => {
+    idIndex = new ContentIdIndex('/tmp/test')
+    idIndex.add({
+      type: 'entry',
+      relativePath: unsafeAsPhysicalPath(`content/pages/page.about.${pageId}.json`),
+      collection: unsafeAsLogicalPath('content/pages'),
+      slug: unsafeAsSlug('about'),
+    })
+  })
+
+  it('rejects a non-existent reference ID inside a block', async () => {
+    const validator = new ReferenceValidator(idIndex, schema)
+
+    const result = await validator.validate({
+      sections: [{ template: 'callout', value: { link: 'z9z9z9z9z9z9' } }],
+    })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors).toHaveLength(1)
+    expect(result.errors[0].fieldPath).toBe('sections[0].link')
+    expect(result.errors[0].error).toBe('Referenced entry does not exist')
+  })
+
+  it('rejects a malformed reference ID inside a block', async () => {
+    const validator = new ReferenceValidator(idIndex, schema)
+
+    const result = await validator.validate({
+      sections: [{ template: 'callout', value: { link: 'not-an-id' } }],
+    })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors[0].fieldPath).toBe('sections[0].link')
+    expect(result.errors[0].error).toBe('Invalid content ID format')
+  })
+
+  it('accepts a valid reference ID inside a block', async () => {
+    const validator = new ReferenceValidator(idIndex, schema)
+
+    const result = await validator.validate({
+      sections: [{ template: 'callout', value: { link: pageId } }],
+    })
+
+    expect(result.valid).toBe(true)
+    expect(result.errors).toHaveLength(0)
+  })
+})

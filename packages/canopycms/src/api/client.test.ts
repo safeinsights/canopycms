@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { CanopyApiClient, createApiClient } from './client'
+import { computeContentSha256Hex } from './request-body-hash'
 
 describe('CanopyApiClient', () => {
   describe('Response handling', () => {
@@ -238,12 +239,15 @@ describe('CanopyApiClient', () => {
       const client = new CanopyApiClient({ fetch: mockFetch })
       await client.branches.create({ branch: 'test-branch' })
 
+      const expectedBody = JSON.stringify({ branch: 'test-branch' })
+      const expectedHash = await computeContentSha256Hex(expectedBody)
+
       expect(mockFetch).toHaveBeenCalledWith(
         '/api/canopycms/branches',
         expect.objectContaining({
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ branch: 'test-branch' }),
+          headers: { 'Content-Type': 'application/json', 'x-amz-content-sha256': expectedHash },
+          body: expectedBody,
         }),
       )
     })
@@ -262,7 +266,10 @@ describe('CanopyApiClient', () => {
         expect.any(String),
         expect.objectContaining({
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            'x-amz-content-sha256': expect.stringMatching(/^[0-9a-f]{64}$/),
+          }),
         }),
       )
     })
@@ -275,7 +282,10 @@ describe('CanopyApiClient', () => {
         expect.any(String),
         expect.objectContaining({
           method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            'x-amz-content-sha256': expect.stringMatching(/^[0-9a-f]{64}$/),
+          }),
         }),
       )
     })
@@ -307,9 +317,81 @@ describe('CanopyApiClient', () => {
         expect.any(String),
         expect.objectContaining({
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: expect.objectContaining({
+            'Content-Type': 'application/json',
+            'x-amz-content-sha256': expect.stringMatching(/^[0-9a-f]{64}$/),
+          }),
         }),
       )
+    })
+  })
+
+  describe('x-amz-content-sha256 (CloudFront OAC body signing)', () => {
+    it('attaches the header on a body-carrying POST request', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, status: 200, data: {} }),
+      })
+
+      const client = new CanopyApiClient({ fetch: mockFetch })
+      const body = { branch: 'test-branch' }
+      await client.branches.create(body)
+
+      const expectedHash = await computeContentSha256Hex(JSON.stringify(body))
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          headers: expect.objectContaining({ 'x-amz-content-sha256': expectedHash }),
+        }),
+      )
+    })
+
+    it('omits the header on a GET request with no body', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, status: 200, data: { branches: [] } }),
+      })
+
+      const client = new CanopyApiClient({ fetch: mockFetch })
+      await client.branches.list()
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit]
+      expect(init.headers).not.toHaveProperty('x-amz-content-sha256')
+    })
+
+    it('omits the header on a DELETE request with no body', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, status: 200, data: { deleted: true } }),
+      })
+
+      const client = new CanopyApiClient({ fetch: mockFetch })
+      await client.branches.delete({ branch: 'test-branch' })
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit]
+      expect(init.headers).not.toHaveProperty('x-amz-content-sha256')
+    })
+
+    it('does not attach the header for a FormData body', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, status: 200, data: {} }),
+      })
+
+      const client = new CanopyApiClient({ fetch: mockFetch, baseUrl: '/api/canopycms' })
+      const formData = new FormData()
+      formData.append('file', 'contents')
+
+      // Exercise the low-level request path directly since no generated
+      // endpoint currently sends FormData (assets.upload sends JSON).
+      await (
+        client as unknown as { request: (m: string, p: string, b?: unknown) => Promise<unknown> }
+      ).request('POST', '/assets', formData)
+
+      const [, init] = mockFetch.mock.calls[0] as [string, RequestInit]
+      expect(init.headers).not.toHaveProperty('x-amz-content-sha256')
+      expect(init.body).toBe(formData)
     })
   })
 
@@ -326,6 +408,36 @@ describe('CanopyApiClient', () => {
       expect(mockFetch).toHaveBeenCalledWith(
         '/api/canopycms/users/search?q=john&limit=10',
         expect.anything(),
+      )
+    })
+
+    it('should forward prefix to assets.list (API-H4)', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, status: 200, data: { assets: [] } }),
+      })
+
+      const client = new CanopyApiClient({ fetch: mockFetch })
+      await client.assets.list({ prefix: 'images/' })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/canopycms/assets?prefix=images%2F',
+        expect.anything(),
+      )
+    })
+
+    it('should forward key to assets.delete (API-H4)', async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, status: 200, data: { deleted: true } }),
+      })
+
+      const client = new CanopyApiClient({ fetch: mockFetch })
+      await client.assets.delete({ key: 'a.png' })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/canopycms/assets?key=a.png',
+        expect.objectContaining({ method: 'DELETE' }),
       )
     })
   })

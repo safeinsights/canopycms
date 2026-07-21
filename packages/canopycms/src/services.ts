@@ -100,7 +100,7 @@ export interface CanopyServices {
   ) => Promise<ContentAccessChecker>
   createGitManagerFor: (
     repoPath: string,
-    opts?: { baseBranch?: string; remote?: string },
+    opts?: { baseBranch?: string; remote?: string; skipIndexMarker?: boolean },
   ) => GitManager
   registry?: BranchRegistry
   githubService?: GitHubService
@@ -271,11 +271,15 @@ async function _createCanopyServicesInternal(
   ): Promise<ContentAccessChecker> =>
     createContentAccessChecker(contentAccessDeps, context, branchRoot, user)
   const configDefaults = getConfigDefaults()
-  const createGitManagerFor = (repoPath: string, opts?: { baseBranch?: string; remote?: string }) =>
+  const createGitManagerFor = (
+    repoPath: string,
+    opts?: { baseBranch?: string; remote?: string; skipIndexMarker?: boolean },
+  ) =>
     new GitManager({
       repoPath,
       baseBranch: opts?.baseBranch ?? config.defaultBaseBranch ?? 'main',
       remote: opts?.remote ?? config.defaultRemoteName ?? configDefaults.remoteName,
+      skipIndexMarker: opts?.skipIndexMarker,
     })
 
   const commitFiles = async (options: {
@@ -354,7 +358,8 @@ async function _createCanopyServicesInternal(
     }
 
     const settingsBranch = operatingStrategy(config.mode).getSettingsBranchName(config)
-    const git = createGitManagerFor(options.branchRoot)
+    // Settings workspace: no ContentStore roots here, skip the index marker
+    const git = createGitManagerFor(options.branchRoot, { skipIndexMarker: true })
 
     try {
       // Pull latest changes from remote settings branch (not base branch!)
@@ -393,12 +398,13 @@ async function _createCanopyServicesInternal(
         if (githubService) {
           let prUrl: string | undefined
           try {
-            prUrl = await githubService.createOrUpdatePR({
+            const result = await githubService.createOrUpdatePR({
               head: settingsBranch,
               base: config.defaultBaseBranch ?? 'main',
               title: 'Update permissions and groups',
               body: 'Automated PR for permission and group changes. Changes are already active in the CMS and will be persisted when this PR is merged.',
             })
+            prUrl = result.url
           } catch (err) {
             console.warn('Failed to create/update PR:', err)
             return { committed: true, pushed: true, syncStatus: 'sync-failed' }

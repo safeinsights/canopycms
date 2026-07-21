@@ -2,7 +2,7 @@
 
 ## Behavioral Rules (always apply)
 
-- Never git add or git commit without being asked. Always provide a commit message when finishing work.
+- Commit and push without asking when the task clearly implies landing changes (PR fix loops, "fix and reply" requests, explicit feature work) — non-main branches only, and always report what was committed. Ask first before anything touching main, force-pushes, or history rewrites. When work ends uncommitted, provide a commit message.
 - Propose next work at the end of each iteration.
 - Use `pnpm`/`pnpm exec`, NOT npm or bun.
 - Use extensionless local imports.

@@ -2,9 +2,11 @@
 
 import React, { useEffect, useId, useState } from 'react'
 
-import { MultiSelect, Select, Stack, Text, Loader } from '@mantine/core'
+import { Alert, Button, MultiSelect, Select, Stack, Text, Loader } from '@mantine/core'
+import { IconAlertCircle } from '@tabler/icons-react'
 
 import { createApiClient } from '../../api/client'
+import { getErrorMessage } from '../../utils/error'
 
 export interface ReferenceOption {
   value: string
@@ -43,6 +45,8 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
   const needsFetch = !staticOptions && (hasCollections || hasEntryTypes)
   const [options, setOptions] = useState<ReferenceOption[]>(staticOptions || [])
   const [loading, setLoading] = useState(needsFetch)
+  const [error, setError] = useState<string | null>(null)
+  const [retryCount, setRetryCount] = useState(0)
 
   // Extract ID from value - handle both string IDs and resolved objects
   const extractId = (val: unknown): string => {
@@ -68,6 +72,7 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
     setPrevFetchKey(fetchKey)
     if (needsFetch) {
       setLoading(true)
+      setError(null)
     }
   }
 
@@ -91,16 +96,25 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
               }),
             )
             setOptions(mappedOptions)
+          } else {
+            setError(response.error || 'Failed to load reference options')
           }
         })
         .catch((err) => {
           console.error('Failed to load reference options:', err)
+          setError(getErrorMessage(err))
         })
         .finally(() => {
           setLoading(false)
         })
     }
-  }, [needsFetch, collections, entryTypes, displayField, branch])
+  }, [needsFetch, collections, entryTypes, displayField, branch, retryCount])
+
+  const handleRetry = () => {
+    setLoading(true)
+    setError(null)
+    setRetryCount((count) => count + 1)
+  }
 
   if (loading) {
     return (
@@ -113,6 +127,38 @@ export const ReferenceField: React.FC<ReferenceFieldProps> = ({
           {label}
         </Text>
         <Loader size="sm" data-testid={`reference-loading-${dataCanopyField}`} />
+      </Stack>
+    )
+  }
+
+  if (error) {
+    return (
+      <Stack
+        gap={4}
+        data-canopy-field={dataCanopyField}
+        data-testid={`reference-field-${dataCanopyField}`}
+      >
+        <Text size="sm" fw={500}>
+          {label}
+        </Text>
+        <Alert
+          icon={<IconAlertCircle size={16} />}
+          color="red"
+          title="Error"
+          data-testid={`reference-error-${dataCanopyField}`}
+        >
+          <Stack gap={4}>
+            <Text size="sm">{error}</Text>
+            <Button
+              size="xs"
+              variant="light"
+              onClick={handleRetry}
+              data-testid={`reference-retry-${dataCanopyField}`}
+            >
+              Retry
+            </Button>
+          </Stack>
+        </Alert>
       </Stack>
     )
   }

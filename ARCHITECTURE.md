@@ -163,6 +163,7 @@ Some files remain at the source root because they represent core domain concepts
 **Content:**
 
 - Content ID index (bidirectional ID-to-path mapping)
+- Content index generation (on-disk cross-process generation marker for the ContentId index; complements the in-process index registry)
 - Content listing (shared entry-listing utilities: filename parsing, entry data reading, ordering, flat entry listing)
 - Content reader (authenticated content access)
 - Content store (file-based content persistence)
@@ -466,15 +467,19 @@ This enables O(1) lookups in both directions:
 
 ### Multi-Process Consistency
 
-The index is NOT thread-safe, but the system is designed for eventual consistency across processes:
+The index is NOT thread-safe, and each process holds its own in-memory copy. There is no shared memory or cross-host file watching between processes (several warm Lambda containers plus the worker sharing branch clones on EFS), so the shared filesystem itself is the coordination medium:
 
 - **Filenames are source of truth**: Each process rebuilds its index by scanning filenames on disk
 - **Atomic operations**: File renames are atomic; all processes discover the same filenames
+- **On-disk generation marker**: Every operation that mutates indexed files under a branch clone rewrites a small per-clone marker file (`.canopy-meta/content-index.generation`) with a fresh random token, strictly after the mutation. Each store re-reads the marker on a throttled probe (default one second) and rebuilds when the token differs from the one it captured before its last scan.
+- **Random token, not a counter**: Readers only need to answer "did it change since I captured it?", so inequality suffices. A monotonic counter would require read-modify-write and silently lose concurrent bumps without a lock; a unique token per bump has no lost-update problem and sidesteps NFS mtime granularity and cross-host clock skew.
+- **Rebuilds swap, never clear**: A rebuild constructs a fresh index and swaps it in, so concurrent readers never observe a half-built index.
+- **Suspicious-lookup backstop**: An ID miss, or an index hit pointing at a file that no longer exists, forces one immediate rebuild (throttled to once per few seconds) before the lookup fails—self-healing for the residual windows below.
+- **Write existence guard**: A write targeting an existing ID consults the actual directory listing before recreating a missing expected file, and raises a conflict error instead of resurrecting an entry another process concurrently renamed. This prevents duplicate-ID files independently of the marker.
 - **Unique ID generation**: Multiple processes can't create duplicate IDs (globally unique)
 - **Collision detection**: Index build fails if duplicate IDs are found
-- **Eventual consistency**: One process creating an entry might not be visible to another until that process rebuilds its index (acceptable for human-paced editing workflows)
 
-In most CMS use cases (where editors work at human speeds), race conditions are rare and eventual consistency is sufficient.
+Residual staleness is bounded rather than open-ended: the probe throttle (about a second) plus, across hosts on EFS/NFS, attribute caching that can delay marker visibility for roughly 3-60 seconds on default mounts. These windows are further bounded by per-request store lifetimes and healed by the suspicious-lookup backstop—acceptable for human-paced editing workflows.
 
 ## Case Sensitivity
 
@@ -2402,14 +2407,15 @@ The tradeoff favors speed over raw memory usage, which is the right choice for r
 
 ### Why eventual consistency for the index?
 
-The index is per-process, not globally synchronized. This design choice accepts eventual consistency for robustness:
+The index is per-process, not globally synchronized. This design choice accepts eventual consistency for robustness, but bounds the staleness window with an on-disk generation marker (see [Multi-Process Consistency](#multi-process-consistency)):
 
-- **No locking**: Avoids distributed lock complexity and deadlock risks
-- **No write conflicts**: Each process independently rebuilds by scanning filenames
-- **Self-healing**: If a process's index gets stale, it can rebuild on demand
-- **Suitable for CMS workflows**: Editors work at human speeds; millisecond-level race conditions don't materialize in practice
+- **No locking**: Avoids distributed lock complexity and deadlock risks—the marker bump is a single atomic write of a random token, never a read-modify-write
+- **No write conflicts**: Each process independently rebuilds by scanning filenames; rebuilds swap in a fresh index rather than clearing in place, so readers never see a partial index
+- **Bounded staleness**: A completed mutation becomes visible to other stores at their next marker probe—typically within the probe interval (about a second), stretched across hosts by NFS attribute caching (roughly 3-60 seconds on default EFS mounts)
+- **Self-healing**: Suspicious lookups (an ID miss, or an index hit whose file is gone) force an immediate rebuild rather than waiting for the next probe
+- **Suitable for CMS workflows**: Editors work at human speeds; second-scale staleness windows don't materialize as conflicts in practice
 
-For a system handling hundreds of concurrent API requests (serverless autoscaling), process-local indexes with eventual consistency is simpler and more scalable than a shared, synchronized index.
+For a system handling hundreds of concurrent API requests (serverless autoscaling), process-local indexes coordinated through the shared filesystem are simpler and more scalable than a shared, synchronized index.
 
 ### Why entry types model instead of singletons?
 

@@ -9,6 +9,8 @@ import {
   type StatusResult,
 } from 'simple-git'
 
+import { invalidateContentIndexesForRoot } from './content-index-registry'
+import { invalidateContentIndexesDurable } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNotFoundError } from './utils/error'
@@ -21,10 +23,53 @@ const log = createDebugLogger({ prefix: 'GitManager' })
 // Maps remotePath -> Promise<void> to serialize access
 const remoteInitLocks = new Map<string, Promise<void>>()
 
+/**
+ * Add a pattern to a repo's .git/info/exclude (a per-repository gitignore that
+ * never gets committed) so runtime metadata like .canopy-meta/ can't be staged
+ * by broad `git add` calls. Idempotent. Standalone so workspace-creating code
+ * that doesn't hold a GitManager (e.g. CLI sync auto-create) can use it too.
+ */
+export async function ensureGitExcludePattern(repoPath: string, pattern: string): Promise<void> {
+  const excludePath = path.join(repoPath, '.git', 'info', 'exclude')
+
+  // Ensure .git/info directory exists
+  await fs.mkdir(path.dirname(excludePath), { recursive: true })
+
+  // Read existing exclude file (create if doesn't exist)
+  let content = ''
+  try {
+    content = await fs.readFile(excludePath, 'utf-8')
+  } catch (err: unknown) {
+    if (!isNotFoundError(err)) throw err
+    // File doesn't exist, will create it
+  }
+
+  // Check if pattern already exists (avoid duplicates)
+  const lines = content.split('\n')
+  if (lines.some((line) => line.trim() === pattern)) {
+    log.debug('git', 'Pattern already in .git/info/exclude', { pattern })
+    return
+  }
+
+  // Add pattern (with newline if file is not empty and doesn't end with one)
+  const needsLeadingNewline = content.length > 0 && !content.endsWith('\n')
+  const newContent = content + (needsLeadingNewline ? '\n' : '') + pattern + '\n'
+
+  await fs.writeFile(excludePath, newContent, 'utf-8')
+  log.debug('git', 'Added pattern to .git/info/exclude', { pattern })
+}
+
 export interface GitManagerOptions {
   repoPath: string
   baseBranch?: string
   remote?: string
+  /**
+   * Skip writing the on-disk content-index generation marker after working-tree
+   * mutations. Set for settings workspaces: no ContentStore is ever rooted at
+   * one, and the marker file would sit untracked in the settings repo.
+   * In-process index invalidation still runs (it is free and harmless).
+   */
+  skipIndexMarker?: boolean
 }
 
 export type GitStatus = Pick<StatusResult, 'files' | 'ahead' | 'behind' | 'current' | 'tracking'>
@@ -61,8 +106,9 @@ export interface InitializeWorkspaceOptions {
   /**
    * Pattern to add to `.git/info/exclude` so runtime metadata
    * (e.g., `.canopy-meta/`) never enters the workspace's git history.
-   * Only applied to content branches; orphan settings branches intentionally
-   * track files under `.canopy-meta/`.
+   * Only applied to content branches; settings workspaces don't need it
+   * (their payloads live at the workspace root and are committed by
+   * explicit path).
    */
   gitExcludePattern?: string
 }
@@ -72,11 +118,13 @@ export class GitManager {
   private readonly repoPath: string
   private readonly baseBranch: string
   private readonly remote: string
+  private readonly skipIndexMarker: boolean
 
   constructor(options: GitManagerOptions, gitOptions?: Partial<SimpleGitOptions>) {
     this.repoPath = path.resolve(options.repoPath)
     this.baseBranch = options.baseBranch ?? 'main'
     this.remote = options.remote ?? 'origin'
+    this.skipIndexMarker = options.skipIndexMarker ?? false
     this.git = simpleGit({ baseDir: this.repoPath, ...gitOptions })
     // Prevent git from traversing above repoPath to find a parent .git directory.
     // If the workspace's .git is corrupt/missing, git should fail rather than
@@ -543,11 +591,13 @@ export class GitManager {
       await freshGit.addConfig('user.email', options.gitBotAuthorEmail)
     }
 
-    // 3. Create GitManager instance
+    // 3. Create GitManager instance. Settings (orphan) workspaces never host
+    // ContentStores, so they skip the on-disk content-index generation marker.
     const git = new GitManager({
       repoPath: options.workspacePath,
       baseBranch,
       remote: remoteName,
+      skipIndexMarker: options.branchType === 'orphan',
     })
 
     // 4. Ensure managed marker and fallback identity.
@@ -581,9 +631,11 @@ export class GitManager {
       await git.createOrphanSettingsBranch(options.branchName, {})
     } else {
       await git.checkoutBranch(options.branchName)
-      // Exclude runtime metadata from git tracking on content branches.
-      // Orphan settings branches deliberately track .canopy-meta/ payloads,
-      // so we skip this step for them.
+      // Exclude runtime metadata (.canopy-meta/) from git tracking on content
+      // branches. Settings workspaces don't need it: their payloads live at
+      // the workspace root (permissions.json/groups.json) and commits there
+      // add explicit file paths only, so nothing under .canopy-meta/ is ever
+      // staged — and they skip the index marker entirely (skipIndexMarker).
       if (options.gitExcludePattern) {
         await git.ensureGitExclude(options.gitExcludePattern)
       }
@@ -603,9 +655,45 @@ export class GitManager {
     }
   }
 
+  /**
+   * Mark ContentStore ID indexes rooted at (or under) this repo as stale.
+   * Called after operations that mutate the working tree (checkout/merge/rebase) so
+   * ID→path lookups don't keep resolving to pre-mutation paths. Invoked in `finally`
+   * blocks because even failed merges/rebases may have touched the tree before
+   * aborting; over-invalidating is safe.
+   *
+   * Covers both scopes: in-process stores via the registry, and stores in OTHER
+   * processes sharing the filesystem (worker vs Lambda on EFS) via the on-disk
+   * generation marker — unless this manager targets a settings workspace
+   * (skipIndexMarker), where only the free in-process invalidation runs.
+   */
+  private async invalidateContentIndexes(): Promise<void> {
+    if (this.skipIndexMarker) {
+      invalidateContentIndexesForRoot(this.repoPath)
+      return
+    }
+    await invalidateContentIndexesDurable(this.repoPath)
+  }
+
   async checkoutBranch(branch: string): Promise<void> {
+    try {
+      await this.checkoutBranchInner(branch)
+    } finally {
+      await this.invalidateContentIndexes()
+    }
+  }
+
+  private async checkoutBranchInner(branch: string): Promise<void> {
     const branches = await this.git.branch()
     if (branches.all.includes(branch)) {
+      // No `--`/`--end-of-options` separator here: a bare `--` switches
+      // `git checkout` into pathspec-restore mode instead of switching
+      // branches (breaking this call), and `--end-of-options` is not
+      // honored by `git checkout` on git versions still in the field
+      // (e.g. Apple's bundled git 2.39.5 treats it as a literal, unmatched
+      // pathspec rather than an options terminator). Safety instead relies
+      // on parseBranchName() rejecting a leading hyphen before `branch`
+      // ever reaches here.
       await this.git.checkout(branch)
       return
     }
@@ -617,6 +705,11 @@ export class GitManager {
       // Best-effort; will fall back to local base branch below if fetch fails
     }
     try {
+      // `-b`/`-B` consume the very next token as their literal branch-name
+      // value (not subject to option re-scanning), and git independently
+      // rejects a leading-hyphen value there ("... is not a valid branch
+      // name") — verified on both a modern git and Apple's bundled git
+      // 2.39.5. So `branch` needs no separator here either.
       await this.git.checkoutBranch(branch, remoteRef)
       return
     } catch {
@@ -630,6 +723,14 @@ export class GitManager {
   }
 
   async pullBase(): Promise<void> {
+    try {
+      await this.pullBaseInner()
+    } finally {
+      await this.invalidateContentIndexes()
+    }
+  }
+
+  private async pullBaseInner(): Promise<void> {
     await this.git.fetch(this.remote, this.baseBranch)
     try {
       await this.git.merge([`${this.remote}/${this.baseBranch}`])
@@ -650,6 +751,14 @@ export class GitManager {
   }
 
   async pullCurrentBranch(): Promise<void> {
+    try {
+      await this.pullCurrentBranchInner()
+    } finally {
+      await this.invalidateContentIndexes()
+    }
+  }
+
+  private async pullCurrentBranchInner(): Promise<void> {
     const branches = await this.git.branch()
     const currentBranch = branches.current
     await this.git.fetch(this.remote, currentBranch)
@@ -669,6 +778,14 @@ export class GitManager {
   }
 
   async rebaseOntoBase(): Promise<void> {
+    try {
+      await this.rebaseOntoBaseInner()
+    } finally {
+      await this.invalidateContentIndexes()
+    }
+  }
+
+  private async rebaseOntoBaseInner(): Promise<void> {
     await this.git.fetch(this.remote, this.baseBranch)
     try {
       await this.git.rebase([`${this.remote}/${this.baseBranch}`])
@@ -698,7 +815,18 @@ export class GitManager {
     const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
     // Use explicit refspec (local:remote) so push works for new branches
     // that don't yet exist in the remote (e.g., orphan settings branches).
-    await this.git.push(this.remote, `${target}:${target}`, ['--set-upstream'])
+    // Built via raw() (rather than the push() wrapper) so --end-of-options
+    // can be placed immediately before the positional remote/refspec
+    // arguments, guarding against a refspec starting with '-' being parsed
+    // as a git option (e.g. --receive-pack=...). Real flags must precede
+    // --end-of-options, since everything after it is treated as positional.
+    await this.git.raw([
+      'push',
+      '--set-upstream',
+      '--end-of-options',
+      this.remote,
+      `${target}:${target}`,
+    ])
   }
 
   async ensureAuthor(author: { name: string; email: string }): Promise<void> {
@@ -773,7 +901,8 @@ export class GitManager {
    */
   async forcePush(branch?: string): Promise<void> {
     const target = branch ?? (await this.git.revparse(['--abbrev-ref', 'HEAD']))
-    await this.git.push(this.remote, target, ['--force-with-lease'])
+    // See push() above for why raw() + --end-of-options is used here.
+    await this.git.raw(['push', '--force-with-lease', '--end-of-options', this.remote, target])
   }
 
   /**
@@ -795,33 +924,7 @@ export class GitManager {
    * This is idempotent - if the pattern already exists, it won't be added again.
    */
   async ensureGitExclude(pattern: string): Promise<void> {
-    const excludePath = path.join(this.repoPath, '.git', 'info', 'exclude')
-
-    // Ensure .git/info directory exists
-    await fs.mkdir(path.dirname(excludePath), { recursive: true })
-
-    // Read existing exclude file (create if doesn't exist)
-    let content = ''
-    try {
-      content = await fs.readFile(excludePath, 'utf-8')
-    } catch (err: unknown) {
-      if (!isNotFoundError(err)) throw err
-      // File doesn't exist, will create it
-    }
-
-    // Check if pattern already exists (avoid duplicates)
-    const lines = content.split('\n')
-    if (lines.some((line) => line.trim() === pattern)) {
-      log.debug('git', 'Pattern already in .git/info/exclude', { pattern })
-      return
-    }
-
-    // Add pattern (with newline if file is not empty and doesn't end with one)
-    const needsLeadingNewline = content.length > 0 && !content.endsWith('\n')
-    const newContent = content + (needsLeadingNewline ? '\n' : '') + pattern + '\n'
-
-    await fs.writeFile(excludePath, newContent, 'utf-8')
-    log.debug('git', 'Added pattern to .git/info/exclude', { pattern })
+    await ensureGitExcludePattern(this.repoPath, pattern)
   }
 
   /**
@@ -830,12 +933,25 @@ export class GitManager {
    * Orphan branches have no shared history with other branches - they start fresh.
    * This is perfect for deployment-specific settings that shouldn't pollute content history.
    *
-   * The branch contains only settings files in .canopy-meta/ (groups.json, permissions.json).
+   * The branch contains only settings files committed by explicit path
+   * (e.g. permissions.json, groups.json at the workspace root).
    *
    * @param branchName - Name of the orphan branch (e.g., 'canopycms-settings-prod')
    * @param initialFiles - Files to commit to the new branch (e.g., { 'permissions.json': '{}', 'groups.json': '{}' })
    */
   async createOrphanSettingsBranch(
+    branchName: string,
+    initialFiles: Record<string, string>,
+  ): Promise<void> {
+    try {
+      await this.createOrphanSettingsBranchInner(branchName, initialFiles)
+    } finally {
+      // Both branches of Inner swap the working tree (checkout / checkout --orphan)
+      await this.invalidateContentIndexes()
+    }
+  }
+
+  private async createOrphanSettingsBranchInner(
     branchName: string,
     initialFiles: Record<string, string>,
   ): Promise<void> {
@@ -845,12 +961,18 @@ export class GitManager {
     const branches = await this.git.branch()
     if (branches.all.includes(branchName)) {
       log.debug('git', 'Orphan branch already exists', { branchName })
-      // Checkout the existing branch
+      // No separator here — see checkoutBranch() above for why plain
+      // `git checkout <branch>` can't safely take one. branchName is always
+      // an internal/config-derived settings-branch name, never user input
+      // (see createOrphanSettingsBranch's callers).
       await this.git.checkout(branchName)
       return
     }
 
-    // Create orphan branch (--orphan creates a branch with no parent/history)
+    // Create orphan branch (--orphan creates a branch with no parent/history).
+    // branchName is consumed as --orphan's literal argument value (like -b/-B
+    // above), so it can't be reinterpreted as a flag; git's own ref-name
+    // validation additionally rejects a leading-hyphen value here.
     await this.git.raw(['checkout', '--orphan', branchName])
 
     // Remove all files from index (orphan checkout keeps working tree)

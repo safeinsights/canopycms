@@ -1,8 +1,9 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { SchemaOps } from './schema-store'
+import { SchemaOps, createCollectionInputSchema } from './schema-store'
+import type { CreateCollectionInput } from './schema-store'
 import type { FieldConfig } from '../config'
 import { unsafeAsLogicalPath } from '../paths/test-utils'
 
@@ -126,6 +127,81 @@ describe('SchemaOps', () => {
           entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
         }),
       ).rejects.toThrow()
+    })
+
+    it('should reject names with path traversal or unsafe characters before any write', async () => {
+      const invalidNames = [
+        '../x',
+        '..',
+        'a/b',
+        'a\\b',
+        'Foo',
+        'foo.bar',
+        'foo bar',
+        '-foo',
+        '.hidden',
+      ]
+
+      for (const name of invalidNames) {
+        await expect(
+          store.createCollection({
+            name,
+            entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+          }),
+        ).rejects.toThrow('Invalid input')
+      }
+
+      // Nothing was written inside or outside the content root
+      expect(await fs.readdir(contentRoot)).toEqual([])
+      expect(await fs.readdir(tempDir)).toEqual(['content'])
+    })
+
+    it('should accept a valid hyphenated name', async () => {
+      const result = await store.createCollection({
+        name: 'blog-posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+
+      expect(result.collectionPath).toBe('blog-posts')
+      const dirs = await fs.readdir(contentRoot)
+      expect(dirs).toHaveLength(1)
+      expect(dirs[0]).toMatch(/^blog-posts\.[a-zA-Z0-9]{12}$/)
+    })
+
+    it('should reject entry types with unsafe names', async () => {
+      await expect(
+        store.createCollection({
+          name: 'posts',
+          entries: [{ name: '../evil', format: 'json', schema: 'postSchema' }],
+        }),
+      ).rejects.toThrow('Invalid input')
+
+      expect(await fs.readdir(contentRoot)).toEqual([])
+    })
+
+    it('should block traversal with the containment check even if input validation is bypassed', async () => {
+      // Simulate a regression where the Zod name pattern is lost: force
+      // safeParse to accept a traversal name so the containment backstop
+      // is exercised directly.
+      const maliciousInput: CreateCollectionInput = {
+        name: '../evil',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      }
+      const spy = vi
+        .spyOn(createCollectionInputSchema, 'safeParse')
+        .mockReturnValue({ success: true, data: maliciousInput })
+
+      try {
+        await expect(store.createCollection(maliciousInput)).rejects.toThrow(
+          'Path traversal detected',
+        )
+      } finally {
+        spy.mockRestore()
+      }
+
+      // Nothing was written outside the content root
+      expect(await fs.readdir(tempDir)).toEqual(['content'])
+      expect(await fs.readdir(contentRoot)).toEqual([])
     })
   })
 
@@ -274,6 +350,23 @@ describe('SchemaOps', () => {
           slug: '2024-posts',
         }),
       ).rejects.toThrow('must start with a letter')
+    })
+
+    it('should reject unsafe name updates', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+
+      for (const name of ['../evil', 'Bad Name', 'foo.bar']) {
+        await expect(
+          store.updateCollection(unsafeAsLogicalPath('posts'), { name }),
+        ).rejects.toThrow('Invalid input')
+      }
+
+      // Name unchanged on disk
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
+      expect(meta!.name).toBe('posts')
     })
 
     it('should not rename if slug is same as current', async () => {
@@ -452,6 +545,23 @@ describe('SchemaOps', () => {
           schema: 'invalidSchema',
         }),
       ).rejects.toThrow('Schema reference "invalidSchema" not found')
+    })
+
+    it('should reject unsafe entry type names', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+
+      for (const name of ['../evil', 'Bad Name', 'foo.bar']) {
+        await expect(
+          store.addEntryType(unsafeAsLogicalPath('posts'), {
+            name,
+            format: 'json',
+            schema: 'postSchema',
+          }),
+        ).rejects.toThrow('Invalid input')
+      }
     })
   })
 

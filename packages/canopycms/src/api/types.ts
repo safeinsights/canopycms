@@ -37,4 +37,11 @@ export interface ApiResponse<TData = unknown> {
   status: number
   data?: TData
   error?: string
+  /**
+   * Structured per-field validation errors accompanying a 422 rejection
+   * (schema validation at the content write boundary). `fieldPath` uses the
+   * canonical CanopyCMS path format (e.g. `blocks[0].title`) so the editor can
+   * surface each error next to its form field.
+   */
+  fieldErrors?: Array<{ fieldPath: string; message: string }>
 }

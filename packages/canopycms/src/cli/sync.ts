@@ -26,6 +26,9 @@ import {
   safeReplaceDir,
   SYNC_BASE_TAG,
 } from '../sync-core'
+import { invalidateContentIndexesDurable } from '../content-index-generation'
+import { ensureGitExcludePattern } from '../git-manager'
+import { operatingStrategy } from '../operating-mode'
 
 export interface SyncOptions {
   projectDir: string
@@ -117,6 +120,13 @@ async function selectBranch(
       await wsGit.init()
       await wsGit.checkoutLocalBranch(branchName)
       await wsGit.raw(['commit', '--allow-empty', '-m', 'init: workspace created by sync'])
+      // Runtime metadata (.canopy-meta/: branch metadata, comments, the
+      // content-index generation marker) must never be staged by sync's
+      // `add -A`. Fully provisioned workspaces get this exclude from
+      // GitManager.initializeWorkspace; this minimal one needs it too. Sync is
+      // dev-mode-only (see branchesDir), so ask the dev strategy for the
+      // pattern rather than hardcoding it.
+      await ensureGitExcludePattern(branchPath, operatingStrategy('dev').getGitExcludePattern())
       p.log.info(`Created branch workspace: ${branchName}`)
     } else {
       const available = branches.length > 0 ? ` Available branches: ${branches.join(', ')}` : ''
@@ -164,6 +174,9 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
       })
       if (!p.isCancel(shouldAbort) && shouldAbort) {
         await wsGit.merge(['--abort'])
+        // The abort rewrote the clone's working tree — tell ContentStore ID
+        // indexes (the dev server is a separate process; on-disk marker).
+        await invalidateContentIndexesDurable(branchPath)
         p.log.success('Merge aborted. Workspace restored to pre-merge state.')
       }
     }
@@ -375,6 +388,9 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
       })
       if (!p.isCancel(shouldAbort) && shouldAbort) {
         await wsGit.merge(['--abort'])
+        // The abort rewrote the clone's working tree — tell ContentStore ID
+        // indexes (the dev server is a separate process; on-disk marker).
+        await invalidateContentIndexesDurable(branchPath)
         p.log.success('Merge aborted. Workspace restored to pre-merge state.')
       }
     }
@@ -401,81 +417,89 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
   // Remember the current branch to switch back after merge
   const currentBranch = (await wsGit.revparse(['--abbrev-ref', 'HEAD'])).trim()
 
-  // Create temp branch from the merge base
-  const incomingBranch = `sync-incoming-${Date.now()}`
-  await wsGit.raw(['checkout', '-b', incomingBranch, baseRef])
-
-  // Replace content on temp branch with working-tree content
-  const wsContentDir = path.join(branchPath, contentRoot)
-  assertWithinDir(wsContentDir, branchPath, '--content-root')
-  const tmpDir = `${wsContentDir}.sync-tmp-${Date.now()}`
+  // Everything from here mutates the branch clone's working tree (temp-branch
+  // checkout, content replace, merge) — whatever the outcome, mark ContentStore
+  // ID indexes stale in the finally below. The dev server is a separate
+  // process, reached via the on-disk generation marker.
   try {
-    await copyDir(srcContentDir, tmpDir)
-    await safeReplaceDir(wsContentDir, tmpDir)
-  } catch (err) {
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
-    // Switch back to workspace branch before re-throwing
-    await wsGit.checkout(currentBranch)
-    await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
-    throw err
-  }
+    // Create temp branch from the merge base
+    const incomingBranch = `sync-incoming-${Date.now()}`
+    await wsGit.raw(['checkout', '-b', incomingBranch, baseRef])
 
-  await wsGit.add('-A')
-  const incomingStatus = await wsGit.status()
-
-  // No working-tree changes — skip merge, just pull editor changes
-  if (incomingStatus.files.length === 0) {
-    await wsGit.checkout(currentBranch)
-    await wsGit.raw(['branch', '-D', incomingBranch])
-    p.log.info('No working-tree changes to merge — pulling editor changes only')
-    const pullResult = await syncPull({ ...options, branch: branchName, force: true })
-    return { pushed: 0, pulled: pullResult.fileCount }
-  }
-
-  await wsGit.commit('sync: incoming working-tree changes')
-
-  // Switch back to workspace branch and merge
-  await wsGit.checkout(currentBranch)
-
-  p.log.step('Merging working-tree changes with editor changes...')
-
-  try {
-    await wsGit.merge([incomingBranch, '--no-edit'])
-  } catch (mergeError) {
-    // Check if it's a merge conflict
-    let mergeStatus: Awaited<ReturnType<typeof wsGit.status>> | undefined
+    // Replace content on temp branch with working-tree content
+    const wsContentDir = path.join(branchPath, contentRoot)
+    assertWithinDir(wsContentDir, branchPath, '--content-root')
+    const tmpDir = `${wsContentDir}.sync-tmp-${Date.now()}`
     try {
-      mergeStatus = await wsGit.status()
-    } catch {
-      // status() failed — clean up incoming branch and re-throw original error
+      await copyDir(srcContentDir, tmpDir)
+      await safeReplaceDir(wsContentDir, tmpDir)
+    } catch (err) {
+      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+      // Switch back to workspace branch before re-throwing
+      await wsGit.checkout(currentBranch)
+      await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
+      throw err
+    }
+
+    await wsGit.add('-A')
+    const incomingStatus = await wsGit.status()
+
+    // No working-tree changes — skip merge, just pull editor changes
+    if (incomingStatus.files.length === 0) {
+      await wsGit.checkout(currentBranch)
+      await wsGit.raw(['branch', '-D', incomingBranch])
+      p.log.info('No working-tree changes to merge — pulling editor changes only')
+      const pullResult = await syncPull({ ...options, branch: branchName, force: true })
+      return { pushed: 0, pulled: pullResult.fileCount }
+    }
+
+    await wsGit.commit('sync: incoming working-tree changes')
+
+    // Switch back to workspace branch and merge
+    await wsGit.checkout(currentBranch)
+
+    p.log.step('Merging working-tree changes with editor changes...')
+
+    try {
+      await wsGit.merge([incomingBranch, '--no-edit'])
+    } catch (mergeError) {
+      // Check if it's a merge conflict
+      let mergeStatus: Awaited<ReturnType<typeof wsGit.status>> | undefined
+      try {
+        mergeStatus = await wsGit.status()
+      } catch {
+        // status() failed — clean up incoming branch and re-throw original error
+        await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
+        throw mergeError
+      }
+      if (mergeStatus.conflicted.length > 0) {
+        p.log.error('Merge conflicts detected in the following files:')
+        for (const file of mergeStatus.conflicted) {
+          p.log.error(`  ${file}`)
+        }
+        p.log.info('The branch workspace is now in a merge state.')
+        p.log.info('Resolve the conflicts in the workspace, then run: canopycms sync pull')
+        p.log.info('Or abort the merge with: canopycms sync abort')
+        // Clean up the incoming branch (leave merge state for user resolution)
+        await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
+        return { pushed: 0, pulled: 0 }
+      }
+      // Not a conflict — clean up and re-throw original error
       await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
       throw mergeError
     }
-    if (mergeStatus.conflicted.length > 0) {
-      p.log.error('Merge conflicts detected in the following files:')
-      for (const file of mergeStatus.conflicted) {
-        p.log.error(`  ${file}`)
-      }
-      p.log.info('The branch workspace is now in a merge state.')
-      p.log.info('Resolve the conflicts in the workspace, then run: canopycms sync pull')
-      p.log.info('Or abort the merge with: canopycms sync abort')
-      // Clean up the incoming branch (leave merge state for user resolution)
-      await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
-      return { pushed: 0, pulled: 0 }
-    }
-    // Not a conflict — clean up and re-throw original error
-    await wsGit.raw(['branch', '-D', incomingBranch]).catch(() => {})
-    throw mergeError
+
+    // Clean merge succeeded
+    await wsGit.raw(['branch', '-D', incomingBranch])
+    await wsGit.tag(['-f', SYNC_BASE_TAG])
+    p.log.success('Merged working-tree changes with editor changes')
+
+    // Pull merged result back to working tree
+    const pullResult = await syncPull({ ...options, branch: branchName, force: true })
+    return { pushed: incomingStatus.files.length, pulled: pullResult.fileCount }
+  } finally {
+    await invalidateContentIndexesDurable(branchPath)
   }
-
-  // Clean merge succeeded
-  await wsGit.raw(['branch', '-D', incomingBranch])
-  await wsGit.tag(['-f', SYNC_BASE_TAG])
-  p.log.success('Merged working-tree changes with editor changes')
-
-  // Pull merged result back to working tree
-  const pullResult = await syncPull({ ...options, branch: branchName, force: true })
-  return { pushed: incomingStatus.files.length, pulled: pullResult.fileCount }
 }
 
 /**
@@ -500,6 +524,9 @@ async function syncAbort(options: SyncOptions): Promise<void> {
   }
 
   await wsGit.merge(['--abort'])
+  // The abort rewrote the clone's working tree — tell ContentStore ID indexes
+  // (the dev server is a separate process; on-disk marker).
+  await invalidateContentIndexesDurable(branchPath)
   p.log.success(
     `Merge aborted in branch workspace "${branchName}". Workspace restored to pre-merge state.`,
   )

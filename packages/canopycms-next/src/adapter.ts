@@ -6,6 +6,7 @@ import {
   type CanopyRequest,
   type CanopyResponse,
 } from 'canopycms/http'
+import { getErrorMessage, sanitizeErrorMessage } from 'canopycms/utils/error'
 
 /**
  * Options for creating a Canopy Next.js handler.
@@ -83,6 +84,7 @@ async function extractPathSegments(ctx?: {
  * export const GET = handler
  * export const POST = handler
  * export const PUT = handler
+ * export const PATCH = handler
  * export const DELETE = handler
  * ```
  */
@@ -97,9 +99,23 @@ export const createCanopyCatchAllHandler = (options: CanopyNextOptions) => {
         | { canopycms?: string[]; [key: string]: unknown }
     },
   ): Promise<Response> => {
-    const canopyReq = wrapNextRequest(req)
-    const segments = await extractPathSegments(ctx)
-    const response = await coreHandler(canopyReq, segments)
-    return toNextResponse(response)
+    try {
+      const canopyReq = wrapNextRequest(req)
+      const segments = await extractPathSegments(ctx)
+      const response = await coreHandler(canopyReq, segments)
+      return toNextResponse(response)
+    } catch (err) {
+      // Defense-in-depth (API-C1): coreHandler already guards itself with a
+      // top-level try/catch, but this adapter also wraps request conversion
+      // (wrapNextRequest/extractPathSegments/toNextResponse) so a failure there
+      // can never escape as Next's generic unhandled-error 500, which would
+      // break the uniform { ok, status, error } envelope the editor expects.
+      const message = getErrorMessage(err)
+      console.error('CanopyCMS: Unhandled error in Next.js catch-all handler:', message)
+      return toNextResponse({
+        status: 500,
+        body: { ok: false, status: 500, error: sanitizeErrorMessage(message) },
+      })
+    }
   }
 }

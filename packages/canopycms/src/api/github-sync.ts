@@ -50,12 +50,23 @@ export async function syncSubmitPr(
           syncStatus: 'synced',
         }
       } else {
-        const result = await githubService.createPullRequest({
-          branchName: context.branch.name,
+        // GIT-H1: pullRequestNumber isn't recorded — this may be a genuine
+        // first submit, or a prior submit that created a PR on GitHub but
+        // crashed/failed before persisting its number. createOrUpdatePR is
+        // idempotent: it looks up any existing open PR for this branch and
+        // updates it instead of calling the non-idempotent create (which
+        // 422s on a duplicate and would leave the branch wedged in
+        // 'sync-failed' forever with no way to recover).
+        const result = await githubService.createOrUpdatePR({
+          head: context.branch.name,
+          base: context.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
           title: prTitle,
           body: prBody,
-          draft: false,
         })
+        const pr = await githubService.getPullRequest(result.number)
+        if (pr.draft) {
+          await githubService.convertToReady(result.number)
+        }
         return {
           prUrl: result.url,
           prNumber: result.number,
@@ -74,8 +85,14 @@ export async function syncSubmitPr(
   }
 
   // Async path: queue task for worker
+  // GIT-H1: always use the idempotent create-or-update action rather than
+  // branching on whether pullRequestNumber is known. If a prior submit
+  // created the PR but the worker crashed before this branch's metadata
+  // recorded the number, the next submit would otherwise re-enqueue
+  // 'push-and-create-pr' and 422 on GitHub's duplicate-PR check, wedging the
+  // branch in 'sync-failed' with no way to recover.
   return enqueueGitHubTask(ctx, context, {
-    action: context.branch.pullRequestNumber ? 'push-and-update-pr' : 'push-and-create-pr',
+    action: 'push-and-create-or-update-pr',
     payload: {
       branch: context.branch.name,
       title: prTitle,

@@ -42,14 +42,26 @@ export async function canopyContext(options: {
       ? "import { createClerkAuthPlugin } from 'canopycms-auth-clerk'\nimport { createDevAuthPlugin } from 'canopycms-auth-dev'"
       : "import { createDevAuthPlugin } from 'canopycms-auth-dev'"
 
-  const authPlugin =
+  // SEC: never key auth on an env var alone — a missing/misspelled CANOPY_AUTH_MODE in a
+  // prod deploy must not silently fall back to the unauthenticated dev plugin. In prod the
+  // verifying plugin is always used; if its config/env is missing it throws at startup.
+  const authPluginSetup =
     options.authProvider === 'clerk'
-      ? "process.env.CANOPY_AUTH_MODE === 'clerk'\n      ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })\n      : createDevAuthPlugin()"
-      : 'createDevAuthPlugin()'
+      ? [
+          '// Auth plugin selection — fails closed. The dev plugin performs NO real credential',
+          "// verification, so it is only ever used when mode is 'dev'. In prod, Clerk is always",
+          '// used: if CLERK_SECRET_KEY is missing, createClerkAuthPlugin throws at startup',
+          '// instead of silently falling back to unauthenticated dev auth.',
+          'const authPlugin =',
+          "  config.server.mode === 'prod' || process.env.CANOPY_AUTH_MODE === 'clerk'",
+          '    ? createClerkAuthPlugin({ useOrganizationsAsGroups: true })',
+          '    : createDevAuthPlugin()',
+        ].join('\n')
+      : 'const authPlugin = createDevAuthPlugin()'
 
   return template
     .replace('{{AUTH_IMPORTS}}', authImports)
-    .replace('{{AUTH_PLUGIN}}', authPlugin)
+    .replace('{{AUTH_PLUGIN_SETUP}}', authPluginSetup)
     .replace('{{CONFIG_IMPORT}}', options.configImport)
 }
 

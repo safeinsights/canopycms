@@ -191,4 +191,101 @@ describe('FormRenderer', () => {
       expect(screen.queryByText(/Someone else has recently changed this page/)).toBeNull()
     })
   })
+
+  describe('fieldErrors prop (ED-H1)', () => {
+    const fields: FieldConfig[] = [
+      { name: 'title', type: 'string', label: 'Title', required: true },
+      {
+        name: 'blocks',
+        type: 'block',
+        label: 'Blocks',
+        templates: [
+          { name: 'hero', label: 'Hero', fields: [{ name: 'headline', type: 'string' }] },
+        ],
+      },
+    ]
+
+    it('shows a summary alert and an inline message under the offending field', () => {
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={fields}
+            value={{ title: '' }}
+            onChange={() => {}}
+            fieldErrors={{ title: 'This field is required' }}
+          />
+        </CanopyCMSProvider>,
+      )
+      expect(screen.getByTestId('validation-alert')).toBeTruthy()
+      expect(screen.getByText(/Fix these issues before saving/)).toBeTruthy()
+      expect(screen.getByTestId('field-error-title').textContent).toBe('This field is required')
+    })
+
+    it('shows inline errors for block-nested field paths', () => {
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={fields}
+            value={{ title: 'ok', blocks: [{ template: 'hero', value: { headline: '' } }] }}
+            onChange={() => {}}
+            fieldErrors={{ 'blocks[0].headline': 'This field is required' }}
+          />
+        </CanopyCMSProvider>,
+      )
+      expect(screen.getByTestId('field-error-blocks[0].headline').textContent).toBe(
+        'This field is required',
+      )
+    })
+
+    it('renders no validation UI when there are no errors', () => {
+      render(
+        <CanopyCMSProvider>
+          <FormRenderer fields={fields} value={{ title: 'ok' }} onChange={() => {}} />
+        </CanopyCMSProvider>,
+      )
+      expect(screen.queryByTestId('validation-alert')).toBeNull()
+      expect(screen.queryByTestId('field-error-title')).toBeNull()
+    })
+
+    it('keeps the same input DOM node across error/no-error transitions (no remount on fix)', () => {
+      const { rerender } = render(
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={fields}
+            value={{ title: '' }}
+            onChange={() => {}}
+            fieldErrors={{ title: 'This field is required' }}
+          />
+        </CanopyCMSProvider>,
+      )
+      const inputWithError = screen.getByLabelText('Title') as HTMLInputElement
+      expect(screen.getByTestId('field-error-title')).toBeTruthy()
+
+      // Simulate the error clearing (e.g. user typed a character and the live
+      // recompute effect in useDraftManager cleared the field error).
+      rerender(
+        <CanopyCMSProvider>
+          <FormRenderer fields={fields} value={{ title: 'o' }} onChange={() => {}} />
+        </CanopyCMSProvider>,
+      )
+      const inputWithoutError = screen.getByLabelText('Title') as HTMLInputElement
+      expect(screen.queryByTestId('field-error-title')).toBeNull()
+      expect(inputWithoutError).toBe(inputWithError)
+
+      // And back again, in case the error reappears (e.g. a subsequent save attempt).
+      rerender(
+        <CanopyCMSProvider>
+          <FormRenderer
+            fields={fields}
+            value={{ title: 'o' }}
+            onChange={() => {}}
+            fieldErrors={{ title: 'This field is required' }}
+          />
+        </CanopyCMSProvider>,
+      )
+      const inputWithErrorAgain = screen.getByLabelText('Title') as HTMLInputElement
+      expect(screen.getByTestId('field-error-title')).toBeTruthy()
+      expect(inputWithErrorAgain).toBe(inputWithError)
+    })
+  })
 })

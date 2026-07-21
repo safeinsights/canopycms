@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
+import type { Dirent } from 'node:fs'
 
 import matter from 'gray-matter'
 import { parse as yamlParse, stringify as yamlStringify } from 'yaml'
@@ -23,8 +24,11 @@ import {
   extractEntryTypeFromFilename,
   resolveCollectionPath,
 } from './content-id-index'
+import { registerContentIndexForInvalidation } from './content-index-registry'
+import { bumpContentIndexGeneration, readContentIndexGeneration } from './content-index-generation'
 import { generateId } from './id'
 import { isNodeError } from './utils/error'
+import { filePathExists } from './utils/fs'
 import { asRecord, getFormatExtension } from './utils/format'
 import {
   normalizeFilesystemPath,
@@ -91,7 +95,7 @@ export class ContentConflictError extends Error {
  * Get the default entry type from a collection's entries array.
  * Returns the entry marked as default, or the first one, or undefined if no entries.
  */
-function getDefaultEntryType(
+export function getDefaultEntryType(
   entries: readonly EntryTypeConfig[] | undefined,
 ): EntryTypeConfig | undefined {
   if (!entries || entries.length === 0) return undefined
@@ -117,28 +121,202 @@ function validateSlug(slug: string): void {
   }
 }
 
+export interface ContentStoreOptions {
+  /**
+   * Minimum ms between on-disk generation-marker probes when the in-memory
+   * index is otherwise fresh (see content-index-generation.ts). The probe is
+   * one small readFile; the 1s default matches the schema-cache mtime
+   * debounce. Tests pass 0 for deterministic cross-process scenarios.
+   */
+  indexFreshnessIntervalMs?: number
+}
+
+const DEFAULT_INDEX_FRESHNESS_INTERVAL_MS = 1000
+/**
+ * At most one suspicious-lookup forced rescan per store per this window, so
+ * genuinely dangling IDs cannot trigger a full tree scan on every lookup.
+ */
+const FORCED_REFRESH_MIN_INTERVAL_MS = 5000
+
+/** Internal sentinel: a lookup result that suggests this store's index is stale. */
+const STALE_LOOKUP = Symbol('stale-index-lookup')
+
 export class ContentStore {
   private readonly root: string
   private readonly schemaIndex: Map<string, FlatSchemaItem>
-  private readonly _idIndex: ContentIdIndex
-  private indexLoaded: boolean = false
+  /** Swapped wholesale on rebuild — in-flight callers keep their (older) snapshot. */
+  private _idIndex: ContentIdIndex
+  /** Bumped by invalidateIndex(); when it differs from loadedIndexGeneration the index is stale. */
+  private indexGeneration = 0
+  private loadedIndexGeneration = -1
+  /**
+   * On-disk generation token (content-index-generation.ts) the current index
+   * was built against. undefined = never captured; null = marker absent at
+   * build time. Assigned only by the rebuild path and by guarded self-adoption
+   * after this store's own mutations.
+   */
+  private loadedDiskGeneration: string | null | undefined = undefined
+  private lastDiskProbeMs = 0
+  private lastForcedRefreshMs = 0
+  private readonly indexFreshnessIntervalMs: number
+  /** In-flight index build, shared by concurrent idIndex() callers so scans never interleave. */
+  private indexBuild: Promise<unknown> | null = null
 
-  constructor(root: string, flatSchema: FlatSchemaItem[]) {
+  constructor(root: string, flatSchema: FlatSchemaItem[], options: ContentStoreOptions = {}) {
     this.root = path.resolve(root)
+    this.indexFreshnessIntervalMs =
+      options.indexFreshnessIntervalMs ?? DEFAULT_INDEX_FRESHNESS_INTERVAL_MS
     this.schemaIndex = new Map(flatSchema.map((item) => [item.logicalPath, item]))
     this._idIndex = new ContentIdIndex(this.root)
+    registerContentIndexForInvalidation(this.root, this)
   }
 
   /**
-   * Get the ID index, ensuring it's loaded first.
-   * This getter automatically loads the index on first access.
+   * Mark the ID index stale so the next idIndex() access rebuilds it from disk.
+   *
+   * Called (via content-index-registry) after in-process operations that change the
+   * working tree underneath this store — git checkout/merge/rebase, the worker's
+   * rebase loop, and sync-core's content replacement. Without this, ID→path lookups
+   * keep resolving to pre-mutation paths and saves can target moved/deleted files.
+   *
+   * Cheap: only bumps a generation counter; the rebuild happens lazily.
+   */
+  public invalidateIndex(): void {
+    this.indexGeneration++
+  }
+
+  /**
+   * Get the ID index, ensuring it's loaded and current first.
+   * Loads lazily on first access and rebuilds after invalidateIndex(); repeated
+   * accesses with no intervening invalidation reuse the already-built index,
+   * except for a throttled probe of the on-disk generation marker that detects
+   * mutations made by OTHER processes sharing this root (e.g. on EFS).
    */
   public async idIndex(): Promise<ContentIdIndex> {
-    if (!this.indexLoaded) {
-      await this._idIndex.buildFromFilenames('content')
-      this.indexLoaded = true
+    // Cross-process freshness probe: when the in-memory generations already
+    // match, cheaply check whether another process bumped the on-disk marker
+    // since this index was built. Skipped while a rebuild is due anyway — the
+    // rebuild below captures the marker itself.
+    if (this.loadedIndexGeneration === this.indexGeneration && this.shouldProbeDiskGeneration()) {
+      const diskToken = await readContentIndexGeneration(this.root)
+      if (diskToken !== this.loadedDiskGeneration) {
+        this.indexGeneration++
+      }
+    }
+
+    while (this.loadedIndexGeneration !== this.indexGeneration) {
+      if (this.indexBuild) {
+        // Another caller is already rebuilding — wait, then re-check freshness.
+        await this.indexBuild
+        continue
+      }
+      const generation = this.indexGeneration
+      const build = (async () => {
+        // Capture the marker BEFORE scanning: a bump landing mid-scan then
+        // differs from the token recorded below, forcing a rebuild on the
+        // next probe instead of being silently missed.
+        const diskToken = await readContentIndexGeneration(this.root)
+        // Build into a fresh instance and swap, instead of clearing in place:
+        // in-flight callers hold the previous reference across awaits and must
+        // keep seeing a consistent (if outdated) snapshot, never a half-built one.
+        const fresh = new ContentIdIndex(this.root)
+        await fresh.buildFromFilenames('content')
+        return { diskToken, fresh }
+      })()
+      this.indexBuild = build
+      let result: { diskToken: string | null; fresh: ContentIdIndex }
+      try {
+        result = await build
+      } finally {
+        this.indexBuild = null
+      }
+      // Swap and record in one synchronous continuation (only the rebuild path
+      // assigns these; waiters above never do), so callers resuming after us
+      // observe a consistent index/generation/token triple. If invalidateIndex()
+      // ran mid-build the generations won't match and we rebuild.
+      this._idIndex = result.fresh
+      this.loadedIndexGeneration = generation
+      this.loadedDiskGeneration = result.diskToken
+      // The build just captured a fresh token — it counts as a probe.
+      this.lastDiskProbeMs = Date.now()
     }
     return this._idIndex
+  }
+
+  /**
+   * Throttle for the on-disk marker probe. Stamps the clock synchronously
+   * before the caller's readFile so concurrent idIndex() callers don't
+   * double-probe (and double-rebuild) on the same token change.
+   */
+  private shouldProbeDiskGeneration(): boolean {
+    const now = Date.now()
+    if (now - this.lastDiskProbeMs < this.indexFreshnessIntervalMs) return false
+    this.lastDiskProbeMs = now
+    return true
+  }
+
+  /**
+   * After one of this store's own successful mutations: publish the change to
+   * other processes (bump the on-disk marker) and adopt the written token,
+   * since the in-memory index was already updated incrementally — avoiding a
+   * pointless self-rescan on the next probe. Adoption is skipped unless the
+   * index is quiescent and `updatedIndex` is still the live instance: if a
+   * rebuild raced with the mutation, its scan may predate our file change, so
+   * we leave the recorded token older and let the next probe observe our bump
+   * and trigger the healing rebuild.
+   */
+  private async recordOwnMutation(updatedIndex: ContentIdIndex): Promise<void> {
+    const token = await bumpContentIndexGeneration(this.root)
+    if (
+      token !== null &&
+      this.indexBuild === null &&
+      this.loadedIndexGeneration === this.indexGeneration &&
+      this._idIndex === updatedIndex
+    ) {
+      this.loadedDiskGeneration = token
+    }
+  }
+
+  /**
+   * Backstop for the residual staleness windows of the cross-process marker
+   * (NFS attribute caching, probe throttle, self-adoption — see
+   * content-index-generation.ts): force one rebuild in response to a
+   * suspicious lookup (an ID miss, or an index hit whose file is gone), but
+   * throttle how often a caller can force one. Time-boxed so genuinely
+   * dangling IDs cost at most one rescan per window. Returns true if a
+   * refresh was performed by THIS call; callers that lose the throttle race
+   * still benefit — idIndex() dedupes concurrent builds, so a caller that won
+   * the race rebuilds the index for everyone, and callers should still retry
+   * their lookup against the live index regardless of this return value.
+   */
+  private async refreshIndexForSuspiciousLookup(): Promise<boolean> {
+    const now = Date.now()
+    if (now - this.lastForcedRefreshMs < FORCED_REFRESH_MIN_INTERVAL_MS) return false
+    this.lastForcedRefreshMs = now
+    this.invalidateIndex()
+    await this.idIndex()
+    return true
+  }
+
+  /**
+   * Find the file in `dir` whose filename embeds `id`.
+   * Returns its root-relative path, or null if no such file (or no such dir).
+   */
+  private async findEntryPathById(dir: string, id: string): Promise<string | null> {
+    let entries: Dirent[]
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true })
+    } catch (err) {
+      if (isNodeError(err) && err.code === 'ENOENT') return null
+      throw err
+    }
+    for (const entry of entries) {
+      if (entry.isDirectory()) continue
+      if (extractIdFromFilename(entry.name) === id) {
+        return path.relative(this.root, path.join(dir, entry.name))
+      }
+    }
+    return null
   }
 
   /**
@@ -451,7 +629,8 @@ export class ContentStore {
     entryTypeName?: string,
     existingId?: ContentId,
   ): Promise<ContentDocument> {
-    const idIndex = await this.idIndex()
+    // Warm the index outside the lock (a full scan must not hold the entry lock)
+    await this.idIndex()
     const schemaItem = this.assertSchemaItem(collectionPath)
 
     // Determine expected format and fields (validation — outside lock so errors are immediate)
@@ -511,6 +690,25 @@ export class ContentStore {
         }
       }
 
+      // Existence guard (cross-process): the caller asserts this entry already
+      // exists (existingId), so if no file is at the path we are about to
+      // write, this store's index may be stale — another process may have
+      // renamed the entry. Recreating a renamed entry's old path would leave
+      // two files with the same embedded ID and poison every subsequent index
+      // rebuild (ID collision). The directory listing is authoritative on this
+      // host: if the ID's actual on-disk location differs from what our index
+      // believes, fail with a conflict so the caller reloads fresh state.
+      // (An intentional slug-change save passes: the index and the directory
+      // agree on the entry's current — old-slug — path. External deletes also
+      // pass: the ID is nowhere on disk, so recreating is last-writer-wins.)
+      if (existingId && !(await filePathExists(absolutePath))) {
+        const actualRelPath = await this.findEntryPathById(path.dirname(absolutePath), existingId)
+        const indexedRelPath = (await this.idIndex()).findById(existingId)?.relativePath ?? null
+        if (actualRelPath !== null && actualRelPath !== indexedRelPath) {
+          throw new ContentConflictError()
+        }
+      }
+
       // Serialize content string
       let content: string
       if (input.format === 'json') {
@@ -523,20 +721,22 @@ export class ContentStore {
 
       await atomicWriteFile(absolutePath, content)
 
-      // Update the ID index after a successful write
+      // Update the ID index after a successful write. Look up and mutate the
+      // LIVE index in one synchronous window (no awaits in between): a
+      // concurrent rebuild may have swapped in a fresh instance since the
+      // pre-write snapshot, and updates must land where future lookups go.
+      const liveIndex = this._idIndex
+      let staleOldAbsPath: string | null = null
       if (id) {
-        const existing = idIndex.findById(id)
+        const existing = liveIndex.findById(id)
         if (existing) {
           if (existing.relativePath !== relativePath) {
-            // Slug changed — delete the orphaned file at the old path before updating the index
-            const oldAbsPath = path.join(this.root, existing.relativePath)
-            await fs.unlink(oldAbsPath).catch((err: unknown) => {
-              if (!isNodeError(err) || err.code !== 'ENOENT') throw err
-            })
-            idIndex.updatePath(existing.id, relativePath)
+            // Slug changed — remember the orphaned old path to delete below
+            staleOldAbsPath = path.join(this.root, existing.relativePath)
+            liveIndex.updatePath(existing.id, relativePath)
           }
         } else {
-          idIndex.add({
+          liveIndex.add({
             type: 'entry',
             relativePath,
             collection: collectionPath,
@@ -544,6 +744,12 @@ export class ContentStore {
           })
         }
       }
+      if (staleOldAbsPath) {
+        await fs.unlink(staleOldAbsPath).catch((err: unknown) => {
+          if (!isNodeError(err) || err.code !== 'ENOENT') throw err
+        })
+      }
+      await this.recordOwnMutation(liveIndex)
 
       const afterStat = await fs.stat(absolutePath)
       const base = {
@@ -573,12 +779,32 @@ export class ContentStore {
   /**
    * Read an entry by its ID (UUID).
    * Returns null if the ID doesn't exist or points to a collection.
+   *
+   * Suspicious results (ID missing from the index, or an index hit whose file
+   * is gone) trigger one forced index refresh and a retry — self-healing for
+   * mutations by other processes inside the marker's residual windows.
    */
   async readById(id: ContentId): Promise<ContentDocument | null> {
+    const first = await this.readByIdOnce(id)
+    if (first !== STALE_LOOKUP) return first
+    if (!(await this.refreshIndexForSuspiciousLookup())) return null
+    const second = await this.readByIdOnce(id)
+    return second === STALE_LOOKUP ? null : second
+  }
+
+  private async readByIdOnce(id: ContentId): Promise<ContentDocument | null | typeof STALE_LOOKUP> {
     const idIndex = await this.idIndex()
     const location = idIndex.findById(id)
-    if (!location || location.type !== 'entry') return null
-    return this.read(location.collection!, location.slug!)
+    if (!location) return STALE_LOOKUP
+    if (location.type !== 'entry') return null
+    try {
+      return await this.read(location.collection!, location.slug!)
+    } catch (err) {
+      // Index hit but the file is gone — the typical symptom of an external
+      // rename/delete this store hasn't observed yet.
+      if (isNodeError(err) && err.code === 'ENOENT') return STALE_LOOKUP
+      throw err
+    }
   }
 
   /**
@@ -592,24 +818,85 @@ export class ContentStore {
   }
 
   /**
+   * Check whether a document already exists on disk for this collection+slug.
+   * Used by the write boundary to distinguish creates from edits (create
+   * scaffolds and maxItems enforcement).
+   */
+  async documentExists(collectionPath: LogicalPath, slug: Slug | '' = ''): Promise<boolean> {
+    const schemaItem = this.assertSchemaItem(collectionPath)
+    const { absolutePath } = await this.buildPaths(schemaItem, slug)
+    try {
+      await fs.access(absolutePath)
+      return true
+    } catch (err) {
+      if (isNodeError(err) && err.code === 'ENOENT') return false
+      throw err
+    }
+  }
+
+  /**
+   * Resolve the actual on-disk entry type of an existing collection entry, by
+   * inspecting its filename directly. Entry filenames embed their type
+   * (`{type}.{slug}.{id}.{ext}`) and it is immutable after creation — see the
+   * existing-file lookup in buildPaths(), which this mirrors. Returns
+   * undefined if no entry exists yet at this slug.
+   *
+   * Used at the API write boundary (api/content.ts) to validate an existing
+   * entry's payload against ITS real schema rather than a caller-supplied (or
+   * omitted/spoofed) `entryType` param — ContentStore.write() preserves the
+   * on-disk type regardless of what's requested, so validation must agree
+   * with what will actually be written (post-review M2).
+   *
+   * Cheap: one buildPaths() resolution plus a stat, no file content is read —
+   * same cost class as documentExists().
+   */
+  async getExistingEntryType(
+    collectionPath: LogicalPath,
+    slug: Slug | '' = '',
+  ): Promise<string | undefined> {
+    const schemaItem = this.assertCollection(collectionPath)
+    const { absolutePath, entryTypeName } = await this.buildPaths(schemaItem, slug)
+    return (await filePathExists(absolutePath)) ? entryTypeName : undefined
+  }
+
+  /**
+   * Count existing entries of a given entry type in a collection, by filename
+   * (entry filenames embed their type: `{type}.{slug}.{id}.{ext}`). Used to
+   * enforce `EntryTypeConfig.maxItems` server-side at the create boundary.
+   */
+  async countEntriesOfType(collectionPath: LogicalPath, entryTypeName: string): Promise<number> {
+    this.assertCollection(collectionPath)
+    const collectionRoot = await resolveCollectionPath(this.root, collectionPath)
+    if (!collectionRoot) return 0
+    const entries = await fs
+      .readdir(collectionRoot, { withFileTypes: true })
+      .catch((): Dirent[] => [])
+    return entries.filter(
+      (entry) => !entry.isDirectory() && extractEntryTypeFromFilename(entry.name) === entryTypeName,
+    ).length
+  }
+
+  /**
    * Delete an entry and remove it from the index.
    */
   async delete(collectionPath: LogicalPath, slug: Slug): Promise<void> {
-    const idIndex = await this.idIndex()
+    // Warm the index outside the lock (a full scan must not hold the entry lock)
+    await this.idIndex()
     const collection = this.assertCollection(collectionPath)
     const { absolutePath, relativePath } = await this.buildPaths(collection, slug)
 
     return withLock(absolutePath, async () => {
-      // Get ID before deleting
-      const id = idIndex.findByPath(relativePath)
-
       // Delete file
       await fs.unlink(absolutePath)
 
-      // Remove from index
+      // Remove from the LIVE index — lookup and mutation in one synchronous
+      // window, since a concurrent rebuild may swap instances across awaits.
+      const liveIndex = this._idIndex
+      const id = liveIndex.findByPath(relativePath)
       if (id) {
-        idIndex.remove(id)
+        liveIndex.remove(id)
       }
+      await this.recordOwnMutation(liveIndex)
     })
   }
 
@@ -628,7 +915,8 @@ export class ContentStore {
     currentSlug: Slug,
     newSlug: Slug,
   ): Promise<{ newPath: LogicalPath }> {
-    const idIndex = await this.idIndex()
+    // Warm the index outside the lock (a full scan must not hold the entry lock)
+    await this.idIndex()
     const collection = this.assertCollection(collectionPath)
 
     // Validate new slug format (Slug branded type guarantees lowercase alphanumeric+hyphens via parseSlug)
@@ -721,12 +1009,15 @@ export class ContentStore {
       }
       await fs.unlink(currentPath)
 
-      // Update the ID index
+      // Update the LIVE index — lookup and mutation in one synchronous window,
+      // since a concurrent rebuild may swap instances across awaits.
       const newRelativePath = path.relative(this.root, newPath) as PhysicalPath
-      const entryId = idIndex.findByPath(currentRelPath)
+      const liveIndex = this._idIndex
+      const entryId = liveIndex.findByPath(currentRelPath)
       if (entryId) {
-        idIndex.updatePath(entryId, newRelativePath)
+        liveIndex.updatePath(entryId, newRelativePath)
       }
+      await this.recordOwnMutation(liveIndex)
 
       // Return new logical path
       return { newPath: `${collectionPath}/${safeNewSlug}` as LogicalPath }
@@ -885,15 +1176,42 @@ export class ContentStore {
    * Resolve a single reference ID to full entry data.
    * Returns null if the reference is invalid or missing.
    * Includes id, slug, and collection fields for debugging.
+   *
+   * Suspicious results (ID missing from the index, or an index hit whose file
+   * is gone) trigger one forced index refresh and a retry — self-healing for
+   * mutations by other processes inside the marker's residual windows. The
+   * forced refresh itself is throttled (see refreshIndexForSuspiciousLookup),
+   * but the retry against the live index always runs regardless of whether
+   * this call won the throttle race: when a `list: true` reference array is
+   * resolved via Promise.all, every miss shares the same stale snapshot, and
+   * idIndex() dedupes concurrent builds — so a sibling call that wins the
+   * throttle and rebuilds heals every other miss in the same batch, not just
+   * the first.
    */
   private async resolveSingleReference(
     id: string,
     idIndex: ContentIdIndex,
   ): Promise<Record<string, unknown> | null> {
+    const first = await this.resolveSingleReferenceOnce(id, idIndex)
+    if (first !== STALE_LOOKUP) return first
+    // Force a rebuild (throttled). Even when this caller loses the throttle,
+    // retry against the live index: a sibling lookup in the same batch may have
+    // won it and invalidated/rebuilt (idIndex() dedupes in-flight builds), so
+    // every miss in a Promise.all batch heals, not just the first.
+    await this.refreshIndexForSuspiciousLookup()
+    const second = await this.resolveSingleReferenceOnce(id, await this.idIndex())
+    return second === STALE_LOOKUP ? null : second
+  }
+
+  private async resolveSingleReferenceOnce(
+    id: string,
+    idIndex: ContentIdIndex,
+  ): Promise<Record<string, unknown> | null | typeof STALE_LOOKUP> {
     try {
       const location = idIndex.findById(id)
 
-      if (!location || location.type !== 'entry' || !location.collection || !location.slug) {
+      if (!location) return STALE_LOOKUP
+      if (location.type !== 'entry' || !location.collection || !location.slug) {
         return null
       }
 
@@ -909,6 +1227,9 @@ export class ContentStore {
         ...doc.data,
       }
     } catch (error) {
+      // Index hit but the file is gone — the typical symptom of an external
+      // rename/delete this store hasn't observed yet.
+      if (isNodeError(error) && error.code === 'ENOENT') return STALE_LOOKUP
       console.error(`Failed to resolve reference ${id}:`, error)
       return null
     }

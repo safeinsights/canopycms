@@ -20,8 +20,26 @@ import { NextResponse } from 'next/server'
 //   export const config = {
 //     matcher: ['/edit(.*)', '/api/canopycms(.*)'],
 //   }
+//
+// IMPORTANT: unlike canopy.ts and the edit page, this file does NOT read
+// CANOPY_AUTH_MODE at runtime -- it is frozen at `init` time. If you switch
+// from dev to Clerk auth (or flip CANOPY_AUTH_MODE=clerk), you must swap this
+// file for the Clerk middleware above; otherwise /edit and /api/canopycms stay
+// unprotected at the edge (the Clerk auth plugin still rejects unauthenticated
+// API calls, and the core fails closed in prod mode, but this defense-in-depth
+// redirect is gone). The warning below only helps you notice the mismatch.
+
+let warnedAuthModeMismatch = false
 
 export default function middleware() {
+  if (process.env.CANOPY_AUTH_MODE === 'clerk' && !warnedAuthModeMismatch) {
+    warnedAuthModeMismatch = true
+    console.warn(
+      '[canopycms] CANOPY_AUTH_MODE=clerk is set, but middleware.ts is still the dev ' +
+        'passthrough generated for dev auth. Replace this file with the Clerk middleware ' +
+        '(see the comment above) so /edit and /api/canopycms are protected at the edge.',
+    )
+  }
   return NextResponse.next()
 }
 

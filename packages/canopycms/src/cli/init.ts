@@ -3,7 +3,7 @@ import path from 'node:path'
 import * as p from '@clack/prompts'
 import { createJiti } from 'jiti'
 import { operatingStrategy } from '../operating-mode'
-import type { AuthPlugin } from '../auth/plugin'
+import { assertAuthPluginAllowedForMode, type AuthPlugin } from '../auth/plugin'
 import { filePathExists } from '../utils/fs'
 import { getErrorMessage, isNotFoundError } from '../utils/error'
 
@@ -352,6 +352,11 @@ export async function workerRunOnce(options: {
   // helper functions, or dynamic expressions, and can silently fall through to 'dev'
   // on a real prod config — turning a prod-safety guard into a silent task-loss bug.
   const mode = await detectMode(options.projectDir)
+
+  // Fail closed (SEC-C1): never populate a prod auth cache from a dev/insecure plugin.
+  if (options.authPlugin) {
+    assertAuthPluginAllowedForMode(options.authPlugin, mode)
+  }
 
   const taskDir = getTaskQueueDir({ mode })
 

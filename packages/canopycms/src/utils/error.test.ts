@@ -4,6 +4,7 @@ import {
   isNodeError,
   isNotFoundError,
   isPermissionError,
+  redactCredentials,
   sanitizeErrorMessage,
 } from './error'
 
@@ -150,6 +151,49 @@ describe('error utilities', () => {
     it('leaves branch names with slashes alone', () => {
       const msg = "base branch 'fix/unify-base-branch-resolution' does not exist locally"
       expect(sanitizeErrorMessage(msg)).toBe(msg)
+    })
+
+    it('redacts absolute paths directly after a colon, comma, or bracket', () => {
+      expect(sanitizeErrorMessage('lock held:/mnt/efs/workspace/main')).toBe('lock held:<path>')
+      expect(sanitizeErrorMessage('copied x.txt,/mnt/backup/x.txt')).toBe('copied x.txt,<path>')
+      // The closing bracket is swallowed by the greedy trailing segment —
+      // over-redaction is the safe direction here.
+      expect(sanitizeErrorMessage('at [/mnt/efs/workspace/main]')).toBe('at [<path>')
+    })
+
+    it('still keeps credential-free URL slashes untouched with the wider boundary', () => {
+      const msg = 'cloning https://github.com/org/repo.git'
+      expect(sanitizeErrorMessage(msg)).toBe(msg)
+    })
+
+    it('redacts bare GitHub token shapes outside URL userinfo', () => {
+      const msg = 'auth failed for token ghp_abcdefghijklmnop1234'
+      expect(sanitizeErrorMessage(msg)).toBe('auth failed for token ***')
+    })
+
+    it('redacts Bearer tokens', () => {
+      const msg = 'header Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig rejected'
+      expect(sanitizeErrorMessage(msg)).toBe('header Authorization: Bearer *** rejected')
+    })
+  })
+
+  describe('redactCredentials', () => {
+    it('redacts URL credentials but keeps filesystem paths', () => {
+      const msg =
+        'push https://x-access-token:ghp_secret9876543210@github.com/org/repo.git failed in /mnt/efs/workspace/main'
+      expect(redactCredentials(msg)).toBe(
+        'push https://***@github.com/org/repo.git failed in /mnt/efs/workspace/main',
+      )
+    })
+
+    it('redacts bare token shapes but keeps everything else', () => {
+      const msg = "remote rejected github_pat_11ABCDEFG0123456789 for '/mnt/efs/clone'"
+      expect(redactCredentials(msg)).toBe("remote rejected *** for '/mnt/efs/clone'")
+    })
+
+    it('leaves ordinary messages untouched', () => {
+      const msg = "base branch 'fix/thing' does not exist at /mnt/efs/workspace"
+      expect(redactCredentials(msg)).toBe(msg)
     })
   })
 })

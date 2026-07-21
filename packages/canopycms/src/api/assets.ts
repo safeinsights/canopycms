@@ -42,14 +42,19 @@ export interface DeleteAssetBody {
 
 /**
  * List assets - any authenticated user can list assets.
+ *
+ * Declared as `params` (not just parsed ad hoc from req.query) so the client
+ * generator (scripts/generate-client.ts) sees a paramsSchema and emits a
+ * method that accepts and forwards `prefix` (API-H4) instead of a no-arg
+ * `assets.list()` that can never pass it.
  */
-const listAssetsQuerySchema = z.object({
+const listAssetsParamsSchema = z.object({
   prefix: z.string().optional(),
 })
 
 const listAssetsHandler = async (ctx: ApiContext, req: ApiRequest): Promise<AssetsListResponse> => {
   if (!ctx.assetStore) return { ok: false, status: 501, error: 'Asset store not configured' }
-  const query = listAssetsQuerySchema.safeParse(req.query ?? {})
+  const query = listAssetsParamsSchema.safeParse(req.query ?? {})
   if (!query.success) {
     return { ok: false, status: 400, error: query.error.message }
   }
@@ -74,7 +79,12 @@ const uploadAssetHandler = async (
 
 /**
  * Delete asset - requires Admin access.
+ *
+ * Declared as `params` (see listAssetsParamsSchema above) so the generated
+ * client's `assets.delete()` method accepts and forwards `key` (API-H4).
  */
+const deleteAssetParamsSchema = z.object({ key: z.string().min(1) })
+
 const deleteAssetHandler = async (
   _gc: Record<string, never>,
   ctx: ApiContext,
@@ -82,7 +92,7 @@ const deleteAssetHandler = async (
 ): Promise<AssetDeleteResponse> => {
   if (!ctx.assetStore) return { ok: false, status: 501, error: 'Asset store not configured' }
 
-  const deleteQuery = z.object({ key: z.string().min(1) }).safeParse(req.query ?? {})
+  const deleteQuery = deleteAssetParamsSchema.safeParse(req.query ?? {})
   if (!deleteQuery.success) {
     return { ok: false, status: 400, error: 'key query parameter required' }
   }
@@ -104,6 +114,7 @@ const listAssets = defineEndpoint({
   name: 'list',
   method: 'GET',
   path: '/assets',
+  params: listAssetsParamsSchema,
   responseType: 'AssetsListResponse',
   response: {} as AssetsListResponse,
   defaultMockData: { assets: [] },
@@ -137,6 +148,7 @@ const deleteAsset = defineEndpoint({
   name: 'delete',
   method: 'DELETE',
   path: '/assets',
+  params: deleteAssetParamsSchema,
   responseType: 'AssetDeleteResponse',
   response: {} as AssetDeleteResponse,
   defaultMockData: { deleted: true },

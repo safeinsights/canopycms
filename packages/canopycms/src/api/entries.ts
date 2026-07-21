@@ -6,7 +6,7 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContextWithSchema } from '../types'
 import { defineEndpoint } from './route-builder'
 import { normalizeFilesystemPath, parseSlug, parseLogicalPath } from '../paths'
-import { isNotFoundError } from '../utils/error'
+import { isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { resolveEntryTitle } from '../utils/title-field'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema, queryBooleanSchema } from './validators'
@@ -207,7 +207,11 @@ const listEntriesHandler = async (
 
   const limit = Math.min(Math.max(params.limit ?? DEFAULT_ENTRIES_LIMIT, 1), MAX_ENTRIES_PER_PAGE)
   // Offset-based pagination: items may be skipped or duplicated if content changes between pages.
-  const offset = Number.isFinite(Number(params.cursor)) ? Number(params.cursor) : 0
+  // Clamp to >= 0 (API-L1) - a negative cursor would otherwise flow straight into
+  // Array.slice(offset, offset + limit), which interprets negative indices as
+  // "from the end", returning unexpected/out-of-order results instead of erroring.
+  const parsedCursor = Number(params.cursor)
+  const offset = Number.isFinite(parsedCursor) ? Math.max(0, parsedCursor) : 0
   const search = params.q?.toLowerCase()
   const recursive = params.recursive ?? false
 
@@ -245,7 +249,7 @@ const listEntriesHandler = async (
     }
   } catch (err) {
     if (err instanceof ContentStoreError) {
-      return { ok: false, status: 400, error: err.message }
+      return { ok: false, status: 400, error: sanitizeErrorMessage(err.message) }
     }
     throw err
   }
@@ -436,7 +440,7 @@ const deleteEntryHandler = async (
     return {
       ok: false,
       status: 500,
-      error: err instanceof Error ? err.message : 'Failed to delete entry',
+      error: sanitizeErrorMessage(err instanceof Error ? err.message : 'Failed to delete entry'),
     }
   }
 }

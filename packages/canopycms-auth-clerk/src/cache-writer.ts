@@ -73,7 +73,6 @@ export async function refreshClerkCache(
   const clerkUsers: ClerkUserData[] = []
   const pageSize = 500
   let offset = 0
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const usersResponse = (await clerkClient.users.getUserList({
       limit: pageSize,
@@ -100,7 +99,6 @@ export async function refreshClerkCache(
     const clerkOrgs: ClerkOrganization[] = []
     let orgOffset = 0
     const orgPageSize = 100
-    // eslint-disable-next-line no-constant-condition
     while (true) {
       const orgsResponse = (await clerkClient.organizations.getOrganizationList({
         limit: orgPageSize,

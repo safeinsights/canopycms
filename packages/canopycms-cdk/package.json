@@ -30,16 +30,16 @@
   },
   "scripts": {
     "build": "tsc",
-    "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=worker/dist/index.js --external:@aws-sdk/*",
+    "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=worker/dist/index.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "lint": "eslint src/",
-    "test": "echo \"No tests yet\"",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=18"
   },
   "peerDependencies": {
-    "aws-cdk-lib": "^2.150.0",
+    "aws-cdk-lib": "^2.168.0",
     "constructs": "^10.0.0"
   },
   "peerDependenciesMeta": {
@@ -53,11 +53,9 @@
   "devDependencies": {
     "@types/node": "^22.9.0",
     "@types/react": "^18.3.12",
-    "aws-cdk-lib": "^2.150.0",
+    "aws-cdk-lib": "^2.168.0",
     "canopycms": "workspace:*",
     "canopycms-auth-clerk": "workspace:*",
-    "@octokit/rest": "^20.0.2",
-    "simple-git": "^3.36.0",
     "@aws-sdk/client-secrets-manager": "^3.600.0",
     "constructs": "^10.0.0",
     "esbuild": "^0.25.0",

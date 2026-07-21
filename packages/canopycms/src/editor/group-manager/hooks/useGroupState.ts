@@ -5,6 +5,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { InternalGroup, CanopyGroupId, CanopyUserId } from '../types'
 
+const TEMP_GROUP_ID_PREFIX = 'temp-'
+
+const isTempGroupId = (id: CanopyGroupId): boolean => id.startsWith(TEMP_GROUP_ID_PREFIX)
+
 export interface UseGroupStateOptions {
   initialGroups: InternalGroup[]
   onSave?: (groups: InternalGroup[]) => Promise<void>
@@ -42,7 +46,7 @@ export function useGroupState({
 
   const createGroup = useCallback((name: string, description: string) => {
     const newGroup: InternalGroup = {
-      id: '' as CanopyGroupId,
+      id: `${TEMP_GROUP_ID_PREFIX}${crypto.randomUUID()}` as CanopyGroupId,
       name,
       description,
       members: [],
@@ -102,7 +106,10 @@ export function useGroupState({
     setIsSaving(true)
     setError(null)
     try {
-      await onSave(groups)
+      const groupsToSave = groups.map((g) =>
+        isTempGroupId(g.id) ? { ...g, id: '' as CanopyGroupId } : g,
+      )
+      await onSave(groupsToSave)
       setIsDirty(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save groups')

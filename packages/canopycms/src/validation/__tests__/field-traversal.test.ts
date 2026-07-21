@@ -296,6 +296,133 @@ describe('field-traversal', () => {
   })
 })
 
+describe('canonical block shape { template, value } (SCH-H-block)', () => {
+  // Real block data — as produced by the editor (BlockField.tsx) and persisted
+  // by ContentStore — is { template, value }: the template name lives on
+  // `template` and nested field values live under `value`. The traversal
+  // previously keyed off `_type`, so every real block was silently skipped.
+  const schema: FieldConfig[] = [
+    {
+      name: 'blocks',
+      type: 'block',
+      label: 'Blocks',
+      templates: [
+        {
+          name: 'callout',
+          label: 'Callout',
+          fields: [
+            { name: 'body', type: 'markdown', label: 'Body' },
+            { name: 'link', type: 'reference', label: 'Link', collections: ['pages'] },
+          ],
+        },
+      ],
+    },
+  ]
+
+  it('traverses nested fields under value', () => {
+    const data = {
+      blocks: [{ template: 'callout', value: { body: '# Hi', link: 'page-1' } }],
+    }
+
+    const visited: string[] = []
+    traverseFields(schema, data, ({ path, field }) => {
+      visited.push(`${path}:${field.type}`)
+      return []
+    })
+
+    expect(visited).toEqual(['blocks:block', 'blocks[0].body:markdown', 'blocks[0].link:reference'])
+  })
+
+  it('resolves deeply nested structures under value', () => {
+    const deepSchema: FieldConfig[] = [
+      {
+        name: 'sections',
+        type: 'block',
+        label: 'Sections',
+        templates: [
+          {
+            name: 'content',
+            label: 'Content Section',
+            fields: [
+              {
+                name: 'metadata',
+                type: 'object',
+                label: 'Metadata',
+                fields: [
+                  { name: 'ref', type: 'reference', label: 'Reference', collections: ['docs'] },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]
+    const data = {
+      sections: [
+        { template: 'content', value: { metadata: { ref: 'doc-1' } } },
+        { template: 'content', value: { metadata: { ref: 'doc-2' } } },
+      ],
+    }
+
+    const refs = traverseFields(deepSchema, data, ({ field, value, path }) => {
+      if (field.type === 'reference') return [{ path, value }]
+      return []
+    })
+
+    expect(refs).toEqual([
+      { path: 'sections[0].metadata.ref', value: 'doc-1' },
+      { path: 'sections[1].metadata.ref', value: 'doc-2' },
+    ])
+  })
+
+  it('findFieldsByType finds block-nested reference and markdown fields', () => {
+    const data = {
+      blocks: [{ template: 'callout', value: { body: 'See entry:abc', link: 'page-9' } }],
+    }
+
+    const refs = findFieldsByType(schema, data, 'reference')
+    expect(refs).toHaveLength(1)
+    expect(refs[0].path).toBe('blocks[0].link')
+    expect(refs[0].value).toBe('page-9')
+
+    const md = findFieldsByType(schema, data, 'markdown')
+    expect(md).toHaveLength(1)
+    expect(md[0].path).toBe('blocks[0].body')
+    expect(md[0].value).toBe('See entry:abc')
+  })
+
+  it('skips items with an unknown template name', () => {
+    const data = {
+      blocks: [
+        { template: 'nope', value: { body: 'skipped' } },
+        { template: 'callout', value: { body: 'kept' } },
+      ],
+    }
+
+    const visited: string[] = []
+    traverseFields(schema, data, ({ path }) => {
+      visited.push(path)
+      return []
+    })
+
+    expect(visited).toEqual(['blocks', 'blocks[1].body'])
+  })
+
+  it('skips items with no template discriminator at all', () => {
+    const data = {
+      blocks: [{ value: { body: 'orphan' } }, { template: 'callout', value: { body: 'kept' } }],
+    }
+
+    const visited: string[] = []
+    traverseFields(schema, data, ({ path }) => {
+      visited.push(path)
+      return []
+    })
+
+    expect(visited).toEqual(['blocks', 'blocks[1].body'])
+  })
+})
+
 describe('inline group transparency', () => {
   it('inline groups are transparent — visitor sees child fields at the flat path', () => {
     const schema: FieldConfig[] = [

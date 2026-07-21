@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useDraftManager } from './useDraftManager'
+import { SaveApiError } from './useEntryManager'
 import type { EditorEntry } from '../Editor'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../../paths/test-utils'
 
@@ -447,6 +448,176 @@ describe('useDraftManager', () => {
 
     waitFor(() => {
       expect(window.localStorage.getItem('canopycms:drafts:feature')).toBeTruthy()
+    })
+  })
+
+  describe('pre-save schema validation (ED-H1)', () => {
+    const validatedEntry: EditorEntry = {
+      ...mockEntry,
+      schema: [
+        { name: 'title', type: 'string', required: true },
+        {
+          name: 'blocks',
+          type: 'block',
+          templates: [
+            { name: 'quote', fields: [{ name: 'text', type: 'string', required: true }] },
+          ],
+        },
+      ],
+    }
+    const validatedOptions = { ...defaultOptions, currentEntry: validatedEntry }
+
+    it('blocks the save and surfaces per-field errors for an invalid draft', async () => {
+      const { result } = renderHook(() => useDraftManager(validatedOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: '', body: 'Content' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      expect(mockSaveEntry).not.toHaveBeenCalled()
+      expect(mockSetBusy).not.toHaveBeenCalled()
+      expect(result.current.fieldErrors).toEqual({ title: 'This field is required' })
+      const { notifications } = await import('@mantine/notifications')
+      expect(vi.mocked(notifications.show)).toHaveBeenCalledWith(
+        expect.objectContaining({ color: 'red', title: 'Cannot save yet' }),
+      )
+    })
+
+    it('blocks the save on block-nested errors (D1 traversal + D4 rules)', async () => {
+      const { result } = renderHook(() => useDraftManager(validatedOptions))
+
+      act(() => {
+        result.current.setDrafts({
+          abc123def456: {
+            title: 'ok',
+            body: 'Content',
+            blocks: [{ template: 'quote', value: { text: '' } }],
+          },
+        })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      expect(mockSaveEntry).not.toHaveBeenCalled()
+      expect(result.current.fieldErrors).toEqual({
+        'blocks[0].text': 'This field is required',
+      })
+    })
+
+    it('saves a valid draft and keeps fieldErrors empty', async () => {
+      const { result } = renderHook(() => useDraftManager(validatedOptions))
+
+      act(() => {
+        result.current.setDrafts({
+          abc123def456: {
+            title: 'Hello',
+            body: 'Content',
+            blocks: [{ template: 'quote', value: { text: 'quoted' } }],
+          },
+        })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      expect(mockSaveEntry).toHaveBeenCalled()
+      expect(result.current.fieldErrors).toEqual({})
+    })
+
+    it('clears field errors as the user fixes the draft', async () => {
+      const { result } = renderHook(() => useDraftManager(validatedOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: '', body: 'Content' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+      expect(result.current.fieldErrors).toEqual({ title: 'This field is required' })
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Fixed', body: 'Content' } })
+      })
+      await waitFor(() => {
+        expect(result.current.fieldErrors).toEqual({})
+      })
+    })
+
+    it('maps server 422 fieldErrors into the form (server-only checks)', async () => {
+      // Client-side rules pass, but the server rejects (e.g. dangling reference —
+      // existence is only checkable server-side).
+      mockSaveEntry.mockRejectedValueOnce(
+        new SaveApiError(422, 'author: Referenced entry does not exist', [
+          { fieldPath: 'author', message: 'Referenced entry does not exist' },
+        ]),
+      )
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const { result } = renderHook(() => useDraftManager(validatedOptions))
+
+      act(() => {
+        result.current.setDrafts({ abc123def456: { title: 'Hello', body: 'Content' } })
+      })
+      await act(async () => {
+        await result.current.handleSave()
+      })
+
+      expect(result.current.fieldErrors).toEqual({
+        author: 'Referenced entry does not exist',
+      })
+      consoleErrorSpy.mockRestore()
+    })
+  })
+
+  it('never persists the previous branch drafts under the new branch storage key', () => {
+    const setItemSpy = vi.spyOn(window.localStorage, 'setItem')
+    const { result, rerender } = renderHook((props) => useDraftManager(props), {
+      initialProps: defaultOptions,
+    })
+
+    act(() => {
+      result.current.setDrafts({ abc123def456: { title: 'Branch A draft' } })
+    })
+
+    act(() => {
+      rerender({ ...defaultOptions, branchName: 'feature' })
+    })
+
+    const leakedWrites = setItemSpy.mock.calls.filter(
+      ([key, value]) => key === 'canopycms:drafts:feature' && value.includes('Branch A draft'),
+    )
+    expect(leakedWrites).toHaveLength(0)
+  })
+
+  it('merges drafts from another tab without overwriting local edits', () => {
+    const { result } = renderHook(() => useDraftManager(defaultOptions))
+
+    act(() => {
+      result.current.setDrafts({ abc123def456: { title: 'Local draft' } })
+    })
+
+    act(() => {
+      window.localStorage.setItem(
+        'canopycms:drafts:main',
+        JSON.stringify({
+          abc123def456: { title: 'Other tab draft for same entry' },
+          xyz789uvw123: { title: 'Other tab draft for different entry' },
+        }),
+      )
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: 'canopycms:drafts:main',
+          newValue: window.localStorage.getItem('canopycms:drafts:main'),
+        }),
+      )
+    })
+
+    expect(result.current.drafts.abc123def456).toEqual({ title: 'Local draft' })
+    expect(result.current.drafts.xyz789uvw123).toEqual({
+      title: 'Other tab draft for different entry',
     })
   })
 })

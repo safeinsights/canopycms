@@ -9,17 +9,6 @@ import type {
   CanopyConfigInput,
   CanopyClientConfig,
   ClientOnlyFields,
-  ContentRoot,
-  DefaultBaseBranch,
-  DefaultBranchAccess,
-  DefaultPathAccess,
-  DefaultRemoteName,
-  DefaultRemoteUrl,
-  GitBotAuthorEmail,
-  GitBotAuthorName,
-  CanopyOperatingMode,
-  MediaConfig,
-  SourceRoot,
 } from './types'
 
 export type CanopyConfigAuthoring = CanopyConfigInput
@@ -84,9 +73,32 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
 }
 
 /**
+ * Assigns `value` onto `target[key]` unless `value` is undefined.
+ * Used by `composeCanopyConfig` to merge fragments key-by-key without a later
+ * fragment's absent (undefined) field clobbering a value set by an earlier one.
+ */
+function assignFragmentField<K extends keyof CanopyConfigFragment>(
+  target: Partial<CanopyConfigInput>,
+  key: K,
+  value: CanopyConfigFragment[K],
+): void {
+  if (value !== undefined) {
+    target[key] = value
+  }
+}
+
+/**
  * Helper to compose config fragments defined across multiple files.
  * Useful for splitting large configurations into domain-specific modules.
- * Later fragments can override media.
+ *
+ * Merges every field declared on `CanopyConfigFragment` (i.e. every field of
+ * `CanopyConfigInput`) — not just a hand-picked subset — so adopters can put any
+ * config field (including `authPlugin`, `validateEntry`, `editor`, etc.) into any
+ * fragment without it being silently dropped.
+ *
+ * Fragments are applied in order and later fragments win field-by-field: if a later
+ * fragment sets a field, it overrides an earlier one; if a later fragment omits a
+ * field (leaves it undefined), the earlier fragment's value is preserved.
  *
  * @example
  * ```ts
@@ -102,84 +114,20 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
  * ```
  */
 export const composeCanopyConfig = (...fragments: CanopyConfigFragment[]): CanopyConfig => {
-  let media: MediaConfig | undefined
-  let contentRoot: ContentRoot | undefined
-  let sourceRoot: SourceRoot | undefined
-  let defaultBranchAccess: DefaultBranchAccess | undefined
-  let defaultPathAccess: DefaultPathAccess | undefined
-  let defaultBaseBranch: DefaultBaseBranch | undefined
-  let defaultActiveBranch: string | undefined
-  let defaultRemoteName: DefaultRemoteName | undefined
-  let defaultRemoteUrl: DefaultRemoteUrl | undefined
-  let gitBotAuthorName: GitBotAuthorName | undefined
-  let gitBotAuthorEmail: GitBotAuthorEmail | undefined
-  let mode: CanopyOperatingMode | undefined
-  let deploymentName: string | undefined
-  let dev: CanopyConfigInput['dev'] | undefined
+  const merged: Partial<CanopyConfigInput> = {}
 
   for (const fragment of fragments) {
-    if (fragment.media) {
-      media = fragment.media
-    }
-    if (fragment.contentRoot) {
-      contentRoot = fragment.contentRoot
-    }
-    if (fragment.sourceRoot) {
-      sourceRoot = fragment.sourceRoot
-    }
-    if (fragment.defaultBranchAccess) {
-      defaultBranchAccess = fragment.defaultBranchAccess
-    }
-    if (fragment.defaultPathAccess) {
-      defaultPathAccess = fragment.defaultPathAccess
-    }
-    if (fragment.defaultBaseBranch) {
-      defaultBaseBranch = fragment.defaultBaseBranch
-    }
-    if (fragment.defaultActiveBranch) {
-      defaultActiveBranch = fragment.defaultActiveBranch
-    }
-    if (fragment.defaultRemoteName) {
-      defaultRemoteName = fragment.defaultRemoteName
-    }
-    if (fragment.defaultRemoteUrl) {
-      defaultRemoteUrl = fragment.defaultRemoteUrl
-    }
-    if (fragment.gitBotAuthorName) {
-      gitBotAuthorName = fragment.gitBotAuthorName
-    }
-    if (fragment.gitBotAuthorEmail) {
-      gitBotAuthorEmail = fragment.gitBotAuthorEmail
-    }
-    if (fragment.mode) {
-      mode = fragment.mode
-    }
-    if (fragment.deploymentName) {
-      deploymentName = fragment.deploymentName
-    }
-    if (fragment.dev) {
-      dev = fragment.dev
+    for (const key of Object.keys(fragment) as (keyof CanopyConfigFragment)[]) {
+      assignFragmentField(merged, key, fragment[key])
     }
   }
 
-  const merged: CanopyConfigInput = {
-    gitBotAuthorName: gitBotAuthorName ?? '',
-    gitBotAuthorEmail: gitBotAuthorEmail ?? '',
-    ...(media ? { media } : {}),
-    ...(contentRoot ? { contentRoot } : {}),
-    ...(sourceRoot ? { sourceRoot } : {}),
-    ...(defaultBranchAccess ? { defaultBranchAccess } : {}),
-    ...(defaultPathAccess ? { defaultPathAccess } : {}),
-    ...(defaultBaseBranch ? { defaultBaseBranch } : {}),
-    ...(defaultActiveBranch ? { defaultActiveBranch } : {}),
-    ...(defaultRemoteName ? { defaultRemoteName } : {}),
-    ...(defaultRemoteUrl ? { defaultRemoteUrl } : {}),
-    ...(gitBotAuthorName ? { gitBotAuthorName } : {}),
-    ...(gitBotAuthorEmail ? { gitBotAuthorEmail } : {}),
-    ...(mode ? { mode } : {}),
-    ...(deploymentName ? { deploymentName } : {}),
-    ...(dev ? { dev } : {}),
-  }
-
-  return validateCanopyConfig(merged)
+  return validateCanopyConfig({
+    ...merged,
+    // gitBotAuthorName/gitBotAuthorEmail are required by CanopyConfigInput; default to ''
+    // so a fragment set omitting them fails validation (min length / email format) with a
+    // clear error rather than a TS/runtime "missing required field" surprise.
+    gitBotAuthorName: merged.gitBotAuthorName ?? '',
+    gitBotAuthorEmail: merged.gitBotAuthorEmail ?? '',
+  })
 }

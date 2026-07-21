@@ -13,6 +13,7 @@ import {
 import { defineEndpoint } from './route-builder'
 import { getSettingsBranchContext, commitSettings } from './settings-helpers'
 import { generateId } from '../id'
+import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
 
 /** Response type for getting internal groups */
 export type InternalGroupsResponse = ApiResponse<{ groups: InternalGroup[] }>
@@ -128,7 +129,7 @@ const getInternalGroupsHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'Failed to load groups',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
@@ -252,8 +253,10 @@ const updateInternalGroupsHandler = async (
       newContentVersion,
     )
 
-    // Commit and push (mode-aware)
-    await commitSettings(ctx, {
+    // Commit and push (mode-aware). A push failure means the change is saved
+    // to the branch working tree but NOT durably persisted (API-H1) - surface
+    // that to the client instead of reporting a bare 200.
+    const commitResult = await commitSettings(ctx, {
       context,
       branchRoot: context.branchRoot,
       fileName: 'groups.json',
@@ -261,12 +264,20 @@ const updateInternalGroupsHandler = async (
       mode,
     })
 
+    if (!commitResult.pushed) {
+      return {
+        ok: false,
+        status: 502,
+        error: `Groups were saved but failed to sync to git: ${commitResult.error ?? 'unknown error'}`,
+      }
+    }
+
     return { ok: true, status: 200, data: {} }
   } catch (error) {
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'Failed to save groups',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }
@@ -305,7 +316,7 @@ const searchExternalGroupsHandler = async (
     return {
       ok: false,
       status: 500,
-      error: error instanceof Error ? error.message : 'External group search failed',
+      error: sanitizeErrorMessage(getErrorMessage(error)),
     }
   }
 }

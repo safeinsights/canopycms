@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 import minimist from 'minimist'
 import * as p from '@clack/prompts'
 import type { AuthPlugin } from '../auth/plugin'
+import { getErrorMessage } from '../utils/error'
 
 /** Parse raw CLI args into structured flags and positional command. Exported for testing. */
 export function parseArgs(rawArgs: string[]) {
@@ -259,7 +260,7 @@ try {
 
 if (isDirectRun) {
   main().catch((err) => {
-    console.error('Error:', err instanceof Error ? err.message : String(err))
+    console.error('Error:', getErrorMessage(err))
     process.exit(1)
   })
 }

@@ -1,4 +1,5 @@
 export type { AuthPlugin, AuthPluginFactory } from './plugin'
+export { assertAuthPluginAllowedForMode } from './plugin'
 export type { UserSearchResult, GroupMetadata, AuthenticationResult } from './types'
 export {
   isCanopyRequest,

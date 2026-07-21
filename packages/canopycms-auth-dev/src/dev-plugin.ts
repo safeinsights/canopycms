@@ -14,6 +14,13 @@ export { DEFAULT_USERS, DEFAULT_GROUPS, DEV_ADMIN_USER_ID }
  * Supports both cookie-based (UI) and header-based (tests) authentication.
  */
 export class DevAuthPlugin implements AuthPlugin {
+  /**
+   * This plugin trusts X-Test-User / x-dev-user-id headers and the dev cookie
+   * with NO cryptographic verification. Core rejects it when mode is 'prod'
+   * (see assertAuthPluginAllowedForMode in canopycms/auth).
+   */
+  readonly insecureDevOnly = true
+
   private users: DevUser[]
   private groups: DevGroup[]
   private defaultUserId: CanopyUserId

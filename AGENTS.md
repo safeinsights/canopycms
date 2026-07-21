@@ -53,7 +53,7 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `operating-mode/` - Operating mode strategies (prod, dev)
 - `api/` - API handlers (see [api/AGENTS.md](packages/canopycms/src/api/AGENTS.md) for API development guidelines)
 - `middleware/` - API middleware patterns (branch access guards); see also `api/guards.ts` for declarative guard system
-- `validation/` - Validation utilities (field traversal, reference validation, entry link validation)
+- `validation/` - Validation utilities (field traversal, reference validation, entry link validation, pure isomorphic entry schema validation in `entry-validator.ts` shared by the editor and the authoritative server write boundary)
 - `utils/` - Shared utilities (error handling, debug, atomic file writes, title-field: resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists)
 - `worker/` - CmsWorker daemon, task queue, deployment infrastructure
 - `ai/` - AI-ready content generation (markdown converter, engine, route handler); transforms (field/component/body) + entry transforms with traversal-guarded `readSibling` for folding in colocated sibling artifacts
@@ -61,7 +61,7 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `static/` - Framework-agnostic static-generation helpers (collectStaticPaths; sitemap/SEO deferred)
 - `cli/` - CLI commands (`init`, `init-deploy`, `worker run-once`, `generate-ai-content`, `sync`, `migrate`); project-root discovery (`project-root.ts`)
 
-Top-level files (intentionally flat for discoverability): services.ts, content-store.ts, content-listing.ts, content-tree.ts, entry-link-resolver.ts, git-manager.ts, branch-registry.ts, sync-core.ts (prompt-free content sync core), dev-content-watcher.ts (dev working-tree↔branch-clone divergence detection), etc.
+Top-level files (intentionally flat for discoverability): services.ts, content-store.ts, content-listing.ts, content-tree.ts, entry-link-resolver.ts, git-manager.ts, branch-registry.ts, sync-core.ts (prompt-free content sync core), dev-content-watcher.ts (dev working-tree↔branch-clone divergence detection), content-index-generation.ts (on-disk cross-process ContentId index generation marker; `invalidateContentIndexesDurable` is the single entry point for mutation sites), etc.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md#module-structure) for detailed module documentation.
 

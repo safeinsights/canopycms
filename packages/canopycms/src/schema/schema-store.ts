@@ -18,6 +18,7 @@ import { withLock } from '../utils/async-mutex'
 import type { ContentFormat } from '../config'
 import type { EntrySchemaRegistry } from './types'
 import { resolveCollectionPath } from '../content-id-index'
+import { invalidateContentIndexesDurable } from '../content-index-generation'
 import { generateId, isValidId } from '../id'
 import { createLogicalPath, validateAndNormalizePath } from '../paths'
 import type { LogicalPath, ContentId } from '../paths/types'
@@ -81,8 +82,21 @@ const MAX_NAME_LENGTH = 64
 /** Max length for labels */
 const MAX_LABEL_LENGTH = 128
 
+/**
+ * Safe pattern for names and slugs that become filesystem path segments.
+ * Blocks path traversal (".."), separators, dots, and other unsafe characters.
+ * Keep in sync with the client-side validation in the schema editor components.
+ */
+const SAFE_NAME_PATTERN = /^[a-z][a-z0-9-]*$/
+const SAFE_NAME_MESSAGE =
+  'must start with a letter and contain only lowercase letters, numbers, and hyphens'
+
 const entryTypeInputSchema = z.object({
-  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  name: z
+    .string()
+    .min(1)
+    .max(MAX_NAME_LENGTH)
+    .regex(SAFE_NAME_PATTERN, `Entry type name ${SAFE_NAME_MESSAGE}`),
   label: z.string().max(MAX_LABEL_LENGTH).optional(),
   format: z.enum(['md', 'mdx', 'json', 'yaml']),
   schema: z.string().min(1),
@@ -91,16 +105,31 @@ const entryTypeInputSchema = z.object({
 })
 
 const createCollectionInputSchema = z.object({
-  name: z.string().min(1).max(MAX_NAME_LENGTH),
+  name: z
+    .string()
+    .min(1)
+    .max(MAX_NAME_LENGTH)
+    .regex(SAFE_NAME_PATTERN, `Collection name ${SAFE_NAME_MESSAGE}`),
   label: z.string().max(MAX_LABEL_LENGTH).optional(),
   parentPath: z.string().optional(),
   entries: z.array(entryTypeInputSchema).min(1, 'Collection must have at least one entry type'),
 })
 
 const updateCollectionInputSchema = z.object({
-  name: z.string().min(1).max(MAX_NAME_LENGTH).optional(),
+  name: z
+    .string()
+    .min(1)
+    .max(MAX_NAME_LENGTH)
+    .regex(SAFE_NAME_PATTERN, `Collection name ${SAFE_NAME_MESSAGE}`)
+    .optional(),
   label: z.string().max(MAX_LABEL_LENGTH).optional(),
-  slug: z.string().min(1).max(MAX_NAME_LENGTH).optional(), // Directory name (e.g., "posts" in "posts.{id}/")
+  // Directory name (e.g., "posts" in "posts.{id}/")
+  slug: z
+    .string()
+    .min(1)
+    .max(MAX_NAME_LENGTH)
+    .regex(SAFE_NAME_PATTERN, `Slug ${SAFE_NAME_MESSAGE}`)
+    .optional(),
   order: z.array(z.string()).optional(),
 })
 
@@ -137,6 +166,18 @@ export class SchemaOps {
       const branchRoot = path.dirname(this.contentRoot)
       await this.services.branchSchemaCache.invalidate(branchRoot)
     }
+  }
+
+  /**
+   * Collection directory mutations (create/rename/delete) change paths the
+   * ContentId index tracks — collection dirs are indexed as {slug}.{id}/, and
+   * a dir rename re-paths every entry beneath it. Invalidate ContentStore ID
+   * indexes for this branch: in-process via the registry and cross-process via
+   * the on-disk generation marker. ContentStores (and the marker) are rooted
+   * at the branch root, the contentRoot's parent.
+   */
+  private async invalidateContentIdIndexes(): Promise<void> {
+    await invalidateContentIndexesDurable(path.dirname(this.contentRoot))
   }
 
   // --------------------------------------------------------------------------
@@ -323,8 +364,17 @@ export class SchemaOps {
     const dirName = `${input.name}.${contentId}`
     const physicalPath = path.join(parentPhysicalPath, dirName)
 
+    // Defense-in-depth (SCH-C1): the name pattern above already prevents
+    // traversal, but independently assert the resolved path stays within the
+    // content root before any filesystem write.
+    const containment = this.validatePath(physicalPath)
+    if (!containment.valid) {
+      throw new Error(`Invalid collection path: ${containment.error}`)
+    }
+
     // Create directory
     await fs.mkdir(physicalPath, { recursive: true })
+    await this.invalidateContentIdIndexes()
 
     // Build collection meta with empty order array (required for ordering support)
     const meta: CollectionMetaFile = {
@@ -441,10 +491,8 @@ export class SchemaOps {
       // Only rename if slug is actually different
       if (updates.slug !== currentSlug) {
         // Validate new slug (alphanumeric + hyphens, lowercase)
-        if (!/^[a-z][a-z0-9-]*$/.test(updates.slug)) {
-          throw new Error(
-            'Slug must start with a letter and contain only lowercase letters, numbers, and hyphens',
-          )
+        if (!SAFE_NAME_PATTERN.test(updates.slug)) {
+          throw new Error(`Slug ${SAFE_NAME_MESSAGE}`)
         }
 
         // Build new path with new slug + same ID
@@ -472,11 +520,12 @@ export class SchemaOps {
           // Ignore other errors (e.g., ENOENT if parent dir doesn't exist somehow)
         }
 
-        // Atomically rename the directory
+        // Atomically rename the directory — this re-paths every entry beneath
+        // it, so already-loaded ID indexes (here and in other processes) must
+        // be told to rebuild.
         await fs.rename(physicalPath, newPhysicalPath)
         finalPhysicalPath = newPhysicalPath
-
-        // Note: Content ID index will rebuild lazily on next access
+        await this.invalidateContentIdIndexes()
       }
     }
 
@@ -516,6 +565,7 @@ export class SchemaOps {
 
     // Delete the directory (including .collection.json)
     await fs.rm(physicalPath, { recursive: true })
+    await this.invalidateContentIdIndexes()
 
     // Invalidate schema cache after mutation
     await this.invalidateSchemaCache()

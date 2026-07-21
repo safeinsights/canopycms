@@ -5,16 +5,23 @@ import {
   ContentStore,
   ContentStoreError,
   ContentConflictError,
+  getDefaultEntryType,
   type WriteInput,
 } from '../content-store'
 import type { EntrySchema, EntryTypeConfig, EntryValidationIssue, FlatSchemaItem } from '../config'
 import { defineEndpoint } from './route-builder'
 import { ReferenceValidator } from '../validation/reference-validator'
+import {
+  mergeBodyIntoData,
+  normalizeReferenceValues,
+  validateEntryData,
+  type EntryFieldError,
+} from '../validation/entry-validator'
 import { validateEntryLinks } from '../validation/entry-link-validator'
 import { branchNameSchema, logicalPathSchema, slugSchema } from './validators'
 import type { Slug, PhysicalPath } from '../paths'
 import type { BranchContextWithSchema } from '../types'
-import { getErrorMessage, isNotFoundError } from '../utils/error'
+import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
 import { isDataOnlyFormat } from '../utils/format'
 
 /**
@@ -102,10 +109,31 @@ const writeContentParamsSchema = z.object({
   entryType: z.string().optional(), // Optional entry type name for collections with multiple entry types
 })
 
+/**
+ * Bounds on write/validate payload size (API-M1): content body text and
+ * structured field data are otherwise unbounded, letting any authenticated
+ * caller force arbitrarily large writes/validation work. These caps are
+ * generous for real content (a long MDX article, a large field-data object)
+ * while keeping worst-case request size bounded.
+ */
+const MAX_CONTENT_BODY_CHARS = 2_000_000 // ~2MB of markdown/mdx body text
+const MAX_CONTENT_DATA_BYTES = 2_000_000 // ~2MB of structured field data (serialized)
+
+const boundedContentDataSchema = z
+  .record(z.unknown())
+  // TextEncoder measures actual UTF-8 bytes; String#length counts UTF-16 code
+  // units and undercounts multi-byte content by up to 3x.
+  .refine(
+    (data) => new TextEncoder().encode(JSON.stringify(data)).length <= MAX_CONTENT_DATA_BYTES,
+    {
+      message: `data payload exceeds maximum size of ${MAX_CONTENT_DATA_BYTES} bytes`,
+    },
+  )
+
 const writeContentBodySchema = z.object({
   format: z.enum(['json', 'md', 'mdx', 'yaml']),
-  data: z.record(z.unknown()).optional(),
-  body: z.string().optional(),
+  data: boundedContentDataSchema.optional(),
+  body: z.string().max(MAX_CONTENT_BODY_CHARS).optional(),
   expectedVersion: z.number().optional(),
 })
 
@@ -116,7 +144,7 @@ const validateReferencesParamsSchema = z.object({
 })
 
 const validateReferencesBodySchema = z.object({
-  data: z.record(z.unknown()),
+  data: boundedContentDataSchema,
 })
 
 const renameEntryParamsSchema = z.object({
@@ -154,7 +182,7 @@ const readContentHandler = async (
     relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
-    return { ok: false, status: 400, error: message }
+    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 
   const access = await ctx.services.checkContentAccess(
@@ -206,7 +234,7 @@ const writeContentHandler = async (
     relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
-    return { ok: false, status: 400, error: message }
+    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 
   const access = await ctx.services.checkContentAccess(
@@ -218,6 +246,137 @@ const writeContentHandler = async (
   )
   if (!access.allowed) {
     return { ok: false, status: 403, error: 'Forbidden' }
+  }
+
+  // ------------------------------------------------------------------
+  // Authoritative schema validation at the write boundary (COMPOUND-2).
+  //
+  // The server rejects structurally invalid entry data even when the client
+  // is bypassed: required fields, type/format correctness, non-empty required
+  // references (pure rules shared with the editor via validation/entry-validator),
+  // plus reference EXISTENCE (server-only: reads the content ID index) and
+  // EntryTypeConfig.maxItems at the create boundary (SCH-H3).
+  //
+  // One narrow carve-out: the editor's create flow scaffolds a brand-new entry
+  // by writing entirely empty data (`{}` and an empty body) and only then lets
+  // the user fill the form — so a create scaffold (target file does not exist
+  // yet AND the payload is completely empty) skips field validation. Any write
+  // carrying actual data, and every write to an existing entry, is validated.
+  // ------------------------------------------------------------------
+
+  // Resolve the entry-type config the store will write with (mirrors ContentStore.write)
+  let entryTypeConfig: EntryTypeConfig | undefined
+  let fields: EntrySchema = []
+  let maxItems: number | undefined
+  let entryTypeName: string | undefined
+  if (schemaItem.type === 'entry-type') {
+    fields = schemaItem.schema
+    maxItems = schemaItem.maxItems
+    entryTypeName = schemaItem.name
+  } else {
+    // An entryType param naming an unknown type is always a bad request,
+    // regardless of whether the target entry exists yet.
+    if (params.entryType) {
+      const requestedConfig = schemaItem.entries?.find((e) => e.name === params.entryType)
+      if (!requestedConfig) {
+        return {
+          ok: false,
+          status: 400,
+          error: `Entry type '${params.entryType}' not found`,
+        }
+      }
+    }
+
+    // For an existing entry, validate against its REAL on-disk type. Entry
+    // filenames embed the type (`{type}.{slug}.{id}.{ext}`) and
+    // ContentStore.write() preserves it regardless of what's requested (see
+    // buildPaths in content-store.ts) — so resolving from params.entryType
+    // or the default here instead would let a direct API write validate a
+    // payload against the WRONG entry type's schema (post-review M2). The
+    // editor always sends the entry's real entryType, so this only changes
+    // behavior for non-editor callers.
+    const existingEntryType = await store.getExistingEntryType(schemaItem.logicalPath, slug)
+    if (existingEntryType) {
+      if (params.entryType && params.entryType !== existingEntryType) {
+        return {
+          ok: false,
+          status: 409,
+          error: `Entry type conflict: entry already exists with type '${existingEntryType}', but request specified '${params.entryType}'`,
+        }
+      }
+      entryTypeConfig = schemaItem.entries?.find((e) => e.name === existingEntryType)
+      entryTypeName = existingEntryType
+    } else if (params.entryType) {
+      entryTypeConfig = schemaItem.entries?.find((e) => e.name === params.entryType)
+      entryTypeName = entryTypeConfig?.name
+    } else {
+      entryTypeConfig = getDefaultEntryType(schemaItem.entries)
+      entryTypeName = entryTypeConfig?.name
+    }
+    fields = entryTypeConfig?.schema ?? []
+    maxItems = entryTypeConfig?.maxItems
+  }
+
+  const data = body.data ?? {}
+  const isDataOnly = isDataOnlyFormat(body.format)
+
+  try {
+    const exists = await store.documentExists(schemaItem.logicalPath, slug)
+
+    // SCH-H3: enforce maxItems server-side at the create boundary. The editor
+    // only gates its "Add" button; a direct API create could otherwise exceed
+    // the cap. Best-effort under concurrency: the count-then-create below is
+    // not atomic, so two simultaneous creates can still race past the cap —
+    // the guard's real target is the single-request direct-API bypass.
+    if (!exists && maxItems !== undefined && entryTypeName) {
+      const collectionPath =
+        schemaItem.type === 'entry-type' ? schemaItem.parentPath : schemaItem.logicalPath
+      const count = await store.countEntriesOfType(collectionPath, entryTypeName)
+      if (count >= maxItems) {
+        return {
+          ok: false,
+          status: 422,
+          error: `Cannot create entry: type "${entryTypeName}" allows at most ${maxItems} ${maxItems === 1 ? 'entry' : 'entries'}`,
+        }
+      }
+    }
+
+    const isCreateScaffold =
+      !exists && Object.keys(data).length === 0 && (isDataOnly || !body.body?.trim())
+
+    if (!isCreateScaffold) {
+      // Pure rules (shared with the editor). For md/mdx the body is validated
+      // as the schema's isBody field.
+      const dataForValidation = isDataOnly ? data : mergeBodyIntoData(fields, data, body.body ?? '')
+      const fieldErrors: EntryFieldError[] = validateEntryData(fields, dataForValidation)
+
+      // Reference existence (server-only: reads the content ID index). Editor
+      // payloads may still carry resolved `{ id, ... }` objects from a prior
+      // read, so collapse them to id strings before checking.
+      if (fieldErrors.length === 0) {
+        const idIndex = await store.idIndex()
+        const refValidator = new ReferenceValidator(idIndex, fields)
+        const refResult = await refValidator.validate(normalizeReferenceValues(fields, data))
+        fieldErrors.push(
+          ...refResult.errors.map((e) => ({ fieldPath: e.fieldPath, message: e.error })),
+        )
+      }
+
+      if (fieldErrors.length > 0) {
+        return {
+          ok: false,
+          status: 422,
+          // '; '-joined: the editor shows this in a notification, which collapses newlines
+          error: fieldErrors.map((e) => `${e.fieldPath}: ${e.message}`).join('; '),
+          fieldErrors,
+        }
+      }
+    }
+  } catch (err) {
+    if (err instanceof ContentStoreError) {
+      return { ok: false, status: 400, error: sanitizeErrorMessage(err.message) }
+    }
+    throw err
   }
 
   // Adopter save-time validation, run BEFORE the file is written: 'error' issues
@@ -237,7 +396,11 @@ const writeContentHandler = async (
         body: body.body,
       })
     } catch (err) {
-      return { ok: false, status: 500, error: `validateEntry hook failed: ${getErrorMessage(err)}` }
+      return {
+        ok: false,
+        status: 500,
+        error: `validateEntry hook failed: ${sanitizeErrorMessage(getErrorMessage(err))}`,
+      }
     }
     const errors = issues.filter((issue) => issue.level === 'error')
     if (errors.length > 0) {
@@ -270,19 +433,13 @@ const writeContentHandler = async (
           expectedVersion: body.expectedVersion,
         }
 
-    const result = await store.write(schemaItem.logicalPath, slug, writeInput, params.entryType)
+    // Pass the resolved entryTypeName (not the raw, possibly-omitted
+    // params.entryType) so the store's own format check agrees with the type
+    // we just validated against.
+    const result = await store.write(schemaItem.logicalPath, slug, writeInput, entryTypeName)
 
-    // Validate entry links in body content (warnings only, don't block save)
-    // Resolve fields from schema: entry-type has .schema directly,
-    // collections need to look up the entry type by name
-    let fields: EntrySchema = []
-    if (schemaItem.type === 'entry-type') {
-      fields = schemaItem.schema
-    } else if (params.entryType) {
-      fields = schemaItem.entries?.find((e) => e.name === params.entryType)?.schema ?? []
-    } else if (schemaItem.entries?.length === 1) {
-      fields = schemaItem.entries[0].schema ?? []
-    }
+    // Validate entry links in body content (warnings only, don't block save).
+    // Reuses the entry-type fields resolved above for schema validation.
     const idIndex = await store.idIndex()
     const linkValidation = validateEntryLinks(body.data ?? {}, fields, idIndex, body.body)
     const entryLinkWarnings =
@@ -298,7 +455,7 @@ const writeContentHandler = async (
       }
     }
     const message = err instanceof ContentStoreError ? err.message : 'Write failed'
-    return { ok: false, status: 400, error: message }
+    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 }
 
@@ -327,7 +484,7 @@ const validateReferencesHandler = async (
     relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
-    return { ok: false, status: 400, error: message }
+    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 
   const access = await ctx.services.checkContentAccess(
@@ -412,7 +569,7 @@ const renameEntryHandler = async (
     relativePath = pathResult.relativePath
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Invalid content request'
-    return { ok: false, status: 400, error: message }
+    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 
   // Check edit permission on current path
@@ -433,7 +590,7 @@ const renameEntryHandler = async (
     return { ok: true, status: 200, data: { newPath: result.newPath } }
   } catch (err) {
     const message = err instanceof ContentStoreError ? err.message : 'Rename failed'
-    return { ok: false, status: 400, error: message }
+    return { ok: false, status: 400, error: sanitizeErrorMessage(message) }
   }
 }
 

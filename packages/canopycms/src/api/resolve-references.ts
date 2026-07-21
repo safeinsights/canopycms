@@ -20,12 +20,20 @@ export type ResolveReferencesResponse = ApiResponse<{
 // Zod Schemas for Validation
 // ============================================================================
 
+/**
+ * Resolution does sequential per-ID file I/O (see the loop below), so the
+ * request body caps how much filesystem work a single authenticated caller
+ * can force. 100 is a generous bound for real UI usage (a page's worth of
+ * reference fields) while keeping worst-case latency/IO bounded (API-M1).
+ */
+const MAX_RESOLVE_REFERENCE_IDS = 100
+
 const resolveReferencesParamsSchema = z.object({
   branch: branchNameSchema,
 })
 
 const resolveReferencesBodySchema = z.object({
-  ids: z.array(contentIdSchema).min(1),
+  ids: z.array(contentIdSchema).min(1).max(MAX_RESOLVE_REFERENCE_IDS),
 })
 
 const resolveReferencesHandler = async (

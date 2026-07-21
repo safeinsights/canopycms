@@ -2,7 +2,7 @@ import type { CanopyRequest, CanopyResponse } from './types'
 import { jsonResponse } from './types'
 import { createCanopyRouter } from './router'
 import type { ApiContext, ApiResponse } from '../api/types'
-import type { AuthPlugin } from '../auth/plugin'
+import { assertAuthPluginAllowedForMode, type AuthPlugin } from '../auth/plugin'
 import { createCanopyServices, type CanopyServices } from '../services'
 import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
@@ -10,7 +10,7 @@ import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
 import { authResultToCanopyUser } from '../user'
 import { loadInternalGroups, RESERVED_GROUPS } from '../authorization'
 import { clientOperatingStrategy } from '../operating-mode'
-import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
+import { getErrorMessage, redactCredentials, sanitizeErrorMessage } from '../utils/error'
 
 let warnedNoAdmins = false
 
@@ -151,18 +151,35 @@ export type CanopyRequestHandler = (
  * ```
  */
 export function createCanopyRequestHandler(options: CanopyHandlerOptions): CanopyRequestHandler {
+  // Fail closed (SEC-C1): a dev/insecure auth plugin must never serve prod traffic.
+  // Throws at handler creation time so misconfigured deployments fail at startup.
+  const mode = options.services?.config.mode ?? options.config?.mode
+  assertAuthPluginAllowedForMode(options.authPlugin, mode)
+
   const router = createCanopyRouter()
 
-  // Build context once at initialization, not per-request
+  // Build context once (memoized) and reuse across requests in the same warm
+  // container/process. On rejection (e.g. transient cold-start / EFS not yet
+  // mounted), the cache is cleared (API-H3) so the NEXT request retries
+  // buildContext() instead of replaying the same rejection forever.
   let apiCtxPromise: Promise<ApiContext> | null = null
   const getContext = () => {
     if (!apiCtxPromise) {
-      apiCtxPromise = buildContext(options)
+      apiCtxPromise = buildContext(options).catch((err: unknown) => {
+        apiCtxPromise = null
+        throw err
+      })
     }
     return apiCtxPromise
   }
 
-  return async (
+  // Core request-handling logic, wrapped below by a top-level try/catch (API-C1).
+  // getContext()/refreshActiveBranch()/authenticate()/match.handler() are NOT
+  // individually try/catched here, and some handlers deliberately re-throw
+  // unrecognized errors (e.g. api/content.ts, api/entries.ts) — without an outer
+  // boundary, an unhandled throw would escape the framework adapter as a generic
+  // 500 that breaks the uniform { ok, status, error } contract the editor depends on.
+  const handleRequest = async (
     req: CanopyRequest,
     pathSegments: string[],
   ): Promise<CanopyResponse<ApiResponse>> => {
@@ -201,10 +218,11 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       mainBranchContext = await apiCtx.getBranchContext(baseBranch)
     } catch (err) {
       const message = getErrorMessage(err)
-      // Full detail to server logs; sanitized detail to the (authenticated)
-      // client — git errors can embed credentials and filesystem paths.
+      // Full path detail to server logs; sanitized detail to the
+      // (authenticated) client. Credentials (git errors can embed them) are
+      // redacted even from server logs.
       console.error(
-        `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${message}`,
+        `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${redactCredentials(message)}`,
       )
       return jsonResponse(
         {
@@ -301,6 +319,20 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         mergedParams as unknown,
       )
       return jsonResponse(result, result.status)
+    }
+  }
+
+  return async (
+    req: CanopyRequest,
+    pathSegments: string[],
+  ): Promise<CanopyResponse<ApiResponse>> => {
+    try {
+      return await handleRequest(req, pathSegments)
+    } catch (err) {
+      // Last-resort boundary (API-C1): see handleRequest's doc comment above.
+      const message = getErrorMessage(err)
+      console.error('CanopyCMS: Unhandled error in API request handler:', message)
+      return jsonResponse({ ok: false, status: 500, error: sanitizeErrorMessage(message) }, 500)
     }
   }
 }

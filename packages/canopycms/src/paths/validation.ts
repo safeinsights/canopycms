@@ -300,6 +300,13 @@ export function parseBranchName(
     return { ok: false, error: 'Branch name cannot contain spaces' }
   }
 
+  // Reject a leading hyphen: validated names flow positionally into git
+  // commands (e.g. `git checkout <branch>`), and a name like "--upload-pack=x"
+  // would otherwise be parsed by git as an option rather than a ref name.
+  if (name.startsWith('-')) {
+    return { ok: false, error: 'Branch name cannot start with "-"' }
+  }
+
   // Additional git restrictions
   if (name.startsWith('.') || name.endsWith('.')) {
     return { ok: false, error: 'Branch name cannot start or end with a dot' }
@@ -307,6 +314,13 @@ export function parseBranchName(
 
   if (name.includes('@{')) {
     return { ok: false, error: 'Branch name cannot contain "@{"' }
+  }
+
+  // Bare reserved refs: "HEAD" and "@" are ambiguous shorthand for the
+  // current ref, not real branch names (still allow names that merely
+  // contain these as a substring, e.g. "release-HEAD" or "HEADer").
+  if (name === 'HEAD' || name === '@') {
+    return { ok: false, error: 'Branch name cannot be the reserved ref "HEAD" or "@"' }
   }
 
   // Git-forbidden characters: ~ ^ : ? * [ \ and control chars

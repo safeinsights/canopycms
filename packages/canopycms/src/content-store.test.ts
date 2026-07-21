@@ -6,6 +6,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { defineCanopyTestConfig } from './config-test'
 import { flattenSchema } from './config'
+import { ContentIdIndex } from './content-id-index'
+import {
+  bumpContentIndexGeneration,
+  invalidateContentIndexesDurable,
+} from './content-index-generation'
+import { invalidateContentIndexesForRoot } from './content-index-registry'
 import { ContentStore, ContentStoreError, ContentConflictError } from './content-store'
 import { generateId } from './id'
 import { unsafeAsLogicalPath, unsafeAsSlug } from './paths/test-utils'
@@ -1495,5 +1501,600 @@ describe('ContentStore OCC', () => {
     } finally {
       statSpy.mockRestore()
     }
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ID index invalidation (in-process staleness after checkout/pull/rebase/sync)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContentStore index invalidation', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          {
+            name: 'post',
+            format: 'md' as const,
+            schema: [{ name: 'title', type: 'string' as const }],
+          },
+        ],
+      },
+    ],
+  } as const
+
+  const makeStore = async (root?: string) => {
+    const resolvedRoot = root ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-idx-')))
+    const config = defineCanopyTestConfig({ schema })
+    return {
+      root: resolvedRoot,
+      store: new ContentStore(resolvedRoot, flattenSchema(schema, config.contentRoot)),
+    }
+  }
+
+  /** Write an entry, warm the index, then rename its file on disk behind the store's back. */
+  const writeAndRenameOnDisk = async (store: ContentStore, oldSlug: string, newSlug: string) => {
+    const doc = await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug(oldSlug), {
+      format: 'md',
+      data: { title: 'T' },
+      body: 'Body',
+    })
+    const id = await store.getIdForEntry(
+      unsafeAsLogicalPath('content/posts'),
+      unsafeAsSlug(oldSlug),
+    )
+    if (!id) throw new Error('expected id for written entry')
+    // Simulate a checkout/pullBase/rebase swapping files underneath the store:
+    // rename the entry file to a new slug without going through the store.
+    await fs.rename(doc.absolutePath, doc.absolutePath.replace(oldSlug, newSlug))
+    return id
+  }
+
+  it('rebuilds the index after invalidateIndex so lookups return the new path', async () => {
+    const { store } = await makeStore()
+    const id = await writeAndRenameOnDisk(store, 'hello-world', 'renamed-entry')
+
+    // Pre-invalidation the index is stale: it still resolves the old path.
+    const staleLocation = (await store.idIndex()).findById(id)
+    expect(staleLocation?.relativePath).toContain('hello-world')
+
+    store.invalidateIndex()
+
+    // Post-invalidation the lookup resolves the NEW on-disk path, not the stale one.
+    const freshLocation = (await store.idIndex()).findById(id)
+    expect(freshLocation?.relativePath).toContain('renamed-entry')
+    expect(freshLocation?.relativePath).not.toContain('hello-world')
+    expect(freshLocation?.slug).toBe('renamed-entry')
+
+    // And readById follows the new path end to end.
+    const doc = await store.readById(id)
+    expect(doc?.relativePath).toContain('renamed-entry')
+  })
+
+  it('does not rebuild the index on repeated reads without an intervening invalidation', async () => {
+    const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+    try {
+      const { store } = await makeStore()
+      await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('a'), {
+        format: 'md',
+        data: { title: 'A' },
+        body: 'Body',
+      })
+      const buildsAfterWrite = buildSpy.mock.calls.length
+      expect(buildsAfterWrite).toBe(1)
+
+      // Ordinary repeated reads — including concurrent index accesses — reuse the index.
+      await store.read(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('a'))
+      await store.read(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('a'))
+      await Promise.all([store.idIndex(), store.idIndex(), store.idIndex()])
+      expect(buildSpy.mock.calls.length).toBe(buildsAfterWrite)
+
+      // Invalidation triggers exactly one rebuild on next access.
+      store.invalidateIndex()
+      await store.idIndex()
+      expect(buildSpy.mock.calls.length).toBe(buildsAfterWrite + 1)
+      await store.idIndex()
+      expect(buildSpy.mock.calls.length).toBe(buildsAfterWrite + 1)
+    } finally {
+      buildSpy.mockRestore()
+    }
+  })
+
+  it('concurrent idIndex() calls after invalidation share one rebuild and do not collide', async () => {
+    const { store } = await makeStore()
+    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('b'), {
+      format: 'md',
+      data: { title: 'B' },
+      body: 'Body',
+    })
+    await store.idIndex()
+
+    const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+    try {
+      store.invalidateIndex()
+      // Without clear-before-rebuild (or with interleaved scans) this would throw
+      // "ID collision detected" for every unchanged file.
+      await Promise.all([store.idIndex(), store.idIndex(), store.idIndex()])
+      expect(buildSpy.mock.calls.length).toBe(1)
+    } finally {
+      buildSpy.mockRestore()
+    }
+  })
+
+  it('invalidateContentIndexesForRoot invalidates stores at or under the root, not others', async () => {
+    const base = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-idx-reg-'))
+    const nestedRoot = path.join(base, 'clone')
+    await fs.mkdir(nestedRoot, { recursive: true })
+    const { store: nestedStore } = await makeStore(nestedRoot)
+    const { store: otherStore } = await makeStore()
+
+    const nestedId = await writeAndRenameOnDisk(nestedStore, 'nested-old', 'nested-new')
+    const otherId = await writeAndRenameOnDisk(otherStore, 'other-old', 'other-new')
+
+    // Warm both indexes (both now stale relative to disk).
+    expect((await nestedStore.idIndex()).findById(nestedId)?.relativePath).toContain('nested-old')
+    expect((await otherStore.idIndex()).findById(otherId)?.relativePath).toContain('other-old')
+
+    // Invalidating an ANCESTOR of the nested store's root reaches it (prefix match)...
+    invalidateContentIndexesForRoot(base)
+    expect((await nestedStore.idIndex()).findById(nestedId)?.relativePath).toContain('nested-new')
+
+    // ...but leaves stores under unrelated roots untouched (still stale).
+    expect((await otherStore.idIndex()).findById(otherId)?.relativePath).toContain('other-old')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cross-process index consistency (on-disk generation marker).
+// Two ContentStore instances on the SAME root model two processes sharing a
+// branch clone (Lambda + worker on EFS): ContentStore.write() never calls the
+// in-process registry, and the registry/withLock module state is inert across
+// same-root stores, so any second-store rebuild here provably comes from the
+// on-disk marker (or the suspicious-lookup backstop where stated).
+
+describe('ContentStore cross-process index consistency', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          {
+            name: 'post',
+            format: 'md' as const,
+            schema: [{ name: 'title', type: 'string' as const }],
+          },
+        ],
+      },
+    ],
+  } as const
+
+  const posts = unsafeAsLogicalPath('content/posts')
+
+  const makeStore = async (root?: string, indexFreshnessIntervalMs = 0) => {
+    const resolvedRoot = root ?? (await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-xproc-')))
+    const config = defineCanopyTestConfig({ schema })
+    return {
+      root: resolvedRoot,
+      store: new ContentStore(resolvedRoot, flattenSchema(schema, config.contentRoot), {
+        indexFreshnessIntervalMs,
+      }),
+    }
+  }
+
+  const writeEntry = (store: ContentStore, slug: string, existingId?: string) =>
+    store.write(
+      posts,
+      unsafeAsSlug(slug),
+      { format: 'md', data: { title: 'T' }, body: 'Body' },
+      undefined,
+      existingId as Parameters<ContentStore['write']>[4],
+    )
+
+  const getId = async (store: ContentStore, slug: string) => {
+    const id = await store.getIdForEntry(posts, unsafeAsSlug(slug))
+    if (!id) throw new Error(`expected id for entry ${slug}`)
+    return id
+  }
+
+  it('a write in one store becomes visible to a pre-built store on the same root', async () => {
+    const { root, store: storeA } = await makeStore()
+    const { store: storeB } = await makeStore(root)
+
+    // B builds its index BEFORE A writes — a lazy first scan must not be
+    // what makes the test pass.
+    await storeB.idIndex()
+
+    await writeEntry(storeA, 'fresh-entry')
+    const id = await getId(storeA, 'fresh-entry')
+
+    // B's next access probes the marker A bumped and rebuilds.
+    // (findById directly — readById would also engage the backstop.)
+    const location = (await storeB.idIndex()).findById(id)
+    expect(location?.slug).toBe('fresh-entry')
+  })
+
+  it('negative control: without a marker bump the other store stays stale; the bump alone heals it', async () => {
+    const { root, store: storeA } = await makeStore()
+    const { store: storeB } = await makeStore(root)
+    await writeEntry(storeA, 'seed') // creates content/posts on disk
+    await storeB.idIndex()
+
+    // Simulate a process that mutates files WITHOUT bumping the marker.
+    const manualId = generateId()
+    await fs.writeFile(
+      path.join(root, 'content', 'posts', `post.manual-entry.${manualId}.md`),
+      'Body',
+      'utf-8',
+    )
+
+    // Probe runs (interval 0) but the token is unchanged — B must NOT rescan.
+    expect((await storeB.idIndex()).findById(manualId)).toBeNull()
+
+    // The bump alone (no in-process registry involvement) makes B rebuild.
+    await bumpContentIndexGeneration(root)
+    expect((await storeB.idIndex()).findById(manualId)?.slug).toBe('manual-entry')
+  })
+
+  it('a slug rename in one store is resolved at the new path by the other store', async () => {
+    const { root, store: storeA } = await makeStore()
+    const { store: storeB } = await makeStore(root)
+    await writeEntry(storeA, 'old-slug')
+    const id = await getId(storeA, 'old-slug')
+    await storeB.idIndex()
+    expect((await storeB.idIndex()).findById(id)?.slug).toBe('old-slug')
+
+    await storeA.renameEntry(posts, unsafeAsSlug('old-slug'), unsafeAsSlug('new-slug'))
+
+    const location = (await storeB.idIndex()).findById(id)
+    expect(location?.slug).toBe('new-slug')
+    expect(location?.relativePath).not.toContain('old-slug')
+  })
+
+  it('a git-style on-disk mutation plus invalidateContentIndexesDurable reaches other stores', async () => {
+    const { root, store: storeA } = await makeStore()
+    const { store: storeB } = await makeStore(root)
+    const doc = await writeEntry(storeA, 'pre-rebase')
+    const id = await getId(storeA, 'pre-rebase')
+    await storeB.idIndex()
+
+    // Simulate a rebase/checkout swapping files underneath both stores,
+    // performed by a third process that calls the durable invalidation.
+    await fs.rename(doc.absolutePath, doc.absolutePath.replace('pre-rebase', 'post-rebase'))
+    await invalidateContentIndexesDurable(root)
+
+    expect((await storeB.idIndex()).findById(id)?.slug).toBe('post-rebase')
+  })
+
+  it('does not rebuild while the marker is unchanged, and throttles probes at the default interval', async () => {
+    const { root, store: storeA } = await makeStore()
+    const { store: storeB } = await makeStore(root)
+    await writeEntry(storeA, 'stable')
+    await storeB.idIndex()
+
+    const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+    try {
+      // Marker stable — repeated accesses on both stores probe (interval 0)
+      // but never rebuild.
+      await Promise.all([storeA.idIndex(), storeB.idIndex()])
+      await storeA.idIndex()
+      await storeB.idIndex()
+      expect(buildSpy).not.toHaveBeenCalled()
+
+      // A store with the default interval doesn't even see a fresh bump yet:
+      // its probe is throttled after the initial build.
+      const { store: throttled } = await makeStore(root, 1000)
+      await throttled.idIndex() // initial build (counts as a probe)
+      buildSpy.mockClear()
+      await bumpContentIndexGeneration(root)
+      await throttled.idIndex() // within the interval — probe throttled, no rebuild
+      expect(buildSpy).not.toHaveBeenCalled()
+    } finally {
+      buildSpy.mockRestore()
+    }
+  })
+
+  it('readById self-heals on an ID miss inside the residual window (no marker bump)', async () => {
+    const { root, store } = await makeStore()
+    await writeEntry(store, 'seed')
+    await store.idIndex()
+
+    // File appears without any bump — models the NFS attribute-cache window
+    // where another host's bump is not visible yet.
+    const manualId = generateId()
+    await fs.writeFile(
+      path.join(root, 'content', 'posts', `post.hidden-entry.${manualId}.md`),
+      'Body',
+      'utf-8',
+    )
+
+    const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+    try {
+      // Miss → one forced rebuild → resolves.
+      const doc = await store.readById(manualId as Parameters<ContentStore['readById']>[0])
+      expect(doc?.relativePath).toContain('hidden-entry')
+      expect(buildSpy).toHaveBeenCalledTimes(1)
+
+      // A genuinely dangling ID does not rebuild again within the allowance window.
+      const dangling = await store.readById(generateId() as Parameters<ContentStore['readById']>[0])
+      expect(dangling).toBeNull()
+      expect(buildSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      buildSpy.mockRestore()
+    }
+  })
+
+  it('readById self-heals on a stale hit whose file moved (no marker bump)', async () => {
+    const { store } = await makeStore()
+    const doc = await writeEntry(store, 'moves-away')
+    const id = await getId(store, 'moves-away')
+    await store.idIndex()
+
+    // Rename on disk without a bump: the index still hits, but the read ENOENTs.
+    await fs.rename(doc.absolutePath, doc.absolutePath.replace('moves-away', 'moved-here'))
+
+    const healed = await store.readById(id)
+    expect(healed?.relativePath).toContain('moved-here')
+  })
+
+  it('resolveSingleReference heals every miss in a list:true reference batch, not just the first', async () => {
+    // A dedicated schema: a `posts` entry with a list:true reference field
+    // pointing at `authors` entries, so resolving one post fans out into a
+    // Promise.all batch of resolveSingleReference calls (content-store.ts
+    // resolveReferencesInData, the `field.list && Array.isArray(value)` path).
+    const refSchema = {
+      collections: [
+        {
+          name: 'authors',
+          path: 'authors',
+          entries: [
+            {
+              name: 'author',
+              format: 'md' as const,
+              schema: [{ name: 'name', type: 'string' as const }],
+            },
+          ],
+        },
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            {
+              name: 'post',
+              format: 'md' as const,
+              schema: [
+                { name: 'title', type: 'string' as const },
+                { name: 'contributors', type: 'reference' as const, list: true },
+              ],
+            },
+          ],
+        },
+      ],
+    } as const
+
+    const root = await tmpDir()
+    const config = defineCanopyTestConfig({ schema: refSchema })
+    const store = new ContentStore(root, flattenSchema(refSchema, config.contentRoot))
+
+    const authorsPath = unsafeAsLogicalPath('content/authors')
+    const postsPath = unsafeAsLogicalPath('content/posts')
+
+    const authorSlugs = ['author-a', 'author-b', 'author-c']
+    const authorIds: string[] = []
+    const authorDocs: Awaited<ReturnType<typeof store.write>>[] = []
+    for (const slug of authorSlugs) {
+      const doc = await store.write(authorsPath, unsafeAsSlug(slug), {
+        format: 'md',
+        data: { name: slug },
+        body: '',
+      })
+      authorDocs.push(doc)
+      const id = await store.getIdForEntry(authorsPath, unsafeAsSlug(slug))
+      if (!id) throw new Error(`expected id for author ${slug}`)
+      authorIds.push(id)
+    }
+
+    await store.write(postsPath, unsafeAsSlug('the-post'), {
+      format: 'md',
+      data: { title: 'The Post', contributors: authorIds },
+      body: 'Body',
+    })
+
+    // Build the index BEFORE the external mutation, so all three author
+    // lookups miss against the same stale snapshot when the post is resolved.
+    await store.idIndex()
+
+    // Move all three referenced entries on disk behind the store's back, with
+    // no marker bump -- same external-mutation shape as 'readById self-heals
+    // on a stale hit whose file moved' above, just applied to every reference
+    // in the batch instead of just one.
+    for (let i = 0; i < authorDocs.length; i++) {
+      await fs.rename(
+        authorDocs[i].absolutePath,
+        authorDocs[i].absolutePath.replace(authorSlugs[i], `${authorSlugs[i]}-moved`),
+      )
+    }
+
+    const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+    try {
+      const doc = await store.read(postsPath, unsafeAsSlug('the-post'))
+      if (doc.format !== 'md' && doc.format !== 'mdx') throw new Error('expected markdown')
+      const resolvedContributors = doc.data.contributors as Array<Record<string, unknown> | null>
+
+      // Every reference in the batch must heal -- not just the first caller
+      // to win the throttled forced refresh.
+      expect(resolvedContributors).toHaveLength(3)
+      authorSlugs.forEach((slug, i) => {
+        expect(resolvedContributors[i]).not.toBeNull()
+        expect(resolvedContributors[i]?.slug).toBe(`${slug}-moved`)
+      })
+
+      // The forced rebuild itself stays throttled to once for the whole batch.
+      expect(buildSpy).toHaveBeenCalledTimes(1)
+    } finally {
+      buildSpy.mockRestore()
+    }
+  })
+
+  it('write() with existingId refuses to recreate an entry another store renamed', async () => {
+    const { root, store: storeA } = await makeStore()
+    // Large interval: models a store whose probe hasn't fired (residual window).
+    const { store: storeB } = await makeStore(root, 60_000)
+    await writeEntry(storeA, 'contested')
+    const id = await getId(storeA, 'contested')
+    await storeB.idIndex() // B's index now maps id → contested
+
+    await storeA.renameEntry(posts, unsafeAsSlug('contested'), unsafeAsSlug('relocated'))
+
+    // B, still stale, saves "in place" at the old slug — must conflict, not
+    // recreate the old file (which would leave two files with the same ID).
+    await expect(writeEntry(storeB, 'contested', id)).rejects.toThrow(ContentConflictError)
+    const files = await fs.readdir(path.join(root, 'content', 'posts'))
+    expect(files.filter((f) => f.includes(id))).toHaveLength(1)
+  })
+
+  it('write() with existingId recreates an entry another store deleted (last writer wins)', async () => {
+    const { root, store: storeA } = await makeStore()
+    const { store: storeB } = await makeStore(root, 60_000)
+    await writeEntry(storeA, 'doomed')
+    const id = await getId(storeA, 'doomed')
+    await storeB.idIndex()
+
+    await storeA.delete(posts, unsafeAsSlug('doomed'))
+
+    // The ID is nowhere on disk — recreating is an allowed last-writer-wins.
+    const recreated = await writeEntry(storeB, 'doomed', id)
+    expect(recreated.relativePath).toContain('doomed')
+    const files = await fs.readdir(path.join(root, 'content', 'posts'))
+    expect(files.filter((f) => f.includes(id))).toHaveLength(1)
+  })
+
+  it("a store's own writes never trigger a self-rescan (adopted token)", async () => {
+    const { store } = await makeStore() // interval 0: probes on every access
+    await writeEntry(store, 'first')
+    const buildSpy = vi.spyOn(ContentIdIndex.prototype, 'buildFromFilenames')
+    try {
+      await writeEntry(store, 'second')
+      await store.idIndex()
+      await store.read(posts, unsafeAsSlug('second'))
+      expect(buildSpy).not.toHaveBeenCalled()
+    } finally {
+      buildSpy.mockRestore()
+    }
+  })
+
+  it('rebuilds swap in a fresh index; in-flight holders keep a queryable snapshot', async () => {
+    const { store } = await makeStore()
+    await writeEntry(store, 'snapshot')
+    const id = await getId(store, 'snapshot')
+
+    const before = await store.idIndex()
+    store.invalidateIndex()
+    const after = await store.idIndex()
+
+    expect(after).not.toBe(before)
+    // The old snapshot was not cleared in place — holders across awaits still
+    // get consistent answers.
+    expect(before.findById(id)?.slug).toBe('snapshot')
+    expect(after.findById(id)?.slug).toBe('snapshot')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Write-boundary helpers: documentExists + countEntriesOfType (D4 / SCH-H3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContentStore documentExists / countEntriesOfType', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          { name: 'post', format: 'json' as const, schema: [], default: true },
+          { name: 'settings', format: 'json' as const, schema: [], maxItems: 1 },
+        ],
+      },
+    ],
+  } as const
+
+  const makeStore = async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
+    const config = defineCanopyTestConfig({ schema })
+    return new ContentStore(root, flattenSchema(schema, config.contentRoot))
+  }
+
+  it('reports existence of a document before and after write', async () => {
+    const store = await makeStore()
+    const posts = unsafeAsLogicalPath('content/posts')
+    expect(await store.documentExists(posts, unsafeAsSlug('hello'))).toBe(false)
+    await store.write(posts, unsafeAsSlug('hello'), { format: 'json', data: { a: 1 } })
+    expect(await store.documentExists(posts, unsafeAsSlug('hello'))).toBe(true)
+    expect(await store.documentExists(posts, unsafeAsSlug('other'))).toBe(false)
+  })
+
+  it('counts only entries of the requested entry type', async () => {
+    const store = await makeStore()
+    const posts = unsafeAsLogicalPath('content/posts')
+    expect(await store.countEntriesOfType(posts, 'post')).toBe(0)
+    await store.write(posts, unsafeAsSlug('one'), { format: 'json', data: {} }, 'post')
+    await store.write(posts, unsafeAsSlug('two'), { format: 'json', data: {} }, 'post')
+    await store.write(posts, unsafeAsSlug('main'), { format: 'json', data: {} }, 'settings')
+    expect(await store.countEntriesOfType(posts, 'post')).toBe(2)
+    expect(await store.countEntriesOfType(posts, 'settings')).toBe(1)
+    expect(await store.countEntriesOfType(posts, 'nope')).toBe(0)
+  })
+
+  it('returns 0 for a collection directory that does not exist yet', async () => {
+    const store = await makeStore()
+    expect(await store.countEntriesOfType(unsafeAsLogicalPath('content/posts'), 'post')).toBe(0)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// getExistingEntryType (post-review M2): resolve an existing entry's real,
+// filename-embedded type without a full read.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ContentStore getExistingEntryType', () => {
+  const schema = {
+    collections: [
+      {
+        name: 'posts',
+        path: 'posts',
+        entries: [
+          { name: 'post', format: 'json' as const, schema: [], default: true },
+          { name: 'settings', format: 'json' as const, schema: [], maxItems: 1 },
+        ],
+      },
+    ],
+  } as const
+
+  const makeStore = async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-'))
+    const config = defineCanopyTestConfig({ schema })
+    return new ContentStore(root, flattenSchema(schema, config.contentRoot))
+  }
+
+  it('returns undefined when no entry exists yet at this slug', async () => {
+    const store = await makeStore()
+    const posts = unsafeAsLogicalPath('content/posts')
+    expect(await store.getExistingEntryType(posts, unsafeAsSlug('hello'))).toBeUndefined()
+  })
+
+  it('returns the non-default entry type embedded in an existing filename', async () => {
+    const store = await makeStore()
+    const posts = unsafeAsLogicalPath('content/posts')
+    await store.write(posts, unsafeAsSlug('main'), { format: 'json', data: {} }, 'settings')
+    expect(await store.getExistingEntryType(posts, unsafeAsSlug('main'))).toBe('settings')
+  })
+
+  it('returns the default entry type when that is what was written', async () => {
+    const store = await makeStore()
+    const posts = unsafeAsLogicalPath('content/posts')
+    await store.write(posts, unsafeAsSlug('hello'), { format: 'json', data: {} }, 'post')
+    expect(await store.getExistingEntryType(posts, unsafeAsSlug('hello'))).toBe('post')
   })
 })

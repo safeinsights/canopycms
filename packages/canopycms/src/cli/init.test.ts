@@ -134,6 +134,17 @@ describe('canopycms init', () => {
     expect(canopy).toContain('createDevAuthPlugin')
   })
 
+  it('clerk canopy.ts fails closed: prod always uses Clerk, never dev auth (SEC-C1)', async () => {
+    await init(defaultOpts(tmpDir, { authProvider: 'clerk' }))
+
+    const canopy = await fs.readFile(path.join(tmpDir, 'app/lib/canopy.ts'), 'utf-8')
+    // Plugin selection must consider the operating mode, not just an env var:
+    // prod picks Clerk even when CANOPY_AUTH_MODE is unset/misspelled/dropped.
+    expect(canopy).toContain("config.server.mode === 'prod' ||")
+    // The old footgun keyed selection on the env var ALONE (dev fallback in prod).
+    expect(canopy).not.toMatch(/authPlugin[:=]\s*\n?\s*process\.env\.CANOPY_AUTH_MODE/)
+  })
+
   it('generates passthrough middleware by default', async () => {
     await init(defaultOpts(tmpDir))
 
@@ -141,6 +152,17 @@ describe('canopycms init', () => {
     expect(mw).toContain('NextResponse.next()')
     // Clerk middleware appears in comments as a guide, but not as active code
     expect(mw).toContain('export default function middleware()')
+  })
+
+  it('passthrough middleware warns when CANOPY_AUTH_MODE=clerk but middleware was not regenerated', async () => {
+    await init(defaultOpts(tmpDir))
+
+    // ADO-M1: middleware.ts is frozen at init time and does not read CANOPY_AUTH_MODE
+    // at runtime like canopy.ts/edit page do. It should at least warn about the
+    // mismatch so an adopter who flips the env var without swapping this file notices.
+    const mw = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
+    expect(mw).toContain("process.env.CANOPY_AUTH_MODE === 'clerk'")
+    expect(mw).toContain('console.warn')
   })
 
   it('generates clerk middleware when authProvider is clerk', async () => {
