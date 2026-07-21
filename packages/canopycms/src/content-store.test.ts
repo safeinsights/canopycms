@@ -928,6 +928,76 @@ describe('ContentStore', () => {
       )
       expect(newDoc.data.title).toBe('Updated')
     })
+
+    it('detects a renamed entry via the live index without rescanning under the lock', async () => {
+      const root = await tmpDir()
+      const config = defineCanopyTestConfig({ schema })
+      const store = new ContentStore(root, flattenSchema(schema, config.contentRoot))
+
+      const doc = await store.write(
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsSlug('stale-slug'),
+        { format: 'json', data: { title: 'Original' } },
+      )
+
+      const existingId = await store.getIdForEntry(
+        unsafeAsLogicalPath('content/posts'),
+        unsafeAsSlug('stale-slug'),
+      )
+      expect(existingId).toBeTruthy()
+
+      // The live index already maps existingId -> the original path (write()
+      // populated it incrementally, and getIdForEntry()'s idIndex() call above
+      // was a cache-hit, not a rebuild).
+      const renamedAbsPath = doc.absolutePath.replace('stale-slug', 'moved-away')
+      const realIdIndex = store.idIndex.bind(store)
+
+      // write()'s pre-lock warm-up (its `await this.idIndex()`) is the only
+      // idIndex() call write() should make; the in-lock existence guard must
+      // read the live index synchronously instead of calling idIndex() again
+      // (which would run a full rescan while holding the entry lock). This
+      // mock intercepts exactly that one call: it resolves it normally (a
+      // cheap cache-hit, since nothing has invalidated the index yet), then --
+      // AFTER it has already returned its (still-fresh-at-that-instant)
+      // snapshot -- simulates a concurrent process renaming the file on disk
+      // and bumping the generation. That models invalidateIndex() firing
+      // between write()'s warm-up and its in-lock guard: the live index
+      // (`this._idIndex`) is left stale, pointing at the pre-rename path.
+      const idIndexSpy = vi.spyOn(store, 'idIndex').mockImplementationOnce(async () => {
+        const result = await realIdIndex()
+        await fs.rename(doc.absolutePath, renamedAbsPath)
+        store.invalidateIndex()
+        return result
+      })
+
+      // Writing at the original (now-renamed-away) slug with the stale ID must
+      // conflict: the guard's fresh directory scan finds the entry at its new
+      // location, which disagrees with the (deliberately un-rebuilt) live
+      // index.
+      await expect(
+        store.write(
+          unsafeAsLogicalPath('content/posts'),
+          unsafeAsSlug('stale-slug'),
+          { format: 'json', data: { title: 'Updated' } },
+          undefined,
+          existingId!,
+        ),
+      ).rejects.toThrow(ContentConflictError)
+
+      // Exactly one idIndex() call -- the pre-lock warm-up. If the guard had
+      // called idIndex() again, this count would be 2, and (because
+      // invalidateIndex() was called above) that second call would have
+      // performed a full rescan while holding the entry lock -- the latency
+      // regression this test guards against.
+      expect(idIndexSpy).toHaveBeenCalledTimes(1)
+
+      idIndexSpy.mockRestore()
+
+      // The renamed file must still be the only copy on disk -- the rejected
+      // write must not have created a duplicate at the old path.
+      const files = await fs.readdir(path.dirname(renamedAbsPath))
+      expect(files.filter((f) => f.includes(existingId!))).toHaveLength(1)
+    })
   })
 
   describe('multiple entry types', () => {

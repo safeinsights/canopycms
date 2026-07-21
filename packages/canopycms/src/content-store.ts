@@ -701,9 +701,19 @@ export class ContentStore {
       // (An intentional slug-change save passes: the index and the directory
       // agree on the entry's current — old-slug — path. External deletes also
       // pass: the ID is nowhere on disk, so recreating is last-writer-wins.)
+      //
+      // indexedRelPath reads the LIVE index synchronously — NOT idIndex() —
+      // because idIndex() would run a full rescan while holding the entry
+      // lock if invalidateIndex() fired between the pre-lock warm-up above
+      // and here. The live index may then be stale, but staleness only errs
+      // toward throwing ContentConflictError: actualRelPath comes from the
+      // fresh in-lock directory scan just below (ground truth), so a stale
+      // indexedRelPath can only turn agree->disagree (spurious conflict,
+      // which the caller already handles by reloading), never
+      // disagree->agree. Fail-closed, never fail-open.
       if (existingId && !(await filePathExists(absolutePath))) {
         const actualRelPath = await this.findEntryPathById(path.dirname(absolutePath), existingId)
-        const indexedRelPath = (await this.idIndex()).findById(existingId)?.relativePath ?? null
+        const indexedRelPath = this._idIndex.findById(existingId)?.relativePath ?? null
         if (actualRelPath !== null && actualRelPath !== indexedRelPath) {
           throw new ContentConflictError()
         }
