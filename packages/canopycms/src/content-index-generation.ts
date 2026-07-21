@@ -4,6 +4,7 @@ import {
   readResourceGeneration,
 } from './resource-generation'
 import { invalidateContentIndexesForRoot } from './content-index-registry'
+import { SCHEMA_GENERATION_RESOURCE } from './branch-schema-cache'
 
 /**
  * Cross-process ContentId index generation marker.
@@ -92,5 +93,32 @@ export async function readContentIndexGeneration(root: string): Promise<string |
  */
 export async function invalidateContentIndexesDurable(root: string): Promise<void> {
   await bumpContentIndexGeneration(root)
+  invalidateContentIndexesForRoot(root)
+}
+
+/**
+ * The entry point for operations that mutate a branch-clone root's working
+ * tree BROADLY rather than through a single known write/delete/rename call:
+ * git working-tree ops (checkout/merge/rebase/abort), content sync, CLI sync,
+ * and migrate. Such operations can touch `.collection.json` files as a side
+ * effect (a rebase can pull in upstream schema changes; a sync can overwrite
+ * the whole content directory), so both durable, cross-process caches rooted
+ * at `root` need to be told: the ContentId index (content-index-registry.ts)
+ * AND the resolved-schema cache (branch-schema-cache.ts).
+ *
+ * `invalidateContentIndexesDurable` remains the entry point for mutations
+ * that only ever touch content files, never schema (ContentStore's own
+ * write/delete/rename paths) - those don't need the extra schema bump.
+ *
+ * Both marker bumps are "hint" flavor (bumpResourceGeneration's default,
+ * `mustSucceed` not set): callers of this function are typically `finally`
+ * blocks in bulk operations (e.g. a git rebase cleanup) that must not start
+ * throwing because a marker write failed - log-and-swallow is the existing
+ * semantics at those call sites, and a lost bump only degrades to pre-marker
+ * staleness behavior plus whatever backstop the consumer implements.
+ */
+export async function invalidateBranchContentCaches(root: string): Promise<void> {
+  await bumpContentIndexGeneration(root)
+  await bumpResourceGeneration(root, SCHEMA_GENERATION_RESOURCE)
   invalidateContentIndexesForRoot(root)
 }

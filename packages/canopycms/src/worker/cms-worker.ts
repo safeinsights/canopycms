@@ -16,7 +16,7 @@ import type { Task } from './task-queue'
 import { createOrUpdatePullRequest, createCanopyOctokit } from '../github-service'
 import { getBranchMetadataFileManager, BranchMetadataFileManager } from '../branch-metadata'
 import { extractIdFromFilename } from '../content-id-index'
-import { invalidateContentIndexesDurable } from '../content-index-generation'
+import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, ROOT_COLLECTION_ID } from '../paths/types'
 import { getErrorMessage, isNodeError } from '../utils/error'
 
@@ -837,7 +837,7 @@ export class CmsWorker {
         // ID indexes rooted here stale so lookups rebuild from disk, in this
         // process and (via the on-disk generation marker) in the Lambda
         // containers sharing this filesystem.
-        await invalidateContentIndexesDurable(branchPath)
+        await invalidateBranchContentCaches(branchPath)
 
         // Convert file paths to ContentIds — immutable, survives slug renames.
         // Entry files have IDs in their filename (e.g., "post.slug.a1b2c3d4e5f6.mdx").

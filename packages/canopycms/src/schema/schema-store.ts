@@ -18,7 +18,7 @@ import { withLock } from '../utils/async-mutex'
 import type { ContentFormat } from '../config'
 import type { EntrySchemaRegistry } from './types'
 import { resolveCollectionPath } from '../content-id-index'
-import { invalidateContentIndexesDurable } from '../content-index-generation'
+import { invalidateBranchContentCaches } from '../content-index-generation'
 import { generateId, isValidId } from '../id'
 import { createLogicalPath, validateAndNormalizePath } from '../paths'
 import type { LogicalPath, ContentId } from '../paths/types'
@@ -175,9 +175,16 @@ export class SchemaOps {
    * indexes for this branch: in-process via the registry and cross-process via
    * the on-disk generation marker. ContentStores (and the marker) are rooted
    * at the branch root, the contentRoot's parent.
+   *
+   * Uses the combined invalidateBranchContentCaches() helper rather than the
+   * content-index-only invalidateContentIndexesDurable(): every call site here
+   * is already followed by its own invalidateSchemaCache() call below, so this
+   * double-bumps the schema generation marker. That's harmless (bumps are
+   * idempotent hints, not counters) and keeps this call uniform with the other
+   * bulk-mutation call sites that use the combined helper.
    */
   private async invalidateContentIdIndexes(): Promise<void> {
-    await invalidateContentIndexesDurable(path.dirname(this.contentRoot))
+    await invalidateBranchContentCaches(path.dirname(this.contentRoot))
   }
 
   // --------------------------------------------------------------------------
