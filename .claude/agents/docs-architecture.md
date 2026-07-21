@@ -6,9 +6,11 @@ tools: Read, Edit, Grep, Glob
 
 You are a documentation specialist for CanopyCMS. Your job is to keep ARCHITECTURE.md up-to-date as the system evolves.
 
-## Target File
+## Target Files
 
-`ARCHITECTURE.md`
+- `ARCHITECTURE.md`
+- `docs/concurrency.md` — the concurrency-model reference (locking layers, generation
+  markers, EFS/NFS semantics, per-resource table, recipes)
 
 ## Purpose
 
@@ -89,6 +91,13 @@ Update ARCHITECTURE.md when:
 4. Operating modes are added or changed
 5. Major workflow changes occur
 6. A significant design decision is made
+
+Update `docs/concurrency.md` when locking, caching, invalidation, or cross-process
+coordination behavior changes — anything touching `.canopy-meta/` markers/locks,
+`utils/async-mutex.ts`, `utils/occ-json-write.ts`, `resource-generation.ts`,
+`content-index-generation.ts`, or the concurrency behavior of a store/cache. Keep its
+per-resource table and recipes in sync with the code; unlike ARCHITECTURE.md, that
+document intentionally names files, so verify its file references still exist.
 
 ## Key Directories to Monitor
 

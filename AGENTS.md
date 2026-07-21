@@ -54,14 +54,14 @@ The core package (`packages/canopycms/src/`) is organized into focused modules:
 - `api/` - API handlers (see [api/AGENTS.md](packages/canopycms/src/api/AGENTS.md) for API development guidelines)
 - `middleware/` - API middleware patterns (branch access guards); see also `api/guards.ts` for declarative guard system
 - `validation/` - Validation utilities (field traversal, reference validation, entry link validation, pure isomorphic entry schema validation in `entry-validator.ts` shared by the editor and the authoritative server write boundary)
-- `utils/` - Shared utilities (error handling, debug, atomic file writes, title-field: resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists)
+- `utils/` - Shared utilities (error handling, debug, atomic file writes, title-field: resolveEntryTitle, findInvalidTitleFields, findTitleFieldsInLists); `occ-json-write.ts` - shared OCC JSON write helper (`writeOccJsonFile`, `withOccRetry`, `withOccFileLock`) adopted by comment-store.ts and branch-metadata.ts — see [docs/concurrency.md](docs/concurrency.md)
 - `worker/` - CmsWorker daemon, task queue, deployment infrastructure
 - `ai/` - AI-ready content generation (markdown converter, engine, route handler); transforms (field/component/body) + entry transforms with traversal-guarded `readSibling` for folding in colocated sibling artifacts
 - `build/` - Static build utilities (write AI content files to disk)
 - `static/` - Framework-agnostic static-generation helpers (collectStaticPaths; sitemap/SEO deferred)
 - `cli/` - CLI commands (`init`, `init-deploy`, `worker run-once`, `generate-ai-content`, `sync`, `migrate`); project-root discovery (`project-root.ts`)
 
-Top-level files (intentionally flat for discoverability): services.ts, content-store.ts, content-listing.ts, content-tree.ts, entry-link-resolver.ts, git-manager.ts, branch-registry.ts, sync-core.ts (prompt-free content sync core), dev-content-watcher.ts (dev working-tree↔branch-clone divergence detection), content-index-generation.ts (on-disk cross-process ContentId index generation marker; `invalidateContentIndexesDurable` is the single entry point for mutation sites), etc.
+Top-level files (intentionally flat for discoverability): services.ts, content-store.ts (mutator lock keys are namespaced content-ID keys from a directory-scan pre-pass), content-listing.ts, content-tree.ts, entry-link-resolver.ts, git-manager.ts, branch-registry.ts, sync-core.ts (prompt-free content sync core), dev-content-watcher.ts (dev working-tree↔branch-clone divergence detection), resource-generation.ts (generalized on-disk generation-marker primitive: per-resource marker under `.canopy-meta/`, bump/read/isGenerationCurrent), content-index-generation.ts (thin wrapper over resource-generation.ts for the ContentId index; `invalidateContentIndexesDurable` is the entry point for content-only mutation sites, `invalidateBranchContentCaches` for bulk working-tree mutations that also bump the schema marker), etc.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md#module-structure) for detailed module documentation.
 
@@ -78,6 +78,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md#module-structure) for detailed module docu
 - Keep the styling of the host app separate from that of the CanopyCMS editing interface. CanopyCMS uses Mantine, but host apps/examples can use whatever they want.
 - Keep docs current: update `BACKLOG.md`, `README.md`, and AGENTS when behavior or workflows change.
 - Always honor branch modes (prod/dev) and path traversal guards. Branch metadata/registry live under `.canopy-dev/` (dev) or the configured workspace root (prod).
+- Concurrency: before adding any cache, mutable JSON file, or read-modify-write against the workspace, read [docs/concurrency.md](docs/concurrency.md) (locking layers, generation markers, EFS/NFS rules, recipes) — and keep it updated when you change that behavior.
 - Expose client-only React via `canopycms/client` with `use client`; keep server-only deps out of browser bundles.
 
 ## Quality Checks

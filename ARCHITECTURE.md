@@ -394,6 +394,8 @@ CanopyCMS is entirely file system based. There are no external databases, no Red
 - **Settings (prod)**: `groups.json` and `permissions.json` on orphan branch `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific), workspace at `{workspaceRoot}/settings/`
 - **Settings (dev)**: Same orphan branch mechanism as prod (`canopycms-settings-{deploymentName}`), workspace at `.canopy-dev/settings/` (gitignored, local development only)
 
+**Concurrent writes**: Branch metadata and comments are each mutated by more than one host at a time in practice (several warm Lambda containers plus the worker, all sharing EFS). Both are protected by a server-enforced cross-host lock in addition to in-process serialization and per-write version checks, so a lost update across hosts is not an accepted risk for either file. See [docs/concurrency.md](docs/concurrency.md) for the full protection model and why each layer alone isn't sufficient.
+
 **Deployment model**: CanopyCMS is designed to be deployed to a server or serverless function with an attached file system shared by all server processes. On AWS, this could mean Lambda + EFS.
 
 ## Content Identification System
@@ -466,6 +468,12 @@ This enables O(1) lookups in both directions:
 - Memory overhead: ~1KB per entry
 
 ### Multi-Process Consistency
+
+> The full concurrency model — the four protection layers (in-process mutex, per-file
+> OCC, server-enforced lockfile, generation markers), EFS/NFS semantics, the
+> per-resource protection table, residual staleness windows, and recipes for new
+> caches/stores — lives in [docs/concurrency.md](docs/concurrency.md). This section
+> covers only the ContentId index.
 
 The index is NOT thread-safe, and each process holds its own in-memory copy. There is no shared memory or cross-host file watching between processes (several warm Lambda containers plus the worker sharing branch clones on EFS), so the shared filesystem itself is the coordination medium:
 
@@ -654,6 +662,12 @@ Schema resolution happens during service initialization through a multi-step pro
 - Lists available schema registry keys in error messages
 - Validates collection structure during parse (must have entries or collections)
 - Throws if no `.collection.json` files are found in the content directory
+
+### Schema Cache Invalidation
+
+The resolved schema is cached per branch so ordinary requests don't re-scan and re-parse every `.collection.json` file. Schema edits (adding a collection, changing an entry type, reordering) invalidate that cache the same way branch metadata and the content ID index do: by bumping a cross-process generation marker rather than mutating the cache in place. Every warm host sharing the branch workspace (Lambda containers, the worker) notices the bump at its next read and re-resolves.
+
+Bulk working-tree operations — a rebase pulling in upstream `.collection.json` changes, a sync, a migration — also bump the schema marker, not just direct schema edits made through the editor. This was a deliberate backstop: a git operation that changes schema files on disk without going through the schema-editing API would otherwise leave every process serving a stale schema with no signal to refresh. See [docs/concurrency.md](docs/concurrency.md) for the generation-marker protocol and the residual staleness windows it accepts.
 
 ### Async Initialization Pattern
 
@@ -1261,7 +1275,7 @@ Helper functions (`isAdmin`, `isReviewer`, `isPrivileged`) provide convenient ro
 
 - **Dev mode**: Settings on orphan branch `canopycms-settings-{deploymentName}`, workspace at `.canopy-dev/settings/` (gitignored, local development only)
 - **Prod mode**: Settings on orphan branch `canopycms-settings-{deploymentName}`, workspace at `{workspaceRoot}/settings/` (version-controlled, deployment-specific)
-- Branch ACLs are stored in each branch's metadata file (`.canopy-meta/branch.json`)
+- Branch ACLs are stored in each branch's metadata file (`.canopy-meta/branch.json`); saves to this file are protected by a server-enforced cross-host lock, so an ACL or status update can't be silently lost when two hosts write it at once (see [docs/concurrency.md](docs/concurrency.md))
 
 The `permissions/` and `groups/` subdirectories handle file schema definitions and loading logic for these configuration files.
 
@@ -1674,6 +1688,7 @@ The comment system supports asynchronous review workflows.
 - Comments are stored per-branch in `.canopy-meta/comments.json`
 - Comments are NOT committed to git—they're review artifacts, automatically excluded via git info/exclude
 - Thread resolution is controlled by the thread author, reviewers, or admins
+- Comment writes are safe under concurrent reviewers, including two different Lambda containers writing at the same moment: an in-process mutex, a server-enforced cross-host lock, and per-write version checks compose so a comment can't be silently lost to a concurrent write on another host (see [docs/concurrency.md](docs/concurrency.md))
 
 ## Editor Architecture
 
