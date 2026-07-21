@@ -137,19 +137,20 @@ describe('BranchMetadataFileManager', () => {
   })
 
   describe('registry invalidation', () => {
-    it('update() invalidates registry cache', async () => {
+    it('update() invalidates registry cache and eagerly rewrites it', async () => {
       const branchRoot = await tmpDir()
       const registryDir = await tmpDir()
-
-      // Create initial cache file
-      const cacheFile = path.join(registryDir, 'branches.json')
-      await fs.mkdir(path.dirname(cacheFile), { recursive: true })
-      await fs.writeFile(cacheFile, JSON.stringify({ version: 1, branches: [] }))
 
       // Create metadata with registryDir
       const meta = getBranchMetadataFileManager(branchRoot, registryDir)
 
-      // First update creates the metadata and invalidates cache
+      // First update creates the metadata and invalidates cache. invalidate()
+      // bumps the resource-generation marker and eager-regenerates, so
+      // branches.json exists immediately. Note branchRoot here is NOT nested
+      // under registryDir (unlike real usage), so the eager scan itself finds
+      // no branch subdirectories - this test only exercises the bump +
+      // eager-rewrite mechanism, not branch discovery (see branch-registry.test.ts
+      // for that).
       await meta.save({
         branch: {
           name: 'feature/z',
@@ -158,27 +159,37 @@ describe('BranchMetadataFileManager', () => {
         },
       })
 
-      // Recreate cache file to test invalidation on second update
-      await fs.writeFile(cacheFile, JSON.stringify({ version: 1, branches: [] }))
+      const cacheFile = path.join(registryDir, 'branches.json')
+      const firstSnapshot = JSON.parse(await fs.readFile(cacheFile, 'utf8')) as {
+        version: number
+        branches: unknown[]
+        generation: string | null
+      }
+      expect(firstSnapshot.branches).toHaveLength(0)
+      const firstGeneration = firstSnapshot.generation
+      expect(firstGeneration).not.toBeNull()
 
-      // Second update should also invalidate registry
+      // Second update should also invalidate and eager-regenerate, bumping
+      // the embedded generation token again.
       await meta.save({
         branch: { status: 'submitted' },
       })
 
-      // Cache should be gone, stale file should exist
-      const cacheExists = await fs
-        .stat(cacheFile)
-        .then(() => true)
-        .catch(() => false)
+      const secondSnapshot = JSON.parse(await fs.readFile(cacheFile, 'utf8')) as {
+        version: number
+        branches: unknown[]
+        generation: string | null
+      }
+      expect(secondSnapshot.branches).toHaveLength(0)
+      expect(secondSnapshot.generation).not.toBe(firstGeneration)
+
+      // The legacy rename-based stale artifact is never produced.
       const staleFile = path.join(registryDir, 'branches.stale.json')
       const staleExists = await fs
         .stat(staleFile)
         .then(() => true)
         .catch(() => false)
-
-      expect(cacheExists).toBe(false)
-      expect(staleExists).toBe(true)
+      expect(staleExists).toBe(false)
     })
 
     it('getBranchMetadataFileManager factory creates metadata with registryDir', async () => {
