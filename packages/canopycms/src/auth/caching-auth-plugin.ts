@@ -35,15 +35,23 @@ export type TokenVerifier = (context: unknown) => Promise<{ userId: CanopyUserId
  *
  * In dev mode, an optional `lazyRefresher` can be provided to auto-populate
  * the cache on first request, eliminating the need to run `worker run-once` manually.
+ *
+ * This wrapper only forwards the inner plugin's `verifiesCredentials` affirmation via the
+ * `options` constructor param — it cannot launder an insecure plugin, because
+ * createNextCanopyContext asserts the INNER plugin (before wrapping) in context-wrapper.ts.
  */
 export class CachingAuthPlugin implements AuthPlugin {
   private refreshPromise: Promise<void> | null = null
+  readonly verifiesCredentials: boolean
 
   constructor(
     private readonly verifyToken: TokenVerifier,
     private readonly cache: AuthCacheProvider,
     private readonly lazyRefresher?: () => Promise<unknown>,
-  ) {}
+    options?: { verifiesCredentials?: boolean },
+  ) {
+    this.verifiesCredentials = options?.verifiesCredentials === true
+  }
 
   private async ensureCachePopulated(): Promise<void> {
     if (!this.lazyRefresher) return

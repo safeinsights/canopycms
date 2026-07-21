@@ -15,6 +15,8 @@ import type { EntrySchemaRegistry } from '../schema/types'
 import { generateAIContent } from '../ai/generate'
 import { resolveBranchRoot } from '../ai/resolve-branch'
 import type { AIContentConfig } from '../ai/types'
+import { listEntries } from '../content-listing'
+import { assertBuildEntriesValid } from '../static'
 
 export interface GenerateAIContentFilesOptions {
   config: CanopyConfig
@@ -49,6 +51,12 @@ export async function generateAIContentFiles(
     const cached = await schemaCache.getSchema(branchRoot, entrySchemaRegistry, contentRootName)
     flatSchema = cached.flatSchema
   }
+
+  // Fail the build on abandoned create-scaffolds (schema-invalid entries) rather than baking them
+  // into generated AI content. Unconditional (no isBuildMode gate): this is an explicit build
+  // command, not something `next dev` runs incidentally.
+  const entriesForValidation = await listEntries(branchRoot, flatSchema, contentRootName)
+  assertBuildEntriesValid(entriesForValidation, 'AI content generation')
 
   // Create store and generate
   const store = new ContentStore(branchRoot, flatSchema)

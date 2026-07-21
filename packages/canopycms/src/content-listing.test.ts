@@ -650,4 +650,41 @@ describe('listEntries', () => {
     const entries = await listEntries(tempDir, flat, 'content')
     expect(entries).toHaveLength(0)
   })
+
+  it('populates schema with the matching entry type field definitions', async () => {
+    const contentDir = path.join(tempDir, 'content')
+    await fs.mkdir(contentDir)
+
+    const { dir: postsDir } = await createCollection(contentDir, 'posts')
+    await createEntry(postsDir, 'post', 'hello', 'md', { title: 'Hello' })
+    await createEntry(postsDir, 'page', 'about', 'md', { title: 'About' })
+
+    const postSchema = [{ name: 'title', type: 'string' as const, required: true }]
+    const pageSchema = [
+      { name: 'title', type: 'string' as const },
+      { name: 'slug', type: 'string' as const },
+    ]
+
+    const schema: RootCollectionConfig = {
+      collections: [
+        {
+          name: 'posts',
+          path: 'posts',
+          entries: [
+            { name: 'post', format: 'md', schema: postSchema },
+            { name: 'page', format: 'md', schema: pageSchema },
+          ],
+        },
+      ],
+    }
+    const flat = flattenSchema(schema, 'content')
+
+    const entries = await listEntries(tempDir, flat, 'content')
+
+    const postEntry = entries.find((e) => e.slug === 'hello')
+    const pageEntry = entries.find((e) => e.slug === 'about')
+
+    expect(postEntry?.schema).toEqual(postSchema)
+    expect(pageEntry?.schema).toEqual(pageSchema)
+  })
 })

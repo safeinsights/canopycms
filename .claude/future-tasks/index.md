@@ -62,7 +62,7 @@ Priority levels:
 | [static-export-sitemap.md](static-export-sitemap.md)                               | Static-export sitemap helper: enumerate published entries + singletons → `sitemap.xml` (framework-agnostic core + Next adapter) |
 | [static-export-seo-metadata.md](static-export-seo-metadata.md)                     | Static-export SEO metadata helper + recommended SEO field group → Next `Metadata`                                          |
 | [entry-navigator-scalability.md](entry-navigator-scalability.md)                   | Editor navigator loads all entries up front with a hard 10,000 ceiling; move to collection-scoped/lazy loading (+ keyset cursor) |
-| [pr106-review-followups.md](pr106-review-followups.md)                             | Deferred items from the PR #106 integration review: mode-default decision, lazy Clerk plugin vs pipeline secret, insecureDevOnly allowlist, worker PR-logic dedup, editor lows, test gaps |
+| [pr106-review-followups.md](pr106-review-followups.md)                             | RESOLVED — all deferred items from the PR #106 integration review (mode-default, abandoned-scaffold guard, worker PR-logic dedup, Octokit throttling, editor lows, idIndex-in-lock) fixed on `fix/pr106-review-followups` (2026-07-20); test-coverage gaps closed |
 
 ---
 

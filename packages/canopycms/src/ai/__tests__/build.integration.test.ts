@@ -11,6 +11,23 @@ import { unsafeAsLogicalPath, unsafeAsSlug } from '../../paths/test-utils'
 import { generateAIContentFiles } from '../../build/generate-ai-content'
 import type { AIManifest } from '../types'
 
+const scaffoldSchema: RootCollectionConfig = {
+  collections: [
+    {
+      name: 'posts',
+      path: 'posts',
+      entries: [
+        {
+          name: 'post',
+          format: 'md' as const,
+          schema: [{ name: 'title', type: 'string' as const, required: true }],
+          default: true,
+        },
+      ],
+    },
+  ],
+}
+
 const tmpDir = () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-ai-build-'))
 
 const testSchema: RootCollectionConfig = {
@@ -220,5 +237,72 @@ describe('generateAIContentFiles', () => {
     expect(postsDir).toContain('all.md')
     expect(postsDir).toContain('hello-world.md')
     expect(postsDir).toContain('second.md')
+  })
+
+  it('rejects an abandoned create-scaffold (schema-invalid empty entry)', async () => {
+    const config = defineCanopyTestConfig({ schema: scaffoldSchema })
+    const flat = flattenSchema(scaffoldSchema, config.contentRoot)
+    const store = new ContentStore(contentRoot, flat)
+
+    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('hello-world'), {
+      format: 'md',
+      data: { title: 'Hello World' },
+      body: '# Hello',
+    })
+    // Abandoned create-scaffold: the editor's create flow writes this before the user fills it
+    // in, and nothing else re-validates it once it's on disk.
+    const scaffoldSlug = unsafeAsSlug('untitled')
+    await store.write(unsafeAsLogicalPath('content/posts'), scaffoldSlug, {
+      format: 'md',
+      data: {},
+      body: '',
+    })
+
+    vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)
+
+    await expect(
+      generateAIContentFiles({
+        config: { ...config, mode: 'dev', deployedAs: 'static' },
+        entrySchemaRegistry: {},
+        outputDir,
+        _testFlatSchema: flat,
+      }),
+    ).rejects.toThrow(/CanopyCMS static build:.*content\/posts\/untitled/s)
+  })
+
+  it('resolves once the abandoned scaffold is fixed', async () => {
+    const config = defineCanopyTestConfig({ schema: scaffoldSchema })
+    const flat = flattenSchema(scaffoldSchema, config.contentRoot)
+    const store = new ContentStore(contentRoot, flat)
+
+    await store.write(unsafeAsLogicalPath('content/posts'), unsafeAsSlug('hello-world'), {
+      format: 'md',
+      data: { title: 'Hello World' },
+      body: '# Hello',
+    })
+    const scaffoldSlug = unsafeAsSlug('untitled')
+    await store.write(unsafeAsLogicalPath('content/posts'), scaffoldSlug, {
+      format: 'md',
+      data: {},
+      body: '',
+    })
+
+    // Fix the scaffold by filling in the required field.
+    await store.write(unsafeAsLogicalPath('content/posts'), scaffoldSlug, {
+      format: 'md',
+      data: { title: 'Untitled No More' },
+      body: '# Untitled No More',
+    })
+
+    vi.spyOn(process, 'cwd').mockReturnValue(contentRoot)
+
+    const result = await generateAIContentFiles({
+      config: { ...config, mode: 'dev', deployedAs: 'static' },
+      entrySchemaRegistry: {},
+      outputDir,
+      _testFlatSchema: flat,
+    })
+
+    expect(result.fileCount).toBeGreaterThan(0)
   })
 })

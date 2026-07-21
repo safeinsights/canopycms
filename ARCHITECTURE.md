@@ -905,7 +905,7 @@ CanopyCMS distinguishes between two branch concepts that serve different purpose
 
 ## Operating Modes
 
-CanopyCMS supports two operating modes to fit different environments. The mode is configured in `canopycms.config.ts` and defaults to `'dev'` if not specified. After Zod validation, `config.mode` is always defined and can be used throughout the codebase without fallback checks.
+CanopyCMS supports two operating modes to fit different environments. The mode is configured in `canopycms.config.ts` via a required `mode` field with no default. Omitting it fails Zod validation loudly at startup, rather than silently falling back to a mode — a prod deployment that forgot to set `mode` would otherwise run with dev's header-trusting auth semantics, trusting whatever identity a caller claims in a request header. After validation, `config.mode` is always defined and can be used throughout the codebase without fallback checks.
 
 ### dev
 
@@ -1004,6 +1004,8 @@ Each auth plugin package provides its own token verifier and cache writer:
 
 The cache is populated by the worker daemon (or `npx canopycms worker run-once` in dev mode). Lambda reads it on every request. Cache invalidation is mtime-based — when the worker writes new cache files, Lambda picks them up on the next request. In dev mode, `CachingAuthPlugin` accepts an optional lazy refresher callback that auto-populates the cache on first request if it does not yet exist, so developers do not need to run the worker manually before their first login.
 
+`CachingAuthPlugin` does not declare its own production trust — it forwards the wrapped plugin's `verifiesCredentials` affirmation through a constructor option (see [Authentication](#authentication) below). This matters because the framework adapter asserts trust against the wrapped (inner) plugin before wrapping it, so `CachingAuthPlugin` can never launder an insecure plugin into a trusted one just by adding a cache in front of it.
+
 **Transparent auto-wrapping via `verifyTokenOnly`**: Auth plugins can declare a `verifyTokenOnly?(context)` method on the `AuthPlugin` interface. This is a lightweight, networkless token verification path — it confirms the JWT signature and extracts a user ID without making any API calls or fetching metadata. When this optional method is present, `createNextCanopyContext` (the Next.js adapter) automatically wraps the plugin with `CachingAuthPlugin` + `FileBasedAuthCache` in `prod` and `dev` modes. Adopters do not need to wire up caching manually; the adapter detects the capability and enables caching transparently.
 
 **Cache path derivation**: The auth cache directory is derived from the workspace root returned by the operating mode strategy: `{workspaceRoot}/.cache`. Adopters can override this with the `CANOPY_AUTH_CACHE_PATH` environment variable. Because the workspace root is already the authoritative base for all mode-specific state, no additional configuration is needed in the common case.
@@ -1025,14 +1027,15 @@ The shared helper `github-sync.ts` provides `syncSubmitPr()` and `syncConvertToD
 **Task actions:**
 
 - `push-branch` -- pushes a branch from `remote.git` to GitHub
-- `push-and-create-pr` -- pushes then creates a new PR (content branches, first submit)
-- `push-and-update-pr` -- pushes then updates an existing PR (content branches, re-submit)
-- `push-and-create-or-update-pr` -- pushes then checks for an existing open PR before creating (used for settings PRs, which are updated repeatedly rather than creating one PR per branch)
+- `push-and-create-pr` / `push-and-update-pr` -- push then create or update a specific, already-known PR
+- `push-and-create-or-update-pr` -- pushes, then looks up any existing open PR for the branch and updates it in place, only creating a new one if none exists. This idempotent create-or-update is the standard path for both content-branch submits and settings-branch syncs, because either can be safely retried after a partial failure (e.g. the PR was created on GitHub but its number was never recorded in branch metadata) without hitting GitHub's duplicate-PR error. Content submits set a `markReadyIfDraft` flag in the task payload so the worker converts a pre-existing draft PR to ready-for-review; settings syncs, which are not review requests, omit the flag. The create-or-update logic itself lives in one shared helper (`createOrUpdatePullRequest` in `github-service.ts`), used by both the worker task and the direct-API path's initial-submit/crash-recovery branch (`GitHubService.createOrUpdatePR`, single-server deployments with internet) when a branch's PR number isn't yet known, so idempotency has a single implementation regardless of deployment topology. The direct-API path's other branch -- updating a PR by an already-known number -- calls `updatePullRequest` directly and performs its own draft-to-ready conversion rather than routing through the shared helper. Draft-conversion is therefore best-effort everywhere (a permissions-limited token can't fail an otherwise-successful submit or update), but has two independent call sites rather than one: the shared helper's `markReadyIfDraft` handling, and this second, separately-wrapped conversion in `api/github-sync.ts`.
 - `convert-to-draft` -- converts a PR to draft status (withdraw)
 - `close-pr` -- closes a PR
 - `delete-remote-branch` -- removes a branch from GitHub
 
 Branch metadata includes a `syncStatus` field (`synced`, `pending-sync`, `sync-failed`) so the editor UI can show sync progress. The settings branch commit operation (`commitToSettingsBranch`) returns the same `syncStatus` values, allowing the permissions and groups UI to surface sync state to admins.
+
+**Rate-limit handling**: Every Octokit instance CanopyCMS creates -- the worker's and `GitHubService`'s -- goes through a shared factory that attaches the `@octokit/plugin-throttling` plugin, so both proactively honor GitHub's retry-after guidance on primary and secondary (abuse-detection) rate limits instead of failing immediately. The worker retains a manual classification of HTTP 403 responses as a safety net for what the throttling plugin doesn't cover -- retries the plugin has already exhausted, and errors it never sees at all (e.g. non-403 network failures) -- so a rate-limited task fails permanently only when it genuinely should.
 
 #### Worker CLI
 
@@ -1831,7 +1834,7 @@ The same generation engine powers two delivery paths. Both read from the default
 
 **Route handler** (`canopycms/ai` entrypoint): A Next.js-native catch-all GET handler mounted at a separate route (e.g., `/ai/[...path]/route.ts`). It generates content lazily on first request and caches the result in memory. In dev mode, the cache is bypassed on every request so content changes are reflected immediately. In production, responses include a short `Cache-Control` header. The route handler returns standard `Response` objects directly -- it does not use the CanopyCMS `CanopyRequest`/`CanopyResponse` abstraction or the editor API's guard system, because it has no authentication or branch resolution requirements.
 
-**Static build utility** (`canopycms/build` entrypoint): Writes all generated files to a directory on disk (e.g., `public/ai/`). Used during the build step (e.g., `pnpm build`) or via the `npx canopycms generate-ai-content` CLI command. This path is appropriate for pure static exports where no Next.js server is running at request time.
+**Static build utility** (`canopycms/build` entrypoint): Writes all generated files to a directory on disk (e.g., `public/ai/`). Used during the build step (e.g., `pnpm build`) or via the `npx canopycms generate-ai-content` CLI command. This path is appropriate for pure static exports where no Next.js server is running at request time. Before writing any files, it unconditionally re-validates every entry against its schema and fails loudly if any are schema-invalid (see [Build-Time Content Validity Guard](#build-time-content-validity-guard)).
 
 ### Why a Separate Route Handler?
 
@@ -1966,6 +1969,17 @@ Ordinary page code reaches for enumeration or phase-selecting reads; only advanc
 
 **Deferred work:** Sitemap generation and SEO metadata extraction are intended to follow the same core-plus-adapter pattern but are tracked as separate future tasks. Only static path collection ships today.
 
+### Build-Time Content Validity Guard
+
+Static builds enumerate and export content without going through the editor's save-time validation, so a schema-invalid entry that made it onto disk — most commonly an abandoned create-scaffold (an empty entry the editor's create flow writes before the user fills it in, then never finishes) — could otherwise ship silently into the static output: a page that quietly disappears from route generation, or malformed content in an AI export. Both `collectStaticPaths()` and the AI content build utility (see [AI Content Generation](#ai-content-generation)) re-validate every entry against its schema before proceeding, using the same pure validation logic as the editor's save boundary, and fail the build loudly with a list of every offending entry -- not just the first -- rather than silently dropping or mangling a page.
+
+This guard is deliberately build-only, not runtime:
+
+- **`collectStaticPaths()`** only enforces this when a build-mode environment marker is set (`next build`'s production phase, or the generic `CANOPY_BUILD_MODE` flag for other frameworks). Skipping it in `next dev` matters because fresh create-scaffolds legitimately exist mid-edit during development -- failing the dev server on every unfinished draft would make routine editing unusable.
+- **The AI content build utility** enforces it unconditionally, since it is only ever invoked as an explicit build step (the CLI command or a build script), never incidentally by a dev server.
+
+Publishing and saving remain permissive by design -- this guard only runs at the point content is about to be exported for public consumption, not while an editor is still working on a branch.
+
 ## Extensibility Points
 
 ### Authentication
@@ -1983,6 +1997,8 @@ The interface also has one optional method:
 - **`verifyTokenOnly(context)`**: Lightweight, networkless JWT verification that returns just a user ID (no metadata). When implemented, framework adapters automatically enable file-based auth caching in prod and dev modes. This is the recommended path for Lambda deployments that have no internet access, and ensures dev mode mirrors prod behavior.
 
 This abstraction means you can use Clerk, Auth0, NextAuth, Supabase Auth, or a custom solution. See `canopycms-auth-clerk` as a reference implementation. Creating a new auth plugin involves implementing the interface and publishing it as a package.
+
+**Production trust gate — `verifiesCredentials`**: The interface also carries an optional `verifiesCredentials` marker. Framework adapters check every configured auth plugin against the operating mode before using it: if `mode` is `'prod'` and the plugin does not affirm `verifiesCredentials: true`, the adapter throws at handler creation rather than serving traffic. This is an allowlist, not a denylist — a plugin must actively declare that it performs real cryptographic credential verification (e.g. Clerk's JWT verification) to be trusted in production. A plugin that omits the marker is rejected in prod, whether that plugin is `canopycms-auth-dev`'s dev plugin (which intentionally trusts request headers/cookies with no verification, for local development) or a third-party plugin that simply forgot to set it. `CachingAuthPlugin` forwards rather than declares this marker (see [Auth Caching](#auth-caching-cachingauthplugin) above), and the static-deployment stub plugin (which unconditionally denies every request) sets it too, since an always-deny plugin is trivially safe in any mode.
 
 ### Framework Adapters
 
@@ -2078,6 +2094,13 @@ File paths can change when entries are renamed (slug changes). ContentIds are im
 
 Defense in depth. Branch access controls who can see a branch. Path permissions control what content they can edit. Combining them provides flexible policies: you might let someone access a branch but restrict them to certain content paths within it.
 
+### Why is `mode` required, and why an allowlist (not a denylist) for auth plugin trust?
+
+Two related changes close the same gap: a prod deployment silently running insecure, header-trusting auth semantics because of a missing or forgotten config value.
+
+- **`mode` has no default.** Earlier, an unconfigured `mode` fell back to `'dev'`, so a prod deploy that omitted the field by mistake would silently authenticate every request by trusting whatever identity a caller claimed — no error, no warning, just an open door. Making `mode` a required config field turns that mistake into a loud validation failure at startup instead of a silent security hole in production traffic.
+- **`verifiesCredentials` is an allowlist, not a denylist.** An earlier version of this guard asked plugins to opt themselves _out_ of production use by setting a marker. The problem with a denylist is the failure direction: a third-party or hand-rolled plugin that simply doesn't know about the marker is trusted by default, which is backwards for a check whose entire purpose is preventing header-spoofing impersonation. Flipping it to `verifiesCredentials: true` — a marker a plugin must affirmatively set to claim real cryptographic verification — makes the safe default rejection: an unrecognized or incomplete plugin fails closed in prod rather than silently granting every caller admin-equivalent access.
+
 ### Why modularize into focused subdirectories?
 
 The codebase underwent a major refactoring to decompose large files (600-1100+ lines) into focused modules. This provides several benefits:
@@ -2104,6 +2127,10 @@ The tradeoff is slightly more complex import paths, but the improved maintainabi
 ### Why separate packages for auth and framework adapters?
 
 Keeps the core framework-agnostic. Adopters only install what they need. Testing is simpler because the core doesn't depend on Next.js or Clerk. New frameworks and auth providers can be supported without modifying core code.
+
+### Why does ClerkAuthPlugin resolve its secret lazily?
+
+`ClerkAuthPlugin` resolves `CLERK_SECRET_KEY` and constructs the underlying Clerk client on first authenticated use, memoized afterward, rather than at construction time. This supports the two-deployment model (see [Static Deployment and Build Mode](#static-deployment-and-build-mode)): a zero-editor public build can import the same `canopy.ts` module — configured with `mode: 'prod'` and a real `ClerkAuthPlugin` — without the secret needing to be present in that build's environment, because the plugin is instantiated but never actually authenticates anything there. Only a deployment that actually receives authenticated requests needs the secret available at runtime.
 
 ### Why pnpm with strict workspace isolation?
 

@@ -11,12 +11,23 @@ const FALLBACK_AUTHOR = {
   gitBotAuthorEmail: 'canopycms-test@example.com',
 }
 
-type TestConfigInput = Omit<CanopyConfigInput, 'gitBotAuthorName' | 'gitBotAuthorEmail'> & {
+// mode has no default on the real schema (SEC-C1: a prod deploy that omits it must fail
+// validation loudly). This test-only fallback keeps existing test configs terse by
+// defaulting to 'dev'; production config authoring goes through defineCanopyConfig, which
+// has no such fallback.
+const FALLBACK_MODE = 'dev' as const
+
+type TestConfigInput = Omit<
+  CanopyConfigInput,
+  'gitBotAuthorName' | 'gitBotAuthorEmail' | 'mode'
+> & {
   schema: RootCollectionConfig
-} & Partial<Pick<CanopyConfigInput, 'gitBotAuthorName' | 'gitBotAuthorEmail'>>
+} & Partial<Pick<CanopyConfigInput, 'gitBotAuthorName' | 'gitBotAuthorEmail' | 'mode'>>
 
 /**
- * Test-only helper that fills required author fields for convenience.
+ * Test-only helper that fills required author fields (and defaults `mode` to 'dev') for
+ * convenience. The real schema requires `mode` with no default (SEC-C1); this helper
+ * intentionally defaults it so existing test configs don't all need `mode: 'dev'` added.
  * Do not use in production code; prefer defineCanopyConfig.
  */
 export const defineCanopyTestConfig = (
@@ -27,6 +38,7 @@ export const defineCanopyTestConfig = (
   const { schema: _schema, ...configWithoutSchema } = config
   return defineCanopyConfig({
     ...FALLBACK_AUTHOR,
+    mode: FALLBACK_MODE,
     ...configWithoutSchema,
     ...(overrides ?? {}),
   }).server

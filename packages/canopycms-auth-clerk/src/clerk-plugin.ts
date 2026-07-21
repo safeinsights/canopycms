@@ -121,21 +121,18 @@ export const extractToken = (headers: HeadersLike): string | null => {
  * Uses @clerk/backend for framework-agnostic JWT verification.
  */
 export class ClerkAuthPlugin implements AuthPlugin {
+  /** Verifies Clerk-issued JWTs via verifyToken — satisfies the prod allowlist guard. */
+  readonly verifiesCredentials = true
+
   private config: Required<Omit<ClerkAuthConfig, 'secretKey' | 'jwtKey' | 'authorizedParties'>> & {
-    secretKey: string
     jwtKey?: string
     authorizedParties?: string[]
   }
-  private clerkClient: ReturnType<typeof createClerkClient>
+  private readonly secretKeyOverride?: string
+  private resolvedSecretKey?: string
+  private clerkClientInstance?: ReturnType<typeof createClerkClient>
 
   constructor(config: ClerkAuthConfig = {}) {
-    const secretKey = config.secretKey ?? process.env.CLERK_SECRET_KEY
-    if (!secretKey) {
-      throw new Error(
-        'ClerkAuthPlugin: CLERK_SECRET_KEY environment variable or secretKey config is required',
-      )
-    }
-
     const jwtKey = config.jwtKey ?? process.env.CLERK_JWT_KEY
     const authorizedParties =
       config.authorizedParties ??
@@ -145,12 +142,33 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
     this.config = {
       useOrganizationsAsGroups: config.useOrganizationsAsGroups ?? true,
-      secretKey,
       jwtKey,
       authorizedParties,
     }
 
-    this.clerkClient = createClerkClient({ secretKey })
+    this.secretKeyOverride = config.secretKey
+  }
+
+  /**
+   * Resolves (and memoizes) the Clerk secret key at first use. Fail-closed: throws the
+   * same CLERK_SECRET_KEY error the constructor used to throw, now at the first
+   * authenticated call, so a zero-editor static build can import canopy.ts without the
+   * secret.
+   */
+  private getSecretKey(): string {
+    if (this.resolvedSecretKey) return this.resolvedSecretKey
+    const secretKey = this.secretKeyOverride ?? process.env.CLERK_SECRET_KEY
+    if (!secretKey) {
+      throw new Error(
+        'ClerkAuthPlugin: CLERK_SECRET_KEY environment variable or secretKey config is required',
+      )
+    }
+    this.resolvedSecretKey = secretKey
+    return secretKey
+  }
+
+  private getClerkClient(): ReturnType<typeof createClerkClient> {
+    return (this.clerkClientInstance ??= createClerkClient({ secretKey: this.getSecretKey() }))
   }
 
   async verifyTokenOnly(context: unknown): Promise<{ userId: string } | null> {
@@ -178,6 +196,8 @@ export class ClerkAuthPlugin implements AuthPlugin {
   }
 
   async authenticate(context: unknown): Promise<AuthenticationResult> {
+    const secretKey = this.getSecretKey()
+    const clerkClient = this.getClerkClient()
     try {
       // Extract headers from context (supports CanopyRequest and Headers)
       const headers = extractHeaders(context)
@@ -196,7 +216,7 @@ export class ClerkAuthPlugin implements AuthPlugin {
 
       // Verify the token
       const verifyOptions: Parameters<typeof clerkVerifyToken>[1] = {
-        secretKey: this.config.secretKey,
+        secretKey,
       }
 
       if (this.config.jwtKey) {
@@ -216,12 +236,12 @@ export class ClerkAuthPlugin implements AuthPlugin {
       const userId = payload.sub
 
       // Get user details from Clerk
-      const clerkUser = (await this.clerkClient.users.getUser(userId)) as ClerkUserData
+      const clerkUser = (await clerkClient.users.getUser(userId)) as ClerkUserData
 
       // Get organizations as external groups
       let externalGroups: string[] | undefined
       if (this.config.useOrganizationsAsGroups) {
-        const orgs = (await this.clerkClient.users.getOrganizationMembershipList({
+        const orgs = (await clerkClient.users.getOrganizationMembershipList({
           userId: clerkUser.id,
         })) as ClerkResponse<ClerkOrganizationMembership>
 
@@ -249,8 +269,9 @@ export class ClerkAuthPlugin implements AuthPlugin {
   }
 
   async searchUsers(query: string, limit = 10): Promise<UserSearchResult[]> {
+    const clerkClient = this.getClerkClient()
     try {
-      const response = (await this.clerkClient.users.getUserList({
+      const response = (await clerkClient.users.getUserList({
         query,
         limit,
       })) as ClerkResponse<ClerkUserData>
@@ -272,8 +293,9 @@ export class ClerkAuthPlugin implements AuthPlugin {
   }
 
   async getUserMetadata(userId: string): Promise<UserSearchResult | null> {
+    const clerkClient = this.getClerkClient()
     try {
-      const user = (await this.clerkClient.users.getUser(userId)) as ClerkUserData
+      const user = (await clerkClient.users.getUser(userId)) as ClerkUserData
       const mapped = mapClerkUserData(user)
       return {
         id: user.id,
@@ -292,8 +314,9 @@ export class ClerkAuthPlugin implements AuthPlugin {
       return null
     }
 
+    const clerkClient = this.getClerkClient()
     try {
-      const org = (await this.clerkClient.organizations.getOrganization({
+      const org = (await clerkClient.organizations.getOrganization({
         organizationId: groupId,
       })) as ClerkOrganization
 
@@ -313,8 +336,9 @@ export class ClerkAuthPlugin implements AuthPlugin {
       return []
     }
 
+    const clerkClient = this.getClerkClient()
     try {
-      const response = (await this.clerkClient.organizations.getOrganizationList({
+      const response = (await clerkClient.organizations.getOrganizationList({
         limit,
       })) as ClerkResponse<ClerkOrganization>
 
@@ -331,8 +355,9 @@ export class ClerkAuthPlugin implements AuthPlugin {
   }
 
   createCacheRefresher(cachePath: string) {
-    const { secretKey, useOrganizationsAsGroups } = this.config
+    const { useOrganizationsAsGroups } = this.config
     return async () => {
+      const secretKey = this.getSecretKey()
       const { refreshClerkCache } = await import('./cache-writer')
       return refreshClerkCache({ secretKey, cachePath, useOrganizationsAsGroups })
     }

@@ -31,6 +31,7 @@ const schema = {
 } as const
 
 const configBundle = defineCanopyConfig({
+  mode: 'dev',
   contentRoot: 'content',
   defaultBaseBranch: 'main',
   gitBotAuthorName: 'Canopy Bot',

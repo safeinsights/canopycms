@@ -35,11 +35,17 @@ const mockOctokit = {
   graphql: vi.fn(),
 }
 
-vi.mock('@octokit/rest', () => ({
-  Octokit: vi.fn(function () {
+vi.mock('@octokit/rest', () => {
+  // github-service.ts calls Octokit.plugin(throttling) at module load time to
+  // build a throttling-enabled constructor — the mock constructor needs a
+  // `.plugin` static (returning itself) so that still resolves to something
+  // constructible, even though this mock never uses real throttling.
+  const OctokitMock: any = vi.fn(function () {
     return mockOctokit
-  }),
-}))
+  })
+  OctokitMock.plugin = vi.fn(() => OctokitMock)
+  return { Octokit: OctokitMock }
+})
 
 describe('PR Workflow Integration', () => {
   let tmpRoot: string

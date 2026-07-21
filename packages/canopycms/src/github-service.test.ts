@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { GitHubService, createGitHubService } from './github-service'
+import {
+  GitHubService,
+  createGitHubService,
+  createCanopyOctokit,
+  shouldRetryRateLimit,
+  shouldRetrySecondaryRateLimit,
+} from './github-service'
 import type { CanopyConfig } from './config'
 import { mockConsole } from './test-utils/console-spy.js'
 
@@ -310,6 +316,116 @@ describe('GitHubService', () => {
         expect(consoleSpy).toHaveWarned('Found 2 open PRs')
         consoleSpy.restore()
       })
+
+      it('converts an existing draft PR to ready when markReadyIfDraft is set', async () => {
+        mockOctokit.pulls.list.mockResolvedValue({
+          data: [
+            {
+              number: 7,
+              html_url: 'https://github.com/test-owner/test-repo/pull/7',
+              updated_at: '2026-01-01T00:00:00Z',
+              draft: true,
+              node_id: 'PR_x',
+            },
+          ],
+        })
+        mockOctokit.graphql.mockResolvedValue({})
+
+        await service.createOrUpdatePR({
+          head: 'feature-branch',
+          base: 'main',
+          title: 'Submit feature-branch',
+          body: 'Body',
+          markReadyIfDraft: true,
+        })
+
+        expect(mockOctokit.graphql).toHaveBeenCalledWith(
+          expect.stringContaining('markPullRequestReadyForReview'),
+          expect.objectContaining({ pullRequestId: 'PR_x' }),
+        )
+      })
+
+      it('does not call graphql when the existing PR is not a draft, even with markReadyIfDraft', async () => {
+        mockOctokit.pulls.list.mockResolvedValue({
+          data: [
+            {
+              number: 7,
+              html_url: 'https://github.com/test-owner/test-repo/pull/7',
+              updated_at: '2026-01-01T00:00:00Z',
+              draft: false,
+              node_id: 'PR_x',
+            },
+          ],
+        })
+
+        await service.createOrUpdatePR({
+          head: 'feature-branch',
+          base: 'main',
+          title: 'Submit feature-branch',
+          body: 'Body',
+          markReadyIfDraft: true,
+        })
+
+        expect(mockOctokit.graphql).not.toHaveBeenCalled()
+      })
+
+      it('resolves as a successful (non-created) update, warning, when the draft->ready graphql mutation rejects', async () => {
+        // A fine-grained token that can update PRs but lacks the mutation's
+        // scope throws a GraphqlResponseError with no numeric HTTP status.
+        // That must not sink the already-succeeded push + pulls.update — see
+        // the best-effort handling in createOrUpdatePullRequest.
+        const consoleSpy = mockConsole()
+        mockOctokit.pulls.list.mockResolvedValue({
+          data: [
+            {
+              number: 7,
+              html_url: 'https://github.com/test-owner/test-repo/pull/7',
+              updated_at: '2026-01-01T00:00:00Z',
+              draft: true,
+              node_id: 'PR_x',
+            },
+          ],
+        })
+        mockOctokit.graphql.mockRejectedValue(new Error('Resource not accessible by integration'))
+
+        const result = await service.createOrUpdatePR({
+          head: 'feature-branch',
+          base: 'main',
+          title: 'Submit feature-branch',
+          body: 'Body',
+          markReadyIfDraft: true,
+        })
+
+        expect(result).toEqual({
+          number: 7,
+          url: 'https://github.com/test-owner/test-repo/pull/7',
+        })
+        expect(consoleSpy).toHaveWarned('Failed to convert PR #7 to ready for review')
+        consoleSpy.restore()
+      })
+
+      it('does not call graphql for a draft PR when markReadyIfDraft is not set', async () => {
+        mockOctokit.pulls.list.mockResolvedValue({
+          data: [
+            {
+              number: 7,
+              html_url: 'https://github.com/test-owner/test-repo/pull/7',
+              updated_at: '2026-01-01T00:00:00Z',
+              draft: true,
+              node_id: 'PR_x',
+            },
+          ],
+        })
+
+        await service.createOrUpdatePR({
+          head: 'feature-branch',
+          base: 'main',
+          title: 'Submit feature-branch',
+          body: 'Body',
+        })
+
+        expect(mockOctokit.graphql).not.toHaveBeenCalled()
+      })
     })
 
     describe('updatePullRequest', () => {
@@ -418,6 +534,44 @@ describe('GitHubService', () => {
           ref: 'heads/feature-branch',
         })
       })
+    })
+  })
+
+  describe('shouldRetryRateLimit', () => {
+    it('retries when under the retry-count limit and the wait is short', () => {
+      expect(shouldRetryRateLimit(60, 0)).toBe(true)
+      expect(shouldRetryRateLimit(60, 1)).toBe(true)
+    })
+
+    it('stops once retryCount reaches the limit (2)', () => {
+      expect(shouldRetryRateLimit(60, 2)).toBe(false)
+      expect(shouldRetryRateLimit(1, 3)).toBe(false)
+    })
+
+    it('stops once the wait exceeds 60s, even on the first retry', () => {
+      expect(shouldRetryRateLimit(61, 0)).toBe(false)
+    })
+  })
+
+  describe('shouldRetrySecondaryRateLimit', () => {
+    it('retries once when the wait is short', () => {
+      expect(shouldRetrySecondaryRateLimit(60, 0)).toBe(true)
+    })
+
+    it('stops once retryCount reaches the limit (1)', () => {
+      expect(shouldRetrySecondaryRateLimit(60, 1)).toBe(false)
+    })
+
+    it('stops once the wait exceeds 60s, even on the first retry', () => {
+      expect(shouldRetrySecondaryRateLimit(61, 0)).toBe(false)
+    })
+  })
+
+  describe('createCanopyOctokit', () => {
+    it('returns an Octokit instance with pulls and graphql available (construction is side-effect-free)', () => {
+      const octokit = createCanopyOctokit({ auth: 'test-token' })
+      expect(octokit.pulls).toBeDefined()
+      expect(typeof octokit.graphql).toBe('function')
     })
   })
 })

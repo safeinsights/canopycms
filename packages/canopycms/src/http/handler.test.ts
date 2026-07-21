@@ -419,20 +419,19 @@ describe('createCanopyRequestHandler', () => {
   })
 
   describe('auth plugin mode guard (SEC-C1)', () => {
-    /** Same shape as DevAuthPlugin: insecure marker AND verifyTokenOnly implemented. */
-    const insecureDevPlugin: AuthPlugin = {
+    /** Same shape as DevAuthPlugin: verifyTokenOnly implemented, no verifiesCredentials marker. */
+    const unmarkedDevPlugin: AuthPlugin = {
       ...createMockAuthPlugin(),
-      insecureDevOnly: true,
       verifyTokenOnly: async () => ({ userId: 'dev_user' }),
     }
 
     const prodConfig = { mode: 'prod', deployedAs: 'server' } as CanopyConfig
     const devConfig = { mode: 'dev', deployedAs: 'server' } as CanopyConfig
 
-    it('throws at creation when an insecure dev-only plugin is configured with mode prod', () => {
+    it('throws at creation when an unmarked plugin is configured with mode prod', () => {
       expect(() =>
-        createCanopyRequestHandler({ config: prodConfig, authPlugin: insecureDevPlugin }),
-      ).toThrow(/dev\/insecure auth plugin.*mode: 'prod'/)
+        createCanopyRequestHandler({ config: prodConfig, authPlugin: unmarkedDevPlugin }),
+      ).toThrow(/mode: 'prod'.*does not affirm.*verifiesCredentials/)
     })
 
     it('throws when prod mode comes from pre-built services', () => {
@@ -441,25 +440,33 @@ describe('createCanopyRequestHandler', () => {
         ...base,
         config: { ...base.config, mode: 'prod' as const },
       } as unknown as CanopyServices
-      expect(() => createCanopyRequestHandler({ services, authPlugin: insecureDevPlugin })).toThrow(
-        /dev\/insecure auth plugin/,
+      expect(() => createCanopyRequestHandler({ services, authPlugin: unmarkedDevPlugin })).toThrow(
+        /verifiesCredentials/,
       )
     })
 
-    it('accepts the same insecure plugin in dev mode', () => {
+    it('accepts the same unmarked plugin in dev mode', () => {
       expect(() =>
-        createCanopyRequestHandler({ config: devConfig, authPlugin: insecureDevPlugin }),
+        createCanopyRequestHandler({ config: devConfig, authPlugin: unmarkedDevPlugin }),
       ).not.toThrow()
     })
 
-    it('accepts a verifying plugin (verifyTokenOnly, no marker) in prod', () => {
+    it('accepts a verifying plugin (verifiesCredentials: true) in prod', () => {
       const verifyingPlugin: AuthPlugin = {
         ...createMockAuthPlugin(),
+        verifiesCredentials: true,
         verifyTokenOnly: async () => ({ userId: 'real_user' }),
       }
       expect(() =>
         createCanopyRequestHandler({ config: prodConfig, authPlugin: verifyingPlugin }),
       ).not.toThrow()
+    })
+
+    it('throws for an unmarked plugin without verifyTokenOnly in prod', () => {
+      const plainUnmarkedPlugin: AuthPlugin = { ...createMockAuthPlugin() }
+      expect(() =>
+        createCanopyRequestHandler({ config: prodConfig, authPlugin: plainUnmarkedPlugin }),
+      ).toThrow(/verifiesCredentials/)
     })
   })
 })

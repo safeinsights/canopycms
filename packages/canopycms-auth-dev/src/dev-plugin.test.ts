@@ -7,7 +7,7 @@ import {
   DEV_ADMIN_USER_ID,
 } from './dev-plugin'
 import type { DevUser, DevGroup } from './dev-plugin'
-import type { AuthenticationResult } from 'canopycms/auth'
+import type { AuthenticationResult, AuthPlugin } from 'canopycms/auth'
 
 // Type guard to assert successful authentication
 function assertSuccess(result: AuthenticationResult): asserts result is AuthenticationResult & {
@@ -21,12 +21,16 @@ function assertSuccess(result: AuthenticationResult): asserts result is Authenti
 }
 
 describe('DevAuthPlugin', () => {
-  describe('insecureDevOnly marker (SEC-C1)', () => {
-    it('is marked insecureDevOnly so core rejects it in prod mode', () => {
-      // This marker is what assertAuthPluginAllowedForMode (canopycms/auth) keys on.
-      // If it is ever removed, a prod deploy could silently accept X-Test-User headers.
-      expect(new DevAuthPlugin({}).insecureDevOnly).toBe(true)
-      expect(createDevAuthPlugin({ autoBootstrapAdmin: false }).insecureDevOnly).toBe(true)
+  describe('verifiesCredentials marker (SEC-C1)', () => {
+    it('does NOT set verifiesCredentials, so core rejects it in prod mode', () => {
+      // assertAuthPluginAllowedForMode (canopycms/auth) is an allowlist: it rejects any
+      // plugin whose verifiesCredentials is not exactly true when mode is 'prod'. This
+      // plugin trusts request headers with no cryptographic verification, so the ABSENCE
+      // of the marker is the security property here — if it were ever added, a prod
+      // deploy could silently accept X-Test-User headers.
+      const plugin: AuthPlugin = new DevAuthPlugin({})
+      expect(plugin.verifiesCredentials).toBeUndefined()
+      expect(createDevAuthPlugin({ autoBootstrapAdmin: false }).verifiesCredentials).toBeUndefined()
     })
   })
 

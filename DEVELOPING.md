@@ -1019,6 +1019,8 @@ const config = defineCanopyTestConfig({
 })
 ```
 
+**`mode` is required by the real config schema, but not in test fixtures:** production config (`defineCanopyConfig`) has no default for `mode` -- a prod deploy that omits it must fail validation loudly rather than silently running header-trusting dev auth semantics. `defineCanopyTestConfig()` (in `src/config-test.ts`) defaults `mode` to `'dev'` for you, so existing test configs don't all need `mode: 'dev'` added. Use `defineCanopyTestConfig()`/`createTestServices()` rather than hand-rolling `mode` into every test config; if you need a `'prod'`-mode test config, pass it explicitly (`defineCanopyTestConfig({ ..., mode: 'prod' })`).
+
 **Testing Schema Flattening**
 
 ```typescript
@@ -2243,6 +2245,63 @@ This approach ensures:
 - Expected console output doesn't pollute test runs
 - Unexpected console output still surfaces (helping catch real issues)
 - Console behavior is properly tested as part of the functionality
+
+### Testing GC-Dependent Code Deterministically (`WeakRef`/`FinalizationRegistry`)
+
+Code that prunes dead `WeakRef`s or registers a `FinalizationRegistry` callback can't be exercised by waiting for real garbage collection in a test -- GC timing is non-deterministic. `src/content-index-registry.test.ts` stubs the globals instead, so the pruning logic runs on command:
+
+**`WeakRef`: stub the global, since the module reads it fresh on every call**
+
+```typescript
+class FakeWeakRef<T extends object> {
+  static deadTargets = new Set<object>()
+  constructor(private readonly target: T) {}
+  deref(): T | undefined {
+    return FakeWeakRef.deadTargets.has(this.target) ? undefined : this.target
+  }
+}
+
+afterEach(() => vi.unstubAllGlobals())
+
+it('skips a dead ref', () => {
+  vi.stubGlobal('WeakRef', FakeWeakRef)
+  // ... register targets, then mark one dead via FakeWeakRef.deadTargets.add(target)
+})
+```
+
+This works because the production code calls `new WeakRef(target)` via a bare global reference resolved at call time -- stubbing before the call is enough, no module reload needed.
+
+**`FinalizationRegistry`: stub the global AND force a fresh module instance**
+
+If the production module captures the constructor at module-load time (`const finalization = new FinalizationRegistry(cb)`), stubbing the global after that module has already loaded has no effect on the existing instance. Combine `vi.stubGlobal()` with `vi.resetModules()` and a dynamic re-import so the fresh module wires up the fake:
+
+```typescript
+class FakeFinalizationRegistry<T> {
+  constructor(cb: (heldValue: T) => void) {
+    capturedCallback = cb
+  }
+  register(_target: object, heldValue: T): void {
+    capturedHeldValue = heldValue
+  }
+  unregister(): boolean {
+    return true
+  }
+}
+
+vi.stubGlobal('FinalizationRegistry', FakeFinalizationRegistry)
+vi.resetModules()
+
+try {
+  const fresh = await import('./content-index-registry')
+  fresh.registerContentIndexForInvalidation(root, target)
+  // capturedCallback/capturedHeldValue now hold what the engine would pass on real GC
+  capturedCallback?.(capturedHeldValue) // Simulate the engine deciding to collect `target`
+} finally {
+  vi.resetModules() // Restore the real module for subsequent tests
+}
+```
+
+**Why this matters:** without `vi.resetModules()`, the already-loaded module keeps its reference to the _real_ `FinalizationRegistry` constructor, so `vi.stubGlobal()` alone silently does nothing for module-load-time captures -- the test would pass for the wrong reason (or not exercise the finalizer path at all).
 
 ### Type-Level Testing with `expectTypeOf`
 

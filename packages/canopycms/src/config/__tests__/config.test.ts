@@ -18,6 +18,7 @@ import {
 const gitAuthor = {
   gitBotAuthorName: 'Test Bot',
   gitBotAuthorEmail: 'bot@example.com',
+  mode: 'dev' as const,
 }
 
 // Minimal stub satisfying the AuthPlugin interface, for fragment-merge tests (SCH-H2).
@@ -34,6 +35,31 @@ const fakeValidateEntry: ValidateEntryHook = async () => []
 describe('config validation', () => {
   it('accepts a minimal config', () => {
     expect(() => validateCanopyConfig({ ...gitAuthor })).not.toThrow()
+  })
+
+  // SEC-C1: `mode` has no default. A prod deploy that omits it must fail validation
+  // loudly instead of silently running header-trusting dev auth semantics.
+  it('throws when mode is omitted, with an error mentioning "mode"', () => {
+    const { mode: _mode, ...withoutMode } = gitAuthor
+
+    expect(() => validateCanopyConfig({ ...withoutMode })).toThrow(/mode/i)
+  })
+
+  // SEC-C1: composeCanopyConfig must not paper over a missing mode either — if no
+  // fragment in the chain supplies it, validation should fail the same way.
+  it('throws from composeCanopyConfig when no fragment supplies mode', () => {
+    const posts: CanopyConfigFragment = {
+      gitBotAuthorName: gitAuthor.gitBotAuthorName,
+      gitBotAuthorEmail: gitAuthor.gitBotAuthorEmail,
+    }
+
+    expect(() => composeCanopyConfig(posts)).toThrow(/mode/i)
+  })
+
+  it('round-trips an explicit mode: "prod"', () => {
+    const config = validateCanopyConfig({ ...gitAuthor, mode: 'prod' })
+
+    expect(config.mode).toBe('prod')
   })
 
   // SCH-M1: defaultBranchAccess/defaultPathAccess must resolve to 'deny' (fail closed),

@@ -46,6 +46,7 @@ import type { LogicalPath } from '../../paths/types'
 import { EntryTypeEditor } from './EntryTypeEditor'
 import { ConfirmDeleteModal } from '../components/ConfirmDeleteModal'
 import { getErrorMessage } from '../../utils/error'
+import type { SchemaOpResult } from '../hooks/useSchemaManager'
 
 // ============================================================================
 // Types
@@ -88,19 +89,22 @@ export interface CollectionEditorProps {
   availableSchemas: string[]
   /** Called when save is clicked for collection create/update */
   onSave: (data: CreateCollectionInput | UpdateCollectionInput, isNew: boolean) => void
-  /** Called when an entry type is added (edit mode only); resolves to whether the save succeeded */
+  /** Called when an entry type is added (edit mode only); resolves to the save result */
   onAddEntryType?: (
     collectionPath: LogicalPath,
     entryType: CreateEntryTypeInput,
-  ) => Promise<boolean>
-  /** Called when an entry type is updated (edit mode only); resolves to whether the save succeeded */
+  ) => Promise<SchemaOpResult>
+  /** Called when an entry type is updated (edit mode only); resolves to the save result */
   onUpdateEntryType?: (
     collectionPath: LogicalPath,
     entryTypeName: string,
     updates: Partial<CreateEntryTypeInput>,
-  ) => Promise<boolean>
+  ) => Promise<SchemaOpResult>
   /** Called when an entry type is removed (edit mode only) */
-  onRemoveEntryType?: (collectionPath: LogicalPath, entryTypeName: string) => void
+  onRemoveEntryType?: (
+    collectionPath: LogicalPath,
+    entryTypeName: string,
+  ) => Promise<SchemaOpResult> | void
   /** Called when modal is closed */
   onClose: () => void
   /** Whether a save operation is in progress */
@@ -274,7 +278,9 @@ export function CollectionEditor({
         setEntryTypeSaving(true)
         setEntryTypeError(null)
         try {
-          const success = isNew
+          // Absent props (optional chaining short-circuits to `undefined`) are
+          // treated as success — there's nothing to report back for them.
+          const result = isNew
             ? await onAddEntryType?.(editingCollection.logicalPath, data as CreateEntryTypeInput)
             : editingEntryType
               ? await onUpdateEntryType?.(
@@ -282,12 +288,15 @@ export function CollectionEditor({
                   editingEntryType.name,
                   data,
                 )
-              : true
-          if (!success) {
-            setEntryTypeError('Failed to save entry type. Please try again.')
+              : undefined
+          if (result && !result.ok) {
+            setEntryTypeError(result.error)
             return
           }
         } catch (err) {
+          // Genuine last resort: onAddEntryType/onUpdateEntryType return result
+          // objects by contract and are not expected to throw, but guard here
+          // in case a caller violates that contract.
           setEntryTypeError(getErrorMessage(err))
           return
         } finally {

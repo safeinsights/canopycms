@@ -16,10 +16,11 @@ export { DEFAULT_USERS, DEFAULT_GROUPS, DEV_ADMIN_USER_ID }
 export class DevAuthPlugin implements AuthPlugin {
   /**
    * This plugin trusts X-Test-User / x-dev-user-id headers and the dev cookie
-   * with NO cryptographic verification. Core rejects it when mode is 'prod'
-   * (see assertAuthPluginAllowedForMode in canopycms/auth).
+   * with NO cryptographic verification. It intentionally does NOT set
+   * `verifiesCredentials`, so core's allowlist guard rejects it whenever mode
+   * is 'prod' (see assertAuthPluginAllowedForMode in canopycms/auth) —
+   * absence is the security property here, fail-closed by default.
    */
-  readonly insecureDevOnly = true
 
   private users: DevUser[]
   private groups: DevGroup[]

@@ -27,10 +27,11 @@ vi.mock('@clerk/backend', () => ({
 }))
 
 import { ClerkAuthPlugin } from './clerk-plugin'
-import { verifyToken } from '@clerk/backend'
+import { verifyToken, createClerkClient } from '@clerk/backend'
 import type { CanopyRequest } from 'canopycms/http'
 
 const mockVerifyToken = verifyToken as any
+const mockCreateClerkClient = createClerkClient as any
 
 describe('ClerkAuthPlugin', () => {
   beforeEach(() => {
@@ -40,9 +41,10 @@ describe('ClerkAuthPlugin', () => {
   })
 
   describe('constructor', () => {
-    it('throws error if CLERK_SECRET_KEY not provided', () => {
+    it('does not throw if CLERK_SECRET_KEY not provided, and does not construct the Clerk client', () => {
       delete process.env.CLERK_SECRET_KEY
-      expect(() => new ClerkAuthPlugin()).toThrow('CLERK_SECRET_KEY')
+      expect(() => new ClerkAuthPlugin()).not.toThrow()
+      expect(mockCreateClerkClient).not.toHaveBeenCalled()
     })
 
     it('uses env var for secret key by default', () => {
@@ -54,6 +56,71 @@ describe('ClerkAuthPlugin', () => {
       const plugin = new ClerkAuthPlugin()
       // Config is private, but we can test behavior
       expect(plugin).toBeDefined()
+    })
+
+    it('sets verifiesCredentials: true (SEC-C1 allowlist marker)', () => {
+      // ClerkAuthPlugin verifies Clerk-issued JWTs, so it must affirm this marker for
+      // assertAuthPluginAllowedForMode to accept it in prod mode.
+      const plugin = new ClerkAuthPlugin()
+      expect(plugin.verifiesCredentials).toBe(true)
+    })
+  })
+
+  describe('lazy secret key resolution', () => {
+    it('authenticate() without the secret rejects with a CLERK_SECRET_KEY error', async () => {
+      delete process.env.CLERK_SECRET_KEY
+      const plugin = new ClerkAuthPlugin()
+      const req = {
+        method: 'GET',
+        header: vi.fn().mockImplementation((name: string) => {
+          if (name === 'Authorization') return 'Bearer test_token'
+          return null
+        }),
+      } as unknown as CanopyRequest
+
+      await expect(plugin.authenticate(req)).rejects.toThrow('CLERK_SECRET_KEY')
+    })
+
+    it('searchUsers() without the secret rejects with a CLERK_SECRET_KEY error', async () => {
+      delete process.env.CLERK_SECRET_KEY
+      const plugin = new ClerkAuthPlugin()
+
+      await expect(plugin.searchUsers('test')).rejects.toThrow('CLERK_SECRET_KEY')
+    })
+
+    it('memoizes the Clerk client: two authenticated calls create it once', async () => {
+      const plugin = new ClerkAuthPlugin()
+
+      mockVerifyToken.mockResolvedValue({ sub: 'user_123' })
+      mockGetUser.mockResolvedValue({
+        id: 'user_123',
+        fullName: 'John Doe',
+        primaryEmailAddress: { emailAddress: 'john@example.com' },
+      })
+      mockGetOrganizationMembershipList.mockResolvedValue({ data: [] })
+
+      const req = {
+        method: 'GET',
+        header: vi.fn().mockImplementation((name: string) => {
+          if (name === 'Authorization') return 'Bearer valid_token'
+          return null
+        }),
+      } as unknown as CanopyRequest
+
+      await plugin.authenticate(req)
+      await plugin.authenticate(req)
+
+      expect(mockCreateClerkClient).toHaveBeenCalledTimes(1)
+    })
+
+    it('secretKey config override works without the env var', async () => {
+      delete process.env.CLERK_SECRET_KEY
+      const plugin = new ClerkAuthPlugin({ secretKey: 'sk_override' })
+
+      mockGetUserList.mockResolvedValue({ data: [] })
+
+      await expect(plugin.searchUsers('test')).resolves.toEqual([])
+      expect(mockCreateClerkClient).toHaveBeenCalledWith({ secretKey: 'sk_override' })
     })
   })
 
@@ -371,6 +438,18 @@ describe('ClerkAuthPlugin', () => {
 
       expect(results).toEqual([])
       consoleSpy.restore()
+    })
+  })
+
+  describe('createCacheRefresher', () => {
+    it('returns a function without the secret, but invoking it rejects with a CLERK_SECRET_KEY error', async () => {
+      delete process.env.CLERK_SECRET_KEY
+      const plugin = new ClerkAuthPlugin()
+
+      const refresher = plugin.createCacheRefresher('/tmp/cache.json')
+
+      expect(refresher).toBeInstanceOf(Function)
+      await expect(refresher()).rejects.toThrow('CLERK_SECRET_KEY')
     })
   })
 

@@ -280,6 +280,11 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
  * a real prod deployment would mask a broken config and cause the worker-run-once
  * prod-safety guard to fall through to the dev-only task-skip path.
  *
+ * Since `mode` is now schema-required (no default — SEC-C1), a config file that omits
+ * it fails Zod validation inside defineCanopyConfig at import time; that surfaces here
+ * as a jiti-import failure, caught and re-thrown loudly below rather than silently
+ * treated as absent.
+ *
  * Accepts the same shapes as `cli/generate-ai-content.ts`:
  * `export default defineCanopyConfig({...})` → reads `.default.server.mode`
  * `export const config = defineCanopyConfig({...})` → reads `.config.server.mode`
@@ -379,11 +384,20 @@ export async function workerRunOnce(options: {
   }
   console.log(`\nCanopyCMS worker run-once (mode: ${mode}, auth: ${authMode})\n`)
 
-  // Refresh auth cache
+  // Refresh auth cache. A refresh failure (e.g. CLERK_SECRET_KEY missing —
+  // the Clerk plugin resolves it lazily at refresh time, not at construction)
+  // must be loud but must not abort the run: task draining below publishes
+  // content and is independent of the auth cache. Exit non-zero so
+  // orchestration still notices the stale/missing cache.
   if (refreshAuthCache) {
     console.log('Refreshing auth cache...')
-    await refreshAuthCache()
-    console.log('Auth cache refreshed')
+    try {
+      await refreshAuthCache()
+      console.log('Auth cache refreshed')
+    } catch (err) {
+      console.error(`Auth cache NOT refreshed: ${getErrorMessage(err)}`)
+      process.exitCode = 1
+    }
   }
 
   // Process task queue (if any pending tasks)
