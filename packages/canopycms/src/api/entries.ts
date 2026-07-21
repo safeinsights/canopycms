@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 import { z } from 'zod'
 
 import type { ContentFormat, EntryTypeConfig, FlatSchemaItem } from '../config'
@@ -419,9 +421,20 @@ const deleteEntryHandler = async (
     // Delete the entry
     await contentStore.delete(collectionLogicalPath, entrySlug)
 
-    // Update the collection's order array to remove the deleted item
+    // Update the collection's order array to remove the deleted item.
+    // Construct exactly like api/schema.ts's getSchemaOps: contentRoot (NOT
+    // branchRoot — SchemaOps derives branchRoot as dirname(contentRoot), so
+    // passing branchRoot would invalidate the wrong root) and with services,
+    // so updateOrder's .collection.json write bumps the schema generation
+    // marker. Without the bump, every host durably serves the stale cached
+    // order (still containing the deleted entry) until the next unrelated
+    // schema mutation — prod has no mtime backstop.
     if (contentId && collection.type === 'collection' && collection.order) {
-      const schemaStore = new SchemaOps(branchContext.branchRoot, ctx.services.entrySchemaRegistry)
+      const schemaStore = new SchemaOps(
+        path.join(branchContext.branchRoot, 'content'),
+        ctx.services.entrySchemaRegistry,
+        ctx.services,
+      )
       const newOrder = collection.order.filter((id) => id !== contentId)
       if (newOrder.length !== collection.order.length) {
         await schemaStore.updateOrder(collectionPath as LogicalPath, newOrder as string[])

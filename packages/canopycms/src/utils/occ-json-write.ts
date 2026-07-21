@@ -206,12 +206,36 @@ export async function withOccFileLock<T>(filePath: string, fn: () => Promise<T>)
   const dir = path.dirname(filePath)
   await fs.mkdir(dir, { recursive: true })
 
-  const release = await lockfile.lock(dir, {
-    lockfilePath: `${filePath}.lock`,
-    realpath: false,
-    stale: 10_000,
-    retries: { retries: 20, factor: 1.5, minTimeout: 25, maxTimeout: 250, randomize: true },
-  })
+  let release: () => Promise<void>
+  try {
+    release = await lockfile.lock(dir, {
+      lockfilePath: `${filePath}.lock`,
+      realpath: false,
+      stale: 10_000,
+      // The retry budget must exceed `stale`: a holder that died without
+      // releasing (kill -9) is only taken over once its lock goes stale, so
+      // waiters that give up sooner than that turn every crashed holder into
+      // ~10s of hard failures. Budget here sums to ~11.5s base (more with
+      // randomize), comfortably past one stale takeover.
+      retries: { retries: 11, factor: 1.6, minTimeout: 50, maxTimeout: 2000, randomize: true },
+      // A compromised lock (the lock dir vanished or refresh failed mid-hold,
+      // e.g. the branch directory containing it was deleted) must not crash
+      // the process, which is proper-lockfile's default. Our critical
+      // sections are short and idempotent-on-conflict (OCC verify inside);
+      // log and let the section finish.
+      onCompromised: (err) => {
+        log.warn('lock', `Lock compromised mid-hold for ${filePath}`, {
+          error: getErrorMessage(err),
+        })
+      },
+    })
+  } catch (err) {
+    // Exhausted the retry budget (or other acquisition failure): surface as
+    // the standard conflict type so adopters' boundary translation turns it
+    // into their public retriable conflict error instead of a raw ELOCKED
+    // leaking out as an opaque 500.
+    throw new OccWriteConflictError(`Could not acquire file lock: ${getErrorMessage(err)}`)
+  }
 
   try {
     return await fn()

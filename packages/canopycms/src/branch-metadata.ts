@@ -151,8 +151,9 @@ export class BranchMetadataFileManager {
    * public `BranchMetadataConflictError`.
    */
   async save(incoming: BranchMetadataUpdate): Promise<BranchMetadataFile> {
+    let saved: BranchMetadataFile
     try {
-      return await withLock(this.filePath, () =>
+      saved = await withLock(this.filePath, () =>
         withOccFileLock(this.filePath, () =>
           withOccRetry(async () => {
             const { meta: existing, version } = await this.load()
@@ -189,7 +190,6 @@ export class BranchMetadataFileManager {
             const written = await this.write(merged, version)
             merged.version = written.version
             merged.writeId = written.writeId
-            await this.invalidateRegistry()
             return merged
           }),
         ),
@@ -200,6 +200,13 @@ export class BranchMetadataFileManager {
       }
       throw err
     }
+    // Registry invalidation AFTER releasing the lockfile: the protocol only
+    // requires the bump to land strictly after the branch.json write (it
+    // does), and the registry's eager regeneration is O(branch count) fs
+    // reads on EFS — holding the server-enforced lock through it would
+    // extend every save's critical section for no correctness gain.
+    await this.invalidateRegistry()
+    return saved
   }
 
   /**

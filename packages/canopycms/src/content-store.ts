@@ -397,10 +397,11 @@ export class ContentStore {
    * buildPaths() re-resolution will find the first call's just-written file
    * and fold in as an edit (see write()). A concurrent create racing from a
    * DIFFERENT process is NOT covered by this in-process mutex -- accepted
-   * per the epic's design review: every entry gets its own freshly
-   * generated ID, so cross-process double-creates can only end in a
-   * slug-uniqueness/existence-guard style error, never a duplicate-ID
-   * collision.
+   * per the epic's design review: each writer mints its own fresh ID and
+   * writes its own distinct filename, so both writes succeed and the result
+   * is two same-slug files with different IDs (a slug-uniqueness violation
+   * surfaced on the next listing/lookup), never a duplicate-ID collision
+   * that would poison index rebuilds.
    */
   private createLockKey(schemaItem: FlatSchemaItem, slug: string): string {
     return `${this.root}:create:${this.collectionSlugKey(schemaItem, slug)}`
@@ -771,130 +772,154 @@ export class ContentStore {
     // re-resolved (ground truth) after the lock is held -- see
     // .claude/future-tasks/content-store-lock-key.md and entryLockKey().
     const prePass = await this.buildPaths(schemaItem, slug, { entryTypeName, existingId })
-    const lockKey = this.entryLockKey(schemaItem, slug, prePass)
+    let lockKey = this.entryLockKey(schemaItem, slug, prePass)
 
-    return withLock(lockKey, async () => {
-      // Re-resolve inside the lock: ground truth after acquisition. A
-      // concurrent renameEntry() may have moved this entry between the
-      // pre-pass above and acquiring this lock.
-      const { absolutePath, relativePath, id } = await this.buildPaths(schemaItem, slug, {
-        entryTypeName,
-        existingId,
-      })
+    // Reclassification loop: the pre-pass picked the lock key, but the world
+    // can change between the pre-pass and lock acquisition (a concurrent
+    // renameEntry() freeing this slug flips existing->new; a concurrent
+    // create landing flips new->existing). Writing under the WRONG kind of
+    // key would bypass serialization against the writers holding the right
+    // one (e.g. a reclassified-to-create write under an id-key racing a
+    // create-key holder on the same slug -> two same-slug files). So after
+    // the in-lock re-resolution, re-derive the key; on mismatch, release and
+    // re-acquire under the current key. Bounded: each flip requires another
+    // mutator to have completed in the gap; the cap only guards pathological
+    // scheduling.
+    const RETRY_KEY = Symbol('retry-with-new-lock-key')
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const outcome = await withLock(lockKey, async (): Promise<ContentDocument | symbol> => {
+        // Re-resolve inside the lock: ground truth after acquisition. A
+        // concurrent renameEntry() may have moved this entry between the
+        // pre-pass above and acquiring this lock.
+        const inLock = await this.buildPaths(schemaItem, slug, {
+          entryTypeName,
+          existingId,
+        })
+        const currentKey = this.entryLockKey(schemaItem, slug, inLock)
+        if (currentKey !== lockKey) {
+          lockKey = currentKey
+          return RETRY_KEY
+        }
+        const { absolutePath, relativePath, id } = inLock
 
-      await fs.mkdir(path.dirname(absolutePath), { recursive: true })
+        await fs.mkdir(path.dirname(absolutePath), { recursive: true })
 
-      // OCC: if caller supplied a version token, reject stale writes
-      if (input.expectedVersion !== undefined) {
-        try {
-          const existing = await fs.stat(absolutePath)
-          if (existing.mtimeMs !== input.expectedVersion) {
+        // OCC: if caller supplied a version token, reject stale writes
+        if (input.expectedVersion !== undefined) {
+          try {
+            const existing = await fs.stat(absolutePath)
+            if (existing.mtimeMs !== input.expectedVersion) {
+              throw new ContentConflictError()
+            }
+          } catch (err) {
+            if (err instanceof ContentConflictError) throw err
+            if (isNodeError(err) && err.code === 'ENOENT') {
+              // File doesn't exist yet — first write, skip version check
+            } else {
+              throw err
+            }
+          }
+        }
+
+        // Existence guard (cross-process): the caller asserts this entry already
+        // exists (existingId), so if no file is at the path we are about to
+        // write, this store's index may be stale — another process may have
+        // renamed the entry. Recreating a renamed entry's old path would leave
+        // two files with the same embedded ID and poison every subsequent index
+        // rebuild (ID collision). The directory listing is authoritative on this
+        // host: if the ID's actual on-disk location differs from what our index
+        // believes, fail with a conflict so the caller reloads fresh state.
+        // (An intentional slug-change save passes: the index and the directory
+        // agree on the entry's current — old-slug — path. External deletes also
+        // pass: the ID is nowhere on disk, so recreating is last-writer-wins.)
+        //
+        // indexedRelPath reads the LIVE index synchronously — NOT idIndex() —
+        // because idIndex() would run a full rescan while holding the entry
+        // lock if invalidateIndex() fired between the pre-lock warm-up above
+        // and here. The live index may then be stale, but staleness only errs
+        // toward throwing ContentConflictError: actualRelPath comes from the
+        // fresh in-lock directory scan just below (ground truth), so a stale
+        // indexedRelPath can only turn agree->disagree (spurious conflict,
+        // which the caller already handles by reloading), never
+        // disagree->agree. Fail-closed, never fail-open.
+        if (existingId && !(await filePathExists(absolutePath))) {
+          const actualRelPath = await this.findEntryPathById(path.dirname(absolutePath), existingId)
+          const indexedRelPath = this._idIndex.findById(existingId)?.relativePath ?? null
+          if (actualRelPath !== null && actualRelPath !== indexedRelPath) {
             throw new ContentConflictError()
           }
-        } catch (err) {
-          if (err instanceof ContentConflictError) throw err
-          if (isNodeError(err) && err.code === 'ENOENT') {
-            // File doesn't exist yet — first write, skip version check
-          } else {
-            throw err
-          }
         }
-      }
 
-      // Existence guard (cross-process): the caller asserts this entry already
-      // exists (existingId), so if no file is at the path we are about to
-      // write, this store's index may be stale — another process may have
-      // renamed the entry. Recreating a renamed entry's old path would leave
-      // two files with the same embedded ID and poison every subsequent index
-      // rebuild (ID collision). The directory listing is authoritative on this
-      // host: if the ID's actual on-disk location differs from what our index
-      // believes, fail with a conflict so the caller reloads fresh state.
-      // (An intentional slug-change save passes: the index and the directory
-      // agree on the entry's current — old-slug — path. External deletes also
-      // pass: the ID is nowhere on disk, so recreating is last-writer-wins.)
-      //
-      // indexedRelPath reads the LIVE index synchronously — NOT idIndex() —
-      // because idIndex() would run a full rescan while holding the entry
-      // lock if invalidateIndex() fired between the pre-lock warm-up above
-      // and here. The live index may then be stale, but staleness only errs
-      // toward throwing ContentConflictError: actualRelPath comes from the
-      // fresh in-lock directory scan just below (ground truth), so a stale
-      // indexedRelPath can only turn agree->disagree (spurious conflict,
-      // which the caller already handles by reloading), never
-      // disagree->agree. Fail-closed, never fail-open.
-      if (existingId && !(await filePathExists(absolutePath))) {
-        const actualRelPath = await this.findEntryPathById(path.dirname(absolutePath), existingId)
-        const indexedRelPath = this._idIndex.findById(existingId)?.relativePath ?? null
-        if (actualRelPath !== null && actualRelPath !== indexedRelPath) {
-          throw new ContentConflictError()
-        }
-      }
-
-      // Serialize content string
-      let content: string
-      if (input.format === 'json') {
-        content = `${JSON.stringify(input.data ?? {}, null, 2)}\n`
-      } else if (input.format === 'yaml') {
-        content = yamlStringify(input.data ?? {})
-      } else {
-        content = matter.stringify(input.body, input.data ?? {})
-      }
-
-      await atomicWriteFile(absolutePath, content)
-
-      // Update the ID index after a successful write. Look up and mutate the
-      // LIVE index in one synchronous window (no awaits in between): a
-      // concurrent rebuild may have swapped in a fresh instance since the
-      // pre-write snapshot, and updates must land where future lookups go.
-      const liveIndex = this._idIndex
-      let staleOldAbsPath: string | null = null
-      if (id) {
-        const existing = liveIndex.findById(id)
-        if (existing) {
-          if (existing.relativePath !== relativePath) {
-            // Slug changed — remember the orphaned old path to delete below
-            staleOldAbsPath = path.join(this.root, existing.relativePath)
-            liveIndex.updatePath(existing.id, relativePath)
-          }
+        // Serialize content string
+        let content: string
+        if (input.format === 'json') {
+          content = `${JSON.stringify(input.data ?? {}, null, 2)}\n`
+        } else if (input.format === 'yaml') {
+          content = yamlStringify(input.data ?? {})
         } else {
-          liveIndex.add({
-            type: 'entry',
-            relativePath,
-            collection: collectionPath,
-            slug: slug || undefined,
+          content = matter.stringify(input.body, input.data ?? {})
+        }
+
+        await atomicWriteFile(absolutePath, content)
+
+        // Update the ID index after a successful write. Look up and mutate the
+        // LIVE index in one synchronous window (no awaits in between): a
+        // concurrent rebuild may have swapped in a fresh instance since the
+        // pre-write snapshot, and updates must land where future lookups go.
+        const liveIndex = this._idIndex
+        let staleOldAbsPath: string | null = null
+        if (id) {
+          const existing = liveIndex.findById(id)
+          if (existing) {
+            if (existing.relativePath !== relativePath) {
+              // Slug changed — remember the orphaned old path to delete below
+              staleOldAbsPath = path.join(this.root, existing.relativePath)
+              liveIndex.updatePath(existing.id, relativePath)
+            }
+          } else {
+            liveIndex.add({
+              type: 'entry',
+              relativePath,
+              collection: collectionPath,
+              slug: slug || undefined,
+            })
+          }
+        }
+        if (staleOldAbsPath) {
+          await fs.unlink(staleOldAbsPath).catch((err: unknown) => {
+            if (!isNodeError(err) || err.code !== 'ENOENT') throw err
           })
         }
-      }
-      if (staleOldAbsPath) {
-        await fs.unlink(staleOldAbsPath).catch((err: unknown) => {
-          if (!isNodeError(err) || err.code !== 'ENOENT') throw err
-        })
-      }
-      await this.recordOwnMutation(liveIndex)
+        await this.recordOwnMutation(liveIndex)
 
-      const afterStat = await fs.stat(absolutePath)
-      const base = {
-        collection: schemaItem.logicalPath,
-        collectionName: schemaItem.name,
-        relativePath,
-        absolutePath,
-        version: afterStat.mtimeMs,
-      }
+        const afterStat = await fs.stat(absolutePath)
+        const base = {
+          collection: schemaItem.logicalPath,
+          collectionName: schemaItem.name,
+          relativePath,
+          absolutePath,
+          version: afterStat.mtimeMs,
+        }
 
-      if (input.format === 'json') {
-        return { ...base, format: 'json' as const, data: input.data ?? {} }
-      }
-      if (input.format === 'yaml') {
-        return { ...base, format: 'yaml' as const, data: input.data ?? {} }
-      }
-      return {
-        ...base,
-        format: input.format,
-        data: input.data ?? {},
-        body: input.body,
-        bodyFieldName: findBodyFieldName(fields),
-      }
-    })
+        if (input.format === 'json') {
+          return { ...base, format: 'json' as const, data: input.data ?? {} }
+        }
+        if (input.format === 'yaml') {
+          return { ...base, format: 'yaml' as const, data: input.data ?? {} }
+        }
+        return {
+          ...base,
+          format: input.format,
+          data: input.data ?? {},
+          body: input.body,
+          bodyFieldName: findBodyFieldName(fields),
+        }
+      })
+      if (typeof outcome !== 'symbol') return outcome
+    }
+    // Ten completed foreign mutations landed in our acquisition gaps in a
+    // row — treat as contention and let the caller reload + retry.
+    throw new ContentConflictError()
   }
 
   /**

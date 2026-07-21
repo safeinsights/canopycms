@@ -5,6 +5,7 @@ import { z } from 'zod'
 import type { BranchAccessControl, BranchContext, BranchMetadata } from '../types'
 import { BranchWorkspaceManager } from '../branch-workspace'
 import { getBranchMetadataFileManager } from '../branch-metadata'
+import { withOccFileLock } from '../utils/occ-json-write'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import { createDebugLogger } from '../utils/debug'
@@ -296,28 +297,46 @@ export const deleteBranchHandler = async (
     }
   }
 
-  // Delete branch metadata file so it disappears from registry scans
+  // Delete branch metadata file so it disappears from registry scans.
+  // Hold the same server-enforced lockfile branch-metadata saves hold
+  // (see utils/occ-json-write.ts): an unguarded unlink racing a concurrent
+  // save() would let the save's create path resurrect a phantom branch.json
+  // inside a deleted branch, which the registry's next scan would list as a
+  // live branch with no clone. The directory removal happens inside the
+  // same hold so a racing save cannot slip between unlink and rm either.
   const metadataFile = path.join(branchContext.branchRoot, '.canopy-meta', 'branch.json')
   try {
-    await fs.unlink(metadataFile)
-  } catch (err: unknown) {
-    if (!isNotFoundError(err)) {
-      console.error(
-        `CanopyCMS: Failed to delete branch metadata for ${branchName}:`,
-        getErrorMessage(err),
-      )
-    }
-  }
+    await withOccFileLock(metadataFile, async () => {
+      try {
+        await fs.unlink(metadataFile)
+      } catch (err: unknown) {
+        if (!isNotFoundError(err)) {
+          console.error(
+            `CanopyCMS: Failed to delete branch metadata for ${branchName}:`,
+            getErrorMessage(err),
+          )
+        }
+      }
 
-  // In multi-branch modes, also delete the entire branch directory
-  if (branchContext.branchRoot !== branchContext.baseRoot) {
-    try {
-      await fs.rm(branchContext.branchRoot, { recursive: true, force: true })
-    } catch (err: unknown) {
-      console.error(
-        `CanopyCMS: Failed to delete branch directory for ${branchName}:`,
-        getErrorMessage(err),
-      )
+      // In multi-branch modes, also delete the entire branch directory
+      if (branchContext.branchRoot !== branchContext.baseRoot) {
+        try {
+          await fs.rm(branchContext.branchRoot, { recursive: true, force: true })
+        } catch (err: unknown) {
+          console.error(
+            `CanopyCMS: Failed to delete branch directory for ${branchName}:`,
+            getErrorMessage(err),
+          )
+        }
+      }
+    })
+  } catch (err: unknown) {
+    // Lock acquisition failed (e.g. contention past the retry budget) —
+    // surface as an error rather than silently skipping the delete.
+    return {
+      ok: false,
+      status: 409,
+      error: `Branch is busy, try again: ${getErrorMessage(err)}`,
     }
   }
 

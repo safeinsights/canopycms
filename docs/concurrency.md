@@ -100,10 +100,19 @@ The protocol (full rationale in resource-generation.ts's doc comment):
 **Durable-snapshot caveat (window E, below):** for consumers that persist their
 snapshot to disk (registry, schema cache), a scan served from stale NFS caches can
 durably record a fresh token over stale data — a _shared_ staleness all hosts trust
-until the next bump. Mitigations every such consumer implements: **eager regeneration
-on the mutating host** right after its bump (its own scan is coherent with its own
-mutation), and a **suspicious-miss backstop** (a lookup that "should" hit but misses
-forces one throttled rescan).
+until the next bump. Mitigations: **eager regeneration on the mutating host** right
+after its bump (its own scan is coherent with its own mutation) — the registry does
+this inside `invalidate()`, the schema cache one level up in
+`SchemaOps.invalidateSchemaCache()` — and, for the registry, a **suspicious-miss
+backstop** (`get()` on a name missing from the snapshot forces one throttled rescan).
+The schema cache has no equivalent miss signal; bulk-mutation bumps (git ops) accept
+the lazy next-read regen there.
+
+One more accepted transient: during a **rolling deploy**, an old-version process
+neither reads markers nor writes token-embedded snapshots (and writes the retired
+`.stale` files new readers ignore), so old and new processes can be mutually stale
+for the deploy window. Strict snapshot `version` checks make the new code regenerate
+over anything the old code wrote; the window closes when the old processes drain.
 
 ## Who uses what
 

@@ -37,6 +37,17 @@ vi.mock('../branch-metadata', () => ({
   }),
 }))
 
+// deleteBranch wraps the metadata unlink in the real server-enforced file
+// lock; these are API-logic unit tests on fake paths (/test/repo), where the
+// lock's mkdir would fail. Pass the critical section through unchanged.
+vi.mock('../utils/occ-json-write', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/occ-json-write')>()
+  return {
+    ...actual,
+    withOccFileLock: vi.fn(<T>(_path: string, fn: () => Promise<T>) => fn()),
+  }
+})
+
 vi.mock('../branch-workspace', () => ({
   BranchWorkspaceManager: vi.fn().mockImplementation(function () {
     return {

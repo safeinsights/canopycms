@@ -110,16 +110,19 @@ async function isStaleByMtime(dir: string, cachedAt: Date): Promise<boolean> {
  *   is still served to this caller; it just isn't written durably.
  * - invalidate() bumps the marker with `mustSucceed: true`: an explicit
  *   invalidation (e.g. after a schema mutation) must not silently fail and
- *   leave every reader confidently stale with no bounding backstop. Unlike
- *   BranchRegistry, invalidate() here does NOT eager-regenerate - it isn't
- *   given the entrySchemaRegistry/contentRootName resolveSchema needs, and
- *   doesn't need to duplicate that call: the mutating request flow (schema
- *   edit handlers in api/schema.ts) re-reads the schema immediately
- *   afterward as part of the same request/response cycle, on the same warm
- *   host that just bumped the marker. That re-read is necessarily coherent
- *   with the mutation it just observed (no NFS round trip was needed), so it
- *   serves the same window-E-closing purpose as BranchRegistry's eager
- *   regen without invalidate() needing to duplicate the resolve machinery.
+ *   leave every reader confidently stale with no bounding backstop.
+ *   invalidate() itself does NOT eager-regenerate - it isn't given the
+ *   entrySchemaRegistry/contentRootName that resolveSchema needs. The
+ *   eager re-resolve (window-E mitigation, mirroring BranchRegistry's
+ *   eager regen) lives one level up in SchemaOps.invalidateSchemaCache()
+ *   (schema/schema-store.ts), which has those arguments and calls
+ *   getSchema() right after invalidating - so every SchemaOps mutation
+ *   re-resolves on the mutating host, whose scan is necessarily coherent
+ *   with the mutation it just made. (The editor's follow-up schema GET is
+ *   a separate Lambda invocation with no container affinity, so it could
+ *   not serve this purpose.) Callers of invalidate() that bypass SchemaOps
+ *   (api/schema.ts's explicit invalidate endpoint; the bulk-mutation bump
+ *   in invalidateBranchContentCaches) accept the lazy next-read regen.
  *
  * This is also why prod needs no mtime walk: the dev-only mtime check below
  * exists solely to catch hand edits to .collection.json made outside the CMS

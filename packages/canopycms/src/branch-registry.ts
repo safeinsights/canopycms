@@ -179,6 +179,12 @@ export class BranchRegistry {
     await bumpResourceGeneration(this.root, RESOURCE, { mustSucceed: true })
 
     try {
+      // A scan already in flight (a concurrent list() on this shared
+      // instance) captured the PRE-bump token and possibly pre-mutation
+      // state; joining it via regenerate()'s dedup would skip the eager
+      // post-bump scan this method exists for. Let it drain — its snapshot
+      // self-describes as stale either way — then run a fresh scan.
+      if (this.regenInFlight) await this.regenInFlight.catch(() => {})
       await this.regenerate()
     } catch (err: unknown) {
       log.warn('invalidate', 'Eager regeneration after invalidate() failed', {

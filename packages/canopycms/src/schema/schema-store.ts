@@ -14,6 +14,8 @@ import path from 'node:path'
 import { z } from 'zod'
 import { atomicWriteFile } from '../utils/atomic-write'
 import { withLock } from '../utils/async-mutex'
+import { createDebugLogger } from '../utils/debug'
+import { getErrorMessage } from '../utils/error'
 
 import type { ContentFormat } from '../config'
 import type { EntrySchemaRegistry } from './types'
@@ -145,6 +147,8 @@ const updateEntryTypeInputSchema = z.object({
 // SchemaOps Class
 // ============================================================================
 
+const log = createDebugLogger({ prefix: 'SchemaOps' })
+
 export class SchemaOps {
   constructor(
     private readonly contentRoot: string,
@@ -157,14 +161,37 @@ export class SchemaOps {
   // --------------------------------------------------------------------------
 
   /**
-   * Invalidate schema cache for this branch after mutations.
-   * This marks the cache as stale so the next schema load will regenerate it.
+   * Invalidate schema cache for this branch after mutations, then eagerly
+   * re-resolve on THIS host.
+   *
+   * The eager re-resolve is the durable-snapshot window-E mitigation (see
+   * BranchSchemaCache's class docs): the mutating host's own scan is
+   * necessarily coherent with the mutation it just made, whereas the
+   * editor's follow-up schema read is a separate Lambda invocation with no
+   * container affinity — exactly the lazy foreign-host pull whose scan can
+   * be served from stale NFS caches and durably persist a fresh-token
+   * snapshot of pre-mutation schema. Regen failures are logged and
+   * swallowed (mirroring BranchRegistry.invalidate()): the bump alone
+   * already restored correctness for every future reader, and a mutation
+   * that leaves no valid schema behind (e.g. deleting the last collection)
+   * must not fail the request over an uncacheable resolve.
    */
   private async invalidateSchemaCache(): Promise<void> {
-    if (this.services) {
-      // Get branchRoot from contentRoot (parent directory)
-      const branchRoot = path.dirname(this.contentRoot)
-      await this.services.branchSchemaCache.invalidate(branchRoot)
+    if (!this.services) return
+    // Get branchRoot from contentRoot (parent directory)
+    const branchRoot = path.dirname(this.contentRoot)
+    await this.services.branchSchemaCache.invalidate(branchRoot)
+    try {
+      await this.services.branchSchemaCache.getSchema(
+        branchRoot,
+        this.entrySchemaRegistry,
+        path.basename(this.contentRoot),
+      )
+    } catch (err) {
+      log.warn('schema-cache', `Eager schema re-resolve after invalidation failed`, {
+        branchRoot,
+        error: getErrorMessage(err),
+      })
     }
   }
 
