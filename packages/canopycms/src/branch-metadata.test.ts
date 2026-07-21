@@ -12,6 +12,12 @@ import {
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-branchmeta-'))
 
+// This file exercises many save() calls; settleMs: 0 skips the (default 50ms)
+// post-rename settle wait, which matters nothing for correctness here since
+// everything runs single-host/single-process against a real tmp filesystem.
+const createMeta = (branchRoot: string, baseRoot: string) =>
+  getBranchMetadataFileManager(branchRoot, baseRoot, { settleMs: 0 })
+
 describe('BranchMetadataFileManager', () => {
   describe('loadOnly', () => {
     it('loads metadata from disk', async () => {
@@ -52,7 +58,7 @@ describe('BranchMetadataFileManager', () => {
     it('creates metadata when none exists', async () => {
       const root = await tmpDir()
       const registryDir = await tmpDir()
-      const meta = getBranchMetadataFileManager(root, registryDir)
+      const meta = createMeta(root, registryDir)
 
       const created = await meta.save({
         branch: {
@@ -77,7 +83,7 @@ describe('BranchMetadataFileManager', () => {
       // link() is atomic and EEXIST-safe: it either creates the target or fails cleanly.
       const root = await tmpDir()
       const registryDir = await tmpDir()
-      const meta = getBranchMetadataFileManager(root, registryDir)
+      const meta = createMeta(root, registryDir)
 
       const linkSpy = vi.spyOn(fs, 'link')
 
@@ -104,7 +110,7 @@ describe('BranchMetadataFileManager', () => {
     it('updates existing metadata and stamps updatedAt', async () => {
       const root = await tmpDir()
       const registryDir = await tmpDir()
-      const meta = getBranchMetadataFileManager(root, registryDir)
+      const meta = createMeta(root, registryDir)
 
       // First create
       const created = await meta.save({
@@ -142,7 +148,7 @@ describe('BranchMetadataFileManager', () => {
       const registryDir = await tmpDir()
 
       // Create metadata with registryDir
-      const meta = getBranchMetadataFileManager(branchRoot, registryDir)
+      const meta = createMeta(branchRoot, registryDir)
 
       // First update creates the metadata and invalidates cache. invalidate()
       // bumps the resource-generation marker and eager-regenerates, so
@@ -196,7 +202,7 @@ describe('BranchMetadataFileManager', () => {
       const branchRoot = await tmpDir()
       const registryDir = await tmpDir()
 
-      const meta = getBranchMetadataFileManager(branchRoot, registryDir)
+      const meta = createMeta(branchRoot, registryDir)
 
       // Create metadata via update
       await meta.save({
@@ -216,7 +222,7 @@ describe('BranchMetadataFileManager', () => {
     it('writes version and writeId fields', async () => {
       const root = await tmpDir()
       const registryDir = await tmpDir()
-      const meta = getBranchMetadataFileManager(root, registryDir)
+      const meta = createMeta(root, registryDir)
 
       await meta.save({
         branch: { name: 'feature/versioned', status: 'editing', createdBy: 'u1' },
@@ -230,7 +236,7 @@ describe('BranchMetadataFileManager', () => {
     it('increments version on each save', async () => {
       const root = await tmpDir()
       const registryDir = await tmpDir()
-      const meta = getBranchMetadataFileManager(root, registryDir)
+      const meta = createMeta(root, registryDir)
 
       await meta.save({
         branch: { name: 'feature/inc', status: 'editing', createdBy: 'u1' },
@@ -243,26 +249,29 @@ describe('BranchMetadataFileManager', () => {
       expect(v2?.version).toBe(2)
     })
 
-    it('handles concurrent save() calls to the same file via in-memory lock', async () => {
+    it('handles concurrent save() calls from two manager instances deterministically', async () => {
       const root = await tmpDir()
       const registryDir = await tmpDir()
 
       // Create initial metadata
-      const meta0 = getBranchMetadataFileManager(root, registryDir)
+      const meta0 = createMeta(root, registryDir)
       await meta0.save({
         branch: { name: 'feature/race', status: 'editing', createdBy: 'u1' },
       })
 
-      // Concurrently update from two separate instances
-      const meta1 = getBranchMetadataFileManager(root, registryDir)
-      const meta2 = getBranchMetadataFileManager(root, registryDir)
+      // Concurrently update from two separate instances. Serialized end-to-end
+      // by the withLock -> withOccFileLock -> withOccRetry stack (see class doc
+      // comment on BranchMetadataFileManager), so this is deterministic rather
+      // than a race that happens to resolve without loss in this process.
+      const meta1 = createMeta(root, registryDir)
+      const meta2 = createMeta(root, registryDir)
 
       await Promise.all([
         meta1.save({ branch: { title: 'Title A' } }),
         meta2.save({ branch: { description: 'Desc B' } }),
       ])
 
-      // Both should succeed (serialized by in-memory lock) and produce valid JSON
+      // Both should succeed (merged sequentially, no lost update) and produce valid JSON
       const final = await BranchMetadataFileManager.loadOnly(root)
       expect(final).not.toBeNull()
       expect(final?.branch.name).toBe('feature/race')
@@ -270,6 +279,22 @@ describe('BranchMetadataFileManager', () => {
       expect(final?.branch.title).toBe('Title A')
       expect(final?.branch.description).toBe('Desc B')
       expect(final?.version).toBe(3) // initial=1, +2 concurrent saves
+    })
+
+    it('does not leak branch.json.lock artifacts after a save cycle', async () => {
+      const root = await tmpDir()
+      const registryDir = await tmpDir()
+      const meta = createMeta(root, registryDir)
+
+      await meta.save({
+        branch: { name: 'feature/lockfile', status: 'editing', createdBy: 'u1' },
+      })
+      await meta.save({ branch: { status: 'submitted' } })
+
+      const metaDir = path.join(root, '.canopy-meta')
+      const entries = await fs.readdir(metaDir)
+      const lockArtifacts = entries.filter((name) => name.includes('.lock'))
+      expect(lockArtifacts).toEqual([])
     })
 
     it('reads legacy files without version/writeId gracefully', async () => {
@@ -298,7 +323,7 @@ describe('BranchMetadataFileManager', () => {
       expect(loaded?.branch.name).toBe('feature/legacy')
 
       // save() should upgrade it with version/writeId
-      const meta = getBranchMetadataFileManager(root, registryDir)
+      const meta = createMeta(root, registryDir)
       const updated = await meta.save({ branch: { status: 'submitted' } })
       expect(updated.branch.status).toBe('submitted')
 
@@ -310,7 +335,7 @@ describe('BranchMetadataFileManager', () => {
     it('produces valid JSON after save', async () => {
       const root = await tmpDir()
       const registryDir = await tmpDir()
-      const meta = getBranchMetadataFileManager(root, registryDir)
+      const meta = createMeta(root, registryDir)
 
       await meta.save({
         branch: { name: 'feature/valid-json', status: 'editing', createdBy: 'u1' },
