@@ -122,7 +122,6 @@ describe('findInvalidEntries', () => {
     const result = findInvalidEntries([
       {
         entryPath: 'content/posts/draft' as never,
-        format: 'json',
         schema: requiredTitleSchema,
         data: {},
       },
@@ -138,7 +137,6 @@ describe('findInvalidEntries', () => {
     const result = findInvalidEntries([
       {
         entryPath: 'content/posts/hello' as never,
-        format: 'json',
         schema: requiredTitleSchema,
         data: { title: 'Hello' },
       },
@@ -151,9 +149,68 @@ describe('findInvalidEntries', () => {
     const result = findInvalidEntries([
       {
         entryPath: 'content/posts/mystery' as never,
-        format: 'json',
         schema: undefined,
         data: {},
+      },
+    ])
+
+    expect(result).toHaveLength(0)
+  })
+
+  // -------------------------------------------------------------------------
+  // Regression: the guard must validate on-disk listEntries-shaped data
+  // (validateEntryData), not the editor's FormValue shape (validateEntryFormValue).
+  // listEntries already merges an md/mdx body under the schema's isBody field
+  // name (readEntryData in content-listing.ts) — NOT under a literal 'body' key.
+  // Using validateEntryFormValue here used to remap a (nonexistent) `body` key
+  // over the real content field, wiping out a fully valid entry's data and
+  // reporting it as missing-required.
+  // -------------------------------------------------------------------------
+
+  it('validates a valid md entry whose schema uses a custom-named isBody field', () => {
+    const customBodySchema: EntrySchema = [
+      { name: 'content', type: 'markdown', isBody: true, required: true },
+    ]
+
+    const result = findInvalidEntries([
+      {
+        entryPath: 'content/posts/custom-body' as never,
+        schema: customBodySchema,
+        // On-disk shape: listEntries merges the md body under the schema's isBody
+        // field name ('content'), not under a literal 'body' key.
+        data: { content: '# Hello\n\nReal body content.' },
+      },
+    ])
+
+    expect(result).toHaveLength(0)
+  })
+
+  it('normalizes gray-matter Date instances (unquoted YAML dates) before validating, including nested in an object and a list item', () => {
+    const dateSchema: EntrySchema = [
+      { name: 'publishedAt', type: 'datetime', required: true },
+      {
+        name: 'meta',
+        type: 'object',
+        fields: [{ name: 'updatedAt', type: 'datetime', required: true }],
+      },
+      {
+        name: 'events',
+        type: 'object',
+        list: true,
+        fields: [{ name: 'when', type: 'datetime', required: true }],
+      },
+    ]
+
+    const result = findInvalidEntries([
+      {
+        entryPath: 'content/posts/hand-authored' as never,
+        schema: dateSchema,
+        data: {
+          // gray-matter parses unquoted YAML dates into JS Date instances.
+          publishedAt: new Date('2024-01-15T00:00:00.000Z'),
+          meta: { updatedAt: new Date('2024-02-01T00:00:00.000Z') },
+          events: [{ when: new Date('2024-03-01T00:00:00.000Z') }],
+        },
       },
     ])
 
@@ -170,7 +227,6 @@ describe('assertBuildEntriesValid', () => {
         [
           {
             entryPath: 'content/posts/hello' as never,
-            format: 'json',
             schema: requiredTitleSchema,
             data: { title: 'Hello' },
           },
@@ -187,19 +243,16 @@ describe('assertBuildEntriesValid', () => {
         [
           {
             entryPath: 'content/posts/draft-one' as never,
-            format: 'json',
             schema: requiredTitleSchema,
             data: {},
           },
           {
             entryPath: 'content/posts/draft-two' as never,
-            format: 'json',
             schema: requiredTitleSchema,
             data: {},
           },
           {
             entryPath: 'content/posts/hello' as never,
-            format: 'json',
             schema: requiredTitleSchema,
             data: { title: 'Hello' },
           },

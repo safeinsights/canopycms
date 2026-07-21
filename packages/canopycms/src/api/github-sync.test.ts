@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { GitHubService } from '../github-service'
 import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockBranchContext } from '../test-utils'
+import { mockConsole } from '../test-utils/console-spy.js'
 
 const baseConfig: CanopyConfig = {
   gitBotAuthorName: 'Canopy Bot',
@@ -118,7 +119,43 @@ describe('syncSubmitPr (GIT-H1)', () => {
       expect(githubService.convertToReady).toHaveBeenCalledWith(123)
     })
 
-    it('creates a new PR via createOrUpdatePR on first submit (no pullRequestNumber yet)', async () => {
+    it('warns but still returns synced when the known-PR-number branch fails to convert draft to ready (best-effort)', async () => {
+      // This branch calls updatePullRequest by known PR number directly
+      // (not createOrUpdatePR), so it does its own draft->ready conversion.
+      // A conversion failure (e.g. a permissions-limited token) must not
+      // sink the update that already succeeded.
+      const consoleSpy = mockConsole()
+      const githubService = makeGitHubService({
+        getPullRequest: vi.fn().mockResolvedValue({
+          number: 123,
+          url: 'https://github.com/owner/repo/pull/123',
+          state: 'open',
+          merged: false,
+          draft: true,
+        }),
+        convertToReady: vi.fn().mockRejectedValue(new Error('Resource not accessible')),
+      })
+      const ctx = createMockApiContext({
+        services: { config: baseConfig, githubService },
+      })
+      const branchContext = createMockBranchContext({
+        branchName: 'feature/x',
+        pullRequestNumber: 123,
+        pullRequestUrl: 'https://github.com/owner/repo/pull/123',
+      })
+
+      const result = await syncSubmitPr(ctx, branchContext)
+
+      expect(result).toEqual({
+        prUrl: 'https://github.com/owner/repo/pull/123',
+        prNumber: 123,
+        syncStatus: 'synced',
+      })
+      expect(consoleSpy).toHaveWarned('Failed to convert PR #123 to ready for review')
+      consoleSpy.restore()
+    })
+
+    it('creates a new PR via createOrUpdatePR on first submit (no pullRequestNumber yet), delegating draft->ready conversion', async () => {
       const githubService = makeGitHubService()
       const ctx = createMockApiContext({
         services: { config: baseConfig, githubService },
@@ -128,8 +165,13 @@ describe('syncSubmitPr (GIT-H1)', () => {
       const result = await syncSubmitPr(ctx, branchContext)
 
       expect(githubService.createOrUpdatePR).toHaveBeenCalledWith(
-        expect.objectContaining({ head: 'feature/new' }),
+        expect.objectContaining({ head: 'feature/new', markReadyIfDraft: true }),
       )
+      // The shared createOrUpdatePullRequest helper now owns draft->ready
+      // conversion for this branch (GIT-106 followup) — no separate
+      // getPullRequest/convertToReady round-trip here.
+      expect(githubService.getPullRequest).not.toHaveBeenCalled()
+      expect(githubService.convertToReady).not.toHaveBeenCalled()
       expect(result).toEqual({
         prUrl: 'https://github.com/owner/repo/pull/123',
         prNumber: 123,
@@ -149,13 +191,6 @@ describe('syncSubmitPr (GIT-H1)', () => {
           number: 99,
           url: 'https://github.com/owner/repo/pull/99',
         }),
-        getPullRequest: vi.fn().mockResolvedValue({
-          number: 99,
-          url: 'https://github.com/owner/repo/pull/99',
-          state: 'open',
-          merged: false,
-          draft: false,
-        }),
       })
       const ctx = createMockApiContext({
         services: { config: baseConfig, githubService },
@@ -168,6 +203,8 @@ describe('syncSubmitPr (GIT-H1)', () => {
       expect(result.syncStatus).toBe('synced')
       expect(result.prNumber).toBe(99)
       expect(result.prUrl).toBe('https://github.com/owner/repo/pull/99')
+      expect(githubService.getPullRequest).not.toHaveBeenCalled()
+      expect(githubService.convertToReady).not.toHaveBeenCalled()
     })
 
     it('sets sync-failed (not a throw) when the GitHub API call itself fails', async () => {

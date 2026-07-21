@@ -384,11 +384,20 @@ export async function workerRunOnce(options: {
   }
   console.log(`\nCanopyCMS worker run-once (mode: ${mode}, auth: ${authMode})\n`)
 
-  // Refresh auth cache
+  // Refresh auth cache. A refresh failure (e.g. CLERK_SECRET_KEY missing —
+  // the Clerk plugin resolves it lazily at refresh time, not at construction)
+  // must be loud but must not abort the run: task draining below publishes
+  // content and is independent of the auth cache. Exit non-zero so
+  // orchestration still notices the stale/missing cache.
   if (refreshAuthCache) {
     console.log('Refreshing auth cache...')
-    await refreshAuthCache()
-    console.log('Auth cache refreshed')
+    try {
+      await refreshAuthCache()
+      console.log('Auth cache refreshed')
+    } catch (err) {
+      console.error(`Auth cache NOT refreshed: ${getErrorMessage(err)}`)
+      process.exitCode = 1
+    }
   }
 
   // Process task queue (if any pending tasks)

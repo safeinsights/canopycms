@@ -2,6 +2,7 @@ import { Octokit } from '@octokit/rest'
 import { throttling } from '@octokit/plugin-throttling'
 import type { CanopyConfig } from './config'
 import { operatingStrategy } from './operating-mode'
+import { getErrorMessage } from './utils/error'
 
 const ThrottledOctokit = Octokit.plugin(throttling)
 
@@ -151,21 +152,39 @@ export async function createOrUpdatePullRequest(
     if (markReadyIfDraft && existing.draft) {
       // Use GraphQL API for draft conversion (not available in REST API).
       // Read the node id straight off the list payload — no extra pulls.get.
-      await octokit.graphql(
-        `
-        mutation($pullRequestId: ID!) {
-          markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
-            pullRequest {
-              id
+      //
+      // Best-effort: the push + pulls.update above already succeeded, so the
+      // submit itself is done. A fine-grained token that can update PRs but
+      // lacks this mutation's scope throws a GraphqlResponseError, which
+      // carries no numeric HTTP status (the GraphQL endpoint responds 200
+      // even for a mutation-level failure) — the worker's
+      // isPermanentTaskFailure would classify that as transient and retry
+      // the whole re-push until the retry cap, wedging the branch in
+      // 'sync-failed' even though the PR already exists and is current.
+      // Warn and continue instead of letting this sink an already-succeeded
+      // submit.
+      try {
+        await octokit.graphql(
+          `
+          mutation($pullRequestId: ID!) {
+            markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
+              pullRequest {
+                id
+              }
             }
           }
-        }
-      `,
-        {
-          pullRequestId: existing.node_id,
-          ...requestOption,
-        },
-      )
+        `,
+          {
+            pullRequestId: existing.node_id,
+            ...requestOption,
+          },
+        )
+      } catch (err) {
+        console.warn(
+          `CanopyCMS: Failed to convert PR #${existing.number} to ready for review (the PR update itself succeeded; continuing):`,
+          getErrorMessage(err),
+        )
+      }
     }
 
     return { number: existing.number, url: existing.html_url, created: false }

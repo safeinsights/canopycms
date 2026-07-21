@@ -20,6 +20,13 @@ export interface AuthPlugin {
    * Authenticate user from request context.
    * Returns user identity (without final groups) - core will apply bootstrap admins.
    *
+   * Contract: CREDENTIAL failures (missing/invalid/expired token) resolve to
+   * `{ success: false }` — they map to 401s. CONFIGURATION errors (e.g. a
+   * required secret like CLERK_SECRET_KEY is absent) may THROW instead: they
+   * are operator mistakes, not user mistakes, and should surface as loud 500s
+   * rather than quiet auth denials. Callers invoking authenticate() directly
+   * (custom adapters) should be prepared for a rejection on misconfiguration.
+   *
    * @param context - Framework-specific context (CanopyRequest, headers, etc.)
    * @returns AuthenticationResult with user identity or error
    */

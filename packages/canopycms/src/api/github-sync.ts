@@ -4,6 +4,7 @@ import type { TaskAction } from '../worker/task-queue'
 import { enqueueTask } from '../worker/task-queue'
 import { getTaskQueueDir } from '../worker/task-queue-config'
 import { clientOperatingStrategy } from '../operating-mode'
+import { getErrorMessage } from '../utils/error'
 
 /**
  * Result of a GitHub sync operation.
@@ -40,9 +41,24 @@ export async function syncSubmitPr(
           title: prTitle,
           body: prBody,
         })
-        const pr = await githubService.getPullRequest(context.branch.pullRequestNumber)
-        if (pr.draft) {
-          await githubService.convertToReady(context.branch.pullRequestNumber)
+        // Best-effort draft->ready conversion. This branch updates a known
+        // PR number directly (not through createOrUpdatePR), so it doesn't
+        // get the shared helper's built-in markReadyIfDraft handling and
+        // does its own here. Wrapped separately so a conversion failure
+        // (e.g. a fine-grained token that can update PRs but lacks this
+        // mutation's scope) can't sink the update that already succeeded —
+        // consistent with createOrUpdatePullRequest's best-effort handling
+        // in github-service.ts.
+        try {
+          const pr = await githubService.getPullRequest(context.branch.pullRequestNumber)
+          if (pr.draft) {
+            await githubService.convertToReady(context.branch.pullRequestNumber)
+          }
+        } catch (err) {
+          console.warn(
+            `CanopyCMS: Failed to convert PR #${context.branch.pullRequestNumber} to ready for review for ${context.branch.name} (the PR update itself succeeded; continuing):`,
+            getErrorMessage(err),
+          )
         }
         return {
           prUrl: context.branch.pullRequestUrl,
@@ -57,16 +73,18 @@ export async function syncSubmitPr(
         // updates it instead of calling the non-idempotent create (which
         // 422s on a duplicate and would leave the branch wedged in
         // 'sync-failed' forever with no way to recover).
+        //
+        // markReadyIfDraft: true delegates draft->ready conversion to the
+        // shared createOrUpdatePullRequest helper (github-service.ts), which
+        // treats conversion as best-effort so a permissions-limited token
+        // can't fail this submit.
         const result = await githubService.createOrUpdatePR({
           head: context.branch.name,
           base: context.branch.baseBranch ?? ctx.services.config.defaultBaseBranch ?? 'main',
           title: prTitle,
           body: prBody,
+          markReadyIfDraft: true,
         })
-        const pr = await githubService.getPullRequest(result.number)
-        if (pr.draft) {
-          await githubService.convertToReady(result.number)
-        }
         return {
           prUrl: result.url,
           prNumber: result.number,

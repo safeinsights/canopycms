@@ -1,7 +1,7 @@
 import type { CanopyBuildContext } from '../context'
 import { isBuildMode } from '../build-mode'
 import type { ListEntriesItem } from '../content-listing'
-import { validateEntryFormValue, type EntryFieldError } from '../validation/entry-validator'
+import { validateEntryData, type EntryFieldError } from '../validation/entry-validator'
 
 /**
  * Framework-agnostic helpers for static-site generation. These produce neutral data structures
@@ -86,11 +86,45 @@ export interface InvalidBuildEntry {
 }
 
 /**
+ * Deep-walk a plain data value (objects and arrays only — the shapes YAML/JSON parsing can
+ * produce), converting every `Date` instance to its ISO string.
+ *
+ * gray-matter parses unquoted YAML dates in hand-authored frontmatter (`date: 2024-01-15`) into
+ * JS `Date` objects rather than strings. The shared validator's datetime check requires a string
+ * (see `validateScalar` in entry-validator.ts), so a legitimate hand-authored or migrated entry
+ * would otherwise fail this build guard. CMS-authored entries round-trip as quoted strings, so
+ * this only affects pre-existing content — which is the primary path for adopters retrofitting
+ * CanopyCMS onto an existing repo.
+ *
+ * Normalization lives here, in the guard, rather than in the shared validator: the editor/server
+ * save boundary always receives JSON-shaped payloads over HTTP and can never see a `Date` there —
+ * only this build-time read of on-disk YAML/frontmatter can produce one. The shared validator
+ * stays strict.
+ *
+ * No cycle guard: this only ever walks data parsed fresh from YAML/JSON/frontmatter on disk,
+ * which cannot contain circular references.
+ */
+function normalizeDatesDeep(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString()
+  if (Array.isArray(value)) return value.map(normalizeDatesDeep)
+  if (value && typeof value === 'object') {
+    const result: Record<string, unknown> = {}
+    for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
+      result[key] = normalizeDatesDeep(v)
+    }
+    return result
+  }
+  return value
+}
+
+/**
  * Scan listEntries-shaped items for schema-invalid entries.
  *
- * Runs the same pure validation used at the editor save boundary
- * (`validateEntryFormValue`, api/content.ts) against each item's raw data. This is how an
- * abandoned create-scaffold — an empty entry the editor's create flow writes before the user
+ * Runs `validateEntryData` — the same pure validation used at the server write boundary
+ * (api/content.ts) for on-disk-shaped data — against each item's raw data. listEntries already
+ * merges an md/mdx body into `data` under the schema's `isBody` field name (see `readEntryData`
+ * in content-listing.ts), so no FormValue-style remapping is needed or correct here. This is how
+ * an abandoned create-scaffold — an empty entry the editor's create flow writes before the user
  * fills it in (skipped from validation there via `isCreateScaffold`) — gets caught before it
  * ships in a static build, since nothing else re-validates it once it's on disk.
  *
@@ -98,12 +132,13 @@ export interface InvalidBuildEntry {
  * different failure class, handled elsewhere.
  */
 export function findInvalidEntries(
-  items: readonly Pick<ListEntriesItem, 'entryPath' | 'schema' | 'format' | 'data'>[],
+  items: readonly Pick<ListEntriesItem, 'entryPath' | 'schema' | 'data'>[],
 ): InvalidBuildEntry[] {
   const invalid: InvalidBuildEntry[] = []
   for (const item of items) {
     if (!item.schema) continue
-    const errors = validateEntryFormValue(item.schema, item.format, item.data)
+    const data = normalizeDatesDeep(item.data) as Record<string, unknown>
+    const errors = validateEntryData(item.schema, data)
     if (errors.length > 0) {
       invalid.push({ entryPath: item.entryPath, errors })
     }
@@ -119,7 +154,7 @@ export function findInvalidEntries(
  * offending entry so one build catches every abandoned scaffold, not just the first.
  */
 export function assertBuildEntriesValid(
-  items: readonly Pick<ListEntriesItem, 'entryPath' | 'schema' | 'format' | 'data'>[],
+  items: readonly Pick<ListEntriesItem, 'entryPath' | 'schema' | 'data'>[],
   phaseLabel: string,
 ): void {
   const invalid = findInvalidEntries(items)
