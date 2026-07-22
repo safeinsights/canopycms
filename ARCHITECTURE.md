@@ -19,13 +19,15 @@ Key characteristics:
 
 CanopyCMS is organized as a monorepo with separate packages for extensibility:
 
-- **canopycms** (core): The main library containing content store, branch management, permissions, editor UI, API handlers, and AI content generation. This package is framework-agnostic and contains all business logic. It exposes multiple entrypoints: `canopycms/server` (content reading, API setup), `canopycms/client` (editor components), `canopycms/config` (configuration helpers), `canopycms/ai` (AI content route handler and generation), and `canopycms/build` (static file generation utilities).
+- **canopycms** (core): The main library containing content store, branch management, permissions, editor UI, API handlers, AI content generation, and the asset/media store plus its on-demand image-transform engine. This package is framework-agnostic and contains all business logic. It exposes multiple entrypoints: `canopycms/server` (content reading, API setup), `canopycms/client` (editor components), `canopycms/config` (configuration helpers), `canopycms/ai` (AI content route handler and generation), and `canopycms/build` (static file generation utilities). The main `canopycms` entry also exports the isomorphic `assetUrl`/`assetSrcSet` helpers so host apps can build transform URLs (see [Asset & Media System](#asset--media-system)).
 
 - **canopycms-next**: Next.js adapter that provides thin integration (~10 lines of user extraction code). Wraps core context with React cache() for per-request memoization. Also provides a `withCanopy()` Next.js config wrapper that handles module transpilation and React deduplication (see [Framework Adapters](#framework-adapters) below).
 
 - **canopycms-auth-clerk**: Authentication plugin using Clerk.
 
 - **canopycms-auth-dev**: Development authentication plugin that provides a mock auth flow with configurable test users. Used for local development without requiring a real auth provider.
+
+- **canopycms-cdk**: AWS CDK infrastructure package (not imported by the CMS runtime). It ships the constructs adopters use to provision a CanopyCMS deployment — the CMS service (Lambda + EFS), the CloudFront distribution, and the `AssetSupport` construct that wires up the asset bucket, CloudFront behaviors, and the image-transform Lambda — plus the `CmsWorker` daemon. The transform Lambda reuses the core package's transform engine verbatim, so the deployed CDN and dev mode apply identical image transformations. See [Asset & Media System](#asset--media-system) and [Deployment Architecture](#deployment-architecture).
 
 This separation keeps the core framework-agnostic while allowing adapters to be minimal integration layers. All business logic lives in core—adapters only handle framework-specific concerns like extracting user identity from request contexts.
 
@@ -135,6 +137,14 @@ The core package organizes code into focused modules, each with a single respons
 - The Next.js adapter (canopycms-next) maps those onto `generateStaticParams` via the free `collectStaticParams` helper and the bound `generateContentStaticParams` method, so page modules never hold the admin build context
 - See [Static-Export Helpers](#static-export-helpers) for the core-plus-adapter design and the enumeration / content-read / admin capability split
 
+**Assets & Media** - Content-addressed asset storage, upload finalize pipeline, and on-demand image transforms:
+
+- Store contract with S3 and local-filesystem adapters, selected by the `media` config
+- Content-addressed key builders (sha-256 hashing, filename slugging) and the fixed set of bucket prefixes
+- Finalize pipeline (magic-byte sniffing, SVG sanitization, dimension extraction, dedup ordering)
+- Isomorphic transform-directive parser and canonical formatter, a server-only image transform (sharp), and the isomorphic `assetUrl`/`assetSrcSet` URL helpers
+- See [Asset & Media System](#asset--media-system) for the full subsystem
+
 **Validation** - Content validation utilities:
 
 - Reference validator for checking content references
@@ -191,7 +201,6 @@ Some files remain at the source root because they represent core domain concepts
 
 **Other:**
 
-- Asset store (media file management)
 - Comment store (review comment persistence)
 - Reference resolver (content reference handling)
 - Settings workspace (settings file management)
@@ -394,6 +403,8 @@ CanopyCMS is entirely file system based. There are no external databases, no Red
 - **Settings (prod)**: `groups.json` and `permissions.json` on orphan branch `canopycms-settings-{deploymentName}` (version-controlled, deployment-specific), workspace at `{workspaceRoot}/settings/`
 - **Settings (dev)**: Same orphan branch mechanism as prod (`canopycms-settings-{deploymentName}`), workspace at `.canopy-dev/settings/` (gitignored, local development only)
 
+**What is deliberately not on this filesystem:** Binary assets (images, PDFs) are not stored in git or on the CMS workspace filesystem. They live in a separate content-addressed object store — S3 in prod, a local directory in dev — and content only ever references them by immutable key. This keeps git history and per-branch EFS clones lean. See [Asset & Media System](#asset--media-system).
+
 **Concurrent writes**: Branch metadata and comments are each mutated by more than one host at a time in practice (several warm Lambda containers plus the worker, all sharing EFS). Both are protected by a server-enforced cross-host lock in addition to in-process serialization and per-write version checks, so a lost update across hosts is not an accepted risk for either file. See [docs/concurrency.md](docs/concurrency.md) for the full protection model and why each layer alone isn't sufficient.
 
 **Deployment model**: CanopyCMS is designed to be deployed to a server or serverless function with an attached file system shared by all server processes. On AWS, this could mean Lambda + EFS.
@@ -531,6 +542,8 @@ The schema is defined as a `RootCollectionConfig` with two optional properties:
 **Field flags**: Individual fields within an entry type can carry behavioral flags:
 
 - **isTitle**: Marks a field as the human-readable title for entries of this type. The editor UI, content listings, and tree builders use this to display meaningful labels instead of raw slugs. Only one field per entry type may be marked `isTitle`. The field must be a scalar (string-like) value that can be resolved at runtime, so `isTitle` is rejected on fields nested inside `list: true` object fields where the system cannot determine which array element to use.
+
+**Structured field types**: Beyond scalar fields, the schema supports structured field types whose value is an object rather than a primitive. The `image` field is one such type — its value carries a content-addressed asset reference plus alt text, dimensions, and an optional crop rectangle, and its definition can require a fixed aspect ratio. Structured values are enforced at the server write boundary by the shared isomorphic entry validator. See [Asset & Media System](#asset--media-system).
 
 **Reserved field names**: For md/mdx entry types, the field name "body" is reserved. The system uses `body` to carry the markdown content itself (everything below the frontmatter). Schema validation rejects md/mdx entry types that define a frontmatter field named "body" to prevent collisions with the content body. Data-only formats (JSON and YAML) have no such restriction since they have no separate body concept.
 
@@ -980,6 +993,7 @@ For low-cost AWS deployments, CanopyCMS supports splitting into two components t
 - Authenticates via networkless JWT verification + file-based metadata cache
 - Git operations use a local bare repo (`remote.git`) on EFS via `file://` URL
 - PR operations are queued to a task directory on EFS
+- Reaches S3 for asset presign/finalize through a gateway VPC endpoint (no NAT needed); see [Asset & Media System](#asset--media-system)
 - Holds no sensitive secrets (only public keys and config)
 
 **EC2 Worker (internet access):**
@@ -1800,6 +1814,77 @@ The system uses a two-phase approach:
 
 Alternative approaches (async state, callbacks, separate resolution state) create synchronization problems between two state trees (form data + resolved data). By computing resolved data synchronously from a single source (form data + cache), we eliminate timing issues and race conditions entirely.
 
+## Asset & Media System
+
+CanopyCMS manages binary media (images and PDFs) outside of git. Content references assets by immutable, content-addressed key; the bytes live in a separate object store, and images are resized/reformatted on demand at delivery time rather than at upload time.
+
+The full design record — including rationale, the AWS deploy mechanics, and the rejected upload-time-width-ladder alternative (Plan A) — lives at `.claude/future-tasks/assets-media-system.md`. This section covers the architecture; that record covers the "why we didn't do it the other way."
+
+### Content-Addressed Storage
+
+Assets are stored in a single bucket (in prod, new prefixes inside each site's existing content bucket) under a fixed set of prefixes, keyed by a content hash (sha-256 truncated to 128 bits) rather than by a path an editor chooses:
+
+- `asset-originals/` — private, full-fidelity originals, kept forever
+- `asset-staging/` — short-lived presigned-upload target (expired by a lifecycle rule)
+- `asset-meta/` — private per-asset sidecar (original filename, uploader, date, dimensions, mime)
+- `assets/` — public static delivery for sanitized SVGs and PDFs only
+- `assets/t/` — transform outputs, where the URL path _is_ the S3 key
+
+Keys are **immutable, content-addressed, and unguessable**. Nothing is overwritten or eagerly deleted, and identical bytes deduplicate (the first uploaded filename wins). This is what gives assets **branch-awareness without git storage**:
+
+- A draft branch's newly uploaded image is fetchable-but-unguessable immediately — "unlisted link" semantics — so drafts and PR previews render it before the referencing content is published.
+- Publishing needs no asset-promotion step, because the reference already points at the final key.
+- Rollback always resolves, because old keys are never deleted.
+
+**Unlisted is not private.** Key enumeration is an accepted trade-off (the meta listing that powers the media library is open to any authenticated user); confidential files do not belong in this store. Deleting an asset removes only its meta sidecar — blobs are immortal until a future garbage-collection task.
+
+### Upload and Finalize
+
+Uploads go **directly from the browser to S3** via a presigned POST (with a content-length cap and type conditions). The bytes never traverse the CMS's request path, so the serverless function's small request-body limit is irrelevant, and presign generation is local crypto that needs no outbound internet.
+
+After the browser upload lands in staging, the editor calls a **finalize** step that runs synchronously in the CMS API process (the CMS Lambda in prod, the dev server in dev). Finalize sniffs the real file type from magic bytes, sanitizes SVGs (which cannot be type-sniffed and are explicitly parsed and stripped of scripts), extracts dimensions (honoring EXIF orientation), writes the original and meta sidecar (and a public copy for SVG/PDF), deletes the staging object, and returns the complete structured field value. The commit-point ordering is deliberate — dedup check, then original, then meta — so a crash never leaves a meta record pointing at bytes that were never written. Finalize is lightweight (milliseconds); the heavyweight image library (sharp) is intentionally **not** in the CMS process.
+
+### On-Demand Image Transforms
+
+Raster images are always served through the transform layer, never as raw originals — this guarantees EXIF stripping and bounds the set of derivatives. A transform URL encodes an imgix-style directive set (allowlisted width, format, quality, and a normalized crop rectangle) as a path segment: `assets/t/{directives}/{hash}/{slug}`. Because the URL path is the S3 key, transform outputs are cacheable static objects once produced.
+
+Delivery uses a **CloudFront origin group with failover**:
+
+1. The signed S3 origin is tried first. On a cache/S3 miss (403 or 404), CloudFront fails over to a transform Lambda behind an OAC-locked Function URL.
+2. The Lambda reads the original, applies the directives, strips EXIF, and **writes the canonical output key to S3 first**, then serves the bytes. For outputs too large for the Function URL's buffered response cap (and for the transform-failure fallback), it returns a `302` redirect with `Cache-Control: no-store` to the now-satisfiable S3 URL — the `no-store` is load-bearing, because caching the redirect instead of the image is a known trap.
+3. The next request for that URL hits the S3 object directly; the Lambda is a fill-on-miss path, not a per-request resizer.
+
+The Function URL is locked to CloudFront (OAC / IAM) so the transform Lambda cannot be invoked directly to stuff the cache with arbitrary variants, and the directive allowlist bounds the variant space. Both behaviors are attached to the environment distribution and the PR-preview distribution, so previews of draft branches resolve newly uploaded images.
+
+**One transform engine, two runtimes.** The directive parser and the sharp-based transform live in the core package. The prod transform Lambda imports that engine verbatim; dev mode emulates `/assets/t/*` with the same engine on the fly (the dev route serves through the store abstraction, and `withCanopy` rewrites `/assets/*` to the CMS API route). Identical URLs resolve in every mode, and there is exactly one implementation of "what does this directive do to this image." This is a modernized redesign of OpenStax's `image-cdn`: S3-sourced instead of HTTP-pull, and sync-on-miss via origin-group failover instead of an S3-website-redirect + queue dance (which does not work under OAC anyway).
+
+### Structured Image Field
+
+The schema gains a first-class structured `image` field type whose value is `{ src, alt, width, height, crop? }` rather than a raw string path. The field definition can require a fixed aspect ratio (which triggers a crop step in the editor) and can make alt text optional. The stored value is validated at the authoritative server write boundary by the shared isomorphic entry validator, the same validator the editor uses, so a malformed image value cannot be saved.
+
+Crop is stored as a **normalized rectangle and applied as a URL directive**, not baked into a derived asset. An image can be re-cropped at any time by editing the rectangle, with no derived-asset bookkeeping and no re-upload. There is deliberately no `variants` array on the field — transform URLs are deterministic functions of the reference plus directives, so host apps build responsive `srcset`s with the exported `assetSrcSet` helper instead of the CMS tracking a fixed ladder.
+
+### Editor Media UI
+
+The editor adds a **MediaLibrary** that operates in two modes from one component:
+
+- **Manage mode** in a right-hand drawer (mounted from the editor sidebar's settings menu), for browsing, uploading, and deleting.
+- **Picker mode** in a modal, opened from the `image` field and from the MDX editor's custom image dialog.
+
+The library is a cursor-paginated grid over the meta prefix with client-side filename filtering, a dropzone upload with XHR progress, and a crop step (react-easy-crop) when the field requires an aspect ratio. Thumbnail URLs are built from a configured public base URL because the editor may be served from a different origin than the site. The MDX body editor wires an upload/pick dialog into its image plugin, so images embedded in prose flow through the same store and transform layer as structured image fields.
+
+**Guards mirror the server exactly**: uploading and listing are open to any authenticated user, and deleting requires admin. There is no finer-grained per-asset ACL — assets are branch-agnostic and content-addressed, so the branch and path permission layers do not apply to them.
+
+### Pluggable Store Contract
+
+The asset store is defined by a contract that supports both direct-signed and proxied upload modes and lets a store own its own key/URL resolution. CanopyCMS ships two implementations — S3 and local filesystem — but the contract is intentionally broad enough that a git-backed or third-party (e.g. Cloudinary/ImageKit) adapter could be added later without changing content references, which stay vendor-neutral. Because references are just keys plus directives, swapping the delivery layer (e.g. putting a third-party image CDN in front of the originals) stays cheap to revisit.
+
+### Delivery Infrastructure
+
+The delivery-side infrastructure is packaged as the `AssetSupport` CDK construct in `canopycms-cdk`, so each site provisions its own asset stack rather than depending on an org-wide shared deployment (the construct is the unit of reuse, avoiding cross-account IAM). It supports both a standalone bucket and a bring-your-own existing content bucket, attaches the `/assets/*` and `/assets/t/*` CloudFront behaviors, and deploys the transform Lambda (bundled with sharp's platform-specific binaries, no Docker required).
+
+Landing this construct also required fixing the CMS service construct: the isolated-VPC CMS Lambda previously had no route to S3 at all. It now reaches S3 through a gateway VPC endpoint (with a corresponding security-group egress rule), which is what makes networkless presign generation and finalize possible without a NAT gateway. See [Deployment Architecture](#deployment-architecture).
+
 ## AI Content Generation
 
 CanopyCMS can export its content as clean, AI-consumable markdown with a structured manifest. This enables AI tools, LLMs, and external indexing services to discover and ingest site content without parsing CMS-specific file formats or navigating the internal content ID system.
@@ -2020,7 +2105,7 @@ This abstraction means you can use Clerk, Auth0, NextAuth, Supabase Auth, or a c
 Framework adapters provide thin integration between the framework and CanopyCMS core. They handle two main concerns:
 
 1. **User extraction**: Extract user identity from framework-specific request context (Next.js headers, Express req, etc.)
-2. **Request/response adaptation**: Convert framework request/response objects to core `CanopyRequest`/`CanopyResponse` types for API handlers
+2. **Request/response adaptation**: Convert framework request/response objects to core `CanopyRequest`/`CanopyResponse` types for API handlers. The response type is not limited to JSON — it also carries a binary/stream variant, and requests can expose raw (unparsed) bodies. This was added for the asset system, which serves binary bytes and accepts non-JSON uploads (see [Asset & Media System](#asset--media-system)).
 
 The `canopycms-next` adapter is ~10 lines for user extraction plus the request/response wrapper. All business logic stays in core—adapters are purely integration code.
 
@@ -2054,6 +2139,14 @@ The configuration accepts a `validateEntry` hook for adopter-defined, server-sid
 ### Why file system based (no external databases)?
 
 Simplifies deployment and operations. Git already provides versioning, and the file system provides persistence. No need to sync state between a database and git. Works well with serverless + attached storage (Lambda + EFS).
+
+### Why are binary assets stored in object storage instead of git?
+
+Git history is append-only, so every replaced image version would live forever, and Canopy's clone-per-branch-on-EFS model would multiply that repo weight into every branch provision. Content-addressed keys in a separate object store sidestep both problems and give branch-awareness for free: a draft's asset is fetchable-but-unguessable immediately, publish needs no promotion step, and rollback always resolves. Content references stay vendor-neutral (a key plus directives), so a git-backed adapter remains possible later for tiny adopters. See [Asset & Media System](#asset--media-system) and the design record at `.claude/future-tasks/assets-media-system.md`.
+
+### Why transform images on demand instead of a fixed width ladder at upload?
+
+An upload-time width ladder (the rejected Plan A) was simpler to build but aged badly: it needed sharp in the CMS request path, per-field width hints for odd sizes, derived assets for cropping, and worker back-fill jobs whenever the ladder or quality changed. On-demand transforms move all of that behind a deterministic URL: any size is available, crop is a re-editable rectangle rather than a derived asset, and changing the pipeline just changes cache keys. The cost is one Lambda per site and a sub-second first-hit per new variant, both of which the origin-group cache absorbs. Full trade-off table in the design record.
 
 ### Why branch-per-workspace?
 
