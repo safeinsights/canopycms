@@ -1,4 +1,5 @@
 import type { ApiResponse } from '../api/types'
+import type { CanopyBinaryResponse } from './types'
 import { BRANCH_ROUTES } from '../api/branch'
 import { WORKFLOW_ROUTES } from '../api/branch-status'
 import { COMMENT_ROUTES } from '../api/comments'
@@ -16,9 +17,13 @@ import { SCHEMA_ROUTES } from '../api/schema'
  * Handler function signature for Canopy API routes.
  * Uses `any` to accommodate different handler signatures in the codebase.
  * Some handlers take (ctx, req, params), others take (ctx, params) directly.
+ * Return type is widened to include `CanopyBinaryResponse` so routes that
+ * stream bytes (e.g. asset serving) can be registered in the same route
+ * table as ordinary JSON routes; the core handler discriminates on `kind`
+ * before deciding whether to wrap the result in a JSON envelope.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type CanopyHandler = (...args: any[]) => Promise<ApiResponse<any>>
+export type CanopyHandler = (...args: any[]) => Promise<ApiResponse<any> | CanopyBinaryResponse>
 
 /**
  * Route definition for the Canopy API.

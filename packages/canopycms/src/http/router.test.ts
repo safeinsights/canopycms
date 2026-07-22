@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createCanopyRouter, matchRoute, type RouteDefinition } from './router'
+import type { CanopyBinaryResponse } from './types'
 
 /** Build a minimal RouteDefinition for synthetic precedence tests. */
 const route = (
@@ -168,5 +169,32 @@ describe('createCanopyRouter - real route table (SEC-H3 regression)', () => {
   it('returns null for unknown method/path combinations', () => {
     const router = createCanopyRouter()
     expect(router.match('DELETE', ['unknown', 'nested', 'path'])).toBeNull()
+  })
+})
+
+describe('matchRoute - CanopyHandler may return a CanopyBinaryResponse (M2 plumbing)', () => {
+  it('matches a route whose handler returns a binary response and leaves the result unchanged', async () => {
+    const binaryResult: CanopyBinaryResponse = {
+      kind: 'binary',
+      status: 200,
+      body: new Uint8Array([9, 9]),
+      headers: { contentType: 'application/octet-stream' },
+    }
+    const routes: RouteDefinition[] = [
+      {
+        method: 'GET',
+        pattern: ['assets', 'binary'],
+        // Type-checks against the widened CanopyHandler return type without
+        // any cast - proof that the router table can carry a binary route
+        // alongside ordinary ApiResponse-returning ones.
+        handler: async () => binaryResult,
+      },
+    ]
+
+    const match = matchRoute(routes, 'GET', ['assets', 'binary'])
+    expect(match).not.toBeNull()
+
+    const result = await match?.handler()
+    expect(result).toEqual(binaryResult)
   })
 })

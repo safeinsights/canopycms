@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 
 import {
   createCanopyRequestHandler,
+  isCanopyBinaryResponse,
+  type CanopyBinaryResponse,
   type CanopyHandlerOptions,
   type CanopyRequest,
   type CanopyResponse,
@@ -35,13 +37,47 @@ export function wrapNextRequest(req: Request): CanopyRequest {
         return undefined
       }
     },
+
+    async rawBody(): Promise<Uint8Array> {
+      return new Uint8Array(await req.arrayBuffer())
+    },
+
+    async formData(): Promise<FormData> {
+      return req.formData()
+    },
   }
 }
 
 /**
- * Convert a CanopyResponse to a NextResponse.
+ * Map a CanopyBinaryResponse's framework-agnostic header fields onto the
+ * real HTTP header names, omitting any that weren't set.
  */
-function toNextResponse(response: CanopyResponse<unknown>): Response {
+function toBinaryHeaders(headers: CanopyBinaryResponse['headers']): HeadersInit {
+  const result: Record<string, string> = {}
+  if (headers.contentType) result['Content-Type'] = headers.contentType
+  if (headers.contentDisposition) result['Content-Disposition'] = headers.contentDisposition
+  if (headers.cacheControl) result['Cache-Control'] = headers.cacheControl
+  if (headers.etag) result['ETag'] = headers.etag
+  return result
+}
+
+/**
+ * Convert a CanopyResponse (or CanopyBinaryResponse) to a NextResponse.
+ */
+function toNextResponse(response: CanopyResponse<unknown> | CanopyBinaryResponse): Response {
+  if (isCanopyBinaryResponse(response)) {
+    // A Uint8Array can be backed by an arbitrary ArrayBufferLike (e.g. a
+    // Node Buffer), which doesn't structurally satisfy the DOM lib's
+    // BodyInit/ArrayBufferView (specifically ArrayBuffer-backed). Copying
+    // through the typed-array constructor yields a plain ArrayBuffer-backed
+    // view so this type-checks without an unsafe cast; ReadableStream
+    // bodies pass through unchanged.
+    const body = response.body instanceof Uint8Array ? new Uint8Array(response.body) : response.body
+    return new NextResponse(body, {
+      status: response.status,
+      headers: toBinaryHeaders(response.headers),
+    })
+  }
   return NextResponse.json(response.body, {
     status: response.status,
     headers: response.headers,
