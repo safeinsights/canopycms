@@ -21,10 +21,13 @@ const { binaryResponse, binaryHandler } = vi.hoisted(() => {
 
 /**
  * Mock the real asset routes module so `GET /assets` resolves to a synthetic
- * binary-returning handler, exercising the exact route-table shape a later
- * PR's asset-serving endpoint will use (see M2 in
- * .claude/future-tasks/assets-media-system.md) without building that
- * endpoint here - this PR is plumbing-only.
+ * binary-returning handler. This keeps the test focused purely on the core
+ * handler's binary-response passthrough (isCanopyBinaryResponse routing),
+ * decoupled from the real asset store/pipeline - that endpoint-level
+ * behavior (the real `GET /assets/raw/{key...}` route) is covered in
+ * ../api/assets.test.ts. `assetRawRoute` is a required export of the real
+ * module (imported directly by router.ts) - stubbed here so the mock stays
+ * a valid substitute even though this file doesn't exercise it.
  */
 vi.mock('../api/assets', () => ({
   ASSET_ROUTES: {
@@ -34,6 +37,11 @@ vi.mock('../api/assets', () => ({
       handler: binaryHandler,
       validate: () => ({ ok: true as const, params: {} }),
     },
+  },
+  assetRawRoute: {
+    method: 'GET',
+    pattern: ['assets', 'raw', '...key'],
+    handler: vi.fn(),
   },
 }))
 

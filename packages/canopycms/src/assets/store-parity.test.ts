@@ -157,7 +157,9 @@ function runParitySuite(label: string, setup: () => Harness | Promise<Harness>) 
     })
 
     it('returns null for readStaging of a missing key', async () => {
-      expect(await harness.store.readStaging('asset-staging/does-not-exist')).toBeNull()
+      expect(
+        await harness.store.readStaging('asset-staging/dddddddd-dddd-4ddd-8ddd-dddddddddddd'),
+      ).toBeNull()
     })
 
     it('round-trips putOriginal/readOriginal, including contentType and ext', async () => {
@@ -311,9 +313,11 @@ describe('LocalAssetStore path-traversal guard', () => {
   it('rejects a staging key that escapes the root', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-assets-traversal-'))
     const store = new LocalAssetStore({ root })
-    await expect(store.writeStaging('../escape', new TextEncoder().encode('x'))).rejects.toThrow(
-      'Path traversal detected',
-    )
+    // The escape is routed inside the staging prefix so it passes the
+    // staging-key assertion and exercises resolveKey's traversal guard.
+    await expect(
+      store.writeStaging('asset-staging/../../escape', new TextEncoder().encode('x')),
+    ).rejects.toThrow('Path traversal detected')
     await fs.rm(root, { recursive: true, force: true })
   })
 
@@ -326,9 +330,9 @@ describe('LocalAssetStore path-traversal guard', () => {
     await fs.writeFile(path.join(sibling, 'secret.txt'), 'secret content')
 
     const store = new LocalAssetStore({ root })
-    await expect(store.readStaging('../assets-sibling/secret.txt')).rejects.toThrow(
-      'Path traversal detected',
-    )
+    await expect(
+      store.readStaging('asset-staging/../../assets-sibling/secret.txt'),
+    ).rejects.toThrow('Path traversal detected')
 
     await fs.rm(parent, { recursive: true, force: true })
   })

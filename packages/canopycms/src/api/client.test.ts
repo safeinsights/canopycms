@@ -303,15 +303,10 @@ describe('CanopyApiClient', () => {
       )
     })
 
-    it('should send asset upload with proper body', async () => {
+    it('should send asset presign with JSON body', async () => {
       const client = new CanopyApiClient({ fetch: mockFetch })
-      const data = new Uint8Array([1, 2, 3, 4])
 
-      await client.assets.upload({
-        key: 'test.jpg',
-        data,
-        contentType: 'image/jpeg',
-      })
+      await client.assets.presign({ filename: 'test.jpg', contentType: 'image/jpeg' })
 
       expect(mockFetch).toHaveBeenCalledWith(
         expect.any(String),
@@ -323,6 +318,54 @@ describe('CanopyApiClient', () => {
           }),
         }),
       )
+    })
+
+    it('should send asset finalize with JSON body', async () => {
+      const client = new CanopyApiClient({ fetch: mockFetch })
+
+      await client.assets.finalize({ stagingKey: 'asset-staging/x', filename: 'test.jpg' })
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        '/api/canopycms/assets/finalize',
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+
+    it('should send asset uploadProxied as multipart/form-data, not JSON (hand-written client method)', async () => {
+      const client = new CanopyApiClient({ fetch: mockFetch })
+      const file = new File([new Uint8Array([1, 2, 3, 4])], 'test.jpg', { type: 'image/jpeg' })
+
+      await client.assets.uploadProxied(file)
+
+      expect(mockFetch).toHaveBeenCalledWith('/api/canopycms/assets/upload', expect.anything())
+      const [, init] = (mockFetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+        string,
+        RequestInit,
+      ]
+      expect(init.method).toBe('POST')
+      expect(init.body).toBeInstanceOf(FormData)
+      const formData = init.body as FormData
+      expect((formData.get('file') as File).name).toBe('test.jpg')
+      // Browser sets the multipart boundary Content-Type itself; a FormData
+      // body must never get the JSON Content-Type or the OAC signing header
+      // (see the request() body-branching in client.ts / generate-client.ts).
+      expect(init.headers).not.toHaveProperty('Content-Type')
+      expect(init.headers).not.toHaveProperty('x-amz-content-sha256')
+    })
+
+    it('should forward an optional filename override in uploadProxied', async () => {
+      const client = new CanopyApiClient({ fetch: mockFetch })
+      const file = new File([new Uint8Array([1])], 'original.jpg', { type: 'image/jpeg' })
+
+      await client.assets.uploadProxied(file, { filename: 'renamed.jpg' })
+
+      const [, init] = (mockFetch as ReturnType<typeof vi.fn>).mock.calls[0] as [
+        string,
+        RequestInit,
+      ]
+      const formData = init.body as FormData
+      expect(formData.get('filename')).toBe('renamed.jpg')
+      expect((formData.get('file') as File).name).toBe('original.jpg')
     })
   })
 
@@ -373,25 +416,20 @@ describe('CanopyApiClient', () => {
       expect(init.headers).not.toHaveProperty('x-amz-content-sha256')
     })
 
-    it('does not attach the header for a FormData body', async () => {
+    it('does not attach the header for a FormData body (assets.uploadProxied)', async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({ ok: true, status: 200, data: {} }),
       })
 
       const client = new CanopyApiClient({ fetch: mockFetch, baseUrl: '/api/canopycms' })
-      const formData = new FormData()
-      formData.append('file', 'contents')
+      const file = new File(['contents'], 'file.bin')
 
-      // Exercise the low-level request path directly since no generated
-      // endpoint currently sends FormData (assets.upload sends JSON).
-      await (
-        client as unknown as { request: (m: string, p: string, b?: unknown) => Promise<unknown> }
-      ).request('POST', '/assets', formData)
+      await client.assets.uploadProxied(file)
 
       const [, init] = mockFetch.mock.calls[0] as [string, RequestInit]
       expect(init.headers).not.toHaveProperty('x-amz-content-sha256')
-      expect(init.body).toBe(formData)
+      expect(init.body).toBeInstanceOf(FormData)
     })
   })
 

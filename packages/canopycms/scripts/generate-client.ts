@@ -63,9 +63,34 @@ function groupRoutesByNamespace(routes: RouteMetadata[]): NamespaceRoutes[] {
 }
 
 /**
+ * Hand-written client methods, keyed by `${namespace}.${name}`, for routes
+ * the generic template can't express - e.g. a multipart/form-data upload,
+ * which takes a `File` rather than a JSON body. Kept inside the generator
+ * (rather than hand-edited into client.ts afterwards) so client.ts stays
+ * fully auto-generated and safe to regenerate.
+ */
+const HAND_WRITTEN_METHODS: Record<string, (route: RouteMetadata) => string> = {
+  'assets.uploadProxied': (route) => `    /**
+     * ${route.name} - ${route.method} ${route.path} (multipart/form-data - hand-written;
+     * the generic template only knows JSON bodies, and this route accepts a file)
+     */
+    ${route.name}: (file: File, options?: { filename?: string }): Promise<${route.responseTypeName}> => {
+      const formData = new FormData()
+      formData.append('file', file)
+      if (options?.filename) {
+        formData.append('filename', options.filename)
+      }
+      return this.request('${route.method}', '${route.path}', formData)
+    }`,
+}
+
+/**
  * Generate a single client method
  */
 function generateClientMethod(route: RouteMetadata): string {
+  const handWritten = HAND_WRITTEN_METHODS[`${route.namespace}.${route.name}`]
+  if (handWritten) return handWritten(route)
+
   const hasParams = !!route.paramsSchema
   const hasBody = !!route.bodySchema
 

@@ -17,7 +17,7 @@ import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResp
 import type { ReferenceOptionsResponse } from '../reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from '../resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from '../entries'
-import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse, UploadAssetBody } from '../assets'
+import type { AssetDeleteResponse, AssetsListResponse, FinalizeAssetBody, FinalizeAssetResponse, PresignAssetBody, PresignAssetResponse } from '../assets'
 import type { GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from '../permissions'
 import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from '../groups'
 import type { UserInfoResponse } from '../user'
@@ -79,8 +79,10 @@ export function createMockApiClient(): MockApiClient {
   },
 
   assets: {
+    presign: vi.fn().mockResolvedValue(mockSuccess({"upload":{"mode":"proxied","stagingKey":"asset-staging/mock","maxBytes":52428800}})),
+    finalize: vi.fn().mockResolvedValue(mockSuccess({"asset":{"hash32":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","filename":"sample.png","slug":"sample","ext":"png","mime":"image/png","size":1024,"width":100,"height":100,"kind":"raster","uploadedAt":"2024-01-01T00:00:00.000Z","src":"/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sample.png"}})),
+    uploadProxied: vi.fn().mockResolvedValue(mockSuccess({"asset":{"hash32":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","filename":"sample.png","slug":"sample","ext":"png","mime":"image/png","size":1024,"width":100,"height":100,"kind":"raster","uploadedAt":"2024-01-01T00:00:00.000Z","src":"/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sample.png"}})),
     list: vi.fn().mockResolvedValue(mockSuccess({"assets":[]})),
-    upload: vi.fn().mockResolvedValue(mockSuccess({"asset":{"key":"","url":""}})),
     delete: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
   },
 
@@ -256,17 +258,24 @@ export function mockDeleteEntryResponse(): DeleteEntryResponse {
 }
 
 /**
+ * Create a PresignAssetResponse for testing
+ */
+export function mockPresignAssetResponse(): PresignAssetResponse {
+  return mockSuccess({"upload":{"mode":"proxied","stagingKey":"asset-staging/mock","maxBytes":52428800}})
+}
+
+/**
+ * Create a FinalizeAssetResponse for testing
+ */
+export function mockFinalizeAssetResponse(): FinalizeAssetResponse {
+  return mockSuccess({"asset":{"hash32":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","filename":"sample.png","slug":"sample","ext":"png","mime":"image/png","size":1024,"width":100,"height":100,"kind":"raster","uploadedAt":"2024-01-01T00:00:00.000Z","src":"/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/sample.png"}})
+}
+
+/**
  * Create a AssetsListResponse for testing
  */
 export function mockAssetsListResponse(): AssetsListResponse {
   return mockSuccess({"assets":[]})
-}
-
-/**
- * Create a AssetUploadResponse for testing
- */
-export function mockAssetUploadResponse(): AssetUploadResponse {
-  return mockSuccess({"asset":{"key":"","url":""}})
 }
 
 /**

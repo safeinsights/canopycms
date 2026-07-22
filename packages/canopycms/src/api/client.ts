@@ -15,7 +15,7 @@ import type { ContentReadResponse, ContentWriteResponse, ReferenceValidationResp
 import type { ReferenceOptionsResponse } from './reference-options'
 import type { ResolveReferencesBody, ResolveReferencesResponse } from './resolve-references'
 import type { DeleteEntryResponse, EntriesResponse } from './entries'
-import type { AssetDeleteResponse, AssetUploadResponse, AssetsListResponse, UploadAssetBody } from './assets'
+import type { AssetDeleteResponse, AssetsListResponse, FinalizeAssetBody, FinalizeAssetResponse, PresignAssetBody, PresignAssetResponse } from './assets'
 import type { GetUserMetadataResponse, ListGroupsResponse, PermissionsResponse, SearchUsersResponse, UpdatePermissionsBody } from './permissions'
 import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGroupsBody, UpdateInternalGroupsResponse } from './groups'
 import type { UserInfoResponse } from './user'
@@ -243,17 +243,37 @@ export class CanopyApiClient {
    */
   readonly assets = {
     /**
+     * presign - POST /assets/presign
+     */
+    presign: (body: PresignAssetBody): Promise<PresignAssetResponse> => {
+      return this.request('POST', '/assets/presign', body)
+    },
+
+    /**
+     * finalize - POST /assets/finalize
+     */
+    finalize: (body: FinalizeAssetBody): Promise<FinalizeAssetResponse> => {
+      return this.request('POST', '/assets/finalize', body)
+    },
+
+    /**
+     * uploadProxied - POST /assets/upload (multipart/form-data - hand-written;
+     * the generic template only knows JSON bodies, and this route accepts a file)
+     */
+    uploadProxied: (file: File, options?: { filename?: string }): Promise<FinalizeAssetResponse> => {
+      const formData = new FormData()
+      formData.append('file', file)
+      if (options?.filename) {
+        formData.append('filename', options.filename)
+      }
+      return this.request('POST', '/assets/upload', formData)
+    },
+
+    /**
      * list - GET /assets
      */
     list: (params: Record<string, string>): Promise<AssetsListResponse> => {
       return this.request('GET', this.buildPath('/assets', params))
-    },
-
-    /**
-     * upload - POST /assets
-     */
-    upload: (body: UploadAssetBody): Promise<AssetUploadResponse> => {
-      return this.request('POST', '/assets', body)
     },
 
     /**

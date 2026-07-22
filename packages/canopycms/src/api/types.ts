@@ -3,6 +3,7 @@ import type { AuthPlugin } from '../auth/plugin'
 import type { CanopyServices } from '../services'
 import type { CanopyUser } from '../user'
 import type { AssetStore } from '../assets/types'
+import type { CanopyRequest } from '../http/types'
 
 export interface ApiContext {
   services: CanopyServices
@@ -30,6 +31,15 @@ export interface ApiRequest<TBody = unknown> {
   body?: TBody
   query?: Record<string, string | string[] | undefined>
   user: CanopyUser
+  /**
+   * The underlying framework-agnostic request, for handlers that must bypass
+   * the default JSON body parsing (e.g. multipart/form-data uploads - see
+   * `bodyFormat: 'multipart'` in route-builder.ts and `rawRequest.formData()`
+   * / `rawRequest.rawBody()`). Always populated by the core handler; optional
+   * only so hand-built `ApiRequest` test fixtures that don't need it keep
+   * compiling.
+   */
+  rawRequest?: CanopyRequest
 }
 
 export interface ApiResponse<TData = unknown> {

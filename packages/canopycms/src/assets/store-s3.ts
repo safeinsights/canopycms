@@ -65,12 +65,27 @@ export class S3AssetStore implements AssetStore {
   private readonly bucket: string
   private readonly maxUploadBytes: number
   private readonly keys: ReturnType<typeof createKeyBuilders>
+  private readonly stagingPrefix: string
 
   constructor(options: S3AssetStoreOptions) {
     this.bucket = options.bucket
     this.maxUploadBytes = options.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES
     this.client = new S3Client({ region: options.region })
-    this.keys = createKeyBuilders(options.prefixes ?? ASSET_PREFIXES)
+    const prefixes = options.prefixes ?? ASSET_PREFIXES
+    this.keys = createKeyBuilders(prefixes)
+    this.stagingPrefix = `${prefixes.staging}/`
+  }
+
+  /**
+   * Staging methods accept caller-influenced keys (finalize receives the key
+   * from the client), so they must never operate outside the staging prefix —
+   * in a shared content bucket an unguarded deleteStaging would reach deploy
+   * artifacts under builds/. The API layer validates too; defense-in-depth.
+   */
+  private assertStagingKey(key: string): void {
+    if (!key.startsWith(this.stagingPrefix)) {
+      throw new Error(`Not a staging key: ${key}`)
+    }
   }
 
   async beginUpload(input: BeginUploadInput): Promise<StagedUploadTarget> {
@@ -91,16 +106,19 @@ export class S3AssetStore implements AssetStore {
   }
 
   async writeStaging(key: string, data: Uint8Array, contentType?: string): Promise<void> {
+    this.assertStagingKey(key)
     await this.client.send(
       new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: data, ContentType: contentType }),
     )
   }
 
   async readStaging(key: string): Promise<Uint8Array | null> {
+    this.assertStagingKey(key)
     return this.getObjectBytes(key)
   }
 
   async deleteStaging(key: string): Promise<void> {
+    this.assertStagingKey(key)
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }))
   }
 
