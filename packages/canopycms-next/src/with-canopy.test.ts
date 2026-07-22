@@ -168,4 +168,73 @@ describe('withCanopy', () => {
       expect(result.transpilePackages).toContain('canopycms')
     })
   })
+
+  describe('assets rewrite', () => {
+    const ASSETS_REWRITE = {
+      source: '/assets/:path*',
+      destination: '/api/canopycms/assets/raw/assets/:path*',
+    }
+
+    it('adds the assets rewrite when the user has no rewrites at all', async () => {
+      const result = withCanopy({})
+      const rewrites = await result.rewrites!()
+      expect(rewrites).toEqual([ASSETS_REWRITE])
+    })
+
+    it('appends to a user rewrites array form (async function)', async () => {
+      const result = withCanopy({
+        rewrites: async () => [{ source: '/old', destination: '/new' }],
+      })
+      const rewrites = (await result.rewrites!()) as Array<{ source: string; destination: string }>
+      expect(rewrites).toEqual([{ source: '/old', destination: '/new' }, ASSETS_REWRITE])
+    })
+
+    it('supports a non-async user rewrites function that returns a plain array', async () => {
+      // Next's declared type requires a Promise-returning function, but real
+      // next.config.js files are untyped JS - a sync function that just
+      // returns the array is common in the wild. `await`ing a non-Promise
+      // value resolves immediately, so this must not crash.
+      const syncRewrites = (() => [
+        { source: '/sync', destination: '/sync-dest' },
+      ]) as unknown as NonNullable<NextConfig['rewrites']>
+      const result = withCanopy({ rewrites: syncRewrites })
+      const rewrites = (await result.rewrites!()) as Array<{ source: string; destination: string }>
+      expect(rewrites).toEqual([{ source: '/sync', destination: '/sync-dest' }, ASSETS_REWRITE])
+    })
+
+    it('merges into afterFiles for the object rewrites form, leaving beforeFiles/fallback untouched', async () => {
+      const result = withCanopy({
+        rewrites: async () => ({
+          beforeFiles: [{ source: '/before', destination: '/before-dest' }],
+          afterFiles: [{ source: '/after', destination: '/after-dest' }],
+          fallback: [{ source: '/fallback', destination: '/fallback-dest' }],
+        }),
+      })
+      const rewrites = (await result.rewrites!()) as {
+        beforeFiles: Array<{ source: string; destination: string }>
+        afterFiles: Array<{ source: string; destination: string }>
+        fallback: Array<{ source: string; destination: string }>
+      }
+      expect(rewrites.beforeFiles).toEqual([{ source: '/before', destination: '/before-dest' }])
+      expect(rewrites.afterFiles).toEqual([
+        { source: '/after', destination: '/after-dest' },
+        ASSETS_REWRITE,
+      ])
+      expect(rewrites.fallback).toEqual([{ source: '/fallback', destination: '/fallback-dest' }])
+    })
+
+    it('handles the object form with buckets omitted entirely, defaulting them to empty arrays', async () => {
+      const result = withCanopy({
+        rewrites: async () => ({ afterFiles: [{ source: '/x', destination: '/y' }] }),
+      })
+      const rewrites = (await result.rewrites!()) as {
+        beforeFiles: unknown[]
+        afterFiles: Array<{ source: string; destination: string }>
+        fallback: unknown[]
+      }
+      expect(rewrites.beforeFiles).toEqual([])
+      expect(rewrites.fallback).toEqual([])
+      expect(rewrites.afterFiles).toEqual([{ source: '/x', destination: '/y' }, ASSETS_REWRITE])
+    })
+  })
 })

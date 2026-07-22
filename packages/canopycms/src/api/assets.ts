@@ -4,11 +4,13 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import { defineEndpoint } from './route-builder'
 import type { RouteDefinition } from '../http/router'
 import type { CanopyBinaryResponse } from '../http/types'
-import type { AssetMeta, StagedUploadTarget } from '../assets/types'
+import type { AssetMeta, AssetStore, StagedUploadTarget } from '../assets/types'
 import { ASSET_PREFIXES } from '../assets/keys'
 import { ALLOWED_UPLOAD_CONTENT_TYPES } from '../assets/pipeline'
 import { finalizeStagedUpload } from '../assets/finalize'
 import { assetSrc } from '../assets/asset-src'
+import { formatDirectives, parseTransformPath } from '../assets/transform-directives'
+import { applyTransform } from '../assets/transform'
 
 /** An asset's persisted meta plus its computed, root-relative public URL. */
 export type AssetRecord = AssetMeta & { src: string }
@@ -257,14 +259,91 @@ const deleteAssetHandler = async (
   return { ok: true, status: 200, data: { deleted: true } }
 }
 
+/** Cache-Control applied to every transform output this route writes/serves - matches finalize.ts's PUBLIC_CACHE_CONTROL for static public objects. */
+const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
+
 /**
- * Serve a public asset object (sanitized svg/pdf finalize wrote) for dev-mode
- * `/assets/*` rewrites. Hand-built (not `defineEndpoint`) rather than
- * registered in `ASSET_ROUTES`/the client generator: this route returns raw
- * bytes (`CanopyBinaryResponse`), not a JSON envelope, so a generated client
+ * Lazy dev-mode emulation of the prod transform Lambda (PR 7 reuses
+ * `parseTransformPath`/`formatDirectives`/`applyTransform` unchanged): parse
+ * the request, load the original, transform it, write the result back under
+ * its CANONICAL key (so a non-canonically-ordered directive string still
+ * dedupes with any equivalent request), then serve the bytes just computed
+ * (no re-read from the store).
+ *
+ * `key` here is the full store key already confirmed to start with the
+ * `assets/t/` prefix and to have missed the cache-hit `readPublicObject`
+ * check in `rawAssetHandler`.
+ */
+async function serveLazyTransform(
+  assetStore: AssetStore,
+  key: string,
+): Promise<CanopyBinaryResponse | ApiResponse<never>> {
+  const rest = key.slice(ASSET_PREFIXES.transform.length + 1)
+  const parsed = parseTransformPath(rest.split('/'))
+  if (!parsed.ok) {
+    return { ok: false, status: 400, error: parsed.error }
+  }
+
+  const meta = await assetStore.getMeta(parsed.hash32)
+  if (!meta) {
+    return { ok: false, status: 404, error: 'Not found' }
+  }
+  if (meta.kind !== 'raster') {
+    return { ok: false, status: 400, error: 'Not a raster asset - svg/pdf are served statically' }
+  }
+
+  // When the URL omits an explicit `f=` format, the transform preserves the
+  // source format, so the URL's `{ext}` must match the source's real ext
+  // exactly - the parser alone can't check this (it doesn't know the source
+  // format until this meta lookup).
+  const requestedFormat = parsed.directives.identity ? undefined : parsed.directives.format
+  if (requestedFormat === undefined && parsed.ext !== meta.ext) {
+    return { ok: false, status: 400, error: 'Extension does not match the source format' }
+  }
+
+  const original = await assetStore.readOriginal(parsed.hash32)
+  if (!original) {
+    return { ok: false, status: 404, error: 'Not found' }
+  }
+
+  const transformed = await applyTransform(
+    { data: original.data, ext: original.ext },
+    parsed.directives,
+  )
+  if (!transformed.ok) {
+    return { ok: false, status: 502, error: transformed.error }
+  }
+
+  const canonicalKey = `${ASSET_PREFIXES.transform}/${formatDirectives(parsed.directives)}/${parsed.hash32}/${parsed.slug}.${parsed.ext}`
+  await assetStore.putPublicObject({
+    key: canonicalKey,
+    data: transformed.data,
+    contentType: transformed.contentType,
+    cacheControl: TRANSFORM_CACHE_CONTROL,
+  })
+
+  return {
+    kind: 'binary',
+    status: 200,
+    body: transformed.data,
+    headers: { contentType: transformed.contentType, cacheControl: TRANSFORM_CACHE_CONTROL },
+  }
+}
+
+/**
+ * Serve a public asset object (sanitized svg/pdf finalize wrote, or a
+ * previously-computed transform output) for dev-mode `/assets/*` rewrites.
+ * Hand-built (not `defineEndpoint`) rather than registered in
+ * `ASSET_ROUTES`/the client generator: this route returns raw bytes
+ * (`CanopyBinaryResponse`), not a JSON envelope, so a generated client
  * method that calls `response.json()` would be actively wrong. Consumers hit
  * this route directly (an `<img>`/`<a>` src, or a framework rewrite), never
  * through `client.ts`.
+ *
+ * Transform outputs (`assets/t/...`) are cache-checked exactly like any
+ * other public object first - only a MISS under the `assets/t/` prefix falls
+ * through to `serveLazyTransform`, which computes and caches the bytes. This
+ * mirrors the prod design (CloudFront origin-group -> S3 -> Lambda on miss).
  */
 const rawAssetHandler = async (
   ctx: ApiContext,
@@ -275,6 +354,7 @@ const rawAssetHandler = async (
 
   const key = params.key ?? ''
   const publicPrefix = `${ASSET_PREFIXES.public}/`
+  const transformPrefix = `${ASSET_PREFIXES.transform}/`
   // Defense-in-depth: the local store re-guards path traversal on its own key
   // resolution, but reject obviously-wrong keys before ever touching the
   // store, and never distinguish "malformed key" from "not found" in the
@@ -284,20 +364,24 @@ const rawAssetHandler = async (
   }
 
   const object = await ctx.assetStore.readPublicObject(key)
-  if (!object) {
+  if (object) {
+    return {
+      kind: 'binary',
+      status: 200,
+      body: object.data,
+      headers: {
+        contentType: object.contentType,
+        contentDisposition: object.contentDisposition,
+        cacheControl: object.cacheControl,
+      },
+    }
+  }
+
+  if (!key.startsWith(transformPrefix)) {
     return { ok: false, status: 404, error: 'Not found' }
   }
 
-  return {
-    kind: 'binary',
-    status: 200,
-    body: object.data,
-    headers: {
-      contentType: object.contentType,
-      contentDisposition: object.contentDisposition,
-      cacheControl: object.cacheControl,
-    },
-  }
+  return serveLazyTransform(ctx.assetStore, key)
 }
 
 // ============================================================================
