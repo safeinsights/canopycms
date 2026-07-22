@@ -14,6 +14,7 @@ import {
   type ListEntriesOptions,
   type ListEntriesItem,
   createCanopyServices,
+  createAssetStore,
   operatingStrategy,
   loadInternalGroups,
   loadBranchContext,
@@ -243,6 +244,15 @@ export async function createNextCanopyContext(
     entrySchemaRegistry: options.entrySchemaRegistry,
   })
 
+  // Fallback root for the implicit local asset store (media unset, or
+  // adapter: 'local' without a directory). Dev-only by design: in prod an
+  // unset `media` must leave the store unconfigured (asset routes 501)
+  // rather than silently storing assets on EFS with no serving path in the
+  // static build.
+  const devAssetsDir =
+    mode === 'dev' ? path.join(operatingStrategy(mode).getWorkspaceRoot(), 'assets') : undefined
+  const assetStore = createAssetStore(options.config.media, { devAssetsDir })
+
   // In dev, surface divergence between working-tree content and the served branch clone (warn-only).
   // All logic lives in the core watcher; this is just the once-at-startup trigger (thin Next wiring).
   if (options.config.mode === 'dev' && !isBuildMode()) {
@@ -354,6 +364,7 @@ export async function createNextCanopyContext(
     ...options,
     authPlugin,
     services,
+    assetStore,
   })
 
   return {

@@ -4,6 +4,8 @@
 
 import { z } from 'zod'
 
+import { relativePathSchema } from './collection'
+
 // Media adapter configuration schema.
 // Keyed as a discriminated union on `adapter` so each adapter's required fields are
 // enforced at parse time. With a plain z.union, a malformed s3 config (e.g. missing
@@ -11,16 +13,24 @@ import { z } from 'zod'
 // of failing validation. There is no generic/custom adapter branch: only 'local', 's3',
 // and 'lfs' are implemented (see BACKLOG.md "Asset adapters"); add a literal branch here
 // when a new adapter ships.
+//
+// Bucket-prefix layout (asset-originals/, asset-staging/, asset-meta/, assets/) is
+// intentionally NOT configurable here — those are constants in assets/keys.ts, not
+// per-site config (see .claude/future-tasks/assets-media-system.md).
 export const mediaSchema = z.discriminatedUnion('adapter', [
   z.object({
     adapter: z.literal('local'),
     publicBaseUrl: z.string().url().optional(),
+    /** Root directory for local asset storage. Defaults to the caller's dev-assets dir. */
+    directory: relativePathSchema.optional(),
   }),
   z.object({
     adapter: z.literal('s3'),
     bucket: z.string().min(1),
     region: z.string().min(1),
     publicBaseUrl: z.string().url().optional(),
+    /** Max upload size in bytes for presigned direct uploads. Defaults to 50 MiB. */
+    maxUploadBytes: z.number().int().positive().optional(),
   }),
   z.object({
     adapter: z.literal('lfs'),

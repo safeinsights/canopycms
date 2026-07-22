@@ -2,7 +2,7 @@ import type { BranchContext } from '../types'
 import type { AuthPlugin } from '../auth/plugin'
 import type { CanopyServices } from '../services'
 import type { CanopyUser } from '../user'
-import type { AssetStore } from '../asset-store'
+import type { AssetStore } from '../assets/types'
 
 export interface ApiContext {
   services: CanopyServices

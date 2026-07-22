@@ -109,3 +109,12 @@ export type { StaticPathEntry, CollectStaticPathsOptions } from './static'
 export { startDevContentWatcher } from './dev-content-watcher'
 
 export type { StartDevContentWatcherOptions } from './dev-content-watcher'
+
+/**
+ * Instantiate the AssetStore configured by a site's `media` config
+ * (`config.media`). Returns undefined when no store applies: `media` is
+ * unset and no `devAssetsDir` fallback was given, `adapter: 'local'` omits
+ * `directory` with no fallback, or `adapter: 'lfs'` (config literal kept,
+ * not yet implemented).
+ */
+export { createAssetStore } from './assets/factory'
