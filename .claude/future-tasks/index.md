@@ -31,7 +31,7 @@ None currently open.
 
 | File                                                                               | Summary                                                                                                                    |
 | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| [assets-media-system.md](assets-media-system.md)                                   | Assets/media system design (agreed 2026-07-19): S3 content-addressed storage, presigned direct upload, sharp pipeline, image field + media manager, CDK asset bucket |
+| [assets-media-system.md](assets-media-system.md)                                   | Assets/media system — Plan B approved 2026-07-21, in progress on epic/assets-media-system: S3 content-addressed prefixes in existing buckets, presigned direct upload, on-demand transform Lambda, image field + MediaManager |
 | [schema-store-rmw-protection.md](schema-store-rmw-protection.md)                   | `.collection.json` mutations in schema/schema-store.ts are read-modify-write with `withLock` covering only the final write; no OCC/lockfile — concurrent admin schema edits can lose updates cross-process |
 | [settings-file-occ-cross-host.md](settings-file-occ-cross-host.md)                 | Audit permissions.json/groups.json `contentVersion` OCC for the cross-host lost-update blind spot the epic fixed elsewhere; apply the layered lock pattern if confirmed |
 | [validate-entry-type-names.md](validate-entry-type-names.md)                       | Reference fields can specify non-existent `entryType` names; add config-time validation                                    |
