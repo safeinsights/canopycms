@@ -1574,7 +1574,72 @@ try {
 
 ### Media Configuration
 
-Not Yet Implemented
+CanopyCMS stores uploaded images and PDFs in a content-addressed asset store and serves
+images through an on-demand transform layer. Configure it with the `media` key:
+
+```typescript
+media: {
+  adapter: 's3',
+  bucket: 'my-site-assets',
+  region: 'us-east-1',
+  // Optional: absolute base URL when the editor is served from a different origin
+  // than the public site (e.g. a dedicated editor domain). Omit for same-origin.
+  publicBaseUrl: 'https://assets.example.com',
+  // Optional: max upload size for presigned direct uploads (default 50 MiB).
+  maxUploadBytes: 52_428_800,
+}
+```
+
+For local development, omit `media` entirely (uploads go to `.canopy-dev/assets/` via the
+built-in local adapter), or point at your real bucket to test the S3 path:
+
+```typescript
+media: { adapter: 'local', directory: '.canopy-dev/assets' }
+```
+
+**How it works**
+
+- **Upload** — editors add images through the Media Library (a right-hand drawer opened
+  from the editor's Settings menu) or directly from an `image` field / the MDX "Insert
+  Image" dialog. Uploads go **straight from the browser to S3** via a presigned POST; the
+  bytes never pass through your API route. On completion the server sniffs the real file
+  type, strips EXIF metadata (including GPS), sanitizes SVGs, hashes the bytes, and records
+  the asset.
+- **Content addressing** — every asset is keyed by a hash of its bytes, so uploads are
+  immutable and deduplicated. Content on a draft branch references its images immediately;
+  publishing needs no separate asset step, and rollbacks always resolve.
+- **Delivery** — images are served from `/assets/t/{directives}/…` URLs that transform on
+  first request (resize, format-convert to WebP, crop) and cache immutably at the CDN
+  thereafter. Use the exported helpers to build responsive markup:
+
+  ```typescript
+  import { assetUrl, assetSrcSet } from 'canopycms'
+
+  <img
+    src={assetUrl(image, { width: 960 })}
+    srcSet={assetSrcSet(image, [480, 960, 1600])}
+    sizes="(max-width: 700px) 100vw, 960px"
+    alt={image.alt}
+    width={image.width}
+    height={image.height}
+  />
+  ```
+
+  SVGs and PDFs are served statically (no transform).
+
+**`image` fields** hold a structured value — `{ src, alt, width, height, crop? }` — so alt
+text is enforced, intrinsic dimensions prevent layout shift, and crops are stored as a
+directive rather than a derived file. Declare an `aspect` on the field (e.g. `'16:9'`,
+`'1:1'`) to enable the interactive crop step, and `altOptional: true` for decorative
+images.
+
+**Permissions** — any authenticated editor can upload and list assets; deleting an asset
+from the library is admin-only (and removes only the library record — existing content
+references keep resolving).
+
+**Infrastructure** — the `canopycms-cdk` package ships an `AssetSupport` construct that
+provisions the bucket (or attaches to an existing one), the transform Lambda, and the
+CloudFront behaviors. See [docs/deploying-to-aws.md](docs/deploying-to-aws.md).
 
 ### Editor Customization
 
