@@ -4,7 +4,7 @@
 
 Surfaced by the EFS cross-process concurrency epic's second review (2026-07-21), while
 implementing fixes from a follow-up adversarial review of that epic's PRs. Not part of
-the epic's original scope (see `efs-cross-process-concurrency.md`), which covered
+the epic's original scope (see `resolved/efs-cross-process-concurrency.md`), which covered
 branch-registry, branch-schema-cache, comment-store, branch-metadata, and content-store
 lock keys — `.collection.json` writes were left as-is.
 
@@ -64,6 +64,6 @@ Follow the standard recipe:
 ## Related
 
 - `docs/concurrency.md` — "Adding a mutable JSON file" recipe
-- `efs-cross-process-concurrency.md` — the epic that hardened branch-registry,
+- `resolved/efs-cross-process-concurrency.md` — the epic that hardened branch-registry,
   branch-schema-cache, comment-store, branch-metadata, and content-store, but did not
   touch schema-store.ts

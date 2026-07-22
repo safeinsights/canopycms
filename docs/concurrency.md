@@ -140,7 +140,7 @@ markers entirely (`skipIndexMarker` on GitManager).
 ## Residual staleness windows (accepted, bounded)
 
 Named A/B/C/E for continuity with the original analysis
-(`.claude/future-tasks/index-staleness-multiprocess.md`):
+(`.claude/future-tasks/resolved/index-staleness-multiprocess.md`):
 
 - **(A) Attribute caching, benign direction:** another host may not see a new marker
   for up to the cache window (~3–60s); it keeps serving its stale cache until then.
@@ -212,5 +212,5 @@ All in use today; copy them rather than inventing new ones:
 Designed across PR #94 (ContentId index marker) and the July 2026 EFS cross-process
 concurrency epic (PRs #111–#116: shared primitives, branch-registry GIT-M1,
 branch-schema-cache GIT-M2, comment-store GIT-M3, branch-metadata GIT-M4, content-store
-lock keys). Background analysis: `.claude/future-tasks/index-staleness-multiprocess.md`
-and `.claude/future-tasks/efs-cross-process-concurrency.md`.
+lock keys). Background analysis: `.claude/future-tasks/resolved/index-staleness-multiprocess.md`
+and `.claude/future-tasks/resolved/efs-cross-process-concurrency.md`.

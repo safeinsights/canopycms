@@ -365,7 +365,7 @@ export class ContentStore {
   /**
    * Lock key for an existing entry, addressed by its permanent content ID
    * (stable across renames -- the whole point of this locking scheme; see
-   * .claude/future-tasks/content-store-lock-key.md). Namespaced by store
+   * .claude/future-tasks/resolved/content-store-lock-key.md). Namespaced by store
    * root: the same content ID exists in every clone of a branch, and one
    * process can hold ContentStore instances on several clones (dev
    * workspace roots, prod branch clones) at once, so the root prefix keeps
@@ -770,7 +770,7 @@ export class ContentStore {
     // path by directory-scanning for the slug, and that resolution can go
     // stale the instant a concurrent renameEntry() completes, so it must be
     // re-resolved (ground truth) after the lock is held -- see
-    // .claude/future-tasks/content-store-lock-key.md and entryLockKey().
+    // .claude/future-tasks/resolved/content-store-lock-key.md and entryLockKey().
     const prePass = await this.buildPaths(schemaItem, slug, { entryTypeName, existingId })
     let lockKey = this.entryLockKey(schemaItem, slug, prePass)
 

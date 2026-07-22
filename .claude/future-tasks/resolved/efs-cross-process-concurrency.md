@@ -3,7 +3,7 @@
 ## Status: RESOLVED (2026-07-21, epic PRs #111–#116 on integration branch `epic/efs-cross-process-concurrency`)
 
 All four findings fixed with one coordinated design, adversarially reviewed before
-implementation. The durable reference is now **[docs/concurrency.md](../../docs/concurrency.md)**
+implementation. The durable reference is now **[docs/concurrency.md](../../../docs/concurrency.md)**
 (layered model, EFS/NFS semantics, per-resource table, residual windows, recipes).
 
 - **PR #111 (primitives):** `resource-generation.ts` generalizes the PR #94 marker
