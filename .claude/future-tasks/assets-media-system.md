@@ -45,7 +45,7 @@ More static sites are coming.
 asset-originals/{hash32}.{ext}        private; full-fidelity originals, kept forever
 asset-staging/{uuid}                  presigned-POST target; 1-day lifecycle expiry
 asset-meta/{hash32}.json              private; filename, uploader, date, dims, mime
-asset-cache/…                         transform outputs (public via /assets/t/*)
+assets/t/{directives}/{hash32}/{slug} transform outputs (URL path = S3 key; no originPath)
 assets/{hash32}/{slug}.{ext}          public static: sanitized SVG + PDFs only
 ```
 
@@ -77,12 +77,21 @@ assets/{hash32}/{slug}.{ext}          public static: sanitized SVG + PDFs only
 ### Delivery — on-demand transform layer
 
 `/assets/t/{directives}/{hash32}/{slug}.{ext}` → CloudFront behavior with **origin group
-[S3 `asset-cache/` → transform Lambda on 403/404]**. On miss, the Lambda reads
-`asset-originals/`, applies imgix-style directives (`w=`, `f=`, `q=`, `c=x,y,w,h`
-normalized crop rect), strips EXIF, writes to `asset-cache/`, returns the image
-(~300–800 ms once per variant; 1-year-immutable cached after). Directive allowlist
-(bounded width set) prevents cache-stuffing; transform failure falls back to the
-original. Raster images are served ONLY via `/assets/t/*` (EXIF-strip guaranteed);
+[S3 (no originPath; URL path = key, so outputs live under `assets/t/…`) → transform
+Lambda on 403 AND 404]** (existing infra is OAI with `s3:List*`, so misses are 404;
+configure both criteria). On miss, the Lambda reads `asset-originals/`, applies
+imgix-style directives (`w=`, `f=`, `q=`, `c=x,y,w,h` normalized crop rect), strips
+EXIF, **writes the output to S3 first**, then returns the bytes inline only when small
+enough for the Function URL's ~6 MB buffered cap; for larger outputs and for the
+transform-failure fallback it returns **302 + `Cache-Control: no-store`** to the
+now-satisfiable S3 URL (the no-store matters — the OpenStax prior art documents the
+cached-redirect trap). Failure fallback serves a copy written under
+`assets/t/original/{hash32}/{slug}` (originals aren't otherwise URL-reachable). The
+Function URL is locked to CloudFront via OAC/AWS_IAM so direct invocation can't stuff
+the cache; directive allowlist (bounded width set) bounds variants. **Open spike
+(first Phase 2 task, ~1 hr in the sandbox): confirm OAC/OAI-signed origins work inside
+an origin group** — no documented statement either way. Raster images are served ONLY
+via `/assets/t/*` (EXIF-strip guaranteed);
 SVG/PDF static via `/assets/*`. Both behaviors go on env AND preview distributions, so
 PR previews of draft branches resolve new images. This is a modernized re-design of
 OpenStax `image-cdn` (../../openstax/image-cdn): S3-sourced instead of HTTP-pull, and
@@ -92,8 +101,16 @@ Handler. Ships as a **per-site CDK construct** (no org-wide shared deployment �
 cross-account IAM webs; the construct is the reuse).
 
 **Dev mode:** `withCanopy` rewrites `/assets/* → /api/canopycms/assets/*`; the local
-route serves from `.canopy-dev/assets/` and emulates `/assets/t/*` with on-the-fly sharp.
-Identical URLs in content across modes.
+route serves **through the store abstraction** and emulates `/assets/t/*` with
+on-the-fly sharp. Two dev configurations exist and both matter: `adapter: 'local'`
+(example apps; files in `.canopy-dev/assets/`; uploads proxied through the API) and
+**`adapter: 's3'` under `next dev`** (docs-site until a CMS deployment exists: local
+AWS credentials presign against the real sandbox bucket, `http://localhost:3000` goes
+in the bucket CORS origins — this is the only way a laptop upload reaches the bucket
+that CI-built PR previews serve from). The dev asset GET route depends on cookie-based
+auth (Clerk / dev-plugin cookie). Identical URLs in content across modes; local
+`CANOPY_BUILD=static` exports can't resolve `/assets/*` (no CloudFront locally) —
+accepted.
 
 ### Content model + editor
 
@@ -106,11 +123,18 @@ Identical URLs in content across modes.
   mounted from the EditorSidebar Settings menu, `EditorStateContext.ModalState`); picker
   mode in a Modal from ImageField and from MDXEditor via custom `ImageDialog`
   (`imagePlugin({ imageUploadHandler, ImageDialog })`, confirmed in 3.53). Grid of
-  `/assets/t/w=160/…` thumbnails, cursor-paginated list over `asset-meta/`
-  (ListObjectsV2 continuation tokens), client-side filename filter, `@mantine/dropzone`
-  upload with XHR progress. Guards mirror the server: upload = editor (guard relaxed
-  from `privileged`), delete = admin via `isAdmin` capability flags; delete removes the
-  meta sidecar only (blobs immortal until a future GC worker task).
+  thumbnail URLs built from `media.publicBaseUrl` (the editor may be served from a CMS
+  domain, not the site domain — root-relative stays only in stored content),
+  cursor-paginated list over `asset-meta/` (ListObjectsV2 continuation tokens),
+  client-side filename filter, `@mantine/dropzone` (pinned exactly to the installed
+  Mantine core version) upload with XHR progress. Guards mirror the server: upload =
+  any authenticated user (there is no finer "editor" role — Admins/Reviewers are the
+  only reserved groups, and branch/path ACLs can't apply to branch-agnostic assets),
+  list = any authenticated user (key enumeration accepted: unlisted ≠ private), delete
+  = admin via `isAdmin` capability flags; delete removes the meta sidecar only (blobs
+  immortal until a future GC worker task). Modal open-state follows the live
+  `Editor.tsx` local-`useState` pattern (`EditorStateContext.ModalState` exists but is
+  mounted nowhere — dead code; don't wire it).
 - Scope: images + PDFs. No video.
 
 ### Pluggability (kept, not built)
@@ -158,21 +182,57 @@ Also considered and rejected earlier in the design rounds:
 
 ## Epic breakdown (PR sequence)
 
-1. Store contract v2 + S3/Local stores + `media` config consumption
-2. Asset API (presign/finalize/list/delete/stream) + finalize pipeline + client regen + guard change
-3. Transform engine (directive parser + sharp module) + dev-mode `/assets/t/*` emulation + `assetUrl` helper
-4. Structured `image` field (schema + AI serialization)
-5. Editor: ImageField + MediaLibrary (Drawer/picker) + MDX wiring + crop step
-6. `canopycms-cdk` AssetSupport construct (BYO-bucket + standalone) + transform Lambda + behavior helpers
-7. docs-site-proto wiring (infra + config) — sandbox deploy verification
-8. Adopter codemods + `public/` migration job
-9. Docs + bookkeeping
+1. Store contract v2 + S3/Local stores + `media` config consumption (new `assets/` module)
+2. HTTP plumbing: binary/stream `CanopyResponse` variant + raw request body + Next adapter support (prereq for stream/dev serving and proxied uploads)
+3. Asset API (presign/finalize/list/delete/stream) + finalize pipeline + client regen + guard change
+4. Transform engine (directive parser + sharp module) + dev-mode `/assets/t/*` emulation + `assetUrl` helper
+5. Structured `image` field (schema + AI serialization)
+6. Editor: ImageField + MediaLibrary (Drawer/picker) + MDX wiring + crop step
+7. CDK: origin-group OAC spike FIRST, then AssetSupport construct (BYO-bucket + standalone) + transform Lambda (Docker/image bundling for sharp) + behavior helpers + `CanopyCmsService` fix (S3 gateway endpoint + SG egress + IAM — the construct as built cannot reach S3 at all)
+8. docs-site-proto wiring (separate repo): infra + config + **fix `update-distribution.ts` to flip OriginPath only on build origins** (today it stamps every origin — first deploy after adding the asset origin would 404 all assets)
+9. Adopter codemods + `public/` migration job
+10. Docs + bookkeeping
 
 Success criteria (hard gates): dev e2e — upload via MediaManager and MDX, pick-from-library
 from both entry points, paginated library, guard-hidden controls, structured value in the
 content file, emulated transforms render in preview and post-publish, 40 MB original
 accepted, SVG-script sanitized, PDF real-filename download, crop rect round-trips.
-Prod-shape e2e (sandbox docs-site) — presigned upload from the editor origin; first
-`/assets/t/…` hit transforms, second is a cache hit with immutable headers;
-transform-failure fallback; PR preview renders a draft branch's new image; draft image
-unreachable from published pages until publish; originPath flip doesn't disturb assets.
+Prod-shape e2e (sandbox) — scope depends on the open B1 decision below; at minimum:
+presigned upload against the real sandbox bucket (from dev-mode-with-S3 or a deployed
+editor), first `/assets/t/…` hit transforms, second is a cache hit with immutable
+headers; transform-failure fallback; PR preview renders a draft branch's new image;
+draft image unreachable from published pages until publish; originPath flip doesn't
+disturb assets.
+
+## Adversarial review amendments (2026-07-21)
+
+A heavy adversarial review of the approved plan against the real code produced these
+corrections, all folded into the sections above:
+
+- **B1 (open decision, gates Phase 2 verification):** no CMS/editor Lambda is deployed
+  anywhere — docs-site runs the editor only under `next dev`, and `CanopyCmsService`
+  as built has a PRIVATE_ISOLATED VPC with no S3 endpoint and NFS-only SG egress.
+  Either (a) re-scope prod-shape e2e to dev-mode-with-S3 + direct CloudFront checks, or
+  (b) add a full sandbox CMS-service deployment to the epic. **JP to decide.**
+- **B2:** `update-distribution.ts` stamps OriginPath onto every origin → PR 8 fix.
+- **B3:** dev-mode dual configuration made explicit (local vs S3-in-dev); dev route
+  serves through the store abstraction.
+- **M1:** transform Lambda writes-to-S3-first; inline bytes only under the ~6 MB
+  Function URL cap; 302+no-store for large/fallback; fallback copy under
+  `assets/t/original/`.
+- **M2:** JSON-only HTTP pipeline → new PR 2 (binary responses, raw bodies).
+- **M3:** `EditorStateContext.ModalState` is unmounted dead code → use `Editor.tsx`
+  local-useState pattern.
+- **M4:** editor thumbnails via `media.publicBaseUrl` (editor origin ≠ site origin).
+- **M5:** guard semantics stated exactly (authenticated / authenticated / admin).
+- **M6:** `file-type` cannot detect SVG (text format) — explicit XML/root-element check
+  before the sanitizer; sniff-undefined is never pass-through.
+- **M7:** `asset-cache/` prefix dropped; outputs under `assets/t/…` (URL = key).
+- Minor: meta writes use S3 conditional `If-None-Match: *` (LocalAssetStore gets a `wx`
+  equivalent for parity); `content-disposition` package against header injection;
+  `image-size` orientation 5–8 width/height swap; SVG sanitizer needs a DOM shim —
+  server-only module; `@mantine/dropzone` pinned exactly to installed core (7.17.8);
+  media config discriminator is `adapter` (not `kind`); sharp in the transform Lambda
+  requires Docker/image bundling; deploy `/*` invalidation needlessly evicts transform
+  cache (accepted); `FormRenderer` image case goes in the switch (~line 224), not the
+  custom-renderer branch at line 192.
