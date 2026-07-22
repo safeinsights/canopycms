@@ -6,6 +6,7 @@ import {
   aws_lambda as lambda,
   aws_route53 as route53,
   aws_certificatemanager as acm,
+  aws_s3 as s3,
 } from 'aws-cdk-lib'
 import { CanopyCmsService } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
@@ -101,5 +102,96 @@ describe('CanopyCmsDistribution origin access control', () => {
         Principal: 'cloudfront.amazonaws.com',
       }),
     )
+  })
+})
+
+describe('CanopyCmsService B1: the Lambda can actually reach S3', () => {
+  it('adds an S3 gateway VPC endpoint (the PRIVATE_ISOLATED subnet has no NAT/IGW route to S3 otherwise)', () => {
+    const template = synth()
+    template.hasResourceProperties(
+      'AWS::EC2::VPCEndpoint',
+      Match.objectLike({
+        ServiceName: Match.objectLike({ 'Fn::Join': Match.anyValue() }),
+        VpcEndpointType: 'Gateway',
+      }),
+    )
+    // ServiceName is built from a region/service-name join - assert the
+    // literal 's3' fragment is present rather than the whole Fn::Join shape.
+    const endpoints = template.findResources('AWS::EC2::VPCEndpoint')
+    const serviceNames = Object.values(endpoints).map((e) =>
+      JSON.stringify(e.Properties.ServiceName),
+    )
+    expect(serviceNames.some((s) => s.includes('.s3'))).toBe(true)
+  })
+
+  it('adds Lambda SG egress on 443 (for the S3 gateway endpoint)', () => {
+    const template = synth()
+    // A plain-CIDR egress rule (no reciprocal ingress rule on the peer) is
+    // inlined by CDK directly onto the `AWS::EC2::SecurityGroup` resource
+    // rather than synthesized as a standalone `AWS::EC2::SecurityGroupEgress`
+    // - unlike the NFS rule above, which involves TWO security groups that
+    // reference each other (Lambda egress -> EFS, EFS ingress <- Lambda) and
+    // so CDK breaks that cycle by emitting a standalone resource instead.
+    // Both shapes are functionally identical at the AWS API level.
+    template.hasResourceProperties(
+      'AWS::EC2::SecurityGroup',
+      Match.objectLike({
+        GroupDescription: 'CanopyCMS Lambda',
+        SecurityGroupEgress: Match.arrayWith([
+          Match.objectLike({
+            IpProtocol: 'tcp',
+            FromPort: 443,
+            ToPort: 443,
+            CidrIp: '0.0.0.0/0',
+          }),
+        ]),
+      }),
+    )
+  })
+
+  it('grants the CMS Lambda role prefix-scoped access to an optional assetBucket', () => {
+    const app = new App()
+    const stack = new Stack(app, 'TestStack', {
+      env: { account: '123456789012', region: 'us-east-1' },
+    })
+    const assetBucket = new s3.Bucket(stack, 'AssetBucket')
+    new CanopyCmsService(stack, 'Cms', {
+      cmsDockerImage: lambda.DockerImageCode.fromEcr(
+        ecr.Repository.fromRepositoryName(stack, 'Repo', 'cms'),
+      ),
+      githubOwner: 'acme',
+      githubRepo: 'site',
+      assetBucket,
+    })
+    const template = Template.fromStack(stack)
+
+    const policies = template.findResources('AWS::IAM::Policy')
+    const statements = Object.values(policies).flatMap(
+      (policy) => policy.Properties.PolicyDocument.Statement as unknown[],
+    )
+    const resourcePatterns = statements
+      .map((s) => (s as { Resource?: unknown }).Resource)
+      .flat()
+      .map((r) => JSON.stringify(r))
+      .join('\n')
+
+    for (const prefix of ['asset-staging/*', 'asset-originals/*', 'asset-meta/*', 'assets/*']) {
+      expect(resourcePatterns).toContain(prefix)
+    }
+  })
+
+  it('does not grant any asset bucket access when assetBucket is omitted', () => {
+    const template = synth()
+    const policies = template.findResources('AWS::IAM::Policy')
+    const statements = Object.values(policies).flatMap(
+      (policy) => policy.Properties.PolicyDocument.Statement as unknown[],
+    )
+    const resourcePatterns = statements
+      .map((s) => (s as { Resource?: unknown }).Resource)
+      .flat()
+      .map((r) => JSON.stringify(r))
+      .join('\n')
+
+    expect(resourcePatterns).not.toContain('asset-originals/*')
   })
 })

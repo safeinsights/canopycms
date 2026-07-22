@@ -73,6 +73,7 @@ None currently open.
 | File                                             | Summary                                                                      |
 | ------------------------------------------------ | ---------------------------------------------------------------------------- |
 | [ai-content-v2.md](ai-content-v2.md)             | `llms.txt` metadata, HTTP caching headers, selective rebuild for AI content  |
+| [transform-lambda-bundle-bloat.md](transform-lambda-bundle-bloat.md) | Transform Lambda's `handler.js` bundles unrelated octokit/simple-git/proper-lockfile code via the broad `canopycms/server` barrel (~1 MB dead weight); needs an approved narrow `canopycms` entrypoint to fix |
 | [schema-faq-glossary.md](schema-faq-glossary.md) | Dedicated FAQ and glossary schema collections for reuse across pages         |
 | [content-root-name-hardcoded.md](content-root-name-hardcoded.md) | `api/schema.ts`'s `getSchemaOps` and `api/entries.ts`'s `deleteEntry` hardcode `'content'` instead of honoring `config.contentRoot` like every other content-facing code path |
 | [FIXES.md](FIXES.md)                             | Older catch-all list; mostly superseded — review and migrate to proper files |

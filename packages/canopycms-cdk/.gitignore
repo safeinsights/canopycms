@@ -1,2 +1,4 @@
 dist/
 worker/dist/
+lambda/asset-transform/dist/
+canary/cdk.out/
