@@ -427,9 +427,18 @@ importers:
 
   packages/canopycms-cdk:
     devDependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.600.0
+        version: 3.1092.0
       '@aws-sdk/client-secrets-manager':
         specifier: ^3.600.0
         version: 3.1018.0
+      '@smithy/util-stream':
+        specifier: ^3.0.0 || ^4.0.0
+        version: 4.5.20
+      '@types/aws-lambda':
+        specifier: ^8.10.145
+        version: 8.10.162
       '@types/node':
         specifier: ^22.9.0
         version: 22.19.15
@@ -439,6 +448,9 @@ importers:
       aws-cdk-lib:
         specifier: ^2.168.0
         version: 2.244.0(constructs@10.6.0)
+      aws-sdk-client-mock:
+        specifier: ^4.0.0
+        version: 4.1.0
       canopycms:
         specifier: workspace:*
         version: link:../canopycms
@@ -451,6 +463,9 @@ importers:
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
@@ -3024,6 +3039,9 @@ packages:
 
   '@types/aria-query@5.0.4':
     resolution: {integrity: sha512-rfT93uj5s0PRL7EzccGMs3brplhcrghnDoV26NqKhCAS1hVo+WdNsPvE/yb6ilfr5hi2MEk6d5EWJTKdxg8jVw==}
+
+  '@types/aws-lambda@8.10.162':
+    resolution: {integrity: sha512-Fn658grtLOci1oxi1391vvDWJRKNGWRSqfxRkmN/Iy3c0tQH1USMKEXcPYHLvope+ZgTFocx9FRQJx1muBL6qw==}
 
   '@types/babel__core@7.20.5':
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
@@ -9208,6 +9226,8 @@ snapshots:
   '@tokenizer/token@0.3.0': {}
 
   '@types/aria-query@5.0.4': {}
+
+  '@types/aws-lambda@8.10.162': {}
 
   '@types/babel__core@7.20.5':
     dependencies:

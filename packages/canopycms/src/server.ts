@@ -118,3 +118,47 @@ export type { StartDevContentWatcherOptions } from './dev-content-watcher'
  * not yet implemented).
  */
 export { createAssetStore } from './assets/factory'
+
+/**
+ * The five S3/local bucket-prefix strings (`asset-originals/`, `asset-staging/`,
+ * `asset-meta/`, `assets/`, `assets/t/`). Re-exported so server-only consumers
+ * outside this package - notably the prod transform Lambda
+ * (`packages/canopycms-cdk/lambda/asset-transform`) - can build/parse asset
+ * keys through the same constants `S3AssetStore` uses, rather than
+ * duplicating the literal prefix strings.
+ */
+export { ASSET_PREFIXES, type AssetPrefixes } from './assets/keys'
+
+/** Asset metadata sidecar shape (`asset-meta/{hash32}.json`), written by the finalize pipeline and read by the transform layer (dev-mode emulation and the prod transform Lambda). */
+export type { AssetMeta } from './assets/types'
+
+/**
+ * Parse the three path segments after `assets/t/` (`{directives}/{hash32}/{slug}.{ext}`)
+ * into a validated `TransformDirectives` set, or a structured parse error.
+ * Reused unchanged by the dev-mode lazy `/assets/t/*` emulation (`api/assets.ts`)
+ * and the prod transform Lambda (`packages/canopycms-cdk/lambda/asset-transform`)
+ * so the URL grammar is defined in exactly one place.
+ */
+export { parseTransformPath } from './assets/transform-directives'
+
+export type { ParsedTransformPath, ParseTransformPathResult } from './assets/transform-directives'
+
+/**
+ * Canonical string form of a `TransformDirectives` set - the cache key every
+ * transform output is stored under (`assets/t/{formatDirectives(...)}/{hash32}/{slug}.{ext}`).
+ * Equivalent directive sets (different key order/float formatting) always
+ * format to the same string. Reused by the prod transform Lambda so its
+ * canonical writes agree with the dev-mode emulation and `assetUrl()`.
+ */
+export { formatDirectives } from './assets/transform-directives'
+
+/**
+ * Apply a parsed `TransformDirectives` set to source image bytes with sharp:
+ * resize/format/quality/crop, with EXIF stripped on every re-encode (even
+ * identity). Server-only (sharp) - reused unchanged by the dev-mode lazy
+ * `/assets/t/*` emulation and the prod transform Lambda
+ * (`packages/canopycms-cdk/lambda/asset-transform`).
+ */
+export { applyTransform } from './assets/transform'
+
+export type { ApplyTransformInput, TransformResult } from './assets/transform'
