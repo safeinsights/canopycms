@@ -11,9 +11,7 @@ Priority levels:
 
 ## P0 — Must fix before multi-editor prod launch
 
-| File                                                               | Summary                                                                                                                                      |
-| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| [index-staleness-multiprocess.md](index-staleness-multiprocess.md) | RESOLVED — in-process invalidation (PR #91) + cross-process on-disk generation marker, suspicious-lookup backstop, and write existence guard (PR fix/content-index-cross-process). Residual NFS-caching windows documented in the file. |
+None currently open.
 
 ---
 
@@ -21,15 +19,10 @@ Priority levels:
 
 | File                                                                         | Summary                                                                                                                       |
 | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| [preview-bridge-security.md](preview-bridge-security.md)                     | RESOLVED — source + origin checks landed in preview-bridge.tsx (verified at 2026-07 baseline re-review)                       |
-| [efs-cross-process-concurrency.md](efs-cross-process-concurrency.md)         | EPIC: remaining Lambda↔worker EFS races — uncoordinated cache regeneration (branch-registry, branch-schema-cache), branch-metadata write-verify missing NFS settle, comment-store missing in-process lock |
 | [editor-async-patterns.md](editor-async-patterns.md)                         | `ReferenceField` refetches on every render; `useReferenceResolution` and `loadEntry` have no cancellation for stale responses |
 | [stale-draft-prevents-content-load.md](stale-draft-prevents-content-load.md) | Stale localStorage draft permanently blocks fresh content load with no user indication                                        |
 | [dual-react-problem.md](dual-react-problem.md)                               | Dual React instance crash when adopters use `file:` references in their Next.js app                                           |
-| [e2e-reset-race-condition.md](e2e-reset-race-condition.md)                   | RESOLVED — 404-on-ENOENT in api/content.ts + reset polling gates (verified at 2026-07 baseline re-review)                     |
-| [flaky-comment-store-tests.md](flaky-comment-store-tests.md)                 | Race conditions in concurrent comment store tests require retry workarounds                                                   |
 | [swr.md](swr.md)                                                             | Multiple independent `useEffect` hooks fire duplicate API calls on initial editor load; SWR would deduplicate                 |
-| [content-store-validation.md](content-store-validation.md)                   | RESOLVED — authoritative write-boundary validation + client pre-save errors via shared entry-validator (PR #93)               |
 | [editor-state-context-migration.md](editor-state-context-migration.md)       | Complete migration of `Editor.tsx` inline state to `EditorStateContext`                                                       |
 
 ---
@@ -39,7 +32,8 @@ Priority levels:
 | File                                                                               | Summary                                                                                                                    |
 | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
 | [assets-media-system.md](assets-media-system.md)                                   | Assets/media system design (agreed 2026-07-19): S3 content-addressed storage, presigned direct upload, sharp pipeline, image field + media manager, CDK asset bucket |
-| [content-store-lock-key.md](content-store-lock-key.md)                             | Use content ID (not physical path) as lock key in ContentStore — immune to rename races; new-entry fallback to logical key |
+| [schema-store-rmw-protection.md](schema-store-rmw-protection.md)                   | `.collection.json` mutations in schema/schema-store.ts are read-modify-write with `withLock` covering only the final write; no OCC/lockfile — concurrent admin schema edits can lose updates cross-process |
+| [settings-file-occ-cross-host.md](settings-file-occ-cross-host.md)                 | Audit permissions.json/groups.json `contentVersion` OCC for the cross-host lost-update blind spot the epic fixed elsewhere; apply the layered lock pattern if confirmed |
 | [validate-entry-type-names.md](validate-entry-type-names.md)                       | Reference fields can specify non-existent `entryType` names; add config-time validation                                    |
 | [rename-collection-name-to-key.md](rename-collection-name-to-key.md)               | Rename `collection.name` → `collection.key` to clarify its machine-readable role                                           |
 | [user-metadata-optimization.md](user-metadata-optimization.md)                     | Batch user metadata endpoint + possible API namespace reorganization                                                       |
@@ -62,7 +56,6 @@ Priority levels:
 | [static-export-sitemap.md](static-export-sitemap.md)                               | Static-export sitemap helper: enumerate published entries + singletons → `sitemap.xml` (framework-agnostic core + Next adapter) |
 | [static-export-seo-metadata.md](static-export-seo-metadata.md)                     | Static-export SEO metadata helper + recommended SEO field group → Next `Metadata`                                          |
 | [entry-navigator-scalability.md](entry-navigator-scalability.md)                   | Editor navigator loads all entries up front with a hard 10,000 ceiling; move to collection-scoped/lazy loading (+ keyset cursor) |
-| [pr106-review-followups.md](pr106-review-followups.md)                             | RESOLVED — all deferred items from the PR #106 integration review (mode-default, abandoned-scaffold guard, worker PR-logic dedup, Octokit throttling, editor lows, idIndex-in-lock) fixed on `fix/pr106-review-followups` (2026-07-20); test-coverage gaps closed |
 
 ---
 
@@ -80,6 +73,7 @@ Priority levels:
 | ------------------------------------------------ | ---------------------------------------------------------------------------- |
 | [ai-content-v2.md](ai-content-v2.md)             | `llms.txt` metadata, HTTP caching headers, selective rebuild for AI content  |
 | [schema-faq-glossary.md](schema-faq-glossary.md) | Dedicated FAQ and glossary schema collections for reuse across pages         |
+| [content-root-name-hardcoded.md](content-root-name-hardcoded.md) | `api/schema.ts`'s `getSchemaOps` and `api/entries.ts`'s `deleteEntry` hardcode `'content'` instead of honoring `config.contentRoot` like every other content-facing code path |
 | [FIXES.md](FIXES.md)                             | Older catch-all list; mostly superseded — review and migrate to proper files |
 
 ---
@@ -94,3 +88,22 @@ Small findings not worth dedicated task files; fix opportunistically:
 - `assets.upload` can never validate: server schema requires a `Buffer`/`Uint8Array` instance but the client JSON-stringifies bodies, so the parsed value is a plain object → always 400. Dead path today; rework with the assets/media system (base64 string data, or raw `ArrayBuffer` bodies + `computeContentSha256HexFromBytes`). (2026-07 second-round review, LOW)
 
 Fixed on the 2026-07 review branch: `CanopyConfigSchema` schema-field drift, `relativePathSchema` per-segment traversal check, `composeCanopyConfig` dead spread (superseded by the full-fragment merge in PR #90). The getErrorMessage sweep (G1) replaced the exact-semantic `String(err)` occurrences; sites with custom fallback strings or raw-object console logging were deliberately retained (getErrorMessage has no fallback parameter — widening it is an optional follow-up noted in the G1 PR).
+
+---
+
+## Resolved
+
+Completed tasks live in [resolved/](resolved/) — kept because several double as
+design/analysis references (residual-window analyses, implementation summaries).
+The tables above list OPEN work only.
+
+| File | Summary |
+| ---- | ------- |
+| [index-staleness-multiprocess.md](resolved/index-staleness-multiprocess.md) | RESOLVED — in-process invalidation (PR #91) + cross-process on-disk generation marker, suspicious-lookup backstop, and write existence guard (PR fix/content-index-cross-process). Residual NFS-caching windows documented in the file. |
+| [preview-bridge-security.md](resolved/preview-bridge-security.md) | RESOLVED — source + origin checks landed in preview-bridge.tsx (verified at 2026-07 baseline re-review) |
+| [efs-cross-process-concurrency.md](resolved/efs-cross-process-concurrency.md) | RESOLVED — epic PRs #111–#116: shared generation-marker + OCC/lockfile primitives applied to branch-registry, schema-cache, comment-store, branch-metadata, content-store lock keys; concurrency model documented in docs/concurrency.md |
+| [e2e-reset-race-condition.md](resolved/e2e-reset-race-condition.md) | RESOLVED — 404-on-ENOENT in api/content.ts + reset polling gates (verified at 2026-07 baseline re-review) |
+| [flaky-comment-store-tests.md](resolved/flaky-comment-store-tests.md) | RESOLVED — layered locking in epic PR #114; {retry:1} workarounds removed, 20/20 clean runs |
+| [content-store-validation.md](resolved/content-store-validation.md) | RESOLVED — authoritative write-boundary validation + client pre-save errors via shared entry-validator (PR #93) |
+| [content-store-lock-key.md](resolved/content-store-lock-key.md) | RESOLVED — epic PR #116: readdir-derived namespaced content-ID lock keys, buildPaths inside the lock, create-slug keys |
+| [pr106-review-followups.md](resolved/pr106-review-followups.md) | RESOLVED — all deferred items from the PR #106 integration review (mode-default, abandoned-scaffold guard, worker PR-logic dedup, Octokit throttling, editor lows, idIndex-in-lock) fixed on `fix/pr106-review-followups` (2026-07-20); test-coverage gaps closed |

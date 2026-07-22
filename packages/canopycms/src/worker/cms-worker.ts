@@ -16,7 +16,7 @@ import type { Task } from './task-queue'
 import { createOrUpdatePullRequest, createCanopyOctokit } from '../github-service'
 import { getBranchMetadataFileManager, BranchMetadataFileManager } from '../branch-metadata'
 import { extractIdFromFilename } from '../content-id-index'
-import { invalidateContentIndexesDurable } from '../content-index-generation'
+import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, ROOT_COLLECTION_ID } from '../paths/types'
 import { getErrorMessage, isNodeError } from '../utils/error'
 
@@ -760,7 +760,26 @@ export class CmsWorker {
         const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
 
         if (behindCount === 0) {
-          // Already in sync — clear any stale conflict state
+          // Already in sync. This is the overwhelmingly common outcome per
+          // branch per cycle (most branches are caught up most of the
+          // time), so skip the save entirely when metadata already reflects
+          // a clean state -- every save() now eager-regenerates the branch
+          // registry (branch-metadata.ts's invalidateRegistry(), O(branch
+          // count) fs reads on EFS), so an unconditional save here turns
+          // every rebase cycle into O(N^2) registry work across N branches
+          // for what is otherwise a true no-op. Re-load fresh (not the
+          // `metaFile` snapshot from before the fetch/rev-list above) so a
+          // concurrent editor-driven metadata change during that window
+          // isn't clobbered by a stale skip decision.
+          const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
+          const conflictStatus = currentMeta?.branch.conflictStatus
+          const conflictFiles = currentMeta?.branch.conflictFiles
+          const alreadyClean =
+            (conflictStatus === undefined || conflictStatus === 'clean') &&
+            (conflictFiles === undefined || conflictFiles.length === 0)
+          if (alreadyClean) {
+            continue
+          }
           await meta.save({
             branch: {
               name: branchDir,
@@ -837,7 +856,7 @@ export class CmsWorker {
         // ID indexes rooted here stale so lookups rebuild from disk, in this
         // process and (via the on-disk generation marker) in the Lambda
         // containers sharing this filesystem.
-        await invalidateContentIndexesDurable(branchPath)
+        await invalidateBranchContentCaches(branchPath)
 
         // Convert file paths to ContentIds — immutable, survives slug renames.
         // Entry files have IDs in their filename (e.g., "post.slug.a1b2c3d4e5f6.mdx").

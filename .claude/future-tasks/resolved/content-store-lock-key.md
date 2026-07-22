@@ -1,5 +1,22 @@
 # ContentStore: Use Content ID as Stable Lock Key
 
+## Status: RESOLVED (2026-07-21, epic PR #116)
+
+Implemented as part of the EFS concurrency epic
+([efs-cross-process-concurrency.md](efs-cross-process-concurrency.md)) with one
+important amendment from the adversarial design review: the lock key is derived from a
+**buildPaths directory-scan pre-pass**, NOT `idIndex.findByPath` as sketched below — a
+stale index would have reintroduced the very race being fixed. Also added beyond this
+doc: namespaced keys (`${root}:id:${id}`), a per-slug create key closing the in-process
+same-slug double-create, and renameEntry taking source-ID + destination-create locks in
+sorted order (a racing create could otherwise fold into the renamed-in file as a
+type-confused edit). Regression tests verified to reproduce the corruption against the
+pre-fix code.
+
+Original description below.
+
+---
+
 ## Problem
 
 `ContentStore.write()`, `delete()`, and `renameEntry()` currently lock on `absolutePath` (the

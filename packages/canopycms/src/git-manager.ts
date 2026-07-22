@@ -10,7 +10,7 @@ import {
 } from 'simple-git'
 
 import { invalidateContentIndexesForRoot } from './content-index-registry'
-import { invalidateContentIndexesDurable } from './content-index-generation'
+import { invalidateBranchContentCaches } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNotFoundError } from './utils/error'
@@ -656,23 +656,28 @@ export class GitManager {
   }
 
   /**
-   * Mark ContentStore ID indexes rooted at (or under) this repo as stale.
-   * Called after operations that mutate the working tree (checkout/merge/rebase) so
-   * ID→path lookups don't keep resolving to pre-mutation paths. Invoked in `finally`
-   * blocks because even failed merges/rebases may have touched the tree before
-   * aborting; over-invalidating is safe.
+   * Mark ContentStore ID indexes AND the resolved-schema cache rooted at (or
+   * under) this repo as stale. Called after operations that mutate the
+   * working tree (checkout/merge/rebase) so ID→path lookups don't keep
+   * resolving to pre-mutation paths, and so a rebase/checkout that pulled in
+   * upstream `.collection.json` changes doesn't leave the schema cache
+   * pinned to the pre-mutation schema. Invoked in `finally` blocks because
+   * even failed merges/rebases may have touched the tree before aborting;
+   * over-invalidating is safe.
    *
-   * Covers both scopes: in-process stores via the registry, and stores in OTHER
-   * processes sharing the filesystem (worker vs Lambda on EFS) via the on-disk
-   * generation marker — unless this manager targets a settings workspace
-   * (skipIndexMarker), where only the free in-process invalidation runs.
+   * Covers both scopes: in-process stores/caches via their registries, and
+   * consumers in OTHER processes sharing the filesystem (worker vs Lambda on
+   * EFS) via the on-disk generation markers — unless this manager targets a
+   * settings workspace (skipIndexMarker), where only the free in-process
+   * content-index invalidation runs and NEITHER marker is bumped (settings
+   * workspaces have no schema cache of their own either).
    */
   private async invalidateContentIndexes(): Promise<void> {
     if (this.skipIndexMarker) {
       invalidateContentIndexesForRoot(this.repoPath)
       return
     }
-    await invalidateContentIndexesDurable(this.repoPath)
+    await invalidateBranchContentCaches(this.repoPath)
   }
 
   async checkoutBranch(branch: string): Promise<void> {

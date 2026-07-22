@@ -14,7 +14,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { simpleGit, type SimpleGit } from 'simple-git'
 
 import { BranchMetadataFileManager } from '../branch-metadata'
@@ -251,17 +251,44 @@ describe('CmsWorker rebaseActiveBranches', () => {
   // -------------------------------------------------------------------------
 
   describe('already in sync', () => {
-    it('marks conflictStatus clean when branch is already up to date', async () => {
-      const setup = await createBranchSetup(tmpDir, 'my-feature')
-      // No new commits pushed to remote: branch is already in sync
-      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+    // Item 5 fix: every save() eager-regenerates the branch registry
+    // (O(branch count) fs reads), so a rebase cycle must not unconditionally
+    // save metadata for branches that are already in sync AND already
+    // reflect a clean/no-conflict state -- that would turn every cycle into
+    // O(N^2) registry work across N branches for a true no-op. A branch
+    // that's in sync but NOT yet marked clean (e.g. stale
+    // conflicts-detected from a previous cycle) must still be saved.
 
+    it('does not save metadata when the branch is already up to date and already marked clean (no-op skip)', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {
+        conflictStatus: 'clean',
+        conflictFiles: [],
+      })
+
+      const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
       const worker = makeWorker(tmpDir)
       await runRebase(worker)
+      expect(saveSpy).not.toHaveBeenCalled()
+      saveSpy.mockRestore()
+    })
 
+    it('does not save metadata when the branch has never recorded a conflict status (undefined treated as clean)', async () => {
+      const setup = await createBranchSetup(tmpDir, 'my-feature')
+      // No new commits pushed to remote: branch is already in sync, and
+      // conflictStatus/conflictFiles were never set (a brand-new branch).
+      await writeMeta(setup.branchPath, setup.contentBranchesPath, {})
+
+      const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker)
+      expect(saveSpy).not.toHaveBeenCalled()
+      saveSpy.mockRestore()
+
+      // Untouched -- the skip means these stay exactly as they were.
       const meta = await readMeta(setup.branchPath)
-      expect(meta?.conflictStatus).toBe('clean')
-      expect(meta?.conflictFiles).toEqual([])
+      expect(meta?.conflictStatus).toBeUndefined()
+      expect(meta?.conflictFiles).toBeUndefined()
     })
 
     it('clears stale conflictFiles when branch catches up without new conflicts', async () => {

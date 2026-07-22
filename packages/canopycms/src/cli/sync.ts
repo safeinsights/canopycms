@@ -26,7 +26,7 @@ import {
   safeReplaceDir,
   SYNC_BASE_TAG,
 } from '../sync-core'
-import { invalidateContentIndexesDurable } from '../content-index-generation'
+import { invalidateBranchContentCaches } from '../content-index-generation'
 import { ensureGitExcludePattern } from '../git-manager'
 import { operatingStrategy } from '../operating-mode'
 
@@ -176,7 +176,7 @@ async function syncPush(options: SyncOptions): Promise<{ fileCount: number }> {
         await wsGit.merge(['--abort'])
         // The abort rewrote the clone's working tree — tell ContentStore ID
         // indexes (the dev server is a separate process; on-disk marker).
-        await invalidateContentIndexesDurable(branchPath)
+        await invalidateBranchContentCaches(branchPath)
         p.log.success('Merge aborted. Workspace restored to pre-merge state.')
       }
     }
@@ -390,7 +390,7 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
         await wsGit.merge(['--abort'])
         // The abort rewrote the clone's working tree — tell ContentStore ID
         // indexes (the dev server is a separate process; on-disk marker).
-        await invalidateContentIndexesDurable(branchPath)
+        await invalidateBranchContentCaches(branchPath)
         p.log.success('Merge aborted. Workspace restored to pre-merge state.')
       }
     }
@@ -498,7 +498,7 @@ async function syncBoth(options: SyncOptions): Promise<{ pushed: number; pulled:
     const pullResult = await syncPull({ ...options, branch: branchName, force: true })
     return { pushed: incomingStatus.files.length, pulled: pullResult.fileCount }
   } finally {
-    await invalidateContentIndexesDurable(branchPath)
+    await invalidateBranchContentCaches(branchPath)
   }
 }
 
@@ -526,7 +526,7 @@ async function syncAbort(options: SyncOptions): Promise<void> {
   await wsGit.merge(['--abort'])
   // The abort rewrote the clone's working tree — tell ContentStore ID indexes
   // (the dev server is a separate process; on-disk marker).
-  await invalidateContentIndexesDurable(branchPath)
+  await invalidateBranchContentCaches(branchPath)
   p.log.success(
     `Merge aborted in branch workspace "${branchName}". Workspace restored to pre-merge state.`,
   )

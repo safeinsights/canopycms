@@ -1,13 +1,19 @@
-import fs from 'node:fs/promises'
-import path from 'node:path'
-import { randomUUID } from 'node:crypto'
-import { atomicWriteFile } from './utils/atomic-write'
-import { getErrorMessage, isNodeError } from './utils/error'
+import {
+  resourceGenerationPath,
+  bumpResourceGeneration,
+  readResourceGeneration,
+} from './resource-generation'
 import { invalidateContentIndexesForRoot } from './content-index-registry'
-import { createDebugLogger } from './utils/debug'
+import { SCHEMA_GENERATION_RESOURCE } from './branch-schema-cache'
 
 /**
  * Cross-process ContentId index generation marker.
+ *
+ * This is the ContentIdIndex-specific instance of the generic on-disk
+ * generation-marker protocol in resource-generation.ts — see that module's
+ * doc comment for the full protocol (random-token rationale, bump/read
+ * ordering, and the general residual staleness windows A/B/C/E). This file
+ * documents only what is specific to the in-memory ContentIdIndex.
  *
  * The ContentIdIndex is an in-memory map per ContentStore instance. Within one
  * process, content-index-registry.ts invalidates stale indexes directly. Across
@@ -18,49 +24,26 @@ import { createDebugLogger } from './utils/debug'
  * file with a fresh random token, and every ContentStore cheaply re-reads that
  * marker (throttled) to decide whether its in-memory index is still current.
  *
- * The marker lives at {root}/.canopy-meta/content-index.generation:
- * `.canopy-meta/` is the established per-clone internal dir — dot-prefixed (so
- * content and index scans skip it) and excluded from git via .git/info/exclude.
+ * The marker lives at {root}/.canopy-meta/content-index.generation.
  *
- * ## Why a random token instead of a monotonic counter
+ * ## Residual staleness windows, as they apply here
  *
- * Readers only need "did it change since I captured it", so inequality against
- * the captured value suffices. A counter would need read-modify-write, which
- * silently loses concurrent bumps without a lock (two bumpers read 5, both
- * write 6 — a reader that recorded 6 after the first bump never learns of the
- * second mutation). A unique token per bump has no lost-update problem, needs
- * no lock, and avoids NFS mtime-granularity / cross-host clock-skew issues.
- * Each bump is a single atomic temp-file + rename.
+ * All bounded in practice by per-request ContentStore lifetimes and self-healed
+ * by the suspicious-lookup backstop in ContentStore:
  *
- * ## Ordering protocol (correctness)
- *
- * - Bumpers write the marker strictly AFTER their filesystem mutations.
- * - Readers capture the marker token strictly BEFORE scanning the tree, and
- *   record it only after the scan completes. A bump landing mid-scan therefore
- *   leaves the recorded token older than the file, forcing a rebuild on the
- *   next probe.
- *
- * ## Consistency guarantees and residual staleness windows (EFS/NFSv4)
- *
- * Guaranteed: any completed mutation that bumps the marker is observed by every
- * store on that root at its next freshness probe. Residual windows, all bounded
- * in practice by per-request ContentStore lifetimes and self-healed by the
- * suspicious-lookup backstop in ContentStore:
- *
- * - (A) NFS attribute caching (benign direction): another host may not see a
- *   new marker for up to the attribute-cache timeout (~3-60s on default EFS
- *   mounts; `noac` cannot be assumed). The reader acts on a stale token and
- *   keeps a stale index until the cache expires.
+ * - (A) NFS attribute caching: another host may not see a new marker for up to
+ *   the attribute-cache timeout (~3-60s on default EFS mounts). The reader acts
+ *   on a stale token and keeps a stale index until the cache expires.
  * - (B) Probe throttle: up to ContentStore's indexFreshnessIntervalMs (1s).
  * - (C) Self-adoption: after its own mutation a store adopts the token it
  *   wrote; if a concurrent foreign bump landed just before ours, we miss that
  *   one notification (window: from our last token observation to our rename).
- * - (E) Fresh-token/stale-scan (malignant direction, cross-host only): NFS
- *   revalidates the marker file on open, but a rebuild's readdir calls may be
- *   served from dentry/attribute caches — a scan can record a NEW token against
- *   PRE-mutation directory listings, leaving that store confidently stale until
- *   the next bump. Structurally unfixable with a filesystem marker; bounded by
- *   per-request store lifetimes and the backstop.
+ * - (E) Fresh-token/stale-scan (cross-host only): a rebuild's readdir calls may
+ *   be served from stale dentry/attribute caches, recording a NEW token against
+ *   PRE-mutation directory listings. Unlike a durable-snapshot consumer (see
+ *   resource-generation.ts), this only mis-serves ONE process's in-memory
+ *   index for the remainder of its lifetime — it is not written back to disk,
+ *   so it cannot become a shared stale state visible to other hosts.
  *
  * Wrong-file WRITE corruption (recreating a concurrently renamed entry →
  * duplicate IDs) is prevented independently of this marker by the existence
@@ -68,15 +51,11 @@ import { createDebugLogger } from './utils/debug'
  * before recreating a missing expected file.
  */
 
-const log = createDebugLogger({ prefix: 'ContentIndex' })
-
-/** Matches BRANCH_META_DIR in branch-metadata.ts — the per-clone internal dir. */
-const META_DIR = '.canopy-meta'
-const GENERATION_FILE = 'content-index.generation'
+const RESOURCE = 'content-index'
 
 /** Absolute path of the generation marker for a branch-clone root. */
 export function contentIndexGenerationPath(root: string): string {
-  return path.join(path.resolve(root), META_DIR, GENERATION_FILE)
+  return resourceGenerationPath(root, RESOURCE)
 }
 
 /**
@@ -87,16 +66,7 @@ export function contentIndexGenerationPath(root: string): string {
  * pre-marker staleness behavior plus the ContentStore backstop).
  */
 export async function bumpContentIndexGeneration(root: string): Promise<string | null> {
-  const token = randomUUID()
-  try {
-    await atomicWriteFile(contentIndexGenerationPath(root), token)
-    return token
-  } catch (err) {
-    log.warn('generation', `Failed to bump content index generation for ${root}`, {
-      error: getErrorMessage(err),
-    })
-    return null
-  }
+  return bumpResourceGeneration(root, RESOURCE)
 }
 
 /**
@@ -106,22 +76,25 @@ export async function bumpContentIndexGeneration(root: string): Promise<string |
  * which is the safe direction.
  */
 export async function readContentIndexGeneration(root: string): Promise<string | null> {
-  try {
-    return await fs.readFile(contentIndexGenerationPath(root), 'utf-8')
-  } catch (err) {
-    if (isNodeError(err) && err.code === 'ENOENT') return null
-    log.warn('generation', `Failed to read content index generation for ${root}`, {
-      error: getErrorMessage(err),
-    })
-    return null
-  }
+  const result = await readResourceGeneration(root, RESOURCE)
+  return result.ok ? result.token : null
 }
 
 /**
- * The single entry point for operations that mutate indexed files under a
- * branch-clone root: git working-tree mutations, content sync, collection
- * directory operations, CLI sync. Bumps the on-disk marker (cross-process),
- * then invalidates in-process registered stores.
+ * The designated entry point for a FUTURE content-only bulk mutation site —
+ * one that mutates indexed files under a branch-clone root broadly (not
+ * through a single known write/delete/rename call) but never touches schema.
+ * Bumps the on-disk content-index marker (cross-process), then invalidates
+ * in-process registered stores.
+ *
+ * Currently unused in production: `ContentStore`'s own write()/delete()/
+ * renameEntry() bump the marker directly via their `recordOwnMutation()` ->
+ * `bumpContentIndexGeneration()` call, not through this wrapper, and every
+ * existing bulk-mutation call site (git checkout/merge/rebase, sync, CLI
+ * sync, migrate) can touch `.collection.json` as a side effect, so those all
+ * use the combined `invalidateBranchContentCaches()` below instead. Kept as
+ * the documented, ready-to-use entry point for a future call site that is
+ * genuinely content-only.
  *
  * Bump-before-invalidate: the in-process invalidation triggers a rebuild on
  * next access, and that rebuild captures the marker token before scanning —
@@ -130,5 +103,36 @@ export async function readContentIndexGeneration(root: string): Promise<string |
  */
 export async function invalidateContentIndexesDurable(root: string): Promise<void> {
   await bumpContentIndexGeneration(root)
+  invalidateContentIndexesForRoot(root)
+}
+
+/**
+ * The entry point for operations that mutate a branch-clone root's working
+ * tree BROADLY rather than through a single known write/delete/rename call:
+ * git working-tree ops (checkout/merge/rebase/abort), content sync, CLI sync,
+ * and migrate. Such operations can touch `.collection.json` files as a side
+ * effect (a rebase can pull in upstream schema changes; a sync can overwrite
+ * the whole content directory), so both durable, cross-process caches rooted
+ * at `root` need to be told: the ContentId index (content-index-registry.ts)
+ * AND the resolved-schema cache (branch-schema-cache.ts).
+ *
+ * `invalidateContentIndexesDurable` is the designated entry point for a
+ * future call site that only ever touches content files, never schema, and
+ * needs the durable-invalidation shape but not the extra schema bump.
+ * `ContentStore`'s own write/delete/rename paths don't call it either — they
+ * bump the content-index marker directly via `recordOwnMutation()` (see
+ * content-store.ts), since they already know exactly which mutation just
+ * happened and don't need a generic "some indexed files changed" entry point.
+ *
+ * Both marker bumps are "hint" flavor (bumpResourceGeneration's default,
+ * `mustSucceed` not set): callers of this function are typically `finally`
+ * blocks in bulk operations (e.g. a git rebase cleanup) that must not start
+ * throwing because a marker write failed - log-and-swallow is the existing
+ * semantics at those call sites, and a lost bump only degrades to pre-marker
+ * staleness behavior plus whatever backstop the consumer implements.
+ */
+export async function invalidateBranchContentCaches(root: string): Promise<void> {
+  await bumpContentIndexGeneration(root)
+  await bumpResourceGeneration(root, SCHEMA_GENERATION_RESOURCE)
   invalidateContentIndexesForRoot(root)
 }

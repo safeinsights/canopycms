@@ -180,6 +180,15 @@ export function createMockServices(options: MockServicesOptions = {}): CanopySer
           schema: {},
           flatSchema: [],
         }),
+        // SchemaOps.invalidateSchemaCache() calls resolveAndPersist() (not
+        // getSchema()) for its eager post-mutation re-resolve -- see
+        // branch-schema-cache.ts's doc comment. Mocked here too so that
+        // path doesn't silently fall into invalidateSchemaCache()'s
+        // swallow-and-log catch in every test using the default mock.
+        resolveAndPersist: vi.fn().mockResolvedValue({
+          schema: {},
+          flatSchema: [],
+        }),
         invalidate: vi.fn().mockResolvedValue(undefined),
       } as any),
     checkBranchAccess:

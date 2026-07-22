@@ -2,6 +2,14 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 
+import { withLock } from './utils/async-mutex'
+import {
+  writeOccJsonFile,
+  withOccRetry,
+  withOccFileLock,
+  OccWriteConflictError,
+} from './utils/occ-json-write'
+
 /**
  * Error thrown when a concurrent modification is detected.
  * Operations that encounter this error will automatically retry.
@@ -50,130 +58,117 @@ export interface CommentsFile {
  * Manages comment storage for a branch workspace.
  * Comments are stored in .canopy-meta/comments.json and are NOT committed to git.
  *
- * Uses optimistic locking with retry to handle concurrent modifications safely.
- * This is non-blocking - conflicts are detected via version mismatch and retried.
+ * Mutators are protected by three layers, outermost to innermost:
+ *
+ * 1. {@link withLock} - an in-process FIFO mutex keyed by the resolved file
+ *    path. Serializes concurrent mutators on the SAME process/host
+ *    deterministically, so racing `resolveThread`/`deleteThread`/`addComment`
+ *    calls against the same store (or two store instances pointed at the
+ *    same branch) never race each other's load-modify-write cycle.
+ * 2. {@link withOccFileLock} - a server-enforced, cross-process/cross-host
+ *    lock (proper-lockfile, mkdir-based). This is the actual fix for lost
+ *    comments across two warm Lambda containers on EFS, where rename-based
+ *    OCC verification alone is unreliable (see guarantee doc on
+ *    `utils/occ-json-write.ts`).
+ * 3. {@link withOccRetry} around {@link writeOccJsonFile} - version/writeId
+ *    based optimistic concurrency control. With layers 1-2 in place this is
+ *    now a defense-in-depth backstop only (e.g. a stale process from a
+ *    rolling deploy writing without the lock), not the primary safety
+ *    mechanism.
+ *
+ * See `utils/occ-json-write.ts` for full guarantee documentation of layers 2-3.
  */
 export class CommentStore {
-  private filePath: string
-  private loadedVersion: number | null = null
+  private readonly filePath: string
+  private readonly settleMs: number | undefined
 
-  constructor(branchRoot: string) {
-    this.filePath = path.join(branchRoot, '.canopy-meta', 'comments.json')
+  constructor(branchRoot: string, options?: { settleMs?: number }) {
+    // Resolve so two differently-spelled paths to the same branch root map
+    // to the same in-process lock key (see withLock).
+    this.filePath = path.join(path.resolve(branchRoot), '.canopy-meta', 'comments.json')
+    this.settleMs = options?.settleMs
   }
 
   /**
-   * Load comments file. Tracks version for optimistic locking.
+   * Load comments file for read-only access.
    */
   async load(): Promise<CommentsFile> {
+    const { data } = await this.loadWithVersion()
+    return data
+  }
+
+  /**
+   * Load comments file along with the version observed at load time. Used by
+   * mutators, which need the version as a LOCAL value threaded through their
+   * load-modify-write cycle rather than shared mutable instance state (so
+   * concurrent mutate cycles on the same instance never clobber each other's
+   * expected version).
+   */
+  private async loadWithVersion(): Promise<{ data: CommentsFile; version: number | null }> {
     try {
       const content = await fs.readFile(this.filePath, 'utf-8')
-      const data = JSON.parse(content) as CommentsFile
+      const parsed = JSON.parse(content) as CommentsFile
       // Backward compat: treat missing version as 0
-      this.loadedVersion = data.version ?? 0
-      return { ...data, version: this.loadedVersion }
+      const version = parsed.version ?? 0
+      return { data: { ...parsed, version }, version }
     } catch {
       // File doesn't exist yet, return empty structure
-      this.loadedVersion = null
       return {
-        schemaVersion: 1,
-        version: 0,
-        threads: {},
+        data: {
+          schemaVersion: 1,
+          version: 0,
+          threads: {},
+        },
+        version: null,
       }
     }
   }
 
   /**
-   * Save comments file with optimistic locking.
-   * Uses atomic temp-file write to prevent corruption.
+   * Write comments file via the shared OCC helper.
    *
-   * For new files (expectedVersion === null): uses exclusive create to prevent races
-   * For existing files: uses atomic rename with post-write verification
+   * Throws the helper's raw {@link OccWriteConflictError} so the surrounding
+   * {@link withOccRetry} in withMutation() recognizes and retries it;
+   * translation to the public `CommentStoreConflictError` contract happens at
+   * the withMutation() boundary, after retries are exhausted.
    *
-   * @throws CommentStoreConflictError if version has changed since load
+   * Note: comment-store historically wrote without a trailing newline;
+   * `writeOccJsonFile`'s default (`trailingNewline: false`) preserves that.
    */
-  private async save(data: CommentsFile, expectedVersion: number | null): Promise<void> {
-    await fs.mkdir(path.dirname(this.filePath), { recursive: true })
+  private async writeData(data: CommentsFile, expectedVersion: number | null): Promise<void> {
+    await writeOccJsonFile(
+      this.filePath,
+      { ...data },
+      {
+        expectedVersion,
+        settleMs: this.settleMs,
+      },
+    )
+  }
 
-    // Increment version and generate unique write ID for ownership verification
-    // New files start at version 1, existing files increment by 1
-    const newVersion = expectedVersion === null ? 1 : expectedVersion + 1
-    const writeId = randomUUID()
-    const newData = { ...data, version: newVersion, writeId }
-    const content = JSON.stringify(newData, null, 2)
-    const tempPath = `${this.filePath}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
-
-    if (expectedVersion === null) {
-      // New file case: use exclusive create flag to prevent race
-      // If file already exists, this will throw EEXIST
-      try {
-        await fs.writeFile(this.filePath, content, { flag: 'wx' })
-        return
-      } catch (err: unknown) {
-        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
-          // File was created by another process, conflict
-          throw new CommentStoreConflictError()
-        }
-        throw err
-      }
-    }
-
-    // Existing file case: write to temp, atomic rename, then verify we won
-    await fs.writeFile(tempPath, content, 'utf-8')
-
+  /**
+   * Run a mutate cycle (load -> modify -> write) under the full lock +
+   * OCC-retry stack described in the class doc comment. A conflict that
+   * survives every retry surfaces as the public `CommentStoreConflictError`.
+   */
+  private async withMutation<T>(
+    operation: (data: CommentsFile, version: number | null) => Promise<T>,
+  ): Promise<T> {
     try {
-      // First check: verify expected version before rename
-      let currentVersion: number | null = null
-      try {
-        const current = JSON.parse(await fs.readFile(this.filePath, 'utf-8'))
-        currentVersion = current.version ?? 0
-      } catch {
-        currentVersion = null
-      }
-
-      if (currentVersion !== expectedVersion) {
-        throw new CommentStoreConflictError()
-      }
-
-      // Atomic rename
-      await fs.rename(tempPath, this.filePath)
-
-      // Post-write verification with settling delay
-      // Wait to let concurrent renames complete on shared filesystems (EFS/NFS), then verify our writeId
-      await new Promise((resolve) => setTimeout(resolve, 50))
-
-      const afterWrite = JSON.parse(await fs.readFile(this.filePath, 'utf-8'))
-      if (afterWrite.writeId !== writeId) {
-        // Another process won the race - our write was overwritten
-        throw new CommentStoreConflictError()
-      }
+      return await withLock(this.filePath, () =>
+        withOccFileLock(this.filePath, () =>
+          withOccRetry(async () => {
+            const { data, version } = await this.loadWithVersion()
+            return operation(data, version)
+          }),
+        ),
+      )
     } catch (err) {
-      // Clean up temp file on any error (may already be renamed away)
-      await fs.unlink(tempPath).catch(() => {})
+      if (err instanceof OccWriteConflictError) {
+        throw new CommentStoreConflictError()
+      }
       throw err
     }
-  }
-
-  /**
-   * Retry an operation that may fail due to concurrent modification.
-   * Non-blocking - reloads and retries on conflict with exponential backoff.
-   */
-  private async withRetry<T>(operation: () => Promise<T>, maxAttempts = 10): Promise<T> {
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        return await operation()
-      } catch (err) {
-        if (err instanceof CommentStoreConflictError && attempt < maxAttempts) {
-          // Reset loaded version and retry with exponential backoff + jitter
-          this.loadedVersion = null
-          const baseDelay = Math.min(10 * Math.pow(2, attempt - 1), 100) // 10, 20, 40, 80, 100ms cap
-          const jitter = Math.random() * baseDelay
-          await new Promise((resolve) => setTimeout(resolve, baseDelay + jitter))
-          continue
-        }
-        throw err
-      }
-    }
-    throw new Error('Unreachable')
   }
 
   async addComment(options: {
@@ -184,12 +179,11 @@ export class CommentStore {
     entryPath?: string
     canopyPath?: string
   }): Promise<{ threadId: string; commentId: string }> {
-    // Generate IDs outside retry so they stay stable across retries
+    // Generate IDs outside the mutation so they stay stable across retries
     const threadId = options.threadId || randomUUID()
     const commentId = randomUUID()
 
-    return this.withRetry(async () => {
-      const data = await this.load()
+    return this.withMutation(async (data, version) => {
       const timestamp = new Date().toISOString()
 
       const comment: Comment = {
@@ -217,15 +211,13 @@ export class CommentStore {
         data.threads[threadId].comments.push(comment)
       }
 
-      await this.save(data, this.loadedVersion)
+      await this.writeData(data, version)
       return { threadId, commentId }
     })
   }
 
   async resolveThread(threadId: string, userId: string): Promise<boolean> {
-    return this.withRetry(async () => {
-      const data = await this.load()
-
+    return this.withMutation(async (data, version) => {
       if (!data.threads[threadId]) {
         return false
       }
@@ -234,7 +226,7 @@ export class CommentStore {
       data.threads[threadId].resolvedBy = userId
       data.threads[threadId].resolvedAt = new Date().toISOString()
 
-      await this.save(data, this.loadedVersion)
+      await this.writeData(data, version)
       return true
     })
   }
@@ -256,15 +248,13 @@ export class CommentStore {
   }
 
   async deleteThread(threadId: string): Promise<boolean> {
-    return this.withRetry(async () => {
-      const data = await this.load()
-
+    return this.withMutation(async (data, version) => {
       if (!data.threads[threadId]) {
         return false
       }
 
       delete data.threads[threadId]
-      await this.save(data, this.loadedVersion)
+      await this.writeData(data, version)
       return true
     })
   }

@@ -14,11 +14,13 @@ import path from 'node:path'
 import { z } from 'zod'
 import { atomicWriteFile } from '../utils/atomic-write'
 import { withLock } from '../utils/async-mutex'
+import { createDebugLogger } from '../utils/debug'
+import { getErrorMessage } from '../utils/error'
 
 import type { ContentFormat } from '../config'
 import type { EntrySchemaRegistry } from './types'
 import { resolveCollectionPath } from '../content-id-index'
-import { invalidateContentIndexesDurable } from '../content-index-generation'
+import { invalidateBranchContentCaches } from '../content-index-generation'
 import { generateId, isValidId } from '../id'
 import { createLogicalPath, validateAndNormalizePath } from '../paths'
 import type { LogicalPath, ContentId } from '../paths/types'
@@ -145,6 +147,8 @@ const updateEntryTypeInputSchema = z.object({
 // SchemaOps Class
 // ============================================================================
 
+const log = createDebugLogger({ prefix: 'SchemaOps' })
+
 export class SchemaOps {
   constructor(
     private readonly contentRoot: string,
@@ -157,14 +161,45 @@ export class SchemaOps {
   // --------------------------------------------------------------------------
 
   /**
-   * Invalidate schema cache for this branch after mutations.
-   * This marks the cache as stale so the next schema load will regenerate it.
+   * Invalidate schema cache for this branch after mutations, then eagerly
+   * re-resolve on THIS host.
+   *
+   * The eager re-resolve is the durable-snapshot window-E mitigation (see
+   * BranchSchemaCache's class docs): the mutating host's own scan is
+   * necessarily coherent with the mutation it just made, whereas the
+   * editor's follow-up schema read is a separate Lambda invocation with no
+   * container affinity — exactly the lazy foreign-host pull whose scan can
+   * be served from stale NFS caches and durably persist a fresh-token
+   * snapshot of pre-mutation schema. Regen failures are logged and
+   * swallowed (mirroring BranchRegistry.invalidate()): the bump alone
+   * already restored correctness for every future reader, and a mutation
+   * that leaves no valid schema behind (e.g. deleting the last collection)
+   * must not fail the request over an uncacheable resolve.
+   *
+   * Uses `resolveAndPersist()`, NOT `getSchema()`: getSchema()'s cache-read
+   * fast path can return a snapshot a DIFFERENT, concurrent host just wrote
+   * (its own eager re-resolve, raced against this one, embedding the
+   * now-current marker token over ITS OWN stale-NFS-cache scan) — silently
+   * skipping the one scan this call exists to guarantee. resolveAndPersist()
+   * never reads the cache file, so it cannot be short-circuited that way.
+   * See BranchSchemaCache.resolveAndPersist()'s doc comment for the full race.
    */
   private async invalidateSchemaCache(): Promise<void> {
-    if (this.services) {
-      // Get branchRoot from contentRoot (parent directory)
-      const branchRoot = path.dirname(this.contentRoot)
-      await this.services.branchSchemaCache.invalidate(branchRoot)
+    if (!this.services) return
+    // Get branchRoot from contentRoot (parent directory)
+    const branchRoot = path.dirname(this.contentRoot)
+    await this.services.branchSchemaCache.invalidate(branchRoot)
+    try {
+      await this.services.branchSchemaCache.resolveAndPersist(
+        branchRoot,
+        this.entrySchemaRegistry,
+        path.basename(this.contentRoot),
+      )
+    } catch (err) {
+      log.warn('schema-cache', `Eager schema re-resolve after invalidation failed`, {
+        branchRoot,
+        error: getErrorMessage(err),
+      })
     }
   }
 
@@ -175,9 +210,16 @@ export class SchemaOps {
    * indexes for this branch: in-process via the registry and cross-process via
    * the on-disk generation marker. ContentStores (and the marker) are rooted
    * at the branch root, the contentRoot's parent.
+   *
+   * Uses the combined invalidateBranchContentCaches() helper rather than the
+   * content-index-only invalidateContentIndexesDurable(): every call site here
+   * is already followed by its own invalidateSchemaCache() call below, so this
+   * double-bumps the schema generation marker. That's harmless (bumps are
+   * idempotent hints, not counters) and keeps this call uniform with the other
+   * bulk-mutation call sites that use the combined helper.
    */
   private async invalidateContentIdIndexes(): Promise<void> {
-    await invalidateContentIndexesDurable(path.dirname(this.contentRoot))
+    await invalidateBranchContentCaches(path.dirname(this.contentRoot))
   }
 
   // --------------------------------------------------------------------------

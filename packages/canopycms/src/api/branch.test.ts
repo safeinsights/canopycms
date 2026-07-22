@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import fs from 'node:fs/promises'
 
 // Mock authorization module (specifically loadPathPermissions)
 vi.mock('../authorization', async (importOriginal) => {
@@ -36,6 +37,17 @@ vi.mock('../branch-metadata', () => ({
     }
   }),
 }))
+
+// deleteBranch wraps the metadata unlink in the real server-enforced file
+// lock; these are API-logic unit tests on fake paths (/test/repo), where the
+// lock's mkdir would fail. Pass the critical section through unchanged.
+vi.mock('../utils/occ-json-write', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../utils/occ-json-write')>()
+  return {
+    ...actual,
+    withOccFileLock: vi.fn(<T>(_path: string, fn: () => Promise<T>) => fn()),
+  }
+})
 
 vi.mock('../branch-workspace', () => ({
   BranchWorkspaceManager: vi.fn().mockImplementation(function () {
@@ -501,6 +513,46 @@ describe('deleteBranch api', () => {
     expect(res.ok).toBe(true)
     expect(res.data?.deleted).toBe(true)
   })
+
+  it('surfaces a cleanupWarning (but still reports deleted: true) when the directory rm fails (regression)', async () => {
+    const ctx = {
+      ...deleteCtx,
+      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1')),
+    }
+    const rmSpy = vi.spyOn(fs, 'rm').mockRejectedValueOnce(new Error('EACCES: permission denied'))
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const res = await deleteBranch(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/x') },
+    )
+
+    // Metadata is gone either way -- the branch is logically deleted and
+    // must not silently report failure, but the orphan clone's persistence
+    // must not be hidden from the caller either.
+    expect(res.ok).toBe(true)
+    expect(res.data?.deleted).toBe(true)
+    expect(res.data?.cleanupWarning).toContain('EACCES')
+    expect(consoleErrorSpy).toHaveBeenCalled()
+
+    rmSpy.mockRestore()
+    consoleErrorSpy.mockRestore()
+  })
+
+  it('omits cleanupWarning when the directory rm succeeds', async () => {
+    const ctx = {
+      ...deleteCtx,
+      getBranchContext: vi.fn().mockResolvedValue(makeBranchContext('u1')),
+    }
+    const res = await deleteBranch(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/x') },
+    )
+    expect(res.ok).toBe(true)
+    expect(res.data?.cleanupWarning).toBeUndefined()
+  })
 })
 
 describe('canModifyBranchAccess', () => {
@@ -622,4 +674,66 @@ describe('updateBranchAccess api', () => {
   })
 
   // Test for missing branchRoot removed - BranchContext now requires branchRoot at type level
+
+  it('omits an unsupplied field from the save() payload entirely, rather than spreading the stale snapshot (regression)', async () => {
+    // branchContext.branch.access as resolved by getBranchContext() -- a
+    // snapshot taken before this handler acquires anything. It carries
+    // allowedGroups from some earlier state; a concurrent request could have
+    // already changed allowedGroups on disk by the time save() actually
+    // reloads and merges.
+    const ctx = {
+      ...baseCtx,
+      getBranchContext: vi.fn().mockResolvedValue(
+        createMockBranchContext({
+          branchName: 'feature/x',
+          createdBy: 'u1',
+          access: { allowedGroups: ['stale-group'] },
+        }),
+      ),
+    }
+    mockMetadataUpdate.mockClear()
+
+    const res = await updateBranchAccess(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/x') },
+      // Caller supplies ONLY allowedUsers -- allowedGroups is omitted.
+      { allowedUsers: ['u2', 'u3'] },
+    )
+    expect(res.ok).toBe(true)
+
+    // The save() payload's access delta must contain ONLY the supplied key.
+    // If allowedGroups were included (even with the stale snapshot's value),
+    // save()'s field-level merge (branch-metadata.ts) would let it silently
+    // clobber whatever a concurrent request wrote to allowedGroups on disk.
+    expect(mockMetadataUpdate).toHaveBeenCalledTimes(1)
+    const payload = mockMetadataUpdate.mock.calls[0][0] as { branch?: { access?: object } }
+    expect(payload.branch?.access).toEqual({ allowedUsers: ['u2', 'u3'] })
+    expect(payload.branch?.access).not.toHaveProperty('allowedGroups')
+  })
+
+  it('still clears a field when the caller explicitly supplies an empty array', async () => {
+    const ctx = {
+      ...baseCtx,
+      getBranchContext: vi.fn().mockResolvedValue(
+        createMockBranchContext({
+          branchName: 'feature/x',
+          createdBy: 'u1',
+          access: { allowedUsers: ['u2'], allowedGroups: ['editors'] },
+        }),
+      ),
+    }
+    mockMetadataUpdate.mockClear()
+
+    await updateBranchAccess(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: unsafeAsBranchName('feature/x') },
+      { allowedUsers: [] },
+    )
+
+    const payload = mockMetadataUpdate.mock.calls[0][0] as { branch?: { access?: object } }
+    expect(payload.branch?.access).toEqual({ allowedUsers: [] })
+    expect(payload.branch?.access).not.toHaveProperty('allowedGroups')
+  })
 })

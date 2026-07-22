@@ -23,6 +23,8 @@ import { parseSlug } from '../paths'
 import { filePathExists } from '../utils/fs'
 import { loadCollectionMetaFiles } from '../schema'
 import { getErrorMessage } from '../utils/error'
+import { BranchMetadataFileManager } from '../branch-metadata'
+import { invalidateBranchContentCaches } from '../content-index-generation'
 
 export const MIGRATE_FORMATS = ['md', 'mdx', 'json', 'yaml'] as const
 export type MigrateFormat = (typeof MIGRATE_FORMATS)[number]
@@ -283,6 +285,30 @@ export async function migrate(options: MigrateOptions): Promise<{ opCount: numbe
     }
   }
   p.log.success(`Applied ${ops.length} operation(s).`)
+
+  // migrate's target (`projectDir`, resolved by walking up from cwd to the
+  // nearest canopycms.config.ts — see cli/project-root.ts) is USUALLY the
+  // developer's live source repo, not a branch clone: migrate is meant to run
+  // once, before any branch workspace has ever been created, converting a
+  // plain content tree into CanopyCMS conventions. In that (common) case
+  // there is no cached schema/content-index to invalidate, and bumping the
+  // markers there would be a no-op nobody reads — no consumer treats the
+  // live project root as a cached branchRoot outside build/static mode, which
+  // skips the disk cache entirely — and would risk violating the
+  // never-write-.canopy-meta-at-the-project-root invariant documented on
+  // BranchSchemaCache.
+  //
+  // But projectDir CAN resolve to an actual branch clone workspace if the CLI
+  // happens to be invoked with cwd inside one: branch clones are full git
+  // clones (see GitManager.cloneRepo), so they carry their own
+  // canopycms.config.ts and satisfy findProjectRoot just as well as the true
+  // project root. Guard on that directly — a branch clone always has
+  // .canopy-meta/branch.json (BranchMetadataFileManager), the live project
+  // root never does — rather than assuming based on how migrate is "usually"
+  // invoked.
+  if (await BranchMetadataFileManager.loadOnly(projectDir)) {
+    await invalidateBranchContentCaches(projectDir)
+  }
 
   // Sanity-check the result: all .collection.json files must parse
   try {

@@ -6,6 +6,9 @@ import { SchemaOps, createCollectionInputSchema } from './schema-store'
 import type { CreateCollectionInput } from './schema-store'
 import type { FieldConfig } from '../config'
 import { unsafeAsLogicalPath } from '../paths/test-utils'
+import { BranchSchemaCache, SCHEMA_GENERATION_RESOURCE } from '../branch-schema-cache'
+import { resourceGenerationPath } from '../resource-generation'
+import { createMockServices } from '../test-utils'
 
 describe('SchemaOps', () => {
   let tempDir: string
@@ -921,6 +924,50 @@ describe('SchemaOps', () => {
     it('should return null when root meta does not exist', async () => {
       const meta = await store.readRootCollectionMeta()
       expect(meta).toBeNull()
+    })
+  })
+
+  describe('invalidateSchemaCache eager re-resolve (with services)', () => {
+    // Every SchemaOps constructed elsewhere in this file omits the `services`
+    // arg, so invalidateSchemaCache() no-ops there (see the `if (!this.services)
+    // return` guard) and the eager re-resolve added in 89f7885 is structurally
+    // unreachable. This block constructs SchemaOps WITH a real
+    // BranchSchemaCache-bearing services object so a mutation actually bumps
+    // the on-disk generation marker AND eagerly rewrites schema-cache.json —
+    // via resolveAndPersist(), never getSchema() (see invalidateSchemaCache's
+    // doc comment for why getSchema()'s cache-read fast path would be the
+    // wrong call here).
+    it('bumps the schema generation marker and eagerly rewrites schema-cache.json via resolveAndPersist, without ever calling getSchema', async () => {
+      const branchRoot = tempDir // contentRoot === path.join(branchRoot, 'content')
+      const branchSchemaCache = new BranchSchemaCache('dev')
+      const services = createMockServices({ branchSchemaCache })
+      const storeWithServices = new SchemaOps(contentRoot, entrySchemaRegistry, services)
+
+      await storeWithServices.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+
+      const markerPath = resourceGenerationPath(branchRoot, SCHEMA_GENERATION_RESOURCE)
+      const cachePath = path.join(branchRoot, '.canopy-meta', 'schema-cache.json')
+
+      // Spy AFTER createCollection's own invalidate so it only observes the
+      // updateCollection call below.
+      const getSchemaSpy = vi.spyOn(branchSchemaCache, 'getSchema')
+      const resolveAndPersistSpy = vi.spyOn(branchSchemaCache, 'resolveAndPersist')
+
+      await storeWithServices.updateCollection(unsafeAsLogicalPath('posts'), {
+        label: 'Posts!',
+      })
+
+      expect(getSchemaSpy).not.toHaveBeenCalled()
+      expect(resolveAndPersistSpy).toHaveBeenCalledTimes(1)
+
+      const token = await fs.readFile(markerPath, 'utf-8')
+      expect(token.length).toBeGreaterThan(0)
+
+      const cache = JSON.parse(await fs.readFile(cachePath, 'utf-8')) as { generation: string }
+      expect(cache.generation).toBe(token)
     })
   })
 })
