@@ -7,7 +7,7 @@
  *   asset-originals/{hash32}.{ext}          private; full-fidelity originals
  *   asset-staging/{uuid}                    presigned-POST target
  *   asset-meta/{hash32}.json                private; filename/uploader/dims/mime
- *   assets/t/{directives}/{hash32}/{slug}   transform outputs (built in a later PR)
+ *   assets/t/{directives}/{hash32}/{slug}   transform outputs (see transform-directives.ts)
  *   assets/{hash32}/{slug}.{ext}            public static: sanitized SVG + PDF only
  *
  * Stores must build keys through these helpers rather than hand-rolling prefix
@@ -15,6 +15,10 @@
  */
 
 import { createHash } from 'node:crypto'
+
+import { ASSET_PREFIXES, type AssetPrefixes } from './asset-prefixes'
+
+export { ASSET_PREFIXES, type AssetPrefixes }
 
 /** sha-256 of the given bytes, truncated to 32 hex chars (128 bits). */
 export function hashBytes(data: Uint8Array): string {
@@ -76,28 +80,6 @@ export function slugifyFilename(name: string): { slug: string; ext: string } {
   slug = slug.slice(0, MAX_SLUG_LENGTH).replace(/-+$/g, '')
 
   return { slug: slug || FALLBACK_SLUG, ext }
-}
-
-/** The five bucket prefixes, kept as constants so stores never hand-roll them. */
-export const ASSET_PREFIXES = {
-  originals: 'asset-originals',
-  staging: 'asset-staging',
-  meta: 'asset-meta',
-  public: 'assets',
-  /** Transform-output prefix; the directive-aware key builder ships in a later PR. */
-  transform: 'assets/t',
-} as const
-
-/**
- * Widened to plain `string` fields (not `typeof ASSET_PREFIXES`'s literal
- * types) so overriding stores can supply their own prefix strings.
- */
-export interface AssetPrefixes {
-  originals: string
-  staging: string
-  meta: string
-  public: string
-  transform: string
 }
 
 /**

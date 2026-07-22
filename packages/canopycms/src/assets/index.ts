@@ -47,3 +47,20 @@ export { finalizeAsset, finalizeStagedUpload, type FinalizeAssetResult } from '.
 export { sanitizeSvg } from './svg-sanitizer'
 
 export { assetSrc, IDENTITY_TRANSFORM_DIRECTIVE } from './asset-src'
+
+export {
+  formatDirectives,
+  isAllowedTransformWidth,
+  parseTransformPath,
+  type CropRect,
+  type IdentityDirectives,
+  type OutputFormat,
+  type ParsedTransformPath,
+  type ParseTransformPathResult,
+  type ResizeDirectives,
+  type TransformDirectives,
+} from './transform-directives'
+
+export { applyTransform, type ApplyTransformInput, type TransformResult } from './transform'
+
+export { assetUrl, assetSrcSet, type AssetRef, type AssetUrlOptions } from './asset-url'

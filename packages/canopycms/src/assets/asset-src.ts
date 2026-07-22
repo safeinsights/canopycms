@@ -17,10 +17,11 @@
  */
 
 import { ASSET_PREFIXES } from './keys'
+import { IDENTITY_TRANSFORM_DIRECTIVE } from './transform-directives'
 import type { AssetMeta } from './types'
 
-/** The identity transform directive name - PR 4 must implement a directive with this exact name. */
-export const IDENTITY_TRANSFORM_DIRECTIVE = 'orig'
+/** Re-exported for existing importers (assets/index.ts barrel) - the value now lives in transform-directives.ts, PR 4's pure directive module, so it's reachable without pulling keys.ts's node:crypto import into client bundles. */
+export { IDENTITY_TRANSFORM_DIRECTIVE }
 
 export function assetSrc(meta: Pick<AssetMeta, 'hash32' | 'slug' | 'ext' | 'kind'>): string {
   if (meta.kind === 'svg' || meta.kind === 'pdf') {

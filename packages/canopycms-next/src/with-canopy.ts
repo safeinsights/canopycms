@@ -33,6 +33,59 @@ const CMS_PAGE_EXTENSIONS = ['server.ts', 'server.tsx']
  */
 const NEXTJS_DEFAULT_PAGE_EXTENSIONS = ['tsx', 'ts', 'jsx', 'js']
 
+/**
+ * Maps CanopyCMS's public asset URL space onto the raw-serving API route.
+ * `/assets/:path*` covers both static public objects (`assets/{hash}/{slug}.ext`
+ * - sanitized svg/pdf) and transform outputs (`assets/t/{directives}/...`);
+ * the destination re-adds the `assets/` prefix because that's the literal
+ * store key the raw route (`GET /assets/raw/{key...}`) expects, and adds
+ * `assets/raw/` because that's where the raw route itself is mounted.
+ *
+ * Harmless for static export (no server ever consults `rewrites` there) and
+ * correct under `next dev`/server mode.
+ */
+const ASSETS_REWRITE = {
+  source: '/assets/:path*',
+  destination: '/api/canopycms/assets/raw/assets/:path*',
+}
+
+/**
+ * Wrap a user's existing `rewrites` config (if any) to also add
+ * `ASSETS_REWRITE`, handling every shape Next.js allows:
+ * - no `rewrites` at all
+ * - the plain-array form (checked after filesystem routes/public, before
+ *   dynamic routes - i.e. equivalent to the object form's `afterFiles`)
+ * - the `{ beforeFiles, afterFiles, fallback }` object form (any bucket
+ *   optional) - CanopyCMS's rule is added to `afterFiles`, matching the
+ *   plain-array form's placement semantics
+ *
+ * Next's own `NextConfig['rewrites']` type requires the function to return
+ * a `Promise`, but plain (non-async) user functions that just return the
+ * value directly are common in real `next.config.js` files (untyped JS) -
+ * `await`ing a non-Promise value resolves immediately, so this handles both
+ * without assuming the user's function is itself async.
+ */
+function withAssetsRewrite(
+  existingRewrites: NextConfig['rewrites'],
+): NonNullable<NextConfig['rewrites']> {
+  return async () => {
+    if (!existingRewrites) {
+      return [ASSETS_REWRITE]
+    }
+
+    const result = await existingRewrites()
+    if (Array.isArray(result)) {
+      return [...result, ASSETS_REWRITE]
+    }
+
+    return {
+      beforeFiles: result.beforeFiles ?? [],
+      afterFiles: [...(result.afterFiles ?? []), ASSETS_REWRITE],
+      fallback: result.fallback ?? [],
+    }
+  }
+}
+
 export interface WithCanopyOptions {
   /** Additional packages to transpile beyond the Canopy defaults. */
   packages?: string[]
@@ -184,5 +237,6 @@ export function withCanopy(
     transpilePackages: allPackages,
     ...(pageExtensions ? { pageExtensions } : {}),
     webpack,
+    rewrites: withAssetsRewrite(nextConfig.rewrites),
   }
 }

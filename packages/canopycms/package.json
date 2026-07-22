@@ -139,6 +139,7 @@
     "proper-lockfile": "^4.1.2",
     "react-split-pane": "^0.1.92",
     "sanitize-html": "^2.17.5",
+    "sharp": "^0.35.3",
     "short-uuid": "^6.0.3",
     "simple-git": "^3.36.0",
     "yaml": "^2.8.3",

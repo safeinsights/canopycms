@@ -33,3 +33,9 @@ export type {
   DefaultEntryTypes,
 } from './content-tree'
 export type { ListEntriesItem, ListEntriesOptions } from './content-listing'
+// Asset URL helpers — client-safe (no node: imports). Build/adjust transform
+// URLs for <img>/srcset from stored asset refs without pulling in the
+// server-only transform engine (canopycms's assets/transform.ts, sharp).
+export { assetUrl, assetSrcSet } from './assets/asset-url'
+export type { AssetRef, AssetUrlOptions } from './assets/asset-url'
+export type { OutputFormat, CropRect, TransformDirectives } from './assets/transform-directives'

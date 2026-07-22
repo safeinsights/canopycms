@@ -2,6 +2,8 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 
+import { imageSize } from 'image-size'
+import sharp from 'sharp'
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
 
 import { ASSET_ROUTES, assetRawRoute } from './assets'
@@ -13,6 +15,7 @@ import { createMockApiContext, mockConsole } from '../test-utils'
 import { createCanopyRequestHandler } from '../http/handler'
 import type { CanopyRequest } from '../http/types'
 import type { AuthPlugin } from '../auth/plugin'
+import * as transformModule from '../assets/transform'
 
 // Real request-handling test below (bodyFormat bypass) needs a full
 // createCanopyRequestHandler - mirrors src/http/handler.test.ts's mocking so
@@ -24,6 +27,14 @@ vi.mock('../branch-workspace', () => ({
 vi.mock('../authorization/permissions', () => ({
   loadPathPermissions: vi.fn().mockResolvedValue([]),
 }))
+// Partial mock: wraps the real applyTransform in a spy so the lazy-transform
+// tests below can assert cache hits never re-invoke sharp, while every other
+// describe block in this file (which never calls the raw route's transform
+// path) keeps the real implementation untouched.
+vi.mock('../assets/transform', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../assets/transform')>()
+  return { ...actual, applyTransform: vi.fn(actual.applyTransform) }
+})
 
 // 1x1-scale PNG fixture (IHDR-only, no pixel data) - same construction as
 // assets/pipeline.test.ts's PNG_3X5_BASE64; duplicated here to keep this file
@@ -445,6 +456,157 @@ describe('assetRawRoute (GET /assets/raw/{key...})', () => {
       key: `assets/${'a'.repeat(32)}/slug.svg`,
     })
     expect(res).toMatchObject({ ok: false, status: 501 })
+  })
+})
+
+describe('assetRawRoute - lazy transform (GET /assets/t/{directives}/{hash32}/{slug}.{ext})', () => {
+  let tmpDir: string
+  let store: LocalAssetStore
+  let rasterBytes: Uint8Array
+  const rasterHash32 = 'b'.repeat(32)
+  const svgHash32 = 'c'.repeat(32)
+
+  const rasterMeta: AssetMeta = {
+    hash32: rasterHash32,
+    filename: 'photo.png',
+    slug: 'photo',
+    ext: 'png',
+    mime: 'image/png',
+    size: 0,
+    kind: 'raster',
+    uploadedAt: '2026-01-01T00:00:00.000Z',
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-assets-transform-test-'))
+    store = new LocalAssetStore({ root: tmpDir })
+
+    const buf = await sharp({
+      create: { width: 800, height: 400, channels: 3, background: { r: 10, g: 20, b: 30 } },
+    })
+      .png()
+      .toBuffer()
+    rasterBytes = new Uint8Array(buf)
+
+    await store.putOriginal({
+      hash32: rasterHash32,
+      ext: 'png',
+      data: rasterBytes,
+      contentType: 'image/png',
+    })
+    await store.putMetaIfAbsent(rasterHash32, { ...rasterMeta, size: rasterBytes.byteLength })
+
+    await store.putMetaIfAbsent(svgHash32, {
+      hash32: svgHash32,
+      filename: 'logo.svg',
+      slug: 'logo',
+      ext: 'svg',
+      mime: 'image/svg+xml',
+      size: 42,
+      kind: 'svg',
+      uploadedAt: '2026-01-01T00:00:00.000Z',
+    })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('computes and caches a transform on first miss, resizing correctly', async () => {
+    const key = `assets/t/w=160/${rasterHash32}/photo.png`
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
+    expect(res).toMatchObject({
+      kind: 'binary',
+      status: 200,
+      headers: { contentType: 'image/png' },
+    })
+    expect(transformModule.applyTransform).toHaveBeenCalledTimes(1)
+
+    if (!('body' in res)) return
+    const dims = imageSize(Buffer.from(res.body as Uint8Array))
+    expect(dims.width).toBe(160)
+    expect(dims.height).toBe(80)
+
+    const cached = await store.readPublicObject(key)
+    expect(cached).not.toBeNull()
+  })
+
+  it('serves the second identical request from the store without invoking the transform engine again', async () => {
+    const key = `assets/t/w=160/${rasterHash32}/photo.png`
+    await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
+    expect(transformModule.applyTransform).toHaveBeenCalledTimes(1)
+
+    const second = await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
+    expect(second).toMatchObject({ kind: 'binary', status: 200 })
+    expect(transformModule.applyTransform).toHaveBeenCalledTimes(1)
+  })
+
+  it('caches a non-canonically-ordered directive request under its canonical key only', async () => {
+    const nonCanonicalKey = `assets/t/w=160,q=80/${rasterHash32}/photo.png`
+    const canonicalKey = `assets/t/q=80,w=160/${rasterHash32}/photo.png`
+
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), { key: nonCanonicalKey })
+    expect(res).toMatchObject({ kind: 'binary', status: 200 })
+
+    expect(await store.readPublicObject(canonicalKey)).not.toBeNull()
+    expect(await store.readPublicObject(nonCanonicalKey)).toBeNull()
+  })
+
+  it('returns 400 on a directive parse failure', async () => {
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/not-a-directive/${rasterHash32}/photo.png`,
+    })
+    expect(res).toMatchObject({ ok: false, status: 400 })
+    expect(transformModule.applyTransform).not.toHaveBeenCalled()
+  })
+
+  it('returns 404 when the hash32 has no meta', async () => {
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/orig/${'d'.repeat(32)}/photo.png`,
+    })
+    expect(res).toMatchObject({ ok: false, status: 404 })
+  })
+
+  it('returns 400 when the meta kind is not raster (svg is served statically)', async () => {
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/orig/${svgHash32}/logo.svg`,
+    })
+    expect(res).toMatchObject({ ok: false, status: 400 })
+    expect(transformModule.applyTransform).not.toHaveBeenCalled()
+  })
+
+  it('returns 400 when the requested ext does not match the source ext and no format is given', async () => {
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/orig/${rasterHash32}/photo.webp`,
+    })
+    expect(res).toMatchObject({ ok: false, status: 400 })
+    expect(transformModule.applyTransform).not.toHaveBeenCalled()
+  })
+
+  it('returns 404 when meta exists but the original blob is missing', async () => {
+    const orphanHash32 = 'e'.repeat(32)
+    await store.putMetaIfAbsent(orphanHash32, { ...rasterMeta, hash32: orphanHash32 })
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/orig/${orphanHash32}/photo.png`,
+    })
+    expect(res).toMatchObject({ ok: false, status: 404 })
+  })
+
+  it('returns a 502-style error when the transform engine rejects the input', async () => {
+    const junkHash32 = 'f'.repeat(32)
+    await store.putOriginal({
+      hash32: junkHash32,
+      ext: 'png',
+      data: new Uint8Array([0, 1, 2, 3]),
+      contentType: 'image/png',
+    })
+    await store.putMetaIfAbsent(junkHash32, { ...rasterMeta, hash32: junkHash32 })
+
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/t/orig/${junkHash32}/photo.png`,
+    })
+    expect(res).toMatchObject({ ok: false, status: 502 })
   })
 })
 
