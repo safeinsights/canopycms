@@ -65,6 +65,7 @@ export const CanopyEditor: React.FC<CanopyEditorProps> = ({
         contentRoot={config.contentRoot}
         entryLinkUrl={config.entryLinkUrl}
         previewBaseByCollection={previewBase}
+        assetBaseUrl={config.assetBaseUrl}
         themeOptions={resolvedTheme}
         AccountComponent={config.editor?.AccountComponent}
         onAccountClick={config.editor?.onAccountClick}

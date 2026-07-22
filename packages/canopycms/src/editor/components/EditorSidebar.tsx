@@ -2,6 +2,7 @@ import { ActionIcon, Menu, Paper, Stack } from '@mantine/core'
 import {
   IconUserCircle,
   IconLogout,
+  IconPhoto,
   IconSettings,
   IconLayoutColumns,
   IconLayoutRows,
@@ -59,6 +60,11 @@ export interface EditorSidebarProps {
   onGroupManagerOpen: () => void
 
   /**
+   * Callback when the media library should be opened.
+   */
+  onMediaLibraryOpen: () => void
+
+  /**
    * Custom account component to render (e.g., Clerk's UserButton).
    * If provided, replaces the default account button.
    */
@@ -91,6 +97,7 @@ export interface EditorSidebarProps {
  *   onHighlightToggle={() => setHighlightEnabled(!highlightEnabled)}
  *   onPermissionManagerOpen={() => setPermissionManagerOpen(true)}
  *   onGroupManagerOpen={() => setGroupManagerOpen(true)}
+ *   onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
  * />
  * ```
  */
@@ -104,6 +111,7 @@ export function EditorSidebar({
   onHighlightToggle,
   onPermissionManagerOpen,
   onGroupManagerOpen,
+  onMediaLibraryOpen,
   AccountComponent,
   onAccountClick,
   onLogoutClick,
@@ -161,6 +169,9 @@ export function EditorSidebar({
             <Menu.Label>Settings</Menu.Label>
             <Menu.Item onClick={onPermissionManagerOpen}>Manage Permissions</Menu.Item>
             <Menu.Item onClick={onGroupManagerOpen}>Manage Groups</Menu.Item>
+            <Menu.Item leftSection={<IconPhoto size={14} />} onClick={onMediaLibraryOpen}>
+              Media library
+            </Menu.Item>
           </Menu.Dropdown>
         </Menu>
         {/* Account section - use custom component or default buttons */}

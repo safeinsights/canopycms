@@ -457,6 +457,14 @@ export type CanopyClientConfig = Pick<
   'defaultBaseBranch' | 'defaultActiveBranch' | 'contentRoot' | 'editor' | 'mode' | 'entryLinkUrl'
 > & {
   flatSchema: FlatSchemaItem[]
+  /**
+   * `media.publicBaseUrl`, when configured - the only part of `media` safe/
+   * useful to expose client-side (the editor may be served from a different
+   * origin than the site; the rest of `MediaConfig` - bucket, region, etc -
+   * has no business in a browser bundle). Threaded through to `Editor`'s
+   * `assetBaseUrl` prop. Undefined means root-relative asset URLs.
+   */
+  assetBaseUrl?: string
 }
 
 // Client-only fields that can be provided as overrides (e.g., from auth providers)

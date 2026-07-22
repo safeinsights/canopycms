@@ -9,6 +9,8 @@ import type {
   BlockFieldConfig,
   EntrySchema,
   FieldConfig,
+  ImageFieldConfig,
+  ImageFieldValue,
   InlineGroupFieldConfig,
   ObjectFieldConfig,
   ReferenceFieldConfig,
@@ -21,6 +23,7 @@ import { BlockField, type BlockInstance } from './fields/BlockField'
 import { SelectField } from './fields/SelectField'
 import { ReferenceField } from './fields/ReferenceField'
 import { CodeField } from './fields/CodeField'
+import { ImageField } from './fields/ImageField'
 import { ObjectField } from './fields/ObjectField'
 import { InlineGroupField } from './fields/InlineGroupField'
 import { formatCanopyPath, normalizeCanopyPath } from './canopy-path'
@@ -309,6 +312,26 @@ export const FormRenderer: React.FC<FormRendererProps> = ({
             multiple={isMulti}
             onChange={(next) => update(next)}
             dataCanopyField={normalizeCanopyPath(path)}
+          />,
+        )
+      }
+      case 'image': {
+        const imageField = field as ImageFieldConfig
+        return wrapWithComments(
+          <ImageField
+            key={fieldKey(path)}
+            id={fieldId}
+            label={label}
+            value={currentValue as ImageFieldValue | undefined}
+            onChange={(next) => update(next)}
+            aspect={imageField.aspect}
+            altOptional={imageField.altOptional}
+            dataCanopyField={canopyPath}
+            errors={{
+              src: fieldErrors?.[`${canopyPath}.src`],
+              alt: fieldErrors?.[`${canopyPath}.alt`],
+              crop: fieldErrors?.[`${canopyPath}.crop`],
+            }}
           />,
         )
       }

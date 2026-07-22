@@ -47,8 +47,15 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
     // Client config helper - extracts safe subset and merges overrides
     // Note: flatSchema is loaded dynamically by the editor via API (from .collection.json files)
     client: (clientOverrides?: ClientOnlyFields): CanopyClientConfig => {
-      const { defaultBaseBranch, defaultActiveBranch, contentRoot, editor, mode, entryLinkUrl } =
-        validated
+      const {
+        defaultBaseBranch,
+        defaultActiveBranch,
+        contentRoot,
+        editor,
+        mode,
+        entryLinkUrl,
+        media,
+      } = validated
       const clientConfig: CanopyClientConfig = {
         defaultBaseBranch,
         defaultActiveBranch,
@@ -56,6 +63,7 @@ export function defineCanopyConfig(config: CanopyConfigInput | CanopyConfigAutho
         editor,
         mode,
         entryLinkUrl,
+        assetBaseUrl: media?.publicBaseUrl,
         flatSchema: [], // Loaded dynamically by editor via API
       }
 

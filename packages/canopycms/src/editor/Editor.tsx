@@ -59,8 +59,9 @@ import { EntryCreateModal } from './components/EntryCreateModal'
 import { ConfirmDeleteModal } from './components/ConfirmDeleteModal'
 import { CollectionEditor, type ExistingCollection, type ExistingEntryType } from './schema-editor'
 import type { LogicalPath, ContentId } from '../paths/types'
-import { useApiClient } from './context'
+import { AssetContextProvider, useApiClient } from './context'
 import { EntryLinkContext, type EntryLinkOption } from './fields/entry-link'
+import { MediaLibrary } from './media/MediaLibrary'
 
 export interface EditorEntry {
   path: LogicalPath // Logical path (no IDs/extensions)
@@ -122,6 +123,8 @@ export interface EditorProps {
   previewBaseByCollection?: Record<string, string>
   currentUser?: string
   canResolveComments?: boolean
+  /** `media.publicBaseUrl` from config - prefixed onto asset URLs the editor builds (MediaLibrary/ImageField/MDX image dialog). Undefined means root-relative (editor and site share an origin). */
+  assetBaseUrl?: string
   // Auth UI handlers from config
   AccountComponent?: React.ComponentType
   onAccountClick?: () => void
@@ -151,6 +154,7 @@ export const Editor: React.FC<EditorProps> = ({
   previewBaseByCollection,
   currentUser = 'current-user',
   canResolveComments = true,
+  assetBaseUrl,
   AccountComponent,
   onAccountClick,
   onLogoutClick,
@@ -164,6 +168,7 @@ export const Editor: React.FC<EditorProps> = ({
   const [groupManagerOpen, setGroupManagerOpen] = useState(false)
   const [permissionManagerOpen, setPermissionManagerOpen] = useState(false)
   const [branchManagerOpen, setBranchManagerOpen] = useState(false)
+  const [mediaLibraryOpen, setMediaLibraryOpen] = useState(false)
 
   // Schema editor state
   const [collectionEditorOpen, setCollectionEditorOpen] = useState(false)
@@ -862,456 +867,466 @@ export const Editor: React.FC<EditorProps> = ({
 
   return (
     <CanopyCMSProvider {...(themeOptions ?? {})}>
-      <Box bg="gray.0" style={{ minHeight: '100vh', width: '100%' }}>
-        <EditorHeader
-          ref={headerRef}
-          siteTitle={siteTitle}
-          siteSubtitle={siteSubtitle}
-          headerTitle={headerTitle}
-          currentEntry={currentEntry}
-          branchName={branchNameState}
-          operatingMode={operatingMode}
-          branchStatus={currentBranch?.status}
-          busy={busy}
-          breadcrumbSegments={breadcrumbSegments}
-          editedFiles={editedFiles}
-          modifiedCount={modifiedCount}
-          unresolvedCommentCount={comments.filter((t) => !t.resolved).length}
-          comments={comments}
-          hasUnsavedChanges={isSelectedDirty()}
-          userContext={userContext}
-          branchCreatedBy={currentBranch?.createdBy}
-          branchAccess={currentBranch?.access}
-          onNavigatorOpen={() => setNavigatorOpen(true)}
-          onFileReload={handleReload}
-          onFileDiscardDraft={handleDiscardFileDraft}
-          onEntrySelect={setSelectedPath}
-          onBranchReloadData={handleReloadBranchData}
-          onBranchDiscardDrafts={handleDiscardDrafts}
-          onBranchManagerOpen={() => {
-            setBranchManagerOpen(true)
-            // Branchless = the initial load failed or found nothing; opening
-            // the manager doubles as the retry (adopts the server default on
-            // success and clears the sticky error toast).
-            if (!branchNameState) loadBranches().catch(console.error)
-          }}
-          onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
-          onSave={handleSave}
-          onSubmit={() => branchNameState && handleSubmit(branchNameState)}
-          onWithdraw={() => branchNameState && handleWithdraw(branchNameState)}
-        />
+      <AssetContextProvider baseUrl={assetBaseUrl}>
+        <Box bg="gray.0" style={{ minHeight: '100vh', width: '100%' }}>
+          <EditorHeader
+            ref={headerRef}
+            siteTitle={siteTitle}
+            siteSubtitle={siteSubtitle}
+            headerTitle={headerTitle}
+            currentEntry={currentEntry}
+            branchName={branchNameState}
+            operatingMode={operatingMode}
+            branchStatus={currentBranch?.status}
+            busy={busy}
+            breadcrumbSegments={breadcrumbSegments}
+            editedFiles={editedFiles}
+            modifiedCount={modifiedCount}
+            unresolvedCommentCount={comments.filter((t) => !t.resolved).length}
+            comments={comments}
+            hasUnsavedChanges={isSelectedDirty()}
+            userContext={userContext}
+            branchCreatedBy={currentBranch?.createdBy}
+            branchAccess={currentBranch?.access}
+            onNavigatorOpen={() => setNavigatorOpen(true)}
+            onFileReload={handleReload}
+            onFileDiscardDraft={handleDiscardFileDraft}
+            onEntrySelect={setSelectedPath}
+            onBranchReloadData={handleReloadBranchData}
+            onBranchDiscardDrafts={handleDiscardDrafts}
+            onBranchManagerOpen={() => {
+              setBranchManagerOpen(true)
+              // Branchless = the initial load failed or found nothing; opening
+              // the manager doubles as the retry (adopts the server default on
+              // success and clears the sticky error toast).
+              if (!branchNameState) loadBranches().catch(console.error)
+            }}
+            onCommentsPanelOpen={() => setCommentsPanelOpen(true)}
+            onSave={handleSave}
+            onSubmit={() => branchNameState && handleSubmit(branchNameState)}
+            onWithdraw={() => branchNameState && handleWithdraw(branchNameState)}
+          />
 
-        <Box
-          style={{
-            paddingTop: headerHeight,
-            paddingBottom: footerHeight,
-            paddingRight: sidebarWidth,
-            minHeight: '100vh',
-            width: '100%',
-          }}
-        >
           <Box
             style={{
-              height: `calc(100vh - ${headerHeight + footerHeight}px)`,
-              minHeight: 0,
-              position: 'relative',
+              paddingTop: headerHeight,
+              paddingBottom: footerHeight,
+              paddingRight: sidebarWidth,
+              minHeight: '100vh',
+              width: '100%',
             }}
           >
-            <Box style={{ flex: 1, minHeight: 0, height: '100%', width: '100%' }}>
-              <EditorPanes
-                layout={layout}
-                onLayoutChange={(next) => setLayout(next)}
-                preview={
-                  renderPreview && currentEntry
-                    ? renderPreview(currentEntry, effectiveValue)
-                    : defaultPreview
-                }
-                form={
-                  !currentEntry ? (
-                    <CenteredMessage>
-                      {!branchNameState && busy
-                        ? 'Setting up your branch workspace…'
-                        : entriesInitializing
-                          ? 'Loading content…'
-                          : 'Select an item to start editing.'}
-                    </CenteredMessage>
-                  ) : currentEntry.canEdit === false ? (
-                    <CenteredMessage>
-                      You don&apos;t have permission to edit this content.
-                    </CenteredMessage>
-                  ) : schema.length > 0 && effectiveValue ? (
-                    <EntryLinkContext.Provider value={entryLinkContextValue}>
-                      <FormRenderer
-                        fields={schema}
-                        value={effectiveValue}
-                        onChange={(next) => {
-                          const contentId = currentEntry?.contentId
-                          if (contentId) {
-                            setDrafts((prev) => ({ ...prev, [contentId]: next }))
-                          }
-                        }}
-                        branch={branchNameState}
-                        onResolvedValueChange={setPreviewData}
-                        onLoadingStateChange={setPreviewLoadingState}
-                        comments={comments}
-                        currentEntryPath={selectedPath}
-                        currentUserId={currentUser}
-                        canResolve={canResolveComments}
-                        focusedFieldPath={focusedFieldPath}
-                        highlightThreadId={highlightThreadId}
-                        onAddComment={handleAddComment}
-                        onResolveThread={handleResolveThread}
-                        fieldErrors={fieldErrors}
-                        conflictNotice={
-                          !!(
-                            currentEntry?.contentId &&
-                            currentBranch?.conflictFiles?.includes(currentEntry.contentId)
-                          )
-                        }
-                      />
-                    </EntryLinkContext.Provider>
-                  ) : (
-                    <CenteredMessage>No fields to edit.</CenteredMessage>
-                  )
-                }
-              />
-            </Box>
-            <EditorSidebar
-              layout={layout}
-              highlightEnabled={highlightEnabled}
-              sidebarWidth={sidebarWidth}
-              headerHeight={headerHeight}
-              footerHeight={footerHeight}
-              onLayoutChange={setLayout}
-              onHighlightToggle={() => setHighlightEnabled(!highlightEnabled)}
-              onPermissionManagerOpen={() => setPermissionManagerOpen(true)}
-              onGroupManagerOpen={() => setGroupManagerOpen(true)}
-              AccountComponent={AccountComponent}
-              onAccountClick={onAccountClick}
-              onLogoutClick={onLogoutClick}
-            />
-          </Box>
-        </Box>
-
-        <EditorFooter />
-
-        <Drawer.Root
-          opened={navigatorOpen}
-          onClose={() => setNavigatorOpen(false)}
-          position="left"
-          size={360}
-        >
-          <Drawer.Overlay blur={2} />
-          <Drawer.Content>
-            <Drawer.Header>
-              <Drawer.Title>Content</Drawer.Title>
-              <Group gap="xs">
-                {navCollections &&
-                  navCollections.length > 0 &&
-                  (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
-                    <Menu shadow="md" width={200} withinPortal position="bottom-end">
-                      <Menu.Target>
-                        <ActionIcon
-                          variant="subtle"
-                          color="gray"
-                          size="sm"
-                          aria-label="Content actions"
-                        >
-                          <IconDots size={16} />
-                        </ActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown>
-                        {navCollections[0].onAdd && (
-                          <Menu.Item
-                            leftSection={<IconPlus size={14} />}
-                            onClick={() => navCollections[0].onAdd?.()}
-                          >
-                            Add Entry
-                          </Menu.Item>
-                        )}
-                        {navCollections[0].onAddSubCollection && (
-                          <Menu.Item
-                            leftSection={<IconFolderPlus size={14} />}
-                            onClick={() => navCollections[0].onAddSubCollection?.()}
-                          >
-                            Add Collection
-                          </Menu.Item>
-                        )}
-                      </Menu.Dropdown>
-                    </Menu>
-                  )}
-                <ActionIcon
-                  variant="subtle"
-                  color="gray"
-                  size="sm"
-                  onClick={handleCollapseAll}
-                  title="Collapse all folders"
-                  aria-label="Collapse all folders"
-                >
-                  <IconChevronUp size={16} />
-                </ActionIcon>
-                <ActionIcon
-                  variant="subtle"
-                  color="gray"
-                  size="sm"
-                  onClick={handleExpandAll}
-                  title="Expand all folders"
-                  aria-label="Expand all folders"
-                >
-                  <IconChevronDown size={16} />
-                </ActionIcon>
-                <Drawer.CloseButton />
-              </Group>
-            </Drawer.Header>
-            <Drawer.Body p={0}>
-              <Box px="md">
-                <EntryNavigator
-                  collections={navCollections}
-                  items={
-                    navCollections
-                      ? undefined
-                      : entriesState.map((e) => ({
-                          path: e.path,
-                          label: e.label,
-                          status: e.status,
-                        }))
+            <Box
+              style={{
+                height: `calc(100vh - ${headerHeight + footerHeight}px)`,
+                minHeight: 0,
+                position: 'relative',
+              }}
+            >
+              <Box style={{ flex: 1, minHeight: 0, height: '100%', width: '100%' }}>
+                <EditorPanes
+                  layout={layout}
+                  onLayoutChange={(next) => setLayout(next)}
+                  preview={
+                    renderPreview && currentEntry
+                      ? renderPreview(currentEntry, effectiveValue)
+                      : defaultPreview
                   }
-                  selectedPath={selectedPath}
-                  onSelect={(id) => {
-                    setSelectedPath(id)
-                    setNavigatorOpen(false)
-                  }}
-                  onTreeControllerReady={handleTreeControllerReady}
-                  expandedStateRef={treeExpandedStateRef}
-                  onExpandedStateChange={handleExpandedStateChange}
-                  onDeleteEntry={handleDeleteEntry}
-                  onRenameEntry={handleRenameEntry}
-                  onReorderEntry={handleReorderEntry}
-                  hiddenRootPath={hiddenRootPath}
-                  loading={entriesInitializing}
+                  form={
+                    !currentEntry ? (
+                      <CenteredMessage>
+                        {!branchNameState && busy
+                          ? 'Setting up your branch workspace…'
+                          : entriesInitializing
+                            ? 'Loading content…'
+                            : 'Select an item to start editing.'}
+                      </CenteredMessage>
+                    ) : currentEntry.canEdit === false ? (
+                      <CenteredMessage>
+                        You don&apos;t have permission to edit this content.
+                      </CenteredMessage>
+                    ) : schema.length > 0 && effectiveValue ? (
+                      <EntryLinkContext.Provider value={entryLinkContextValue}>
+                        <FormRenderer
+                          fields={schema}
+                          value={effectiveValue}
+                          onChange={(next) => {
+                            const contentId = currentEntry?.contentId
+                            if (contentId) {
+                              setDrafts((prev) => ({ ...prev, [contentId]: next }))
+                            }
+                          }}
+                          branch={branchNameState}
+                          onResolvedValueChange={setPreviewData}
+                          onLoadingStateChange={setPreviewLoadingState}
+                          comments={comments}
+                          currentEntryPath={selectedPath}
+                          currentUserId={currentUser}
+                          canResolve={canResolveComments}
+                          focusedFieldPath={focusedFieldPath}
+                          highlightThreadId={highlightThreadId}
+                          onAddComment={handleAddComment}
+                          onResolveThread={handleResolveThread}
+                          fieldErrors={fieldErrors}
+                          conflictNotice={
+                            !!(
+                              currentEntry?.contentId &&
+                              currentBranch?.conflictFiles?.includes(currentEntry.contentId)
+                            )
+                          }
+                        />
+                      </EntryLinkContext.Provider>
+                    ) : (
+                      <CenteredMessage>No fields to edit.</CenteredMessage>
+                    )
+                  }
                 />
               </Box>
-            </Drawer.Body>
-          </Drawer.Content>
-        </Drawer.Root>
-        <Drawer
-          opened={branchManagerOpen}
-          onClose={() => setBranchManagerOpen(false)}
-          position="right"
-          title={
-            <div>
-              <Title order={4}>Branches</Title>
-              <Text size="xs" c="dimmed">
-                Manage access, status, and lifecycle
-              </Text>
-            </div>
-          }
-          padding="md"
-          size={420}
-          overlayProps={{ blur: 2 }}
-        >
-          <BranchManager
-            branches={branchSummaries}
-            mode={operatingMode}
-            user={userContext}
-            onSelect={async (name) => {
-              try {
-                await handleBranchChange(name)
-                setBranchManagerOpen(false)
-              } catch (err) {
-                console.error('Branch change failed or was cancelled:', err)
-                // Don't close branch manager if there was an error or user cancelled
-              }
-            }}
-            onCreate={(branch) => {
-              handleCreateBranch(branch).catch((err) => console.error(err))
-            }}
-            onSubmit={(name) => {
-              handleSubmit(name).catch((err) => console.error(err))
-            }}
-            onWithdraw={(name) => {
-              handleWithdraw(name).catch((err) => console.error(err))
-            }}
-            onRequestChanges={(name) => {
-              handleRequestChanges(name).catch((err) => console.error(err))
-            }}
-            onDelete={(name) => {
-              handleDelete(name).catch((err) => console.error(err))
-            }}
+              <EditorSidebar
+                layout={layout}
+                highlightEnabled={highlightEnabled}
+                sidebarWidth={sidebarWidth}
+                headerHeight={headerHeight}
+                footerHeight={footerHeight}
+                onLayoutChange={setLayout}
+                onHighlightToggle={() => setHighlightEnabled(!highlightEnabled)}
+                onPermissionManagerOpen={() => setPermissionManagerOpen(true)}
+                onGroupManagerOpen={() => setGroupManagerOpen(true)}
+                onMediaLibraryOpen={() => setMediaLibraryOpen(true)}
+                AccountComponent={AccountComponent}
+                onAccountClick={onAccountClick}
+                onLogoutClick={onLogoutClick}
+              />
+            </Box>
+          </Box>
+
+          <EditorFooter />
+
+          <Drawer.Root
+            opened={navigatorOpen}
+            onClose={() => setNavigatorOpen(false)}
+            position="left"
+            size={360}
+          >
+            <Drawer.Overlay blur={2} />
+            <Drawer.Content>
+              <Drawer.Header>
+                <Drawer.Title>Content</Drawer.Title>
+                <Group gap="xs">
+                  {navCollections &&
+                    navCollections.length > 0 &&
+                    (navCollections[0].onAdd || navCollections[0].onAddSubCollection) && (
+                      <Menu shadow="md" width={200} withinPortal position="bottom-end">
+                        <Menu.Target>
+                          <ActionIcon
+                            variant="subtle"
+                            color="gray"
+                            size="sm"
+                            aria-label="Content actions"
+                          >
+                            <IconDots size={16} />
+                          </ActionIcon>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          {navCollections[0].onAdd && (
+                            <Menu.Item
+                              leftSection={<IconPlus size={14} />}
+                              onClick={() => navCollections[0].onAdd?.()}
+                            >
+                              Add Entry
+                            </Menu.Item>
+                          )}
+                          {navCollections[0].onAddSubCollection && (
+                            <Menu.Item
+                              leftSection={<IconFolderPlus size={14} />}
+                              onClick={() => navCollections[0].onAddSubCollection?.()}
+                            >
+                              Add Collection
+                            </Menu.Item>
+                          )}
+                        </Menu.Dropdown>
+                      </Menu>
+                    )}
+                  <ActionIcon
+                    variant="subtle"
+                    color="gray"
+                    size="sm"
+                    onClick={handleCollapseAll}
+                    title="Collapse all folders"
+                    aria-label="Collapse all folders"
+                  >
+                    <IconChevronUp size={16} />
+                  </ActionIcon>
+                  <ActionIcon
+                    variant="subtle"
+                    color="gray"
+                    size="sm"
+                    onClick={handleExpandAll}
+                    title="Expand all folders"
+                    aria-label="Expand all folders"
+                  >
+                    <IconChevronDown size={16} />
+                  </ActionIcon>
+                  <Drawer.CloseButton />
+                </Group>
+              </Drawer.Header>
+              <Drawer.Body p={0}>
+                <Box px="md">
+                  <EntryNavigator
+                    collections={navCollections}
+                    items={
+                      navCollections
+                        ? undefined
+                        : entriesState.map((e) => ({
+                            path: e.path,
+                            label: e.label,
+                            status: e.status,
+                          }))
+                    }
+                    selectedPath={selectedPath}
+                    onSelect={(id) => {
+                      setSelectedPath(id)
+                      setNavigatorOpen(false)
+                    }}
+                    onTreeControllerReady={handleTreeControllerReady}
+                    expandedStateRef={treeExpandedStateRef}
+                    onExpandedStateChange={handleExpandedStateChange}
+                    onDeleteEntry={handleDeleteEntry}
+                    onRenameEntry={handleRenameEntry}
+                    onReorderEntry={handleReorderEntry}
+                    hiddenRootPath={hiddenRootPath}
+                    loading={entriesInitializing}
+                  />
+                </Box>
+              </Drawer.Body>
+            </Drawer.Content>
+          </Drawer.Root>
+          <Drawer
+            opened={branchManagerOpen}
             onClose={() => setBranchManagerOpen(false)}
-            comments={comments}
-            currentUserId={currentUser}
-            canResolve={canResolveComments}
-            onAddComment={handleAddComment}
-            onResolveThread={handleResolveThread}
-            highlightThreadId={highlightThreadId}
-            onGetUserMetadata={handleGetUserMetadata}
-          />
-        </Drawer>
-        {commentsPanelOpen && branchNameState && (
-          <CommentsPanel
-            branchName={branchNameState}
-            comments={comments}
-            canResolve={true}
-            onAddComment={handleAddComment}
-            onResolveThread={handleResolveThread}
-            onClose={() => setCommentsPanelOpen(false)}
-            onJumpToField={handleJumpToField}
-            onGetUserMetadata={handleGetUserMetadata}
-            onJumpToEntry={handleJumpToEntry}
-            onJumpToBranch={handleJumpToBranch}
-          />
-        )}
-
-        {/* Group Manager Modal */}
-        <Drawer
-          opened={groupManagerOpen}
-          onClose={() => setGroupManagerOpen(false)}
-          position="right"
-          title={
-            <div>
-              <Title order={4}>Groups</Title>
-              <Text size="xs" c="dimmed">
-                Manage groups and organizations
-              </Text>
-            </div>
-          }
-          padding="md"
-          size={600}
-          overlayProps={{ blur: 2 }}
-        >
-          <GroupManager
-            internalGroups={groupsData}
-            loading={groupsLoading}
-            canEdit={true}
-            onSave={handleSaveGroups}
-            onSearchUsers={handleSearchUsers}
-            onGetUserMetadata={handleGetUserMetadata}
-            onSearchExternalGroups={handleSearchExternalGroups}
-            onClose={() => setGroupManagerOpen(false)}
-          />
-        </Drawer>
-
-        {/* Permission Manager Modal */}
-        <Drawer
-          opened={permissionManagerOpen}
-          onClose={() => setPermissionManagerOpen(false)}
-          position="right"
-          title={
-            <div>
-              <Title order={4}>Permissions</Title>
-              <Text size="xs" c="dimmed">
-                Manage content access by path (read, edit, review)
-              </Text>
-            </div>
-          }
-          padding="md"
-          size={700}
-          overlayProps={{ blur: 2 }}
-        >
-          <PermissionManager
-            collections={activeCollections}
-            contentRoot={contentRoot}
-            permissions={permissionsData}
-            loading={permissionsLoading}
-            canEdit={true}
-            onSave={handleSavePermissions}
-            onSearchUsers={handleSearchUsers}
-            onGetUserMetadata={handleGetUserMetadata}
-            onListGroups={handleListGroups}
-            onClose={() => setPermissionManagerOpen(false)}
-          />
-        </Drawer>
-
-        {/* Collection Editor Modal */}
-        <CollectionEditor
-          isOpen={collectionEditorOpen}
-          editingCollection={editingCollection}
-          parentPath={collectionEditorParentPath}
-          availableSchemas={availableSchemas}
-          onSave={handleCollectionSave}
-          onAddEntryType={
-            editingCollection ? (path, entryType) => addEntryType(path, entryType) : undefined
-          }
-          onUpdateEntryType={
-            editingCollection
-              ? (path, name, updates) => updateEntryType(path, name, updates)
-              : undefined
-          }
-          onRemoveEntryType={
-            editingCollection ? (path, name) => removeEntryType(path, name) : undefined
-          }
-          onClose={handleCloseCollectionEditor}
-          isSaving={schemaLoading}
-          error={collectionEditorError}
-        />
-
-        {/* Rename Entry Modal */}
-        {renamingEntry && (
-          <RenameEntryModal
-            isOpen={renameModalOpen}
-            entryLabel={renamingEntry.label}
-            currentSlug={renamingEntry.slug || ''}
-            onSave={handleRenameSubmit}
-            onClose={() => {
-              setRenameModalOpen(false)
-              setRenamingEntry(null)
-              setRenameModalError(null)
-            }}
-            isSaving={renameModalSaving}
-            error={renameModalError}
-          />
-        )}
-
-        {/* Entry Create Modal */}
-        {createModalCollection && (
-          <EntryCreateModal
-            isOpen={createModalOpen}
-            collectionLabel={createModalCollection.label || createModalCollection.name}
-            entryTypes={
-              createModalCollection.entryTypes?.map((et) => ({
-                name: et.name,
-                label: et.label,
-                format: et.format,
-                default: et.default,
-                maxItems: et.maxItems,
-              })) || []
+            position="right"
+            title={
+              <div>
+                <Title order={4}>Branches</Title>
+                <Text size="xs" c="dimmed">
+                  Manage access, status, and lifecycle
+                </Text>
+              </div>
             }
-            onCreate={handleCreateModalSubmit}
-            onClose={closeCreateModal}
-            isCreating={createModalCreating}
-            error={createModalError}
+            padding="md"
+            size={420}
+            overlayProps={{ blur: 2 }}
+          >
+            <BranchManager
+              branches={branchSummaries}
+              mode={operatingMode}
+              user={userContext}
+              onSelect={async (name) => {
+                try {
+                  await handleBranchChange(name)
+                  setBranchManagerOpen(false)
+                } catch (err) {
+                  console.error('Branch change failed or was cancelled:', err)
+                  // Don't close branch manager if there was an error or user cancelled
+                }
+              }}
+              onCreate={(branch) => {
+                handleCreateBranch(branch).catch((err) => console.error(err))
+              }}
+              onSubmit={(name) => {
+                handleSubmit(name).catch((err) => console.error(err))
+              }}
+              onWithdraw={(name) => {
+                handleWithdraw(name).catch((err) => console.error(err))
+              }}
+              onRequestChanges={(name) => {
+                handleRequestChanges(name).catch((err) => console.error(err))
+              }}
+              onDelete={(name) => {
+                handleDelete(name).catch((err) => console.error(err))
+              }}
+              onClose={() => setBranchManagerOpen(false)}
+              comments={comments}
+              currentUserId={currentUser}
+              canResolve={canResolveComments}
+              onAddComment={handleAddComment}
+              onResolveThread={handleResolveThread}
+              highlightThreadId={highlightThreadId}
+              onGetUserMetadata={handleGetUserMetadata}
+            />
+          </Drawer>
+          {commentsPanelOpen && branchNameState && (
+            <CommentsPanel
+              branchName={branchNameState}
+              comments={comments}
+              canResolve={true}
+              onAddComment={handleAddComment}
+              onResolveThread={handleResolveThread}
+              onClose={() => setCommentsPanelOpen(false)}
+              onJumpToField={handleJumpToField}
+              onGetUserMetadata={handleGetUserMetadata}
+              onJumpToEntry={handleJumpToEntry}
+              onJumpToBranch={handleJumpToBranch}
+            />
+          )}
+
+          {/* Group Manager Modal */}
+          <Drawer
+            opened={groupManagerOpen}
+            onClose={() => setGroupManagerOpen(false)}
+            position="right"
+            title={
+              <div>
+                <Title order={4}>Groups</Title>
+                <Text size="xs" c="dimmed">
+                  Manage groups and organizations
+                </Text>
+              </div>
+            }
+            padding="md"
+            size={600}
+            overlayProps={{ blur: 2 }}
+          >
+            <GroupManager
+              internalGroups={groupsData}
+              loading={groupsLoading}
+              canEdit={true}
+              onSave={handleSaveGroups}
+              onSearchUsers={handleSearchUsers}
+              onGetUserMetadata={handleGetUserMetadata}
+              onSearchExternalGroups={handleSearchExternalGroups}
+              onClose={() => setGroupManagerOpen(false)}
+            />
+          </Drawer>
+
+          {/* Permission Manager Modal */}
+          <Drawer
+            opened={permissionManagerOpen}
+            onClose={() => setPermissionManagerOpen(false)}
+            position="right"
+            title={
+              <div>
+                <Title order={4}>Permissions</Title>
+                <Text size="xs" c="dimmed">
+                  Manage content access by path (read, edit, review)
+                </Text>
+              </div>
+            }
+            padding="md"
+            size={700}
+            overlayProps={{ blur: 2 }}
+          >
+            <PermissionManager
+              collections={activeCollections}
+              contentRoot={contentRoot}
+              permissions={permissionsData}
+              loading={permissionsLoading}
+              canEdit={true}
+              onSave={handleSavePermissions}
+              onSearchUsers={handleSearchUsers}
+              onGetUserMetadata={handleGetUserMetadata}
+              onListGroups={handleListGroups}
+              onClose={() => setPermissionManagerOpen(false)}
+            />
+          </Drawer>
+
+          {/* Media Library Drawer */}
+          <MediaLibrary
+            opened={mediaLibraryOpen}
+            onClose={() => setMediaLibraryOpen(false)}
+            mode="manage"
           />
-        )}
 
-        {/* Delete Collection Confirmation Modal */}
-        <ConfirmDeleteModal
-          isOpen={deleteCollectionModalOpen}
-          title="Delete Collection"
-          message="Are you sure you want to delete this collection? This cannot be undone."
-          confirmLabel="Delete Collection"
-          onConfirm={confirmDeleteCollection}
-          onClose={() => {
-            setDeleteCollectionModalOpen(false)
-            setDeletingCollectionPath(null)
-          }}
-          loading={deleteInProgress}
-        />
+          {/* Collection Editor Modal */}
+          <CollectionEditor
+            isOpen={collectionEditorOpen}
+            editingCollection={editingCollection}
+            parentPath={collectionEditorParentPath}
+            availableSchemas={availableSchemas}
+            onSave={handleCollectionSave}
+            onAddEntryType={
+              editingCollection ? (path, entryType) => addEntryType(path, entryType) : undefined
+            }
+            onUpdateEntryType={
+              editingCollection
+                ? (path, name, updates) => updateEntryType(path, name, updates)
+                : undefined
+            }
+            onRemoveEntryType={
+              editingCollection ? (path, name) => removeEntryType(path, name) : undefined
+            }
+            onClose={handleCloseCollectionEditor}
+            isSaving={schemaLoading}
+            error={collectionEditorError}
+          />
 
-        {/* Delete Entry Confirmation Modal */}
-        <ConfirmDeleteModal
-          isOpen={deleteEntryModalOpen}
-          title="Delete Entry"
-          message="Are you sure you want to delete this entry? This cannot be undone."
-          confirmLabel="Delete Entry"
-          onConfirm={confirmDeleteEntry}
-          onClose={() => {
-            setDeleteEntryModalOpen(false)
-            setDeletingEntryPath(null)
-          }}
-          loading={deleteInProgress}
-        />
-      </Box>
+          {/* Rename Entry Modal */}
+          {renamingEntry && (
+            <RenameEntryModal
+              isOpen={renameModalOpen}
+              entryLabel={renamingEntry.label}
+              currentSlug={renamingEntry.slug || ''}
+              onSave={handleRenameSubmit}
+              onClose={() => {
+                setRenameModalOpen(false)
+                setRenamingEntry(null)
+                setRenameModalError(null)
+              }}
+              isSaving={renameModalSaving}
+              error={renameModalError}
+            />
+          )}
+
+          {/* Entry Create Modal */}
+          {createModalCollection && (
+            <EntryCreateModal
+              isOpen={createModalOpen}
+              collectionLabel={createModalCollection.label || createModalCollection.name}
+              entryTypes={
+                createModalCollection.entryTypes?.map((et) => ({
+                  name: et.name,
+                  label: et.label,
+                  format: et.format,
+                  default: et.default,
+                  maxItems: et.maxItems,
+                })) || []
+              }
+              onCreate={handleCreateModalSubmit}
+              onClose={closeCreateModal}
+              isCreating={createModalCreating}
+              error={createModalError}
+            />
+          )}
+
+          {/* Delete Collection Confirmation Modal */}
+          <ConfirmDeleteModal
+            isOpen={deleteCollectionModalOpen}
+            title="Delete Collection"
+            message="Are you sure you want to delete this collection? This cannot be undone."
+            confirmLabel="Delete Collection"
+            onConfirm={confirmDeleteCollection}
+            onClose={() => {
+              setDeleteCollectionModalOpen(false)
+              setDeletingCollectionPath(null)
+            }}
+            loading={deleteInProgress}
+          />
+
+          {/* Delete Entry Confirmation Modal */}
+          <ConfirmDeleteModal
+            isOpen={deleteEntryModalOpen}
+            title="Delete Entry"
+            message="Are you sure you want to delete this entry? This cannot be undone."
+            confirmLabel="Delete Entry"
+            onConfirm={confirmDeleteEntry}
+            onClose={() => {
+              setDeleteEntryModalOpen(false)
+              setDeletingEntryPath(null)
+            }}
+            loading={deleteInProgress}
+          />
+        </Box>
+      </AssetContextProvider>
     </CanopyCMSProvider>
   )
 }
