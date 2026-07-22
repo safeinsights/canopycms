@@ -114,15 +114,30 @@ export class LocalAssetStore implements AssetStore {
     }
   }
 
+  /**
+   * Staging methods accept caller-influenced keys (finalize receives the key
+   * from the client), so they must never operate outside the staging prefix —
+   * otherwise a crafted key turns the staging cleanup into an arbitrary-object
+   * delete. The API layer validates too; this is defense-in-depth.
+   */
+  private assertStagingKey(key: string): void {
+    if (!key.startsWith(`${ASSET_PREFIXES.staging}/`)) {
+      throw new Error(`Not a staging key: ${key}`)
+    }
+  }
+
   async writeStaging(key: string, data: Uint8Array, _contentType?: string): Promise<void> {
+    this.assertStagingKey(key)
     await this.writeFile(this.resolveKey(key), data)
   }
 
   async readStaging(key: string): Promise<Uint8Array | null> {
+    this.assertStagingKey(key)
     return this.readFileOrNull(this.resolveKey(key))
   }
 
   async deleteStaging(key: string): Promise<void> {
+    this.assertStagingKey(key)
     await this.deleteFileIfPresent(this.resolveKey(key))
   }
 

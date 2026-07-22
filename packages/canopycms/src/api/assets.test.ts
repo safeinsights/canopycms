@@ -1,15 +1,46 @@
-import { describe, expect, it } from 'vitest'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
-import { ASSET_ROUTES } from './assets'
-import type { ApiContext } from './types'
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
+
+import { ASSET_ROUTES, assetRawRoute } from './assets'
+import type { ApiContext, ApiRequest } from './types'
 import type { AssetMeta, AssetStore } from '../assets/types'
+import { LocalAssetStore } from '../assets/store-local'
 import { RESERVED_GROUPS } from '../authorization'
-import { createMockApiContext } from '../test-utils'
+import { createMockApiContext, mockConsole } from '../test-utils'
+import { createCanopyRequestHandler } from '../http/handler'
+import type { CanopyRequest } from '../http/types'
+import type { AuthPlugin } from '../auth/plugin'
 
-// Extract handlers for testing
-const listAssets = ASSET_ROUTES.list.handler
-const uploadAsset = ASSET_ROUTES.upload.handler
-const deleteAsset = ASSET_ROUTES.delete.handler
+// Real request-handling test below (bodyFormat bypass) needs a full
+// createCanopyRequestHandler - mirrors src/http/handler.test.ts's mocking so
+// branch/permission loading never touches git or the filesystem.
+vi.mock('../branch-workspace', () => ({
+  BranchWorkspaceManager: vi.fn(),
+  loadBranchContext: vi.fn().mockResolvedValue(null),
+}))
+vi.mock('../authorization/permissions', () => ({
+  loadPathPermissions: vi.fn().mockResolvedValue([]),
+}))
+
+// 1x1-scale PNG fixture (IHDR-only, no pixel data) - same construction as
+// assets/pipeline.test.ts's PNG_3X5_BASE64; duplicated here to keep this file
+// self-contained. 3x5.
+const PNG_3X5_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAMAAAAFCAYAAAAAAAAA'
+
+/**
+ * Decodes to a Uint8Array backed by a concrete `ArrayBuffer` (not the wider
+ * `ArrayBufferLike`/`SharedArrayBuffer` a `Buffer` is generically typed as),
+ * so the result is directly usable as a `BlobPart` for `new File([...])`.
+ */
+function bytesOf(base64: string): Uint8Array<ArrayBuffer> {
+  const buf = Buffer.from(base64, 'base64')
+  const arrayBuffer = new ArrayBuffer(buf.byteLength)
+  new Uint8Array(arrayBuffer).set(buf)
+  return new Uint8Array(arrayBuffer)
+}
 
 const sampleMeta: AssetMeta = {
   hash32: 'a'.repeat(32),
@@ -24,7 +55,11 @@ const sampleMeta: AssetMeta = {
 
 const makeAssetStore = (): AssetStore => ({
   capabilities: { directUpload: false },
-  beginUpload: async () => ({ mode: 'proxied', stagingKey: 'asset-staging/x', maxBytes: 1 }),
+  beginUpload: async () => ({
+    mode: 'proxied',
+    stagingKey: 'asset-staging/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    maxBytes: 1_000_000,
+  }),
   writeStaging: async () => {},
   readStaging: async () => null,
   deleteStaging: async () => {},
@@ -38,17 +73,18 @@ const makeAssetStore = (): AssetStore => ({
   deleteMeta: async () => {},
 })
 
-// Default mock services already allow branch + content access; only the asset store
-// and a branch-not-found getBranchContext are asset-specific.
-const makeCtx = (): ApiContext => ({
+const ctxWith = (assetStore: AssetStore | undefined): ApiContext => ({
   ...createMockApiContext({ branchContext: null }),
-  assetStore: makeAssetStore(),
+  assetStore,
 })
 
-describe('asset api endpoint params schemas (API-H4)', () => {
+const authedReq = (overrides: Partial<ApiRequest> = {}): ApiRequest => ({
+  user: { type: 'authenticated', userId: 'u1', groups: [] },
+  ...overrides,
+})
+
+describe('asset api params schemas', () => {
   it('declares a params schema for list so the client generator emits cursor/limit', () => {
-    // Without a declared params schema, scripts/generate-client.ts emits a
-    // no-arg client method that can never forward cursor/limit.
     expect(ASSET_ROUTES.list.params).toBeDefined()
     const parsed = ASSET_ROUTES.list.params?.safeParse({ cursor: 'abc', limit: '10' })
     expect(parsed?.success).toBe(true)
@@ -57,165 +93,463 @@ describe('asset api endpoint params schemas (API-H4)', () => {
     }
   })
 
-  it('declares a params schema for delete so the client generator emits key', () => {
-    expect(ASSET_ROUTES.delete.params).toBeDefined()
-    const missing = ASSET_ROUTES.delete.params?.safeParse({})
-    expect(missing?.success).toBe(false)
-    const present = ASSET_ROUTES.delete.params?.safeParse({ key: 'a.png' })
-    expect(present?.success).toBe(true)
-    if (present?.success) {
-      expect(present.data).toEqual({ key: 'a.png' })
-    }
+  it('validates delete key as a 32-char lowercase hex string (400 on anything else)', () => {
+    const bad = ASSET_ROUTES.delete.validate({ params: { key: 'not-a-hash.png' } })
+    expect(bad.ok).toBe(false)
+
+    const good = ASSET_ROUTES.delete.validate({ params: { key: 'a'.repeat(32) } })
+    expect(good.ok).toBe(true)
   })
 })
 
-describe('asset api', () => {
+describe('presign', () => {
   it('returns 501 when asset store missing', async () => {
-    const res = await listAssets(
-      { ...makeCtx(), assetStore: undefined },
-      { user: { type: 'authenticated', userId: 'u', groups: [] } },
-      {},
-    )
+    const res = await ASSET_ROUTES.presign.handler(ctxWith(undefined), authedReq(), {
+      filename: 'a.png',
+      contentType: 'image/png',
+    })
     expect(res.status).toBe(501)
   })
 
-  it('lists assets for any user', async () => {
-    const res = await listAssets(
-      makeCtx(),
-      {
-        user: { type: 'authenticated', userId: 'u', groups: [] },
-      },
-      {},
+  it('returns a StagedUploadTarget for an allowed content type', async () => {
+    const res = await ASSET_ROUTES.presign.handler(ctxWith(makeAssetStore()), authedReq(), {
+      filename: 'a.png',
+      contentType: 'image/png',
+    })
+    expect(res.ok).toBe(true)
+    expect(res.data?.upload.stagingKey).toBe('asset-staging/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa')
+  })
+
+  it('rejects an unsupported content type (415)', async () => {
+    const res = await ASSET_ROUTES.presign.handler(ctxWith(makeAssetStore()), authedReq(), {
+      filename: 'a.exe',
+      contentType: 'application/x-msdownload',
+    })
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(415)
+  })
+
+  it('rejects a declared size over the store max up front (413)', async () => {
+    const store: AssetStore = {
+      ...makeAssetStore(),
+      beginUpload: async () => ({
+        mode: 'proxied',
+        stagingKey: 'asset-staging/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        maxBytes: 100,
+      }),
+    }
+    const res = await ASSET_ROUTES.presign.handler(ctxWith(store), authedReq(), {
+      filename: 'a.png',
+      contentType: 'image/png',
+      size: 200,
+    })
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(413)
+  })
+})
+
+describe('finalize + uploadProxied (real LocalAssetStore in a tmp dir)', () => {
+  let tmpDir: string
+  let store: LocalAssetStore
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-assets-api-test-'))
+    store = new LocalAssetStore({ root: tmpDir })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('finalizes a staged raster upload end to end, returning an AssetRecord with src', async () => {
+    const stagingKey = 'asset-staging/bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+    await store.writeStaging(stagingKey, bytesOf(PNG_3X5_BASE64), 'image/png')
+
+    const res = await ASSET_ROUTES.finalize.handler(ctxWith(store), authedReq(), {
+      stagingKey,
+      filename: 'a.png',
+    })
+    expect(res.ok).toBe(true)
+    expect(res.data?.asset.kind).toBe('raster')
+    expect(res.data?.asset.src).toMatch(/^\/assets\/t\/orig\//)
+
+    // Staging object deleted after success.
+    expect(await store.readStaging(stagingKey)).toBeNull()
+  })
+
+  it('finalizes a staged svg upload, writing a public object and sanitizing on the way', async () => {
+    const stagingKey = 'asset-staging/cccccccc-cccc-4ccc-8ccc-cccccccccccc'
+    const dirtySvg =
+      '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><rect width="1" height="1"/></svg>'
+    await store.writeStaging(stagingKey, new TextEncoder().encode(dirtySvg), 'image/svg+xml')
+
+    const res = await ASSET_ROUTES.finalize.handler(ctxWith(store), authedReq(), {
+      stagingKey,
+      filename: 'evil.svg',
+    })
+    expect(res.ok).toBe(true)
+    expect(res.data?.asset.kind).toBe('svg')
+    expect(res.data?.asset.src).toMatch(/^\/assets\//)
+
+    if (!res.data) return
+    const publicObject = await store.readPublicObject(
+      `assets/${res.data.asset.hash32}/${res.data.asset.slug}.svg`,
     )
+    expect(publicObject).not.toBeNull()
+    expect(Buffer.from(publicObject!.data).toString('utf-8')).not.toMatch(/<script/i)
+  })
+
+  it('returns 404 for a missing/expired staging key', async () => {
+    const res = await ASSET_ROUTES.finalize.handler(ctxWith(store), authedReq(), {
+      stagingKey: 'asset-staging/dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      filename: 'a.png',
+    })
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(404)
+  })
+
+  it('dedups identical bytes: second finalize returns the first upload winner meta, no rewrite', async () => {
+    const stagingKey1 = 'asset-staging/eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee'
+    const stagingKey2 = 'asset-staging/ffffffff-ffff-4fff-8fff-ffffffffffff'
+    await store.writeStaging(stagingKey1, bytesOf(PNG_3X5_BASE64), 'image/png')
+    await store.writeStaging(stagingKey2, bytesOf(PNG_3X5_BASE64), 'image/png')
+
+    const first = await ASSET_ROUTES.finalize.handler(ctxWith(store), authedReq(), {
+      stagingKey: stagingKey1,
+      filename: 'first-name.png',
+    })
+    const second = await ASSET_ROUTES.finalize.handler(ctxWith(store), authedReq(), {
+      stagingKey: stagingKey2,
+      filename: 'second-name.png',
+    })
+    expect(first.ok).toBe(true)
+    expect(second.ok).toBe(true)
+    if (!first.data || !second.data) return
+    expect(second.data.asset.hash32).toBe(first.data.asset.hash32)
+    expect(second.data.asset.filename).toBe('first-name.png') // first-name-wins
+  })
+
+  it('deletes the staging object after a pipeline rejection too', async () => {
+    const stagingKey = 'asset-staging/99999999-9999-4999-8999-999999999999'
+    await store.writeStaging(
+      stagingKey,
+      new TextEncoder().encode('just some junk text'),
+      'text/plain',
+    )
+
+    const res = await ASSET_ROUTES.finalize.handler(ctxWith(store), authedReq(), {
+      stagingKey,
+      filename: 'junk.bin',
+    })
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(415)
+    expect(await store.readStaging(stagingKey)).toBeNull()
+  })
+
+  it('uploadProxied: accepts a multipart file through a proxied-mode store', async () => {
+    const file = new File([bytesOf(PNG_3X5_BASE64)], 'upload.png', { type: 'image/png' })
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const req: ApiRequest = authedReq({
+      rawRequest: {
+        method: 'POST',
+        url: 'http://localhost/assets/upload',
+        header: () => null,
+        json: async () => undefined,
+        formData: async () => formData,
+      } as CanopyRequest,
+    })
+
+    const res = await ASSET_ROUTES.uploadProxied.handler(ctxWith(store), req)
+    expect(res.ok).toBe(true)
+    expect(res.data?.asset.kind).toBe('raster')
+    expect(res.data?.asset.filename).toBe('upload.png')
+  })
+
+  it('uploadProxied: an explicit filename field overrides file.name', async () => {
+    const file = new File([bytesOf(PNG_3X5_BASE64)], 'original.png', { type: 'image/png' })
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('filename', 'renamed.png')
+
+    const req: ApiRequest = authedReq({
+      rawRequest: {
+        method: 'POST',
+        url: 'http://localhost/assets/upload',
+        header: () => null,
+        json: async () => undefined,
+        formData: async () => formData,
+      } as CanopyRequest,
+    })
+
+    const res = await ASSET_ROUTES.uploadProxied.handler(ctxWith(store), req)
+    expect(res.ok).toBe(true)
+    expect(res.data?.asset.filename).toBe('renamed.png')
+  })
+
+  it('uploadProxied: rejects (400) when the store is direct-upload mode', async () => {
+    const directStore: AssetStore = { ...makeAssetStore(), capabilities: { directUpload: true } }
+    const req: ApiRequest = authedReq({
+      rawRequest: {
+        method: 'POST',
+        url: 'http://localhost/assets/upload',
+        header: () => null,
+        json: async () => undefined,
+        formData: async () => new FormData(),
+      } as CanopyRequest,
+    })
+
+    const res = await ASSET_ROUTES.uploadProxied.handler(ctxWith(directStore), req)
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(400)
+  })
+
+  it('uploadProxied: rejects (400) when the adapter never wired formData()', async () => {
+    const req: ApiRequest = authedReq({
+      rawRequest: {
+        method: 'POST',
+        url: 'http://localhost/assets/upload',
+        header: () => null,
+        json: async () => undefined,
+        // formData intentionally omitted
+      } as CanopyRequest,
+    })
+
+    const res = await ASSET_ROUTES.uploadProxied.handler(ctxWith(store), req)
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(400)
+  })
+})
+
+describe('list', () => {
+  it('returns 501 when asset store missing', async () => {
+    const res = await ASSET_ROUTES.list.handler(ctxWith(undefined), authedReq(), {})
+    expect(res.status).toBe(501)
+  })
+
+  it('lists assets for any user, each with a computed src', async () => {
+    const res = await ASSET_ROUTES.list.handler(ctxWith(makeAssetStore()), authedReq(), {})
     expect(res.ok).toBe(true)
     expect(res.data?.assets[0].hash32).toBe(sampleMeta.hash32)
+    expect(res.data?.assets[0].src).toBeTruthy()
   })
 
-  it('forwards cursor/limit query params to the store', async () => {
+  it('forwards cursor/limit params to the store', async () => {
     let receivedInput: { cursor?: string; limit?: number } | undefined
-    const ctx: ApiContext = {
-      ...makeCtx(),
-      assetStore: {
-        ...makeAssetStore(),
-        listMeta: async (input) => {
-          receivedInput = input
-          return { items: [] }
-        },
+    const store: AssetStore = {
+      ...makeAssetStore(),
+      listMeta: async (input) => {
+        receivedInput = input
+        return { items: [] }
       },
     }
-    await listAssets(
-      ctx,
-      {
-        user: { type: 'authenticated', userId: 'u', groups: [] },
-        query: { cursor: 'xyz', limit: '5' },
-      },
-      { cursor: 'xyz', limit: 5 },
-    )
+    await ASSET_ROUTES.list.handler(ctxWith(store), authedReq(), { cursor: 'xyz', limit: 5 })
     expect(receivedInput).toEqual({ cursor: 'xyz', limit: 5 })
   })
+})
 
-  describe('uploadAsset', () => {
-    it('returns 403 for non-privileged users', async () => {
-      const res = await uploadAsset(
-        makeCtx(),
-        { user: { type: 'authenticated', userId: 'u', groups: [] } },
-        { key: 'a.png', data: Buffer.from('x') },
-      )
-      expect(res.ok).toBe(false)
-      expect(res.status).toBe(403)
-      expect(res.error).toBe('Privileged access required')
+describe('delete', () => {
+  const key = 'a'.repeat(32)
+
+  it('returns 403 for non-privileged users', async () => {
+    const res = await ASSET_ROUTES.delete.handler(ctxWith(makeAssetStore()), authedReq(), { key })
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(403)
+  })
+
+  it('returns 403 for reviewers (only admins may delete)', async () => {
+    const req = authedReq({
+      user: { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.REVIEWERS] },
+    })
+    const res = await ASSET_ROUTES.delete.handler(ctxWith(makeAssetStore()), req, { key })
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(403)
+  })
+
+  it('allows admins to delete, forwarding the key as the hash32 to deleteMeta', async () => {
+    let deletedHash32: string | undefined
+    const store: AssetStore = {
+      ...makeAssetStore(),
+      deleteMeta: async (hash32) => {
+        deletedHash32 = hash32
+      },
+    }
+    const req = authedReq({
+      user: { type: 'authenticated', userId: 'u', groups: [RESERVED_GROUPS.ADMINS] },
+    })
+    const res = await ASSET_ROUTES.delete.handler(ctxWith(store), req, { key })
+    expect(res.ok).toBe(true)
+    expect(deletedHash32).toBe(key)
+  })
+})
+
+describe('assetRawRoute (GET /assets/raw/{key...})', () => {
+  let tmpDir: string
+  let store: LocalAssetStore
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-assets-raw-test-'))
+    store = new LocalAssetStore({ root: tmpDir })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('serves a stored public object as a CanopyBinaryResponse with the right headers', async () => {
+    const key = `assets/${'a'.repeat(32)}/slug.svg`
+    await store.putPublicObject({
+      key,
+      data: new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"/>'),
+      contentType: 'image/svg+xml',
+      contentDisposition: 'inline',
+      cacheControl: 'public, max-age=31536000, immutable',
     })
 
-    it('returns 501 for Reviewers (guard passes, endpoint not yet implemented)', async () => {
-      const res = await uploadAsset(
-        makeCtx(),
-        {
-          user: {
-            type: 'authenticated',
-            userId: 'u',
-            groups: [RESERVED_GROUPS.REVIEWERS],
-          },
-        },
-        { key: 'a.png', data: Buffer.from('x') },
-      )
-      expect(res.ok).toBe(false)
-      expect(res.status).toBe(501)
-    })
-
-    it('returns 501 for Admins (guard passes, endpoint not yet implemented)', async () => {
-      const res = await uploadAsset(
-        makeCtx(),
-        {
-          user: {
-            type: 'authenticated',
-            userId: 'u',
-            groups: [RESERVED_GROUPS.ADMINS],
-          },
-        },
-        { key: 'a.png', data: Buffer.from('x') },
-      )
-      expect(res.ok).toBe(false)
-      expect(res.status).toBe(501)
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), { key })
+    expect(res).toMatchObject({
+      kind: 'binary',
+      status: 200,
+      headers: {
+        contentType: 'image/svg+xml',
+        contentDisposition: 'inline',
+        cacheControl: 'public, max-age=31536000, immutable',
+      },
     })
   })
 
-  describe('deleteAsset', () => {
-    it('returns 403 for non-admin users', async () => {
-      const res = await deleteAsset(
-        makeCtx(),
-        {
-          user: { type: 'authenticated', userId: 'u', groups: [] },
-          query: { key: 'a.png' },
-        },
-        { key: 'a.png' },
-      )
-      expect(res.ok).toBe(false)
-      expect(res.status).toBe(403)
-      expect(res.error).toBe('Admin access required')
+  it('404s when the public object does not exist', async () => {
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: `assets/${'b'.repeat(32)}/missing.svg`,
+    })
+    expect(res).toMatchObject({ ok: false, status: 404 })
+  })
+
+  it('rejects (404) a key outside the public prefix', async () => {
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: 'asset-originals/x.png',
+    })
+    expect(res).toMatchObject({ ok: false, status: 404 })
+  })
+
+  it('rejects (404) a key containing ".." (path traversal defense-in-depth)', async () => {
+    const res = await assetRawRoute.handler(ctxWith(store), authedReq(), {
+      key: 'assets/../asset-originals/x.png',
+    })
+    expect(res).toMatchObject({ ok: false, status: 404 })
+  })
+
+  it('returns 501 when asset store missing', async () => {
+    const res = await assetRawRoute.handler(ctxWith(undefined), authedReq(), {
+      key: `assets/${'a'.repeat(32)}/slug.svg`,
+    })
+    expect(res).toMatchObject({ ok: false, status: 501 })
+  })
+})
+
+describe('full request pipeline - bodyFormat: multipart bypass (regression for the core handler change)', () => {
+  const createMockAuthPlugin = (): AuthPlugin => ({
+    authenticate: async () => ({
+      success: true,
+      user: { userId: 'u1', externalGroups: [] },
+    }),
+    searchUsers: async () => [],
+    getUserMetadata: async () => null,
+    getGroupMetadata: async () => null,
+    listGroups: async () => [],
+  })
+
+  const createRejectingAuthPlugin = (): AuthPlugin => ({
+    authenticate: async () => ({ success: false, error: 'No token' }),
+    searchUsers: async () => [],
+    getUserMetadata: async () => null,
+    getGroupMetadata: async () => null,
+    listGroups: async () => [],
+  })
+
+  const createMockServices = () => ({
+    config: {
+      schema: [],
+      contentRoot: 'content',
+      gitBotAuthorName: 'Test Bot',
+      gitBotAuthorEmail: 'bot@test.com',
+      mode: 'dev' as const,
+    },
+    checkBranchAccess: vi.fn().mockReturnValue({ allowed: true, reason: '' }),
+    checkPathAccess: vi.fn().mockReturnValue({ allowed: true }),
+    checkContentAccess: vi.fn().mockReturnValue({ allowed: true, branch: {}, path: {} }),
+    pathPermissions: [],
+    createGitManagerFor: vi.fn(),
+    registry: { get: vi.fn().mockResolvedValue(null), list: vi.fn().mockResolvedValue([]) },
+    bootstrapAdminIds: new Set<string>(),
+    refreshActiveBranch: vi.fn().mockResolvedValue(undefined),
+  })
+
+  let tmpDir: string
+  let store: LocalAssetStore
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-assets-pipeline-test-'))
+    store = new LocalAssetStore({ root: tmpDir })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  it('routes POST /assets/upload through the real router+handler without ever calling req.json()', async () => {
+    const services: any = createMockServices()
+    const handler = createCanopyRequestHandler({
+      services,
+      assetStore: store,
+      authPlugin: createMockAuthPlugin(),
+      getBranchContext: async () => null,
     })
 
-    it('returns 403 for Reviewers', async () => {
-      const res = await deleteAsset(
-        makeCtx(),
-        {
-          user: {
-            type: 'authenticated',
-            userId: 'u',
-            groups: [RESERVED_GROUPS.REVIEWERS],
-          },
-          query: { key: 'a.png' },
-        },
-        { key: 'a.png' },
-      )
-      expect(res.ok).toBe(false)
-      expect(res.status).toBe(403)
+    const file = new File([bytesOf(PNG_3X5_BASE64)], 'a.png', { type: 'image/png' })
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const req: CanopyRequest = {
+      method: 'POST',
+      url: 'http://localhost/api/canopycms/assets/upload',
+      header: () => null,
+      json: async () => {
+        throw new Error('req.json() must never be called for a bodyFormat: multipart route')
+      },
+      formData: async () => formData,
+    }
+
+    const response = await handler(req, ['assets', 'upload'])
+    expect(response.status).toBe(200)
+    expect((response.body as { ok: boolean }).ok).toBe(true)
+  })
+
+  it('still enforces auth for the multipart upload route - handler never reads the body for a rejected caller', async () => {
+    const services: any = createMockServices()
+    const handler = createCanopyRequestHandler({
+      services,
+      assetStore: store,
+      authPlugin: createRejectingAuthPlugin(),
+      getBranchContext: async () => null,
     })
 
-    it('allows Admins to delete, forwarding the key as the hash32 to deleteMeta', async () => {
-      let deletedHash32: string | undefined
-      const ctx: ApiContext = {
-        ...makeCtx(),
-        assetStore: {
-          ...makeAssetStore(),
-          deleteMeta: async (hash32) => {
-            deletedHash32 = hash32
-          },
-        },
-      }
-      const res = await deleteAsset(
-        ctx,
-        {
-          user: {
-            type: 'authenticated',
-            userId: 'u',
-            groups: [RESERVED_GROUPS.ADMINS],
-          },
-          query: { key: 'a.png' },
-        },
-        { key: 'a.png' },
-      )
-      expect(res.ok).toBe(true)
-      expect(deletedHash32).toBe('a.png')
-    })
+    let formDataCalled = false
+    const req: CanopyRequest = {
+      method: 'POST',
+      url: 'http://localhost/api/canopycms/assets/upload',
+      header: () => null,
+      json: async () => undefined,
+      formData: async () => {
+        formDataCalled = true
+        return new FormData()
+      },
+    }
+
+    const response = await handler(req, ['assets', 'upload'])
+    expect(response.status).toBe(401)
+    expect(formDataCalled).toBe(false)
   })
 })

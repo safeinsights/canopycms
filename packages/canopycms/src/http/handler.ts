@@ -279,9 +279,11 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     const queryParams = parseQueryParams(req.url)
     const mergedParams = { ...queryParams, ...match.params }
 
-    // Parse body for non-GET requests
+    // Parse body for non-GET requests. Multipart routes opt out (bodyFormat)
+    // so their handler can read the (single-use) body stream itself via
+    // req.formData() - calling req.json() first would consume it.
     let body: unknown
-    if (req.method !== 'GET') {
+    if (req.method !== 'GET' && match.bodyFormat !== 'multipart') {
       try {
         body = await req.json()
       } catch {
@@ -293,7 +295,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     const branch =
       (mergedParams as Record<string, string>)?.branch ??
       (body as Record<string, unknown> | undefined)?.branch
-    const apiReq = { user, body, branch, query: queryParams }
+    const apiReq = { user, body, branch, query: queryParams, rawRequest: req }
 
     // Validate params and body using the route's validation function (if available)
     if (match.validate) {

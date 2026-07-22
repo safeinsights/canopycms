@@ -66,6 +66,13 @@ export interface RouteDefinition<
   body?: TBody
   response: TResponse
   handler: RouteHandler<TParams, TBody, TResponse>
+  /**
+   * Opt out of the core handler's default eager `req.json()` body parsing.
+   * See http/router.ts's `RouteDefinition.bodyFormat` for the full rationale
+   * - set this on routes that read a non-JSON body themselves (e.g. the
+   * proxied multipart asset upload).
+   */
+  bodyFormat?: 'multipart'
 
   // For client generation - builds the actual URL from arguments
   buildPath: TParams extends z.ZodType ? (params: z.infer<TParams>) => string : () => string
@@ -138,6 +145,8 @@ interface EndpointConfigBase<
   response: unknown
   defaultMockData?: unknown
   mockDataCasts?: MockDataCasts
+  /** See `RouteDefinition['bodyFormat']` above. */
+  bodyFormat?: 'multipart'
 }
 
 /** Config for an endpoint without guards */
@@ -273,6 +282,7 @@ export function defineEndpoint(config: any): RouteDefinition<any, any, any> {
     pattern,
     params: config.params,
     body: config.body,
+    bodyFormat: config.bodyFormat,
     response: config.response,
     handler,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
