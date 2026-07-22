@@ -88,9 +88,31 @@ now-satisfiable S3 URL (the no-store matters — the OpenStax prior art document
 cached-redirect trap). Failure fallback serves a copy written under
 `assets/t/original/{hash32}/{slug}` (originals aren't otherwise URL-reachable). The
 Function URL is locked to CloudFront via OAC/AWS_IAM so direct invocation can't stuff
-the cache; directive allowlist (bounded width set) bounds variants. **Open spike
-(first Phase 2 task, ~1 hr in the sandbox): confirm OAC/OAI-signed origins work inside
-an origin group** — no documented statement either way. Raster images are served ONLY
+the cache; directive allowlist (bounded width set) bounds variants. **Spike RESULT
+(2026-07-22, sandbox, stack `canopy-assets-canary-spike`, torn down after): the
+origin-group design is CONFIRMED** — OAC-signed S3 primary serves inside an origin
+group; a miss (403 from the signed S3 origin) fails over to a Lambda Function URL
+member and its response is served AND cached (second hit = `Hit from cloudfront`);
+cold failover including Lambda cold start measured at 0.62 s. Residual assumption:
+the spike's Lambda leg ran `AuthType: NONE` (IAM gaps below) so OAC-signed-Lambda-
+inside-a-group specifically is unproven — low risk since per-origin signing provably
+applies to group members (the S3 leg was signed), verify at canary deploy.
+
+**Sandbox account deploy mechanics learned during the spike (Phase 2 must know):**
+- The human `SafeInsights-DevAdmin` SSO role CANNOT: `cloudfront:CreateDistribution`,
+  `cloudfront:CreateOriginAccessControl`, `iam:PutRolePolicy` (inline policies).
+  It CAN: create roles with AWS-managed policy ARNs, S3 read/write, CFN operations,
+  and `iam:PassRole` on the CDK bootstrap exec role.
+- All resource creation therefore goes through the CDK bootstrap
+  **CloudFormationExecutionRole** (`cdk-hnb659fds-cfn-exec-role-…`, AdministratorAccess)
+  via `aws cloudformation deploy --role-arn …` — the same mechanism `cdk deploy` uses.
+- The account's `CDKToolkit` bootstrap stack is stuck in DELETE_FAILED (since Oct 2025):
+  exec role survives, publishing-role policies/staging-bucket policy partially deleted.
+  The canary's transform Lambda needs CDK assets (sharp cannot be inline code), so
+  Phase 2 must either repair the bootstrap or stand up a custom-qualifier bootstrap
+  (e.g. `cdk bootstrap --show-template` deployed via the exec role, qualifier `canopy`)
+  without touching the broken stack — JP's team may have intended to remove CDK here;
+  ask before repairing the shared one. Raster images are served ONLY
 via `/assets/t/*` (EXIF-strip guaranteed);
 SVG/PDF static via `/assets/*`. Both behaviors go on env AND preview distributions, so
 PR previews of draft branches resolve new images. This is a modernized re-design of
