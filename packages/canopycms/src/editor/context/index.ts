@@ -25,6 +25,13 @@ export {
 } from './ApiClientContext'
 
 export {
+  AssetContextProvider,
+  useAssetContext,
+  type AssetContextValue,
+  type AssetContextProviderProps,
+} from './AssetContext'
+
+export {
   EditorStateProvider,
   useEditorState,
   useEditorLoading,

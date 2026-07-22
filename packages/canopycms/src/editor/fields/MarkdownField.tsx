@@ -6,6 +6,9 @@ import { Text, Textarea } from '@mantine/core'
 
 import type { MDXEditorMethods } from '@mdxeditor/editor'
 import { InsertEntryLink } from './entry-link'
+import { MdxImageDialog } from './MdxImageDialog'
+import { useApiClient } from '../context'
+import { uploadAsset } from '../media/upload-asset'
 
 export interface MarkdownFieldProps {
   id?: string
@@ -44,6 +47,10 @@ const MDXEditorLazy = React.lazy(async () => {
       Separator,
       insertMarkdown$,
       usePublisher,
+      useCellValues,
+      saveImage$,
+      closeImageDialog$,
+      imageDialogState$,
     },
   ] = await Promise.all([import('@mdxeditor/editor'), import('@mdxeditor/editor')])
 
@@ -53,11 +60,25 @@ const MDXEditorLazy = React.lazy(async () => {
     return <InsertEntryLink onInsert={insertMarkdown} />
   }
 
+  /**
+   * Bridges mdxeditor's realm cells (only reachable once this lazy chunk has
+   * loaded) into MdxImageDialog's plain-props interface, so that component
+   * itself never imports `@mdxeditor/editor` at runtime. Same pattern as
+   * `EntryLinkToolbarButton` above.
+   */
+  const MdxImageDialogBridge: React.FC = () => {
+    const [state] = useCellValues(imageDialogState$)
+    const saveImage = usePublisher(saveImage$)
+    const closeImageDialog = usePublisher(closeImageDialog$)
+    return <MdxImageDialog state={state} onSave={saveImage} onClose={closeImageDialog} />
+  }
+
   const WrappedEditor: React.FC<{
     markdown: string
     onChange: (value: string) => void
     editorRef?: React.Ref<MDXEditorMethods>
-  }> = ({ markdown, onChange, editorRef }) => {
+    imageUploadHandler: (file: File) => Promise<string>
+  }> = ({ markdown, onChange, editorRef, imageUploadHandler }) => {
     return (
       <MDXEditor
         ref={editorRef}
@@ -71,7 +92,7 @@ const MDXEditorLazy = React.lazy(async () => {
           markdownShortcutPlugin(),
           linkPlugin(),
           linkDialogPlugin(),
-          imagePlugin(),
+          imagePlugin({ imageUploadHandler, ImageDialog: MdxImageDialogBridge }),
           tablePlugin(),
           codeBlockPlugin({ defaultCodeBlockLanguage: '' }),
           codeMirrorPlugin({
@@ -185,6 +206,21 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
   const inputId = id ?? generatedId
   const editorRef = useRef<MDXEditorMethods>(null)
   const lastExternalValue = useRef(value)
+  const apiClient = useApiClient()
+
+  // Drives both MDXEditor's own drag/drop/paste upload flow and the Upload
+  // tab in our custom image dialog (MdxImageDialog) via the SAME presign/
+  // finalize-or-proxied pipeline used everywhere else in the editor (see
+  // media/upload-asset.ts). Stable across renders (memoized on the API
+  // client, which ApiClientProvider itself memoizes) so MDXEditor's plugin
+  // list doesn't churn on every keystroke.
+  const imageUploadHandler = useCallback(
+    async (file: File) => {
+      const asset = await uploadAsset(apiClient, file)
+      return asset.src
+    },
+    [apiClient],
+  )
 
   // Sync external value changes into the editor (e.g., undo, reset, load)
   useEffect(() => {
@@ -212,7 +248,12 @@ export const MarkdownField: React.FC<MarkdownFieldProps> = ({
       <EditorContentStyles />
       <div style={editorWrapperStyle}>
         <Suspense fallback={<FallbackTextarea value={value} onChange={onChange} />}>
-          <MDXEditorLazy markdown={value} onChange={handleChange} editorRef={editorRef} />
+          <MDXEditorLazy
+            markdown={value}
+            onChange={handleChange}
+            editorRef={editorRef}
+            imageUploadHandler={imageUploadHandler}
+          />
         </Suspense>
       </div>
     </div>
