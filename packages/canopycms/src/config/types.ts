@@ -149,8 +149,14 @@ export type FieldConfig =
 // Kept in sync with the discriminated `mediaSchema` in config/schemas/media.ts — only
 // implemented adapters get a literal branch here (see BACKLOG.md "Asset adapters").
 export type MediaConfig =
-  | { adapter: 'local'; publicBaseUrl?: string }
-  | { adapter: 's3'; bucket: string; region: string; publicBaseUrl?: string }
+  | { adapter: 'local'; publicBaseUrl?: string; directory?: string }
+  | {
+      adapter: 's3'
+      bucket: string
+      region: string
+      publicBaseUrl?: string
+      maxUploadBytes?: number
+    }
   | { adapter: 'lfs'; publicBaseUrl?: string }
 
 /**
