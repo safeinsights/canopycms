@@ -63,6 +63,19 @@ type BlockValue<
   },
 > = RequiredValue<F, Array<DistributeBlockTemplate<F['templates'][number]>>>
 
+/**
+ * Structural mirror of `ImageFieldValue` (config/types.ts). Kept inline
+ * rather than imported so this module stays free of a FieldConfig import
+ * (see the module doc comment: "importing FieldConfig is not required").
+ */
+type ImageValue = {
+  src: string
+  alt: string
+  width?: number
+  height?: number
+  crop?: { x: number; y: number; w: number; h: number }
+}
+
 type FieldValue<F extends InferableField> = F extends {
   type: 'object'
   fields: infer Fields
@@ -82,13 +95,15 @@ type FieldValue<F extends InferableField> = F extends {
         ? ScalarValue<F, InferContentShape<Extract<S, readonly InferableField[]>> | null>
         : F extends { type: 'reference' }
           ? ScalarValue<F, string | null>
-          : F extends { type: 'boolean' }
-            ? ScalarValue<F, boolean>
-            : F extends { type: 'number' }
-              ? ScalarValue<F, number>
-              : F extends { type: 'date' }
-                ? ScalarValue<F, string>
-                : ScalarValue<F, string>
+          : F extends { type: 'image' }
+            ? ScalarValue<F, ImageValue>
+            : F extends { type: 'boolean' }
+              ? ScalarValue<F, boolean>
+              : F extends { type: 'number' }
+                ? ScalarValue<F, number>
+                : F extends { type: 'date' }
+                  ? ScalarValue<F, string>
+                  : ScalarValue<F, string>
 
 /**
  * Infer a TypeScript data shape from a CanopyCMS FieldConfig-like array.

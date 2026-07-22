@@ -51,6 +51,7 @@ export { assetSrc, IDENTITY_TRANSFORM_DIRECTIVE } from './asset-src'
 export {
   formatDirectives,
   isAllowedTransformWidth,
+  isValidCropRect,
   parseTransformPath,
   type CropRect,
   type IdentityDirectives,

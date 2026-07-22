@@ -208,6 +208,24 @@ describe('TypeFromEntrySchema', () => {
       void schema
     })
   })
+
+  describe('image field', () => {
+    it('infers the structured ImageFieldValue shape, not a bare string', () => {
+      const schema = defineEntrySchema([{ name: 'hero', type: 'image' }])
+
+      type Content = TypeFromEntrySchema<typeof schema>
+
+      expectTypeOf<Content['hero']>().toEqualTypeOf<{
+        src: string
+        alt: string
+        width?: number
+        height?: number
+        crop?: { x: number; y: number; w: number; h: number }
+      }>()
+
+      void schema
+    })
+  })
 })
 
 describe('inline groups', () => {
