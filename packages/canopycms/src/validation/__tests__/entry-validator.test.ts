@@ -144,6 +144,79 @@ describe('validateEntryData', () => {
   })
 })
 
+describe('validateEntryData - image fields', () => {
+  const imageSchema: EntrySchema = [{ name: 'hero', type: 'image' }]
+  const altOptionalSchema: EntrySchema = [{ name: 'hero', type: 'image', altOptional: true }]
+
+  it('accepts a full valid image object', () => {
+    const errors = validateEntryData(imageSchema, {
+      hero: {
+        src: '/assets/hero.jpg',
+        alt: 'A hero image',
+        width: 800,
+        height: 600,
+        crop: { x: 0.1, y: 0.1, w: 0.5, h: 0.5 },
+      },
+    })
+    expect(errors).toEqual([])
+  })
+
+  it('accepts a minimal { src, alt } image object', () => {
+    expect(
+      validateEntryData(imageSchema, { hero: { src: '/assets/hero.jpg', alt: 'Hero' } }),
+    ).toEqual([])
+  })
+
+  it('rejects a bare string value', () => {
+    const errors = validateEntryData(imageSchema, { hero: '/assets/hero.jpg' })
+    expect(errors).toEqual([
+      { fieldPath: 'hero', message: 'Expected an image object with { src, alt }' },
+    ])
+  })
+
+  it('rejects a missing/empty src', () => {
+    expect(validateEntryData(imageSchema, { hero: { src: '', alt: 'Hero' } })).toEqual([
+      { fieldPath: 'hero.src', message: 'Image src is required' },
+    ])
+    expect(validateEntryData(imageSchema, { hero: { alt: 'Hero' } })).toEqual([
+      { fieldPath: 'hero.src', message: 'Image src is required' },
+    ])
+  })
+
+  it('rejects an empty alt unless altOptional is set', () => {
+    expect(validateEntryData(imageSchema, { hero: { src: '/x.jpg', alt: '' } })).toEqual([
+      { fieldPath: 'hero.alt', message: 'Image alt text is required' },
+    ])
+    expect(validateEntryData(altOptionalSchema, { hero: { src: '/x.jpg', alt: '' } })).toEqual([])
+  })
+
+  it('rejects a negative or non-integer width/height', () => {
+    const errors = validateEntryData(imageSchema, {
+      hero: { src: '/x.jpg', alt: 'x', width: -5, height: 1.5 },
+    })
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        { fieldPath: 'hero.width', message: 'Image width must be a positive integer' },
+        { fieldPath: 'hero.height', message: 'Image height must be a positive integer' },
+      ]),
+    )
+  })
+
+  it('rejects a crop rect that is out of bounds', () => {
+    const errors = validateEntryData(imageSchema, {
+      hero: { src: '/x.jpg', alt: 'x', crop: { x: 0.6, y: 0, w: 0.6, h: 0.5 } },
+    })
+    expect(errors).toEqual([{ fieldPath: 'hero.crop', message: 'Invalid image crop rect' }])
+  })
+
+  it('rejects a crop rect with a non-positive w/h', () => {
+    const errors = validateEntryData(imageSchema, {
+      hero: { src: '/x.jpg', alt: 'x', crop: { x: 0, y: 0, w: 0, h: 0.5 } },
+    })
+    expect(errors).toEqual([{ fieldPath: 'hero.crop', message: 'Invalid image crop rect' }])
+  })
+})
+
 describe('mergeBodyIntoData / validateEntryFormValue', () => {
   const mdSchema: EntrySchema = [
     { name: 'title', type: 'string', required: true },

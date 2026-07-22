@@ -136,7 +136,10 @@ async function setupContentTree(root: string, flatSchema: ReturnType<typeof flat
   // Settings (JSON)
   await store.write(unsafeAsLogicalPath('content/settings'), unsafeAsSlug('site'), {
     format: 'json',
-    data: { siteName: 'TestSite', logo: '/images/logo.png' },
+    data: {
+      siteName: 'TestSite',
+      logo: { src: '/images/logo.png', alt: 'TestSite logo' },
+    },
   })
 
   // Docs

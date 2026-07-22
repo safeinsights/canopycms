@@ -119,14 +119,34 @@ describe('entryToMarkdown', () => {
       expect(md).toContain('# Heading\n\nSome notes')
     })
 
-    it('renders image fields', () => {
+    it('renders image fields using the value object src/alt', () => {
+      const entry = makeEntry({
+        fields: [{ name: 'hero', type: 'image', label: 'Hero Image' }],
+        data: { hero: { src: '/images/hero.jpg', alt: 'A mountain at sunrise' } },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('## Hero Image')
+      expect(md).toContain('![A mountain at sunrise](/images/hero.jpg)')
+    })
+
+    it('falls back to the field label when alt is empty', () => {
+      const entry = makeEntry({
+        fields: [{ name: 'hero', type: 'image', label: 'Hero Image' }],
+        data: { hero: { src: '/images/hero.jpg', alt: '' } },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('![Hero Image](/images/hero.jpg)')
+    })
+
+    it('degrades to a plain string for a malformed (non-object) image value', () => {
       const entry = makeEntry({
         fields: [{ name: 'hero', type: 'image', label: 'Hero Image' }],
         data: { hero: '/images/hero.jpg' },
       })
       const md = entryToMarkdown(entry)
       expect(md).toContain('## Hero Image')
-      expect(md).toContain('![Hero Image](/images/hero.jpg)')
+      expect(md).toContain('/images/hero.jpg')
+      expect(md).not.toContain('![')
     })
 
     it('renders code fields as fenced code blocks', () => {
@@ -435,7 +455,27 @@ describe('entryToMarkdown', () => {
             ],
           },
         ],
-        data: { logos: [{ name: 'Acme', src: '/logo.png' }] },
+        data: { logos: [{ name: 'Acme', src: { src: '/logo.png', alt: 'Acme logo' } }] },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('| Acme | ![Acme logo](/logo.png) |')
+    })
+
+    it('falls back to an empty alt (not the column label) in image cells', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'logos',
+            type: 'object',
+            label: 'Logos',
+            list: true,
+            fields: [
+              { name: 'name', type: 'string', label: 'Name' },
+              { name: 'src', type: 'image', label: 'Src' },
+            ],
+          },
+        ],
+        data: { logos: [{ name: 'Acme', src: { src: '/logo.png', alt: '' } }] },
       })
       const md = entryToMarkdown(entry)
       expect(md).toContain('| Acme | ![](/logo.png) |')

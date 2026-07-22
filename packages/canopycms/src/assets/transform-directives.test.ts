@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import {
   formatDirectives,
   isAllowedTransformWidth,
+  isValidCropRect,
   parseTransformPath,
   IDENTITY_TRANSFORM_DIRECTIVE,
   type TransformDirectives,
@@ -266,5 +267,30 @@ describe('isAllowedTransformWidth', () => {
     expect(isAllowedTransformWidth(0)).toBe(false)
     expect(isAllowedTransformWidth(4160)).toBe(false)
     expect(isAllowedTransformWidth(320.5)).toBe(false)
+  })
+})
+
+describe('isValidCropRect', () => {
+  it('accepts an in-bounds rect', () => {
+    expect(isValidCropRect(0.1, 0.1, 0.5, 0.5)).toBe(true)
+    expect(isValidCropRect(0, 0, 1, 1)).toBe(true)
+  })
+
+  it('rejects w or h that is not strictly positive', () => {
+    expect(isValidCropRect(0, 0, 0, 0.5)).toBe(false)
+    expect(isValidCropRect(0, 0, 0.5, 0)).toBe(false)
+    expect(isValidCropRect(0, 0, -0.1, 0.5)).toBe(false)
+  })
+
+  it('rejects a rect that extends past the [0,1] bounds', () => {
+    expect(isValidCropRect(0.6, 0, 0.6, 0.5)).toBe(false)
+    expect(isValidCropRect(0, 0.6, 0.5, 0.6)).toBe(false)
+  })
+
+  it('rejects out-of-range or non-finite coordinates', () => {
+    expect(isValidCropRect(-0.1, 0, 0.5, 0.5)).toBe(false)
+    expect(isValidCropRect(0, 0, 1.1, 0.5)).toBe(false)
+    expect(isValidCropRect(0, 0, Infinity, 0.5)).toBe(false)
+    expect(isValidCropRect(0, 0, NaN, 0.5)).toBe(false)
   })
 })

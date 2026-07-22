@@ -131,14 +131,30 @@ function parseUnitFloat(value: string): number | null {
   return n >= 0 && n <= 1 ? n : null
 }
 
+/**
+ * True when x, y, w, h describe a valid normalized crop rect: all four values
+ * finite and in [0,1], w and h strictly positive, and the rect fits within
+ * bounds (x+w<=1, y+h<=1). Shared by the URL-directive parser (`parseCrop`,
+ * below, from a `x:y:w:h` string) and image field value validation (from a
+ * `{x,y,w,h}` object, in validation/entry-validator.ts) so both enforce
+ * identical constraints.
+ */
+export function isValidCropRect(x: number, y: number, w: number, h: number): boolean {
+  for (const n of [x, y, w, h]) {
+    if (!Number.isFinite(n) || n < 0 || n > 1) return false
+  }
+  if (w <= 0 || h <= 0) return false
+  if (x + w > 1 || y + h > 1) return false
+  return true
+}
+
 function parseCrop(value: string): CropRect | null {
   const parts = value.split(':')
   if (parts.length !== 4) return null
   const nums = parts.map(parseUnitFloat)
   if (nums.some((n) => n === null)) return null
   const [x, y, w, h] = nums as number[]
-  if (w <= 0 || h <= 0) return null
-  if (x + w > 1 || y + h > 1) return null
+  if (!isValidCropRect(x, y, w, h)) return null
   return { x, y, w, h }
 }
 

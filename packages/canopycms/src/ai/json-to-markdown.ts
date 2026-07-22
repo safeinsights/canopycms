@@ -182,7 +182,7 @@ function renderField(
       return `${heading} ${label}${descriptionLine}\n\n${String(value)}`
 
     case 'image':
-      return `${heading} ${label}${descriptionLine}\n\n![${label}](${String(value)})`
+      return `${heading} ${label}${descriptionLine}\n\n${formatImageMarkdown(value, label)}`
 
     case 'code':
       return `${heading} ${label}${descriptionLine}\n\n\`\`\`\n${String(value)}\n\`\`\``
@@ -341,8 +341,10 @@ function formatCellValue(field: FieldConfig, value: unknown): string {
         ? value.map((v) => resolveSelectLabel(field as SelectFieldConfig, v)).join(', ')
         : resolveSelectLabel(field as SelectFieldConfig, value)
     case 'image':
-      // Match the standalone image rendering (renderField) so a table cell stays an image reference.
-      return `![](${String(value)})`
+      // Match the standalone image rendering (renderField) so a table cell stays an image
+      // reference; unlike the standalone case, alt has no label fallback here (kept terse —
+      // the column header already carries the label for every row).
+      return formatImageMarkdown(value, '')
     default:
       return String(value)
   }
@@ -404,6 +406,31 @@ function renderReferenceField(
     return `${heading} ${label}${descriptionLine}\n\n${items}`
   }
   return `${heading} ${label}${descriptionLine}\n\n${formatReference(value)}`
+}
+
+/** True for a plain object (not null, not an array) with a string `src`. */
+function isImageValueLike(value: unknown): value is { src: string; alt?: unknown } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    typeof (value as Record<string, unknown>).src === 'string'
+  )
+}
+
+/**
+ * Format an `image` field value as markdown image syntax: `![alt](src)`.
+ * Uses the value's own `alt` when non-empty, otherwise `altFallback`.
+ * Malformed values (not a `{ src, alt }`-shaped object — e.g. a legacy bare
+ * URL string) degrade to a plain string, matching how neighboring field
+ * serializers (e.g. renderObjectField, formatReference) handle unexpected shapes.
+ */
+function formatImageMarkdown(value: unknown, altFallback: string): string {
+  if (!isImageValueLike(value)) {
+    return String(value)
+  }
+  const alt = typeof value.alt === 'string' && value.alt.trim() !== '' ? value.alt : altFallback
+  return `![${alt}](${value.src})`
 }
 
 /**
