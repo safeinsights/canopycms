@@ -82,6 +82,33 @@ export interface TransformRejection {
 export type TransformResult = TransformSuccess | TransformRejection
 
 /**
+ * Dimensions AFTER `.rotate()` has auto-oriented the pixels. sharp's
+ * `metadata()` reports the RAW (pre-rotation) width/height plus the EXIF
+ * `orientation` tag; for orientation 5-8 (the 90-degree rotations that
+ * portrait phone photos almost always carry) the visual axes are swapped.
+ * The crop rect was normalized by the editor against the browser's
+ * auto-oriented preview, so `.extract()` - which runs on the post-rotation
+ * pipeline - must be computed against these swapped dims, NOT the raw ones.
+ * Using the raw dims makes the extract region exceed the rotated image's
+ * bounds and sharp throws `bad extract area`. sharp >=0.33 also exposes an
+ * `autoOrient` block with the corrected dims; prefer it when present.
+ */
+function orientedDimensions(
+  meta: Awaited<ReturnType<SharpPipeline['metadata']>>,
+): { width: number; height: number } | null {
+  const auto = meta.autoOrient
+  if (auto && auto.width && auto.height) {
+    return { width: auto.width, height: auto.height }
+  }
+  if (!meta.width || !meta.height) return null
+  const swap =
+    typeof meta.orientation === 'number' && meta.orientation >= 5 && meta.orientation <= 8
+  return swap
+    ? { width: meta.height, height: meta.width }
+    : { width: meta.width, height: meta.height }
+}
+
+/**
  * Compute a sharp `.extract()` region from a normalized crop rect and the
  * (post-rotation) image dimensions. Rounds the left/top and right/bottom
  * edges independently, then derives width/height from their difference -
@@ -153,11 +180,13 @@ export async function applyTransform(
     let pipeline = sharp(input.data, { animated: true }).rotate()
 
     if (resize?.crop) {
-      const meta = await pipeline.metadata()
-      if (!meta.width || !meta.height) {
+      const oriented = orientedDimensions(await pipeline.metadata())
+      if (!oriented) {
         return { ok: false, status: 422, error: 'Could not read image dimensions for crop' }
       }
-      pipeline = pipeline.extract(computeExtractRegion(resize.crop, meta.width, meta.height))
+      pipeline = pipeline.extract(
+        computeExtractRegion(resize.crop, oriented.width, oriented.height),
+      )
     }
 
     if (resize?.width) {

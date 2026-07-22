@@ -19,6 +19,14 @@ Apply the assets epic's Phase 2 wiring to docs-site-proto (this was PR 8 of
    (origin group [S3 → transform Lambda], failover on 403+404) behaviors. Note the
    existing infra uses OAI; the AssetSupport construct uses OAC — verified compatible
    choices per the canary, but pick one deliberately here.
+   - **CRITICAL (final-review finding #5)**: in BYO-bucket mode the AssetSupport
+     construct uses `S3BucketOrigin.withOriginAccessControl(importedBucket)`, but CDK
+     **cannot** add the OAC `s3:GetObject` grant to an *imported* `IBucket`'s policy.
+     This wiring MUST add that bucket-policy statement to the real content bucket
+     explicitly (the CloudFront distribution's OAC principal, conditioned on the
+     distribution ARN) — otherwise `/assets/*` 403s and `/assets/t/*` permanently fails
+     over to the Lambda (never S3-cached). Standalone mode (the canary) got this for
+     free because CDK owns the bucket; BYO does not.
 3. **CRITICAL bug fix that MUST land in the same change**:
    `infrastructure/scripts/lib/aws.ts` `updateDistributionOriginPath` stamps
    `/builds/{sha}` onto EVERY origin. The first deploy after adding a no-originPath

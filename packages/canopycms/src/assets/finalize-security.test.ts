@@ -97,4 +97,16 @@ describe('sanitizeSvg style attribute hardening', () => {
       '<svg xmlns="http://www.w3.org/2000/svg"><rect style="fill:red" width="10" height="10"/></svg>'
     expect(sanitizeSvg(svg)).toContain('style="fill:red"')
   })
+
+  // A plain `url(` match is bypassable with CSS escapes (`\75rl(...)` decodes
+  // to `url(...)` in the browser's CSS parser). Backslashes have no legitimate
+  // use in inline SVG style, so any style value containing one is dropped.
+  it('drops style attributes using CSS-escape-obfuscated url()', () => {
+    const dirty =
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect style="background:\\75rl(https://evil.example/beacon)" width="10" height="10"/></svg>'
+    const clean = sanitizeSvg(dirty)
+    expect(clean).not.toContain('evil.example')
+    expect(clean).not.toContain('\\75')
+    expect(clean).toContain('<rect')
+  })
 })

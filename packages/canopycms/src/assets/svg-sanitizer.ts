@@ -168,7 +168,13 @@ export function sanitizeSvg(svgText: string): string {
           // A style attribute carrying url(...) can trigger external fetches
           // (tracking beacons) when the SVG is opened as a document; inline
           // <style> elements are already stripped, so close this hole too.
-          if (key === 'style' && /url\s*\(/i.test(value)) {
+          // Also drop any style containing a backslash: CSS escapes (e.g.
+          // `\75rl(...)` -> `url(...)`) let a crafted value slip past a plain
+          // `url(` match yet still resolve to a fetch in the browser's CSS
+          // parser. Backslashes have no legitimate use in inline SVG style,
+          // so rejecting them outright closes the escape-bypass without
+          // needing a full CSS parser.
+          if (key === 'style' && (/url\s*\(/i.test(value) || value.includes('\\'))) {
             continue
           }
           filtered[key] = value

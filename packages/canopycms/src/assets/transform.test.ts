@@ -185,6 +185,39 @@ describe('applyTransform - crop', () => {
     expect(pixels[0]).toBeLessThan(50) // r
     expect(pixels[2]).toBeGreaterThan(200) // b
   })
+
+  // Regression: cropping an EXIF-rotated image (orientation 5-8 = 90-degree
+  // rotations, which portrait phone photos almost always carry) used to throw
+  // `bad extract area` -> 422 because the extract region was computed against
+  // the RAW pre-rotation dims while `.rotate()` had already swapped the axes.
+  // A full-frame crop must simply round-trip to the auto-oriented dimensions.
+  it('crops an EXIF-orientation-6 image against the auto-oriented dimensions', async () => {
+    // Raw sensor 40x80 portrait; orientation 6 => visually 80x40 landscape.
+    const data = await makeOrientedJpeg(40, 80, 6)
+
+    // Full-frame crop: the region that previously overflowed the rotated image.
+    const full = await applyTransform(
+      { data, ext: 'jpg' },
+      resize({ crop: { x: 0, y: 0, w: 1, h: 1 } }),
+    )
+    expect(full.ok).toBe(true)
+    if (!full.ok) return
+    const fullDims = imageSize(Buffer.from(full.data))
+    // Output is auto-oriented: 80 wide x 40 tall, not the raw 40x80.
+    expect(fullDims.width).toBe(80)
+    expect(fullDims.height).toBe(40)
+
+    // A partial crop (left half of the oriented image) must also stay in-bounds.
+    const half = await applyTransform(
+      { data, ext: 'jpg' },
+      resize({ crop: { x: 0, y: 0, w: 0.5, h: 1 } }),
+    )
+    expect(half.ok).toBe(true)
+    if (!half.ok) return
+    const halfDims = imageSize(Buffer.from(half.data))
+    expect(halfDims.width).toBe(40) // half of the oriented width (80)
+    expect(halfDims.height).toBe(40)
+  })
 })
 
 describe('applyTransform - input rejection', () => {
