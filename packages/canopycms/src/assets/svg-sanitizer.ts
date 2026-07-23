@@ -143,9 +143,58 @@ const ALLOWED_SVG_ATTRS = [
 const NON_TEXT_TAGS = ['script', 'style', 'textarea', 'option', 'foreignObject']
 
 /**
+ * Presentation attributes (beyond `style`) whose SVG grammar accepts a
+ * `<funciri>` (`url(...)`) value - `fill`/`stroke` reference paint servers
+ * (gradients/patterns), `filter`/`mask`/`clip-path` reference filter-effect
+ * elements, and the three `marker-*` attributes reference `<marker>`
+ * elements. Every one of these is in `ALLOWED_SVG_ATTRS`, so every one of
+ * them is a route for the same external-fetch beacon `style`'s `url(...)`
+ * hardening (below) already closes: `<rect fill="url(https://evil/beacon)">`
+ * fetches externally the moment the SVG is opened as a document, exactly
+ * like a `style="background:url(...)"` would.
+ */
+const URL_BEARING_ATTRS = new Set([
+  'style',
+  'fill',
+  'stroke',
+  'filter',
+  'mask',
+  'clip-path',
+  'marker-start',
+  'marker-mid',
+  'marker-end',
+])
+
+/**
+ * True when `value` is safe for a URL-bearing presentation attribute: either
+ * it has no `url(...)` funciri and no backslash at all (the common case -
+ * plain colors, `none`, etc.), or its only `url(...)` reference is a local
+ * fragment (`url(#foo)`) - the same in-document-only allowance `href`/
+ * `xlink:href` get, and exactly what gradients/filters/markers legitimately
+ * need to reference document-local `<linearGradient>`/`<filter>`/`<marker>`
+ * defs. Backslashes are rejected unconditionally (even alongside an
+ * otherwise-local `url(#foo)`): CSS escapes (e.g. `\75 rl(...)` -> `url(...)`)
+ * let a crafted value slip past a plain `url(` text match yet still resolve
+ * to an external fetch in the browser's CSS/SVG value parser, and
+ * backslashes have no legitimate use in any of these attribute values.
+ */
+function isSafeUrlBearingValue(value: string): boolean {
+  if (value.includes('\\')) return false
+  const urlMatches = value.matchAll(/url\s*\(\s*(['"]?)\s*([^)'"]*?)\s*\1\s*\)/gi)
+  let sawUrl = false
+  for (const match of urlMatches) {
+    sawUrl = true
+    if (!match[2].startsWith('#')) return false
+  }
+  return sawUrl ? true : !/url\s*\(/i.test(value)
+}
+
+/**
  * Sanitize an SVG document (as text). Strips scripts, event-handler attributes,
  * `<foreignObject>` (and its content), inline `<style>` (CSS injection surface),
- * and any `href`/`xlink:href` that isn't a local fragment reference.
+ * any `href`/`xlink:href` that isn't a local fragment reference, and any
+ * `url(...)` reference on a paint/filter/marker attribute that isn't a local
+ * fragment reference (external-fetch tracking beacon).
  *
  * Input must already be confirmed to be an SVG document (see `sniffSvg` in
  * pipeline.ts) - this function does not re-validate the root element.
@@ -165,17 +214,8 @@ export function sanitizeSvg(svgText: string): string {
           if ((key === 'href' || key === 'xlink:href') && !value.startsWith('#')) {
             continue // drop external/non-local references
           }
-          // A style attribute carrying url(...) can trigger external fetches
-          // (tracking beacons) when the SVG is opened as a document; inline
-          // <style> elements are already stripped, so close this hole too.
-          // Also drop any style containing a backslash: CSS escapes (e.g.
-          // `\75rl(...)` -> `url(...)`) let a crafted value slip past a plain
-          // `url(` match yet still resolve to a fetch in the browser's CSS
-          // parser. Backslashes have no legitimate use in inline SVG style,
-          // so rejecting them outright closes the escape-bypass without
-          // needing a full CSS parser.
-          if (key === 'style' && (/url\s*\(/i.test(value) || value.includes('\\'))) {
-            continue
+          if (URL_BEARING_ATTRS.has(key) && !isSafeUrlBearingValue(value)) {
+            continue // drop external/non-local url(...) references (or any backslash)
           }
           filtered[key] = value
         }

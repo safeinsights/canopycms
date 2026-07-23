@@ -15,7 +15,7 @@ import { CropStep } from '../media/CropStep'
 import { parseAspectRatio } from '../media/crop-math'
 import { MediaLibrary } from '../media/MediaLibrary'
 import { useAssetUpload } from '../media/useAssetUpload'
-import { ACCEPTED_ASSET_MIME_TYPES, MAX_UPLOAD_BYTES } from '../media/upload-constants'
+import { ACCEPTED_IMAGE_MIME_TYPES, MAX_UPLOAD_BYTES } from '../media/upload-constants'
 
 export interface ImageFieldErrors {
   src?: string
@@ -152,7 +152,7 @@ export const ImageField: React.FC<ImageFieldProps> = ({
             onDrop={(files) => void handleDrop(files)}
             onReject={handleReject}
             maxSize={MAX_UPLOAD_BYTES}
-            accept={ACCEPTED_ASSET_MIME_TYPES}
+            accept={ACCEPTED_IMAGE_MIME_TYPES}
             loading={upload.uploading}
             multiple={false}
             data-testid={`image-field-dropzone-${dataCanopyField}`}

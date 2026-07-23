@@ -250,6 +250,54 @@ describe('applyTransform - input rejection', () => {
   })
 })
 
+describe('applyTransform - decompression-bomb input cap', () => {
+  it('rejects a raster whose pixel count exceeds the input cap (limitInputPixels), a decompression-bomb defense', async () => {
+    // Just over MAX_INPUT_PIXELS (4096 x 4096 = 16,777,216) - large enough to
+    // trip sharp's limitInputPixels option at decode time, small enough
+    // (solid color) to stay a fast fixture to generate.
+    const data = await makePng(4100, 4100, [10, 10, 10])
+    const result = await applyTransform({ data, ext: 'png' }, IDENTITY)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.status).toBe(422)
+  })
+
+  it('caps decoded animated frames at MAX_ANIMATED_FRAMES (60) rather than reading every frame of a many-frame source', async () => {
+    // 65 distinctly-colored frames (varied hue per frame - identical/near-
+    // identical consecutive frames risk being merged by the gif encoder,
+    // which would silently defeat this test's premise of a genuinely
+    // 65-page source).
+    const frameCount = 65
+    const frames = await Promise.all(
+      Array.from({ length: frameCount }, (_, i) => {
+        const hue = (i * 37) % 256
+        return sharp({
+          create: {
+            width: 4,
+            height: 4,
+            channels: 3,
+            background: { r: hue, g: 255 - hue, b: (hue * 3) % 256 },
+          },
+        })
+          .png()
+          .toBuffer()
+      }),
+    )
+    const gifBuf = await sharp(frames, { join: { animated: true } })
+      .gif()
+      .toBuffer()
+    const sourceMeta = await sharp(gifBuf, { animated: true }).metadata()
+    expect(sourceMeta.pages).toBe(frameCount) // sanity: the source really has 65 pages
+
+    const result = await applyTransform({ data: new Uint8Array(gifBuf), ext: 'gif' }, IDENTITY)
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+
+    const outMeta = await sharp(Buffer.from(result.data)).metadata()
+    expect(outMeta.pages).toBe(60)
+  })
+})
+
 describe('applyTransform - output size cap', () => {
   it('rejects an encoded output that exceeds the 10 MiB cap', async () => {
     const data = await makePng(20, 20, [1, 1, 1])

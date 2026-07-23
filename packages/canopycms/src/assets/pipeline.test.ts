@@ -52,6 +52,30 @@ function bytesOf(base64: string): Uint8Array {
   return new Uint8Array(Buffer.from(base64, 'base64'))
 }
 
+/**
+ * Build a minimal (IHDR-only, no pixel/scan data) PNG header for an
+ * arbitrary width/height - same construction as PNG_3X5_BASE64 above (CRC
+ * zeroed; file-type/image-size only read the fixed-offset header fields),
+ * parametrized so the decompression-bomb test below can assert on dimensions
+ * image-size actually reports without needing a real, fully-encoded
+ * multi-megapixel fixture.
+ */
+function makeMinimalPngHeader(width: number, height: number): Uint8Array {
+  const buf = Buffer.alloc(33)
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(buf, 0)
+  buf.writeUInt32BE(13, 8)
+  buf.write('IHDR', 12, 'ascii')
+  buf.writeUInt32BE(width, 16)
+  buf.writeUInt32BE(height, 20)
+  buf[24] = 8 // bit depth
+  buf[25] = 6 // color type: RGBA
+  buf[26] = 0 // compression method
+  buf[27] = 0 // filter method
+  buf[28] = 0 // interlace method
+  // bytes 29-32 (CRC) intentionally left zeroed
+  return new Uint8Array(buf)
+}
+
 describe('runFinalizePipeline - raster formats', () => {
   it('accepts a PNG, sniffing the real type and extracting dimensions', async () => {
     const result = await runFinalizePipeline({ data: bytesOf(PNG_3X5_BASE64), filename: 'a.png' })
@@ -99,6 +123,37 @@ describe('runFinalizePipeline - raster formats', () => {
     // displayed/stored dims must be swapped to 8w x 4h.
     expect(result.meta.width).toBe(8)
     expect(result.meta.height).toBe(4)
+  })
+
+  it('rejects a raster whose declared dimensions exceed the pixel-count cap (413), a decompression-bomb defense', async () => {
+    // 30000x30000 = 900,000,000 pixels, comfortably within a 50 MiB byte cap
+    // for a solid-color (highly compressible) real PNG, but far past
+    // MAX_INPUT_PIXELS (4096x4096 = 16,777,216).
+    const result = await runFinalizePipeline({
+      data: makeMinimalPngHeader(30000, 30000),
+      filename: 'bomb.png',
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.status).toBe(413)
+  })
+
+  it('accepts a raster right at the pixel-count cap boundary', async () => {
+    const result = await runFinalizePipeline({
+      data: makeMinimalPngHeader(4096, 4096),
+      filename: 'ok.png',
+    })
+    expect(result.ok).toBe(true)
+  })
+
+  it('rejects a raster over the defensive 50 MiB byte cap (413), independent of dimensions', async () => {
+    const header = bytesOf(PNG_3X5_BASE64)
+    const oversized = new Uint8Array(50 * 1024 * 1024 + 1)
+    oversized.set(header, 0)
+    const result = await runFinalizePipeline({ data: oversized, filename: 'huge.png' })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.status).toBe(413)
   })
 
   it('rejects random bytes with no recognizable magic number (415)', async () => {

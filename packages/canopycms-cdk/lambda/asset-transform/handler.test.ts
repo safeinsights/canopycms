@@ -198,7 +198,7 @@ describe('asset-transform handler', () => {
   it('returns a 302 redirect with Cache-Control: no-store when the transform output exceeds the inline size cap, after writing it to S3 first', async () => {
     const spy = vi.spyOn(canopyServer, 'applyTransform').mockResolvedValue({
       ok: true,
-      data: new Uint8Array(5 * 1024 * 1024), // over the 4.5 MiB inline cap
+      data: new Uint8Array(5 * 1024 * 1024), // over the 4 MiB inline cap
       contentType: 'image/png',
       ext: 'png',
     })
@@ -210,6 +210,29 @@ describe('asset-transform handler', () => {
     expect(res.headers?.location).toBe(rawPath)
     expect(res.headers?.['cache-control']).toBe('no-store')
     expect(objects.has(`assets/t/orig/${HASH32}/photo.png`)).toBe(true)
+
+    spy.mockRestore()
+  })
+
+  it('redirects an oversized-output, non-canonically-ordered request to the CANONICAL path, not rawPath - a mismatch would make CloudFront miss forever and re-invoke this Lambda on every hit', async () => {
+    const spy = vi.spyOn(canopyServer, 'applyTransform').mockResolvedValue({
+      ok: true,
+      data: new Uint8Array(5 * 1024 * 1024), // over the 4 MiB inline cap
+      contentType: 'image/webp',
+      ext: 'webp',
+    })
+
+    // formatDirectives' fixed order is c, f, q, w - `w` before `f` is valid
+    // but non-canonical, so rawPath and the canonical key differ.
+    const rawPath = `/assets/t/w=160,f=webp/${HASH32}/photo.webp`
+    const canonicalPath = `/assets/t/f=webp,w=160/${HASH32}/photo.webp`
+    const res = await handler(makeEvent(rawPath))
+
+    expect(res.statusCode).toBe(302)
+    expect(res.headers?.location).toBe(canonicalPath)
+    expect(res.headers?.['cache-control']).toBe('no-store')
+    // The canonical key (what the redirect points at) was actually written.
+    expect(objects.has(canonicalPath.slice(1))).toBe(true)
 
     spy.mockRestore()
   })

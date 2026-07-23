@@ -46,6 +46,25 @@ const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 const TRANSFORM_LAMBDA_MEMORY_MB = 1536
 const TRANSFORM_LAMBDA_TIMEOUT = Duration.seconds(30)
 
+/**
+ * `/assets/t/*`-specific cache TTLs. The managed `CachePolicy.CACHING_OPTIMIZED`
+ * (used for the plain `/assets/*` static behavior) has a 1-second MIN TTL,
+ * which is exactly the bug this policy exists to avoid: the transform
+ * Lambda's oversized-output path (handler.ts) returns a `Cache-Control:
+ * no-store` 302 redirect specifically so CloudFront never caches it - but a
+ * managed policy with ANY nonzero min TTL still caches that response for at
+ * least that long regardless of the origin's own `no-store`, so the redirect
+ * (to the now-written canonical S3 key) gets cached and re-served, and
+ * CloudFront's next hit for that same canonical key 404s/403s off S3 (or
+ * hasn't propagated yet), falling back to the Lambda again - a self-sustaining
+ * redirect loop. `minTtl: 0` lets an origin's own `Cache-Control` (including
+ * `no-store`) be honored immediately; `maxTtl`/`defaultTtl` stay generous so
+ * the normal case (an immutable 200 with a real `max-age`) still caches well.
+ */
+const TRANSFORM_CACHE_MIN_TTL = Duration.seconds(0)
+const TRANSFORM_CACHE_DEFAULT_TTL = Duration.days(1)
+const TRANSFORM_CACHE_MAX_TTL = Duration.days(365)
+
 export interface AssetSupportProps {
   /**
    * Use an existing bucket (BYO mode - e.g. a site's existing content
@@ -267,6 +286,22 @@ export class AssetSupport extends Construct {
       compress: true,
     }
 
+    // Custom (not managed CACHING_OPTIMIZED) - see TRANSFORM_CACHE_MIN_TTL's
+    // doc comment for why this behavior specifically needs minTtl: 0.
+    // Directives live entirely in the path (no query string), and the
+    // response never varies by cookie/request header, so nothing is
+    // forwarded into the cache key.
+    const transformCachePolicy = new cloudfront.CachePolicy(this, 'AssetsTransformCachePolicy', {
+      minTtl: TRANSFORM_CACHE_MIN_TTL,
+      defaultTtl: TRANSFORM_CACHE_DEFAULT_TTL,
+      maxTtl: TRANSFORM_CACHE_MAX_TTL,
+      enableAcceptEncodingGzip: true,
+      enableAcceptEncodingBrotli: true,
+      queryStringBehavior: cloudfront.CacheQueryStringBehavior.none(),
+      headerBehavior: cloudfront.CacheHeaderBehavior.none(),
+      cookieBehavior: cloudfront.CacheCookieBehavior.none(),
+    })
+
     const assetsTransform: cloudfront.BehaviorOptions = {
       origin: new origins.OriginGroup({
         primaryOrigin: s3Origin,
@@ -279,7 +314,7 @@ export class AssetSupport extends Construct {
         fallbackStatusCodes: [403, 404],
       }),
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-      cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+      cachePolicy: transformCachePolicy,
     }
 
     return { assets, assetsTransform }

@@ -138,6 +138,38 @@ describe('entryToMarkdown', () => {
       expect(md).toContain('![Hero Image](/images/hero.jpg)')
     })
 
+    it('sanitizes a bracket-injection alt so it cannot open a second link/image', () => {
+      const entry = makeEntry({
+        fields: [{ name: 'hero', type: 'image', label: 'Hero Image' }],
+        data: {
+          hero: { src: '/images/hero.jpg', alt: 'x](/a) [pwn](https://evil.com)' },
+        },
+      })
+      const md = entryToMarkdown(entry)
+      // Brackets stripped - the crafted alt can no longer close the intended
+      // link-text span early or open a second one.
+      expect(md).toContain('![x(/a) pwn(https://evil.com)](/images/hero.jpg)')
+      expect(md).not.toContain('](https://evil.com)')
+    })
+
+    it('collapses newlines in alt to spaces', () => {
+      const entry = makeEntry({
+        fields: [{ name: 'hero', type: 'image', label: 'Hero Image' }],
+        data: { hero: { src: '/images/hero.jpg', alt: 'line one\nline two' } },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('![line one line two](/images/hero.jpg)')
+    })
+
+    it('percent-encodes spaces and parentheses in src', () => {
+      const entry = makeEntry({
+        fields: [{ name: 'hero', type: 'image', label: 'Hero Image' }],
+        data: { hero: { src: '/images/my file (final).jpg', alt: 'A photo' } },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('![A photo](/images/my%20file%20%28final%29.jpg)')
+    })
+
     it('degrades to a plain string for a malformed (non-object) image value', () => {
       const entry = makeEntry({
         fields: [{ name: 'hero', type: 'image', label: 'Hero Image' }],
@@ -461,6 +493,51 @@ describe('entryToMarkdown', () => {
       expect(md).toContain('| Acme | ![Acme logo](/logo.png) |')
     })
 
+    it('sanitizes a bracket-injection alt in an image table cell too (survives escapeTableCell)', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'logos',
+            type: 'object',
+            label: 'Logos',
+            list: true,
+            fields: [
+              { name: 'name', type: 'string', label: 'Name' },
+              { name: 'src', type: 'image', label: 'Src' },
+            ],
+          },
+        ],
+        data: {
+          logos: [
+            { name: 'Acme', src: { src: '/logo.png', alt: 'x](/a) [pwn](https://evil.com)' } },
+          ],
+        },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('| Acme | ![x(/a) pwn(https://evil.com)](/logo.png) |')
+      expect(md).not.toContain('](https://evil.com)')
+    })
+
+    it('percent-encodes a src with spaces/parens in an image table cell', () => {
+      const entry = makeEntry({
+        fields: [
+          {
+            name: 'logos',
+            type: 'object',
+            label: 'Logos',
+            list: true,
+            fields: [
+              { name: 'name', type: 'string', label: 'Name' },
+              { name: 'src', type: 'image', label: 'Src' },
+            ],
+          },
+        ],
+        data: { logos: [{ name: 'Acme', src: { src: '/my logo (2).png', alt: 'Acme' } }] },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('| Acme | ![Acme](/my%20logo%20%282%29.png) |')
+    })
+
     it('falls back to an empty alt (not the column label) in image cells', () => {
       const entry = makeEntry({
         fields: [
@@ -561,6 +638,43 @@ describe('entryToMarkdown', () => {
       })
       const md = entryToMarkdown(entry)
       expect(md).toContain('*Whether this dataset requires IRB approval*')
+    })
+  })
+
+  describe('image field regression: [object Object] (formatInlineValue)', () => {
+    it('renders an image field in MD/MDX frontmatter metadata as markdown, not [object Object]', () => {
+      const entry = makeEntry({
+        format: 'md',
+        fields: [
+          { name: 'title', type: 'string', label: 'Title' },
+          { name: 'hero', type: 'image', label: 'Hero' },
+        ],
+        data: {
+          title: 'My Post',
+          hero: { src: '/images/hero.jpg', alt: 'A mountain at sunrise' },
+        },
+        body: '# My Post',
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('**Hero:** ![A mountain at sunrise](/images/hero.jpg)')
+      expect(md).not.toContain('[object Object]')
+    })
+
+    it('renders a top-level list: true image field as a markdown list, not [object Object]', () => {
+      const entry = makeEntry({
+        fields: [{ name: 'gallery', type: 'image', label: 'Gallery', list: true }],
+        data: {
+          gallery: [
+            { src: '/a.jpg', alt: 'First' },
+            { src: '/b.jpg', alt: 'Second' },
+          ],
+        },
+      })
+      const md = entryToMarkdown(entry)
+      expect(md).toContain('## Gallery')
+      expect(md).toContain('- ![First](/a.jpg)')
+      expect(md).toContain('- ![Second](/b.jpg)')
+      expect(md).not.toContain('[object Object]')
     })
   })
 

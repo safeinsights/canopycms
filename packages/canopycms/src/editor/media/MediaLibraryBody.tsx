@@ -27,7 +27,11 @@ import { useApiClient, useAssetContext } from '../context'
 import { useUserContext } from '../hooks'
 import { AssetCard } from './AssetCard'
 import { useAssetUpload } from './useAssetUpload'
-import { ACCEPTED_ASSET_MIME_TYPES, MAX_UPLOAD_BYTES } from './upload-constants'
+import {
+  ACCEPTED_ASSET_MIME_TYPES,
+  ACCEPTED_IMAGE_MIME_TYPES,
+  MAX_UPLOAD_BYTES,
+} from './upload-constants'
 
 const PAGE_SIZE = 40
 
@@ -50,6 +54,10 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
   const { userContext } = useUserContext()
   const canDelete = mode === 'manage' && isAdmin(userContext?.groups)
   const upload = useAssetUpload()
+  // `picker` mode is used exclusively by ImageField and the MDX image dialog
+  // (see MediaLibraryProps.mode's doc comment) - both image-only contexts.
+  // `manage` mode (the Editor's Media Library drawer) keeps accepting PDFs.
+  const imageOnly = mode === 'picker'
 
   const [assets, setAssets] = useState<AssetRecord[]>([])
   const [nextCursor, setNextCursor] = useState<string | undefined>(undefined)
@@ -144,10 +152,14 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
     })
   }
 
+  // Picker mode is image-only (see `imageOnly` above) - pdf assets are
+  // filtered out of the pickable grid entirely, not just the upload accept
+  // list, since an already-uploaded pdf could otherwise still be selected.
+  const kindFiltered = imageOnly ? assets.filter((asset) => asset.kind !== 'pdf') : assets
   const normalizedFilter = filterText.trim().toLowerCase()
   const filteredAssets = normalizedFilter
-    ? assets.filter((asset) => asset.filename.toLowerCase().includes(normalizedFilter))
-    : assets
+    ? kindFiltered.filter((asset) => asset.filename.toLowerCase().includes(normalizedFilter))
+    : kindFiltered
 
   return (
     <Stack gap="sm" h="100%" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -155,14 +167,18 @@ export const MediaLibraryBody: React.FC<MediaLibraryBodyProps> = ({ opened, mode
         onDrop={(files) => void handleDrop(files)}
         onReject={handleReject}
         maxSize={MAX_UPLOAD_BYTES}
-        accept={ACCEPTED_ASSET_MIME_TYPES}
+        accept={imageOnly ? ACCEPTED_IMAGE_MIME_TYPES : ACCEPTED_ASSET_MIME_TYPES}
         loading={upload.uploading}
         multiple={false}
         data-testid="media-library-dropzone"
       >
         <Group justify="center" gap="xs" py="sm" style={{ pointerEvents: 'none' }}>
           <IconUpload size={20} />
-          <Text size="sm">Drop an image or PDF here, or click to browse</Text>
+          <Text size="sm">
+            {imageOnly
+              ? 'Drop an image here, or click to browse'
+              : 'Drop an image or PDF here, or click to browse'}
+          </Text>
         </Group>
       </Dropzone>
 

@@ -15,6 +15,7 @@ import { create as createContentDisposition } from 'content-disposition'
 
 import { hashBytes, publicKey, slugifyFilename } from './keys'
 import { sanitizeSvg } from './svg-sanitizer'
+import { MAX_INPUT_PIXELS } from './transform-directives'
 import type { AssetMeta } from './types'
 
 const RASTER_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
@@ -29,6 +30,14 @@ export const ALLOWED_UPLOAD_CONTENT_TYPES = new Set<string>([
 ])
 
 const PDF_MAX_BYTES = 25 * 1024 * 1024
+
+/**
+ * Defensive raster byte cap, independent of whatever the configured
+ * AssetStore's own upload-size limit happens to be (that limit lives at the
+ * store/API boundary, not here) - mirrors PDF_MAX_BYTES's role as a
+ * pipeline-level backstop rather than the sole enforcement point.
+ */
+const RASTER_MAX_BYTES = 50 * 1024 * 1024
 
 /** EXIF orientation values 5-8 are 90-degree rotations, which swap width/height. */
 const isRotated90 = (orientation: number | undefined): boolean =>
@@ -151,6 +160,13 @@ export async function runFinalizePipeline(input: FinalizeInput): Promise<Finaliz
   let canonicalData: Uint8Array = input.data
 
   if (sniffed && RASTER_MIME_TYPES.has(sniffed.mime)) {
+    if (input.data.byteLength > RASTER_MAX_BYTES) {
+      return {
+        ok: false,
+        status: 413,
+        error: `Raster image exceeds the ${RASTER_MAX_BYTES}-byte limit`,
+      }
+    }
     kind = 'raster'
     mime = sniffed.mime
     ext = sniffed.ext
@@ -176,6 +192,24 @@ export async function runFinalizePipeline(input: FinalizeInput): Promise<Finaliz
   const hash32 = hashBytes(canonicalData)
   const { slug } = slugifyFilename(input.filename)
   const dims = kind === 'pdf' ? {} : computeDimensions(canonicalData)
+
+  // Decompression-bomb defense: a raster's on-disk size says nothing about
+  // its decoded pixel count (a solid-color 30000x30000 PNG compresses to a
+  // few KB) - reject on width*height before this asset is ever finalized, so
+  // the transform engine (transform.ts's own `limitInputPixels`) is never the
+  // only thing standing between an attacker and a huge decode. SVG is exempt:
+  // `computeDimensions` reads its declared viewBox/width/height attributes,
+  // not a decoded raster, so there is no analogous decode-time memory cost.
+  if (kind === 'raster' && dims.width !== undefined && dims.height !== undefined) {
+    const pixelCount = dims.width * dims.height
+    if (pixelCount > MAX_INPUT_PIXELS) {
+      return {
+        ok: false,
+        status: 413,
+        error: `Image dimensions ${dims.width}x${dims.height} (${pixelCount} pixels) exceed the ${MAX_INPUT_PIXELS}-pixel limit`,
+      }
+    }
+  }
 
   const meta: AssetMeta = {
     hash32,

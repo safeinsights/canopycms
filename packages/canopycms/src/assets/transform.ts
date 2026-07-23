@@ -6,8 +6,12 @@
  * `/assets/t/*` emulation in api/assets.ts today, and will be reused
  * unchanged by the prod transform Lambda (PR 7).
  *
- * Pipeline: load with `{ animated: true }` (preserves animated GIF/WebP
- * frames) -> `.rotate()` with no args (bakes EXIF orientation into pixels,
+ * Pipeline: a cheap metadata-only probe (`limitInputPixels: MAX_INPUT_PIXELS`,
+ * decompression-bomb defense #1) learns the real page count, so animated
+ * GIF/WebP frames can be capped at `MAX_ANIMATED_FRAMES` (decompression-bomb
+ * defense #2) without exceeding it and making sharp throw -> load for real
+ * with `{ pages: min(totalPages, MAX_ANIMATED_FRAMES), limitInputPixels }` ->
+ * `.rotate()` with no args (bakes EXIF orientation into pixels,
  * dropping the orientation tag) -> optional crop via `.extract()` -> optional
  * `.resize({ width, withoutEnlargement: true })` (never upscales) -> encode.
  *
@@ -28,7 +32,12 @@
 import sharp from 'sharp'
 
 import { getErrorMessage } from '../utils/error'
-import type { CropRect, OutputFormat, TransformDirectives } from './transform-directives'
+import {
+  MAX_INPUT_PIXELS,
+  type CropRect,
+  type OutputFormat,
+  type TransformDirectives,
+} from './transform-directives'
 
 /**
  * `sharp`'s type declarations use `export =`, which doesn't let a default
@@ -44,6 +53,16 @@ const ALLOWED_INPUT_EXTS = new Set(['png', 'jpg', 'jpeg', 'webp', 'gif'])
 
 /** Defensive cap on encoded output size - prevents cache-stuffing with giant re-encodes. */
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024
+
+/**
+ * Cap on decoded animated frames (GIF/WebP) - without this, `{ animated: true }`
+ * (sharp's `pages: -1`) decodes every frame of a maliciously-crafted
+ * many-thousand-frame animation into memory at once, a decompression-bomb
+ * vector distinct from (and not covered by) `limitInputPixels`, which only
+ * bounds a single frame's width x height. 60 frames covers any reasonable
+ * animated asset (2s at 30fps) with headroom.
+ */
+const MAX_ANIMATED_FRAMES = 60
 
 const CONTENT_TYPE_BY_FORMAT: Record<OutputFormat, string> = {
   webp: 'image/webp',
@@ -177,7 +196,25 @@ export async function applyTransform(
   const quality = resize?.quality
 
   try {
-    let pipeline = sharp(input.data, { animated: true }).rotate()
+    // A cheap header/metadata-only probe (no pixel decode - verified this
+    // costs effectively nothing even for a several-hundred-frame source) to
+    // learn the source's real page count before deciding whether to cap it.
+    // This has to happen before constructing the real pipeline: sharp's
+    // `pages` constructor option is a fixed request, not an upper bound - a
+    // `pages` value that EXCEEDS the source's actual page count makes sharp
+    // throw ("bad page number") rather than clamping, so `MAX_ANIMATED_FRAMES`
+    // can only be applied as `Math.min(totalPages, MAX_ANIMATED_FRAMES)`.
+    // `limitInputPixels` gates this probe exactly like it gates the real
+    // pipeline below - an oversized source throws here already, before any
+    // pixel buffer is ever allocated.
+    const probeMeta = await sharp(input.data, { limitInputPixels: MAX_INPUT_PIXELS }).metadata()
+    const totalPages = probeMeta.pages ?? 1
+    const pagesToRead = Math.min(totalPages, MAX_ANIMATED_FRAMES)
+
+    let pipeline = sharp(input.data, {
+      pages: pagesToRead,
+      limitInputPixels: MAX_INPUT_PIXELS,
+    }).rotate()
 
     if (resize?.crop) {
       const oriented = orientedDimensions(await pipeline.metadata())

@@ -16,7 +16,7 @@
  * concern) and must never be baked into stored/served content URLs.
  */
 
-import { ASSET_PREFIXES } from './keys'
+import { ASSET_PREFIXES } from './asset-prefixes'
 import { IDENTITY_TRANSFORM_DIRECTIVE } from './transform-directives'
 import type { AssetMeta } from './types'
 

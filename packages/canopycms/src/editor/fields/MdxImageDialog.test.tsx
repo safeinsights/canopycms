@@ -77,6 +77,15 @@ describe('MdxImageDialog', () => {
     expect(screen.getByTestId('mdx-image-dialog-dropzone')).toBeTruthy()
   })
 
+  it('restricts the upload dropzone to image mime types - PDF is excluded', () => {
+    renderDialog()
+    const dropzone = screen.getByTestId('mdx-image-dialog-dropzone')
+    const input = dropzone.querySelector('input[type="file"]') as HTMLInputElement
+    expect(input).toBeTruthy()
+    expect(input.accept).not.toContain('application/pdf')
+    expect(input.accept).toContain('image/png')
+  })
+
   it('defaults to the By URL tab when editing an existing image, pre-filled', () => {
     const editingState: MdxImageDialogState = {
       type: 'editing',

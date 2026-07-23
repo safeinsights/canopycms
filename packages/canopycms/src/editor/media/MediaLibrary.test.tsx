@@ -223,6 +223,98 @@ describe('MediaLibraryBody', () => {
     expect(onSelect).toHaveBeenCalledWith(catAsset)
   })
 
+  it('selects a card via the keyboard (Enter) - asset cards are not click-only', async () => {
+    mockClient.assets.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { assets: [catAsset] },
+    })
+    const onSelect = vi.fn()
+
+    renderBody({ mode: 'picker', onSelect })
+
+    const card = await screen.findByTestId(`asset-card-${catAsset.hash32}`)
+    expect(card.getAttribute('role')).toBe('button')
+    expect(card.getAttribute('tabindex')).toBe('0')
+
+    fireEvent.keyDown(card, { key: 'Enter' })
+
+    expect(onSelect).toHaveBeenCalledWith(catAsset)
+  })
+
+  it('selects a card via the keyboard (Space)', async () => {
+    mockClient.assets.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { assets: [catAsset] },
+    })
+    const onSelect = vi.fn()
+
+    renderBody({ mode: 'picker', onSelect })
+
+    const card = await screen.findByTestId(`asset-card-${catAsset.hash32}`)
+    fireEvent.keyDown(card, { key: ' ' })
+
+    expect(onSelect).toHaveBeenCalledWith(catAsset)
+  })
+
+  it('ignores other keys and never selects via the keyboard in manage mode (no onSelect)', async () => {
+    mockClient.assets.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { assets: [catAsset] },
+    })
+
+    renderBody({ mode: 'manage' })
+
+    const card = await screen.findByTestId(`asset-card-${catAsset.hash32}`)
+    expect(card.getAttribute('role')).toBeNull()
+    expect(card.getAttribute('tabindex')).toBeNull()
+  })
+
+  it('picker mode dropzone excludes PDF; manage mode keeps accepting it', async () => {
+    mockClient.assets.list.mockResolvedValue({
+      ok: true,
+      status: 200,
+      data: { assets: [] },
+    })
+
+    const { unmount } = renderBody({ mode: 'picker', onSelect: vi.fn() })
+    const pickerDropzone = screen.getByTestId('media-library-dropzone')
+    const pickerInput = pickerDropzone.querySelector('input[type="file"]') as HTMLInputElement
+    expect(pickerInput.accept).not.toContain('application/pdf')
+    unmount()
+
+    renderBody({ mode: 'manage' })
+    const manageDropzone = screen.getByTestId('media-library-dropzone')
+    const manageInput = manageDropzone.querySelector('input[type="file"]') as HTMLInputElement
+    expect(manageInput.accept).toContain('application/pdf')
+  })
+
+  it('picker mode filters PDF assets out of the pickable grid; manage mode still shows them', async () => {
+    const pdfAsset: AssetRecord = {
+      hash32: 'c'.repeat(32),
+      filename: 'brochure.pdf',
+      slug: 'brochure',
+      ext: 'pdf',
+      mime: 'application/pdf',
+      size: 4096,
+      kind: 'pdf',
+      uploadedAt: '2024-01-03T00:00:00.000Z',
+      src: `/assets/${'c'.repeat(32)}/brochure.pdf`,
+    }
+    mockClient.assets.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { assets: [catAsset, pdfAsset] },
+    })
+
+    renderBody({ mode: 'picker', onSelect: vi.fn() })
+
+    await waitFor(() => expect(screen.getByText('cat')).toBeTruthy())
+    expect(screen.queryByText('brochure')).toBeNull()
+  })
+
   it('shows a retryable error alert when listing fails', async () => {
     mockClient.assets.list.mockResolvedValueOnce({
       ok: false,

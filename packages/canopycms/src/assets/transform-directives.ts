@@ -65,6 +65,20 @@ export type ParseTransformPathResult =
 const MIN_WIDTH = 160
 const MAX_WIDTH = 4096
 const WIDTH_STEP = 160
+
+/**
+ * Decompression-bomb cap: the max `width * height` (post-decode pixel count)
+ * any raster the pipeline handles may have - checked both at upload finalize
+ * time (pipeline.ts, against the raw source dims) and at transform decode
+ * time (transform.ts, via sharp's `limitInputPixels`). Shared here (rather
+ * than duplicated in each server-only module) so it stays a single number,
+ * and because this file is dependency-free/isomorphic it can be imported by
+ * both without pulling sharp or file-type into anything. 4096x4096 (16.7 MP)
+ * comfortably covers the largest output this system ever serves (MAX_WIDTH)
+ * while still bounding decode-time memory for a small/compressible-but-huge
+ * source (e.g. a 30000x30000 solid-color PNG).
+ */
+export const MAX_INPUT_PIXELS = 4096 * 4096
 // Quality is allowlisted (multiples of 5 in [30, 95] - 14 values) for the
 // same cache-stuffing reason as width: every accepted directive combination
 // becomes a stored cache object in prod, so unbounded q would multiply the

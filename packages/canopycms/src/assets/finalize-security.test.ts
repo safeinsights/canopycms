@@ -110,3 +110,69 @@ describe('sanitizeSvg style attribute hardening', () => {
     expect(clean).toContain('<rect')
   })
 })
+
+describe('sanitizeSvg url() hardening on paint/filter/marker presentation attributes', () => {
+  // fill/stroke/filter/mask/clip-path/marker-* are all in ALLOWED_SVG_ATTRS
+  // and each accepts a url(...) funciri - the same external-fetch beacon
+  // vector style's url(...) carries, just on different attributes.
+  it('drops an external url() on fill', () => {
+    const dirty =
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="url(https://evil.example/beacon)" width="10" height="10"/></svg>'
+    const clean = sanitizeSvg(dirty)
+    expect(clean).not.toContain('evil.example')
+    expect(clean).not.toContain('fill=')
+    expect(clean).toContain('<rect')
+  })
+
+  it('drops an external url() on filter', () => {
+    const dirty =
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect filter="url(https://evil.example/beacon)" width="10" height="10"/></svg>'
+    const clean = sanitizeSvg(dirty)
+    expect(clean).not.toContain('evil.example')
+    expect(clean).not.toContain('filter=')
+    expect(clean).toContain('<rect')
+  })
+
+  it('drops an external url() on marker-end', () => {
+    const dirty =
+      '<svg xmlns="http://www.w3.org/2000/svg"><path marker-end="url(https://evil.example/beacon)" d="M0 0"/></svg>'
+    const clean = sanitizeSvg(dirty)
+    expect(clean).not.toContain('evil.example')
+    expect(clean).not.toContain('marker-end=')
+    expect(clean).toContain('<path')
+  })
+
+  it('keeps a local fragment url() reference on fill (gradient defs)', () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg"><defs><linearGradient id="grad"/></defs><rect fill="url(#grad)" width="10" height="10"/></svg>'
+    expect(sanitizeSvg(svg)).toContain('fill="url(#grad)"')
+  })
+
+  it('keeps a local fragment url() reference on filter', () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg"><filter id="f"/><rect filter="url(#f)" width="10" height="10"/></svg>'
+    expect(sanitizeSvg(svg)).toContain('filter="url(#f)"')
+  })
+
+  it('keeps a local fragment url() reference on marker-end', () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg"><marker id="arrow"/><path marker-end="url(#arrow)" d="M0 0"/></svg>'
+    expect(sanitizeSvg(svg)).toContain('marker-end="url(#arrow)"')
+  })
+
+  it('keeps benign (non-url) values on these attributes unchanged', () => {
+    const svg =
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="red" stroke="none" width="10" height="10"/></svg>'
+    const clean = sanitizeSvg(svg)
+    expect(clean).toContain('fill="red"')
+    expect(clean).toContain('stroke="none"')
+  })
+
+  it('drops a CSS-escape-obfuscated (backslash-containing) url() on fill, even when it looks local', () => {
+    const dirty =
+      '<svg xmlns="http://www.w3.org/2000/svg"><rect fill="\\75rl(#grad)" width="10" height="10"/></svg>'
+    const clean = sanitizeSvg(dirty)
+    expect(clean).not.toContain('\\75')
+    expect(clean).not.toContain('fill=')
+  })
+})

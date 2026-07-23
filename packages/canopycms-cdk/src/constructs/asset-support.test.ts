@@ -1,4 +1,4 @@
-import { App, Stack } from 'aws-cdk-lib'
+import { App, Duration, Stack } from 'aws-cdk-lib'
 import { Match, Template } from 'aws-cdk-lib/assertions'
 import { aws_cloudfront as cloudfront, aws_iam as iam, aws_s3 as s3 } from 'aws-cdk-lib'
 import { describe, expect, it } from 'vitest'
@@ -146,6 +146,42 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
     expect(originGroups).toHaveLength(1)
     expect(originGroups[0].FailoverCriteria.StatusCodes.Items.sort()).toEqual([403, 404])
     expect(originGroups[0].Members.Items).toHaveLength(2)
+  })
+
+  it('assetBehaviors(): the /assets/t/* behavior uses a custom cache policy with minTtl 0 (never the managed CACHING_OPTIMIZED, whose 1s min TTL caches the oversized-output no-store redirect)', () => {
+    const stack = makeStack()
+    const assetSupport = new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
+    const template = synthWithDistribution(assetSupport, stack)
+
+    const policies = template.findResources('AWS::CloudFront::CachePolicy')
+    const transformPolicy = Object.values(policies).find(
+      (policy) =>
+        policy.Properties.CachePolicyConfig.Comment !== 'Policy for caching optimized by default',
+    )
+    expect(transformPolicy).toBeDefined()
+    const config = transformPolicy?.Properties.CachePolicyConfig
+    expect(config.MinTTL).toBe(0)
+    expect(config.DefaultTTL).toBe(Duration.days(1).toSeconds())
+    expect(config.MaxTTL).toBe(Duration.days(365).toSeconds())
+    expect(config.ParametersInCacheKeyAndForwardedToOrigin).toMatchObject({
+      EnableAcceptEncodingGzip: true,
+      EnableAcceptEncodingBrotli: true,
+    })
+
+    // The behavior itself references this custom policy, not the managed one.
+    template.hasResourceProperties(
+      'AWS::CloudFront::Distribution',
+      Match.objectLike({
+        DistributionConfig: Match.objectLike({
+          CacheBehaviors: Match.arrayWith([
+            Match.objectLike({
+              PathPattern: '/assets/t/*',
+              CachePolicyId: { Ref: Match.stringLikeRegexp('AssetsTransformCachePolicy') },
+            }),
+          ]),
+        }),
+      }),
+    )
   })
 
   it('creates Origin Access Control resources for both the S3 origin and the Lambda Function URL origin', () => {

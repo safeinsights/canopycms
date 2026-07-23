@@ -419,18 +419,60 @@ function isImageValueLike(value: unknown): value is { src: string; alt?: unknown
 }
 
 /**
+ * Sanitize `alt` for the `[...]` link-text span of `![alt](src)`. `alt` is
+ * user free-text, so a crafted value like `x](/a) [pwn](https://evil.com)`
+ * could otherwise inject a second, attacker-chosen link/image right next to
+ * the intended one. Strips (rather than backslash-escapes) `[`, `]`, and any
+ * backslash: alt is a human-readable description, so losing a stray literal
+ * bracket from it is a non-issue, and stripping sidesteps a real composability
+ * bug backslash-escaping would have - `renderObjectListTable`'s
+ * `escapeTableCell` blindly DOUBLES every backslash in a cell's final text
+ * (to protect its own `|`-splitting), which would silently unescape a
+ * `\[`/`\]` produced here the moment this markdown lands in a table cell
+ * (formatCellValue's image case, below). Newlines collapse to spaces for the
+ * same "can't break out of the link-text span" reason.
+ */
+function sanitizeMarkdownAltText(text: string): string {
+  return text
+    .replace(/[[\]\\]/g, '')
+    .replace(/\r?\n+/g, ' ')
+    .trim()
+}
+
+/**
+ * Percent-encode the handful of characters that would otherwise break a
+ * bare, unbracketed markdown link destination `(src)`: a literal `)` closes
+ * the destination early, and a space or `(` confuses where it ends. Percent-
+ * encoding (rather than wrapping in `<...>` or backslash-escaping) is used
+ * deliberately: it introduces no backslash of its own, so - like
+ * `sanitizeMarkdownAltText` above - it survives `escapeTableCell`'s blind
+ * backslash-doubling unchanged when this lands in a table cell.
+ */
+function encodeMarkdownLinkDestination(src: string): string {
+  return src
+    .replace(/[\r\n]+/g, '')
+    .replace(/ /g, '%20')
+    .replace(/\(/g, '%28')
+    .replace(/\)/g, '%29')
+}
+
+/**
  * Format an `image` field value as markdown image syntax: `![alt](src)`.
- * Uses the value's own `alt` when non-empty, otherwise `altFallback`.
- * Malformed values (not a `{ src, alt }`-shaped object — e.g. a legacy bare
- * URL string) degrade to a plain string, matching how neighboring field
- * serializers (e.g. renderObjectField, formatReference) handle unexpected shapes.
+ * Uses the value's own `alt` when non-empty, otherwise `altFallback`. Both
+ * `alt` and `src` are sanitized for their respective markdown contexts (see
+ * `sanitizeMarkdownAltText`/`encodeMarkdownLinkDestination`) since `alt` is
+ * user free-text and `src` may contain characters unsafe in a bare link
+ * destination. Malformed values (not a `{ src, alt }`-shaped object — e.g. a
+ * legacy bare URL string) degrade to a plain string, matching how neighboring
+ * field serializers (e.g. renderObjectField, formatReference) handle
+ * unexpected shapes.
  */
 function formatImageMarkdown(value: unknown, altFallback: string): string {
   if (!isImageValueLike(value)) {
     return String(value)
   }
   const alt = typeof value.alt === 'string' && value.alt.trim() !== '' ? value.alt : altFallback
-  return `![${alt}](${value.src})`
+  return `![${sanitizeMarkdownAltText(alt)}](${encodeMarkdownLinkDestination(value.src)})`
 }
 
 /**
@@ -548,6 +590,13 @@ function applyFieldTransform(
 function formatInlineValue(field: FieldConfig, value: unknown): string {
   if (field.type === 'boolean') return value ? 'Yes' : 'No'
   if (field.type === 'reference') return formatReference(value)
+  // Without this, an `image` field falls through to `String(value)` below,
+  // which stringifies the structured `{ src, alt }` value object as the
+  // useless literal text "[object Object]" - hit by MD/MDX frontmatter
+  // metadata fields (renderMarkdownEntry) and top-level `list: true` image
+  // fields (renderListField's primitive-list branch), both of which call
+  // this function directly.
+  if (field.type === 'image') return formatImageMarkdown(value, field.label || field.name)
   return String(value)
 }
 

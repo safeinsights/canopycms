@@ -316,6 +316,50 @@ describe('finalize + uploadProxied (real LocalAssetStore in a tmp dir)', () => {
     expect(res.status).toBe(400)
   })
 
+  it('uploadProxied: rejects (413) an over-cap Content-Length before ever reading the multipart body', async () => {
+    let formDataCalled = false
+    const req: ApiRequest = authedReq({
+      rawRequest: {
+        method: 'POST',
+        url: 'http://localhost/assets/upload',
+        header: (name) =>
+          name.toLowerCase() === 'content-length' ? String(200 * 1024 * 1024) : null,
+        json: async () => undefined,
+        formData: async () => {
+          formDataCalled = true
+          return new FormData()
+        },
+      } as CanopyRequest,
+    })
+
+    const res = await ASSET_ROUTES.uploadProxied.handler(ctxWith(store), req)
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(413)
+    expect(formDataCalled).toBe(false)
+  })
+
+  it('uploadProxied: an absent Content-Length header falls through to the post-read size check', async () => {
+    // No Content-Length header at all - the early guard is a no-op (header
+    // returns null), and the request proceeds to the real (small) body,
+    // which passes the post-read check normally.
+    const file = new File([bytesOf(PNG_3X5_BASE64)], 'a.png', { type: 'image/png' })
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const req: ApiRequest = authedReq({
+      rawRequest: {
+        method: 'POST',
+        url: 'http://localhost/assets/upload',
+        header: () => null,
+        json: async () => undefined,
+        formData: async () => formData,
+      } as CanopyRequest,
+    })
+
+    const res = await ASSET_ROUTES.uploadProxied.handler(ctxWith(store), req)
+    expect(res.ok).toBe(true)
+  })
+
   it('uploadProxied: rejects (400) when the adapter never wired formData()', async () => {
     const req: ApiRequest = authedReq({
       rawRequest: {

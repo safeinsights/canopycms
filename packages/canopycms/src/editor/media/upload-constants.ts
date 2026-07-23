@@ -23,5 +23,20 @@ export const ACCEPTED_ASSET_MIME_TYPES: string[] = [
   'application/pdf',
 ]
 
+/**
+ * Image-only subset of `ACCEPTED_ASSET_MIME_TYPES` (raster + svg, no PDF) -
+ * for contexts that only ever want an image out: the ImageField/MDX-image
+ * dropzones, and MediaLibraryBody's `picker` mode (used exclusively by those
+ * two - see MediaLibrary.tsx's doc comment). The general MediaLibrary
+ * (`manage` mode) keeps accepting the full set, PDF included.
+ */
+export const ACCEPTED_IMAGE_MIME_TYPES: string[] = [
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml',
+]
+
 /** Mirrors store-local.ts/store-s3.ts's DEFAULT_MAX_UPLOAD_BYTES. The real limit is enforced by the presigned target's `maxBytes` (S3 content-length-range or the local store's own cap); this only avoids a doomed upload attempt. */
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024

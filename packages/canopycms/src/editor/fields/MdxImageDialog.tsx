@@ -23,7 +23,7 @@ import type {
 import type { AssetRecord } from '../../api'
 import { MediaLibraryBody } from '../media/MediaLibraryBody'
 import { useAssetUpload } from '../media/useAssetUpload'
-import { ACCEPTED_ASSET_MIME_TYPES, MAX_UPLOAD_BYTES } from '../media/upload-constants'
+import { ACCEPTED_IMAGE_MIME_TYPES, MAX_UPLOAD_BYTES } from '../media/upload-constants'
 
 export type MdxImageDialogState =
   | InactiveImageDialogState
@@ -140,14 +140,14 @@ export const MdxImageDialog: React.FC<MdxImageDialogProps> = ({ state, onSave, o
                 onDrop={(files) => void handleDrop(files)}
                 onReject={handleReject}
                 maxSize={MAX_UPLOAD_BYTES}
-                accept={ACCEPTED_ASSET_MIME_TYPES}
+                accept={ACCEPTED_IMAGE_MIME_TYPES}
                 loading={upload.uploading}
                 multiple={false}
                 data-testid="mdx-image-dialog-dropzone"
               >
                 <Group justify="center" gap="xs" py="sm" style={{ pointerEvents: 'none' }}>
                   <IconUpload size={20} />
-                  <Text size="sm">Drop an image or PDF here, or click to browse</Text>
+                  <Text size="sm">Drop an image here, or click to browse</Text>
                 </Group>
               </Dropzone>
               {upload.uploading &&

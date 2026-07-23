@@ -27,20 +27,26 @@
  *      this response never reaches the viewer.
  *   6. Return the bytes inline (base64, Function URL payload v2) when small
  *      enough to fit the Function URL's ~6 MiB buffered-response cap;
- *      otherwise 302 back to the request's own path with
- *      `Cache-Control: no-store` (CloudFront re-fetches from S3, now a hit -
- *      the `no-store` is required so the REDIRECT itself is never cached,
- *      which is the "cached-redirect trap" documented in the design record
- *      at .claude/future-tasks/assets-media-system.md).
+ *      otherwise 302 to the CANONICAL key's own path (NOT `rawPath` - see
+ *      below) with `Cache-Control: no-store` (CloudFront re-fetches from S3,
+ *      now a hit - the `no-store` is required so the REDIRECT itself is
+ *      never cached at the CloudFront layer, which is the "cached-redirect
+ *      trap" documented in the design record at
+ *      .claude/future-tasks/assets-media-system.md; the CloudFront-layer
+ *      side of that trap is additionally closed by the custom, minTtl-0
+ *      cache policy `AssetSupport` attaches to this behavior instead of the
+ *      managed CACHING_OPTIMIZED policy, whose 1s min TTL would otherwise
+ *      cache this `no-store` response anyway).
  *
  * Note: URLs `canopycms` itself generates always carry canonically-ordered
  * directives (`assets/asset-url.ts`'s `assetUrl()` formats through the same
  * `formatDirectives`), so `rawPath` and the canonical key are the same
  * string in every URL this system produces. A hand-crafted request with a
- * non-canonical directive order would redirect back to a path that differs
- * from the just-written canonical key; CloudFront would miss again and this
- * Lambda would simply redo the (idempotent) transform on the next hit -
- * correct, just not optimally cached for that one non-canonical path.
+ * non-canonical directive order gets an oversized-output redirect to the
+ * CANONICAL key (not back to `rawPath`) precisely so that redirect lands on
+ * the object this Lambda just wrote - redirecting to `rawPath` instead would
+ * have CloudFront miss the same non-canonical path forever, re-invoking this
+ * Lambda (and re-paying its cost) on every single hit for that path.
  */
 
 import {
@@ -66,10 +72,16 @@ const TRANSFORM_CACHE_CONTROL = 'public, max-age=31536000, immutable'
 /**
  * Function URLs buffer the response and base64-encode it for payload v2;
  * AWS documents a ~6 MiB cap on that buffered response. Base64 inflates
- * bytes by ~4/3, so 4.5 MiB of raw output stays comfortably under the cap
- * after encoding (4.5 MiB * 4/3 = 6 MiB).
+ * bytes by exactly 4/3, so 4 MiB of raw output becomes ~5.33 MiB after
+ * encoding - leaving real headroom under the 6 MiB cap for the JSON-envelope
+ * overhead this response doesn't actually have (the body IS the raw base64,
+ * not JSON-wrapped - see `inlineImageResponse`) plus the response headers
+ * Lambda's own invoke-result framing adds on top of the payload itself.
+ * (A previous 4.5 MiB threshold based its headroom claim on 4.5 MiB * 4/3
+ * landing EXACTLY at 6 MiB, i.e. zero headroom - any framing overhead at all
+ * pushed it over, 502-ing the first request for an output near the cap.)
  */
-const INLINE_BODY_LIMIT_BYTES = 4.5 * 1024 * 1024
+const INLINE_BODY_LIMIT_BYTES = 4 * 1024 * 1024
 
 function requireEnv(name: string): string {
   const value = process.env[name]
@@ -240,7 +252,14 @@ async function handleTransformRequest(
     return inlineImageResponse(transformed.data, transformed.contentType)
   }
 
-  return redirectNoStore(rawPath)
+  // Redirect to the CANONICAL key just written above, not `rawPath` - for a
+  // non-canonically-ordered directive request the two differ, and
+  // redirecting back to `rawPath` would have CloudFront re-miss the same
+  // non-canonical path forever (the canonical key is what actually exists in
+  // S3), re-invoking this Lambda on every hit instead of ever landing a
+  // cache hit. See the module doc comment's "Note" for why canopycms' own
+  // URLs never hit this case (they're always canonically ordered already).
+  return redirectNoStore(`/${canonicalKey}`)
 }
 
 export const handler = async (

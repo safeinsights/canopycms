@@ -177,6 +177,29 @@ const uploadProxiedHandler = async (
     }
   }
 
+  // Early size guard from the Content-Length header, BEFORE the multipart
+  // body is ever read - `formData()`/`filePart.arrayBuffer()` below fully
+  // buffer the upload into memory, so without this an over-cap request still
+  // pays the full read cost before the (correct, but too-late) post-read
+  // check further down rejects it. `beginUpload()` is the store-agnostic way
+  // to learn "the store's max" (mirrors presignAssetHandler's own use of it)
+  // - filename/contentType are placeholders here since only `.maxBytes` is
+  // read; the real `beginUpload()` call below (with the actual filename)
+  // still runs after the body is read to build the real staging target.
+  const contentLengthHeader = req.rawRequest.header('content-length')
+  if (contentLengthHeader !== null) {
+    const contentLength = Number(contentLengthHeader)
+    if (Number.isFinite(contentLength)) {
+      const { maxBytes } = await ctx.assetStore.beginUpload({
+        filename: 'upload',
+        contentType: 'application/octet-stream',
+      })
+      if (contentLength > maxBytes) {
+        return { ok: false, status: 413, error: `File exceeds the ${maxBytes}-byte limit` }
+      }
+    }
+  }
+
   let formData: FormData
   try {
     formData = await req.rawRequest.formData()
@@ -204,6 +227,10 @@ const uploadProxiedHandler = async (
     contentType: filePart.type || 'application/octet-stream',
     size: data.byteLength,
   })
+  // Defense-in-depth: the Content-Length guard above is the primary check
+  // (it runs before the body is buffered at all) but a missing or lying
+  // Content-Length header would skip it entirely, so the actual byte count
+  // is still re-checked here against the same store-provided bound.
   if (data.byteLength > target.maxBytes) {
     return { ok: false, status: 413, error: `File exceeds the ${target.maxBytes}-byte limit` }
   }

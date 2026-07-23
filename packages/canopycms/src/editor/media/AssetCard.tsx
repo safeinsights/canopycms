@@ -30,6 +30,14 @@ const THUMBNAIL_WIDTH = 160
 export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, onDelete }) => {
   const uploadedDate = new Date(asset.uploadedAt).toLocaleDateString()
 
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!onSelect) return
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      onSelect(asset)
+    }
+  }
+
   return (
     <Card
       withBorder
@@ -38,6 +46,13 @@ export const AssetCard: React.FC<AssetCardProps> = ({ asset, baseUrl, onSelect, 
       data-testid={`asset-card-${asset.hash32}`}
       style={{ position: 'relative', cursor: onSelect ? 'pointer' : undefined }}
       onClick={onSelect ? () => onSelect(asset) : undefined}
+      // Selection is otherwise a bare click handler on a non-interactive
+      // element, unreachable from the keyboard - role="button" + tabIndex
+      // makes it focusable and announced correctly, and onKeyDown mirrors
+      // native <button> Enter/Space activation.
+      role={onSelect ? 'button' : undefined}
+      tabIndex={onSelect ? 0 : undefined}
+      onKeyDown={onSelect ? handleKeyDown : undefined}
     >
       {onDelete && (
         <ActionIcon

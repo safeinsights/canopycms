@@ -115,6 +115,15 @@ describe('ImageField', () => {
     expect(screen.queryByTestId('image-field-alt-hero')).toBeNull()
   })
 
+  it('restricts the dropzone to image mime types - PDF is excluded', () => {
+    renderField()
+    const dropzone = screen.getByTestId('image-field-dropzone-hero')
+    const input = dropzone.querySelector('input[type="file"]') as HTMLInputElement
+    expect(input).toBeTruthy()
+    expect(input.accept).not.toContain('application/pdf')
+    expect(input.accept).toContain('image/png')
+  })
+
   it('picking from the library (no aspect) commits the value immediately', async () => {
     mockClient.assets.list.mockResolvedValueOnce({
       ok: true,
