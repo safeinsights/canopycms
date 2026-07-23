@@ -83,6 +83,7 @@ export class BranchWorkspaceManager {
             defaultRemoteUrl: this.config.defaultRemoteUrl,
             remoteUrl: options.remoteUrl,
             remoteName: this.config.defaultRemoteName,
+            allowNetworkRemoteInProd: this.config.allowNetworkRemoteInProd,
             branchType: 'content',
             gitBotAuthorName: this.config.gitBotAuthorName,
             gitBotAuthorEmail: this.config.gitBotAuthorEmail,
