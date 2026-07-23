@@ -68,6 +68,10 @@ export const CanopyConfigSchema = z
     // validation loudly rather than silently running header-trusting dev auth semantics.
     mode: operatingModeSchema,
     deployedAs: deployedAsSchema, // Has .default('server'), so always present after validation
+    // Escape hatch for prod hosts that genuinely have internet access and intentionally
+    // run git against a network remote (see GitManager.resolveRemoteUrl's prod-mode guard).
+    // Default false/unset — the standard AWS Lambda+worker topology must leave this unset.
+    allowNetworkRemoteInProd: z.boolean().optional(),
     settingsBranch: z.string().optional(),
     autoCreateSettingsPR: z.boolean().optional(),
     deploymentName: deploymentNameSchema.optional(),

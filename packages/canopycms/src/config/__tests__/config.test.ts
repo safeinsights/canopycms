@@ -118,6 +118,7 @@ describe('config validation', () => {
       deployedAs: 'static',
       settingsBranch: 'canopy-settings',
       autoCreateSettingsPR: true,
+      allowNetworkRemoteInProd: true,
       editor: { title: 'My Editor' },
       entryLinkUrl: () => '/some/url',
     }
@@ -130,8 +131,24 @@ describe('config validation', () => {
     expect(config.deployedAs).toBe('static')
     expect(config.settingsBranch).toBe('canopy-settings')
     expect(config.autoCreateSettingsPR).toBe(true)
+    expect(config.allowNetworkRemoteInProd).toBe(true)
     expect(config.editor?.title).toBe('My Editor')
     expect(typeof config.entryLinkUrl).toBe('function')
+  })
+
+  // PR-F: allowNetworkRemoteInProd must be accepted by the .strict() schema (it's
+  // consumed by GitManager's prod-mode network-remote guard, not by config
+  // validation itself) and must default to undefined/falsy when omitted.
+  it('accepts allowNetworkRemoteInProd and defaults it to undefined when omitted', () => {
+    const withFlag = validateCanopyConfig({
+      ...gitAuthor,
+      mode: 'prod',
+      allowNetworkRemoteInProd: true,
+    })
+    expect(withFlag.allowNetworkRemoteInProd).toBe(true)
+
+    const withoutFlag = validateCanopyConfig({ ...gitAuthor, mode: 'prod' })
+    expect(withoutFlag.allowNetworkRemoteInProd).toBeUndefined()
   })
 
   it('lets a later fragment override an earlier fragment field-by-field', () => {

@@ -1018,6 +1018,8 @@ Both `prod` and `dev` modes use a local bare git repository as the "remote" for 
 
 CanopyCMS auto-detects `remote.git` at the workspace root (via `autoDetectRemotePath` in the operating mode strategy). No explicit `CANOPYCMS_REMOTE_URL` env var needed if `remote.git` exists.
 
+**Prod-mode network-remote guard:** because the Lambda in this topology has no internet access, `GitManager.resolveRemoteUrl` rejects a resolved NETWORK remote URL (`http(s)://`, `ssh://`, `git://`, or scp-like `user@host:path`) in `prod` mode, regardless of whether it came from an explicit `remoteUrl` param, `config.defaultRemoteUrl`, or the `CANOPYCMS_REMOTE_URL` env var — pointing any of those at GitHub directly would make the internet-less Lambda hang trying to clone/fetch/push it. `file://` URLs and plain filesystem paths (including the auto-detected `remote.git` above) are local and unaffected. Prod hosts that genuinely have internet access and intentionally run git against a network remote (e.g. a single-VM deployment outside this topology) can opt out per-deployment via `config.allowNetworkRemoteInProd: true`.
+
 #### Auth Caching (CachingAuthPlugin)
 
 `CachingAuthPlugin` wraps any auth plugin's JWT verification with file-based metadata lookups:

@@ -14,7 +14,7 @@ import { invalidateBranchContentCaches } from './content-index-generation'
 import type { OperatingMode } from './operating-mode'
 import { createDebugLogger } from './utils/debug'
 import { getErrorMessage, isNotFoundError } from './utils/error'
-import { resolveBaseBranch } from './utils/git'
+import { isNetworkRemoteUrl, resolveBaseBranch } from './utils/git'
 import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
@@ -87,6 +87,12 @@ export interface ResolveRemoteUrlOptions {
   defaultRemoteUrl?: string
   baseBranch: string
   sourceRoot?: string
+  /**
+   * Escape hatch: allow a resolved NETWORK remote URL (from remoteUrl/
+   * defaultRemoteUrl/the strategy env var) in prod mode. See CanopyConfig's
+   * `allowNetworkRemoteInProd` doc comment. Has no effect in dev mode.
+   */
+  allowNetworkRemoteInProd?: boolean
 }
 
 export interface InitializeWorkspaceOptions {
@@ -98,6 +104,12 @@ export interface InitializeWorkspaceOptions {
   defaultRemoteUrl?: string
   remoteUrl?: string
   remoteName?: string
+  /**
+   * Escape hatch: allow a resolved NETWORK remote URL in prod mode. Threaded
+   * through to `resolveRemoteUrl` — see its option of the same name and
+   * CanopyConfig's `allowNetworkRemoteInProd` doc comment.
+   */
+  allowNetworkRemoteInProd?: boolean
   branchType: 'content' | 'orphan' // Determines checkout vs createOrphan
   /** Git author name for internal commits (e.g., orphan branch init). */
   gitBotAuthorName: string
@@ -439,6 +451,47 @@ export class GitManager {
   }
 
   /**
+   * Guards prod mode against pointing git operations at a NETWORK remote
+   * (http(s)://, ssh://, git://, or scp-like `user@host:path`).
+   *
+   * In the intended prod architecture the CMS Lambda has no internet access:
+   * all git network I/O happens on the EC2 worker against the EFS-local bare
+   * repo `{workspace}/remote.git`, which the Lambda reaches via auto-detect
+   * (see `resolveRemoteUrl`'s auto-detect step, which always yields a local
+   * path by construction — never checked here). A network URL supplied via
+   * any of the three resolvable sources (explicit param, config, env var) is
+   * almost always a misconfiguration: the internet-less Lambda would try to
+   * clone/fetch/push it directly and hang until timeout.
+   *
+   * Dev mode is never restricted here — this only fires for `mode === 'prod'`.
+   * `file://` URLs and plain filesystem paths are LOCAL and always allowed.
+   *
+   * @param source - Human-readable description of where `url` came from, used
+   *   only in the thrown error message (e.g. "config.defaultRemoteUrl").
+   */
+  private static assertRemoteUrlAllowedInMode(
+    mode: OperatingMode,
+    url: string,
+    source: string,
+    allowNetworkRemoteInProd: boolean | undefined,
+  ): void {
+    if (mode !== 'prod') return
+    if (allowNetworkRemoteInProd) return
+    if (!isNetworkRemoteUrl(url)) return
+
+    throw new Error(
+      `CanopyCMS: refusing to use a network remote URL in prod mode (from ${source}: "${url}"). ` +
+        `The standard AWS Lambda+EC2-worker topology runs the CMS Lambda with no internet ` +
+        `access — the EC2 worker owns all network git I/O, and the Lambda is expected to reach ` +
+        `the EFS-local bare repo ({workspace}/remote.git) via auto-detect instead. Pointing a ` +
+        `network URL here would make the internet-less Lambda try to clone/fetch/push it ` +
+        `directly and hang until timeout. If this prod host genuinely has internet access and ` +
+        `intentionally runs git against a network remote (e.g. a single-VM deployment), set ` +
+        `config.allowNetworkRemoteInProd: true to acknowledge this.`,
+    )
+  }
+
+  /**
    * Resolves the remote URL for git operations following the priority:
    * 1. Explicit remoteUrl parameter
    * 2. Config defaultRemoteUrl
@@ -446,6 +499,11 @@ export class GitManager {
    * 4. Auto-initialized local remote (for dev mode)
    *
    * Uses strategy flags to determine behavior, GitManager executes the logic.
+   *
+   * In prod mode, a resolved network URL from any of the first three sources
+   * is rejected unless `options.allowNetworkRemoteInProd` is set — see
+   * `assertRemoteUrlAllowedInMode`. Auto-detect/auto-init (source 4) are never
+   * checked: they always yield a local filesystem path by construction.
    *
    * @param options.sourceRoot - Optional source directory for monorepos. When provided,
    *   this directory (relative to git root) is used as the source for the simulated remote.
@@ -461,9 +519,34 @@ export class GitManager {
     const config = strategy.getRemoteUrlConfig()
 
     // Centralized priority chain (no duplication across strategies)
-    if (options.remoteUrl) return options.remoteUrl
-    if (options.defaultRemoteUrl) return options.defaultRemoteUrl
-    if (process.env[config.envVarName]) return process.env[config.envVarName]
+    if (options.remoteUrl) {
+      this.assertRemoteUrlAllowedInMode(
+        options.mode,
+        options.remoteUrl,
+        'the explicit remoteUrl parameter',
+        options.allowNetworkRemoteInProd,
+      )
+      return options.remoteUrl
+    }
+    if (options.defaultRemoteUrl) {
+      this.assertRemoteUrlAllowedInMode(
+        options.mode,
+        options.defaultRemoteUrl,
+        'config.defaultRemoteUrl',
+        options.allowNetworkRemoteInProd,
+      )
+      return options.defaultRemoteUrl
+    }
+    const envUrl = process.env[config.envVarName]
+    if (envUrl) {
+      this.assertRemoteUrlAllowedInMode(
+        options.mode,
+        envUrl,
+        `the ${config.envVarName} environment variable`,
+        options.allowNetworkRemoteInProd,
+      )
+      return envUrl
+    }
 
     // Auto-detect: check if a pre-existing remote.git exists at the expected path
     // (e.g., created by EC2 worker on EFS in prod mode)
@@ -558,6 +641,7 @@ export class GitManager {
         defaultRemoteUrl: options.defaultRemoteUrl,
         baseBranch,
         sourceRoot: options.sourceRoot,
+        allowNetworkRemoteInProd: options.allowNetworkRemoteInProd,
       })
 
       // Require remoteUrl for cloning
@@ -620,6 +704,7 @@ export class GitManager {
         defaultRemoteUrl: options.defaultRemoteUrl,
         baseBranch,
         sourceRoot: options.sourceRoot,
+        allowNetworkRemoteInProd: options.allowNetworkRemoteInProd,
       })
       if (remoteUrl) {
         await git.ensureRemote(remoteUrl)
