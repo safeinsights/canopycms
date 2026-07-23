@@ -9,6 +9,7 @@ import {
   aws_s3 as s3,
 } from 'aws-cdk-lib'
 import { CanopyCmsService } from './cms-service'
+import type { CanopyCmsServiceProps } from './cms-service'
 import { CanopyCmsDistribution } from './cms-distribution'
 
 /**
@@ -17,7 +18,7 @@ import { CanopyCmsDistribution } from './cms-distribution'
  * Cluster B deploy blockers: Lambda↔EFS egress (DEP-C1) and the CloudFront-only
  * Function URL (DEP-H2).
  */
-function synth(withDistribution = false): Template {
+function synth(withDistribution = false, overrides: Partial<CanopyCmsServiceProps> = {}): Template {
   const app = new App()
   const stack = new Stack(app, 'TestStack', {
     env: { account: '123456789012', region: 'us-east-1' },
@@ -28,6 +29,7 @@ function synth(withDistribution = false): Template {
     ),
     githubOwner: 'acme',
     githubRepo: 'site',
+    ...overrides,
   })
 
   if (withDistribution) {
@@ -193,5 +195,138 @@ describe('CanopyCmsService B1: the Lambda can actually reach S3', () => {
       .join('\n')
 
     expect(resourcePatterns).not.toContain('asset-originals/*')
+  })
+})
+
+describe('CanopyCmsService: Lambda architecture', () => {
+  it('defaults to x86_64 (no explicit Architectures override) when architecture is omitted', () => {
+    const template = synth()
+    // Lambda's own default is x86_64; CDK renders that as no `Architectures`
+    // property at all rather than an explicit 'x86_64' entry - assert
+    // whichever of the two the template actually contains.
+    const fns = template.findResources('AWS::Lambda::Function', {
+      Properties: Match.objectLike({ PackageType: 'Image' }),
+    })
+    const architectures = Object.values(fns).map(
+      (fn) => (fn.Properties as { Architectures?: string[] }).Architectures,
+    )
+    expect(architectures.length).toBeGreaterThan(0)
+    for (const arch of architectures) {
+      expect(arch === undefined || arch?.[0] === 'x86_64').toBe(true)
+    }
+  })
+
+  it('sets Architectures to arm64 when architecture: Architecture.ARM_64 is passed', () => {
+    const template = synth(false, { architecture: lambda.Architecture.ARM_64 })
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({ Architectures: ['arm64'] }),
+    )
+  })
+})
+
+describe('CanopyCmsService B1: Lambda and worker resolve the same EFS directory', () => {
+  it('sets the Lambda workspace root and auth cache path under the access-point-relative /mnt/efs', () => {
+    const template = synth()
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        Environment: Match.objectLike({
+          Variables: Match.objectLike({
+            CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs',
+            CANOPY_AUTH_CACHE_PATH: '/mnt/efs/.cache',
+          }),
+        }),
+      }),
+    )
+  })
+
+  it('lambda workspace root and worker workspace path resolve to the same EFS directory', () => {
+    const template = synth()
+    // Lambda mounts EFS through the WorkspaceAP access point, which is
+    // already rooted at EFS:/workspace - so the Lambda's /mnt/efs IS
+    // EFS:/workspace.
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        Environment: Match.objectLike({
+          Variables: Match.objectLike({ CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs' }),
+        }),
+      }),
+    )
+    // The worker instead mounts the filesystem ROOT at /mnt/efs and reaches
+    // the same EFS:/workspace directory via /mnt/efs/workspace - assert its
+    // UserData actually references that mount-root + workspace path.
+    const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
+    const userDataBlobs = Object.values(launchConfigs).map((lc) =>
+      JSON.stringify((lc.Properties as { UserData?: unknown }).UserData),
+    )
+    expect(userDataBlobs.some((blob) => blob.includes('/mnt/efs/workspace'))).toBe(true)
+  })
+})
+
+describe('CanopyCmsService B7: git dubious-ownership workaround', () => {
+  it('sets GIT_CONFIG_* env vars so git treats the EFS-owned (uid 1000) repo as safe', () => {
+    const template = synth()
+    template.hasResourceProperties(
+      'AWS::Lambda::Function',
+      Match.objectLike({
+        Environment: Match.objectLike({
+          Variables: Match.objectLike({
+            GIT_CONFIG_COUNT: '1',
+            GIT_CONFIG_KEY_0: 'safe.directory',
+            GIT_CONFIG_VALUE_0: '*',
+          }),
+        }),
+      }),
+    )
+  })
+})
+
+describe('CanopyCmsService B8: worker region resolution', () => {
+  it('writes an AWS_REGION line into the worker UserData env file', () => {
+    const template = synth()
+    const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
+    const userDataBlobs = Object.values(launchConfigs).map((lc) =>
+      JSON.stringify((lc.Properties as { UserData?: unknown }).UserData),
+    )
+    expect(userDataBlobs.some((blob) => /AWS_REGION=/.test(blob))).toBe(true)
+  })
+})
+
+describe('CanopyCmsService: worker SSM observability', () => {
+  it('grants the worker role AmazonSSMManagedInstanceCore', () => {
+    const template = synth()
+    const roles = template.findResources('AWS::IAM::Role', {
+      Properties: Match.objectLike({ Description: 'CanopyCMS EC2 Worker role' }),
+    })
+    const managedPolicyArns = Object.values(roles).flatMap(
+      (role) => (role.Properties as { ManagedPolicyArns?: unknown[] }).ManagedPolicyArns ?? [],
+    )
+    const serialized = managedPolicyArns.map((arn) => JSON.stringify(arn)).join('\n')
+    expect(serialized).toContain('AmazonSSMManagedInstanceCore')
+  })
+})
+
+describe('CanopyCmsService: boot ordering vs EFS mount targets', () => {
+  it('makes the worker ASG depend on the EFS mount targets being available', () => {
+    const template = synth()
+    const mountTargetIds = Object.keys(template.findResources('AWS::EFS::MountTarget'))
+    expect(mountTargetIds.length).toBeGreaterThan(0)
+
+    const asgs = template.findResources('AWS::AutoScaling::AutoScalingGroup')
+    const asgEntries = Object.values(asgs)
+    expect(asgEntries).toHaveLength(1)
+
+    const dependsOnRaw = (asgEntries[0] as { DependsOn?: string | string[] }).DependsOn
+    const dependsOn = Array.isArray(dependsOnRaw)
+      ? dependsOnRaw
+      : dependsOnRaw
+        ? [dependsOnRaw]
+        : []
+
+    for (const mountTargetId of mountTargetIds) {
+      expect(dependsOn).toContain(mountTargetId)
+    }
   })
 })
