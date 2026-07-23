@@ -78,20 +78,34 @@ export class CanopyCmsDistribution extends Construct {
     // the OAC and grants CloudFront lambda:InvokeFunctionUrl automatically.
     const origin = origins.FunctionUrlOrigin.withOriginAccessControl(props.functionUrl)
 
-    // Cache policy for API/editor routes: no caching, forward all headers
+    // Cache policy for API/editor routes: caching is fully disabled (all
+    // TTLs 0), so headerBehavior must stay `none()` - it governs the CACHE
+    // KEY, not what reaches the origin. Two concrete failure modes if it
+    // doesn't:
+    //   - CloudFront REJECTS any cache policy that allowlists `Authorization`
+    //     while all TTLs are 0 - a deploy-time synth/deploy failure (see
+    //     aws/aws-cdk#16977).
+    //   - Allowlisting `Host` here would forward the viewer's Host header to
+    //     the Lambda Function URL origin, which breaks the OAC-signed
+    //     Function URL (the managed `ALL_VIEWER_EXCEPT_HOST_HEADER` origin
+    //     request policy below exists precisely to strip that header).
+    // `Cookie` doesn't belong in headerBehavior either - cookies are
+    // controlled by cookieBehavior (all(), below). None of this reduces what
+    // the origin actually receives: defaultBehavior pairs this policy with
+    // the `ALL_VIEWER_EXCEPT_HOST_HEADER` origin request policy, which
+    // forwards the full viewer request (headers/cookies/query string, minus
+    // Host) to the origin regardless of the (empty) cache key.
     const noCachePolicy = new cloudfront.CachePolicy(this, 'NoCachePolicy', {
-      cachePolicyName: `${id}-no-cache`,
       defaultTtl: Duration.seconds(0),
       maxTtl: Duration.seconds(0),
       minTtl: Duration.seconds(0),
-      headerBehavior: cloudfront.CacheHeaderBehavior.allowList('Authorization', 'Cookie', 'Host'),
+      headerBehavior: cloudfront.CacheHeaderBehavior.none(),
       queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
       cookieBehavior: cloudfront.CacheCookieBehavior.all(),
     })
 
     // Cache policy for static assets
     const staticCachePolicy = new cloudfront.CachePolicy(this, 'StaticCachePolicy', {
-      cachePolicyName: `${id}-static`,
       defaultTtl: Duration.days(365),
       maxTtl: Duration.days(365),
       minTtl: Duration.days(365),

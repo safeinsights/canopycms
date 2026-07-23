@@ -107,6 +107,62 @@ describe('CanopyCmsDistribution origin access control', () => {
   })
 })
 
+describe('CanopyCmsDistribution B5/B9: cache policy cache-key hygiene', () => {
+  it('B5a/B5b/B5c: no CachePolicy in the template allowlists Authorization/Host/Cookie as a header - the no-cache policy uses headerBehavior none(), with cookies/query strings carried by their own (non-header) config', () => {
+    const template = synth(true)
+    const policies = template.findResources('AWS::CloudFront::CachePolicy')
+    const configs = Object.values(policies).map((policy) => policy.Properties.CachePolicyConfig)
+    expect(configs.length).toBeGreaterThan(0)
+
+    for (const config of configs) {
+      const headersConfig = config.ParametersInCacheKeyAndForwardedToOrigin.HeadersConfig
+      // headerBehavior must be 'none' everywhere - allowlisting Authorization
+      // here is a deploy-time rejection when all TTLs are 0 (aws/aws-cdk#16977),
+      // and allowlisting Host forwards the viewer Host header to the Lambda
+      // Function URL origin, breaking its OAC signature.
+      expect(headersConfig.HeaderBehavior).toBe('none')
+      expect(headersConfig.Headers).toBeUndefined()
+    }
+
+    // The no-cache policy (all TTLs 0) is the one that carries the cache
+    // key's cookie/query-string behavior for API/editor routes.
+    const noCachePolicy = configs.find((config) => config.MinTTL === 0 && config.MaxTTL === 0)
+    expect(noCachePolicy).toBeDefined()
+    expect(
+      noCachePolicy?.ParametersInCacheKeyAndForwardedToOrigin.CookiesConfig.CookieBehavior,
+    ).toBe('all')
+    expect(
+      noCachePolicy?.ParametersInCacheKeyAndForwardedToOrigin.QueryStringsConfig
+        .QueryStringBehavior,
+    ).toBe('all')
+  })
+
+  it('the default behavior forwards the full viewer request to the origin via the ALL_VIEWER_EXCEPT_HOST_HEADER managed origin request policy', () => {
+    const template = synth(true)
+    template.hasResourceProperties(
+      'AWS::CloudFront::Distribution',
+      Match.objectLike({
+        DistributionConfig: Match.objectLike({
+          DefaultCacheBehavior: Match.objectLike({
+            // Managed "AllViewerExceptHostHeader" origin request policy id.
+            OriginRequestPolicyId: 'b689b0a8-53d0-40ab-baf2-68738e2966ac',
+          }),
+        }),
+      }),
+    )
+  })
+
+  it("does not hardcode account-unique CachePolicy names (they'd collide across stacks) - lets CDK auto-generate them instead", () => {
+    const template = synth(true)
+    const policies = template.findResources('AWS::CloudFront::CachePolicy')
+    const names = Object.values(policies).map((policy) => policy.Properties.CachePolicyConfig.Name)
+    // The old hardcoded names this construct used to emit, given the 'Dist'
+    // construct id used by this test's synth() helper.
+    expect(names).not.toContain('Dist-no-cache')
+    expect(names).not.toContain('Dist-static')
+  })
+})
+
 describe('CanopyCmsService B1: the Lambda can actually reach S3', () => {
   it('adds an S3 gateway VPC endpoint (the PRIVATE_ISOLATED subnet has no NAT/IGW route to S3 otherwise)', () => {
     const template = synth()

@@ -132,18 +132,24 @@ export interface AssetSupportProps {
  * ```ts
  * const behaviors = assetSupport.assetBehaviors()
  *
- * // Building a new distribution:
+ * // Building a new distribution. CloudFront matches path patterns in the
+ * // order they're listed and stops at the first match, so the more
+ * // specific '/assets/t/*' MUST come before '/assets/*' - otherwise the
+ * // broader S3-only pattern swallows transform requests first and they
+ * // 403 with no Lambda fallback.
  * new cloudfront.Distribution(this, 'Dist', {
  *   defaultBehavior: ...,
  *   additionalBehaviors: {
- *     '/assets/*': behaviors.assets,
  *     '/assets/t/*': behaviors.assetsTransform,
+ *     '/assets/*': behaviors.assets,
  *   },
  * })
  *
- * // Adding to an existing distribution:
- * distribution.addBehavior('/assets/*', behaviors.assets.origin, behaviors.assets)
+ * // Adding to an existing distribution: the same first-match-wins ordering
+ * // applies to the resulting CacheBehaviors list, so call addBehavior for
+ * // '/assets/t/*' before '/assets/*' here too.
  * distribution.addBehavior('/assets/t/*', behaviors.assetsTransform.origin, behaviors.assetsTransform)
+ * distribution.addBehavior('/assets/*', behaviors.assets.origin, behaviors.assets)
  * ```
  */
 export interface AssetCloudFrontBehaviors {
