@@ -4,6 +4,7 @@ import { Construct } from 'constructs'
 import {
   Duration,
   RemovalPolicy,
+  Stack,
   aws_ec2 as ec2,
   aws_efs as efs,
   aws_iam as iam,
@@ -37,6 +38,15 @@ export interface CanopyCmsServiceProps {
 
   /** Lambda reserved concurrency cap (default: 10) */
   reservedConcurrency?: number
+
+  /**
+   * Lambda architecture (default: `Architecture.X86_64`, Lambda's own
+   * default). MUST match the platform the Docker image was built for - e.g.
+   * an image built for `Platform.LINUX_ARM64` requires
+   * `Architecture.ARM_64` here, or the function fails at invoke time with
+   * an exec format error.
+   */
+  architecture?: lambda.Architecture
 
   /** EC2 spot max price (default: on-demand rate for t4g.nano) */
   spotMaxPrice?: string
@@ -216,13 +226,28 @@ export class CanopyCmsService extends Construct {
       memorySize: props.memorySize ?? 2048,
       timeout: props.timeout ?? Duration.seconds(60),
       reservedConcurrentExecutions: props.reservedConcurrency ?? 10,
+      architecture: props.architecture,
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [lambdaSg],
       filesystem: lambda.FileSystem.fromEfsAccessPoint(accessPoint, '/mnt/efs'),
       environment: {
-        CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs/workspace',
-        CANOPY_AUTH_CACHE_PATH: '/mnt/efs/workspace/.cache',
+        // INVARIANT (B1): the Lambda mounts EFS through the WorkspaceAP access
+        // point above, which is already rooted at EFS:/workspace - so /mnt/efs
+        // here IS EFS:/workspace. The EC2 worker instead mounts the filesystem
+        // ROOT at /mnt/efs (see UserData below) and reaches the same directory
+        // via /mnt/efs/workspace. Both paths must resolve to EFS:/workspace,
+        // or the Lambda and worker silently operate on different directories.
+        CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs',
+        CANOPY_AUTH_CACHE_PATH: '/mnt/efs/.cache',
+        // B7: git >= 2.35.2 refuses to operate on repos owned by another uid;
+        // the access point above forces uid/gid 1000 on EFS files, but Lambda
+        // runs container images as its own non-1000 user. Scoped to this
+        // function's env only (not baked into the image) and works regardless
+        // of the runtime uid.
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'safe.directory',
+        GIT_CONFIG_VALUE_0: '*',
         ...props.environment,
       },
     })
@@ -305,6 +330,12 @@ export class CanopyCmsService extends Construct {
       iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonElasticFileSystemClientReadWriteAccess'),
     )
 
+    // Observation channel for a NAT-less deploy (SSM Session Manager / send-command);
+    // worker SG already allows 443 egress.
+    workerRole.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
+    )
+
     // Worker S3 Asset — upload bundled worker code to CDK assets bucket
     // The worker is bundled with esbuild into a single JS file (npm run build:worker)
     const workerAsset = new s3assets.Asset(this, 'WorkerCode', {
@@ -318,6 +349,10 @@ export class CanopyCmsService extends Construct {
       `CANOPYCMS_GITHUB_OWNER=${props.githubOwner}`,
       `CANOPYCMS_GITHUB_REPO=${props.githubRepo}`,
       `CANOPYCMS_BASE_BRANCH=${props.baseBranch ?? 'main'}`,
+      // B8: the AWS SDK JS v3 cannot resolve a region from IMDS on its own -
+      // without this the worker's bare `SecretsManagerClient({})` crash-loops
+      // with "Region is missing".
+      `AWS_REGION=${Stack.of(this).region}`,
     ]
     if (props.githubTokenSecretArn) {
       envLines.push(`CANOPYCMS_GITHUB_TOKEN_SECRET_ARN=${props.githubTokenSecretArn}`)
@@ -409,5 +444,11 @@ export class CanopyCmsService extends Construct {
         grace: Duration.minutes(5),
       }),
     })
+
+    // Boot ordering: the ASG can launch before EFS mount targets are
+    // available; user-data runs with `set -euo pipefail`, so an early
+    // `mount -t efs` failure kills the whole bootstrap and the
+    // EC2-health-checked ASG never notices.
+    this.workerAsg.node.addDependency(this.fileSystem.mountTargetsAvailable)
   }
 }
