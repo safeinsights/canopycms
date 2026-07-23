@@ -1,6 +1,6 @@
 // HTTP types
-export type { CanopyRequest, CanopyResponse } from './types'
-export { jsonResponse } from './types'
+export type { CanopyRequest, CanopyResponse, CanopyBinaryResponse } from './types'
+export { jsonResponse, isCanopyBinaryResponse } from './types'
 
 // Router
 export type { CanopyHandler, RouteDefinition, RouteMatch, CanopyRouter } from './router'

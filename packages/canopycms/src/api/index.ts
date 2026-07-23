@@ -30,11 +30,15 @@ export type {
 } from './permissions'
 export type { UserInfoResponse } from './user'
 export type {
+  AssetRecord,
   AssetsListResponse,
-  AssetUploadResponse,
-  UploadAssetBody,
-  DeleteAssetBody,
+  PresignAssetResponse,
+  PresignAssetBody,
+  FinalizeAssetResponse,
+  FinalizeAssetBody,
+  AssetDeleteResponse,
   ListAssetsParams,
+  DeleteAssetParams,
 } from './assets'
 export type {
   InternalGroupsResponse,

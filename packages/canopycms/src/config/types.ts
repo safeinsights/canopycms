@@ -9,6 +9,7 @@ import type { AuthPlugin } from '../auth/plugin'
 import type { LogicalPath, ContentId } from '../paths/types'
 import type { PermissionPath } from '../authorization/types'
 import type { EntryLinkUrlResolver } from '../entry-link-resolver'
+import type { CropRect } from '../assets/transform-directives'
 
 // Field types
 export const primitiveFieldTypes = [
@@ -19,12 +20,15 @@ export const primitiveFieldTypes = [
   'rich-text',
   'markdown',
   'mdx',
-  'image',
   'code',
 ] as const
 
+// 'image' is not a primitive: it has a structured value (ImageFieldValue) and
+// its own per-type config (ImageFieldConfig, below), so it gets a dedicated
+// entry rather than sharing PrimitiveFieldConfig's flat shape.
 export const fieldTypes = [
   ...primitiveFieldTypes,
+  'image',
   'select',
   'reference',
   'object',
@@ -96,6 +100,37 @@ export interface ReferenceFieldConfig extends BaseFieldConfig {
   options?: ReferenceOption[]
 }
 
+/**
+ * Image field config. The value is a structured object (see `ImageFieldValue`
+ * below), not a bare URL string.
+ */
+export interface ImageFieldConfig extends BaseFieldConfig {
+  type: 'image'
+  /**
+   * "W:H" aspect ratio (e.g. "16:9", "1:1") that triggers a crop step in the
+   * editor. Validated at config-parse time: positive integers on both sides.
+   */
+  aspect?: string
+  /** Allow an empty `alt`. Default: alt text is required (accessibility). */
+  altOptional?: boolean
+}
+
+/**
+ * Structured value stored for an `image` field. `src` is typically a
+ * root-relative `/assets/...` URL from the asset pipeline, but any URL string
+ * is accepted — adopters may reference external images. `alt` is required
+ * unless the field config sets `altOptional: true`. `crop` is a normalized
+ * rect using the same constraints as the transform directive parser's `c=`
+ * directive (see `assets/transform-directives.ts`).
+ */
+export interface ImageFieldValue {
+  src: string
+  alt: string
+  width?: number
+  height?: number
+  crop?: CropRect
+}
+
 export interface BlockConfig {
   name: string
   label?: string
@@ -140,6 +175,7 @@ export type FieldConfig =
   | PrimitiveFieldConfig
   | SelectFieldConfig
   | ReferenceFieldConfig
+  | ImageFieldConfig
   | BlockFieldConfig
   | ObjectFieldConfig
   | InlineGroupFieldConfig
@@ -149,8 +185,14 @@ export type FieldConfig =
 // Kept in sync with the discriminated `mediaSchema` in config/schemas/media.ts — only
 // implemented adapters get a literal branch here (see BACKLOG.md "Asset adapters").
 export type MediaConfig =
-  | { adapter: 'local'; publicBaseUrl?: string }
-  | { adapter: 's3'; bucket: string; region: string; publicBaseUrl?: string }
+  | { adapter: 'local'; publicBaseUrl?: string; directory?: string }
+  | {
+      adapter: 's3'
+      bucket: string
+      region: string
+      publicBaseUrl?: string
+      maxUploadBytes?: number
+    }
   | { adapter: 'lfs'; publicBaseUrl?: string }
 
 /**
@@ -415,6 +457,14 @@ export type CanopyClientConfig = Pick<
   'defaultBaseBranch' | 'defaultActiveBranch' | 'contentRoot' | 'editor' | 'mode' | 'entryLinkUrl'
 > & {
   flatSchema: FlatSchemaItem[]
+  /**
+   * `media.publicBaseUrl`, when configured - the only part of `media` safe/
+   * useful to expose client-side (the editor may be served from a different
+   * origin than the site; the rest of `MediaConfig` - bucket, region, etc -
+   * has no business in a browser bundle). Threaded through to `Editor`'s
+   * `assetBaseUrl` prop. Undefined means root-relative asset URLs.
+   */
+  assetBaseUrl?: string
 }
 
 // Client-only fields that can be provided as overrides (e.g., from auth providers)

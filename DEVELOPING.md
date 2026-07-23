@@ -1343,6 +1343,48 @@ Test the resolution flow by:
 
 See `FormRenderer.test.tsx` for examples.
 
+## Working with Assets
+
+CanopyCMS's asset system (image/file upload, storage, and on-demand transforms) lives under `src/assets/`. Contributors touching this area will encounter several new dependencies: `sharp` (image transforms), `file-type` + `image-size` (sniffing/dimensions during finalize), `sanitize-html` (SVG sanitization), `content-disposition` (download headers), `@aws-sdk/client-s3` + `@aws-sdk/s3-presigned-post` (S3 store + presigned uploads), and on the editor side `@mantine/dropzone` (pinned to the exact Mantine core version already in use) plus `react-easy-crop` (crop UI).
+
+### Transform Engine: Shared Between Dev and Prod
+
+The on-demand image transform pipeline (`/assets/t/{directives}/{hash32}/{slug}.{ext}`) is deliberately split into two files so the same logic can be reused unchanged between dev-mode emulation and the prod CDK Lambda:
+
+| File                             | What it is                                                                                                                                                                 | Who imports it                                                                         |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `assets/transform-directives.ts` | Pure, dependency-free parser/formatter for the directive syntax (`w=`, `f=`, `q=`, `c=`). No imports at all, not even other files in `assets/` -- safe for client bundles. | Editor/client code, `assets/asset-url.ts`, `assets/transform.ts`, the transform Lambda |
+| `assets/transform.ts`            | The actual sharp-based pipeline (`applyTransform`). Server-only.                                                                                                           | `api/assets.ts`'s dev-mode lazy-transform route, the transform Lambda                  |
+
+Both the dev-mode `/assets/t/*` route (`serveLazyTransform` in `packages/canopycms/src/api/assets.ts`) and the prod CDK transform Lambda (`packages/canopycms-cdk/lambda/asset-transform/handler.ts`, which imports `parseTransformPath`/`formatDirectives`/`applyTransform` via the `canopycms/server` re-exports) call into these same two files for the actual parsing and pixel work. **Never reimplement directive parsing or the sharp pipeline in just one place** -- change behavior in `transform-directives.ts`/`transform.ts` and both dev and prod pick it up automatically.
+
+### Client-Bundle Safety for Assets
+
+Editor/client code may import **only** the dependency-free isomorphic modules -- `assets/transform-directives` and `assets/asset-url` -- or `import type` from `assets/types`. It must never import the stores (`store-local.ts`, `store-s3.ts`), the upload/finalize pipeline (`pipeline.ts`, `finalize.ts`), or `transform.ts` -- all of those pull in server-only dependencies (`sharp`, `node:crypto`, the S3 SDK) that must never ship to a browser bundle.
+
+```typescript
+// OK in editor/client code (see packages/canopycms/src/editor/fields/ImageField.tsx)
+import { assetUrl } from '../../assets/asset-url'
+import type { CropRect } from '../../assets/transform-directives'
+
+// NOT OK from client code -- pulls in sharp / node:crypto / the S3 SDK
+// import { applyTransform } from '../../assets/transform'
+// import { LocalAssetStore } from '../../assets/store-local'
+```
+
+This boundary is enforced by convention, not a lint rule -- when adding a new client-facing asset feature, double-check which file you're importing from before assuming it's safe for the browser bundle.
+
+### Dev Gotcha: Adopter Apps Run Against Built `dist/`
+
+`apps/example1` (and any adopter app) consumes `canopycms` and `canopycms-next` from their built `dist/` output, not from `src/`. After changing package source under `packages/canopycms/src/` or `packages/canopycms-next/src/`, rebuild before the adopter dev server will pick up the change:
+
+```bash
+pnpm --filter canopycms build
+pnpm --filter canopycms-next build
+```
+
+Skipping this is a common way to end up debugging behavior that looks broken but is actually just stale compiled output -- for example, a missing `/assets/*` rewrite (added by `withCanopy()` in `canopycms-next/src/with-canopy.ts`) that silently doesn't show up because the adopter app is still running against the previously-built `dist/`.
+
 ## Testing Content IDs
 
 When testing code that uses content IDs, create files with embedded IDs in their filenames:
@@ -2146,6 +2188,58 @@ it('hides conflict notice when prop is absent', () => {
 
 **Why this pattern:** Conflict detection happens server-side (worker rebase writes `conflictFiles` to branch metadata). The editor reads this metadata and passes `conflictNotice` as a boolean prop to the form. Testing both the server-side detection (real git tests) and the client-side display (component tests) ensures the full conflict flow works end-to-end.
 
+### Asset Store Parity Testing
+
+`LocalAssetStore` and `S3AssetStore` must behave identically for anything that's part of the `AssetStore` contract (staging, originals, meta sidecars, public objects, paginated listing). Rather than writing separate assertions per adapter, `packages/canopycms/src/assets/store-parity.test.ts` defines **one shared behavior suite** and runs it against both:
+
+```typescript
+function runParitySuite(label: string, setup: () => Harness | Promise<Harness>) {
+  describe(`AssetStore parity: ${label}`, () => {
+    // ... shared it() blocks: round-trips staging write/read/delete,
+    // putOriginal/readOriginal, putMetaIfAbsent races, listMeta pagination, etc.
+  })
+}
+
+runParitySuite('LocalAssetStore', async () => ({
+  store: new LocalAssetStore({ root: await fs.mkdtemp(...) }),
+  assertsNewestFirst: true,
+}))
+
+runParitySuite('S3AssetStore', () => ({
+  store: new S3AssetStore({ bucket: 'test-bucket', region: 'us-east-1' }),
+  assertsNewestFirst: false, // S3's ListObjectsV2-backed listing gives no ordering guarantee
+}))
+```
+
+**LocalAssetStore** runs against a real temp directory (`fs.mkdtemp`), same as other filesystem-backed tests in this codebase.
+
+**S3AssetStore** runs against [`aws-sdk-client-mock`](https://github.com/m-radzikowski/aws-sdk-client-mock) plus a small in-memory fake (`installS3Fake()` in the same file) that actually stores bytes in a `Map`, so round-trip reads return real data instead of a canned mocked value:
+
+```typescript
+import { mockClient } from 'aws-sdk-client-mock'
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3'
+
+const s3Mock = mockClient(S3Client)
+const objects = new Map<string, { body: Uint8Array; contentType?: string }>()
+
+s3Mock.on(PutObjectCommand).callsFake((input) => {
+  objects.set(input.Key, { body: toBytes(input.Body), contentType: input.ContentType })
+  return {}
+})
+s3Mock.on(GetObjectCommand).callsFake((input) => {
+  const obj = objects.get(input.Key)
+  if (!obj) throw makeAwsError('NoSuchKey', 404, 'The specified key does not exist.')
+  return {
+    Body: sdkStreamMixin(Readable.from(Buffer.from(obj.body))),
+    ContentType: obj.contentType,
+  }
+})
+```
+
+A `Harness` carries an `assertsNewestFirst` flag because `LocalAssetStore` guarantees `listMeta` ordering but S3's `ListObjectsV2`-backed implementation does not -- a shared test that depends on ordering is skipped for the adapter that doesn't guarantee it, rather than being split into an adapter-specific test file.
+
+**Why this pattern:** adapter-specific test files only prove each adapter is internally consistent with itself -- they can't catch the two implementations silently drifting apart on edge cases (error shapes, precondition semantics, metadata field names). Running the identical suite against both catches drift immediately. **When you touch the `AssetStore` contract** (add a method, change an error case, change what a read returns), add the assertion to the shared suite in `store-parity.test.ts` rather than to one adapter's test file only.
+
 ### Testing postMessage Listeners (Framed-Window Simulation)
 
 The preview-bridge listeners validate both `event.origin` and `event.source === window.parent`, so jsdom tests can't just dispatch a bare `MessageEvent` — the source check needs a genuine `WindowProxy` distinct from the test window. Use the `simulateFramed()` pattern from `src/editor/preview-bridge.test.tsx`:
@@ -2662,6 +2756,36 @@ pnpm exec canopycms worker run-once  # Refresh cache, process tasks, exit
 Integration tests cover the full lifecycle: submit handler enqueues → worker dequeues → task completes. See `src/worker/integration.test.ts`.
 
 Rebase logic is tested with real git operations in `src/worker/cms-worker-rebase.test.ts`. These tests create local "remote" repos in temp directories to exercise branch skipping (submitted/approved/dirty), clean rebase, and conflict detection with ContentId extraction. See [Testing with Real Git Operations](#testing-with-real-git-operations) for the pattern.
+
+### Transform Lambda Bundling Without Docker
+
+The prod on-demand transform Lambda needs `sharp`'s native binary for `linux/arm64`, but Docker-based bundling (the usual `aws-cdk-lib/aws-lambda-nodejs` approach) isn't available in this environment. `packages/canopycms-cdk/lambda/asset-transform/build.mjs` works around this:
+
+1. `esbuild` bundles `handler.ts` into a single CJS file, leaving `sharp`/`@img/*` (native bindings) and `@aws-sdk/*` (already present in the Lambda's Node 20.x managed runtime) external.
+2. `npm install sharp@<range> --os=linux --cpu=arm64 --libc=glibc` runs directly in the output directory. Since sharp >=0.33 ships its native binary as a platform-specific optional dependency, npm's `--os`/`--cpu`/`--libc` overrides fetch the linux/arm64 binary regardless of the host OS actually running the install -- this is what makes Docker unnecessary, even from a macOS dev machine.
+
+The `sharp` version installed is read from `packages/canopycms`'s own `dependencies.sharp`, so the Lambda's bundled binary never drifts from the version the transform engine (`assets/transform.ts`) is written against -- never hardcode a version in `build.mjs`.
+
+Run it before synth/deploy:
+
+```bash
+pnpm --filter canopycms-cdk run build:lambda
+```
+
+Output lands in `lambda/asset-transform/dist/` (gitignored); the CDK construct's `lambda.Code.fromAsset()` points there, so `cdk synth`/`deploy` fails with "Cannot find asset" if you skip this step.
+
+### CDK Asset Verification: the Canary Stack
+
+`packages/canopycms-cdk/canary/` is a small CDK app -- not a separate package, it imports `canopycms-cdk`'s own `../../src` directly -- that deploys a throwaway `canopy-assets-canary` stack to a sandbox AWS account (bootstrap qualifier `canopy`) to verify `AssetSupport`'s CloudFront wiring and the transform Lambda against real infrastructure: real CloudFront origin-group failover, a real S3 bucket, a real Lambda invocation. It exists for manual infra verification by contributors working on the assets deployment path -- it is not part of CI or any automated test suite:
+
+```bash
+pnpm --filter canopycms-cdk run build:lambda   # Lambda asset must exist before synth
+cd packages/canopycms-cdk/canary
+npx cdk synth
+npx cdk deploy --profile sandbox-admin
+```
+
+The stack is created with `RemovalPolicy.DESTROY` and `autoDeleteObjects: true` -- it's meant to be deployed, checked, and torn down, not left running.
 
 ### CLI (`canopycms init`)
 

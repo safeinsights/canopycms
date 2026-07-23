@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createCanopyRouter, matchRoute, type RouteDefinition } from './router'
+import type { CanopyBinaryResponse } from './types'
 
 /** Build a minimal RouteDefinition for synthetic precedence tests. */
 const route = (
@@ -133,15 +134,36 @@ describe('createCanopyRouter - real route table (SEC-H3 regression)', () => {
     expect(match?.params).toEqual({})
   })
 
-  it('resolves POST /assets to the upload handler', () => {
+  it('resolves POST /assets/upload to the proxied upload handler (bodyFormat: multipart)', () => {
     const router = createCanopyRouter()
     const uploadRoute = router.routes.find(
-      (r) => r.method === 'POST' && r.pattern.join('/') === 'assets',
+      (r) => r.method === 'POST' && r.pattern.join('/') === 'assets/upload',
     )
     expect(uploadRoute).toBeDefined()
+    expect(uploadRoute?.bodyFormat).toBe('multipart')
 
-    const match = router.match('POST', ['assets'])
+    const match = router.match('POST', ['assets', 'upload'])
     expect(match?.handler).toBe(uploadRoute?.handler)
+    expect(match?.bodyFormat).toBe('multipart')
+  })
+
+  it('resolves POST /assets/presign and POST /assets/finalize as ordinary JSON routes', () => {
+    const router = createCanopyRouter()
+
+    const presignMatch = router.match('POST', ['assets', 'presign'])
+    expect(presignMatch).not.toBeNull()
+    expect(presignMatch?.bodyFormat).toBeUndefined()
+
+    const finalizeMatch = router.match('POST', ['assets', 'finalize'])
+    expect(finalizeMatch).not.toBeNull()
+    expect(finalizeMatch?.bodyFormat).toBeUndefined()
+  })
+
+  it('resolves GET /assets/raw/{key...} via the catch-all pattern', () => {
+    const router = createCanopyRouter()
+    const match = router.match('GET', ['assets', 'raw', 'assets', 'abc123', 'slug.svg'])
+    expect(match).not.toBeNull()
+    expect(match?.params).toEqual({ key: 'assets/abc123/slug.svg' })
   })
 
   it('resolves GET /whoami (static) correctly', () => {
@@ -168,5 +190,32 @@ describe('createCanopyRouter - real route table (SEC-H3 regression)', () => {
   it('returns null for unknown method/path combinations', () => {
     const router = createCanopyRouter()
     expect(router.match('DELETE', ['unknown', 'nested', 'path'])).toBeNull()
+  })
+})
+
+describe('matchRoute - CanopyHandler may return a CanopyBinaryResponse (M2 plumbing)', () => {
+  it('matches a route whose handler returns a binary response and leaves the result unchanged', async () => {
+    const binaryResult: CanopyBinaryResponse = {
+      kind: 'binary',
+      status: 200,
+      body: new Uint8Array([9, 9]),
+      headers: { contentType: 'application/octet-stream' },
+    }
+    const routes: RouteDefinition[] = [
+      {
+        method: 'GET',
+        pattern: ['assets', 'binary'],
+        // Type-checks against the widened CanopyHandler return type without
+        // any cast - proof that the router table can carry a binary route
+        // alongside ordinary ApiResponse-returning ones.
+        handler: async () => binaryResult,
+      },
+    ]
+
+    const match = matchRoute(routes, 'GET', ['assets', 'binary'])
+    expect(match).not.toBeNull()
+
+    const result = await match?.handler()
+    expect(result).toEqual(binaryResult)
   })
 })

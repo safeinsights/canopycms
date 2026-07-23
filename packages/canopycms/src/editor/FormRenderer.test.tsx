@@ -1,13 +1,31 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { userEvent } from '@testing-library/user-event'
 import React, { useState } from 'react'
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { FieldConfig } from '../config'
 import type { FormValue } from './FormRenderer'
 import { FormRenderer } from './FormRenderer'
 import { TextField } from './fields/TextField'
 import { CanopyCMSProvider } from './theme'
+import type { MockApiClient } from '../api/__test__/mock-client'
+import { setupMockApiClient, createApiClientWrapper } from './hooks/__test__/test-utils'
+
+// ImageField (the 'image' field case) reads the API client via context DI -
+// mock the factory module so createApiClientWrapper's ApiClientProvider and
+// useUserContext's internal createApiClient() calls agree on one instance.
+vi.mock('../api', async () => {
+  const actual = await vi.importActual('../api')
+  return {
+    ...actual,
+    createApiClient: vi.fn(),
+  }
+})
+
+vi.mock('@mantine/modals', () => ({
+  ModalsProvider: ({ children }: { children: React.ReactNode }) => children,
+  modals: { openConfirmModal: vi.fn() },
+}))
 
 afterEach(() => cleanup())
 
@@ -286,6 +304,74 @@ describe('FormRenderer', () => {
       const inputWithErrorAgain = screen.getByLabelText('Title') as HTMLInputElement
       expect(screen.getByTestId('field-error-title')).toBeTruthy()
       expect(inputWithErrorAgain).toBe(inputWithError)
+    })
+  })
+
+  describe("'image' field type", () => {
+    let mockClient: MockApiClient
+    let wrapper: ReturnType<typeof createApiClientWrapper>
+
+    beforeEach(async () => {
+      mockClient = await setupMockApiClient()
+      wrapper = createApiClientWrapper(mockClient)
+    })
+
+    it('renders ImageField, not the "Unsupported field" fallback', () => {
+      const fields: FieldConfig[] = [{ name: 'hero', type: 'image', label: 'Hero image' }]
+      const Wrapper = wrapper
+      render(
+        <CanopyCMSProvider>
+          <Wrapper>
+            <FormRenderer fields={fields} value={{}} onChange={() => {}} />
+          </Wrapper>
+        </CanopyCMSProvider>,
+      )
+      expect(screen.getByTestId('image-field-hero')).toBeTruthy()
+      expect(screen.queryByText(/Unsupported field/)).toBeNull()
+    })
+
+    it('threads the aspect config through to ImageField (Crop button appears)', () => {
+      const fields: FieldConfig[] = [
+        { name: 'hero', type: 'image', label: 'Hero image', aspect: '16:9' },
+      ]
+      const Wrapper = wrapper
+      render(
+        <CanopyCMSProvider>
+          <Wrapper>
+            <FormRenderer
+              fields={fields}
+              value={{
+                hero: {
+                  src: '/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/cat.png',
+                  alt: 'Cat',
+                },
+              }}
+              onChange={() => {}}
+            />
+          </Wrapper>
+        </CanopyCMSProvider>,
+      )
+      expect(screen.getByTestId('image-field-crop-hero')).toBeTruthy()
+    })
+
+    it('wires <field>.alt sub-path fieldErrors onto the alt input', () => {
+      const fields: FieldConfig[] = [{ name: 'hero', type: 'image', label: 'Hero image' }]
+      const Wrapper = wrapper
+      render(
+        <CanopyCMSProvider>
+          <Wrapper>
+            <FormRenderer
+              fields={fields}
+              value={{
+                hero: { src: '/assets/t/orig/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/cat.png', alt: '' },
+              }}
+              onChange={() => {}}
+              fieldErrors={{ 'hero.alt': 'Image alt text is required' }}
+            />
+          </Wrapper>
+        </CanopyCMSProvider>,
+      )
+      expect(screen.getByText('Image alt text is required')).toBeTruthy()
     })
   })
 })

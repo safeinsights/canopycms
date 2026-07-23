@@ -28,6 +28,8 @@ export type {
   BlockFieldConfig,
   SelectFieldConfig,
   ReferenceFieldConfig,
+  ImageFieldConfig,
+  ImageFieldValue,
   ObjectFieldConfig,
   InlineGroupFieldConfig,
   CustomFieldConfig,
@@ -75,6 +77,7 @@ export {
   blockSchema,
   selectOptionSchema,
   referenceOptionSchema,
+  imageFieldSchema,
 } from './schemas/field'
 export { collectionSchema, entryTypeSchema, relativePathSchema } from './schemas/collection'
 export { permissionTargetSchema, pathPermissionSchema } from './schemas/permissions'

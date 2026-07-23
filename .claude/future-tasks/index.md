@@ -31,7 +31,11 @@ None currently open.
 
 | File                                                                               | Summary                                                                                                                    |
 | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| [assets-media-system.md](assets-media-system.md)                                   | Assets/media system design (agreed 2026-07-19): S3 content-addressed storage, presigned direct upload, sharp pipeline, image field + media manager, CDK asset bucket |
+| [assets-media-system.md](assets-media-system.md)                                   | Assets/media system — Plan B approved 2026-07-21, in progress on epic/assets-media-system: S3 content-addressed prefixes in existing buckets, presigned direct upload, on-demand transform Lambda, image field + MediaManager |
+| [asset-review-followups.md](asset-review-followups.md)                             | Deferred non-blocking items from PR #126 review: upload abort/AbortController, post-delete blob GC, finalize byte-cap, altOptional-omitted edge, + nits |
+| [docs-site-assets-wiring.md](docs-site-assets-wiring.md)                           | DEFERRED until docs-site prod deploy lands: wire assets into docs-site-proto (AssetSupport BYO-bucket, behaviors, media config) + the update-distribution.ts stamps-every-OriginPath fix that MUST ride along |
+| [adopter-image-field-migration.md](adopter-image-field-migration.md)               | READY (own prompt): migrate ../website + ../docs-site-proto string image paths to the structured image field + optimize the website's 1.5-3.3MB offenders |
+| [cms-service-deployment-test.md](cms-service-deployment-test.md)                     | READY (own epic prompt): first full prod-mode AWS deploy test — editor Lambda, EFS, EC2 worker, Clerk, publish/PR flow; unblocked by the assets epic's CanopyCmsService S3 fix |
 | [schema-store-rmw-protection.md](schema-store-rmw-protection.md)                   | `.collection.json` mutations in schema/schema-store.ts are read-modify-write with `withLock` covering only the final write; no OCC/lockfile — concurrent admin schema edits can lose updates cross-process |
 | [settings-file-occ-cross-host.md](settings-file-occ-cross-host.md)                 | Audit permissions.json/groups.json `contentVersion` OCC for the cross-host lost-update blind spot the epic fixed elsewhere; apply the layered lock pattern if confirmed |
 | [validate-entry-type-names.md](validate-entry-type-names.md)                       | Reference fields can specify non-existent `entryType` names; add config-time validation                                    |
@@ -72,6 +76,7 @@ None currently open.
 | File                                             | Summary                                                                      |
 | ------------------------------------------------ | ---------------------------------------------------------------------------- |
 | [ai-content-v2.md](ai-content-v2.md)             | `llms.txt` metadata, HTTP caching headers, selective rebuild for AI content  |
+| [transform-lambda-bundle-bloat.md](transform-lambda-bundle-bloat.md) | Transform Lambda's `handler.js` bundles unrelated octokit/simple-git/proper-lockfile code via the broad `canopycms/server` barrel (~1 MB dead weight); needs an approved narrow `canopycms` entrypoint to fix |
 | [schema-faq-glossary.md](schema-faq-glossary.md) | Dedicated FAQ and glossary schema collections for reuse across pages         |
 | [content-root-name-hardcoded.md](content-root-name-hardcoded.md) | `api/schema.ts`'s `getSchemaOps` and `api/entries.ts`'s `deleteEntry` hardcode `'content'` instead of honoring `config.contentRoot` like every other content-facing code path |
 | [FIXES.md](FIXES.md)                             | Older catch-all list; mostly superseded — review and migrate to proper files |

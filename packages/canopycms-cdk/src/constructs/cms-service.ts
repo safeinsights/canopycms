@@ -1,4 +1,5 @@
 import * as path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Construct } from 'constructs'
 import {
   Duration,
@@ -10,6 +11,16 @@ import {
   aws_autoscaling as autoscaling,
   aws_s3_assets as s3assets,
 } from 'aws-cdk-lib'
+import type { IBucket } from 'aws-cdk-lib/aws-s3'
+
+// This package (`canopycms-cdk`) is `"type": "module"`, so its compiled
+// output is real ESM - `__dirname` is not a global there. Found while
+// fixing this construct's B1 deploy blocker below: the worker asset path a
+// few lines down threw `__dirname is not defined` under a real ESM runtime
+// (e.g. `tsx`) - masked in this file's own tests only because Vitest's
+// SSR/CJS-interop transform shims `__dirname` automatically. Same fix as
+// ../../lambda/asset-transform/build.mjs and ./asset-support.ts.
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 export interface CanopyCmsServiceProps {
   /** Docker image for the CMS Lambda function */
@@ -53,6 +64,16 @@ export interface CanopyCmsServiceProps {
 
   /** Base branch name (default: 'main') */
   baseBranch?: string
+
+  /**
+   * The asset bucket (from `AssetSupport`, or any bucket following its
+   * prefix layout) the CMS Lambda's role should be granted access to. When
+   * provided, grants the exact prefix-scoped put/get/delete permissions
+   * `S3AssetStore` calls for (packages/canopycms/src/assets/store-s3.ts) -
+   * mirrors `AssetSupport.grantUploadAccess()` rather than depending on that
+   * construct directly, so `canopycms-cdk`'s two constructs stay decoupled.
+   */
+  assetBucket?: IBucket
 }
 
 /**
@@ -109,6 +130,17 @@ export class CanopyCmsService extends Construct {
         ],
       })
 
+    // Gateway VPC endpoint for S3 (free - no hourly/data charge, unlike an
+    // interface endpoint). Without this the PRIVATE_ISOLATED subnet has NO
+    // route to S3 at all (no NAT, no IGW) - the CMS Lambda's S3AssetStore
+    // calls (presigned POST generation, finalize's originals/meta writes)
+    // would hang/fail outright (adversarial finding B1). `addGatewayEndpoint`
+    // is on `IVpc` itself, so this works whether `this.vpc` was created here
+    // or supplied via `props.vpc`.
+    this.vpc.addGatewayEndpoint('S3Endpoint', {
+      service: ec2.GatewayVpcEndpointAwsService.S3,
+    })
+
     // ========================================================================
     // EFS — persistent filesystem for content, git repos, cache
     // ========================================================================
@@ -158,6 +190,27 @@ export class CanopyCmsService extends Construct {
     efsSg.addIngressRule(lambdaSg, ec2.Port.tcp(2049), 'Lambda NFS access')
     lambdaSg.addEgressRule(efsSg, ec2.Port.tcp(2049), 'NFS to EFS')
 
+    // Lambda -> S3 (via the gateway endpoint above), HTTPS only. The tight
+    // option - `ec2.Peer.prefixList(<S3 managed prefix list id>)` - needs a
+    // region-specific literal id (there is no CFN attribute exposing it off
+    // `GatewayVpcEndpoint`, and `PrefixList.fromLookup` does a real AWS
+    // context-provider lookup at synth time, which would make this
+    // construct's synth require live AWS credentials - unacceptable for a
+    // construct whose own unit tests synth with a fake account/region).
+    // `anyIpv4()` on 443 is safe here specifically because the route table
+    // for this PRIVATE_ISOLATED subnet has no route to 0.0.0.0/0 at all (no
+    // NAT, no IGW) - only to the VPC CIDR and to configured endpoints'
+    // prefix-list routes - so this rule cannot actually reach the general
+    // internet; the route table, not the security group, is the real
+    // boundary here. Narrow this to `Peer.prefixList(...)` if/when a
+    // region-agnostic way to reference the S3 managed prefix list lands in
+    // CDK, or if this VPC ever gains a NAT/IGW route.
+    lambdaSg.addEgressRule(
+      ec2.Peer.anyIpv4(),
+      ec2.Port.tcp(443),
+      'HTTPS to S3 (via gateway endpoint)',
+    )
+
     this.lambdaFunction = new lambda.DockerImageFunction(this, 'CmsFunction', {
       code: props.cmsDockerImage,
       memorySize: props.memorySize ?? 2048,
@@ -183,6 +236,32 @@ export class CanopyCmsService extends Construct {
     this.functionUrl = this.lambdaFunction.addFunctionUrl({
       authType: lambda.FunctionUrlAuthType.AWS_IAM,
     })
+
+    // Asset bucket access (optional) - grants the CMS Lambda's role the same
+    // prefix-scoped put/get/delete permissions `AssetSupport.grantUploadAccess()`
+    // grants, without this construct depending on `AssetSupport` directly
+    // (kept decoupled - a consumer wires both constructs together in their
+    // own stack). Duplicated rather than shared because the two constructs
+    // must stay independently usable (`AssetSupport` has no CMS-service
+    // dependency either).
+    if (props.assetBucket) {
+      const prefixes = {
+        staging: 'asset-staging',
+        originals: 'asset-originals',
+        meta: 'asset-meta',
+        public: 'assets',
+      }
+      props.assetBucket.grantPut(this.lambdaFunction, `${prefixes.staging}/*`)
+      props.assetBucket.grantRead(this.lambdaFunction, `${prefixes.staging}/*`)
+      props.assetBucket.grantRead(this.lambdaFunction, `${prefixes.originals}/*`)
+      props.assetBucket.grantRead(this.lambdaFunction, `${prefixes.meta}/*`)
+      props.assetBucket.grantRead(this.lambdaFunction, `${prefixes.public}/*`)
+      props.assetBucket.grantPut(this.lambdaFunction, `${prefixes.originals}/*`)
+      props.assetBucket.grantPut(this.lambdaFunction, `${prefixes.meta}/*`)
+      props.assetBucket.grantPut(this.lambdaFunction, `${prefixes.public}/*`)
+      props.assetBucket.grantDelete(this.lambdaFunction, `${prefixes.staging}/*`)
+      props.assetBucket.grantDelete(this.lambdaFunction, `${prefixes.meta}/*`)
+    }
 
     // ========================================================================
     // EC2 Worker — t4g.nano spot, public subnet, internet, EFS mount

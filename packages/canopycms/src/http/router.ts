@@ -1,4 +1,5 @@
 import type { ApiResponse } from '../api/types'
+import type { CanopyBinaryResponse } from './types'
 import { BRANCH_ROUTES } from '../api/branch'
 import { WORKFLOW_ROUTES } from '../api/branch-status'
 import { COMMENT_ROUTES } from '../api/comments'
@@ -6,7 +7,7 @@ import { CONTENT_ROUTES } from '../api/content'
 import { REFERENCE_OPTIONS_ROUTES } from '../api/reference-options'
 import { RESOLVE_REFERENCES_ROUTES } from '../api/resolve-references'
 import { ENTRY_ROUTES } from '../api/entries'
-import { ASSET_ROUTES } from '../api/assets'
+import { ASSET_ROUTES, assetRawRoute } from '../api/assets'
 import { PERMISSION_ROUTES } from '../api/permissions'
 import { GROUP_ROUTES } from '../api/groups'
 import { USER_ROUTES } from '../api/user'
@@ -16,9 +17,13 @@ import { SCHEMA_ROUTES } from '../api/schema'
  * Handler function signature for Canopy API routes.
  * Uses `any` to accommodate different handler signatures in the codebase.
  * Some handlers take (ctx, req, params), others take (ctx, params) directly.
+ * Return type is widened to include `CanopyBinaryResponse` so routes that
+ * stream bytes (e.g. asset serving) can be registered in the same route
+ * table as ordinary JSON routes; the core handler discriminates on `kind`
+ * before deciding whether to wrap the result in a JSON envelope.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type CanopyHandler = (...args: any[]) => Promise<ApiResponse<any>>
+export type CanopyHandler = (...args: any[]) => Promise<ApiResponse<any> | CanopyBinaryResponse>
 
 /**
  * Route definition for the Canopy API.
@@ -39,6 +44,13 @@ export interface RouteDefinition {
         ok: false
         error: string
       }
+  /**
+   * Opt out of the core handler's default eager `req.json()` body parsing
+   * (see http/handler.ts). Set by routes that accept a non-JSON body (e.g.
+   * multipart/form-data uploads) - the handler must read the body itself via
+   * `req.formData()` instead, since a body stream can only be consumed once.
+   */
+  bodyFormat?: 'multipart'
 }
 
 /**
@@ -49,6 +61,7 @@ export interface RouteMatch {
   params: Record<string, string>
   // Optional validation function for new-style routes
   validate?: RouteDefinition['validate']
+  bodyFormat?: RouteDefinition['bodyFormat']
 }
 
 /**
@@ -80,6 +93,7 @@ function buildCanopyRoutes(): RouteDefinition[] {
     ...Object.values(RESOLVE_REFERENCES_ROUTES),
     ...Object.values(ENTRY_ROUTES),
     ...Object.values(ASSET_ROUTES),
+    assetRawRoute,
     ...Object.values(PERMISSION_ROUTES),
     ...Object.values(GROUP_ROUTES),
     ...Object.values(USER_ROUTES),
@@ -91,6 +105,8 @@ function buildCanopyRoutes(): RouteDefinition[] {
       handler: route.handler,
       // Include validation function if present (new-style routes from defineEndpoint)
       validate: 'validate' in route ? (route.validate as RouteDefinition['validate']) : undefined,
+      bodyFormat:
+        'bodyFormat' in route ? (route.bodyFormat as RouteDefinition['bodyFormat']) : undefined,
     }),
   )
 }
@@ -216,6 +232,7 @@ export function matchRoute(
     handler: best.route.handler,
     params: best.params,
     validate: best.route.validate, // Include validation function if present
+    bodyFormat: best.route.bodyFormat,
   }
 }
 

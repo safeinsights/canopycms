@@ -1,5 +1,5 @@
-import type { CanopyRequest, CanopyResponse } from './types'
-import { jsonResponse } from './types'
+import type { CanopyBinaryResponse, CanopyRequest, CanopyResponse } from './types'
+import { jsonResponse, isCanopyBinaryResponse } from './types'
 import { createCanopyRouter } from './router'
 import type { ApiContext, ApiResponse } from '../api/types'
 import { assertAuthPluginAllowedForMode, type AuthPlugin } from '../auth/plugin'
@@ -117,11 +117,14 @@ const parseQueryParams = (url: string): Record<string, string> => {
 
 /**
  * Core request handler result type.
+ * Widened to include `CanopyBinaryResponse` so routes that stream bytes
+ * (e.g. asset serving) can flow through this handler untouched alongside
+ * ordinary JSON routes - see `isCanopyBinaryResponse` usage below.
  */
 export type CanopyRequestHandler = (
   req: CanopyRequest,
   pathSegments: string[],
-) => Promise<CanopyResponse<ApiResponse>>
+) => Promise<CanopyResponse<ApiResponse> | CanopyBinaryResponse>
 
 /**
  * Create a framework-agnostic Canopy request handler.
@@ -182,7 +185,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
   const handleRequest = async (
     req: CanopyRequest,
     pathSegments: string[],
-  ): Promise<CanopyResponse<ApiResponse>> => {
+  ): Promise<CanopyResponse<ApiResponse> | CanopyBinaryResponse> => {
     // Route matching (fast, do first before async work)
     const match = router.match(req.method, pathSegments)
     if (!match) {
@@ -276,9 +279,11 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     const queryParams = parseQueryParams(req.url)
     const mergedParams = { ...queryParams, ...match.params }
 
-    // Parse body for non-GET requests
+    // Parse body for non-GET requests. Multipart routes opt out (bodyFormat)
+    // so their handler can read the (single-use) body stream itself via
+    // req.formData() - calling req.json() first would consume it.
     let body: unknown
-    if (req.method !== 'GET') {
+    if (req.method !== 'GET' && match.bodyFormat !== 'multipart') {
       try {
         body = await req.json()
       } catch {
@@ -290,7 +295,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
     const branch =
       (mergedParams as Record<string, string>)?.branch ??
       (body as Record<string, unknown> | undefined)?.branch
-    const apiReq = { user, body, branch, query: queryParams }
+    const apiReq = { user, body, branch, query: queryParams, rawRequest: req }
 
     // Validate params and body using the route's validation function (if available)
     if (match.validate) {
@@ -309,6 +314,10 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       }
 
       const result = await match.handler(...handlerArgs)
+      // Binary routes (e.g. asset serving) carry their own status/headers and
+      // must reach the adapter untouched - wrapping them in jsonResponse would
+      // JSON-serialize raw bytes and lose contentType/contentDisposition/etc.
+      if (isCanopyBinaryResponse(result)) return result
       return jsonResponse(result, result.status)
     } else {
       // Should not happen - all routes should use defineEndpoint now
@@ -318,6 +327,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
         apiReq as unknown,
         mergedParams as unknown,
       )
+      if (isCanopyBinaryResponse(result)) return result
       return jsonResponse(result, result.status)
     }
   }
@@ -325,7 +335,7 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
   return async (
     req: CanopyRequest,
     pathSegments: string[],
-  ): Promise<CanopyResponse<ApiResponse>> => {
+  ): Promise<CanopyResponse<ApiResponse> | CanopyBinaryResponse> => {
     try {
       return await handleRequest(req, pathSegments)
     } catch (err) {

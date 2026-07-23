@@ -208,6 +208,11 @@ describe('findInvalidTitleFields', () => {
     expect(findInvalidTitleFields(fields)).toEqual(['count'])
   })
 
+  it('returns field name when isTitle is on an image field (structured value, never a title)', () => {
+    const fields: FieldConfig[] = [{ name: 'hero', type: 'image', isTitle: true }]
+    expect(findInvalidTitleFields(fields)).toEqual(['hero'])
+  })
+
   it('returns dotted path for nested invalid fields', () => {
     const fields: FieldConfig[] = [
       {

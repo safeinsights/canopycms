@@ -1,21 +1,35 @@
 import { describe, expect, it, vi } from 'vitest'
 
-// Mock next/server before any imports
+// Mock next/server before any imports.
+// NextResponse must be both a constructor (adapter.ts does
+// `new NextResponse(body, init)` for binary responses) and expose the
+// static `.json()` factory (used for the JSON response path).
 vi.mock('next/server', () => {
-  return {
-    NextResponse: {
-      json: (body: any, init?: any) => ({
-        body,
-        status: init?.status ?? 200,
-        headers: init?.headers,
-      }),
-    },
+  class MockNextResponse {
+    body: any
+    status: number
+    headers: any
+    constructor(body?: any, init?: any) {
+      this.body = body
+      this.status = init?.status ?? 200
+      this.headers = init?.headers
+    }
+    static json(body: any, init?: any) {
+      return { body, status: init?.status ?? 200, headers: init?.headers }
+    }
   }
+  return { NextResponse: MockNextResponse }
 })
 
-// Mock canopycms/http to return a controlled response
-vi.mock('canopycms/http', async () => {
+// Mock canopycms/http's createCanopyRequestHandler to return a controlled
+// response, but keep every other real export (isCanopyBinaryResponse,
+// jsonResponse, etc.) - adapter.ts's toNextResponse() calls
+// isCanopyBinaryResponse() on every response, so a full-module mock without
+// it would break at runtime for every test in this file, binary or not.
+vi.mock('canopycms/http', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('canopycms/http')>()
   return {
+    ...actual,
     createCanopyRequestHandler: vi.fn(() => {
       return async (req: any, segments: string[]) => {
         // Return different responses based on segments
@@ -222,5 +236,148 @@ describe('wrapNextRequest', () => {
     const wrapped = wrapNextRequest(mockReq)
 
     expect(await wrapped.json()).toBeUndefined()
+  })
+})
+
+describe('binary responses (M2 plumbing)', () => {
+  const mockAuthPlugin = createMockAuthPlugin({
+    userId: 'test-user',
+    groups: ['Admins'],
+  })
+
+  const mockGetRequest = (segments: string[]) =>
+    ({
+      method: 'GET',
+      url: `http://localhost:3000/api/canopycms/${segments.join('/')}`,
+      headers: { get: () => null },
+      json: async () => undefined,
+    }) as any
+
+  it('converts a Uint8Array CanopyBinaryResponse to NextResponse bytes + headers', async () => {
+    const { createCanopyRequestHandler } = await import('canopycms/http')
+    const bytes = new Uint8Array([1, 2, 3, 4])
+    vi.mocked(createCanopyRequestHandler).mockReturnValueOnce(async () => ({
+      kind: 'binary',
+      status: 200,
+      body: bytes,
+      headers: {
+        contentType: 'image/png',
+        cacheControl: 'public, max-age=60',
+        etag: '"abc123"',
+      },
+    }))
+
+    const handler = createCanopyCatchAllHandler({ services: {} as any, authPlugin: mockAuthPlugin })
+    const response: any = await handler(mockGetRequest(['assets', 'hash', 'file.png']), {
+      params: { canopycms: ['assets', 'hash', 'file.png'] },
+    })
+
+    expect(response.status).toBe(200)
+    // toEqual (not toBe): adapter.ts copies the Uint8Array through a fresh
+    // ArrayBuffer-backed view to satisfy the DOM lib's BodyInit typing -
+    // same bytes, different reference.
+    expect(response.body).toEqual(bytes)
+    expect(response.headers).toEqual({
+      'Content-Type': 'image/png',
+      'Cache-Control': 'public, max-age=60',
+      ETag: '"abc123"',
+    })
+  })
+
+  it('streams a ReadableStream CanopyBinaryResponse through end-to-end', async () => {
+    const { createCanopyRequestHandler } = await import('canopycms/http')
+    const chunk = new Uint8Array([9, 8, 7])
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(chunk)
+        controller.close()
+      },
+    })
+    vi.mocked(createCanopyRequestHandler).mockReturnValueOnce(async () => ({
+      kind: 'binary',
+      status: 200,
+      body: stream,
+      headers: { contentType: 'application/pdf' },
+    }))
+
+    const handler = createCanopyCatchAllHandler({ services: {} as any, authPlugin: mockAuthPlugin })
+    const response: any = await handler(mockGetRequest(['assets', 'hash', 'doc.pdf']), {
+      params: { canopycms: ['assets', 'hash', 'doc.pdf'] },
+    })
+
+    expect(response.status).toBe(200)
+    const reader = (response.body as ReadableStream<Uint8Array>).getReader()
+    const { value, done } = await reader.read()
+    expect(done).toBe(false)
+    expect(value).toEqual(chunk)
+  })
+
+  it('omits headers that were not set on the CanopyBinaryResponse (e.g. no contentDisposition)', async () => {
+    const { createCanopyRequestHandler } = await import('canopycms/http')
+    vi.mocked(createCanopyRequestHandler).mockReturnValueOnce(async () => ({
+      kind: 'binary',
+      status: 200,
+      body: new Uint8Array([1]),
+      headers: { contentType: 'image/svg+xml' },
+    }))
+
+    const handler = createCanopyCatchAllHandler({ services: {} as any, authPlugin: mockAuthPlugin })
+    const response: any = await handler(mockGetRequest(['assets', 'hash', 'icon.svg']), {
+      params: { canopycms: ['assets', 'hash', 'icon.svg'] },
+    })
+
+    expect(response.headers).toEqual({ 'Content-Type': 'image/svg+xml' })
+    expect(response.headers).not.toHaveProperty('Content-Disposition')
+  })
+
+  it('leaves the JSON response path unaffected (regression)', async () => {
+    const handler = createCanopyCatchAllHandler({ services: {} as any, authPlugin: mockAuthPlugin })
+    const response: any = await handler(mockGetRequest(['branches']), {
+      params: { canopycms: ['branches'] },
+    })
+
+    expect(response.status).toBe(200)
+    expect(response.body).toEqual({ ok: true, status: 200, data: { branches: [] } })
+  })
+})
+
+describe('wrapNextRequest - raw body / formData capabilities (M2 plumbing)', () => {
+  it('round-trips rawBody() to the exact bytes of a real Request body', async () => {
+    const { wrapNextRequest } = await import('./adapter')
+
+    const payload = new TextEncoder().encode('hello binary world')
+    const req = new Request('http://localhost:3000/api/test', {
+      method: 'POST',
+      body: payload,
+    })
+
+    const wrapped = wrapNextRequest(req)
+    const bytes = await wrapped.rawBody?.()
+
+    expect(bytes).toBeInstanceOf(Uint8Array)
+    expect(bytes).toEqual(payload)
+  })
+
+  it('round-trips formData() from a real multipart/form-data Request', async () => {
+    const { wrapNextRequest } = await import('./adapter')
+
+    const formData = new FormData()
+    formData.append('field', 'value')
+    formData.append(
+      'file',
+      new File([new Uint8Array([1, 2, 3])], 'test.bin', { type: 'application/octet-stream' }),
+    )
+    const req = new Request('http://localhost:3000/api/test', {
+      method: 'POST',
+      body: formData,
+    })
+
+    const wrapped = wrapNextRequest(req)
+    const parsed = await wrapped.formData?.()
+
+    expect(parsed?.get('field')).toBe('value')
+    const file = parsed?.get('file') as File
+    expect(file.name).toBe('test.bin')
+    expect(new Uint8Array(await file.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]))
   })
 })

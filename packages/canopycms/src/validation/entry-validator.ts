@@ -27,12 +27,14 @@ import type {
   ContentFormat,
   EntrySchema,
   FieldConfig,
+  ImageFieldConfig,
   InlineGroupFieldConfig,
   ObjectFieldConfig,
   ReferenceFieldConfig,
   SelectFieldConfig,
 } from '../config'
 import { fieldTypes } from '../config'
+import { isValidCropRect } from '../assets/transform-directives'
 import { resolveBlockItem } from './field-traversal'
 import { findBodyFieldName } from '../utils/body-field'
 import { isDataOnlyFormat } from '../utils/format'
@@ -50,10 +52,76 @@ export interface EntryFieldError {
 const KNOWN_FIELD_TYPES = new Set<string>(fieldTypes)
 
 /** Field types whose value is a plain string. */
-const STRING_FIELD_TYPES = new Set(['string', 'rich-text', 'markdown', 'mdx', 'image', 'code'])
+const STRING_FIELD_TYPES = new Set(['string', 'rich-text', 'markdown', 'mdx', 'code'])
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isPositiveInt(value: unknown): boolean {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0
+}
+
+/** True when `value` is a well-formed `{ x, y, w, h }` normalized crop rect. */
+function isValidImageCropValue(value: unknown): boolean {
+  if (!isPlainRecord(value)) return false
+  const { x, y, w, h } = value
+  if (
+    typeof x !== 'number' ||
+    typeof y !== 'number' ||
+    typeof w !== 'number' ||
+    typeof h !== 'number'
+  ) {
+    return false
+  }
+  return isValidCropRect(x, y, w, h)
+}
+
+/**
+ * Validate a structured `image` field value: `{ src, alt, width?, height?, crop? }`
+ * (see `ImageFieldValue` in config/types.ts). `src` and `alt` are required
+ * whenever a value is present; `alt` may be an empty string only when the
+ * field config sets `altOptional: true`. `width`/`height` must be positive
+ * integers when present; `crop` must satisfy the same normalized-rect
+ * constraints as the transform directive parser (assets/transform-directives.ts).
+ */
+function validateImageValue(
+  field: ImageFieldConfig,
+  value: unknown,
+  path: string,
+): EntryFieldError[] {
+  if (!isPlainRecord(value)) {
+    return [{ fieldPath: path, message: 'Expected an image object with { src, alt }' }]
+  }
+
+  const errors: EntryFieldError[] = []
+
+  if (typeof value.src !== 'string' || value.src.trim() === '') {
+    errors.push({ fieldPath: `${path}.src`, message: 'Image src is required' })
+  }
+
+  if (typeof value.alt !== 'string') {
+    errors.push({ fieldPath: `${path}.alt`, message: 'Image alt text is required' })
+  } else if (value.alt.trim() === '' && field.altOptional !== true) {
+    errors.push({ fieldPath: `${path}.alt`, message: 'Image alt text is required' })
+  }
+
+  if (value.width !== undefined && !isPositiveInt(value.width)) {
+    errors.push({ fieldPath: `${path}.width`, message: 'Image width must be a positive integer' })
+  }
+
+  if (value.height !== undefined && !isPositiveInt(value.height)) {
+    errors.push({
+      fieldPath: `${path}.height`,
+      message: 'Image height must be a positive integer',
+    })
+  }
+
+  if (value.crop !== undefined && !isValidImageCropValue(value.crop)) {
+    errors.push({ fieldPath: `${path}.crop`, message: 'Invalid image crop rect' })
+  }
+
+  return errors
 }
 
 /**
@@ -118,6 +186,8 @@ function validateScalar(field: FieldConfig, value: unknown, path: string): Entry
         return [{ fieldPath: path, message: 'Expected a reference id' }]
       }
       return []
+    case 'image':
+      return validateImageValue(field as ImageFieldConfig, value, path)
     default:
       if (STRING_FIELD_TYPES.has(field.type)) {
         if (typeof value !== 'string') {

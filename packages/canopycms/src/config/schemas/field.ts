@@ -41,6 +41,25 @@ export const primitiveFieldSchema = fieldBaseSchema.extend({
   type: z.enum(primitiveFieldTypes),
 })
 
+// "W:H" aspect ratio, e.g. "16:9" or "1:1" — positive integers on both sides,
+// no leading zeros (leading zero would parse as `0` via Number(), which the
+// field's own regex already rejects as the first character class excludes it).
+const ASPECT_RATIO_RE = /^[1-9][0-9]*:[1-9][0-9]*$/
+
+// Image field: aspect and altOptional configure the editor's crop step and alt
+// text requirement (see ImageFieldConfig in ../types). The field VALUE itself
+// ({ src, alt, width?, height?, crop? }) is validated at the write boundary by
+// validation/entry-validator.ts, not here — this schema only covers the field
+// definition's own config.
+export const imageFieldSchema = fieldBaseSchema.extend({
+  type: z.literal('image'),
+  aspect: z
+    .string()
+    .regex(ASPECT_RATIO_RE, 'aspect must be "W:H" with positive integers (e.g. "16:9")')
+    .optional(),
+  altOptional: z.boolean().optional(),
+})
+
 // Select field with options
 export const selectFieldSchema = fieldBaseSchema.extend({
   type: z.literal('select'),
@@ -110,6 +129,7 @@ const knownFieldSchema: z.ZodTypeAny = z.discriminatedUnion('type', [
   primitiveFieldSchema,
   selectFieldSchema,
   referenceFieldSchema,
+  imageFieldSchema,
   objectFieldSchema,
   blockFieldSchema,
   inlineGroupFieldSchema,
