@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 import minimist from 'minimist'
 import * as p from '@clack/prompts'
 import type { AuthPlugin } from '../auth/plugin'
+import type { AuthProvider } from './init'
 import { getErrorMessage } from '../utils/error'
 
 /** Parse raw CLI args into structured flags and positional command. Exported for testing. */
@@ -30,12 +31,35 @@ export function parseArgs(rawArgs: string[]) {
       'entry-type',
       'format',
       'schema',
+      'auth',
     ],
+    // --dual-build is intentionally NOT declared boolean here: minimist defaults
+    // declared-boolean flags to `false` when absent, which would make "not passed"
+    // indistinguishable from "explicitly disabled". Left undeclared, it parses to
+    // `true` when passed bare, `false` via the standard `--no-dual-build` negation,
+    // and stays `undefined` when omitted entirely — exactly the tri-state init()
+    // needs to decide whether to honor a preset or fall through to prompt/default.
     alias: { f: 'force' },
   })
   const flags = argv as Record<string, string | boolean>
   const command = argv._[0] as string | undefined
   return { argv, flags, command }
+}
+
+const AUTH_PROVIDERS = ['clerk', 'dev'] as const
+
+/**
+ * Validate the --auth flag value for `init`. Returns undefined when the flag
+ * was not provided (caller should fall through to interactive prompt / default).
+ * Throws when a value was provided but isn't a recognized auth provider.
+ * Exported for testing.
+ */
+export function parseAuthFlag(value: string | boolean | undefined): AuthProvider | undefined {
+  if (value === undefined) return undefined
+  if (typeof value === 'string' && (AUTH_PROVIDERS as readonly string[]).includes(value)) {
+    return value as AuthProvider
+  }
+  throw new Error(`--auth must be "clerk" or "dev", got "${String(value)}"`)
 }
 
 const SYNC_SUBCOMMANDS = ['push', 'pull', 'both', 'abort'] as const
@@ -79,6 +103,19 @@ async function main() {
 
     const mode = 'dev'
 
+    let authProvider: AuthProvider | undefined
+    try {
+      authProvider = parseAuthFlag(flags['auth'])
+    } catch (err) {
+      console.error(`Error: ${getErrorMessage(err)}`)
+      process.exit(1)
+    }
+
+    // Tri-state: undefined (flag omitted) falls through to init()'s own
+    // prompt-or-default logic; true/false (flag or --no-dual-build passed)
+    // presets the choice and skips the prompt, same as authProvider above.
+    const staticBuild = typeof flags['dual-build'] === 'boolean' ? flags['dual-build'] : undefined
+
     let appDir: string
     if (typeof flags['app-dir'] === 'string') {
       appDir = flags['app-dir']
@@ -121,6 +158,8 @@ async function main() {
       projectDir: process.cwd(),
       force,
       nonInteractive,
+      authProvider,
+      staticBuild,
     })
   } else if (command === 'init-deploy') {
     const { initDeployAws } = await import('./init')
@@ -215,8 +254,13 @@ async function main() {
     console.log('  init                    Add CanopyCMS to a Next.js app')
     console.log('    --app-dir <path>      App directory (default: app)')
     console.log('    --no-ai               Skip AI content endpoint generation')
+    console.log('    --auth <provider>     Auth provider: clerk|dev (default: dev)')
+    console.log('    --dual-build          Enable static+CMS dual-build output')
     console.log('    --force               Overwrite existing files without asking')
     console.log('    --non-interactive     Use defaults, no prompts')
+    console.log(
+      '                          (--auth/--dual-build apply in both modes and skip their prompt)',
+    )
     console.log('')
     console.log('  init-deploy aws         Generate AWS deployment artifacts')
     console.log('    --force               Overwrite existing files without asking')
