@@ -19,3 +19,4 @@ packages/canopycms/src/api/__test__/mock-client.ts
 **/canopycms.config.ts.template
 **/Dockerfile.*.template
 **/deploy-*.yml.template
+**/dockerignore.template

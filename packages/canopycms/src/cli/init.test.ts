@@ -173,6 +173,15 @@ describe('canopycms init', () => {
     expect(mw).toContain('isProtectedRoute')
   })
 
+  it('clerk middleware passes an explicit jwtKey so cold verification never hits the network (B2)', async () => {
+    await init(defaultOpts(tmpDir, { authProvider: 'clerk' }))
+
+    // Without an explicit jwtKey, @clerk/nextjs fetches JWKS from api.clerk.com
+    // on cold verification; the prod CMS Lambda has no internet and hangs.
+    const mw = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
+    expect(mw).toContain('jwtKey: process.env.CLERK_JWT_KEY')
+  })
+
   it('generates dual-build next.config when staticBuild is true', async () => {
     await init(defaultOpts(tmpDir, { staticBuild: true }))
 
@@ -362,6 +371,81 @@ describe('canopycms init-deploy aws', () => {
     expect(dockerfile).toContain('lambda-adapter')
     expect(dockerfile).toContain('CANOPY_BUILD=cms')
     expect(dockerfile).toContain('apt-get install -y git')
+  })
+
+  it('Dockerfile.cms references the real aws-lambda-adapter image repo (B3)', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    // public.ecr.aws/awsguru/aws-lambda-web-adapter does not exist -- the real
+    // repo is aws-lambda-adapter (no "web-"). Referencing the wrong one fails
+    // the COPY --from= at build time.
+    expect(dockerfile).toContain('aws-lambda-adapter:1.0.1')
+    expect(dockerfile).not.toContain('aws-lambda-web-adapter')
+  })
+
+  it('Dockerfile.cms passes NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY into the build stage', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    // Next.js inlines NEXT_PUBLIC_* values into the client bundle at build time,
+    // so the Clerk publishable key must be threaded through as a build ARG.
+    expect(dockerfile).toContain('ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY')
+    expect(dockerfile).toContain(
+      'ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY',
+    )
+  })
+
+  it('Dockerfile.cms symlinks .next/cache to /tmp for the read-only Lambda filesystem', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    expect(dockerfile).toContain('rm -rf .next/cache && ln -s /tmp .next/cache')
+  })
+
+  it('Dockerfile.cms guards against adopter apps with no public/ dir', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    expect(dockerfile).toContain('mkdir -p public')
+  })
+
+  it('creates .dockerignore that excludes host node_modules but keeps vendor/', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerignore = await fs.readFile(path.join(tmpDir, '.dockerignore'), 'utf-8')
+    expect(dockerignore).toContain('node_modules')
+    expect(dockerignore).toContain('.env*')
+    expect(dockerignore).toContain('cdk.out')
+    // vendor/ must reach the build context -- file: deps resolve from it. No
+    // active ignore pattern should exclude it (a comment explaining why is fine).
+    const ignoreLines = dockerignore
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith('#'))
+    expect(ignoreLines).not.toContain('vendor')
+    expect(ignoreLines).not.toContain('vendor/')
+  })
+
+  it('skips existing .dockerignore in non-interactive mode', async () => {
+    const dockerignorePath = path.join(tmpDir, '.dockerignore')
+    await fs.writeFile(dockerignorePath, 'existing', 'utf-8')
+
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const content = await fs.readFile(dockerignorePath, 'utf-8')
+    expect(content).toBe('existing')
+  })
+
+  it('overwrites existing .dockerignore with --force', async () => {
+    const dockerignorePath = path.join(tmpDir, '.dockerignore')
+    await fs.writeFile(dockerignorePath, 'existing', 'utf-8')
+
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: true, nonInteractive: false })
+
+    const content = await fs.readFile(dockerignorePath, 'utf-8')
+    expect(content).not.toBe('existing')
+    expect(content).toContain('node_modules')
   })
 
   it('creates GitHub Actions workflow', async () => {

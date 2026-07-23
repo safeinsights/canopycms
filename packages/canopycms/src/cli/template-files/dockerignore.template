@@ -1,0 +1,13 @@
+node_modules
+.next
+out
+.git
+.canopy-dev
+*.tgz
+cdk.out
+
+# Secrets must never enter the image build context.
+.env*
+
+# Do NOT ignore vendor/ -- file: dependencies (vendored tarballs) must reach
+# the Docker build context, or `npm ci` will fail to resolve them.

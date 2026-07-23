@@ -229,11 +229,12 @@ export async function init(options: InitOptions): Promise<void> {
 export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   const { projectDir, force, nonInteractive } = options
   const writeOpts = { force, nonInteractive }
-  const { dockerfileCms, githubWorkflowCms } = await import('./templates')
+  const { dockerfileCms, dockerignore, githubWorkflowCms } = await import('./templates')
 
   p.intro('CanopyCMS init-deploy aws')
 
   await writeFile(path.join(projectDir, 'Dockerfile.cms'), await dockerfileCms(), writeOpts)
+  await writeFile(path.join(projectDir, '.dockerignore'), await dockerignore(), writeOpts)
   await writeFile(
     path.join(projectDir, '.github/workflows/deploy-cms.yml'),
     await githubWorkflowCms(),
