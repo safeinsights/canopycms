@@ -47,6 +47,7 @@ The CLI will interactively ask for:
 
 - **Auth provider** — `dev` (local development, no real auth) or `clerk` (Clerk authentication). `canopy.ts` and the edit page handle both providers at runtime via the `CANOPY_AUTH_MODE` environment variable; `middleware.ts` does not (see [Adopter Touchpoints Summary](#adopter-touchpoints-summary)).
 - **Operating mode** — `dev` (full local development with branching and git ops) or `prod` (production deployment). This is written into `canopycms.config.ts` as the required `mode` field -- CanopyCMS has no default and refuses to start without it.
+- **Dual-build** — whether you'll build a static public site and a separate server CMS build from the same repo (default: no). When enabled, CMS-only files use `.server.tsx`/`.server.ts` extensions (e.g. `route.server.ts`) so a static export build doesn't pick them up.
 - **App directory** — where your Next.js app directory lives (default: `app`, use `src/app` for src-layout projects)
 - **Include AI content endpoint?** — generates route files to serve your content as AI-readable markdown (default: yes). See [AI-Ready Content](#ai-ready-content) for details.
 
@@ -57,6 +58,14 @@ npx canopycms init --app-dir app
 ```
 
 Use `--non-interactive` for CI (uses defaults), `--force` to overwrite existing files, or `--no-ai` to skip generating the AI content endpoint.
+
+`--auth <clerk|dev>` and `--dual-build` preset the auth-provider and dual-build choices described above directly from the command line -- useful for scripted/CI scaffolding that needs something other than the `--non-interactive` defaults (dev auth, no dual-build):
+
+```bash
+npx canopycms init --non-interactive --auth clerk --dual-build --force
+```
+
+These two flags apply the same way whether or not `--non-interactive` is set: passing one skips that prompt and uses the given value, while omitting it falls back to the interactive prompt (or, under `--non-interactive`, to the default).
 
 ### What it creates
 

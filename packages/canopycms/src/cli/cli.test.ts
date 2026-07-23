@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseArgs, resolveSyncSubcommand } from './cli'
+import { parseArgs, resolveSyncSubcommand, parseAuthFlag } from './cli'
 
 describe('parseArgs', () => {
   it('parses command as first positional arg', () => {
@@ -65,6 +65,59 @@ describe('parseArgs', () => {
     expect(command).toBe('generate-ai-content')
     expect(flags['output']).toBe('public/ai')
     expect(flags['config']).toBe('ai.config.ts')
+  })
+
+  it('parses --auth as a string flag', () => {
+    const { flags } = parseArgs(['init', '--auth', 'clerk'])
+    expect(flags['auth']).toBe('clerk')
+  })
+
+  it('parses --dual-build as boolean true when passed', () => {
+    const { flags } = parseArgs(['init', '--dual-build'])
+    expect(flags['dual-build']).toBe(true)
+  })
+
+  it('leaves --dual-build undefined when not passed', () => {
+    const { flags } = parseArgs(['init'])
+    expect(flags['dual-build']).toBeUndefined()
+  })
+
+  it('parses --no-dual-build as boolean false (explicit override)', () => {
+    const { flags } = parseArgs(['init', '--no-dual-build'])
+    expect(flags['dual-build']).toBe(false)
+  })
+
+  it('parses --auth and --dual-build together with --non-interactive', () => {
+    const { flags } = parseArgs(['init', '--non-interactive', '--auth', 'clerk', '--dual-build'])
+    expect(flags['non-interactive']).toBe(true)
+    expect(flags['auth']).toBe('clerk')
+    expect(flags['dual-build']).toBe(true)
+  })
+})
+
+describe('parseAuthFlag', () => {
+  it('returns undefined when the flag was not provided', () => {
+    expect(parseAuthFlag(undefined)).toBeUndefined()
+  })
+
+  it('accepts "clerk"', () => {
+    expect(parseAuthFlag('clerk')).toBe('clerk')
+  })
+
+  it('accepts "dev"', () => {
+    expect(parseAuthFlag('dev')).toBe('dev')
+  })
+
+  it('throws for an unrecognized value', () => {
+    expect(() => parseAuthFlag('foo')).toThrow(/--auth must be "clerk" or "dev"/)
+  })
+
+  it('throws for an empty string (--auth passed with no value)', () => {
+    expect(() => parseAuthFlag('')).toThrow(/--auth must be "clerk" or "dev"/)
+  })
+
+  it('throws when given a boolean (defensive — should not happen for a string-declared flag)', () => {
+    expect(() => parseAuthFlag(true)).toThrow(/--auth must be "clerk" or "dev"/)
   })
 })
 
