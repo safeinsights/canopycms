@@ -113,6 +113,10 @@ export async function dockerfileCms(): Promise<string> {
   return readTemplate('Dockerfile.cms.template')
 }
 
+export async function dockerignore(): Promise<string> {
+  return readTemplate('dockerignore.template')
+}
+
 export async function githubWorkflowCms(): Promise<string> {
   return readTemplate('deploy-cms.yml.template')
 }
