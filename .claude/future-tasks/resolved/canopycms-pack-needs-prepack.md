@@ -1,6 +1,6 @@
 # `canopycms` (and siblings) need a `prepack` build guard like `canopycms-cdk` got
 
-**RESOLVED 2026-07-24** (`fix/prepack-build-guard`): `"prepack": "pnpm run build"`
+**RESOLVED 2026-07-24** (PR #143): `"prepack": "pnpm run build"`
 added to `canopycms`, `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`.
 Verified the stale-dist repro turns green: with `dist/` deleted, both `pnpm pack` and
 `npm pack` now build first and the tarball contains fresh `dist/` (including
