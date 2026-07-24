@@ -24,8 +24,9 @@ import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
 import { sanitizeBranchName } from '../paths/branch'
-import type { PullRequestState } from '../types'
+import type { PullRequestState, WorkerStatusReport } from '../types'
 import { getErrorMessage, isNodeError } from '../utils/error'
+import { writeWorkerStatus } from './worker-status'
 
 /**
  * Auth cache refresh function type.
@@ -175,6 +176,25 @@ function optionalString(payload: Record<string, unknown>, key: string, fallback:
 }
 
 /**
+ * Per-cycle outcome of `rebaseActiveBranches()` (PR-W1). Folded by `syncGit()`
+ * into the worker's self-reported status (`WorkerStatusReport.lastGitSync`,
+ * see worker-status.ts) alongside a `durationMs` measured around the whole
+ * sync cycle.
+ */
+interface RebaseSummary {
+  /**
+   * Branches that were behind and completed a rebase onto the base branch
+   * (successfully, whether or not conflicts were resolved via --theirs).
+   * Branches that were already up to date are NOT listed here.
+   */
+  rebased: string[]
+  /** Branches skipped this cycle because their working tree had uncommitted changes. */
+  skippedDirty: string[]
+  /** Branches whose rebase attempt failed (fetch error, unexpected rebase error, or MAX_ROUNDS exceeded). */
+  failed: { branch: string; error: string }[]
+}
+
+/**
  * CMS Worker daemon.
  * Handles operations that Lambda (with no internet) cannot perform:
  * - Processing queued tasks (push branches, create PRs)
@@ -208,6 +228,10 @@ export class CmsWorker {
   private releaseLockFn: (() => Promise<void>) | null = null
   private contentRoot: string
   private log = cmsTaskQueueLogger
+  // PR-W1: self-reported liveness/health snapshot, written to
+  // worker-status.json. Normally initialized once at the top of start();
+  // see ensureStatusReport() for the lazy-init fallback.
+  private statusReport?: WorkerStatusReport
 
   constructor(private config: CmsWorkerConfig) {
     this.octokit = createCanopyOctokit({ auth: config.githubToken })
@@ -224,9 +248,26 @@ export class CmsWorker {
     this.contentRoot = config.contentRoot ?? 'content'
   }
 
+  /**
+   * Lazily get (and initialize if necessary) this worker's self-reported
+   * status object (PR-W1). Normally set once, up front, at the top of
+   * start(). The lazy fallback here covers two cases: (1) something in
+   * start() reaching a status-write point before that normal init runs
+   * (defensive -- see start()'s catch), and (2) unit tests that exercise
+   * syncGit()/processTaskQueue() directly without calling start() first.
+   */
+  private ensureStatusReport(): WorkerStatusReport {
+    if (!this.statusReport) {
+      const now = new Date().toISOString()
+      this.statusReport = { version: 1, startedAt: now, updatedAt: now }
+    }
+    return this.statusReport
+  }
+
   async start(): Promise<void> {
     this.running = true
     console.log('CMS Worker starting...')
+    this.ensureStatusReport()
 
     // Acquire lock to prevent concurrent workers
     await this.acquireLock()
@@ -260,6 +301,24 @@ export class CmsWorker {
       }
       await Promise.allSettled(initialTasks)
     } catch (err) {
+      // PR-W1: surface a startup failure (e.g. the empty-remote guard's
+      // poisoned remote.git) to the admin panel via worker-status.json,
+      // not only journald/CloudWatch. Best-effort and BEFORE releaseLock():
+      // a status-write failure must never block releasing the lock.
+      const report = this.ensureStatusReport()
+      report.lastFatalError = {
+        message: getErrorMessage(err),
+        at: new Date().toISOString(),
+        phase: 'startup',
+      }
+      try {
+        await writeWorkerStatus(this.taskDir, report)
+      } catch (writeErr) {
+        console.error(
+          'Failed to write worker status on startup failure:',
+          getErrorMessage(writeErr),
+        )
+      }
       await this.releaseLock()
       throw err
     }
@@ -519,6 +578,18 @@ export class CmsWorker {
         }
       }
       processed++
+    }
+
+    // PR-W1: only stamp/write when work actually happened this poll --
+    // otherwise every idle 5s poll would hit worker-status.json, an EFS
+    // write treadmill for no signal (liveness is already covered by the
+    // lock heartbeat; see api/admin.ts's classifyWorkerLiveness).
+    if (processed > 0) {
+      const report = this.ensureStatusReport()
+      report.lastTaskCycleAt = new Date().toISOString()
+      await writeWorkerStatus(this.taskDir, report).catch((writeErr) =>
+        console.error('Failed to write worker status:', getErrorMessage(writeErr)),
+      )
     }
   }
 
@@ -785,6 +856,7 @@ export class CmsWorker {
     if (!this.running) return
 
     console.log('Syncing git...')
+    const cycleStartedAt = Date.now()
     const git = simpleGit({
       baseDir: this.remoteGitPath,
       // DEP-H1: a hung fetch/push would stall the sync loop forever
@@ -793,22 +865,51 @@ export class CmsWorker {
       timeout: { block: this.taskTimeoutMs },
     })
 
-    // Fetch all branches from GitHub using direct URL (no named remote)
-    // We use raw git commands since simple-git's fetch() with a URL
-    // doesn't support --prune directly
-    await git.raw(['fetch', this.buildGitHubUrl(), '--prune', '+refs/heads/*:refs/heads/*'])
-    console.log('Fetched from GitHub')
+    // PR-W1: the whole cycle is wrapped so both outcomes -- success and
+    // hard failure (e.g. the fetch throwing against a poisoned remote.git)
+    // -- record a worker-status.json snapshot. The status write itself is
+    // always best-effort (.catch below): it must never turn an otherwise
+    // successful cycle into a failure, and must never mask the real error
+    // on a failed one. On failure we rethrow so scheduleLoop's existing
+    // per-cycle catch stays the loud path.
+    try {
+      // Fetch all branches from GitHub using direct URL (no named remote)
+      // We use raw git commands since simple-git's fetch() with a URL
+      // doesn't support --prune directly
+      await git.raw(['fetch', this.buildGitHubUrl(), '--prune', '+refs/heads/*:refs/heads/*'])
+      console.log('Fetched from GitHub')
 
-    // Push settings branches to GitHub (belt-and-suspenders for task queue).
-    // Ensures settings reach GitHub even if a task queue entry is lost.
-    await this.pushSettingsBranches(git)
+      // Push settings branches to GitHub (belt-and-suspenders for task queue).
+      // Ensures settings reach GitHub even if a task queue entry is lost.
+      await this.pushSettingsBranches(git)
 
-    await this.refreshBaseBranchWorkspace()
+      await this.refreshBaseBranchWorkspace()
 
-    await this.rebaseActiveBranches()
+      const rebaseSummary = await this.rebaseActiveBranches()
 
-    // Periodically clean up old completed/failed tasks
-    await cleanupOldTasks(this.taskDir, undefined, this.log)
+      // Periodically clean up old completed/failed tasks
+      await cleanupOldTasks(this.taskDir, undefined, this.log)
+
+      const report = this.ensureStatusReport()
+      report.lastGitSyncAt = new Date().toISOString()
+      delete report.lastGitSyncError
+      report.lastGitSync = {
+        durationMs: Date.now() - cycleStartedAt,
+        rebased: rebaseSummary.rebased,
+        skippedDirty: rebaseSummary.skippedDirty,
+        failed: rebaseSummary.failed,
+      }
+      await writeWorkerStatus(this.taskDir, report).catch((writeErr) =>
+        console.error('Failed to write worker status:', getErrorMessage(writeErr)),
+      )
+    } catch (err) {
+      const report = this.ensureStatusReport()
+      report.lastGitSyncError = { message: getErrorMessage(err), at: new Date().toISOString() }
+      await writeWorkerStatus(this.taskDir, report).catch((writeErr) =>
+        console.error('Failed to write worker status:', getErrorMessage(writeErr)),
+      )
+      throw err
+    }
   }
 
   /**
@@ -1006,12 +1107,19 @@ export class CmsWorker {
     }
   }
 
-  private async rebaseActiveBranches(): Promise<void> {
+  private async rebaseActiveBranches(): Promise<RebaseSummary> {
+    // PR-W1: collected across the loop below and returned as a summary
+    // (folded into worker-status.json by syncGit()). Purely additive
+    // bookkeeping -- doesn't change any control flow or existing logging.
+    const rebased: string[] = []
+    const skippedDirty: string[] = []
+    const failed: { branch: string; error: string }[] = []
+
     let branchDirs: string[]
     try {
       branchDirs = await fs.readdir(this.contentBranchesPath)
     } catch {
-      return
+      return { rebased, skippedDirty, failed }
     }
 
     for (const branchDir of branchDirs) {
@@ -1087,6 +1195,7 @@ export class CmsWorker {
         const dirtyCheck = await branchGit.status()
         if (dirtyCheck.files.length > 0) {
           console.log(`  Skipping ${branchDir}: has uncommitted changes`)
+          skippedDirty.push(branchDir)
           continue
         }
 
@@ -1139,6 +1248,9 @@ export class CmsWorker {
         const conflictedFiles: string[] = []
         let nextAction: 'start' | 'continue' | 'skip' = 'start'
         let completed = false
+        // PR-W1: captured only on the "unexpected error" exit below, for the
+        // failed-summary entry pushed at the `if (!completed)` check.
+        let failureReason: string | undefined
         const MAX_ROUNDS = 50 // safety limit against infinite loops
 
         for (let round = 0; round < MAX_ROUNDS && !completed; round++) {
@@ -1179,6 +1291,7 @@ export class CmsWorker {
                 // state. Previous metadata (possibly stale) is preserved until the
                 // next successful rebase cycle corrects it.
                 console.warn(`  Unexpected rebase error in ${branchDir}: ${msg || 'Unknown error'}`)
+                failureReason = msg || 'Unknown error'
                 await branchGit.rebase(['--abort']).catch(() => {})
                 break
               }
@@ -1191,6 +1304,10 @@ export class CmsWorker {
             `  Rebase of ${branchDir} did not complete within ${MAX_ROUNDS} rounds, aborting`,
           )
           await branchGit.rebase(['--abort']).catch(() => {})
+          failed.push({
+            branch: branchDir,
+            error: failureReason ?? `did not complete within ${MAX_ROUNDS} rounds`,
+          })
           continue
         }
 
@@ -1236,11 +1353,19 @@ export class CmsWorker {
             conflictFiles: conflictIdsDeduped,
           },
         })
+        // PR-W1: the branch was behind and the rebase completed (with or
+        // without --theirs conflict resolution) -- it moved, so it belongs
+        // in the summary. Branches already up to date `continue`d above and
+        // are deliberately not listed here.
+        rebased.push(branchDir)
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
         console.warn(`  Failed to sync ${branchDir}: ${message}`)
+        failed.push({ branch: branchDir, error: message })
       }
     }
+
+    return { rebased, skippedDirty, failed }
   }
 
   async refreshAuthCache(): Promise<void> {
