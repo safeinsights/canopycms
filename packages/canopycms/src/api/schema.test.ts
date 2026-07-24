@@ -37,7 +37,7 @@ import {
   removeEntryType,
   updateOrder,
 } from './schema'
-import { SchemaOps } from '../schema/schema-store'
+import { SchemaOps, SchemaStoreBusyError } from '../schema/schema-store'
 import { unsafeAsBranchName, unsafeAsLogicalPath } from '../paths/test-utils'
 
 describe('Schema API', () => {
@@ -434,6 +434,28 @@ describe('Schema API', () => {
       expect(result.status).toBe(403)
       expect(result.error).toContain('Admin access required')
     })
+
+    it('should return 409 when the store reports the schema is busy', async () => {
+      const mockStore = {
+        createCollection: vi.fn().mockRejectedValue(new SchemaStoreBusyError()),
+      }
+      vi.mocked(SchemaOps).mockImplementation(function () {
+        return mockStore as any
+      })
+
+      const result = await createCollection.handler(
+        mockCtx,
+        mockReq,
+        { branch: unsafeAsBranchName('main') },
+        {
+          name: 'newcol',
+          entries: [{ name: 'item', format: 'json', schema: 'postSchema' }],
+        },
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+    })
   })
 
   describe('updateCollection', () => {
@@ -523,6 +545,28 @@ describe('Schema API', () => {
         label: 'All Content',
       })
     })
+
+    it('should return 409 when the store reports the schema is busy', async () => {
+      const mockStore = {
+        updateCollection: vi.fn().mockRejectedValue(new SchemaStoreBusyError()),
+      }
+      vi.mocked(SchemaOps).mockImplementation(function () {
+        return mockStore as any
+      })
+
+      const result = await updateCollection.handler(
+        mockCtx,
+        mockReq,
+        {
+          branch: unsafeAsBranchName('main'),
+          collectionPath: unsafeAsLogicalPath('posts'),
+        },
+        { label: 'Updated Posts' },
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+    })
   })
 
   describe('deleteCollection', () => {
@@ -560,6 +604,23 @@ describe('Schema API', () => {
       expect(result.ok).toBe(false)
       expect(result.status).toBe(400)
       expect(result.error).toContain('Collection must be empty')
+    })
+
+    it('should return 409 when the store reports the schema is busy', async () => {
+      const mockStore = {
+        deleteCollection: vi.fn().mockRejectedValue(new SchemaStoreBusyError()),
+      }
+      vi.mocked(SchemaOps).mockImplementation(function () {
+        return mockStore as any
+      })
+
+      const result = await deleteCollection.handler(mockCtx, mockReq, {
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('posts'),
+      })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
     })
 
     it('should reject paths with traversal sequences', () => {
@@ -628,6 +689,28 @@ describe('Schema API', () => {
       expect(result.error).toContain('already exists')
     })
 
+    it('should return 409 when the store reports the schema is busy', async () => {
+      const mockStore = {
+        addEntryType: vi.fn().mockRejectedValue(new SchemaStoreBusyError()),
+      }
+      vi.mocked(SchemaOps).mockImplementation(function () {
+        return mockStore as any
+      })
+
+      const result = await addEntryType.handler(
+        mockCtx,
+        mockReq,
+        {
+          branch: unsafeAsBranchName('main'),
+          collectionPath: unsafeAsLogicalPath('posts'),
+        },
+        { name: 'featured', format: 'mdx', schema: 'postSchema' },
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+    })
+
     it('should reject paths with traversal sequences', () => {
       const result = addEntryType.validate({
         params: { branch: 'main', collectionPath: '../admin' },
@@ -653,7 +736,6 @@ describe('Schema API', () => {
     it('should update entry type when user is admin', async () => {
       const mockStore = {
         updateEntryType: vi.fn().mockResolvedValue(undefined),
-        countEntriesUsingType: vi.fn().mockResolvedValue(0),
       }
       vi.mocked(SchemaOps).mockImplementation(function () {
         return mockStore as any
@@ -679,37 +761,26 @@ describe('Schema API', () => {
       )
     })
 
-    it('should allow label/maxItems updates when entries exist', async () => {
+    // The breaking-change usage guard (blocking format/schema changes while
+    // entries still use this type) used to be pre-checked HERE in the
+    // handler via a separate countEntriesUsingType call. It now lives inside
+    // SchemaOps.updateEntryType itself (schema-store.ts's
+    // updateEntryTypeInner, under the same schema lock that guards the
+    // write — see its doc comment for why: the old handler-side check left a
+    // TOCTOU window). That guard's own behavior — blocking breaking changes
+    // with usage, allowing them without, allowing non-breaking changes
+    // regardless — is now covered directly in schema-store.test.ts. These
+    // handler tests just pin that the handler forwards the store's
+    // rejection/success unchanged and no longer pre-checks usage itself.
+    it('should surface the store rejecting a breaking change as a 400 with the message intact', async () => {
       const mockStore = {
-        updateEntryType: vi.fn().mockResolvedValue(undefined),
-        countEntriesUsingType: vi.fn().mockResolvedValue(5),
-      }
-      vi.mocked(SchemaOps).mockImplementation(function () {
-        return mockStore as any
-      })
-
-      const result = await updateEntryType.handler(
-        mockCtx,
-        mockReq,
-        {
-          branch: unsafeAsBranchName('main'),
-          collectionPath: unsafeAsLogicalPath('posts'),
-          entryTypeName: 'post',
-        },
-        { label: 'Updated Label', maxItems: 10 },
-      )
-
-      expect(result.ok).toBe(true)
-      expect(result.status).toBe(200)
-      expect(mockStore.updateEntryType).toHaveBeenCalled()
-      // Should not check usage count since non-breaking changes
-      expect(mockStore.countEntriesUsingType).not.toHaveBeenCalled()
-    })
-
-    it('should block format change when entries exist', async () => {
-      const mockStore = {
-        updateEntryType: vi.fn().mockResolvedValue(undefined),
-        countEntriesUsingType: vi.fn().mockResolvedValue(3),
+        updateEntryType: vi
+          .fn()
+          .mockRejectedValue(
+            new Error(
+              'Cannot modify schema or format for entry type with existing entries. 3 entries currently use this type.',
+            ),
+          ),
       }
       vi.mocked(SchemaOps).mockImplementation(function () {
         return mockStore as any
@@ -730,42 +801,16 @@ describe('Schema API', () => {
       expect(result.status).toBe(400)
       expect(result.error).toContain('Cannot modify schema or format')
       expect(result.error).toContain('3 entries')
-      expect(mockStore.countEntriesUsingType).toHaveBeenCalledWith('posts', 'post')
-      expect(mockStore.updateEntryType).not.toHaveBeenCalled()
-    })
-
-    it('should block fields change when entries exist', async () => {
-      const mockStore = {
-        updateEntryType: vi.fn().mockResolvedValue(undefined),
-        countEntriesUsingType: vi.fn().mockResolvedValue(1),
-      }
-      vi.mocked(SchemaOps).mockImplementation(function () {
-        return mockStore as any
-      })
-
-      const result = await updateEntryType.handler(
-        mockCtx,
-        mockReq,
-        {
-          branch: unsafeAsBranchName('main'),
-          collectionPath: unsafeAsLogicalPath('posts'),
-          entryTypeName: 'post',
-        },
-        { schema: 'newSchema' },
+      expect(mockStore.updateEntryType).toHaveBeenCalledWith(
+        'posts',
+        'post',
+        expect.objectContaining({ format: 'mdx' }),
       )
-
-      expect(result.ok).toBe(false)
-      expect(result.status).toBe(400)
-      expect(result.error).toContain('Cannot modify schema or format')
-      expect(result.error).toContain('1 entry')
-      expect(mockStore.countEntriesUsingType).toHaveBeenCalledWith('posts', 'post')
-      expect(mockStore.updateEntryType).not.toHaveBeenCalled()
     })
 
-    it('should allow format/fields change when no entries exist', async () => {
+    it('should allow a format/schema change the store reports no conflict for', async () => {
       const mockStore = {
         updateEntryType: vi.fn().mockResolvedValue(undefined),
-        countEntriesUsingType: vi.fn().mockResolvedValue(0),
       }
       vi.mocked(SchemaOps).mockImplementation(function () {
         return mockStore as any
@@ -784,14 +829,12 @@ describe('Schema API', () => {
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-      expect(mockStore.countEntriesUsingType).toHaveBeenCalledWith('posts', 'post')
       expect(mockStore.updateEntryType).toHaveBeenCalled()
     })
 
-    it('should block simultaneous format and fields change when entries exist', async () => {
+    it('should return 409 when the store reports the schema is busy', async () => {
       const mockStore = {
-        updateEntryType: vi.fn().mockResolvedValue(undefined),
-        countEntriesUsingType: vi.fn().mockResolvedValue(5),
+        updateEntryType: vi.fn().mockRejectedValue(new SchemaStoreBusyError()),
       }
       vi.mocked(SchemaOps).mockImplementation(function () {
         return mockStore as any
@@ -805,40 +848,11 @@ describe('Schema API', () => {
           collectionPath: unsafeAsLogicalPath('posts'),
           entryTypeName: 'post',
         },
-        { format: 'mdx', schema: 'newSchema' },
+        { label: 'Blog Post' },
       )
 
       expect(result.ok).toBe(false)
-      expect(result.status).toBe(400)
-      expect(result.error).toContain('Cannot modify schema or format')
-      expect(result.error).toContain('5 entries')
-      expect(mockStore.countEntriesUsingType).toHaveBeenCalledWith('posts', 'post')
-      expect(mockStore.updateEntryType).not.toHaveBeenCalled()
-    })
-
-    it('should use singular "entry" in error message for count=1', async () => {
-      const mockStore = {
-        updateEntryType: vi.fn().mockResolvedValue(undefined),
-        countEntriesUsingType: vi.fn().mockResolvedValue(1),
-      }
-      vi.mocked(SchemaOps).mockImplementation(function () {
-        return mockStore as any
-      })
-
-      const result = await updateEntryType.handler(
-        mockCtx,
-        mockReq,
-        {
-          branch: unsafeAsBranchName('main'),
-          collectionPath: unsafeAsLogicalPath('posts'),
-          entryTypeName: 'post',
-        },
-        { format: 'mdx' },
-      )
-
-      expect(result.ok).toBe(false)
-      expect(result.error).toContain('1 entry') // Singular
-      expect(result.error).not.toContain('entries') // Not plural
+      expect(result.status).toBe(409)
     })
 
     it('should reject paths with traversal sequences', () => {
@@ -908,6 +922,24 @@ describe('Schema API', () => {
       expect(result.error).toContain('Cannot remove last entry type')
     })
 
+    it('should return 409 when the store reports the schema is busy', async () => {
+      const mockStore = {
+        removeEntryType: vi.fn().mockRejectedValue(new SchemaStoreBusyError()),
+      }
+      vi.mocked(SchemaOps).mockImplementation(function () {
+        return mockStore as any
+      })
+
+      const result = await removeEntryType.handler(mockCtx, mockReq, {
+        branch: unsafeAsBranchName('main'),
+        collectionPath: unsafeAsLogicalPath('posts'),
+        entryTypeName: 'post',
+      })
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+    })
+
     it('should reject paths with traversal sequences', () => {
       const result = removeEntryType.validate({
         params: {
@@ -974,6 +1006,28 @@ describe('Schema API', () => {
 
       expect(result.ok).toBe(false)
       expect(result.status).toBe(403)
+    })
+
+    it('should return 409 when the store reports the schema is busy', async () => {
+      const mockStore = {
+        updateOrder: vi.fn().mockRejectedValue(new SchemaStoreBusyError()),
+      }
+      vi.mocked(SchemaOps).mockImplementation(function () {
+        return mockStore as any
+      })
+
+      const result = await updateOrder.handler(
+        mockCtx,
+        mockReq,
+        {
+          branch: unsafeAsBranchName('main'),
+          collectionPath: unsafeAsLogicalPath('posts'),
+        },
+        { order: ['id1'] },
+      )
+
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
     })
 
     it('should reject paths with traversal sequences', () => {

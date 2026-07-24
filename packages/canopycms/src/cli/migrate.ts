@@ -23,6 +23,8 @@ import { parseSlug } from '../paths'
 import { filePathExists } from '../utils/fs'
 import { loadCollectionMetaFiles } from '../schema'
 import { getErrorMessage } from '../utils/error'
+import { withLock } from '../utils/async-mutex'
+import { withOccFileLock, OccWriteConflictError } from '../utils/occ-json-write'
 import { BranchMetadataFileManager } from '../branch-metadata'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 
@@ -277,15 +279,6 @@ export async function migrate(options: MigrateOptions): Promise<{ opCount: numbe
     }
   }
 
-  for (const op of ops) {
-    if (op.kind === 'rename') {
-      await fs.rename(op.from, op.to)
-    } else {
-      await fs.writeFile(op.filePath, op.content, 'utf-8')
-    }
-  }
-  p.log.success(`Applied ${ops.length} operation(s).`)
-
   // migrate's target (`projectDir`, resolved by walking up from cwd to the
   // nearest canopycms.config.ts — see cli/project-root.ts) is USUALLY the
   // developer's live source repo, not a branch clone: migrate is meant to run
@@ -305,8 +298,43 @@ export async function migrate(options: MigrateOptions): Promise<{ opCount: numbe
   // project root. Guard on that directly — a branch clone always has
   // .canopy-meta/branch.json (BranchMetadataFileManager), the live project
   // root never does — rather than assuming based on how migrate is "usually"
-  // invoked.
-  if (await BranchMetadataFileManager.loadOnly(projectDir)) {
+  // invoked. Computed BEFORE applying ops so the same check gates both the
+  // surrogate schema lock below and the post-migration cache invalidation.
+  const isBranchClone = Boolean(await BranchMetadataFileManager.loadOnly(projectDir))
+
+  const applyOps = async (): Promise<void> => {
+    for (const op of ops) {
+      if (op.kind === 'rename') {
+        await fs.rename(op.from, op.to)
+      } else {
+        await fs.writeFile(op.filePath, op.content, 'utf-8')
+      }
+    }
+  }
+
+  if (isBranchClone) {
+    // projectDir IS the branch root in this case (see the invariant note
+    // above) — the same surrogate lock path SchemaOps uses for its own
+    // schema mutations (schema-store.ts's withSchemaLock), so a migrate run
+    // racing a live schema-editing request on this same branch clone
+    // serializes against it instead of silently interleaving writes.
+    const lockPath = path.join(projectDir, '.canopy-meta', 'schema')
+    try {
+      await withLock(lockPath, () => withOccFileLock(lockPath, applyOps))
+    } catch (err) {
+      if (err instanceof OccWriteConflictError) {
+        throw new MigrateError('Another process is modifying the schema, try again.')
+      }
+      throw err
+    }
+  } else {
+    // Not a branch clone — no surrogate lock to take (and none of its
+    // machinery should ever create `.canopy-meta/` at a plain project root).
+    await applyOps()
+  }
+  p.log.success(`Applied ${ops.length} operation(s).`)
+
+  if (isBranchClone) {
     await invalidateBranchContentCaches(projectDir)
   }
 

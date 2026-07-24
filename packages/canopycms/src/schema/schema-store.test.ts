@@ -2,13 +2,51 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { SchemaOps, createCollectionInputSchema } from './schema-store'
+import { SchemaOps, SchemaStoreBusyError, createCollectionInputSchema } from './schema-store'
 import type { CreateCollectionInput } from './schema-store'
 import type { FieldConfig } from '../config'
+import type { LogicalPath } from '../paths/types'
 import { unsafeAsLogicalPath } from '../paths/test-utils'
 import { BranchSchemaCache, SCHEMA_GENERATION_RESOURCE } from '../branch-schema-cache'
 import { resourceGenerationPath } from '../resource-generation'
 import { createMockServices } from '../test-utils'
+import { withOccFileLock } from '../utils/occ-json-write'
+
+/**
+ * Test subclass gating the FIRST readCollectionMeta call behind a
+ * manually-resolved deferred, to deterministically simulate a mutation whose
+ * read has started (and is now parked INSIDE the schema lock) while a second
+ * mutation on another SchemaOps instance queues behind it. Mirrors the gated-
+ * hook pattern used by branch-registry.test.ts's BlockingRegistry and
+ * content-store.test.ts's BlockingContentStore (see docs/concurrency.md's
+ * testing conventions).
+ */
+class GatedSchemaOps extends SchemaOps {
+  public readCallCount = 0
+  private resolveGate!: () => void
+  private gate: Promise<void> = new Promise((resolve) => {
+    this.resolveGate = resolve
+  })
+  private resolveParked!: () => void
+  /** Resolves once the first readCollectionMeta call has started and is now parked on the gate. */
+  public parked: Promise<void> = new Promise((resolve) => {
+    this.resolveParked = resolve
+  })
+
+  /** Release the parked read so the mutation can proceed. */
+  release(): void {
+    this.resolveGate()
+  }
+
+  override async readCollectionMeta(collectionPath: LogicalPath) {
+    this.readCallCount++
+    if (this.readCallCount === 1) {
+      this.resolveParked()
+      await this.gate
+    }
+    return super.readCollectionMeta(collectionPath)
+  }
+}
 
 describe('SchemaOps', () => {
   let tempDir: string
@@ -202,8 +240,14 @@ describe('SchemaOps', () => {
         spy.mockRestore()
       }
 
-      // Nothing was written outside the content root
-      expect(await fs.readdir(tempDir)).toEqual(['content'])
+      // Nothing was written outside the content root. `.canopy-meta/` is the
+      // one expected exception: withSchemaLock's lock acquisition creates it
+      // (outside the content tree, by design — see the module doc comment)
+      // for every mutation attempt, successful or not, before the
+      // containment check inside the lock ever runs. It's left empty (the
+      // lock itself is released) rather than containing anything traversal-derived.
+      expect((await fs.readdir(tempDir)).sort()).toEqual(['.canopy-meta', 'content'])
+      expect(await fs.readdir(path.join(tempDir, '.canopy-meta'))).toEqual([])
       expect(await fs.readdir(contentRoot)).toEqual([])
     })
   })
@@ -626,6 +670,87 @@ describe('SchemaOps', () => {
         }),
       ).rejects.toThrow('Entry type "nonexistent" not found')
     })
+
+    // Breaking-change usage guard — moved here from api/schema.ts's
+    // updateEntryTypeHandler (see updateEntryTypeInner's doc comment): the
+    // handler used to count usages BEFORE calling the store, which left a
+    // TOCTOU window; the guard now runs inside the store, under the same
+    // schema lock that guards the write.
+    it('should block format change when entries exist using this type', async () => {
+      const result = await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+      const collectionPath = path.join(contentRoot, `posts.${result.contentId}`)
+      await fs.writeFile(
+        path.join(collectionPath, 'post.first.abc123def456.json'),
+        JSON.stringify({ title: 'First' }),
+      )
+
+      await expect(
+        store.updateEntryType(unsafeAsLogicalPath('posts'), 'post', { format: 'mdx' }),
+      ).rejects.toThrow('Cannot modify schema or format for entry type with existing entry')
+
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
+      expect(meta!.entries![0].format).toBe('json') // unchanged
+    })
+
+    it('should block schema change when multiple entries exist using this type', async () => {
+      const result = await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+      const collectionPath = path.join(contentRoot, `posts.${result.contentId}`)
+      await fs.writeFile(
+        path.join(collectionPath, 'post.first.abc123def456.json'),
+        JSON.stringify({ title: 'First' }),
+      )
+      await fs.writeFile(
+        path.join(collectionPath, 'post.second.xyz789uvw123.json'),
+        JSON.stringify({ title: 'Second' }),
+      )
+
+      await expect(
+        store.updateEntryType(unsafeAsLogicalPath('posts'), 'post', { schema: 'pageSchema' }),
+      ).rejects.toThrow('2 entries currently use this type')
+    })
+
+    it('should allow format/schema change when no entries use this type', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+
+      await store.updateEntryType(unsafeAsLogicalPath('posts'), 'post', {
+        format: 'mdx',
+        schema: 'pageSchema',
+      })
+
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
+      expect(meta!.entries![0].format).toBe('mdx')
+      expect(meta!.entries![0].schema).toBe('pageSchema')
+    })
+
+    it('should allow label/maxItems changes even when entries exist (non-breaking)', async () => {
+      const result = await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+      const collectionPath = path.join(contentRoot, `posts.${result.contentId}`)
+      await fs.writeFile(
+        path.join(collectionPath, 'post.first.abc123def456.json'),
+        JSON.stringify({ title: 'First' }),
+      )
+
+      await store.updateEntryType(unsafeAsLogicalPath('posts'), 'post', {
+        label: 'Blog Post',
+        maxItems: 5,
+      })
+
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
+      expect(meta!.entries![0].label).toBe('Blog Post')
+      expect(meta!.entries![0].maxItems).toBe(5)
+    })
   })
 
   describe('removeEntryType', () => {
@@ -969,5 +1094,235 @@ describe('SchemaOps', () => {
       const cache = JSON.parse(await fs.readFile(cachePath, 'utf-8')) as { generation: string }
       expect(cache.generation).toBe(token)
     })
+  })
+
+  describe('concurrency', () => {
+    it('serializes two concurrent addEntryType calls on different SchemaOps instances — the second does not read until the first releases the lock', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+
+      const gated = new GatedSchemaOps(contentRoot, entrySchemaRegistry)
+      const second = new SchemaOps(contentRoot, entrySchemaRegistry)
+      const secondReadSpy = vi.spyOn(second, 'readCollectionMeta')
+
+      const addA = gated.addEntryType(unsafeAsLogicalPath('posts'), {
+        name: 'entry-a',
+        format: 'json',
+        schema: 'postSchema',
+      })
+      // Wait for gated's read to actually start (and park) before starting
+      // the second mutation — not just a microtask tick, since the read
+      // involves real fs I/O.
+      await gated.parked
+
+      const addB = second.addEntryType(unsafeAsLogicalPath('posts'), {
+        name: 'entry-b',
+        format: 'json',
+        schema: 'postSchema',
+      })
+
+      // Give any wrongly-unblocked async work a chance to run before
+      // asserting — if the lock were NOT held (the pre-fix behavior),
+      // second's readCollectionMeta would already have been called by now.
+      await new Promise((resolve) => setImmediate(resolve))
+      expect(secondReadSpy).not.toHaveBeenCalled()
+      expect(gated.readCallCount).toBe(1)
+
+      gated.release()
+      await Promise.all([addA, addB])
+
+      expect(secondReadSpy).toHaveBeenCalledTimes(1)
+
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
+      const names = meta!.entries!.map((e) => e.name)
+      expect(names).toEqual(expect.arrayContaining(['post', 'entry-a', 'entry-b']))
+      expect(names).toHaveLength(3)
+    })
+
+    it('serializes 5 concurrent addEntryType calls across 5 SchemaOps instances without losing any', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+
+      const instances = Array.from(
+        { length: 5 },
+        () => new SchemaOps(contentRoot, entrySchemaRegistry),
+      )
+      await Promise.all(
+        instances.map((instance, i) =>
+          instance.addEntryType(unsafeAsLogicalPath('posts'), {
+            name: `entry-${i}`,
+            format: 'json',
+            schema: 'postSchema',
+          }),
+        ),
+      )
+
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
+      const names = meta!.entries!.map((e) => e.name)
+      expect(names).toEqual(
+        expect.arrayContaining(['post', 'entry-0', 'entry-1', 'entry-2', 'entry-3', 'entry-4']),
+      )
+      expect(names).toHaveLength(6)
+
+      // The resulting file parses cleanly (no interleaved/corrupted write).
+      const dirs = await fs.readdir(contentRoot)
+      const collectionDir = dirs.find((d) => d.startsWith('posts.'))!
+      const raw = await fs.readFile(
+        path.join(contentRoot, collectionDir, '.collection.json'),
+        'utf-8',
+      )
+      expect(() => JSON.parse(raw)).not.toThrow()
+    })
+
+    it('two concurrent createCollection calls under the same parent both land in the parent order array', async () => {
+      await store.createCollection({
+        name: 'docs',
+        entries: [{ name: 'doc', format: 'md', schema: 'postSchema' }],
+      })
+
+      const a = new SchemaOps(contentRoot, entrySchemaRegistry)
+      const b = new SchemaOps(contentRoot, entrySchemaRegistry)
+      const docsPath = unsafeAsLogicalPath('docs')
+
+      const [childA, childB] = await Promise.all([
+        a.createCollection({
+          name: 'guides',
+          parentPath: docsPath,
+          entries: [{ name: 'guide', format: 'md', schema: 'postSchema' }],
+        }),
+        b.createCollection({
+          name: 'api',
+          parentPath: docsPath,
+          entries: [{ name: 'api-doc', format: 'md', schema: 'postSchema' }],
+        }),
+      ])
+
+      const parentMeta = await store.readCollectionMeta(docsPath)
+      expect(parentMeta!.order).toEqual(
+        expect.arrayContaining([childA.contentId, childB.contentId]),
+      )
+      expect(parentMeta!.order).toHaveLength(2)
+    })
+
+    it('updateOrder on a non-root collection completes without deadlocking (no re-entrant lock via the public updateCollection)', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+
+      await expect(
+        store.updateOrder(unsafeAsLogicalPath('posts'), ['a', 'b']),
+      ).resolves.toBeUndefined()
+
+      const meta = await store.readCollectionMeta(unsafeAsLogicalPath('posts'))
+      expect(meta!.order).toEqual(['a', 'b'])
+    })
+
+    it('leaves no lock or tmp artifacts under the branch root after mutations', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+      await store.addEntryType(unsafeAsLogicalPath('posts'), {
+        name: 'page',
+        format: 'json',
+        schema: 'postSchema',
+      })
+      await store.updateOrder(unsafeAsLogicalPath('posts'), ['x'])
+
+      const metaDirEntries = await fs
+        .readdir(path.join(tempDir, '.canopy-meta'))
+        .catch(() => [] as string[])
+      expect(metaDirEntries).not.toContain('schema.lock')
+
+      const walk = async (dir: string): Promise<string[]> => {
+        const out: string[] = []
+        for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+          const full = path.join(dir, entry.name)
+          if (entry.isDirectory()) {
+            out.push(...(await walk(full)))
+          } else {
+            out.push(full)
+          }
+        }
+        return out
+      }
+      const files = await walk(contentRoot)
+      expect(files.filter((f) => f.endsWith('.lock') || f.endsWith('.tmp'))).toEqual([])
+    })
+
+    it('rejects with SchemaStoreBusyError without recreating branchRoot when the branch has been deleted', async () => {
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+
+      await fs.rm(tempDir, { recursive: true, force: true })
+
+      await expect(
+        store.addEntryType(unsafeAsLogicalPath('posts'), {
+          name: 'page',
+          format: 'json',
+          schema: 'postSchema',
+        }),
+      ).rejects.toThrow(SchemaStoreBusyError)
+
+      const exists = await fs
+        .stat(tempDir)
+        .then(() => true)
+        .catch(() => false)
+      expect(exists).toBe(false)
+    })
+
+    it('maps a lock-acquisition failure into SchemaStoreBusyError once the branch directory disappears mid-contention', async () => {
+      // Mirrors occ-json-write.test.ts's "deleteBranch vs. racing save" test:
+      // an external holder keeps the surrogate schema lock while addEntryType
+      // queues behind it; once the holder releases AND removes the branch
+      // root, the queued attempt's next retry hits ENOENT (not ELOCKED) and
+      // withOccFileLock fails fast rather than exhausting the ~13.5s
+      // contention budget — withSchemaLock then translates that
+      // OccWriteConflictError into SchemaStoreBusyError.
+      await store.createCollection({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+      })
+
+      const schemaLockPath = path.join(tempDir, '.canopy-meta', 'schema')
+
+      let resolveHolderAcquired!: () => void
+      const holderAcquired = new Promise<void>((resolve) => {
+        resolveHolderAcquired = resolve
+      })
+      let resolveProceed!: () => void
+      const proceed = new Promise<void>((resolve) => {
+        resolveProceed = resolve
+      })
+
+      const holder = withOccFileLock(schemaLockPath, async () => {
+        resolveHolderAcquired()
+        await proceed
+        await fs.rm(tempDir, { recursive: true, force: true })
+      })
+
+      await holderAcquired
+
+      const addPromise = store.addEntryType(unsafeAsLogicalPath('posts'), {
+        name: 'page',
+        format: 'json',
+        schema: 'postSchema',
+      })
+      addPromise.catch(() => {})
+
+      resolveProceed()
+      await holder
+
+      const failStart = Date.now()
+      await expect(addPromise).rejects.toThrow(SchemaStoreBusyError)
+      expect(Date.now() - failStart).toBeLessThan(5000)
+    }, 15_000)
   })
 })

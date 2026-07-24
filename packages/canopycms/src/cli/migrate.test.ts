@@ -241,6 +241,54 @@ describe('canopycms migrate', () => {
     const entry = rootEntries.find((n) => n.endsWith('.yml'))
     expectEntryFileName(entry as string, 'doc', 'settings', 'yml')
   })
+
+  it('creates no .canopy-meta/ at the project root for a plain (non-branch-clone) directory', async () => {
+    // Pins the invariant documented in migrate.ts: a plain project dir (the
+    // common case — migrate runs once before any branch workspace exists)
+    // must never gain a .canopy-meta/ directory, whether from the surrogate
+    // schema lock or from cache invalidation.
+    projectDir = await setupPlainTree()
+
+    const result = await migrate(defaultOpts(projectDir))
+    expect(result.opCount).toBeGreaterThan(0)
+
+    const metaDirExists = await fs
+      .stat(path.join(projectDir, '.canopy-meta'))
+      .then(() => true)
+      .catch(() => false)
+    expect(metaDirExists).toBe(false)
+  })
+
+  it('applies ops under the surrogate schema lock for a branch-clone project dir, leaving no lock artifact behind', async () => {
+    projectDir = await setupPlainTree()
+    // Seed a minimal branch.json the way BranchMetadataFileManager.loadOnly
+    // expects, marking projectDir as a branch clone workspace — branch
+    // clones are full git clones that carry their own
+    // .canopy-meta/branch.json (see migrate.ts's invariant comment).
+    await fs.mkdir(path.join(projectDir, '.canopy-meta'), { recursive: true })
+    await fs.writeFile(
+      path.join(projectDir, '.canopy-meta', 'branch.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        version: 1,
+        branch: {
+          name: 'feature-x',
+          status: 'editing',
+          access: {},
+          createdBy: 'u1',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      }),
+    )
+
+    const result = await migrate(defaultOpts(projectDir))
+    expect(result.opCount).toBeGreaterThan(0)
+
+    const metaEntries = await fs.readdir(path.join(projectDir, '.canopy-meta'))
+    expect(metaEntries).not.toContain('schema.lock')
+    expect(metaEntries).toContain('branch.json') // untouched by the migrate run
+  })
 })
 
 describe('slugifyName', () => {

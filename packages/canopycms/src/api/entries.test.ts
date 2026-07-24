@@ -15,6 +15,7 @@ import { loadCollectionMetaFiles, resolveCollectionReferences } from '../schema'
 import { unsafeAsBranchName, unsafeAsLogicalPath } from '../paths/test-utils'
 import { BranchSchemaCache, SCHEMA_GENERATION_RESOURCE } from '../branch-schema-cache'
 import { resourceGenerationPath } from '../resource-generation'
+import { SchemaOps, SchemaStoreBusyError } from '../schema/schema-store'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-entries-'))
 
@@ -1541,6 +1542,114 @@ describe('deleteEntry', () => {
     // (c) the schema generation marker was bumped by the order-update write
     const markerAfter = await fs.readFile(markerPath, 'utf8')
     expect(markerAfter.length).toBeGreaterThan(0)
+  })
+
+  it('still returns 200 when the order-cleanup update is rejected because the schema is busy', async () => {
+    // deleteEntryHandler's order-array cleanup is best-effort order hygiene
+    // (see the comment above that call site): a busy surrogate schema lock
+    // (another in-flight schema mutation on this branch) must not turn an
+    // already-completed delete into an error response.
+    const root = await tmpDir()
+
+    const postsId = 'q52DCVPuH4ga'
+    await fs.mkdir(path.join(root, `content/posts.${postsId}`), {
+      recursive: true,
+    })
+
+    const entryId = 'abc123def456'
+    const otherEntryId = 'other000id001'
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/.collection.json`),
+      JSON.stringify({
+        name: 'posts',
+        entries: [{ name: 'post', format: 'json', schema: 'postSchema' }],
+        order: [entryId, otherEntryId],
+      }),
+      'utf8',
+    )
+
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.to-delete.${entryId}.json`),
+      JSON.stringify({ title: 'Delete Me' }),
+      'utf8',
+    )
+    await fs.writeFile(
+      path.join(root, `content/posts.${postsId}/post.keep-me.${otherEntryId}.json`),
+      JSON.stringify({ title: 'Keep Me' }),
+      'utf8',
+    )
+
+    const entrySchemaRegistry = {
+      postSchema: [{ name: 'title', type: 'string' }],
+    }
+    const metaFiles = await loadCollectionMetaFiles(path.join(root, 'content'))
+    const schema = resolveCollectionReferences(metaFiles, entrySchemaRegistry)
+
+    const config = defineCanopyTestConfig({
+      defaultBranchAccess: 'allow',
+      contentRoot: 'content',
+      schema,
+    })
+
+    const checkBranchAccess = createCheckBranchAccess('allow')
+    const { checkContentAccess, createContentAccessChecker } = createTestContentAccess({
+      checkBranchAccess,
+      loadPathPermissions: vi.fn().mockResolvedValue([]),
+      defaultPathAccess: 'allow',
+      mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/mock/settings'),
+    })
+
+    const ctx = createMockApiContext({
+      services: {
+        config,
+        entrySchemaRegistry,
+        checkBranchAccess,
+        checkContentAccess,
+        createContentAccessChecker,
+      },
+      branchContext: {
+        ...createMockBranchContext({
+          branchName: 'main',
+          baseRoot: root,
+          branchRoot: root,
+          createdBy: 'u1',
+        }),
+        flatSchema: flattenSchema(schema, config.contentRoot),
+      },
+    })
+
+    const updateOrderSpy = vi
+      .spyOn(SchemaOps.prototype, 'updateOrder')
+      .mockRejectedValue(new SchemaStoreBusyError())
+
+    const { deleteEntry } = await import('./entries')
+
+    const res = await deleteEntry.handler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      {
+        branch: unsafeAsBranchName('main'),
+        entryPath: unsafeAsLogicalPath('content/posts/to-delete'),
+      },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(res.data?.deleted).toBe(true)
+    expect(updateOrderSpy).toHaveBeenCalled()
+
+    // The entry file is still gone — the delete itself completed
+    // successfully; only the best-effort order cleanup was skipped.
+    const files = await fs.readdir(path.join(root, `content/posts.${postsId}`))
+    expect(files).not.toContain(`post.to-delete.${entryId}.json`)
+
+    // The order array still contains the deleted id (cleanup was skipped)
+    const meta = JSON.parse(
+      await fs.readFile(path.join(root, `content/posts.${postsId}/.collection.json`), 'utf8'),
+    ) as { order?: string[] }
+    expect(meta.order).toEqual([entryId, otherEntryId])
+
+    updateOrderSpy.mockRestore()
   })
 
   it('returns 403 when user lacks edit permission', async () => {
