@@ -83,6 +83,36 @@ describe('config validation', () => {
     expect(config.defaultPathAccess).toBe('allow')
   })
 
+  // Level-scoped defaultPathAccess: object form round-trips exactly, with omitted
+  // levels left undefined rather than filled in (resolveDefaultPathAccess handles the
+  // fail-closed 'deny' fallback at read time, not the schema).
+  it('accepts an object form of defaultPathAccess and round-trips it exactly', () => {
+    const config = validateCanopyConfig({
+      ...gitAuthor,
+      defaultPathAccess: { read: 'allow' },
+    })
+
+    expect(config.defaultPathAccess).toEqual({ read: 'allow' })
+  })
+
+  it('rejects an unknown level key in the defaultPathAccess object form', () => {
+    expect(() =>
+      validateCanopyConfig({
+        ...gitAuthor,
+        defaultPathAccess: { readx: 'allow' },
+      } as Record<string, unknown>),
+    ).toThrow()
+  })
+
+  it('rejects an invalid level value in the defaultPathAccess object form', () => {
+    expect(() =>
+      validateCanopyConfig({
+        ...gitAuthor,
+        defaultPathAccess: { read: 'sometimes' },
+      } as Record<string, unknown>),
+    ).toThrow()
+  })
+
   it('rejects unknown fields (strict mode)', () => {
     expect(() =>
       validateCanopyConfig({

@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createTestServices } from './config-test'
 import { createCanopyContext } from './context'
-import { ContentStoreError } from './content-store'
 import { STATIC_DEPLOY_USER } from './build-mode'
 import { parsePhysicalPath } from './paths'
 import type { BranchContext } from './types'
@@ -33,8 +32,17 @@ const buildBranchContext = (branchRoot: string, name = 'main'): BranchContext =>
 
 // Mock branch-workspace to return our test branch context
 let testBranchContext: BranchContext
+// Set by a test to simulate a raw (non-ContentStoreError) failure surfacing while
+// readByUrlPath probes candidates, to verify such errors still propagate instead of
+// being swallowed as "not found".
+let injectNonContentStoreError = false
 vi.mock('./branch-workspace', () => ({
-  loadOrCreateBranchContext: async () => testBranchContext,
+  loadOrCreateBranchContext: async () => {
+    if (injectNonContentStoreError) {
+      throw new Error('simulated non-ContentStoreError failure')
+    }
+    return testBranchContext
+  },
   loadBranchContext: async () => testBranchContext,
 }))
 
@@ -243,7 +251,7 @@ describe('readByUrlPath', () => {
     expect(result).toBeNull()
   })
 
-  it('re-throws non-lookup errors (e.g., permission errors)', async () => {
+  it('returns null (not throw) when a candidate read is FORBIDDEN, so pages can notFound()', async () => {
     const services = await createTestServices(
       {
         defaultBranchAccess: 'deny',
@@ -270,7 +278,32 @@ describe('readByUrlPath', () => {
     })
 
     const ctx = await canopyCtx.getContext()
-    await expect(ctx.readByUrlPath('/docs/secret')).rejects.toThrow(ContentStoreError)
+    await expect(ctx.readByUrlPath('/docs/secret')).resolves.toBeNull()
+  })
+
+  it('still rejects when a real (non-ContentStoreError) error surfaces while probing candidates', async () => {
+    const services = await createTestServices(
+      {
+        defaultBranchAccess: 'allow',
+        defaultPathAccess: 'allow',
+        schema: testSchema,
+      },
+      { getSettingsBranchRoot: () => Promise.resolve(root) },
+    )
+
+    const ctx = await createCanopyContext({
+      services,
+      extractUser: async () => STATIC_DEPLOY_USER,
+    }).getContext()
+
+    injectNonContentStoreError = true
+    try {
+      await expect(ctx.readByUrlPath('/docs/whatever')).rejects.toThrow(
+        'simulated non-ContentStoreError failure',
+      )
+    } finally {
+      injectNonContentStoreError = false
+    }
   })
 
   it('falls through when first candidate resolves to a non-collection schema item', async () => {

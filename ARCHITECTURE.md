@@ -1149,7 +1149,7 @@ This factory is framework-agnostic—it doesn't know about Next.js, Express, or 
 Calling `getContext()` returns a `CanopyContext` with:
 
 - **read()**: Content reader with user already injected, no need to pass user manually
-- **readByUrlPath()**: URL-path-based content reader that resolves URL paths to entries (tries direct slug match first, then falls back to index entry lookup; root path '/' resolves to the content root's index entry)
+- **readByUrlPath()**: URL-path-based content reader that resolves URL paths to entries (tries direct slug match first, then falls back to index entry lookup; root path '/' resolves to the content root's index entry). A denied read (no access, or an anonymous request against a private path) resolves to `null` rather than throwing, so a page's ordinary `if (!result) return notFound()` renders a privacy-preserving 404 instead of an unhandled 500 escaping the server component — the same choice (don't reveal _why_ a path is inaccessible) the JSON API already makes by returning 401/403 rather than leaking content. The stricter **read()** always throws on a denied read, for callers that need to distinguish "not found" from "forbidden."
 - **buildContentTree()**: Build-time content tree builder (see [Content Tree Builder](#content-tree-builder) below)
 - **listEntries()**: Flat content listing for static params, search indexes, sitemaps, etc. (see [Content Entry Listing](#content-entry-listing) below)
 - **services**: Access to underlying services if needed
@@ -1182,7 +1182,7 @@ This covers situations like `getCanopy()` being called from `generateStaticParam
 
 **Combined check**: The content reader and context factory use `isDeployedStatic(config) || isBuildMode()` to determine when to bypass auth. The static deployment check is config-driven (stable, explicit); the build mode check is environment-driven (dynamic, safety net).
 
-**Two-deployment model**: A single codebase can produce both a static export and a CMS server build. The `deployedAs` field in each build's config controls which deployment type is active. This enables patterns like a public-facing static site alongside a separate CMS editor deployment, both reading from the same content repository. At the build-tooling level, the `withCanopy()` Next.js config wrapper supports this via its `staticBuild` option, which controls whether CMS-only files (using the `.server.ts`/`.server.tsx` convention) are included in `pageExtensions`. See [Framework Adapters](#framework-adapters) for details.
+**Two-deployment model**: A single codebase can produce both a static export and a CMS server build. The `deployedAs` field in each build's config controls which deployment type is active. This enables patterns like a public-facing static site alongside a separate CMS editor deployment, both reading from the same content repository. At the build-tooling level, the `withCanopy()` Next.js config wrapper supports this via its `staticBuild` option, which controls whether CMS-only files (using the `.server.ts`/`.server.tsx` convention) are included in `pageExtensions`. A content route whose rendering must itself differ between the two builds (prerendered vs. request-time) additionally ships a matching `.static.ts`/`.static.tsx` variant — see [Why split a dual-build content route into static and server page variants?](#why-split-a-dual-build-content-route-into-static-and-server-page-variants). See [Framework Adapters](#framework-adapters) for details.
 
 This means you can use the same `read()` calls in both authenticated pages and static generation—the context handles the difference automatically.
 
@@ -1272,6 +1272,8 @@ Per-branch ACLs control who can access a branch. Branches can be restricted to s
 ### Layer 2: Path Permissions
 
 Glob patterns (e.g., `content/posts/**`) restrict who can edit specific content paths. First matching rule wins. Only admins bypass path rules. Implemented in the `path.ts` submodule.
+
+**Level-scoped defaults**: `defaultPathAccess` (the fallback verdict when no rule matches a path) accepts either a single value applied to every permission level, or an object scoped per level, e.g. `{ read: 'allow' }`. This lets a `deployedAs: 'server'` site declare public read as its default while edit and review stay deny-by-default — the primary use case is a CMS-served site that is also publicly readable without auth. Any level left unspecified in the object form resolves to `deny`, so scoping read access can never accidentally loosen edit or review by omission.
 
 ### Layer 3: Content Access
 
@@ -2125,7 +2127,7 @@ The `canopycms-next` package also provides a `withCanopy()` function that wraps 
 
 - **Module transpilation**: CanopyCMS packages export raw TypeScript. `withCanopy()` auto-detects which Canopy packages are installed (via `require.resolve`) and adds only those to `transpilePackages`. The core `canopycms` package is always included; optional packages like `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, and `canopycms-cdk` are included only if found in the consumer's `node_modules`. This avoids Next.js build errors from listing uninstalled packages.
 - **React deduplication**: When consuming Canopy packages via `file:` references or linked packages during local development, the bundler can follow symlinks into the linked package's `node_modules` and resolve a second copy of React. Dual React instances cause "Invalid hook call" crashes. `withCanopy()` resolves React modules from the consumer's project root via scoped Webpack aliases (applied only to canopycms source files), ensuring a single React instance without interfering with Next.js internals.
-- **Dual-build page extensions**: `withCanopy()` supports a `staticBuild` option that controls whether CMS-only files are included in the Next.js build. By convention, CMS-only routes (API handlers, editor pages) use `.server.ts` or `.server.tsx` file extensions. In dev and CMS builds (default), `withCanopy()` adds `server.ts` and `server.tsx` to Next.js `pageExtensions` so these files are processed normally. When `staticBuild: true` is set, these extensions are omitted, causing Next.js to ignore the CMS-only files entirely. This is the build-tooling mechanism that enables the two-deployment model described above -- a single codebase produces both a public static export (no editor code) and a CMS server build (with editor routes), controlled by a build-time flag rather than runtime checks.
+- **Dual-build page extensions**: `withCanopy()` supports a `staticBuild` option that controls which per-build file variants Next.js includes. By convention, CMS-only routes (API handlers, editor pages) use `.server.ts`/`.server.tsx` file extensions; a content route that needs to render differently per build additionally ships a `.static.ts`/`.static.tsx` variant (a prerendered `page.static.tsx` alongside a request-time `page.server.tsx`). In dev and CMS builds (default, `staticBuild: false`), `withCanopy()` adds `server.ts`/`server.tsx` to `pageExtensions`, so CMS-only files and `.server.tsx` route variants are processed while `.static.tsx` variants are ignored. When `staticBuild: true` is set, it adds `static.ts`/`static.tsx` instead, so the static-only variants are processed and every `.server.*` file — CMS-only routes and route variants alike — is ignored. This is the build-tooling mechanism that enables the two-deployment model described above -- a single codebase produces both a public static export (no editor code) and a CMS server build (with editor routes), controlled by a build-time flag rather than runtime checks. See [Why split a dual-build content route into static and server page variants?](#why-split-a-dual-build-content-route-into-static-and-server-page-variants) for why a shared page can't switch this behavior on its own.
 
 When installed from npm (not symlinked), the React aliases are harmless -- they resolve to the same React the project already uses. Note that Turbopack does not currently support the absolute-path aliases used for React deduplication, so consumers using `file:` symlinks for local development must use `next dev --webpack`; Turbopack works fine when packages are installed from npm.
 
@@ -2209,6 +2211,10 @@ File paths can change when entries are renamed (slug changes). ContentIds are im
 ### Why three permission layers?
 
 Defense in depth. Branch access controls who can see a branch. Path permissions control what content they can edit. Combining them provides flexible policies: you might let someone access a branch but restrict them to certain content paths within it.
+
+### Why scope `defaultPathAccess` by permission level?
+
+Before this, `defaultPathAccess` applied a single verdict to every permission level, so a deployment that wanted public read either had to deny everything by default (forcing an explicit read-only rule for every public path) or allow everything by default (accidentally opening edit and review too). The object form (`{ read: 'allow' }`) lets a `deployedAs: 'server'` site express "public read, everything else still requires a rule" as one config value. Unspecified levels fail closed to `deny` rather than inheriting a specified sibling level, so scoping read access can never accidentally loosen edit or review by omission.
 
 ### Why is `mode` required, and why an allowlist (not a denylist) for auth plugin trust?
 
@@ -2468,6 +2474,15 @@ The `withCanopy()` wrapper in `canopycms-next` solves both problems in one call:
 **Why solve this in the adapter package?** The dual-React problem is specific to how Next.js resolves modules through symlinks. It is a build-tooling concern, not business logic. Placing it in the adapter keeps the core package clean and makes the fix discoverable for Next.js adopters in the package they already import. Other framework adapters would handle their bundler's equivalent quirks in their own way.
 
 **Why not require pre-compilation?** Pre-compiling Canopy packages would eliminate the `transpilePackages` requirement but would add a build step to the development workflow, slow down iteration, and make debugging harder (source maps through compiled output). Exporting raw TypeScript keeps the development loop fast and debuggable.
+
+### Why split a dual-build content route into static and server page variants?
+
+A content route in a dual-build site (e.g. a catch-all `[slug]` page) needs to behave differently per build: the static export must prerender every known path (`dynamicParams = false`, required by `output: 'export'`), while the CMS server build must render every request live so runtime path ACLs apply and unknown slugs 404 correctly. Two single-page approaches were tried and rejected, empirically, before landing on a per-build file split:
+
+- **A route-segment config value computed from an env var** (e.g. `export const dynamicParams = process.env.CANOPY_BUILD === 'static'`) fails at build time: Next.js statically parses route-segment config and requires literal values, so a computed expression is a hard build error, not a runtime branch.
+- **A single page with `dynamicParams = true` plus `generateStaticParams`** builds and avoids the config-parsing error, but on the CMS server an unknown slug is then served via on-demand static generation rather than an ordinary request — and the request-scoped read's `headers()` call throws `DYNAMIC_SERVER_USAGE`, still surfacing as a 500. Worse, prerendering on the CMS build means build-time content gets served to anonymous visitors, bypassing runtime path ACLs entirely.
+
+The shipped design instead gives each build its own thin page file re-exporting a shared implementation: the static variant re-exports `generateStaticParams` and sets `dynamicParams = false` (prerendered, matching `output: 'export'`); the server variant sets `dynamic = 'force-dynamic'` and has no `generateStaticParams` (every request renders live, ACL-enforced, and unknown slugs reach the page's own `notFound()`). The server variant deliberately prerenders nothing, so it can never serve build-time content to a request-time visitor. `withCanopy()`'s `staticBuild` option ensures each build's `pageExtensions` only pick up its own variant (see [Framework Adapters](#framework-adapters)), so no runtime branching is needed in the page code at all.
 
 ### Why branded types for paths?
 
