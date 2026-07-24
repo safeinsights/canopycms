@@ -8,6 +8,7 @@ import {
   BranchMetadataFileManager,
   BranchMetadataConflictError,
   getBranchMetadataFileManager,
+  buildMergedBranchUpdate,
   type BranchMetadataFile,
 } from './branch-metadata'
 
@@ -122,7 +123,9 @@ describe('BranchMetadataFileManager', () => {
         },
       })
 
-      // Then update
+      // Then update (after a real tick so the strictly-greater assertion below
+      // can't collide with a same-millisecond save)
+      await new Promise((resolve) => setTimeout(resolve, 5))
       const updated = await meta.save({
         branch: {
           name: 'feature/y',
@@ -137,8 +140,10 @@ describe('BranchMetadataFileManager', () => {
       expect(updated.branch.pullRequestNumber).toBe(10)
       expect(updated.branch.access.managerOrAdminAllowed).toBe(true)
       expect(updated.branch.createdAt).toBe(created.branch.createdAt) // createdAt unchanged
-      expect(new Date(updated.branch.updatedAt).getTime()).toBeGreaterThanOrEqual(
-        new Date(created.branch.createdAt).getTime(),
+      // Strictly greater: updatedAt must ADVANCE on save, not stay frozen at
+      // the creation timestamp (regression guard for the spread-order bug)
+      expect(new Date(updated.branch.updatedAt).getTime()).toBeGreaterThan(
+        new Date(created.branch.updatedAt).getTime(),
       )
     })
   })
@@ -347,6 +352,31 @@ describe('BranchMetadataFileManager', () => {
       const raw = await fs.readFile(filePath, 'utf8')
       expect(() => JSON.parse(raw)).not.toThrow()
       expect(raw.endsWith('\n')).toBe(true)
+    })
+  })
+
+  describe('buildMergedBranchUpdate', () => {
+    it('produces archived/merged metadata with an ISO mergedAt and the branch name preserved', () => {
+      const now = new Date('2026-01-01T12:00:00.000Z')
+      const update = buildMergedBranchUpdate('feature/x', now)
+
+      expect(update).toEqual({
+        name: 'feature/x',
+        status: 'archived',
+        pullRequestState: 'merged',
+        mergedAt: '2026-01-01T12:00:00.000Z',
+      })
+    })
+
+    it('defaults `now` to the current time when omitted', () => {
+      const before = Date.now()
+      const update = buildMergedBranchUpdate('feature/y')
+      const after = Date.now()
+
+      expect(update.mergedAt).toEqual(expect.any(String))
+      const mergedAtMs = new Date(update.mergedAt as string).getTime()
+      expect(mergedAtMs).toBeGreaterThanOrEqual(before)
+      expect(mergedAtMs).toBeLessThanOrEqual(after)
     })
   })
 

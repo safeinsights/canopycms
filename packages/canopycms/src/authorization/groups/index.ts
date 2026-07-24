@@ -8,4 +8,9 @@ export {
   type GroupsFile,
   type InternalGroup,
 } from './schema'
-export { loadGroupsFile, loadInternalGroups, saveInternalGroups } from './loader'
+export {
+  loadGroupsFile,
+  loadInternalGroups,
+  deriveInternalGroups,
+  mutateGroupsFile,
+} from './loader'

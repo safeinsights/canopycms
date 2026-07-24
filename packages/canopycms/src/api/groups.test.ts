@@ -1,11 +1,20 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import type { ApiContext, ApiRequest } from './types'
-import type { InternalGroup } from '../authorization'
+import type { InternalGroup, GroupsFile } from '../authorization'
 import type { CanopyGroupId, CanopyUserId } from '../types'
-import { RESERVED_GROUPS } from '../authorization'
-import { createMockApiContext, createMockBranchContext, createMockGitManager } from '../test-utils'
+import { RESERVED_GROUPS, SettingsFileConflictError } from '../authorization'
+import {
+  createMockApiContext,
+  createMockBranchContext,
+  createMockGitManager,
+  createMockSettingsMutation,
+} from '../test-utils'
 
-// Mock authorization module (specifically the groups loader functions)
+// Mock authorization module (specifically the groups loader/mutator).
+// `deriveInternalGroups`, `RESERVED_GROUPS`, `isReservedGroup` etc. are left
+// as the REAL implementation (via `...original`) since they're pure and are
+// exactly what updateInternalGroupsHandler now runs under the settings-file
+// lock to reconcile against the mutator's own fresh file.
 vi.mock('../authorization', async (importOriginal) => {
   const { vi } = await import('vitest')
   const original = await importOriginal<typeof import('../authorization')>()
@@ -13,7 +22,7 @@ vi.mock('../authorization', async (importOriginal) => {
     ...original,
     loadInternalGroups: vi.fn(),
     loadGroupsFile: vi.fn(),
-    saveInternalGroups: vi.fn(),
+    mutateGroupsFile: vi.fn(),
   }
 })
 
@@ -30,7 +39,17 @@ import * as authorization from '../authorization'
 const groupsLoader = {
   loadInternalGroups: authorization.loadInternalGroups,
   loadGroupsFile: authorization.loadGroupsFile,
-  saveInternalGroups: authorization.saveInternalGroups,
+  mutateGroupsFile: authorization.mutateGroupsFile,
+}
+
+/** Build a minimal GroupsFile for createMockSettingsMutation's `currentFile`. */
+function groupsFile(groups: InternalGroup[], version = 0): GroupsFile {
+  return {
+    version,
+    updatedAt: '2024-01-01T00:00:00.000Z',
+    updatedBy: 'prior-admin' as CanopyUserId,
+    groups,
+  }
 }
 
 // Extract handlers for testing
@@ -86,8 +105,8 @@ describe('groups API', () => {
       })
     })
 
-    it('should return empty array when groups file does not exist', async () => {
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+    it('should return derived reserved groups and version 0 when groups file does not exist', async () => {
+      vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue(null)
 
       const req: ApiRequest<undefined> = {
         user: {
@@ -102,7 +121,39 @@ describe('groups API', () => {
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
       if (result.ok) {
-        expect(result.data?.groups).toEqual([])
+        // Even with no file, the handler derives the reserved Admins/Reviewers
+        // groups (deriveInternalGroups is real here) — version 0 with a
+        // non-empty groups array is the documented legitimate combination
+        expect(result.data?.groups).toEqual(authorization.deriveInternalGroups([]))
+        expect(result.data?.version).toBe(0)
+      }
+    })
+
+    it('should return the version from the groups file alongside the derived groups', async () => {
+      const derivedGroups: InternalGroup[] = [
+        {
+          id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+          name: 'Admins',
+          members: ['admin-1' as CanopyUserId],
+        },
+        { id: RESERVED_GROUPS.REVIEWERS as CanopyGroupId, name: 'Reviewers', members: [] },
+      ]
+      vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue(groupsFile(derivedGroups, 7))
+
+      const req: ApiRequest<undefined> = {
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1' as CanopyUserId,
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      }
+
+      const result = await getInternalGroups(mockContext, req)
+
+      expect(result.ok).toBe(true)
+      if (result.ok) {
+        expect(result.data?.groups).toEqual(derivedGroups)
+        expect(result.data?.version).toBe(7)
       }
     })
   })
@@ -147,8 +198,10 @@ describe('groups API', () => {
     })
 
     it('should save groups and commit changes for admin', async () => {
-      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({ currentFile: null })
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
       // Add bootstrap admin so validation passes
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
@@ -175,9 +228,10 @@ describe('groups API', () => {
       expect(result.status).toBe(200)
 
       // Verify groups were saved with generated IDs
-      // Groups are saved to the settings branch root (from getSettingsBranchRoot)
-      expect(groupsLoader.saveInternalGroups).toHaveBeenCalledWith(
-        '/mock/settings',
+      const payload = settingsMutation.getPayload()
+      expect(payload).toMatchObject({ updatedBy: 'admin-1' })
+      const savedGroups = payload?.groups as InternalGroup[]
+      expect(savedGroups).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             name: 'Content Editors',
@@ -186,13 +240,9 @@ describe('groups API', () => {
             id: expect.any(String), // Should have generated ID
           }),
         ]),
-        'admin-1',
-        'dev',
-        1, // contentVersion starts at 1 when file doesn't exist
       )
 
       // Verify the generated ID is not empty
-      const savedGroups = vi.mocked(groupsLoader.saveInternalGroups).mock.calls[0][1]
       expect(savedGroups[0].id).not.toBe('')
       expect(savedGroups[0].id.length).toBeGreaterThan(0)
 
@@ -201,8 +251,10 @@ describe('groups API', () => {
     })
 
     it('surfaces a non-200 failure when the settings commit is saved but not pushed (API-H1)', async () => {
-      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({ currentFile: null })
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
       mockContext.services.commitToSettingsBranch = vi.fn().mockResolvedValue({
         committed: true,
@@ -228,9 +280,9 @@ describe('groups API', () => {
 
       const result = await updateInternalGroups(mockContext, req, { groups })
 
-      // Data was saved (saveInternalGroups ran) but the client must be told the
+      // Data was saved (mutateGroupsFile ran) but the client must be told the
       // push failed - it is NOT durably persisted and could be lost.
-      expect(groupsLoader.saveInternalGroups).toHaveBeenCalled()
+      expect(settingsMutation.getPayload()).not.toBeNull()
       expect(result.ok).toBe(false)
       expect(result.status).toBe(502)
       expect(result.error).toContain('network unreachable')
@@ -486,8 +538,10 @@ describe('groups API', () => {
 
   describe('updateInternalGroups safety validations', () => {
     it('should reject update that removes last admin', async () => {
-      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({ currentFile: null })
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
 
       const groups: InternalGroup[] = [
         {
@@ -513,15 +567,19 @@ describe('groups API', () => {
     })
 
     it('should reject update that renames reserved group', async () => {
-      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
-      // Mock existing Admins group so it's recognized as existing
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([
-        {
-          id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
-          name: RESERVED_GROUPS.ADMINS,
-          members: ['admin-1' as CanopyUserId],
-        },
-      ])
+      // Existing Admins group so it's recognized as an existing ID
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({
+        currentFile: groupsFile([
+          {
+            id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+            name: RESERVED_GROUPS.ADMINS,
+            members: ['admin-1' as CanopyUserId],
+          },
+        ]),
+      })
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
 
       const groups: InternalGroup[] = [
         {
@@ -547,8 +605,10 @@ describe('groups API', () => {
     })
 
     it('should allow update when bootstrap admin exists even with empty Admins group', async () => {
-      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({ currentFile: null })
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
 
       // Add bootstrap admin
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
@@ -578,8 +638,10 @@ describe('groups API', () => {
 
   describe('collision detection', () => {
     it('should reject duplicate group names', async () => {
-      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({ currentFile: null })
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
       const groups: InternalGroup[] = [
@@ -611,8 +673,10 @@ describe('groups API', () => {
     })
 
     it('should reject duplicate group names case-insensitively', async () => {
-      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({ currentFile: null })
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
       const groups: InternalGroup[] = [
@@ -652,8 +716,12 @@ describe('groups API', () => {
         },
       ]
 
-      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue(existingGroups)
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({
+        currentFile: groupsFile(existingGroups),
+      })
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
       const groups: InternalGroup[] = [
@@ -687,8 +755,10 @@ describe('groups API', () => {
 
   describe('autogenerated group IDs', () => {
     it('should generate unique IDs for new groups', async () => {
-      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({ currentFile: null })
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
       const groups: InternalGroup[] = [
@@ -716,10 +786,7 @@ describe('groups API', () => {
 
       expect(result.ok).toBe(true)
 
-      // Check that saveInternalGroups was called
-      expect(groupsLoader.saveInternalGroups).toHaveBeenCalled()
-      const calls = vi.mocked(groupsLoader.saveInternalGroups).mock.calls
-      const savedGroups = calls[calls.length - 1][1] // Get last call
+      const savedGroups = settingsMutation.getPayload()?.groups as InternalGroup[]
       expect(savedGroups).toBeDefined()
       expect(savedGroups.length).toBe(2)
       expect(savedGroups[0].id).not.toBe('')
@@ -736,8 +803,12 @@ describe('groups API', () => {
         },
       ]
 
-      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue(existingGroups)
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({
+        currentFile: groupsFile(existingGroups),
+      })
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
       const groups: InternalGroup[] = [
@@ -760,16 +831,17 @@ describe('groups API', () => {
 
       expect(result.ok).toBe(true)
 
-      const calls = vi.mocked(groupsLoader.saveInternalGroups).mock.calls
-      const savedGroups = calls[calls.length - 1][1]
+      const savedGroups = settingsMutation.getPayload()?.groups as InternalGroup[]
       expect(savedGroups.length).toBe(1)
       expect(savedGroups[0].id).toBe('existing-group-id') // ID preserved
       expect(savedGroups[0].name).toBe('Existing Group (updated)') // But name updated
     })
 
     it('should use group name as ID for reserved groups', async () => {
-      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({ currentFile: null })
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
       const groups: InternalGroup[] = [
@@ -797,8 +869,7 @@ describe('groups API', () => {
 
       expect(result.ok).toBe(true)
 
-      const calls = vi.mocked(groupsLoader.saveInternalGroups).mock.calls
-      const savedGroups = calls[calls.length - 1][1]
+      const savedGroups = settingsMutation.getPayload()?.groups as InternalGroup[]
       expect(savedGroups.length).toBe(2)
       expect(savedGroups[0].id).toBe('Admins') // Reserved group uses name as ID
       expect(savedGroups[1].id).toBe('Reviewers') // Reserved group uses name as ID
@@ -813,8 +884,12 @@ describe('groups API', () => {
         },
       ]
 
-      vi.mocked(groupsLoader.saveInternalGroups).mockResolvedValue()
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue(existingGroups)
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({
+        currentFile: groupsFile(existingGroups),
+      })
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
       ;(mockContext.services as any).bootstrapAdminIds = new Set(['bootstrap-admin'])
 
       const groups: InternalGroup[] = [
@@ -842,8 +917,7 @@ describe('groups API', () => {
 
       expect(result.ok).toBe(true)
 
-      const calls = vi.mocked(groupsLoader.saveInternalGroups).mock.calls
-      const savedGroups = calls[calls.length - 1][1]
+      const savedGroups = settingsMutation.getPayload()?.groups as InternalGroup[]
       expect(savedGroups.length).toBe(2)
       expect(savedGroups[0].id).toBe('existing-1') // Existing ID preserved
       expect(savedGroups[1].id).not.toBe('') // New group got generated ID
@@ -851,29 +925,23 @@ describe('groups API', () => {
     })
   })
 
-  describe('optimistic locking with contentVersion', () => {
+  describe('optimistic locking with expectedContentVersion', () => {
     it('should return 409 when expectedContentVersion does not match current version', async () => {
-      // Mock loadGroupsFile to return a file with contentVersion 5
-      vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue({
-        version: 1,
-        contentVersion: 5,
-        updatedAt: '2024-01-01T00:00:00Z',
-        updatedBy: 'other-admin' as CanopyUserId,
-        groups: [
-          {
-            id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
-            name: 'Admins',
-            members: ['admin-1' as CanopyUserId],
-          },
-        ],
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({
+        currentFile: groupsFile(
+          [
+            {
+              id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+              name: 'Admins',
+              members: ['admin-1' as CanopyUserId],
+            },
+          ],
+          5,
+        ),
       })
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([
-        {
-          id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
-          name: 'Admins',
-          members: ['admin-1' as CanopyUserId],
-        },
-      ])
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
 
       const req: ApiRequest = {
         user: {
@@ -901,30 +969,25 @@ describe('groups API', () => {
       expect(result.error).toBe(
         'Groups were modified by another user. Please reload and try again.',
       )
+      expect(settingsMutation.getPayload()).toBeNull()
     })
 
     it('should succeed when expectedContentVersion matches current version', async () => {
-      // Mock loadGroupsFile to return a file with contentVersion 5
-      vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue({
-        version: 1,
-        contentVersion: 5,
-        updatedAt: '2024-01-01T00:00:00Z',
-        updatedBy: 'admin-1' as CanopyUserId,
-        groups: [
-          {
-            id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
-            name: 'Admins',
-            members: ['admin-1' as CanopyUserId],
-          },
-        ],
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({
+        currentFile: groupsFile(
+          [
+            {
+              id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+              name: 'Admins',
+              members: ['admin-1' as CanopyUserId],
+            },
+          ],
+          5,
+        ),
       })
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([
-        {
-          id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
-          name: 'Admins',
-          members: ['admin-1' as CanopyUserId],
-        },
-      ])
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
 
       const req: ApiRequest = {
         user: {
@@ -949,39 +1012,27 @@ describe('groups API', () => {
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-
-      // Verify saveInternalGroups was called with incremented version
-      expect(groupsLoader.saveInternalGroups).toHaveBeenCalledWith(
-        expect.any(String), // branchRoot varies by test context
-        [{ id: RESERVED_GROUPS.ADMINS, name: 'Admins', members: ['admin-1'] }],
-        'admin-1',
-        'dev',
-        6, // Should be 5 + 1
-      )
+      expect(settingsMutation.getPayload()).toMatchObject({
+        groups: [{ id: RESERVED_GROUPS.ADMINS, name: 'Admins', members: ['admin-1'] }],
+      })
     })
 
     it('should allow update when expectedContentVersion is not provided (backward compatible)', async () => {
-      // Mock loadGroupsFile to return a file with contentVersion 5
-      vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue({
-        version: 1,
-        contentVersion: 5,
-        updatedAt: '2024-01-01T00:00:00Z',
-        updatedBy: 'admin-1' as CanopyUserId,
-        groups: [
-          {
-            id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
-            name: 'Admins',
-            members: ['admin-1' as CanopyUserId],
-          },
-        ],
+      const settingsMutation = createMockSettingsMutation<GroupsFile>({
+        currentFile: groupsFile(
+          [
+            {
+              id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
+              name: 'Admins',
+              members: ['admin-1' as CanopyUserId],
+            },
+          ],
+          5,
+        ),
       })
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([
-        {
-          id: RESERVED_GROUPS.ADMINS as CanopyGroupId,
-          name: 'Admins',
-          members: ['admin-1' as CanopyUserId],
-        },
-      ])
+      vi.mocked(groupsLoader.mutateGroupsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutateGroupsFile,
+      )
 
       const req: ApiRequest = {
         user: {
@@ -1008,10 +1059,10 @@ describe('groups API', () => {
       expect(result.status).toBe(200)
     })
 
-    it('should start at version 1 for new files without contentVersion', async () => {
-      // Mock loadGroupsFile to return null (file doesn't exist)
-      vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue(null)
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+    it('should return 409 with a busy message when the file lock is contended', async () => {
+      vi.mocked(groupsLoader.mutateGroupsFile).mockRejectedValueOnce(
+        new SettingsFileConflictError(),
+      )
 
       const req: ApiRequest = {
         user: {
@@ -1033,17 +1084,9 @@ describe('groups API', () => {
 
       const result = await updateInternalGroups(mockContext, req, body)
 
-      expect(result.ok).toBe(true)
-      expect(result.status).toBe(200)
-
-      // Verify saveInternalGroups was called with version 1 (0 + 1)
-      expect(groupsLoader.saveInternalGroups).toHaveBeenCalledWith(
-        expect.any(String), // branchRoot varies by test context
-        [{ id: RESERVED_GROUPS.ADMINS, name: 'Admins', members: ['admin-1'] }],
-        'admin-1',
-        'dev',
-        1,
-      )
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+      expect(result.error).toBe('Settings are busy, please try again.')
     })
   })
 })

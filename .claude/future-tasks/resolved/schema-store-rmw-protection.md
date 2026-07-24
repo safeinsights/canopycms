@@ -2,6 +2,19 @@
 
 ## Priority: P2
 
+**RESOLVED (2026-07-24, branch claude/settings-schema-protection-3b78af):** implemented
+with one approved deviation from the fix sketch below: NO OCC `version`/`writeId`
+fields were added to `.collection.json` — it is an adopter-visible, git-committed file
+that rebases rewrite wholesale, so a counter there would be meaningless and would churn
+adopter diffs. Instead every `SchemaOps` mutator holds `withLock` + `withOccFileLock`
+on a coarse per-branch surrogate path (`{branchRoot}/.canopy-meta/schema`) across its
+full read-modify-write (`withSchemaLock`; mutators restructured into `*Inner` bodies —
+`withLock` is not re-entrant). `OccWriteConflictError` translates to
+`SchemaStoreBusyError` → 409 in api/schema.ts; the updateEntryType breaking-change
+usage guard moved under the lock; `deleteEntryHandler` tolerates a busy lock for its
+best-effort order cleanup; CLI migrate takes the same lock inside branch clones only.
+docs/concurrency.md table updated.
+
 Surfaced by the EFS cross-process concurrency epic's second review (2026-07-21), while
 implementing fixes from a follow-up adversarial review of that epic's PRs. Not part of
 the epic's original scope (see `resolved/efs-cross-process-concurrency.md`), which covered

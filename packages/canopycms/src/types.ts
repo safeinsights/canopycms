@@ -6,6 +6,7 @@ export type CanopyGroupId = string
 export type BranchStatus = 'editing' | 'submitted' | 'approved' | 'locked' | 'archived'
 export type SyncStatus = 'synced' | 'pending-sync' | 'sync-failed'
 export type ConflictStatus = 'clean' | 'conflicts-detected'
+export type PullRequestState = 'open' | 'closed' | 'merged'
 
 export interface BranchAccessControl {
   allowedUsers?: CanopyUserId[]
@@ -33,6 +34,18 @@ export interface BranchMetadata {
   conflictStatus?: ConflictStatus
   /** ContentIds of entries where --theirs was applied during rebase; cleared on clean rebase */
   conflictFiles?: ContentId[]
+  /**
+   * Lifecycle state of the branch's PR as last observed by the worker's
+   * merge-poll (or verified by markAsMerged). Absent until a PR exists and
+   * has been observed. Draft PRs read 'open'.
+   */
+  pullRequestState?: PullRequestState
+  /**
+   * ISO timestamp stamped when the branch was archived because its PR
+   * merged (worker auto-poll or manual markAsMerged). Absent for branches
+   * archived any other way.
+   */
+  mergedAt?: string
 }
 
 export interface BranchPaths {

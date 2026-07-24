@@ -45,7 +45,7 @@ See [DEVELOPING.md](DEVELOPING.md) for detailed development patterns and practic
 
 The core package (`packages/canopycms/src/`) is organized into focused modules:
 
-- `authorization/` - Unified access control (branch + path permissions, groups)
+- `authorization/` - Unified access control (branch + path permissions, groups); `settings-file-store.ts` - layered cross-host locking for the settings workspace's mutable JSON files (`mutateSettingsJsonFile` wraps withLock + withOccFileLock + withOccRetry/writeOccJsonFile; permissions/groups loaders expose `mutatePermissionsFile`/`mutateGroupsFile` on top) — see [docs/concurrency.md](docs/concurrency.md)
 - `config/` - Configuration types, schemas, validation
 - `schema/` - Schema loading and resolution
 - `paths/` - Path utilities with branded types (LogicalPath, PhysicalPath)

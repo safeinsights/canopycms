@@ -756,6 +756,12 @@ export class GitManager {
     // 6. Checkout or create branch based on type
     if (options.branchType === 'orphan') {
       await git.createOrphanSettingsBranch(options.branchName, {})
+      // Settings mutations hold an OCC lockfile (<file>.lock, see
+      // authorization/settings-file-store.ts) inside this git-committed
+      // workspace. Commits here use scoped `git add <file>` today, but a
+      // crash-orphaned lock dir must never be committable by a future broad
+      // stage either. Runs on every init, so existing clones pick it up.
+      await git.ensureGitExclude('*.lock')
     } else {
       await git.checkoutBranch(options.branchName)
       // Exclude runtime metadata (.canopy-meta/) from git tracking on content

@@ -213,6 +213,10 @@ export class BranchMetadataFileManager {
                 createdAt: existing?.branch.createdAt ?? defaults.createdAt,
                 // Fork point is recorded once at creation; later saves must not move it
                 baseBranch: existing?.branch.baseBranch ?? incoming.branch?.baseBranch,
+                // Always stamped fresh — the spreads above would otherwise let
+                // the existing (creation-time) value win forever, freezing the
+                // timestamp the editor's Branches panel sorts and displays by
+                updatedAt: now,
               },
             }
             const written = await this.write(merged, version)
@@ -253,6 +257,28 @@ export class BranchMetadataFileManager {
  */
 export interface BranchMetadataUpdate {
   branch?: Partial<Omit<BranchMetadata, 'createdAt' | 'updatedAt'>>
+}
+
+/**
+ * Build the metadata update for archiving a branch because its PR merged.
+ * Shared by the worker's merge-poll (CmsWorker.pollMergeState) and the
+ * manual markAsMerged API (api/branch-merge.ts) so both paths produce
+ * identical archived-branch metadata.
+ *
+ * Deliberately omits pullRequestNumber/pullRequestUrl: save()'s merge keeps
+ * whatever the existing metadata already has for fields not present in the
+ * incoming update, so the PR number/URL recorded earlier survive untouched.
+ */
+export function buildMergedBranchUpdate(
+  branchName: string,
+  now: Date = new Date(),
+): NonNullable<BranchMetadataUpdate['branch']> {
+  return {
+    name: branchName,
+    status: 'archived',
+    pullRequestState: 'merged',
+    mergedAt: now.toISOString(),
+  }
 }
 
 /**

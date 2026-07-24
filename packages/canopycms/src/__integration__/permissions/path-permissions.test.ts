@@ -12,11 +12,32 @@ import { BranchWorkspaceManager } from '../../branch-workspace'
 import {
   checkBranchAccessWithDefault,
   loadPathPermissions,
-  savePathPermissions,
+  mutatePermissionsFile,
   createCheckPathAccess,
 } from '../../authorization'
+import type { PathPermission } from '../../config'
+import type { OperatingMode } from '../../operating-mode'
 import { unsafeAsPermissionPath } from '../../authorization/test-utils'
 import { unsafeAsPhysicalPath } from '../../paths/test-utils'
+
+/**
+ * Thin wrapper over `mutatePermissionsFile` matching the old
+ * `savePathPermissions(repoRoot, permissions, updatedBy, mode)` call shape,
+ * so these integration tests (written against the unconditional-overwrite
+ * save) keep working unchanged against the new mutate-under-lock API.
+ */
+async function savePathPermissions(
+  repoRoot: string,
+  permissions: PathPermission[],
+  updatedBy: string,
+  mode: OperatingMode,
+): Promise<void> {
+  await mutatePermissionsFile(repoRoot, mode, () => ({
+    updatedAt: new Date().toISOString(),
+    updatedBy,
+    pathPermissions: permissions,
+  }))
+}
 
 describe('Path Permission Integration', () => {
   let workspace: TestWorkspace

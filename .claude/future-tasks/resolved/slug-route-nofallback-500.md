@@ -1,5 +1,42 @@
 # `/[slug]` dynamic route throws NoFallbackError (500) for unknown slugs instead of 404
 
+## Status: RESOLVED (2026-07-24, server-mode-500-errors branch)
+
+Direction 1 (split the page) shipped, with a `withCanopy()` mechanism to select the
+right variant per build automatically:
+
+- `withCanopy(nextConfig, { staticBuild })` in `packages/canopycms-next/src/with-canopy.ts`
+  now adds `static.ts`/`static.tsx` to `pageExtensions` when `staticBuild: true` (instead
+  of passing `pageExtensions` through unchanged), alongside the existing
+  `server.ts`/`server.tsx` behavior for `staticBuild: false`/dev.
+- The documented convention (README.md's "Dual-Build Sites" section and
+  `docs/deploying-to-aws.md`'s "Dual Build Support" section) is to split a shared
+  content route into a plain implementation file plus two thin route variants:
+  `page.static.tsx` (re-exports default + `generateStaticParams`, plus
+  `dynamicParams = false` as required by `output: 'export'`) and `page.server.tsx`
+  (re-exports default only, plus `export const dynamic = 'force-dynamic'` and NO
+  `generateStaticParams`, so every request renders at request time and unknown slugs
+  hit the page's own `notFound()`). `withCanopy`'s per-build `pageExtensions` makes
+  each build see only its own variant.
+
+Two dead ends were verified against the deploy-test harness so nobody retries them:
+
+1. A single shared page with
+   `export const dynamicParams = process.env.CANOPY_BUILD !== 'static'` — Next 15.5
+   statically parses route-segment config and hard-fails the build ("Unsupported node
+   type BinaryExpression" / "Invalid segment configuration export detected") because
+   the value isn't a literal.
+2. `page.server.tsx` re-exporting `generateStaticParams` with `dynamicParams = true` —
+   builds, and eliminates NoFallbackError, but on the production server an unknown
+   slug is rendered as on-demand *static* generation, where the request-scoped read's
+   `headers()` call throws `DYNAMIC_SERVER_USAGE` (still a 500). Prerendering on the
+   CMS build also serves build-time content to anonymous visitors, bypassing runtime
+   path ACLs — which is why the server variant prerenders nothing at all.
+
+Original description below.
+
+---
+
 Found during the deployment-test epic (2026-07-24), observed in the deployed CMS
 Lambda's CloudWatch logs and locally.
 

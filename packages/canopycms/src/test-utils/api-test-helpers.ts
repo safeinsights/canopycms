@@ -419,12 +419,63 @@ export function createMockBranchMetadata(saveImpl?: any): {
 export function createMockPermissionsLoader(permissions: PathPermission[] = []): {
   loadPathPermissions: Mock
   loadPermissionsFile: Mock
-  savePathPermissions: Mock
+  mutatePermissionsFile: Mock
 } {
   return {
     loadPathPermissions: vi.fn().mockResolvedValue(permissions),
     loadPermissionsFile: vi.fn().mockResolvedValue(null),
-    savePathPermissions: vi.fn().mockResolvedValue(undefined),
+    mutatePermissionsFile: vi.fn().mockResolvedValue(null),
+  }
+}
+
+/**
+ * Create a mock `mutatePermissionsFile` / `mutateGroupsFile` implementation
+ * for use with `vi.mock('../authorization', ...)`. Mirrors the real
+ * load -> mutate -> write contract closely enough for handler-level tests:
+ * invokes the supplied mutator against the configured `currentFile` and its
+ * version, captures whatever payload the mutator returns (for assertions),
+ * and — like the real implementation — lets anything the mutator throws
+ * (`SettingsVersionConflictError`, a groups validation error, ...) propagate
+ * untouched rather than translating it.
+ *
+ * Does NOT model lock contention or `SettingsFileConflictError` — for a
+ * "settings are busy" test case, mock the rejection directly instead:
+ * `vi.mocked(authorization.mutatePermissionsFile).mockRejectedValueOnce(new SettingsFileConflictError())`.
+ *
+ * @example
+ * const settingsMutation = createMockSettingsMutation({ currentFile: null })
+ * vi.mocked(authorization.mutatePermissionsFile).mockImplementation(settingsMutation.impl)
+ * const result = await updatePermissions(mockContext, req, body)
+ * expect(settingsMutation.getPayload()).toMatchObject({ pathPermissions: [] })
+ */
+export function createMockSettingsMutation<TFile extends { version?: number }>(
+  options: { currentFile?: TFile | null } = {},
+): {
+  impl: (
+    root: string,
+    mode: string,
+    mutate: (current: TFile | null, version: number) => Record<string, unknown> | null,
+  ) => Promise<{ version: number; writeId: string } | null>
+  getPayload: () => Record<string, unknown> | null
+} {
+  const currentFile = options.currentFile ?? null
+  let payload: Record<string, unknown> | null = null
+
+  const impl = async (
+    _root: string,
+    _mode: string,
+    mutate: (current: TFile | null, version: number) => Record<string, unknown> | null,
+  ): Promise<{ version: number; writeId: string } | null> => {
+    const version = currentFile?.version ?? 0
+    const result = mutate(currentFile, version)
+    payload = result
+    if (result === null) return null
+    return { version: version + 1, writeId: 'mock-write-id' }
+  }
+
+  return {
+    impl,
+    getPayload: () => payload,
   }
 }
 

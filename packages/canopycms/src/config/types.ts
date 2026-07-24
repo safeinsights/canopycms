@@ -276,7 +276,17 @@ export interface CanopyEditorConfig {
 
 // Default value types
 export type DefaultBranchAccess = 'allow' | 'deny'
-export type DefaultPathAccess = 'allow' | 'deny'
+export type DefaultPathAccessLevel = 'allow' | 'deny'
+/** Per-permission-level scoping for `defaultPathAccess`. An omitted level resolves to 'deny' (fail-closed). */
+export type DefaultPathAccessLevels = Partial<Record<PermissionLevel, DefaultPathAccessLevel>>
+/**
+ * Default access policy for content paths when no permission rule matches.
+ *
+ * Either a single value applied to all levels (existing behavior), or an object scoping
+ * the default per permission level (e.g. `{ read: 'allow' }` for public read while
+ * edit/review stay deny).
+ */
+export type DefaultPathAccess = DefaultPathAccessLevel | DefaultPathAccessLevels
 export type DefaultBaseBranch = string
 export type DefaultRemoteName = string
 export type DefaultRemoteUrl = string

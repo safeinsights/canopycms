@@ -26,6 +26,20 @@ const OPTIONAL_PACKAGES = [
 const CMS_PAGE_EXTENSIONS = ['server.ts', 'server.tsx']
 
 /**
+ * Static-export-only page extensions used by the dual-build convention.
+ * Files with these extensions (e.g., `page.static.tsx`) are included only in
+ * static export builds (`staticBuild: true`), letting a content route ship
+ * per-build variants: `page.static.tsx` prerenders (with `dynamicParams =
+ * false`, required by `output: 'export'`) while `page.server.tsx` renders
+ * every request at request time (`dynamic = 'force-dynamic'`, no
+ * generateStaticParams) so path ACLs apply and unknown slugs 404 instead of
+ * throwing Next's internal NoFallbackError. Next statically parses
+ * route-segment config, so a single shared page cannot switch these on an
+ * env var.
+ */
+const STATIC_PAGE_EXTENSIONS = ['static.ts', 'static.tsx']
+
+/**
  * Next.js default pageExtensions. Not exported as a public API by Next.js
  * (only available via internal `next/dist/server/config-shared`), so we
  * mirror them here. Must be kept in sync manually if Next.js changes defaults.
@@ -93,9 +107,12 @@ export interface WithCanopyOptions {
    * Set to `true` for static export builds to exclude CMS-only pages.
    *
    * When `false` (default): adds `server.ts` and `server.tsx` to `pageExtensions`,
-   * so Next.js processes `.server.ts` and `.server.tsx` files (API routes, editor page).
+   * so Next.js processes `.server.ts` and `.server.tsx` files (API routes, editor page,
+   * and the server-build variant of a dual-build content route).
    *
-   * When `true`: leaves them out, so Next.js ignores CMS-only files during static export.
+   * When `true`: adds `static.ts` and `static.tsx` to `pageExtensions` instead, so
+   * Next.js processes the static-export-only variant of a dual-build content route
+   * (e.g. `page.static.tsx`) while ignoring `.server.*` CMS-only files.
    *
    * @example
    * ```ts
@@ -137,9 +154,10 @@ function resolveReactAliases(resolve: NodeRequire['resolve']): Record<string, st
  * - Auto-detects installed Canopy packages and adds them to `transpilePackages`
  *   (they export raw TypeScript). Only packages found in your node_modules are
  *   added, so you don't need to worry about optional packages you haven't installed.
- * - Adds `server.ts`/`server.tsx` to `pageExtensions` for dual-build support.
- *   CMS-only files (e.g., `route.server.ts`) are included in dev/CMS builds
- *   but excluded when `staticBuild: true` is set.
+ * - Adds `server.ts`/`server.tsx` (or, when `staticBuild: true`, `static.ts`/`static.tsx`)
+ *   to `pageExtensions` for dual-build support. CMS-only files (e.g., `route.server.ts`)
+ *   are included in dev/CMS builds but excluded when `staticBuild: true` is set, in favor
+ *   of the static-export-only page variants (e.g. `page.static.tsx`).
  * - Resolves React to a single copy from your project root, preventing
  *   dual-instance crashes when using `file:` symlinks for local development
  *
@@ -225,17 +243,22 @@ export function withCanopy(
   // file: symlinks must use `next dev --webpack` for local development.
   // Turbopack works fine when canopycms is installed from npm (no symlinks).
 
-  // Dual-build support: include CMS-only page extensions unless this is a static build.
-  // Files like `route.server.ts` and `page.server.tsx` are only processed when
-  // CMS_PAGE_EXTENSIONS are in pageExtensions.
-  const pageExtensions = options.staticBuild
-    ? nextConfig.pageExtensions // static build: don't add CMS extensions
-    : [...(nextConfig.pageExtensions ?? NEXTJS_DEFAULT_PAGE_EXTENSIONS), ...CMS_PAGE_EXTENSIONS]
+  // Dual-build support: a static build gets STATIC_PAGE_EXTENSIONS (e.g. `page.static.tsx`)
+  // instead of CMS_PAGE_EXTENSIONS, so CMS-only files (`route.server.ts`, `page.server.tsx`)
+  // are excluded from static export while the static-only page variants are included.
+  // Set-dedupe guards against a consumer config that already lists any of the
+  // canopy variant extensions (duplicates would be harmless to Next but noisy).
+  const pageExtensions = [
+    ...new Set([
+      ...(nextConfig.pageExtensions ?? NEXTJS_DEFAULT_PAGE_EXTENSIONS),
+      ...(options.staticBuild ? STATIC_PAGE_EXTENSIONS : CMS_PAGE_EXTENSIONS),
+    ]),
+  ]
 
   return {
     ...nextConfig,
     transpilePackages: allPackages,
-    ...(pageExtensions ? { pageExtensions } : {}),
+    pageExtensions,
     webpack,
     rewrites: withAssetsRewrite(nextConfig.rewrites),
   }

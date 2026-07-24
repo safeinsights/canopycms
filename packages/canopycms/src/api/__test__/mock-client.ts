@@ -87,7 +87,7 @@ export function createMockApiClient(): MockApiClient {
   },
 
   permissions: {
-    get: vi.fn().mockResolvedValue(mockSuccess({"permissions":[]})),
+    get: vi.fn().mockResolvedValue(mockSuccess({"permissions":[],"version":0})),
     update: vi.fn().mockResolvedValue(mockSuccess({"permissions":[]})),
     searchUsers: vi.fn().mockResolvedValue(mockSuccess({"users":[]})),
     listGroups: vi.fn().mockResolvedValue(mockSuccess({"groups":[]})),
@@ -95,7 +95,7 @@ export function createMockApiClient(): MockApiClient {
   },
 
   groups: {
-    getInternal: vi.fn().mockResolvedValue(mockSuccess({"groups":[]})),
+    getInternal: vi.fn().mockResolvedValue(mockSuccess({"groups":[],"version":0})),
     updateInternal: vi.fn().mockResolvedValue(mockSuccess({})),
     searchExternal: vi.fn().mockResolvedValue(mockSuccess({"groups":[]})),
   },
@@ -289,7 +289,7 @@ export function mockAssetDeleteResponse(): AssetDeleteResponse {
  * Create a PermissionsResponse for testing
  */
 export function mockPermissionsResponse(): PermissionsResponse {
-  return mockSuccess({"permissions":[]})
+  return mockSuccess({"permissions":[],"version":0})
 }
 
 /**
@@ -317,7 +317,7 @@ export function mockGetUserMetadataResponse(): GetUserMetadataResponse {
  * Create a InternalGroupsResponse for testing
  */
 export function mockInternalGroupsResponse(): InternalGroupsResponse {
-  return mockSuccess({"groups":[]})
+  return mockSuccess({"groups":[],"version":0})
 }
 
 /**
