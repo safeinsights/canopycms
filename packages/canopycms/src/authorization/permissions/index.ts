@@ -6,6 +6,6 @@ export { PermissionsFileSchema, createDefaultPermissionsFile, type PermissionsFi
 export {
   loadPermissionsFile,
   loadPathPermissions,
-  savePathPermissions,
+  mutatePermissionsFile,
   ensurePermissionsFile,
 } from './loader'

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
-import { loadPathPermissions, savePathPermissions, ensurePermissionsFile } from '../permissions'
+import { loadPathPermissions, mutatePermissionsFile, ensurePermissionsFile } from '../permissions'
 import { unsafeAsPermissionPath } from '../test-utils'
 import { mockConsole } from '../../test-utils/console-spy.js'
 
@@ -78,16 +78,18 @@ describe('permissions loader', () => {
     it('throws error on invalid schema', async () => {
       const consoleSpy = mockConsole()
 
-      // Create file with wrong version in new location
+      // Create file with a structurally invalid pathPermissions field (not
+      // an array). Note: `version` is no longer a discriminating literal —
+      // any nonnegative integer (or a missing field) is a valid OCC version
+      // now (see authorization/settings-file-store.ts).
       const canopyDir = testRoot
       await fs.mkdir(canopyDir, { recursive: true })
       await fs.writeFile(
         path.join(canopyDir, 'permissions.json'),
         JSON.stringify({
-          version: 2, // Wrong version
           updatedAt: new Date().toISOString(),
           updatedBy: 'admin',
-          pathPermissions: [],
+          pathPermissions: 'not-an-array',
         }),
         'utf-8',
       )
@@ -98,9 +100,26 @@ describe('permissions loader', () => {
       expect(consoleSpy).toHaveErrored('Failed to parse permissions file')
       consoleSpy.restore()
     })
+
+    it('accepts a hand-written file with no version field (defaults to OCC version 0)', async () => {
+      const canopyDir = testRoot
+      await fs.mkdir(canopyDir, { recursive: true })
+      await fs.writeFile(
+        path.join(canopyDir, 'permissions.json'),
+        JSON.stringify({
+          updatedAt: new Date().toISOString(),
+          updatedBy: 'admin',
+          pathPermissions: [{ path: 'content/admin/**', edit: {} }],
+        }),
+        'utf-8',
+      )
+
+      const permissions = await loadPathPermissions(testRoot, 'prod')
+      expect(permissions).toHaveLength(1)
+    })
   })
 
-  describe('savePathPermissions', () => {
+  describe('mutatePermissionsFile', () => {
     it('saves permissions to file', async () => {
       const permissions = [
         {
@@ -113,13 +132,18 @@ describe('permissions loader', () => {
         },
       ]
 
-      await savePathPermissions(testRoot, permissions, 'admin-user', 'prod')
+      await mutatePermissionsFile(testRoot, 'prod', () => ({
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'admin-user',
+        pathPermissions: permissions,
+      }))
 
       const filePath = path.join(testRoot, 'permissions.json')
       const fileContent = await fs.readFile(filePath, 'utf-8')
       const parsed = JSON.parse(fileContent)
 
       expect(parsed.version).toBe(1)
+      expect(parsed.writeId).toEqual(expect.any(String))
       expect(parsed.updatedBy).toBe('admin-user')
       expect(parsed.updatedAt).toBeTruthy()
       expect(parsed.pathPermissions).toHaveLength(2)
@@ -129,40 +153,69 @@ describe('permissions loader', () => {
       })
     })
 
-    it('validates permissions before saving', async () => {
-      const invalidPermissions: any = [
-        {
-          path: '', // Invalid empty path
-          edit: {},
-        },
-      ]
-
+    it('validates the mutator payload before writing', async () => {
       await expect(
-        savePathPermissions(testRoot, invalidPermissions, 'admin', 'prod'),
+        mutatePermissionsFile(testRoot, 'prod', () => ({
+          updatedAt: new Date().toISOString(),
+          updatedBy: 'admin',
+          pathPermissions: [{ path: '', edit: {} }], // Invalid empty path
+        })),
       ).rejects.toThrow()
+
+      // Nothing was written on validation failure.
+      await expect(fs.access(path.join(testRoot, 'permissions.json'))).rejects.toThrow()
     })
 
-    it('overwrites existing file', async () => {
-      const firstPermissions = [
-        {
-          path: unsafeAsPermissionPath('content/first/**'),
-          edit: { allowedUsers: ['user-1'] },
-        },
-      ]
-      await savePathPermissions(testRoot, firstPermissions, 'admin-1', 'prod')
+    it('overwrites the previous permissions on each mutate', async () => {
+      await mutatePermissionsFile(testRoot, 'prod', () => ({
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'admin-1',
+        pathPermissions: [
+          {
+            path: unsafeAsPermissionPath('content/first/**'),
+            edit: { allowedUsers: ['user-1'] },
+          },
+        ],
+      }))
 
-      const secondPermissions = [
-        {
-          path: unsafeAsPermissionPath('content/second/**'),
-          edit: { allowedUsers: ['user-2'] },
-        },
-      ]
-      await savePathPermissions(testRoot, secondPermissions, 'admin-2', 'prod')
+      await mutatePermissionsFile(testRoot, 'prod', () => ({
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'admin-2',
+        pathPermissions: [
+          {
+            path: unsafeAsPermissionPath('content/second/**'),
+            edit: { allowedUsers: ['user-2'] },
+          },
+        ],
+      }))
 
       const loaded = await loadPathPermissions(testRoot, 'prod')
 
       expect(loaded).toHaveLength(1)
       expect(loaded[0].path).toBe('content/second/**')
+    })
+
+    it('passes the current file and version through to the mutator', async () => {
+      await mutatePermissionsFile(testRoot, 'prod', () => ({
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'admin-1',
+        pathPermissions: [],
+      }))
+
+      let observedVersion: number | undefined
+      let observedCurrentIsNull: boolean | undefined
+      await mutatePermissionsFile(testRoot, 'prod', (current, version) => {
+        observedVersion = version
+        observedCurrentIsNull = current === null
+        return {
+          updatedAt: new Date().toISOString(),
+          updatedBy: 'admin-2',
+          pathPermissions: [],
+        }
+      })
+
+      expect(observedCurrentIsNull).toBe(false)
+      expect(observedVersion).toBe(1)
     })
   })
 
@@ -180,13 +233,16 @@ describe('permissions loader', () => {
     })
 
     it('does nothing if file already exists', async () => {
-      const existingPermissions = [
-        {
-          path: unsafeAsPermissionPath('content/**'),
-          edit: { allowedUsers: ['existing'] },
-        },
-      ]
-      await savePathPermissions(testRoot, existingPermissions, 'original-admin', 'prod')
+      await mutatePermissionsFile(testRoot, 'prod', () => ({
+        updatedAt: new Date().toISOString(),
+        updatedBy: 'original-admin',
+        pathPermissions: [
+          {
+            path: unsafeAsPermissionPath('content/**'),
+            edit: { allowedUsers: ['existing'] },
+          },
+        ],
+      }))
 
       await ensurePermissionsFile(testRoot, 'new-admin', 'prod')
 
@@ -195,6 +251,12 @@ describe('permissions loader', () => {
       // Original permissions should still be there
       expect(loaded).toHaveLength(1)
       expect(loaded[0].path).toBe('content/**')
+
+      // And the file was not rewritten (still at version 1 — ensurePermissionsFile's
+      // mutator returned null, a no-op).
+      const filePath = path.join(testRoot, 'permissions.json')
+      const parsed = JSON.parse(await fs.readFile(filePath, 'utf-8'))
+      expect(parsed.version).toBe(1)
     })
   })
 })

@@ -3,7 +3,12 @@ import { z } from 'zod'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { PathPermission } from '../config'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
-import { loadPathPermissions, savePathPermissions, loadPermissionsFile } from '../authorization'
+import {
+  loadPermissionsFile,
+  mutatePermissionsFile,
+  SettingsVersionConflictError,
+  SettingsFileConflictError,
+} from '../authorization'
 import { permissionPathSchema } from './validators'
 import { MAX_ENTRIES_PER_PAGE } from './entries-constants'
 import { defineEndpoint } from './route-builder'
@@ -11,7 +16,7 @@ import { getSettingsBranchContext, commitSettings } from './settings-helpers'
 import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
 
 /** Response type for getting permissions */
-export type PermissionsResponse = ApiResponse<{ permissions: PathPermission[] }>
+export type PermissionsResponse = ApiResponse<{ permissions: PathPermission[]; version: number }>
 
 /** Response type for user search */
 export type SearchUsersResponse = ApiResponse<{ users: UserSearchResult[] }>
@@ -77,12 +82,12 @@ const getPermissionsHandler = async (
     }
 
     const { context, mode } = result
-    const permissions = await loadPathPermissions(context.branchRoot, mode)
+    const file = await loadPermissionsFile(context.branchRoot, mode)
 
     return {
       ok: true,
       status: 200,
-      data: { permissions },
+      data: { permissions: file?.pathPermissions ?? [], version: file?.version ?? 0 },
     }
   } catch (error) {
     return {
@@ -114,32 +119,23 @@ const updatePermissionsHandler = async (
 
     const { context, mode } = result
 
-    // Load current file to check version (optimistic locking)
-    const currentFile = await loadPermissionsFile(context.branchRoot, mode)
-
-    // Check for version conflict if client sent expected version
-    if (body.expectedContentVersion !== undefined) {
-      const currentVersion = currentFile?.contentVersion ?? 0
-      if (currentVersion !== body.expectedContentVersion) {
-        return {
-          ok: false,
-          status: 409,
-          error: 'Permissions were modified by another user. Please reload and try again.',
-        }
+    // Load -> compare -> write happens atomically under the cross-host
+    // layered lock (see authorization/settings-file-store.ts) — no separate
+    // pre-read here, so there's no TOCTOU window between the version check
+    // and the write.
+    await mutatePermissionsFile(context.branchRoot, mode, (_current, version) => {
+      if (body.expectedContentVersion !== undefined && body.expectedContentVersion !== version) {
+        throw new SettingsVersionConflictError(
+          'Permissions were modified by another user. Please reload and try again.',
+        )
       }
-    }
 
-    // Increment version when saving
-    const newContentVersion = (currentFile?.contentVersion ?? 0) + 1
-
-    // Save file (uses mode-aware file path)
-    await savePathPermissions(
-      context.branchRoot,
-      body.permissions,
-      req.user.userId,
-      mode,
-      newContentVersion,
-    )
+      return {
+        updatedAt: new Date().toISOString(),
+        updatedBy: req.user.userId,
+        pathPermissions: body.permissions,
+      }
+    })
 
     // Commit and push (mode-aware). A push failure means the change is saved
     // to the branch working tree but NOT durably persisted (API-H1) - surface
@@ -162,6 +158,12 @@ const updatePermissionsHandler = async (
 
     return { ok: true, status: 200, data: {} }
   } catch (error) {
+    if (error instanceof SettingsVersionConflictError) {
+      return { ok: false, status: 409, error: error.message }
+    }
+    if (error instanceof SettingsFileConflictError) {
+      return { ok: false, status: 409, error: 'Settings are busy, please try again.' }
+    }
     return {
       ok: false,
       status: 500,
@@ -265,7 +267,7 @@ const getPermissions = defineEndpoint({
   path: '/permissions',
   responseType: 'PermissionsResponse',
   response: {} as PermissionsResponse,
-  defaultMockData: { permissions: [] },
+  defaultMockData: { permissions: [], version: 0 },
   guards: ['admin'] as const,
   handler: getPermissionsHandler,
 })

@@ -2,14 +2,16 @@
 
 **Priority: P2** — authorization data; same failure class the EFS epic fixed elsewhere
 
-**AUDIT CONFIRMED (2026-07-24, steps 1–2 done):** the blind spot is real. The
-`contentVersion` compare-and-swap is application-level only: `api/permissions.ts:121-133`
-(409 on mismatch) and `api/groups.ts:167,245` compare versions, but the writes are
-unlocked `atomicWriteFile` calls (`authorization/permissions/loader.ts:92`,
-`authorization/groups/loader.ts:122`) with no lockfile spanning load→compare→write and
-no use of `writeOccJsonFile`. Two Lambda containers can interleave in the TOCTOU
-window and silently lose an admin edit. Remaining work: steps 3–4 (apply the layered
-lock pattern; update docs/concurrency.md's per-resource table).
+**RESOLVED (2026-07-24, branch claude/settings-schema-protection-3b78af):** steps 3–4
+done. `authorization/settings-file-store.ts` now runs every permissions/groups write
+through the full layered stack (`withLock` → `withOccFileLock` → `withOccRetry` →
+`writeOccJsonFile`); the old app-level `contentVersion` scheme was unified into the OCC
+`version` (advisory here — the settings branch is git-committed, merges can rewrite the
+counter; the lockfile is the cross-host guarantee). Handlers run the
+`expectedContentVersion` compare inside the mutator under the lock; GETs now return
+`version` and the editor hooks send it (conflicts surface via the existing error
+notification — richer conflict UX tracked in `../settings-conflict-resolution-ux.md`).
+docs/concurrency.md table updated.
 
 ## Problem
 

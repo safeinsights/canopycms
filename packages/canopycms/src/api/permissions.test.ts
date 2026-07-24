@@ -3,18 +3,22 @@ import type { ApiContext, ApiRequest } from './types'
 import type { PathPermission, CanopyConfig } from '../config'
 import type { AuthPlugin } from '../auth/plugin'
 import type { UserSearchResult, GroupMetadata } from '../auth/types'
-import { RESERVED_GROUPS } from '../authorization'
-import { createMockApiContext, createMockBranchContext, createMockGitManager } from '../test-utils'
+import { RESERVED_GROUPS, SettingsFileConflictError } from '../authorization'
+import {
+  createMockApiContext,
+  createMockBranchContext,
+  createMockGitManager,
+  createMockSettingsMutation,
+} from '../test-utils'
 
-// Mock authorization module (specifically the permissions loader functions)
+// Mock authorization module (specifically the permissions loader/mutator)
 vi.mock('../authorization', async (importOriginal) => {
   const { vi } = await import('vitest')
   const original = await importOriginal<typeof import('../authorization')>()
   return {
     ...original,
-    loadPathPermissions: vi.fn().mockResolvedValue([]),
     loadPermissionsFile: vi.fn().mockResolvedValue(null),
-    savePathPermissions: vi.fn().mockResolvedValue(undefined),
+    mutatePermissionsFile: vi.fn().mockResolvedValue(null),
   }
 })
 
@@ -24,9 +28,8 @@ import { unsafeAsPermissionPath } from '../authorization/test-utils'
 
 // Alias for convenience (tests reference permissionsLoader)
 const permissionsLoader = {
-  loadPathPermissions: authorization.loadPathPermissions,
   loadPermissionsFile: authorization.loadPermissionsFile,
-  savePathPermissions: authorization.savePathPermissions,
+  mutatePermissionsFile: authorization.mutatePermissionsFile,
 }
 
 // Extract handlers for testing
@@ -71,7 +74,7 @@ describe('permissions API', () => {
   })
 
   describe('getPermissions', () => {
-    it('returns permissions for admin user', async () => {
+    it('returns permissions and version for admin user', async () => {
       const mockPermissions: PathPermission[] = [
         { path: unsafeAsPermissionPath('content/admin/**'), edit: {} },
         {
@@ -92,7 +95,12 @@ describe('permissions API', () => {
         }),
       )
 
-      vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue(mockPermissions)
+      vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue({
+        version: 3,
+        updatedAt: '2024-01-01T00:00:00Z',
+        updatedBy: 'admin-1',
+        pathPermissions: mockPermissions,
+      })
 
       const req: ApiRequest<undefined> = {
         user: {
@@ -107,6 +115,33 @@ describe('permissions API', () => {
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
       expect(result.data?.permissions).toEqual(mockPermissions)
+      expect(result.data?.version).toBe(3)
+    })
+
+    it('returns version 0 when no permissions file exists yet', async () => {
+      mockContext.getBranchContext = vi.fn().mockResolvedValue(
+        createMockBranchContext({
+          branchName: 'main',
+          createdBy: 'admin-1',
+          baseRoot: '/test/repo',
+          branchRoot: '/test/repo',
+        }),
+      )
+      vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue(null)
+
+      const req: ApiRequest<undefined> = {
+        user: {
+          type: 'authenticated',
+          userId: 'admin-1',
+          groups: [RESERVED_GROUPS.ADMINS],
+        },
+      }
+
+      const result = await getPermissions(mockContext, req)
+
+      expect(result.ok).toBe(true)
+      expect(result.data?.permissions).toEqual([])
+      expect(result.data?.version).toBe(0)
     })
 
     it('denies access for non-admin users', async () => {
@@ -130,6 +165,11 @@ describe('permissions API', () => {
           edit: { allowedGroups: ['new-group'] },
         },
       ]
+
+      const settingsMutation = createMockSettingsMutation({ currentFile: null })
+      vi.mocked(permissionsLoader.mutatePermissionsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutatePermissionsFile,
+      )
 
       mockContext.getBranchContext = vi.fn().mockResolvedValue(
         createMockBranchContext({
@@ -164,6 +204,10 @@ describe('permissions API', () => {
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
+      expect(settingsMutation.getPayload()).toMatchObject({
+        updatedBy: 'admin-1',
+        pathPermissions: newPermissions,
+      })
 
       // In dev mode (default), no git operations are performed
       expect(mockContext.services.commitFiles).not.toHaveBeenCalled()
@@ -184,6 +228,11 @@ describe('permissions API', () => {
     })
 
     it('surfaces a non-200 failure when the settings commit is saved but not pushed (API-H1)', async () => {
+      const settingsMutation = createMockSettingsMutation({ currentFile: null })
+      vi.mocked(permissionsLoader.mutatePermissionsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutatePermissionsFile,
+      )
+
       mockContext.getBranchContext = vi.fn().mockResolvedValue(
         createMockBranchContext({
           branchName: 'main',
@@ -615,7 +664,7 @@ describe('permissions API', () => {
       // Mock getSettingsBranchRoot to simulate settings workspace
       prodContext.services.getSettingsBranchRoot = vi.fn().mockResolvedValue('/test/repo/settings')
 
-      vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([])
+      vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue(null)
 
       const req: ApiRequest<undefined> = {
         user: {
@@ -656,7 +705,7 @@ describe('permissions API', () => {
         .fn()
         .mockResolvedValue('/test/repo/.canopy-dev/settings')
 
-      vi.mocked(permissionsLoader.loadPathPermissions).mockResolvedValue([])
+      vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue(null)
 
       const req: ApiRequest<undefined> = {
         user: {
@@ -675,16 +724,23 @@ describe('permissions API', () => {
     })
   })
 
-  describe('optimistic locking with contentVersion', () => {
-    it('should return 409 when expectedContentVersion does not match current version', async () => {
-      // Mock loadPermissionsFile to return a file with contentVersion 5
-      vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue({
-        version: 1,
-        contentVersion: 5,
-        updatedAt: '2024-01-01T00:00:00Z',
-        updatedBy: 'other-admin',
-        pathPermissions: [],
+  describe('optimistic locking with expectedContentVersion', () => {
+    it('returns 409 when expectedContentVersion does not match the current version', async () => {
+      // The mutator sees the file's real version (5) and throws
+      // SettingsVersionConflictError when it doesn't match the client's
+      // expectedContentVersion (3) — exactly like the real
+      // mutatePermissionsFile-backed handler does.
+      const settingsMutation = createMockSettingsMutation({
+        currentFile: {
+          version: 5,
+          updatedAt: '2024-01-01T00:00:00Z',
+          updatedBy: 'other-admin',
+          pathPermissions: [],
+        },
       })
+      vi.mocked(permissionsLoader.mutatePermissionsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutatePermissionsFile,
+      )
 
       const req: ApiRequest<undefined> = {
         user: {
@@ -706,17 +762,23 @@ describe('permissions API', () => {
       expect(result.error).toBe(
         'Permissions were modified by another user. Please reload and try again.',
       )
+      // The version mismatch is detected inside the mutator BEFORE any
+      // payload is computed for a write.
+      expect(settingsMutation.getPayload()).toBeNull()
     })
 
-    it('should succeed when expectedContentVersion matches current version', async () => {
-      // Mock loadPermissionsFile to return a file with contentVersion 5
-      vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue({
-        version: 1,
-        contentVersion: 5,
-        updatedAt: '2024-01-01T00:00:00Z',
-        updatedBy: 'admin-1',
-        pathPermissions: [],
+    it('succeeds when expectedContentVersion matches the current version', async () => {
+      const settingsMutation = createMockSettingsMutation({
+        currentFile: {
+          version: 5,
+          updatedAt: '2024-01-01T00:00:00Z',
+          updatedBy: 'admin-1',
+          pathPermissions: [],
+        },
       })
+      vi.mocked(permissionsLoader.mutatePermissionsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutatePermissionsFile,
+      )
 
       const req: ApiRequest<undefined> = {
         user: {
@@ -735,26 +797,24 @@ describe('permissions API', () => {
 
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
-
-      // Verify savePathPermissions was called with incremented version
-      expect(permissionsLoader.savePathPermissions).toHaveBeenCalledWith(
-        expect.any(String), // branchRoot varies by test context
-        [],
-        'admin-1',
-        'dev',
-        6, // Should be 5 + 1
-      )
-    })
-
-    it('should allow update when expectedContentVersion is not provided (backward compatible)', async () => {
-      // Mock loadPermissionsFile to return a file with contentVersion 5
-      vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue({
-        version: 1,
-        contentVersion: 5,
-        updatedAt: '2024-01-01T00:00:00Z',
+      expect(settingsMutation.getPayload()).toMatchObject({
         updatedBy: 'admin-1',
         pathPermissions: [],
       })
+    })
+
+    it('allows the update when expectedContentVersion is not provided (backward compatible)', async () => {
+      const settingsMutation = createMockSettingsMutation({
+        currentFile: {
+          version: 5,
+          updatedAt: '2024-01-01T00:00:00Z',
+          updatedBy: 'admin-1',
+          pathPermissions: [],
+        },
+      })
+      vi.mocked(permissionsLoader.mutatePermissionsFile).mockImplementation(
+        settingsMutation.impl as typeof authorization.mutatePermissionsFile,
+      )
 
       const req: ApiRequest<undefined> = {
         user: {
@@ -775,9 +835,10 @@ describe('permissions API', () => {
       expect(result.status).toBe(200)
     })
 
-    it('should start at version 1 for new files without contentVersion', async () => {
-      // Mock loadPermissionsFile to return null (file doesn't exist)
-      vi.mocked(permissionsLoader.loadPermissionsFile).mockResolvedValue(null)
+    it('returns 409 with a busy message when the file lock is contended', async () => {
+      vi.mocked(permissionsLoader.mutatePermissionsFile).mockRejectedValueOnce(
+        new SettingsFileConflictError(),
+      )
 
       const req: ApiRequest<undefined> = {
         user: {
@@ -787,23 +848,11 @@ describe('permissions API', () => {
         },
       }
 
-      const body = {
-        permissions: [],
-      }
+      const result = await updatePermissions(mockContext, req, { permissions: [] })
 
-      const result = await updatePermissions(mockContext, req, body)
-
-      expect(result.ok).toBe(true)
-      expect(result.status).toBe(200)
-
-      // Verify savePathPermissions was called with version 1 (0 + 1)
-      expect(permissionsLoader.savePathPermissions).toHaveBeenCalledWith(
-        expect.any(String), // branchRoot varies by test context
-        [],
-        'admin-1',
-        'dev',
-        1,
-      )
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(409)
+      expect(result.error).toBe('Settings are busy, please try again.')
     })
   })
 })

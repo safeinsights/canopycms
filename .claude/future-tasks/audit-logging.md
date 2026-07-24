@@ -132,7 +132,8 @@ Generate reports for compliance audits:
 ### Phase 1: Basic Audit Trail (File-Based)
 
 1. Create `AuditLogger` class with append-only JSONL writer
-2. Integrate into `savePathPermissions` and `saveInternalGroups`
+2. Integrate into `mutatePermissionsFile` and `mutateGroupsFile` (see
+   `authorization/settings-file-store.ts`)
 3. Record before/after state on every change
 4. Add simple diff generation (JSON diff)
 

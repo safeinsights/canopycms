@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { notifications } from '@mantine/notifications'
 import type { InternalGroup } from '../../authorization'
 import type { UserSearchResult, GroupMetadata } from '../../auth/types'
@@ -49,6 +49,13 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
   const apiClient = useApiClient()
   const [groupsData, setGroupsData] = useState<InternalGroup[]>([])
   const [groupsLoading, setGroupsLoading] = useState(false)
+  // Last-loaded version, sent back as expectedContentVersion on save so the
+  // server can detect a conflicting edit from another user (see
+  // api/groups.ts's updateInternalGroupsHandler). Deliberately NOT
+  // auto-updated on a 409 — the user must reopen the manager (which reloads)
+  // to pick up the latest version, rather than silently retrying and risking
+  // an overwrite.
+  const versionRef = useRef(0)
 
   const loadGroups = async () => {
     setGroupsLoading(true)
@@ -56,6 +63,7 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
       const result = await apiClient.groups.getInternal()
       if (!result.ok) throw new Error('Failed to load groups')
       setGroupsData(result.data?.groups ?? [])
+      versionRef.current = result.data?.version ?? 0
     } catch (err) {
       console.error('Failed to load groups:', err)
       notifications.show({ message: 'Failed to load groups', color: 'red' })
@@ -66,7 +74,10 @@ export function useGroupManager(options: UseGroupManagerOptions): UseGroupManage
 
   const handleSaveGroups = useCallback(async (groups: InternalGroup[]) => {
     try {
-      const result = await apiClient.groups.updateInternal({ groups })
+      const result = await apiClient.groups.updateInternal({
+        groups,
+        expectedContentVersion: versionRef.current,
+      })
       if (!result.ok) {
         throw new Error(result.error || 'Failed to save groups')
       }

@@ -37,8 +37,12 @@ const permissionPathSchema = z
  * Any path containing '..' or other traversal sequences will be rejected.
  */
 export const PermissionsFileSchema = z.object({
-  version: z.literal(1),
-  contentVersion: z.number().optional(), // For optimistic locking
+  // Managed by writeOccJsonFile (see authorization/settings-file-store.ts) —
+  // the single OCC counter for this file. Optional so a hand-written file
+  // with no version field parses as version 0. A legacy `contentVersion`
+  // field (if present) is silently stripped by this non-strict zod parse.
+  version: z.number().int().nonnegative().optional(),
+  writeId: z.string().optional(),
   updatedAt: z.string().datetime(),
   updatedBy: z.string() as z.ZodType<CanopyUserId>,
   pathPermissions: z.array(
@@ -54,11 +58,11 @@ export const PermissionsFileSchema = z.object({
 export type PermissionsFile = z.infer<typeof PermissionsFileSchema>
 
 /**
- * Default permissions file
+ * Default permissions file. Omits `version`/`writeId` — the writer
+ * (mutateSettingsJsonFile via writeOccJsonFile) manages those.
  */
 export function createDefaultPermissionsFile(userId: CanopyUserId): PermissionsFile {
   return {
-    version: 1,
     updatedAt: new Date().toISOString(),
     updatedBy: userId,
     pathPermissions: [],

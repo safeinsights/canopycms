@@ -8,12 +8,13 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContextWithSchema } from '../types'
 import { defineEndpoint } from './route-builder'
 import { normalizeFilesystemPath, parseSlug, parseLogicalPath } from '../paths'
-import { isNotFoundError, sanitizeErrorMessage } from '../utils/error'
+import { getErrorMessage, isNotFoundError, sanitizeErrorMessage } from '../utils/error'
+import { createDebugLogger } from '../utils/debug'
 import { resolveEntryTitle } from '../utils/title-field'
 import type { LogicalPath, PhysicalPath, Slug, ContentId } from '../paths/types'
 import { branchNameSchema, logicalPathSchema, queryBooleanSchema } from './validators'
 import { MAX_ENTRIES_PER_PAGE, DEFAULT_ENTRIES_LIMIT } from './entries-constants'
-import { SchemaOps } from '../schema/schema-store'
+import { SchemaOps, SchemaStoreBusyError } from '../schema/schema-store'
 import {
   listCollectionEntries as listCollectionEntriesShared,
   sortByOrder,
@@ -24,6 +25,8 @@ import type { ContentAccessChecker } from '../authorization'
 // Re-export pagination constants from the dependency-free module so they remain
 // part of the entries API surface without pulling server deps into client bundles.
 export { MAX_ENTRIES_PER_PAGE, DEFAULT_ENTRIES_LIMIT } from './entries-constants'
+
+const log = createDebugLogger({ prefix: 'EntriesAPI' })
 
 /**
  * Summary of an entry type for client display.
@@ -437,7 +440,23 @@ const deleteEntryHandler = async (
       )
       const newOrder = collection.order.filter((id) => id !== contentId)
       if (newOrder.length !== collection.order.length) {
-        await schemaStore.updateOrder(collectionPath as LogicalPath, newOrder as string[])
+        try {
+          await schemaStore.updateOrder(collectionPath as LogicalPath, newOrder as string[])
+        } catch (err) {
+          if (!(err instanceof SchemaStoreBusyError)) {
+            throw err
+          }
+          // Best-effort order hygiene (see comment above): the entry is
+          // already deleted, so a busy schema lock must not turn an
+          // otherwise-successful delete into an error response. The order
+          // array will still contain the now-nonexistent id until a later
+          // schema mutation cleans it up.
+          log.warn('delete-entry', 'Skipped order cleanup — schema is busy', {
+            collectionPath,
+            contentId,
+            error: getErrorMessage(err),
+          })
+        }
       }
     }
 

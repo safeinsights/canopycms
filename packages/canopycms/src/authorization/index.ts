@@ -74,7 +74,7 @@ export {
   type PermissionsFile,
   loadPermissionsFile,
   loadPathPermissions,
-  savePathPermissions,
+  mutatePermissionsFile,
   ensurePermissionsFile,
 } from './permissions'
 
@@ -86,5 +86,15 @@ export {
   type InternalGroup,
   loadGroupsFile,
   loadInternalGroups,
-  saveInternalGroups,
+  deriveInternalGroups,
+  mutateGroupsFile,
 } from './groups'
+
+// Settings file store — cross-host layered locking shared by
+// permissions.json and groups.json (see authorization/settings-file-store.ts)
+export {
+  mutateSettingsJsonFile,
+  SettingsFileConflictError,
+  SettingsVersionConflictError,
+  type MutateSettingsFileOptions,
+} from './settings-file-store'

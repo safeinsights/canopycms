@@ -1,7 +1,9 @@
 /**
  * Permissions file loader
  *
- * Handles loading and saving path permissions from the filesystem.
+ * Handles loading path permissions from the filesystem and mutating
+ * permissions.json under the cross-host layered lock in
+ * authorization/settings-file-store.ts.
  */
 
 import fs from 'node:fs/promises'
@@ -10,7 +12,8 @@ import type { PermissionsFile } from './schema'
 import { PermissionsFileSchema } from './schema'
 import type { OperatingMode } from '../../operating-mode'
 import { operatingStrategy } from '../../operating-mode'
-import { atomicWriteFile } from '../../utils/atomic-write'
+import { mutateSettingsJsonFile } from '../settings-file-store'
+import type { OccWriteResult } from '../../utils/occ-json-write'
 
 /**
  * Get the appropriate permissions file path based on mode
@@ -67,46 +70,52 @@ export async function loadPathPermissions(
 }
 
 /**
- * Save path permissions to .canopycms/permissions.json (or .local.json in dev mode)
+ * Mutate permissions.json (or .local.json in dev mode) under the full
+ * cross-host lock + OCC-retry stack (see
+ * authorization/settings-file-store.ts). `mutate` is called with the
+ * current parsed file (`null` if it doesn't exist yet) and the version to
+ * write under; it returns the next raw payload, or `null` for a deliberate
+ * no-op. The returned payload is validated against
+ * {@link PermissionsFileSchema} before being written, preserving the
+ * previous validate-before-write behavior of the old `savePathPermissions`.
  */
-export async function savePathPermissions(
+export async function mutatePermissionsFile(
   repoRoot: string,
-  permissions: PathPermission[],
-  updatedBy: string,
   mode: OperatingMode,
-  contentVersion?: number,
-): Promise<void> {
+  mutate: (current: PermissionsFile | null, version: number) => Record<string, unknown> | null,
+  options?: { settleMs?: number; maxAttempts?: number },
+): Promise<OccWriteResult | null> {
   const permissionsPath = getPermissionsFilePath(repoRoot, mode)
 
-  const permissionsFile: PermissionsFile = {
-    version: 1,
-    contentVersion: contentVersion ?? 1,
-    updatedAt: new Date().toISOString(),
-    updatedBy,
-    pathPermissions: permissions,
-  }
-
-  // Validate before writing
-  PermissionsFileSchema.parse(permissionsFile)
-
-  await atomicWriteFile(permissionsPath, JSON.stringify(permissionsFile, null, 2))
+  return mutateSettingsJsonFile<PermissionsFile>({
+    filePath: permissionsPath,
+    parse: (raw) => PermissionsFileSchema.parse(JSON.parse(raw)),
+    mutate: (current, version) => {
+      const payload = mutate(current, version)
+      return payload === null ? null : PermissionsFileSchema.parse(payload)
+    },
+    settleMs: options?.settleMs,
+    maxAttempts: options?.maxAttempts,
+  })
 }
 
 /**
- * Initialize permissions file if it doesn't exist
+ * Initialize permissions file if it doesn't exist. A no-op when the file is
+ * already present (the mutator returns `null`, so no write happens).
  */
 export async function ensurePermissionsFile(
   repoRoot: string,
   userId: string,
   mode: OperatingMode,
 ): Promise<void> {
-  const permissionsPath = getPermissionsFilePath(repoRoot, mode)
-
-  try {
-    await fs.access(permissionsPath)
-    // File exists, nothing to do
-  } catch {
-    // File doesn't exist, create default
-    await savePathPermissions(repoRoot, [], userId, mode)
-  }
+  await mutatePermissionsFile(repoRoot, mode, (current) => {
+    if (current) {
+      return null
+    }
+    return {
+      updatedAt: new Date().toISOString(),
+      updatedBy: userId,
+      pathPermissions: [],
+    }
+  })
 }

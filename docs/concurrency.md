@@ -116,16 +116,18 @@ over anything the old code wrote; the window closes when the old processes drain
 
 ## Who uses what
 
-| Resource (file under the workspace)             | Mutex (1)           | OCC (2) | Lockfile (3)          | Marker (4)                                    | Notes                                                                                                                 |
-| ----------------------------------------------- | ------------------- | ------- | --------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| Content entries (`content/**`)                  | ✔ content-ID keys   | —       | —                     | `content-index` bump on own writes            | Wrong-file writes prevented by the existence guard in `ContentStore.write()`; slug creates take a per-slug create key |
-| ContentId index (in-memory per store)           | rebuild dedup       | —       | —                     | ✔ reader protocol in `ContentStore.idIndex()` | Suspicious-lookup backstop; window E stays in-memory (never persisted)                                                |
-| Branch registry (`branches.json` at baseRoot)   | regen dedup         | —       | —                     | ✔ `branch-registry`                           | Durable snapshot: eager regen in `invalidate()`, `get()` miss backstop                                                |
-| Schema cache (`.canopy-meta/schema-cache.json`) | — (disk-only cache) | —       | —                     | ✔ `schema`                                    | Durable snapshot: mutating request re-reads immediately (same-host coherent); dev-only mtime walk for hand edits      |
-| Branch metadata (`.canopy-meta/branch.json`)    | ✔ path key          | ✔       | ✔                     | — (registry bumped after save)                | Status + ACLs: security-adjacent, hence the lockfile                                                                  |
-| Comments (`.canopy-meta/comments.json`)         | ✔ path key          | ✔       | ✔                     | —                                             | User data: lost updates unacceptable, hence the lockfile                                                              |
-| Workspace provisioning                          | —                   | —       | ✔ provisioning-lock   | —                                             | Parallel build workers provisioning the same clone                                                                    |
-| Worker task queue                               | —                   | —       | proper-lockfile lease | —                                             | Single consumer; cross-directory rename claims                                                                        |
+| Resource (file under the workspace)                               | Mutex (1)           | OCC (2)    | Lockfile (3)            | Marker (4)                                    | Notes                                                                                                                                                                                                                                                                                                                                                |
+| ----------------------------------------------------------------- | ------------------- | ---------- | ----------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Content entries (`content/**`)                                    | ✔ content-ID keys   | —          | —                       | `content-index` bump on own writes            | Wrong-file writes prevented by the existence guard in `ContentStore.write()`; slug creates take a per-slug create key                                                                                                                                                                                                                                |
+| ContentId index (in-memory per store)                             | rebuild dedup       | —          | —                       | ✔ reader protocol in `ContentStore.idIndex()` | Suspicious-lookup backstop; window E stays in-memory (never persisted)                                                                                                                                                                                                                                                                               |
+| Branch registry (`branches.json` at baseRoot)                     | regen dedup         | —          | —                       | ✔ `branch-registry`                           | Durable snapshot: eager regen in `invalidate()`, `get()` miss backstop                                                                                                                                                                                                                                                                               |
+| Schema cache (`.canopy-meta/schema-cache.json`)                   | — (disk-only cache) | —          | —                       | ✔ `schema`                                    | Durable snapshot: mutating request re-reads immediately (same-host coherent); dev-only mtime walk for hand edits                                                                                                                                                                                                                                     |
+| Branch metadata (`.canopy-meta/branch.json`)                      | ✔ path key          | ✔          | ✔                       | — (registry bumped after save)                | Status + ACLs: security-adjacent, hence the lockfile                                                                                                                                                                                                                                                                                                 |
+| Comments (`.canopy-meta/comments.json`)                           | ✔ path key          | ✔          | ✔                       | —                                             | User data: lost updates unacceptable, hence the lockfile                                                                                                                                                                                                                                                                                             |
+| Settings files (`{settingsRoot}/permissions.json`, `groups.json`) | ✔ path key          | ✔ advisory | ✔                       | —                                             | Authorization data, but git-committed on the settings branch: a merge can rewrite `version`, so OCC is defense only — the lockfile is the guarantee; commit+push stays outside the lock (authorization/settings-file-store.ts)                                                                                                                       |
+| Collection meta (`content/**/.collection.json`)                   | ✔ surrogate key     | —          | ✔ `.canopy-meta/schema` | `schema` bump after mutation                  | Adopter-visible git-committed file: deliberately NO OCC fields (rebases rewrite them; crash-leftover OCC temp files would enter `git add .` at publish). One coarse per-branch surrogate lock spans each full read-modify-write, incl. multi-file mutations; CLI migrate takes the same lock, but only inside branch clones (schema/schema-store.ts) |
+| Workspace provisioning                                            | —                   | —          | ✔ provisioning-lock     | —                                             | Parallel build workers provisioning the same clone                                                                                                                                                                                                                                                                                                   |
+| Worker task queue                                                 | —                   | —          | proper-lockfile lease   | —                                             | Single consumer; cross-directory rename claims                                                                                                                                                                                                                                                                                                       |
 
 Bulk working-tree mutations (git checkout/merge/rebase — including the worker's
 ff-only base-branch refresh in `refreshBaseBranchWorkspace()` — sync, CLI sync, migrate) go
@@ -136,7 +138,9 @@ the `content-index` **and** `schema` markers — a rebase can pull in upstream
 mutation site — it currently has zero production callers: `ContentStore`'s own
 write/delete/rename bump the marker directly via `recordOwnMutation()` ->
 `bumpContentIndexGeneration()`, not through this wrapper. Settings workspaces skip
-markers entirely (`skipIndexMarker` on GitManager).
+markers entirely (`skipIndexMarker` on GitManager); their two mutable files follow the
+mutable-JSON recipe instead (see the table row and
+`authorization/settings-file-store.ts`).
 
 ## Residual staleness windows (accepted, bounded)
 
@@ -179,7 +183,18 @@ with backstops) and `branch-schema-cache.ts`.
 (translating inside the write path silently disables the retry predicate — this bug
 has been caught in review once already). Add `withOccFileLock` when a cross-host lost
 update is unacceptable. Always `path.resolve` the root that feeds your lock key.
-Reference implementations: `comment-store.ts`, `branch-metadata.ts`.
+Reference implementations: `comment-store.ts`, `branch-metadata.ts`,
+`authorization/settings-file-store.ts`.
+
+**Git-committed files are a special case.** OCC `version` counters only mean something
+in files git never rewrites (`.canopy-meta/*`). In a file that merges/rebases rewrite
+wholesale, the counter can move backwards or vanish, so it cannot be a correctness
+mechanism: the settings files keep OCC as defense-in-depth with the lockfile as the
+actual guarantee (see `settings-file-store.ts`'s doc comment), and `.collection.json`
+skips OCC fields entirely — an adopter-visible schema file gets no version/writeId
+churn — relying on layers 1+3 via a coarse per-branch surrogate lock at
+`.canopy-meta/schema` held across each full read-modify-write
+(`schema/schema-store.ts`'s `withSchemaLock`).
 
 **Bulk tree mutation** (anything git-like that rewrites many files): call
 `invalidateBranchContentCaches(branchRoot)` after the mutation completes.
@@ -215,3 +230,10 @@ concurrency epic (PRs #111–#116: shared primitives, branch-registry GIT-M1,
 branch-schema-cache GIT-M2, comment-store GIT-M3, branch-metadata GIT-M4, content-store
 lock keys). Background analysis: `.claude/future-tasks/resolved/index-staleness-multiprocess.md`
 and `.claude/future-tasks/resolved/efs-cross-process-concurrency.md`.
+
+Extended July 2026 (post-epic follow-ups): the settings files adopted the full
+mutable-JSON stack (`authorization/settings-file-store.ts`, unifying the old
+app-level `contentVersion` scheme into the OCC `version`), and `.collection.json`
+mutations were serialized behind the coarse `.canopy-meta/schema` surrogate lock —
+see `.claude/future-tasks/resolved/settings-file-occ-cross-host.md` and
+`.claude/future-tasks/resolved/schema-store-rmw-protection.md`.

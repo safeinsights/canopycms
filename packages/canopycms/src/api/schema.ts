@@ -20,6 +20,7 @@ import { getErrorMessage, sanitizeErrorMessage } from '../utils/error'
 import { branchNameSchema, logicalPathSchema } from './validators'
 import {
   SchemaOps,
+  SchemaStoreBusyError,
   createCollectionInputSchema,
   updateCollectionInputSchema,
   entryTypeInputSchema,
@@ -473,6 +474,9 @@ const createCollectionHandler = async (
       data: result,
     }
   } catch (err) {
+    if (err instanceof SchemaStoreBusyError) {
+      return { ok: false, status: 409, error: err.message }
+    }
     return {
       ok: false,
       status: 400,
@@ -511,6 +515,9 @@ const updateCollectionHandler = async (
       data: { success: true },
     }
   } catch (err) {
+    if (err instanceof SchemaStoreBusyError) {
+      return { ok: false, status: 409, error: err.message }
+    }
     return {
       ok: false,
       status: 400,
@@ -548,6 +555,9 @@ const deleteCollectionHandler = async (
       data: { success: true },
     }
   } catch (err) {
+    if (err instanceof SchemaStoreBusyError) {
+      return { ok: false, status: 409, error: err.message }
+    }
     return {
       ok: false,
       status: 400,
@@ -586,6 +596,9 @@ const addEntryTypeHandler = async (
       data: { success: true },
     }
   } catch (err) {
+    if (err instanceof SchemaStoreBusyError) {
+      return { ok: false, status: 409, error: err.message }
+    }
     return {
       ok: false,
       status: 400,
@@ -616,24 +629,13 @@ const updateEntryTypeHandler = async (
   }
   const collectionPath = decodedPath.path
 
-  // Check if format or schema are being changed (breaking changes)
-  const isBreakingChange = body.format !== undefined || body.schema !== undefined
-  if (isBreakingChange) {
-    // Count existing entries using this type
-    const usageCount = await storeResult.store.countEntriesUsingType(
-      collectionPath,
-      params.entryTypeName,
-    )
-    if (usageCount > 0) {
-      const entryWord = usageCount === 1 ? 'entry' : 'entries'
-      return {
-        ok: false,
-        status: 400,
-        error: `Cannot modify schema or format for entry type with existing ${entryWord}. ${usageCount} ${entryWord} currently use this type.`,
-      }
-    }
-  }
-
+  // Note: the breaking-change usage guard (blocking format/schema changes
+  // while entries still use this type) used to live here, checked BEFORE
+  // calling the store. It moved into SchemaOps.updateEntryType itself so the
+  // usage count is read under the same schema lock that guards the write —
+  // otherwise a concurrent write could land a new entry between this
+  // handler's count and its call to the store (TOCTOU). See
+  // schema-store.ts's updateEntryTypeInner.
   try {
     await storeResult.store.updateEntryType(
       collectionPath,
@@ -646,6 +648,9 @@ const updateEntryTypeHandler = async (
       data: { success: true },
     }
   } catch (err) {
+    if (err instanceof SchemaStoreBusyError) {
+      return { ok: false, status: 409, error: err.message }
+    }
     return {
       ok: false,
       status: 400,
@@ -683,6 +688,9 @@ const removeEntryTypeHandler = async (
       data: { success: true },
     }
   } catch (err) {
+    if (err instanceof SchemaStoreBusyError) {
+      return { ok: false, status: 409, error: err.message }
+    }
     return {
       ok: false,
       status: 400,
@@ -721,6 +729,9 @@ const updateOrderHandler = async (
       data: { success: true },
     }
   } catch (err) {
+    if (err instanceof SchemaStoreBusyError) {
+      return { ok: false, status: 409, error: err.message }
+    }
     return {
       ok: false,
       status: 400,
