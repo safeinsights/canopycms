@@ -26,6 +26,7 @@ vi.mock('../branch-metadata', () => ({
 
 import { withdrawBranch } from './branch-withdraw'
 import { mockConsole, createMockApiContext, createMockBranchContext } from '../test-utils'
+import { RESERVED_GROUPS } from '../authorization'
 
 // Extract handler for testing
 const withdrawHandler = withdrawBranch.handler
@@ -225,5 +226,48 @@ describe('branch withdraw api', () => {
     )
     expect(res.ok).toBe(true)
     expect(convertToDraft).toHaveBeenCalledWith(123)
+  })
+
+  describe('protected base branch (recovery path)', () => {
+    // The base branch is auto-provisioned with createdBy: 'canopycms-system',
+    // which would normally grant withdraw to anyone with general branch
+    // access via the system-branch clause -- isProtectedBranch disables that
+    // grant, restricting withdraw to creator/ACL/privileged users. Withdraw
+    // itself stays reachable (unlike submit) as the deliberate recovery path
+    // for a protected branch wrongly stuck in 'submitted'.
+    const protectedContext = createMockBranchContext({
+      branchName: 'main',
+      status: 'submitted',
+      pullRequestNumber: 123,
+      pullRequestUrl: 'https://github.com/owner/repo/pull/123',
+      createdBy: 'canopycms-system',
+    })
+
+    const makeProtectedCtx = () =>
+      createMockApiContext({
+        branchContext: protectedContext,
+        allowBranchAccess: true,
+        services: {
+          config: { defaultBranchAccess: 'allow', mode: 'prod', defaultBaseBranch: 'main' } as any,
+        },
+      })
+
+    it('restricts withdraw on the protected base branch to privileged/creator/ACL users', async () => {
+      const res = await withdrawHandler(
+        makeProtectedCtx(),
+        { user: { type: 'authenticated', userId: 'random-user', groups: [] } },
+        { branch: 'main' as BranchName },
+      )
+      expect(res.status).toBe(403)
+    })
+
+    it('still allows an admin to withdraw the protected base branch (recovery)', async () => {
+      const res = await withdrawHandler(
+        makeProtectedCtx(),
+        { user: { type: 'authenticated', userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] } },
+        { branch: 'main' as BranchName },
+      )
+      expect(res.ok).toBe(true)
+    })
   })
 })

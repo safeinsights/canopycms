@@ -232,6 +232,70 @@ describe('canPerformWorkflowAction', () => {
     })
   })
 
+  describe('isProtectedBranch option', () => {
+    it('disables the system-branch grant, denying general access on a protected branch', () => {
+      const context: BranchContext = {
+        ...baseContext,
+        branch: {
+          ...baseContext.branch,
+          createdBy: 'canopycms-system',
+          access: {},
+        },
+      }
+      expect(
+        canPerformWorkflowAction(context, regularUser, 'allow', { isProtectedBranch: true }),
+      ).toBe(false)
+    })
+
+    it('still allows admins on a protected system branch', () => {
+      const context: BranchContext = {
+        ...baseContext,
+        branch: {
+          ...baseContext.branch,
+          createdBy: 'canopycms-system',
+          access: {},
+        },
+      }
+      expect(canPerformWorkflowAction(context, admin, 'allow', { isProtectedBranch: true })).toBe(
+        true,
+      )
+    })
+
+    it('still allows the branch creator on a protected branch', () => {
+      const context: BranchContext = {
+        ...baseContext,
+        branch: { ...baseContext.branch, createdBy: 'user-1', access: {} },
+      }
+      expect(
+        canPerformWorkflowAction(context, regularUser, 'allow', { isProtectedBranch: true }),
+      ).toBe(true)
+    })
+
+    it('still allows ACL-listed users on a protected branch', () => {
+      const context: BranchContext = {
+        ...baseContext,
+        branch: {
+          ...baseContext.branch,
+          createdBy: 'user-2',
+          access: { allowedUsers: ['user-1'] },
+        },
+      }
+      expect(
+        canPerformWorkflowAction(context, regularUser, 'deny', { isProtectedBranch: true }),
+      ).toBe(true)
+    })
+
+    it('does not affect non-system branches', () => {
+      const context: BranchContext = {
+        ...baseContext,
+        branch: { ...baseContext.branch, createdBy: 'user-2', access: {} },
+      }
+      expect(
+        canPerformWorkflowAction(context, regularUser, 'deny', { isProtectedBranch: true }),
+      ).toBe(false)
+    })
+  })
+
   describe('combined scenarios', () => {
     it('allows creator who is also in ACL', () => {
       const context: BranchContext = {

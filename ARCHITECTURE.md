@@ -897,7 +897,7 @@ Branches have a lifecycle with several states:
 - **locked**: Temporarily locked from editing
 - **archived**: Merged and preserved for audit
 
-Users can work on main branch too—there's nothing preventing it. The branch model provides isolation for team collaboration but doesn't mandate it.
+In dev mode, users normally work directly on the base branch too—that's the expected local flow, and nothing prevents it. In prod mode, the base branch is read-only in the editor (see [Protected Base Branch](#protected-base-branch) below); real edits require creating a separate branch, which then goes through the submit/review/merge flow. The branch model provides isolation for team collaboration and, in prod, enforces it for the base branch specifically.
 
 ### Branch Identity: defaultBaseBranch vs defaultActiveBranch
 
@@ -929,6 +929,27 @@ CanopyCMS distinguishes between two branch concepts that serve different purpose
 **Per-request branch tracking:** In dev mode, every content-serving entry point — the API handler and the context factory behind `getCanopy()` — calls `refreshActiveBranch()` on each request. If the developer switches git branches, the active branch (and, when unset, the base branch used for newly provisioned workspaces) silently updates — no server restart needed. The workspace for the new branch is lazily created on the first content request via the handler's auto-create path (`BranchWorkspaceManager.openOrCreateBranch`). This only affects non-editor content serving (the public dev site, `getCanopy()`, AI content); the editor is pinned to its own branch via URL params and has branch-specific drafts in localStorage. An editor opened without a pinned branch (no URL parameter, no client-config value) adopts the server's effective default branch, which the branches-list API reports per request — nothing is hardcoded client-side, and an explicitly pinned branch is never overridden.
 
 **Fallback chain:** Throughout the system, content-serving code resolves the active branch as `defaultActiveBranch ?? defaultBaseBranch ?? 'main'`. The handler auto-creates workspaces for `defaultActiveBranch` on demand, ensuring the active branch is always ready to serve content. The HTTP handler also provisions the base-branch workspace on the first request (it is needed to load internal groups); if that provisioning fails, the handler fails loudly — logging the cause and returning a 503 that names the branch and the underlying reason — rather than letting every endpoint return confusing empty results.
+
+### Protected Base Branch
+
+The resolved base branch is **protected**: it can never be submitted for review (submitting it would commit and push directly to itself — a review bypass — and then ask GitHub for a head==base PR, which 422s), and in prod mode it is **read-only in the editor** (content on the base branch only changes via merged PRs, matching the branch-first workflow). In dev mode the base branch stays editable — the developer always lands on it by definition (it follows git HEAD when unset), and editing it is the normal local flow, reconciled via `canopycms sync`.
+
+The single source of truth is `getBranchProtection(config, branchName)` in `authorization/protected-branch.ts`, keyed off the resolved `config.defaultBaseBranch` (never a hard-coded `'main'` — `master`/`develop` bases work) with sanitization-aware comparison (metadata names are sanitized; config holds the raw git name). It returns three flags:
+
+|                 | dev | prod |
+| --------------- | --- | ---- |
+| `isProtected`   | ✓   | ✓    |
+| `submitBlocked` | ✓   | ✓    |
+| `readOnly`      | —   | ✓    |
+
+Enforcement is layered:
+
+- **API guards** (`api/guards.ts`): `writableBranch` (403 on content/entry/schema mutations when `readOnly`) and `submittableBranch` (403 on submit when `submitBlocked`). `deleteBranch` refuses the base branch with a handler-level check.
+- **Workflow authorization** (`authorization/branch.ts`): the system-branch grant in `canPerformWorkflowAction` (the base branch is auto-provisioned with `createdBy: 'canopycms-system'`) is disabled on protected branches, so only admins/reviewers/explicit-ACL users retain workflow rights there.
+- **Backstops** (defense in depth, all refusing sanitized head==base): `services.submitBranch` throws before any git operation; `syncSubmitPr` returns `sync-failed` without calling GitHub or enqueueing; the worker's `push-and-create-or-update-pr` task throws a `PermanentTaskError`.
+- **Editor UI**: renders purely from server-computed wire flags (`isProtected`/`readOnly` on the branches-list response) — Submit is hidden, Save is disabled, and a banner with a "Create a branch" action appears on a read-only branch. The editor still lands on the protected branch for browsing.
+
+**Withdraw is deliberately not blocked** on protected branches: it is the self-serve recovery path for a base branch wrongly stuck in `submitted` (the pre-protection failure mode), and the workflow-authorization change above restricts it to privileged users there.
 
 ## Operating Modes
 
@@ -1511,6 +1532,8 @@ Saves run through server-side validation in the content write handler:
 4. Branch status changes to "submitted"
 
 **Important**: Clicking "Submit" requests publication—it does not actually publish. The content becomes live only after the PR is merged on GitHub and the site is rebuilt/deployed. This separation means CanopyCMS doesn't control the actual publication moment; that's handled by your CI/CD pipeline.
+
+This flow applies to editing branches. The base branch itself can never be submitted—see [Protected Base Branch](#protected-base-branch).
 
 ### Review Process
 

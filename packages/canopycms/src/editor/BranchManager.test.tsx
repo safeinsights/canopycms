@@ -183,6 +183,58 @@ describe('getBranchPermissions', () => {
     })
     expect(perms.canRequestChanges).toBe(true)
   })
+
+  describe('protected base branch', () => {
+    it('blocks submit even for the creator', () => {
+      const branch: BranchSummary = {
+        name: 'main',
+        status: 'editing',
+        createdBy: 'user1',
+        isProtected: true,
+      }
+      const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+      expect(perms.canSubmit).toBe(false)
+    })
+
+    it('blocks delete even for an admin', () => {
+      const branch: BranchSummary = {
+        name: 'main',
+        status: 'editing',
+        createdBy: 'user1',
+        isProtected: true,
+      }
+      const perms = getBranchPermissions(branch, {
+        userId: 'admin',
+        groups: [RESERVED_GROUPS.ADMINS],
+      })
+      expect(perms.canDelete).toBe(false)
+    })
+
+    it('disables the system-branch grant, denying withdraw for a general-access user', () => {
+      const branch: BranchSummary = {
+        name: 'main',
+        status: 'submitted',
+        createdBy: 'canopycms-system',
+        isProtected: true,
+      }
+      const perms = getBranchPermissions(branch, { userId: 'random-user', groups: [] })
+      expect(perms.canWithdraw).toBe(false)
+    })
+
+    it('still allows an admin to withdraw (recovery path)', () => {
+      const branch: BranchSummary = {
+        name: 'main',
+        status: 'submitted',
+        createdBy: 'canopycms-system',
+        isProtected: true,
+      }
+      const perms = getBranchPermissions(branch, {
+        userId: 'admin',
+        groups: [RESERVED_GROUPS.ADMINS],
+      })
+      expect(perms.canWithdraw).toBe(true)
+    })
+  })
 })
 
 describe('BranchManager', () => {
@@ -466,6 +518,31 @@ describe('BranchManager', () => {
     await userEvent.click(requestChangesButtons[1])
 
     expect(onRequestChanges).toHaveBeenCalledWith('feature/test')
+  })
+
+  it('shows a Protected badge for the protected base branch', () => {
+    const branches: BranchSummary[] = [{ ...baseBranches[0], isProtected: true }]
+    renderBranchManager({ branches, mode: 'prod' })
+    expect(screen.getByTestId('branch-protected-badge-main')).toBeDefined()
+  })
+
+  it('does not show a Protected badge for a non-protected branch', () => {
+    renderBranchManager({ branches: baseBranches, mode: 'prod' })
+    expect(screen.queryByTestId('branch-protected-badge-main')).toBeNull()
+  })
+
+  it('disables Submit with a tooltip on the protected branch, even for the creator', () => {
+    const branches: BranchSummary[] = [{ ...baseBranches[0], isProtected: true }]
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+    const submitButton = screen.getByTestId('submit-branch-button-main')
+    expect(submitButton.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('leaves Open enabled on the protected branch', () => {
+    const branches: BranchSummary[] = [{ ...baseBranches[0], isProtected: true }]
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+    const openButton = screen.getByTestId('switch-to-branch-button-main')
+    expect(openButton.hasAttribute('disabled')).toBe(false)
   })
 
   it('calls onDelete when delete button clicked', async () => {

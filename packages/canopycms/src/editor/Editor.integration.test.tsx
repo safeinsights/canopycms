@@ -218,6 +218,152 @@ describe('Editor integration', () => {
     })
   })
 
+  it('shows the read-only banner, keeps Save disabled despite unsaved changes, and hides Submit on the protected base branch', async () => {
+    const entry: EditorEntry = {
+      path: unsafeAsLogicalPath('content/posts/hello'),
+      contentId: unsafeAsContentId('def456ABC123'),
+      label: 'Hello',
+      status: 'entry',
+      schema: [{ name: 'title', type: 'string' }],
+      apiPath: '/api/canopycms/main/content/content/posts/hello',
+      collectionPath: unsafeAsLogicalPath('content/posts'),
+      collectionName: 'posts',
+      slug: 'hello',
+      format: 'json',
+      type: 'entry',
+    }
+
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branches: [
+                {
+                  name: 'main',
+                  status: 'editing',
+                  access: {},
+                  createdBy: 'canopycms-system',
+                  createdAt: '2024-01-01',
+                  updatedAt: '2024-01-01',
+                  // Server-computed protected-base-branch flags (prod).
+                  isProtected: true,
+                  readOnly: true,
+                },
+              ],
+              defaultBranch: 'main',
+            },
+          }),
+        )
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              schema: {},
+              flatSchema: [
+                {
+                  type: 'entry-type',
+                  logicalPath: 'content/posts/post',
+                  name: 'post',
+                  parentPath: 'content/posts',
+                  format: 'json',
+                  schemaRef: 'postSchema',
+                },
+              ],
+              entrySchemas: { postSchema: [{ name: 'title', type: 'string' }] },
+            },
+          }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              collections: [
+                {
+                  logicalPath: 'content/posts',
+                  contentId: 'abc123XYZ789',
+                  name: 'posts',
+                  type: 'collection',
+                  format: 'json',
+                  schema: entry.schema,
+                  order: [],
+                },
+              ],
+              entries: [
+                {
+                  logicalPath: entry.path,
+                  contentId: 'def456ABC123',
+                  collectionPath: entry.collectionPath,
+                  collectionName: entry.collectionName,
+                  slug: entry.slug,
+                  format: entry.format,
+                  entryType: 'post',
+                  physicalPath: '/content/posts.abc123XYZ789/post.hello.def456ABC123.json',
+                  exists: true,
+                },
+              ],
+              pagination: { hasMore: false, limit: 50 },
+            },
+          }),
+        )
+      }
+      if (url === entry.apiPath && (!init || !init.method || init.method === 'GET')) {
+        return Promise.resolve(okJson({ ok: true, status: 200, data: { title: 'Loaded title' } }))
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <ApiClientProvider>
+        <Editor
+          entries={[entry]}
+          title="Test Editor"
+          branchName="main"
+          operatingMode="prod"
+          themeOptions={{}}
+        />
+      </ApiClientProvider>,
+    )
+
+    // Read-only banner appears with the create-branch CTA.
+    await waitFor(() => {
+      expect(screen.getByTestId('protected-branch-banner')).toBeDefined()
+    })
+    expect(screen.getByText(/protected base branch "main"/i)).toBeDefined()
+    expect(screen.getByRole('button', { name: /create a branch/i })).toBeDefined()
+
+    // Submit is hidden entirely (not just disabled) on the protected branch.
+    expect(screen.queryByTestId('submit-button')).toBeNull()
+
+    // Wait for the entry to load, then dirty it -- Save must stay disabled
+    // despite unsaved changes, proving branchReadOnly overrides the normal
+    // hasUnsavedChanges enable logic.
+    let input: HTMLInputElement
+    await waitFor(() => {
+      const el = screen.queryByRole('textbox', { name: /title/i }) as HTMLInputElement | null
+      expect(el).not.toBeNull()
+      input = el!
+    })
+    fireEvent.change(input!, { target: { value: 'Modified title' } })
+
+    await waitFor(() => {
+      const saveButton = screen.getByTestId('save-button')
+      expect(saveButton.hasAttribute('disabled')).toBe(true)
+    })
+  })
+
   // This test verifies the fix for the bug where the last manually expanded collection
   // wouldn't persist when the drawer closed and reopened. The fix captures the tree's
   // expanded state synchronously when the drawer closes, preventing race conditions

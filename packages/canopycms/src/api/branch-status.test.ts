@@ -22,6 +22,21 @@ vi.mock('../branch-metadata', () => ({
   })),
 }))
 
+// Spy on canPerformWorkflowAction (delegating to the real implementation) so
+// tests can assert the handler threads `{ isProtectedBranch }` through to it,
+// without needing to reach the (guard-blocked) protected-branch case itself.
+const canPerformWorkflowActionSpy = vi.fn()
+vi.mock('../authorization', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../authorization')>()
+  return {
+    ...original,
+    canPerformWorkflowAction: (...args: Parameters<typeof original.canPerformWorkflowAction>) => {
+      canPerformWorkflowActionSpy(...args)
+      return original.canPerformWorkflowAction(...args)
+    },
+  }
+})
+
 import { WORKFLOW_ROUTES } from './branch-status'
 import { createMockApiContext, createMockBranchContext, createMockGitManager } from '../test-utils'
 
@@ -81,6 +96,75 @@ describe('branch status api', () => {
       { branch: 'feature/x' as BranchName },
     )
     expect(res.ok).toBe(true)
+  })
+
+  it('rejects submit on the base branch (protected -- submittableBranch guard, prod)', async () => {
+    const baseBranchContext = createMockBranchContext({ branchName: 'main', createdBy: 'u1' })
+    const ctx = createMockApiContext({
+      branchContext: baseBranchContext,
+      allowBranchAccess: true,
+      services: {
+        config: { defaultBranchAccess: 'allow', mode: 'prod', defaultBaseBranch: 'main' } as any,
+      },
+    })
+
+    // WORKFLOW_ROUTES.submit.handler is the guard-wrapped handler (guards:
+    // ['branch', 'submittableBranch']) -- this exercises the guard, not just
+    // the raw handler.
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main' as BranchName },
+    )
+
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(403)
+    expect(res.error).toBe(
+      'The base branch cannot be submitted for review. Create a branch and submit that instead.',
+    )
+  })
+
+  it('rejects submit on the base branch in dev too (submit blocked in both modes)', async () => {
+    const baseBranchContext = createMockBranchContext({ branchName: 'main', createdBy: 'u1' })
+    const ctx = createMockApiContext({
+      branchContext: baseBranchContext,
+      allowBranchAccess: true,
+      services: {
+        config: { defaultBranchAccess: 'allow', mode: 'dev', defaultBaseBranch: 'main' } as any,
+      },
+    })
+
+    const res = await submitBranchForMerge(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'main' as BranchName },
+    )
+
+    expect(res.ok).toBe(false)
+    expect(res.status).toBe(403)
+  })
+
+  it('passes isProtectedBranch into canPerformWorkflowAction', async () => {
+    // The 'submittableBranch' guard already refuses the protected base branch
+    // outright, so the handler only ever runs with isProtectedBranch: false
+    // in practice -- this asserts the handler computes and threads it through
+    // (defense-in-depth); authorization/__tests__/branch.test.ts covers the
+    // isProtectedBranch: true effect on canPerformWorkflowAction directly.
+    canPerformWorkflowActionSpy.mockClear()
+
+    const res = await submitBranchForMerge(
+      makeCtx(true),
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+
+    expect(res.ok).toBe(true)
+    expect(canPerformWorkflowActionSpy).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      { isProtectedBranch: false },
+    )
   })
 
   it('sanitizes credentials and absolute paths when the push fails (API-H2)', async () => {

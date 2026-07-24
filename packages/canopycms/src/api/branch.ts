@@ -18,9 +18,20 @@ const log = createDebugLogger({ prefix: 'BranchAPI' })
 /** Response type for single branch operations (create, update, status) */
 export type BranchResponse = ApiResponse<{ branch: BranchMetadata }>
 
+/**
+ * A listed branch plus server-computed protected-base-branch flags (see
+ * authorization/protected-branch.ts). Optional on the wire, matching the
+ * `defaultBranch` precedent, so older clients/servers stay compatible; this
+ * server always emits both.
+ */
+export interface BranchListItem extends BranchMetadata {
+  isProtected?: boolean
+  readOnly?: boolean
+}
+
 /** Response type for listing branches */
 export type BranchListResponse = ApiResponse<{
-  branches: BranchMetadata[]
+  branches: BranchListItem[]
   /**
    * The server's effective default branch (the detected active branch in dev
    * mode). Clients without an explicitly pinned branch should open this one.
@@ -61,7 +72,7 @@ const updateBranchAccessBodySchema = z.object({
   allowedGroups: z.array(z.string()).optional(),
 })
 
-import { isPrivileged, isAdmin, loadPathPermissions } from '../authorization'
+import { isPrivileged, isAdmin, loadPathPermissions, getBranchProtection } from '../authorization'
 import type { PathPermission } from '../config'
 import type { CanopyUser } from '../user'
 import { operatingStrategy } from '../operating-mode'
@@ -204,12 +215,19 @@ export const listBranchesHandler = async (
   const defaultBranch =
     ctx.services.config.defaultActiveBranch ?? ctx.services.config.defaultBaseBranch ?? 'main'
 
+  // Attach server-computed protected-base-branch flags; read config per-request
+  // so dev-mode refreshActiveBranch() updates are reflected here too.
+  const toListItem = (context: BranchContext): BranchListItem => {
+    const protection = getBranchProtection(ctx.services.config, context.branch.name)
+    return { ...context.branch, isProtected: protection.isProtected, readOnly: protection.readOnly }
+  }
+
   // Admins and Reviewers see all branches
   if (isPrivileged(req.user.groups)) {
     return {
       ok: true,
       status: 200,
-      data: { branches: allBranches.map((c) => c.branch), defaultBranch },
+      data: { branches: allBranches.map(toListItem), defaultBranch },
     }
   }
 
@@ -238,7 +256,7 @@ export const listBranchesHandler = async (
   return {
     ok: true,
     status: 200,
-    data: { branches: visibleBranches.map((c) => c.branch), defaultBranch },
+    data: { branches: visibleBranches.map(toListItem), defaultBranch },
   }
 }
 
@@ -284,6 +302,14 @@ export const deleteBranchHandler = async (
   const branchContext = await ctx.getBranchContext(branchName)
   if (!branchContext) {
     return { ok: false, status: 404, error: 'Branch not found' }
+  }
+
+  // Deleting the base branch would destroy the prod serving clone (and any
+  // stranded edits on it) -- never valid, so this is checked before any
+  // permission check below.
+  const { isProtected } = getBranchProtection(ctx.services.config, branchContext.branch.name)
+  if (isProtected) {
+    return { ok: false, status: 400, error: 'Cannot delete the base branch' }
   }
 
   // Check permission
@@ -519,6 +545,11 @@ const deleteBranch = defineEndpoint({
 /**
  * Update branch access control
  * PATCH /:branch/access
+ *
+ * No 'writableBranch' guard: this only rewrites branch.json's ACL, not branch
+ * content, so it's out of scope for this pass. Noted as a future tightening
+ * candidate -- letting non-admins edit the base branch's ACL is questionable
+ * but pre-existing behavior this plan doesn't change.
  */
 const updateBranchAccess = defineEndpoint({
   namespace: 'branches',

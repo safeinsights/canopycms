@@ -888,6 +888,8 @@ export const Editor: React.FC<EditorProps> = ({
             userContext={userContext}
             branchCreatedBy={currentBranch?.createdBy}
             branchAccess={currentBranch?.access}
+            branchIsProtected={currentBranch?.isProtected}
+            branchReadOnly={currentBranch?.readOnly}
             onNavigatorOpen={() => setNavigatorOpen(true)}
             onFileReload={handleReload}
             onFileDiscardDraft={handleDiscardFileDraft}

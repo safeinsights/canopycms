@@ -32,6 +32,9 @@ None currently open.
 
 | File                                                                               | Summary                                                                                                                    |
 | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| [submitted-branch-edit-locking.md](submitted-branch-edit-locking.md)               | Submitted branches remain fully editable ('locked' status exists but is never set/enforced); extend the protected-branch `writableBranch` guard + `readOnly` wire flag to status-based locking |
+| [rescue-stranded-base-edits.md](rescue-stranded-base-edits.md)                     | Admin capability (CLI/API) to move stranded uncommitted edits from a protected branch clone onto a new editing branch; replaces the manual EFS runbook in deploying-to-aws.md |
+| [sanitized-branch-name-git-mismatch.md](sanitized-branch-name-git-mismatch.md)     | VERIFY FIRST: slashed branch names (`feature/foo`) are sanitized (`feature-foo`) before git workspace init — dev HEAD workspaces and slashed `defaultBaseBranch` values may not round-trip through git ops |
 | [lambda-log-retention.md](lambda-log-retention.md)                                 | The CMS Lambda and transform Lambda still rely on auto-created, infinite-retention CloudWatch log groups; add explicit LogGroups/retention as a sibling of the worker's (now 90 days by default) |
 | [worker-log-timestamps.md](worker-log-timestamps.md)                               | Worker console.log lines carry no timestamps (journald used to add them); CloudWatch now shows only ingestion timestamps and multi-line stack traces land as separate events — a timestamp-prefixing log helper would fix both |
 | [withdraw-stale-pr-state-detection.md](withdraw-stale-pr-state-detection.md)       | Withdraw detects a closed PR from metadata that can be up to `gitSyncInterval` stale — in the lag window it enqueues a convert-to-draft task that 422s and trips `sync-failed` on a successful withdraw; fix by making the worker treat "PR already closed" as a benign no-op. Promoted P3→P2 2026-07-24: user-visible false failure in normal use, small fix |
@@ -69,6 +72,8 @@ None currently open.
 
 | File                                             | Summary                                                                      |
 | ------------------------------------------------ | ---------------------------------------------------------------------------- |
+| [prod-remote-default-branch-detection.md](prod-remote-default-branch-detection.md) | Prod falls back to `'main'` when `defaultBaseBranch` is unset; detect the remote's real default branch (origin/HEAD) at service creation instead |
+| [base-branch-acl-tightening.md](base-branch-acl-tightening.md) | `branches.updateAccess` can still edit the protected base branch's ACL (feeds the `allowed_by_acl` workflow grant); tighten alongside submitted-branch locking |
 | [ai-content-v2.md](ai-content-v2.md)             | `llms.txt` metadata, HTTP caching headers, selective rebuild for AI content  |
 | [transform-lambda-bundle-bloat.md](transform-lambda-bundle-bloat.md) | Transform Lambda's `handler.js` bundles unrelated octokit/simple-git/proper-lockfile code via the broad `canopycms/server` barrel (~1 MB dead weight); needs an approved narrow `canopycms` entrypoint to fix |
 | [schema-faq-glossary.md](schema-faq-glossary.md) | Dedicated FAQ and glossary schema collections for reuse across pages         |
