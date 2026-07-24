@@ -369,6 +369,28 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
     expect(failed.error).toMatch(/missing required string field: branch/)
     expect(failed.retryCount).toBe(0)
   })
+
+  // [HIGH-1] task.error is persisted to failed/<id>.json and served to the
+  // browser by the admin panel's Tasks tab. A git push failure's message
+  // can embed the bot token (buildGitHubUrl() builds
+  // https://x-access-token:TOKEN@github.com/...), so it must be redacted
+  // before it reaches disk.
+  it('redacts a token-bearing error message before persisting task.error via failTask', async () => {
+    const id = await runWithFailure(
+      Object.assign(
+        new Error(
+          "fatal: unable to access 'https://x-access-token:ghp_secret123456@github.com/org/repo.git/': Could not resolve host",
+        ),
+        { status: 422 }, // permanent -- goes straight to failTask, not retryTask
+      ),
+    )
+
+    const failed = JSON.parse(
+      await fs.readFile(path.join(taskDir, 'failed', `${id}.json`), 'utf-8'),
+    )
+    expect(failed.error).not.toContain('ghp_secret123456')
+    expect(failed.error).toContain('***')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -864,6 +886,24 @@ describe('CmsWorker.syncGit() worker-status.json bookkeeping', () => {
     expect(status.lastGitSyncError?.message).toBeTruthy()
     expect(status.lastGitSyncError?.at).toBeTruthy()
     expect(status.lastGitSyncAt).toBeUndefined()
+  })
+
+  it('redacts a token-bearing error message before persisting it to worker-status.json (HIGH-1)', async () => {
+    const worker = makeSyncWorker()
+    // A local nonexistent path (no `://`) so git fails immediately without
+    // any network attempt, while still echoing the literal string back
+    // verbatim in its fatal message -- simulating a fetch/push error whose
+    // text embeds the bot token, same shape as buildGitHubUrl()'s
+    // https://x-access-token:TOKEN@github.com/... URLs.
+    ;(worker as unknown as { buildGitHubUrl(): string }).buildGitHubUrl = () =>
+      path.join(tmpDir, 'x-access-token:ghp_secret123456@nonexistent', 'remote.git')
+
+    await expect(worker.syncGit()).rejects.toThrow()
+
+    const status = await readStatus()
+    expect(status.lastGitSyncError?.message).toBeTruthy()
+    expect(status.lastGitSyncError?.message).not.toContain('ghp_secret123456')
+    expect(status.lastGitSyncError?.message).toContain('***')
   })
 })
 

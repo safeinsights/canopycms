@@ -13,6 +13,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
+import { simpleGit } from 'simple-git'
 
 import type { BranchMetadata } from '../types'
 import { BranchMetadataFileManager, getBranchMetadataFileManager } from '../branch-metadata'
@@ -184,6 +185,20 @@ const purgeBranchDirHandler = async (
   if (!dirPath) {
     return { ok: false, status: 400, error: 'Invalid directory name' }
   }
+
+  // [MEDIUM-1 rider] The directory must actually exist -- otherwise
+  // withOccFileLock's `mkdir -p` below would CREATE it, and purge would
+  // "succeed" with a phantom `.trash-*` entry for a directory that was
+  // never there. Must run before anything below treats "no branch.json" as
+  // orphan classification.
+  const dirExists = await fs
+    .stat(dirPath)
+    .then(() => true)
+    .catch(() => false)
+  if (!dirExists) {
+    return { ok: false, status: 404, error: 'Directory not found' }
+  }
+
   const branchJsonPath = path.join(dirPath, BRANCH_META_DIR, BRANCH_META_FILE)
 
   // Re-derive state server-side -- never trust the client's classification.
@@ -295,6 +310,15 @@ const purgeBranchDirHandler = async (
  * internally, so the rename must happen and the lock must be RELEASED
  * (exiting the withOccFileLock callback) before save() runs -- calling
  * save() while still holding the lock would deadlock against itself.
+ *
+ * [MEDIUM-1] The provisioning lock is held across the ENTIRE archive+save
+ * sequence (acquired before withOccFileLock, released only after save()
+ * completes), same lock order as purge (provisioning -> branch.json) so the
+ * two can never deadlock against each other. Without this, a concurrent
+ * purge could trash the directory in the window between this handler
+ * releasing withOccFileLock (required before save(), per [M4] above) and
+ * save() actually running -- save() would then resurrect a metadata-only
+ * ghost of a directory purge just moved to trash.
  */
 const repairBranchDirHandler = async (
   _gc: Record<string, never>,
@@ -308,6 +332,17 @@ const repairBranchDirHandler = async (
   if (!dirPath) {
     return { ok: false, status: 400, error: 'Invalid directory name' }
   }
+
+  // [MEDIUM-1 rider] Same stat guard as purge: the directory must actually
+  // exist, otherwise withOccFileLock's `mkdir -p` below would CREATE it.
+  const dirExists = await fs
+    .stat(dirPath)
+    .then(() => true)
+    .catch(() => false)
+  if (!dirExists) {
+    return { ok: false, status: 404, error: 'Directory not found' }
+  }
+
   const branchJsonPath = path.join(dirPath, BRANCH_META_DIR, BRANCH_META_FILE)
 
   // Pre-lock precondition check: fail fast on the common cases without
@@ -319,44 +354,97 @@ const repairBranchDirHandler = async (
       : { ok: false, status: 409, error: 'No metadata file -- use purge for orphans' }
   }
 
-  let archivedAs: string
+  // [MEDIUM-1] Zero-retry provisioning lock, mirroring purge's [H2]: fails
+  // fast (409) on genuine live contention instead of hanging the request.
+  // Held until the `finally` below, AFTER save() completes.
+  let releaseProvisioningLock: (() => Promise<void>) | undefined
   try {
-    archivedAs = await withOccFileLock(branchJsonPath, async (): Promise<string> => {
-      // Re-verify still-corrupt under the lock (a concurrent repair could
-      // have already fixed this, or the file could have been purged out
-      // from under us).
-      const recheck = await checkStillCorrupt(dirPath)
-      if (recheck === 'healthy') {
-        throw new RepairPreconditionError('Metadata is healthy', 409)
-      }
-      if (recheck === 'missing') {
-        throw new RepairPreconditionError('No metadata file -- use purge for orphans', 409)
-      }
-
-      const archivedName = `${BRANCH_META_FILE}.corrupt-${formatTrashStamp(new Date())}`
-      await fs.rename(branchJsonPath, path.join(dirPath, BRANCH_META_DIR, archivedName))
-      return archivedName
-    })
+    releaseProvisioningLock = await tryAcquireProvisioningLock(
+      baseRoot,
+      `.${params.dirName}.init.lock`,
+    )
   } catch (err: unknown) {
-    if (err instanceof RepairPreconditionError) {
-      return { ok: false, status: err.status, error: err.message }
+    if (isNodeError(err) && err.code === 'ELOCKED') {
+      return { ok: false, status: 409, error: 'Provisioning lock contention, try again' }
     }
-    return {
-      ok: false,
-      status: 409,
-      error: `Could not lock branch metadata: ${getErrorMessage(err)}`,
-    }
+    return { ok: false, status: 500, error: getErrorMessage(err) }
   }
 
-  // Lock released above (we're outside the withOccFileLock callback now) --
-  // save() takes its own hold on the same lock internally. Its defaults
-  // path fabricates the rest of BranchMetadata and invalidates the registry.
-  const manager = getBranchMetadataFileManager(dirPath, baseRoot)
-  const saved = await manager.save({
-    branch: { name: params.dirName, status: 'editing', createdBy: req.user.userId },
-  })
+  try {
+    let archivedAs: string
+    try {
+      archivedAs = await withOccFileLock(branchJsonPath, async (): Promise<string> => {
+        // Re-verify still-corrupt under the lock (a concurrent repair could
+        // have already fixed this, or the file could have been purged out
+        // from under us).
+        const recheck = await checkStillCorrupt(dirPath)
+        if (recheck === 'healthy') {
+          throw new RepairPreconditionError('Metadata is healthy', 409)
+        }
+        if (recheck === 'missing') {
+          throw new RepairPreconditionError('No metadata file -- use purge for orphans', 409)
+        }
 
-  return { ok: true, status: 200, data: { branch: saved.branch, archivedAs } }
+        const archivedName = `${BRANCH_META_FILE}.corrupt-${formatTrashStamp(new Date())}`
+        await fs.rename(branchJsonPath, path.join(dirPath, BRANCH_META_DIR, archivedName))
+        return archivedName
+      })
+    } catch (err: unknown) {
+      if (err instanceof RepairPreconditionError) {
+        return { ok: false, status: err.status, error: err.message }
+      }
+      return {
+        ok: false,
+        status: 409,
+        error: `Could not lock branch metadata: ${getErrorMessage(err)}`,
+      }
+    }
+
+    // [MEDIUM-3] Prefer the clone's actual checked-out branch over the
+    // (possibly sanitized) directory name -- see resolveRepairedBranchName.
+    const branchName = await resolveRepairedBranchName(dirPath, params.dirName)
+
+    // Lock released above (we're outside the withOccFileLock callback now) --
+    // save() takes its own hold on the same lock internally. Its defaults
+    // path fabricates the rest of BranchMetadata and invalidates the
+    // registry. Still under the provisioning lock acquired above -- see
+    // [MEDIUM-1] in the docstring.
+    const manager = getBranchMetadataFileManager(dirPath, baseRoot)
+    const saved = await manager.save({
+      branch: { name: branchName, status: 'editing', createdBy: req.user.userId },
+    })
+
+    return { ok: true, status: 200, data: { branch: saved.branch, archivedAs } }
+  } finally {
+    if (releaseProvisioningLock) {
+      await releaseProvisioningLock().catch(() => {})
+    }
+  }
+}
+
+/**
+ * [MEDIUM-3] Best-effort read of the branch actually checked out in the
+ * clone at `dirPath`, falling back to `dirName` on any failure (no `.git`,
+ * detached HEAD, corrupt repo, etc.). Workspace directory names are
+ * sanitized (slashes stripped, see paths/branch.ts's `sanitizeBranchName`),
+ * so a branch named `feature/foo` lives in a directory named `feature-foo`
+ * -- writing `dirName` as `branch.name` would make later push/PR tasks
+ * target the wrong ref.
+ */
+async function resolveRepairedBranchName(dirPath: string, dirName: string): Promise<string> {
+  const hasGitDir = await fs
+    .stat(path.join(dirPath, '.git'))
+    .then(() => true)
+    .catch(() => false)
+  if (!hasGitDir) return dirName
+
+  try {
+    const current = await simpleGit({ baseDir: dirPath }).revparse(['--abbrev-ref', 'HEAD'])
+    const trimmed = current.trim()
+    return trimmed || dirName
+  } catch {
+    return dirName
+  }
 }
 
 /** Classify branch.json's current state for repair's precondition checks. */

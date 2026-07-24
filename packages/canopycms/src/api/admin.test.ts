@@ -4,6 +4,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { ADMIN_ROUTES } from './admin'
 import type { ApiContext, ApiRequest } from './types'
+import type { CanopyConfig } from '../config'
 import { createMockApiContext, createMockUser } from '../test-utils'
 import { enqueueTask, dequeueTask, failTask } from '../worker/task-queue'
 
@@ -27,7 +28,7 @@ describe('admin api', () => {
     process.env.CANOPYCMS_WORKSPACE_ROOT = tmpDir
     taskDir = path.join(tmpDir, '.tasks')
 
-    ctx = createMockApiContext({ services: { config: { mode: 'prod' } as any } })
+    ctx = createMockApiContext({ services: { config: { mode: 'prod' } as CanopyConfig } })
     req = { user: createMockUser('admin'), body: {} }
   })
 

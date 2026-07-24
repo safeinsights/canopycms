@@ -5,7 +5,7 @@ import os from 'node:os'
 import { ADMIN_ROUTES } from './admin'
 import type { ApiContext, ApiRequest } from './types'
 import type { CanopyConfig } from '../config'
-import { createMockApiContext, createMockUser } from '../test-utils'
+import { createMockApiContext, createMockUser, initTestRepo } from '../test-utils'
 import { BranchRegistry } from '../branch-registry'
 import { getBranchMetadataFileManager } from '../branch-metadata'
 import { acquireProvisioningLock } from '../utils/provisioning-lock'
@@ -63,6 +63,26 @@ describe('admin branch-health api', () => {
     await fs.mkdir(path.join(branchesRoot, dirName), { recursive: true })
   }
 
+  /**
+   * A branch directory with a REAL git clone checked out on `branchName`
+   * (which may differ from `dirName`, e.g. a slash-named branch living in a
+   * sanitized dir) plus corrupt metadata -- for MEDIUM-3's
+   * resolveRepairedBranchName coverage.
+   */
+  const createCorruptBranchWithGit = async (dirName: string, branchName: string) => {
+    const branchDir = path.join(branchesRoot, dirName)
+    await fs.mkdir(branchDir, { recursive: true })
+    const git = await initTestRepo(branchDir)
+    await git.checkoutLocalBranch(branchName)
+    await fs.writeFile(path.join(branchDir, '.gitkeep'), '')
+    await git.add(['.'])
+    await git.commit('initial commit')
+
+    const metaDir = path.join(branchDir, '.canopy-meta')
+    await fs.mkdir(metaDir, { recursive: true })
+    await fs.writeFile(path.join(metaDir, 'branch.json'), 'not json {{{', 'utf-8')
+  }
+
   const ageDir = async (dirPath: string, ageMs: number) => {
     const old = new Date(Date.now() - ageMs)
     await fs.utimes(dirPath, old, old)
@@ -86,8 +106,23 @@ describe('admin branch-health api', () => {
     })
 
     it('never leaks the absolute workspace path in the response', async () => {
+      // [MEDIUM-2] A healthy-only fixture never exercises the parseError
+      // path this test exists to guard, making the original version
+      // vacuous. Add a corrupt-JSON dir AND an EISDIR-style dir (branch.json
+      // is itself a directory) -- both previously surfaced their raw error
+      // message, which embeds the absolute path.
       await createHealthyBranch('main')
+      await createCorruptBranch('broken')
+      const eisdirMetaDir = path.join(branchesRoot, 'weird-branch', '.canopy-meta')
+      await fs.mkdir(path.join(eisdirMetaDir, 'branch.json'), { recursive: true })
+
       const result = await branchHealthHandler(ctx, req)
+
+      expect(result.data?.entries).toHaveLength(3)
+      const broken = result.data?.entries.find((e) => e.dirName === 'broken')
+      const weird = result.data?.entries.find((e) => e.dirName === 'weird-branch')
+      expect(broken?.parseError).toBeTruthy()
+      expect(weird?.parseError).toBeTruthy()
       expect(JSON.stringify(result)).not.toContain(tmpDir)
     })
   })
@@ -195,6 +230,15 @@ describe('admin branch-health api', () => {
         await release()
       }
     })
+
+    it('returns 404 for a nonexistent directory and creates no trash entry (MEDIUM-1 rider)', async () => {
+      const result = await purgeHandler(ctx, req, { dirName: 'never-existed' })
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(404)
+
+      const entries = await fs.readdir(branchesRoot)
+      expect(entries.some((e) => e.startsWith('.trash-'))).toBe(false)
+    })
   })
 
   describe('POST /admin/branch-dirs/:dirName/repair-metadata', () => {
@@ -207,6 +251,8 @@ describe('admin branch-health api', () => {
       expect(result.data?.archivedAs).toMatch(/^branch\.json\.corrupt-\d{8}T\d{6}Z$/)
       expect(result.data?.branch.status).toBe('editing')
       expect(result.data?.branch.createdBy).toBe(req.user.userId)
+      // (MEDIUM-3) No .git dir in this fixture -- falls back to dirName.
+      expect(result.data?.branch.name).toBe('repair-me')
 
       const archivedPath = path.join(
         branchesRoot,
@@ -250,6 +296,44 @@ describe('admin branch-health api', () => {
         params: { dirName: '..' },
       })
       expect(validationResult.ok).toBe(false)
+    })
+
+    it("uses the clone's actual checked-out branch name, not the sanitized dir name (MEDIUM-3)", async () => {
+      // 'feature/foo' sanitizes to the dir name 'feature-foo' (paths/branch.ts).
+      await createCorruptBranchWithGit('feature-foo', 'feature/foo')
+
+      const result = await repairHandler(ctx, req, { dirName: 'feature-foo' })
+
+      expect(result.ok).toBe(true)
+      expect(result.data?.branch.name).toBe('feature/foo')
+    })
+
+    it('returns 404 for a nonexistent directory (MEDIUM-1 rider)', async () => {
+      const result = await repairHandler(ctx, req, { dirName: 'never-existed' })
+      expect(result.ok).toBe(false)
+      expect(result.status).toBe(404)
+    })
+
+    it('returns 409 on provisioning lock contention against a real held lock (MEDIUM-1)', async () => {
+      await createCorruptBranch('repair-contended')
+
+      const release = await acquireProvisioningLock(branchesRoot, '.repair-contended.init.lock')
+      try {
+        const result = await repairHandler(ctx, req, { dirName: 'repair-contended' })
+        expect(result.ok).toBe(false)
+        expect(result.status).toBe(409)
+        expect(result.error).toMatch(/Provisioning lock contention/)
+      } finally {
+        await release()
+      }
+
+      // The lock contention must have blocked BEFORE any mutation -- the
+      // corrupt file is untouched, not archived.
+      const stillCorrupt = await fs.readFile(
+        path.join(branchesRoot, 'repair-contended', '.canopy-meta', 'branch.json'),
+        'utf-8',
+      )
+      expect(stillCorrupt).toBe('not json {{{')
     })
   })
 
