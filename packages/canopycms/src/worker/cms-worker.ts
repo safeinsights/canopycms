@@ -1198,6 +1198,62 @@ export class CmsWorker {
     }
   }
 
+  /**
+   * Persist a per-branch rebase failure to branch.json (PR-W2), bounded to
+   * roughly one save per failing branch per hour: a branch stuck failing
+   * every cycle must not turn into unbounded save-per-cycle x N-failing-
+   * branches write amplification -- save() eager-regenerates the branch
+   * registry (branch-metadata.ts's invalidateRegistry(), O(branch count) EFS
+   * reads), the same concern the `alreadyClean` no-op guard above exists
+   * for.
+   *
+   * Best-effort and non-fatal like every other metadata write in this
+   * loop's error paths: a corrupt branch.json, a lock-contention error, or
+   * any other save failure here must never abort the per-branch iteration.
+   * This matters doubly at the two call sites -- one is inside the outer
+   * per-branch catch, with no further catch of its own around this call --
+   * so the whole method is wrapped, not just the load.
+   */
+  private async recordRebaseFailure(
+    branchPath: string,
+    branchDir: string,
+    message: string,
+  ): Promise<void> {
+    const RECORD_REFRESH_MS = 60 * 60 * 1000 // 1 hour
+
+    try {
+      const existing = await BranchMetadataFileManager.loadOnly(branchPath)
+      const prior = existing?.branch.rebaseFailure
+      const sameMessage = prior?.message === message
+
+      const now = new Date()
+      if (sameMessage) {
+        const lastAtMs = Date.parse(prior.lastAt)
+        if (!Number.isNaN(lastAtMs) && now.getTime() - lastAtMs < RECORD_REFRESH_MS) {
+          // Same failure, refreshed within the last hour -- skip the save.
+          return
+        }
+      }
+
+      const nowIso = now.toISOString()
+      const firstAt = sameMessage ? prior.firstAt : nowIso
+
+      const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
+      await meta.save({
+        branch: {
+          name: branchDir,
+          rebaseFailure: { message, firstAt, lastAt: nowIso },
+        },
+      })
+    } catch (err) {
+      // Includes BranchMetadataCorruptError from the load above (a save()
+      // against the same corrupt file would just throw again) as well as
+      // any other load/save failure -- recording is best-effort
+      // observability, never allowed to abort the branch loop.
+      console.warn(`  Failed to record rebase failure for ${branchDir}: ${getErrorMessage(err)}`)
+    }
+  }
+
   private async rebaseActiveBranches(): Promise<RebaseSummary> {
     // PR-W1: collected across the loop below and returned as a summary
     // (folded into worker-status.json by syncGit()). Purely additive
@@ -1316,9 +1372,15 @@ export class CmsWorker {
           const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
           const conflictStatus = currentMeta?.branch.conflictStatus
           const conflictFiles = currentMeta?.branch.conflictFiles
-          const alreadyClean =
+          const conflictAlreadyClean =
             (conflictStatus === undefined || conflictStatus === 'clean') &&
             (conflictFiles === undefined || conflictFiles.length === 0)
+          // PR-W2: a lingering rebaseFailure must also be cleared once the
+          // branch catches up clean -- otherwise it sticks as a stale
+          // warning forever (nothing else touches this branch once it's
+          // caught up, so no other save site would ever clear it).
+          const alreadyClean =
+            conflictAlreadyClean && currentMeta?.branch.rebaseFailure === undefined
           if (alreadyClean) {
             continue
           }
@@ -1327,6 +1389,7 @@ export class CmsWorker {
               name: branchDir,
               conflictStatus: 'clean',
               conflictFiles: [],
+              rebaseFailure: undefined,
             },
           })
           continue
@@ -1391,14 +1454,29 @@ export class CmsWorker {
         }
 
         if (!completed) {
+          // PR-W2 (M1 rider): failureReason is only set on the "unexpected
+          // error" break above -- MAX_ROUNDS exhaustion is a distinct exit
+          // path with no error message of its own, so the warn text must
+          // not conflate the two.
           console.warn(
-            `  Rebase of ${branchDir} did not complete within ${MAX_ROUNDS} rounds, aborting`,
+            failureReason !== undefined
+              ? `  Rebase of ${branchDir} aborted due to unexpected error: ${failureReason}`
+              : `  Rebase of ${branchDir} did not complete within ${MAX_ROUNDS} rounds, aborting`,
           )
           await branchGit.rebase(['--abort']).catch(() => {})
+          const rebaseFailureMessage =
+            failureReason ?? `did not complete within ${MAX_ROUNDS} rounds`
           failed.push({
             branch: branchDir,
-            error: failureReason ?? `did not complete within ${MAX_ROUNDS} rounds`,
+            error: rebaseFailureMessage,
           })
+          // PR-W2: record once here for the "!completed" exit -- the
+          // unexpected-error break above is NOT disjoint from this block (it
+          // always falls through here), so recording at the break itself
+          // would double-record. The outer catch below is the only other
+          // record site (a distinct, non-overlapping failure class: errors
+          // outside this round loop, e.g. fetch/rev-list failures).
+          await this.recordRebaseFailure(branchPath, branchDir, rebaseFailureMessage)
           continue
         }
 
@@ -1442,6 +1520,9 @@ export class CmsWorker {
             name: branchDir,
             conflictStatus: hadConflicts ? 'conflicts-detected' : 'clean',
             conflictFiles: conflictIdsDeduped,
+            // PR-W2: the cycle completed successfully -- clear any prior
+            // failure record regardless of conflict outcome.
+            rebaseFailure: undefined,
           },
         })
         // PR-W1: the branch was behind and the rebase completed (with or
@@ -1453,6 +1534,10 @@ export class CmsWorker {
         const message = err instanceof Error ? err.message : 'Unknown error'
         console.warn(`  Failed to sync ${branchDir}: ${message}`)
         failed.push({ branch: branchDir, error: message })
+        // PR-W2: second (and only other) record site -- see the comment at
+        // the `if (!completed)` block above for why these two sites are
+        // disjoint.
+        await this.recordRebaseFailure(branchPath, branchDir, message)
       }
     }
 
