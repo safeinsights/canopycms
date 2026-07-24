@@ -252,6 +252,7 @@ describe('admin api', () => {
         limit: 1,
         taskId: 'x',
         fileName: 'x.json',
+        dirName: 'x',
       }
 
       for (const route of Object.values(ADMIN_ROUTES)) {

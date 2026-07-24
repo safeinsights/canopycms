@@ -2,6 +2,8 @@
  * Admin observability endpoints: task queue stats/listing and worker
  * liveness (PR-A1), plus task recovery actions — retry a failed task or
  * delete a stuck/corrupt task file (PR-A2) — for an admin-only dashboard.
+ * Branch-health scan + purge/repair actions (PR-A3) live in
+ * admin-branch-health.ts and are merged into ADMIN_ROUTES below.
  */
 
 import fs from 'node:fs/promises'
@@ -22,6 +24,18 @@ import type { WorkerStatusReport } from '../types'
 import type { OperatingMode } from '../operating-mode'
 import { defineEndpoint } from './route-builder'
 import { getErrorMessage, isNotFoundError } from '../utils/error'
+import { ADMIN_BRANCH_HEALTH_ROUTES } from './admin-branch-health'
+// generate-client.ts resolves a route's response/body type module purely
+// from its `namespace` field (see typeNameToModule/namespaceToModule in
+// scripts/generate-client.ts) -- it has no way to know these three types
+// actually live in admin-branch-health.ts, so client.ts's generated import
+// expects them here. Re-export rather than teaching the generator a second
+// file per namespace.
+export type {
+  BranchHealthResponse,
+  PurgeBranchDirResponse,
+  RepairBranchDirResponse,
+} from './admin-branch-health'
 
 // ============================================================================
 // Worker lock liveness
@@ -426,11 +440,17 @@ const deleteTask = defineEndpoint({
 })
 
 /**
- * Exported routes for router registration
+ * Exported routes for router registration.
+ *
+ * Branch-health scan + purge/repair (PR-A3) live in admin-branch-health.ts
+ * (kept out of this file to stay under its size budget) and are merged in
+ * here so the router (http/router.ts) and generate-client.ts keep a single
+ * `ADMIN_ROUTES` import.
  */
 export const ADMIN_ROUTES = {
   status: getAdminStatus,
   listTasks: listAdminTasks,
   retryTask,
   deleteTask,
+  ...ADMIN_BRANCH_HEALTH_ROUTES,
 } as const

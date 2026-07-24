@@ -80,6 +80,31 @@ const DEFAULT_MAX_RETRIES = 3
 const DEFAULT_LOCK_STALE_MS = 60_000
 
 /**
+ * [C1] Retention window for `.trash-*` branch directories left behind by the
+ * admin purge action (api/admin-branch-health.ts). Matches
+ * cleanupOldTasks's default task retention for consistency.
+ */
+const TRASH_RETENTION_MS = 30 * 24 * 60 * 60_000
+
+/** Matches `.trash-{dirName}-{STAMP}` names, capturing the trailing stamp. */
+const TRASH_DIR_STAMP_RE = /-(\d{8}T\d{6}Z)$/
+
+/**
+ * Parse a purge-generated `YYYYMMDDTHHMMSSZ` stamp into a Date, or null if
+ * malformed. Age comes ONLY from this name-embedded stamp, never the dir's
+ * own mtime -- `fs.rename` preserves the original directory's mtime, so an
+ * mtime-based retention check would delete a months-stale orphan's trash on
+ * the very first cleanup pass after purge.
+ */
+function parseTrashStamp(stamp: string): Date | null {
+  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp)
+  if (!match) return null
+  const [, year, month, day, hour, minute, second] = match
+  const date = new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}.000Z`)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+/**
  * An error inherent to the task itself (malformed payload, unknown action):
  * retrying can never succeed, so the task should fail fast instead of
  * burning its retry budget.
@@ -890,6 +915,15 @@ export class CmsWorker {
       // Periodically clean up old completed/failed tasks
       await cleanupOldTasks(this.taskDir, undefined, this.log)
 
+      // [C1] Sweep branch directories the admin purge action trashed more
+      // than TRASH_RETENTION_MS ago. Worker-only by design: purge itself
+      // never deletes anything (reversible), and this cycle is the sole
+      // place actual removal happens.
+      const trashRemoved = await this.cleanupTrashedBranchDirs()
+      if (trashRemoved > 0) {
+        console.log(`Removed ${trashRemoved} expired trashed branch dir(s)`)
+      }
+
       const report = this.ensureStatusReport()
       report.lastGitSyncAt = new Date().toISOString()
       delete report.lastGitSyncError
@@ -910,6 +944,63 @@ export class CmsWorker {
       )
       throw err
     }
+  }
+
+  /**
+   * [C1] Remove `.trash-*` branch directories (created by the admin purge
+   * action, api/admin-branch-health.ts) whose name-embedded stamp is older
+   * than {@link TRASH_RETENTION_MS}. Names that don't match the expected
+   * `.trash-{dirName}-{STAMP}` shape, or whose stamp fails to parse, are
+   * left alone (logged once per cycle, not per file, to avoid flooding logs
+   * if something odd accumulates) -- purge is the only writer of this
+   * naming scheme, so an unparseable name is unexpected and worth a human
+   * looking rather than a silent skip.
+   */
+  private async cleanupTrashedBranchDirs(): Promise<number> {
+    let entries: string[]
+    try {
+      entries = await fs.readdir(this.contentBranchesPath)
+    } catch (err: unknown) {
+      if (isNodeError(err) && err.code === 'ENOENT') return 0
+      throw err
+    }
+
+    const now = Date.now()
+    let removed = 0
+    let loggedUnparseable = false
+
+    for (const name of entries) {
+      if (!name.startsWith('.trash-')) continue
+
+      const stampMatch = TRASH_DIR_STAMP_RE.exec(name)
+      const stampDate = stampMatch ? parseTrashStamp(stampMatch[1]) : null
+      if (!stampDate) {
+        if (!loggedUnparseable) {
+          console.log(`CanopyCMS: Skipping trash dir with unparseable stamp: ${name}`)
+          loggedUnparseable = true
+        }
+        continue
+      }
+
+      if (now - stampDate.getTime() < TRASH_RETENTION_MS) continue
+
+      try {
+        await fs.rm(path.join(this.contentBranchesPath, name), {
+          recursive: true,
+          force: true,
+          maxRetries: 3,
+          retryDelay: 100,
+        })
+        removed++
+      } catch (err: unknown) {
+        console.error(
+          `CanopyCMS: Failed to remove trashed branch dir ${name}:`,
+          getErrorMessage(err),
+        )
+      }
+    }
+
+    return removed
   }
 
   /**
