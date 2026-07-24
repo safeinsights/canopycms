@@ -1950,7 +1950,8 @@ Every entry gets an automatic UUID that stays the same even when you rename or m
 2. **Make changes**: Edits are saved to the branch workspace
 3. **Submit for review**: Creates a GitHub PR with all changes
 4. **Review and merge**: Standard PR workflow on GitHub
-5. **Deploy**: Your CI/CD rebuilds the site after merge
+5. **Auto-archive**: The CMS worker detects the merge on its next git-sync cycle (default every 5 minutes), archives the branch, and fast-forwards the base branch's content view automatically — no manual cleanup needed. If a PR is closed without merging, the branch stays "submitted" with a "PR closed" badge for an admin to follow up.
+6. **Deploy**: Your CI/CD rebuilds the site after merge
 
 ### Comments System
 
@@ -2249,7 +2250,8 @@ When your changes are ready:
 1. Click "Submit for Review" in the header
 2. This commits your changes and creates a GitHub PR
 3. The PR can be reviewed using standard GitHub workflows
-4. Once merged, your changes are deployed with the next site build
+4. Once merged, CanopyCMS detects it automatically (within one worker sync cycle) and marks the branch "Merged" in the Branches panel — your changes are also deployed with the next site build
+5. If the PR is closed without merging, the branch shows a "PR closed" badge and stays submitted until an admin follows up
 
 ### Using Comments
 

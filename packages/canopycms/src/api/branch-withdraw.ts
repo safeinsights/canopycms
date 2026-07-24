@@ -37,8 +37,14 @@ const withdrawBranchHandler = async (
     }
   }
 
-  // Convert PR to draft (sync via githubService, or async via task queue)
-  await syncConvertToDraft(ctx, branchContext)
+  // Convert PR to draft (sync via githubService, or async via task queue) --
+  // but a PR closed on GitHub without merging can't be converted to draft.
+  // Withdraw (back to 'editing') is the deliberate recovery path for a
+  // closed-unmerged PR, and a later resubmit opens a fresh PR via
+  // createOrUpdatePullRequest, so skip the conversion in that case.
+  if (branchContext.branch.pullRequestState !== 'closed') {
+    await syncConvertToDraft(ctx, branchContext)
+  }
 
   // Update branch status to 'editing'
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)

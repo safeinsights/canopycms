@@ -143,4 +143,56 @@ describe('branch withdraw api', () => {
     expect(res.ok).toBe(true)
     expect(convertToDraft).not.toHaveBeenCalled()
   })
+
+  it('skips PR-to-draft conversion when the PR was closed without merging', async () => {
+    // A closed PR can't be converted to draft; withdraw is the recovery
+    // path and must succeed without attempting the conversion.
+    const convertToDraft = vi.fn().mockResolvedValue(undefined)
+    const githubService = { convertToDraft }
+    const ctx = makeCtx(true, githubService)
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, pullRequestState: 'closed' },
+    })
+    const res = await withdrawHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+    expect(res.ok).toBe(true)
+    expect(res.status).toBe(200)
+    expect(convertToDraft).not.toHaveBeenCalled()
+    expect(mockMetadataSave).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: expect.objectContaining({ status: 'editing' }) }),
+    )
+  })
+
+  it('still converts the PR to draft when pullRequestState is open', async () => {
+    const convertToDraft = vi.fn().mockResolvedValue(undefined)
+    const githubService = { convertToDraft }
+    const ctx = makeCtx(true, githubService)
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, pullRequestState: 'open' },
+    })
+    const res = await withdrawHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+    expect(res.ok).toBe(true)
+    expect(convertToDraft).toHaveBeenCalledWith(123)
+  })
+
+  it('still converts the PR to draft when pullRequestState is undefined', async () => {
+    const convertToDraft = vi.fn().mockResolvedValue(undefined)
+    const githubService = { convertToDraft }
+    const res = await withdrawHandler(
+      makeCtx(true, githubService),
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+    expect(res.ok).toBe(true)
+    expect(convertToDraft).toHaveBeenCalledWith(123)
+  })
 })

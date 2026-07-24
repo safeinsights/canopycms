@@ -230,6 +230,45 @@ describe('useBranchManager', () => {
     restore()
   })
 
+  it('passes pullRequestState and mergedAt through branchSummaries unchanged', async () => {
+    const branchesWithPrState: BranchMetadata[] = [
+      {
+        ...mockBranches[0],
+        status: 'archived',
+        pullRequestState: 'merged',
+        mergedAt: '2024-02-01T00:00:00.000Z',
+      },
+      {
+        ...mockBranches[1],
+        pullRequestState: 'closed',
+      },
+    ]
+    mockClient.branches.list.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { branches: branchesWithPrState },
+    })
+
+    const { result } = renderHook(() => useBranchManager(defaultOptions), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.branchSummaries).toHaveLength(2)
+    })
+
+    expect(result.current.branchSummaries[0]).toMatchObject({
+      name: 'main',
+      pullRequestState: 'merged',
+      mergedAt: '2024-02-01T00:00:00.000Z',
+    })
+    expect(result.current.branchSummaries[1]).toMatchObject({
+      name: 'feature',
+      pullRequestState: 'closed',
+    })
+    expect(result.current.branchSummaries[1].mergedAt).toBeUndefined()
+  })
+
   it('computes currentBranch and branchStatus', async () => {
     mockClient.branches.list.mockResolvedValueOnce({
       ok: true,

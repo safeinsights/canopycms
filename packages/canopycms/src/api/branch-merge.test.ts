@@ -8,13 +8,24 @@ import { mockConsole } from '../test-utils/console-spy.js'
 // Extract handler for testing
 const markAsMergedHandler = markAsMerged.handler
 
-vi.mock('../branch-metadata', () => {
+// Shared mock `save` so tests can inspect what markAsMerged actually wrote,
+// created via vi.hoisted since vi.mock factories can't close over ordinary
+// module-scope variables (hoisting).
+const { mockSave } = vi.hoisted(() => ({ mockSave: vi.fn().mockResolvedValue(undefined) }))
+
+vi.mock('../branch-metadata', async () => {
+  // buildMergedBranchUpdate is a pure helper (no fs/git access) that the
+  // handler imports from this module -- spread the real module so it stays
+  // defined instead of undefined, while BranchMetadataFileManager/
+  // getBranchMetadataFileManager stay mocked to avoid touching the filesystem.
+  const actual = await vi.importActual<typeof import('../branch-metadata')>('../branch-metadata')
   return {
+    ...actual,
     BranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-      save: vi.fn().mockResolvedValue(undefined),
+      save: mockSave,
     })),
     getBranchMetadataFileManager: vi.fn().mockImplementation(() => ({
-      save: vi.fn().mockResolvedValue(undefined),
+      save: mockSave,
     })),
   }
 })
@@ -67,6 +78,19 @@ describe('branch merge api - markAsMerged', () => {
     await markAsMergedHandler(ctx, req, { branch: 'feature/x' as BranchName })
 
     expect(mockGithubService.getPullRequest).toHaveBeenCalledWith(42)
+  })
+
+  it('saves via buildMergedBranchUpdate: status archived, pullRequestState merged, mergedAt is a string', async () => {
+    await markAsMergedHandler(ctx, req, { branch: 'feature/x' as BranchName })
+
+    expect(mockSave).toHaveBeenCalledWith({
+      branch: expect.objectContaining({
+        name: 'feature/x',
+        status: 'archived',
+        pullRequestState: 'merged',
+        mergedAt: expect.any(String),
+      }),
+    })
   })
 
   it('returns 404 if branch not found', async () => {

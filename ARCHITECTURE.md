@@ -1519,11 +1519,15 @@ Saves run through server-side validation in the content write handler:
 
 ### Merging and Archiving
 
+Merge detection is automatic. Once a branch is `submitted` or `approved` and has a recorded PR, the worker's sync cycle polls GitHub for that PR's resolution on every pass (see [Branch Synchronization and Conflict Detection](#branch-synchronization-and-conflict-detection)):
+
 1. PR is merged on GitHub (outside CanopyCMS, by someone with merge permissions)
-2. User clicks "Mark as Merged" in CanopyCMS
-3. System verifies merge via GitHub API
-4. Branch moves to "archived" status
-5. Site rebuild/deploy happens via other processes (e.g. CI/CD)
+2. On its next sync cycle, the worker detects the merge via the GitHub API and archives the branch itself — status moves to "archived", `pullRequestState` is stamped `merged`, and `mergedAt` records when
+3. Site rebuild/deploy happens via other processes (e.g. CI/CD)
+
+If the PR is closed on GitHub **without** merging, the worker records `pullRequestState: 'closed'` but leaves the branch's status untouched — a closed PR isn't necessarily terminal (it can be reopened), so an admin decides the next step rather than the worker guessing. The editor surfaces this as a red "closed" PR badge and disables actions that assume an open, convertible-to-draft PR (withdraw, request changes).
+
+A `markAsMerged` API endpoint still exists, now as a manual/ops fallback rather than the primary path — useful when the worker isn't running or an admin wants to force-resolve a branch immediately instead of waiting for the next poll cycle. It verifies the merge via the GitHub API and builds its update through the same shared helper as the automatic path, so both produce identical archived-branch metadata.
 
 ## Branch Synchronization and Conflict Detection
 
@@ -1531,12 +1535,13 @@ When the base branch (typically `main`) receives new commits from merged PRs, ac
 
 ### Rebase Behavior
 
-The worker's synchronization cycle fetches the latest base branch from GitHub into the local bare repo, then iterates over all active branch workspaces and rebases them.
+The worker's synchronization cycle fetches the latest base branch from GitHub into the local bare repo, fast-forwards the base branch's own workspace clone to match it, then iterates over all other active branch workspaces and rebases them. Previously that base-branch clone was refreshed only incidentally, by the same generic rebase loop that handles other branches: for a clone in `editing` status, rebasing onto `origin/<baseBranch>` degenerates to a fast-forward when the clone IS the base branch. But that loop's skip paths — a dirty tree, a missing `.git` — were silent, the suspected live failure mode behind a wedged base view with no diagnosable signal. A dedicated step now fast-forwards it (`merge --ff-only`) explicitly every cycle and invalidates its content caches when it advances. This clone must stay a linear mirror of the remote: an unprovisioned workspace is a quiet skip, but a dirty working tree or a non-fast-forward (diverged local history) state is a loud error left untouched, since nothing else would surface a silently wedged base view.
 
-**Branches that are skipped:**
+**Branches that are skipped by the rebase loop:**
 
-- **In review** (`submitted` or `approved` status): Rebasing would rewrite commit history under a PR that reviewers are actively looking at. These branches are left untouched until they return to `editing` status.
-- **Archived**: Already merged branches have no reason to be rebased.
+- **The base branch's own workspace**: Kept current by the fast-forward step above, not this loop — routing it through the `--theirs` conflict-resolution path below could rewrite its history.
+- **In review** (`submitted` or `approved` status): Rebasing would rewrite commit history under a PR that reviewers are actively looking at. These branches are left untouched until they return to `editing` status — but the same cycle polls GitHub for their PR's resolution (see [Merging and Archiving](#merging-and-archiving)), since nothing else tells the worker a merge or close happened.
+- **Archived**: Already merged branches have no reason to be rebased or polled — there's no open PR left to check.
 - **Dirty working tree**: If the branch has uncommitted changes (an editor is actively saving), rebasing would fail or destroy their work. The worker skips the branch and tries again on the next cycle.
 
 **Clean rebases**: When no files conflict, the rebase applies cleanly. The branch gets the base branch's latest changes, and any previous conflict state is cleared.
