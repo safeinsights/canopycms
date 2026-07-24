@@ -125,9 +125,19 @@ describe('withCanopy', () => {
       const result = withCanopy({})
       expect(result.pageExtensions).toContain('server.ts')
       expect(result.pageExtensions).toContain('server.tsx')
+      expect(result.pageExtensions).not.toContain('static.ts')
+      expect(result.pageExtensions).not.toContain('static.tsx')
       // Also includes the default Next.js extensions
       expect(result.pageExtensions).toContain('tsx')
       expect(result.pageExtensions).toContain('ts')
+    })
+
+    it('adds CMS page extensions when staticBuild is explicitly false', () => {
+      const result = withCanopy({}, { staticBuild: false })
+      expect(result.pageExtensions).toContain('server.ts')
+      expect(result.pageExtensions).toContain('server.tsx')
+      expect(result.pageExtensions).not.toContain('static.ts')
+      expect(result.pageExtensions).not.toContain('static.tsx')
     })
 
     it('merges with existing pageExtensions', () => {
@@ -137,14 +147,22 @@ describe('withCanopy', () => {
       expect(result.pageExtensions).toContain('server.tsx')
     })
 
-    it('excludes CMS extensions when staticBuild is true', () => {
+    it('adds static page extensions instead of CMS extensions when staticBuild is true', () => {
       const result = withCanopy({}, { staticBuild: true })
-      expect(result.pageExtensions).toBeUndefined()
+      expect(result.pageExtensions).toContain('static.ts')
+      expect(result.pageExtensions).toContain('static.tsx')
+      expect(result.pageExtensions).not.toContain('server.ts')
+      expect(result.pageExtensions).not.toContain('server.tsx')
+      // Also includes the default Next.js extensions
+      expect(result.pageExtensions).toContain('tsx')
+      expect(result.pageExtensions).toContain('ts')
     })
 
-    it('preserves existing pageExtensions when staticBuild is true', () => {
+    it('preserves and extends existing pageExtensions when staticBuild is true', () => {
       const result = withCanopy({ pageExtensions: ['tsx', 'ts', 'mdx'] }, { staticBuild: true })
-      expect(result.pageExtensions).toEqual(['tsx', 'ts', 'mdx'])
+      expect(result.pageExtensions).toContain('mdx')
+      expect(result.pageExtensions).toContain('static.ts')
+      expect(result.pageExtensions).toContain('static.tsx')
       expect(result.pageExtensions).not.toContain('server.ts')
     })
   })
