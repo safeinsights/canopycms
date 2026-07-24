@@ -173,6 +173,39 @@ describe('CanopyCmsDistribution B5/B9: cache policy cache-key hygiene', () => {
   })
 })
 
+describe('CanopyCmsDistribution: x-forwarded-host viewer-request function', () => {
+  it('sets x-forwarded-host (and never the disallowed x-forwarded-proto) in a CloudFront Function', () => {
+    const template = synth(true)
+    const fns = template.findResources('AWS::CloudFront::Function')
+    const codes = Object.values(fns).map(
+      (fn) => (fn.Properties as { FunctionCode: string }).FunctionCode,
+    )
+    expect(codes.length).toBeGreaterThan(0)
+    expect(codes.some((code) => code.includes('x-forwarded-host'))).toBe(true)
+    // Deploy-proven: x-forwarded-proto is on CloudFront Functions' disallowed
+    // header list - setting it 502s every request.
+    for (const code of codes) {
+      expect(code).not.toContain('x-forwarded-proto')
+    }
+  })
+
+  it('associates the function as viewer-request on the default behavior', () => {
+    const template = synth(true)
+    template.hasResourceProperties(
+      'AWS::CloudFront::Distribution',
+      Match.objectLike({
+        DistributionConfig: Match.objectLike({
+          DefaultCacheBehavior: Match.objectLike({
+            FunctionAssociations: Match.arrayWith([
+              Match.objectLike({ EventType: 'viewer-request' }),
+            ]),
+          }),
+        }),
+      }),
+    )
+  })
+})
+
 describe('CanopyCmsService B1: the Lambda can actually reach S3', () => {
   it('adds an S3 gateway VPC endpoint (the PRIVATE_ISOLATED subnet has no NAT/IGW route to S3 otherwise)', () => {
     const template = synth()
@@ -392,6 +425,17 @@ describe('CanopyCmsService: boot ordering vs EFS mount targets', () => {
     for (const mountTargetId of mountTargetIds) {
       expect(dependsOn).toContain(mountTargetId)
     }
+  })
+})
+
+describe('CanopyCmsService: EFS mount survives instance reboots', () => {
+  it('writes an fstab entry and gates the worker unit on the mount', () => {
+    const template = synth()
+    const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
+    const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
+    const all = blobs + ltBlobs
+    expect(all).toContain('>> /etc/fstab')
+    expect(all).toContain('RequiresMountsFor=/mnt/efs')
   })
 })
 

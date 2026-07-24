@@ -221,6 +221,7 @@ export class CmsStack extends Stack {
     // Function-URL origin, and a viewer-request CloudFront Function that sets
     // x-forwarded-host from Host — but NOT x-forwarded-proto, a disallowed
     // header). See the deployment-test writeup referenced below.
+    // (CanopyCmsDistribution wires the x-forwarded-host function automatically.)
     new CanopyCmsDistribution(this, 'CmsDist', {
       functionUrl: cmsService.functionUrl,
       domainName: 'cms.docs.example.org',

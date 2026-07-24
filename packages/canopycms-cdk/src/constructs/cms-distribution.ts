@@ -38,6 +38,8 @@ export interface CanopyCmsDistributionProps {
  * - CloudFront distribution with Function URL origin
  * - Route53 A/AAAA alias records
  * - Cache policies: no-cache for /api/* and /edit*, cache /_next/static/*
+ * - Viewer-request CloudFront Function setting x-forwarded-host (redirect-URL
+ *   derivation behind the Host-stripping OAC origin)
  */
 export class CanopyCmsDistribution extends Construct {
   /** The CloudFront distribution */
@@ -100,6 +102,29 @@ export class CanopyCmsDistribution extends Construct {
       cookieBehavior: cloudfront.CacheCookieBehavior.none(),
     })
 
+    // CloudFront gives the origin the Function URL's own Host (forwarding the
+    // viewer Host would break the OAC SigV4 signature), and Lambda Web Adapter
+    // forwards no `x-forwarded-*` headers of its own - so without this
+    // function, Clerk/Next derive sign-in redirect URLs from the IAM-authed
+    // Function URL host instead of the public domain, and the redirect 403s
+    // (direct Function URL hits are rejected). Deploy-proven (deploy-test
+    // epic, 2026-07-23): x-forwarded-proto is on CloudFront Functions'
+    // DISALLOWED header list - setting it fails every request with 502
+    // FunctionValidationError. Only x-forwarded-host is set; proto is
+    // unambiguous anyway (viewer-facing CloudFront is HTTPS-only via
+    // REDIRECT_TO_HTTPS).
+    const forwardedHostFunction = new cloudfront.Function(this, 'ForwardedHostFunction', {
+      code: cloudfront.FunctionCode.fromInline(
+        [
+          'function handler(event) {',
+          '  var request = event.request;',
+          "  request.headers['x-forwarded-host'] = { value: request.headers.host.value };",
+          '  return request;',
+          '}',
+        ].join('\n'),
+      ),
+    })
+
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       domainNames: [props.domainName],
       certificate,
@@ -109,6 +134,12 @@ export class CanopyCmsDistribution extends Construct {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
         originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        functionAssociations: [
+          {
+            function: forwardedHostFunction,
+            eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+          },
+        ],
       },
       additionalBehaviors: {
         '/_next/static/*': {
