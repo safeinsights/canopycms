@@ -85,6 +85,9 @@ None currently open.
 | [schema-faq-glossary.md](schema-faq-glossary.md) | Dedicated FAQ and glossary schema collections for reuse across pages         |
 | [content-root-name-hardcoded.md](content-root-name-hardcoded.md) | `api/schema.ts`'s `getSchemaOps` and `api/entries.ts`'s `deleteEntry` hardcode `'content'` instead of honoring `config.contentRoot` like every other content-facing code path |
 | [init-mode-prompt-stale-doc.md](init-mode-prompt-stale-doc.md)   | README's Quick Start claims `canopycms init` interactively prompts for "Operating mode" (dev/prod), but `cli.ts` hardcodes `mode = 'dev'` with no prompt and `InitOptions.mode` is typed as the literal `'dev'` only — needs a decision (drop the doc claim, or add real prod-mode scaffolding) |
+| [efs-tls-in-transit.md](efs-tls-in-transit.md)   | EFS worker mount doesn't pass the `tls` option (efs-utils stunnel) — NFS traffic is unencrypted in transit (intra-VPC only; at-rest encryption is on). Needs its own verification deploy. From PR #141 review (LOW) |
+| [worker-push-end-of-options.md](worker-push-end-of-options.md) | Worker's `git.push(this.buildGitHubUrl(), branch)` has no `--end-of-options` separator before the task-payload branch name — argument-injectable in principle, low exposure since branch names originate from the CMS's own branch workflow. Pre-existing, flagged by PR #141 review (LOW) |
+| [network-escape-hatch-git-env.md](network-escape-hatch-git-env.md) | Under `allowNetworkRemoteInProd`, `GitManager`'s remote fetch/push run with the restricted `gitChildEnv` allowlist (drops `HTTPS_PROXY`/`GIT_SSL_*`/`GIT_SSH_COMMAND`) — would fail behind a proxy while the worker's full-env pushes succeed. From PR #141 review (LOW) |
 | [FIXES.md](FIXES.md)                             | Older catch-all list; mostly superseded — review and migrate to proper files |
 
 ---

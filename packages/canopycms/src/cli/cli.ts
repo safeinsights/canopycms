@@ -62,6 +62,25 @@ export function parseAuthFlag(value: string | boolean | undefined): AuthProvider
   throw new Error(`--auth must be "clerk" or "dev", got "${String(value)}"`)
 }
 
+/**
+ * Validate/coerce the --dual-build flag value for `init`. Returns undefined
+ * when the flag was not provided (caller should fall through to init()'s own
+ * prompt-or-default logic). minimist leaves `dual-build` undeclared (see
+ * parseArgs above), so `--dual-build=true` / `--dual-build true` parse as the
+ * STRINGS "true"/"false" rather than real booleans — coerce those explicitly
+ * so they don't silently fall through to `undefined` (then `false` by
+ * default in non-interactive mode), the opposite of what the user asked.
+ * Throws when a value was provided but isn't a real boolean or "true"/"false".
+ * Exported for testing.
+ */
+export function parseDualBuildFlag(value: unknown): boolean | undefined {
+  if (value === undefined) return undefined
+  if (typeof value === 'boolean') return value
+  if (value === 'true') return true
+  if (value === 'false') return false
+  throw new Error(`--dual-build must be a boolean (true/false), got "${String(value)}"`)
+}
+
 const SYNC_SUBCOMMANDS = ['push', 'pull', 'both', 'abort'] as const
 type SyncSubcommand = (typeof SYNC_SUBCOMMANDS)[number]
 
@@ -114,7 +133,13 @@ async function main() {
     // Tri-state: undefined (flag omitted) falls through to init()'s own
     // prompt-or-default logic; true/false (flag or --no-dual-build passed)
     // presets the choice and skips the prompt, same as authProvider above.
-    const staticBuild = typeof flags['dual-build'] === 'boolean' ? flags['dual-build'] : undefined
+    let staticBuild: boolean | undefined
+    try {
+      staticBuild = parseDualBuildFlag(flags['dual-build'])
+    } catch (err) {
+      console.error(`Error: ${getErrorMessage(err)}`)
+      process.exit(1)
+    }
 
     let appDir: string
     if (typeof flags['app-dir'] === 'string') {

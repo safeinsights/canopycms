@@ -529,20 +529,33 @@ export class CanopyCmsService extends Construct {
       '/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/canopy-worker-logs.json',
     )
 
-    // Auto Scaling Group
-    this.workerAsg = new autoscaling.AutoScalingGroup(this, 'WorkerAsg', {
-      vpc: this.vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+    // Launch template (not the deprecated AutoScalingGroup instanceType/
+    // machineImage/... shorthand): that shorthand synthesizes an
+    // AWS::AutoScaling::LaunchConfiguration, which AWS accounts created after
+    // ~mid-2023 cannot create at all — `cdk deploy` would hard-fail for any
+    // fresh adopter account. An explicit LaunchTemplate synthesizes
+    // AWS::EC2::LaunchTemplate instead, which every account can use.
+    const launchTemplate = new ec2.LaunchTemplate(this, 'WorkerLaunchTemplate', {
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.NANO),
       machineImage: ec2.MachineImage.latestAmazonLinux2023({
         cpuType: ec2.AmazonLinuxCpuType.ARM_64,
       }),
       role: workerRole,
       securityGroup: workerSg,
+      userData,
+      spotOptions: {
+        requestType: ec2.SpotRequestType.ONE_TIME, // required for ASG-managed spot
+        maxPrice: parseFloat(props.spotMaxPrice ?? '0.0042'), // On-demand rate for t4g.nano
+      },
+    })
+
+    // Auto Scaling Group
+    this.workerAsg = new autoscaling.AutoScalingGroup(this, 'WorkerAsg', {
+      vpc: this.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      launchTemplate,
       minCapacity: 1,
       maxCapacity: 1,
-      userData,
-      spotPrice: props.spotMaxPrice ?? '0.0042', // On-demand rate for t4g.nano
       healthCheck: autoscaling.HealthCheck.ec2({
         grace: Duration.minutes(5),
       }),
