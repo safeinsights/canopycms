@@ -21,7 +21,11 @@ const withdrawBranchHandler = async (
   // still allowed (it's the only self-serve recovery for a base branch wrongly
   // stuck in 'submitted'), but restricted to privileged/creator/ACL users.
   const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'
-  const { isProtected } = getBranchProtection(ctx.services.config, branchContext.branch.name)
+  const { isProtected } = getBranchProtection(
+    ctx.services.config,
+    branchContext.branch.name,
+    branchContext.branch.baseBranch,
+  )
   const canWithdraw = canPerformWorkflowAction(branchContext, req.user, defaultAccess, {
     isProtectedBranch: isProtected,
   })

@@ -59,6 +59,31 @@ describe('getBranchProtection', () => {
     expect(result.isProtected).toBe(true)
   })
 
+  describe('recordedBaseBranch clause', () => {
+    it('stays protected when config.defaultBaseBranch drifts but the recorded fork point equals the branch name', () => {
+      const result = getBranchProtection(
+        { mode: 'prod', defaultBaseBranch: 'release-1.0' },
+        'main',
+        'main',
+      )
+      expect(result.isProtected).toBe(true)
+    })
+
+    it('does not falsely protect a normal editing branch forked from the base branch', () => {
+      const result = getBranchProtection(
+        { mode: 'prod', defaultBaseBranch: 'main' },
+        'my-feature',
+        'main',
+      )
+      expect(result.isProtected).toBe(false)
+    })
+
+    it('is additive only -- omitting the third arg preserves prior 2-arg behavior', () => {
+      const result = getBranchProtection({ mode: 'prod', defaultBaseBranch: 'main' }, 'main')
+      expect(result.isProtected).toBe(true)
+    })
+  })
+
   describe('prod/dev x protected/non-protected matrix', () => {
     const cases: Array<{
       mode: 'prod' | 'dev'

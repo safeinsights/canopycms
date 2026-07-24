@@ -18,6 +18,7 @@ import type { BranchStatus } from '../../types'
 import type { EditorEntry } from '../Editor'
 import type { LogicalPath } from '../../paths/types'
 import { clientOperatingStrategy } from '../../operating-mode/client'
+import { isAdmin, isReviewer } from '../../authorization/helpers'
 
 /**
  * Props for the EditorHeader component.
@@ -491,7 +492,11 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
               // wrongly stuck in 'submitted'.
               if (branchIsProtected && !isSubmitted) return null
 
-              // Check if user can perform workflow actions (creator OR ACL access OR system branch)
+              // Check if user can perform workflow actions (creator OR ACL access OR system
+              // branch OR privileged). Admins/Reviewers must be able to withdraw a protected
+              // base branch wrongly stuck in 'submitted' -- the documented recovery flow --
+              // even when they're neither its creator nor in its ACL; this mirrors the
+              // server's canPerformWorkflowAction and BranchManager.tsx.
               const userIsCreator = userContext?.userId === branchCreatedBy
               const isSystemBranch = branchCreatedBy === 'canopycms-system' && !branchIsProtected
               const userInACL =
@@ -499,9 +504,13 @@ export const EditorHeader = forwardRef<HTMLDivElement, EditorHeaderProps>(functi
                 branchAccess &&
                 (branchAccess.allowedUsers?.includes(userContext.userId) ||
                   userContext.groups?.some((g) => branchAccess.allowedGroups?.includes(g)))
+              const userIsPrivileged =
+                !!userContext &&
+                (isAdmin(userContext.groups ?? []) || isReviewer(userContext.groups ?? []))
 
               const canPerformAction =
-                (userIsCreator || userInACL || isSystemBranch) && (isEditing || isSubmitted)
+                (userIsCreator || userInACL || isSystemBranch || userIsPrivileged) &&
+                (isEditing || isSubmitted)
 
               return (
                 <Tooltip

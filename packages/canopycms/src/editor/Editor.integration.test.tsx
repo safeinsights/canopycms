@@ -7,6 +7,7 @@ import type { EditorEntry } from './Editor'
 import { Editor } from './Editor'
 import { ApiClientProvider } from './context'
 import { unsafeAsLogicalPath, unsafeAsContentId } from '../paths/test-utils'
+import { RESERVED_GROUPS } from '../authorization'
 
 // Mock @mantine/modals
 vi.mock('@mantine/modals', () => ({
@@ -268,6 +269,16 @@ describe('Editor integration', () => {
             data: {
               schema: {},
               flatSchema: [
+                // buildEditorCollections (editor-config.ts) only turns 'collection'
+                // items into navigable EntryNavigator nodes -- the 'entry-type' item
+                // below alone produces no tree node to open/inspect.
+                {
+                  type: 'collection',
+                  logicalPath: 'content/posts',
+                  name: 'posts',
+                  label: 'Posts',
+                  entries: [{ name: 'post', format: 'json', schema: entry.schema }],
+                },
                 {
                   type: 'entry-type',
                   logicalPath: 'content/posts/post',
@@ -361,6 +372,101 @@ describe('Editor integration', () => {
     await waitFor(() => {
       const saveButton = screen.getByTestId('save-button')
       expect(saveButton.hasAttribute('disabled')).toBe(true)
+    })
+
+    // Open the entry navigator (File dropdown -> All Files) and confirm the
+    // read-only branch hides every mutation affordance: the per-collection
+    // context menu (EntryNavigator's readOnly gating) and the drawer header's
+    // "Content actions" button (Add Entry/Add Collection for the root), which
+    // reads navCollections[0].onAdd directly and would otherwise bypass
+    // EntryNavigator's gating entirely.
+    fireEvent.click(screen.getByTestId('file-dropdown-button'))
+    await waitFor(() => {
+      expect(screen.getByTestId('all-files-menu-item')).toBeDefined()
+    })
+    fireEvent.click(screen.getByTestId('all-files-menu-item'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('entry-nav-item-posts')).toBeDefined()
+    })
+    expect(screen.queryByTestId('collection-menu-posts')).toBeNull()
+    expect(screen.queryByRole('button', { name: /content actions/i })).toBeNull()
+  })
+
+  it('grants an admin who is neither creator nor in ACL an enabled Withdraw button on a protected base branch stuck in "submitted"', async () => {
+    // Recovery-flow regression: the base branch's system-branch grant is
+    // disabled once protected (see EditorHeader's canPerformAction), so an
+    // admin must fall back to the privileged-user grant instead -- otherwise
+    // a base branch wrongly stuck in 'submitted' has no self-serve recovery.
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url =
+        typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
+      if (url.endsWith('/api/canopycms/branches')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: {
+              branches: [
+                {
+                  name: 'main',
+                  status: 'submitted',
+                  access: {},
+                  createdBy: 'canopycms-system',
+                  createdAt: '2024-01-01',
+                  updatedAt: '2024-01-01',
+                  isProtected: true,
+                  readOnly: true,
+                },
+              ],
+              defaultBranch: 'main',
+            },
+          }),
+        )
+      }
+      if (url.endsWith('/whoami')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: { userId: 'admin-1', groups: [RESERVED_GROUPS.ADMINS] },
+          }),
+        )
+      }
+      if (url.includes('/schema') && !url.includes('/schema/')) {
+        return Promise.resolve(
+          okJson({ ok: true, status: 200, data: { schema: {}, flatSchema: [], entrySchemas: {} } }),
+        )
+      }
+      if (url.includes('/entries')) {
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            status: 200,
+            data: { collections: [], entries: [], pagination: { hasMore: false, limit: 50 } },
+          }),
+        )
+      }
+      return Promise.resolve(okJson({ ok: true, status: 200, data: {} }))
+    })
+
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(
+      <ApiClientProvider>
+        <Editor
+          entries={[]}
+          title="Test Editor"
+          branchName="main"
+          operatingMode="prod"
+          themeOptions={{}}
+        />
+      </ApiClientProvider>,
+    )
+
+    await waitFor(() => {
+      const withdrawButton = screen.getByTestId('withdraw-button')
+      expect(withdrawButton.hasAttribute('disabled')).toBe(false)
     })
   })
 

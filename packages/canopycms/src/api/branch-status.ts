@@ -38,7 +38,11 @@ const submitBranchForMergeHandler = async (
   // is passed for defense-in-depth (disables the system-branch grant); the 'submittableBranch'
   // guard above already refuses base-branch submits outright before the handler runs.
   const defaultAccess = ctx.services.config.defaultBranchAccess ?? 'deny'
-  const { isProtected } = getBranchProtection(ctx.services.config, branchContext.branch.name)
+  const { isProtected } = getBranchProtection(
+    ctx.services.config,
+    branchContext.branch.name,
+    branchContext.branch.baseBranch,
+  )
   const canSubmit = canPerformWorkflowAction(branchContext, req.user, defaultAccess, {
     isProtectedBranch: isProtected,
   })

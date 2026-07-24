@@ -12,6 +12,7 @@ import { createDebugLogger } from '../utils/debug'
 import { clientOperatingStrategy } from '../operating-mode'
 import { isNotFoundError, getErrorMessage } from '../utils/error'
 import { branchNameSchema, branchParamSchema } from './validators'
+import { sanitizeBranchName } from '../paths'
 
 const log = createDebugLogger({ prefix: 'BranchAPI' })
 
@@ -157,6 +158,46 @@ export const createBranchHandler = async (
       }
     }
 
+    // Reject the base branch name outright. openOrCreateBranch's save() (see
+    // branch-metadata.ts) field-merges the caller-supplied `access` over an
+    // EXISTING branch's metadata rather than replacing it, so a request
+    // naming the base branch would let the caller inject themselves into the
+    // protected base branch's ACL (gaining e.g. withdraw rights via the
+    // allowed_by_acl path). No recorded fork point exists yet for a
+    // not-yet-created branch, so this checks config protection only.
+    const { isProtected } = getBranchProtection(ctx.services.config, branchName)
+    if (isProtected) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'Cannot create a branch with the base branch name',
+      }
+    }
+
+    // Reject a name collision with ANY existing branch for the same
+    // field-merge reason: creating over an existing branch name would let
+    // the caller's `access` ACL overwrite that branch's real ACL instead of
+    // creating a new, separate branch. Comparison uses the sanitized name
+    // since that's what's persisted in branch.json (see
+    // BranchWorkspaceManager.openOrCreateBranch). System branches
+    // auto-provisioned via http/handler.ts's getBranchContext don't go
+    // through this handler, so rejecting collisions here doesn't affect them.
+    if (!ctx.services.registry) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'Branch registry not initialized — ensure the workspace has been initialized',
+      }
+    }
+    const existingBranch = await ctx.services.registry.get(sanitizeBranchName(branchName))
+    if (existingBranch) {
+      return {
+        ok: false,
+        status: 409,
+        error: 'A branch with this name already exists',
+      }
+    }
+
     // Load path permissions from the base branch's JSON file (the resolved
     // fork point — baked into config at service creation; dev-mode git HEAD
     // when not explicitly configured)
@@ -218,7 +259,11 @@ export const listBranchesHandler = async (
   // Attach server-computed protected-base-branch flags; read config per-request
   // so dev-mode refreshActiveBranch() updates are reflected here too.
   const toListItem = (context: BranchContext): BranchListItem => {
-    const protection = getBranchProtection(ctx.services.config, context.branch.name)
+    const protection = getBranchProtection(
+      ctx.services.config,
+      context.branch.name,
+      context.branch.baseBranch,
+    )
     return { ...context.branch, isProtected: protection.isProtected, readOnly: protection.readOnly }
   }
 
@@ -234,6 +279,11 @@ export const listBranchesHandler = async (
   // Regular users only see branches they created or have explicit access to
   const visibleBranches = allBranches.filter((context) => {
     const branch = context.branch
+    // The protected base branch is where every user lands by default; always
+    // show it (read-only) so the editor can render its protected state.
+    if (getBranchProtection(ctx.services.config, branch.name, branch.baseBranch).isProtected) {
+      return true
+    }
     // User created the branch
     if (branch.createdBy === req.user.userId) {
       return true
@@ -307,7 +357,11 @@ export const deleteBranchHandler = async (
   // Deleting the base branch would destroy the prod serving clone (and any
   // stranded edits on it) -- never valid, so this is checked before any
   // permission check below.
-  const { isProtected } = getBranchProtection(ctx.services.config, branchContext.branch.name)
+  const { isProtected } = getBranchProtection(
+    ctx.services.config,
+    branchContext.branch.name,
+    branchContext.branch.baseBranch,
+  )
   if (isProtected) {
     return { ok: false, status: 400, error: 'Cannot delete the base branch' }
   }

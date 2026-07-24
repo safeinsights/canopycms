@@ -206,7 +206,11 @@ const runWritableBranchGuard: GuardRunner = async (ctx, _req, params, accumulate
     return { ok: false, response: { ok: false, status: 404, error: 'Branch not found' } }
   }
 
-  const protection = getBranchProtection(ctx.services.config, context.branch.name)
+  const protection = getBranchProtection(
+    ctx.services.config,
+    context.branch.name,
+    context.branch.baseBranch,
+  )
   if (protection.readOnly) {
     return {
       ok: false,
@@ -230,7 +234,11 @@ const runSubmittableBranchGuard: GuardRunner = async (ctx, _req, params, accumul
     return { ok: false, response: { ok: false, status: 404, error: 'Branch not found' } }
   }
 
-  const protection = getBranchProtection(ctx.services.config, context.branch.name)
+  const protection = getBranchProtection(
+    ctx.services.config,
+    context.branch.name,
+    context.branch.baseBranch,
+  )
   if (protection.submitBlocked) {
     return {
       ok: false,
