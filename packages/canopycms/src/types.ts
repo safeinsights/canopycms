@@ -46,6 +46,12 @@ export interface BranchMetadata {
    * archived any other way.
    */
   mergedAt?: string
+  /**
+   * Set by the worker when a rebase cycle fails for this branch; cleared on
+   * the next successful cycle (and on submit). firstAt survives repeated
+   * failures with the same message so the panel can show "failing since".
+   */
+  rebaseFailure?: { message: string; firstAt: string; lastAt: string }
 }
 
 export interface BranchPaths {
