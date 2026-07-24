@@ -31,6 +31,7 @@ None currently open.
 
 | File                                                                               | Summary                                                                                                                    |
 | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| [server-mode-anonymous-read-500.md](server-mode-anonymous-read-500.md)             | Anonymous reads on a `deployedAs: 'server'` site render 500 (unhandled FORBIDDEN from server components) instead of 401/404; no documented public-read story for adopters |
 | [assets-media-system.md](assets-media-system.md)                                   | Assets/media system — Plan B approved 2026-07-21, in progress on epic/assets-media-system: S3 content-addressed prefixes in existing buckets, presigned direct upload, on-demand transform Lambda, image field + MediaManager |
 | [asset-review-followups.md](asset-review-followups.md)                             | Deferred non-blocking items from PR #126 review: upload abort/AbortController, post-delete blob GC, finalize byte-cap, altOptional-omitted edge, + nits |
 | [docs-site-assets-wiring.md](docs-site-assets-wiring.md)                           | DEFERRED until docs-site prod deploy lands: wire assets into docs-site-proto (AssetSupport BYO-bucket, behaviors, media config) + the update-distribution.ts stamps-every-OriginPath fix that MUST ride along |
