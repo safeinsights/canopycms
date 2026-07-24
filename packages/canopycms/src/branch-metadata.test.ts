@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   BranchMetadataFileManager,
   BranchMetadataConflictError,
+  BranchMetadataCorruptError,
   getBranchMetadataFileManager,
   buildMergedBranchUpdate,
   type BranchMetadataFile,
@@ -53,6 +54,18 @@ describe('BranchMetadataFileManager', () => {
       const root = await tmpDir()
       const loaded = await BranchMetadataFileManager.loadOnly(root)
       expect(loaded).toBeNull()
+    })
+
+    it('throws BranchMetadataCorruptError for unparseable metadata', async () => {
+      const root = await tmpDir()
+      const metaDir = path.join(root, '.canopy-meta')
+      await fs.mkdir(metaDir, { recursive: true })
+      await fs.writeFile(path.join(metaDir, 'branch.json'), '{ this is not json', 'utf8')
+
+      await expect(BranchMetadataFileManager.loadOnly(root)).rejects.toThrow(
+        BranchMetadataCorruptError,
+      )
+      await expect(BranchMetadataFileManager.loadOnly(root)).rejects.toThrow(root)
     })
   })
 

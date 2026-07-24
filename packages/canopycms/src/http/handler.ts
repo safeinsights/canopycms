@@ -7,6 +7,7 @@ import { createCanopyServices, type CanopyServices } from '../services'
 import type { CanopyConfig } from '../config'
 import type { BranchContext } from '../types'
 import { loadBranchContext, BranchWorkspaceManager } from '../branch-workspace'
+import { BranchMetadataCorruptError } from '../branch-metadata'
 import { authResultToCanopyUser } from '../user'
 import { loadInternalGroups, RESERVED_GROUPS } from '../authorization'
 import { clientOperatingStrategy } from '../operating-mode'
@@ -221,20 +222,31 @@ export function createCanopyRequestHandler(options: CanopyHandlerOptions): Canop
       mainBranchContext = await apiCtx.getBranchContext(baseBranch)
     } catch (err) {
       const message = getErrorMessage(err)
-      // Full path detail to server logs; sanitized detail to the
-      // (authenticated) client. Credentials (git errors can embed them) are
-      // redacted even from server logs.
-      console.error(
-        `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${redactCredentials(message)}`,
-      )
-      return jsonResponse(
-        {
-          ok: false,
-          status: 503,
-          error: `Branch workspace provisioning failed for '${baseBranch}': ${sanitizeErrorMessage(message)}`,
-        },
-        503,
-      )
+      if (err instanceof BranchMetadataCorruptError) {
+        // Corrupt BASE branch metadata must not take down every endpoint —
+        // the /admin recovery surface is how it gets fixed. Degrade instead:
+        // no internal groups this request (bootstrap admins retain admin via
+        // bootstrapAdminIds), and keep routing.
+        console.error(
+          `CanopyCMS: Base branch '${baseBranch}' has corrupt metadata; serving without internal groups until repaired: ${redactCredentials(message)}`,
+        )
+        mainBranchContext = null
+      } else {
+        // Full path detail to server logs; sanitized detail to the
+        // (authenticated) client. Credentials (git errors can embed them) are
+        // redacted even from server logs.
+        console.error(
+          `CanopyCMS: Failed to provision workspace for base branch '${baseBranch}': ${redactCredentials(message)}`,
+        )
+        return jsonResponse(
+          {
+            ok: false,
+            status: 503,
+            error: `Branch workspace provisioning failed for '${baseBranch}': ${sanitizeErrorMessage(message)}`,
+          },
+          503,
+        )
+      }
     }
     const operatingMode = apiCtx.services.config.mode
     const internalGroups = mainBranchContext

@@ -274,7 +274,21 @@ export class BranchRegistry {
         }
 
         const branchRoot = path.join(this.root, entry.name)
-        const meta = await BranchMetadataFileManager.loadOnly(branchRoot)
+
+        // Quarantine, don't propagate: one branch's corrupt/unreadable
+        // branch.json must not take down the whole listing (a rethrow here
+        // would 500 GET /branches for every branch). The broken branch just
+        // drops out of the registry; it stays on disk for the admin
+        // branch-health surface to report and repair.
+        let meta: Awaited<ReturnType<typeof BranchMetadataFileManager.loadOnly>>
+        try {
+          meta = await BranchMetadataFileManager.loadOnly(branchRoot)
+        } catch (err: unknown) {
+          console.warn(
+            `CanopyCMS: Skipping branch directory '${entry.name}' during registry scan: ${getErrorMessage(err)}`,
+          )
+          continue
+        }
 
         if (meta) {
           branches.push({
