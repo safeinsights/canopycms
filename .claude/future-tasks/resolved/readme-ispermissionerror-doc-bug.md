@@ -1,6 +1,16 @@
 # README's `isPermissionError` example never fires for a `canopy.read()` denial
 
-**Status**: proposed
+**Status**: RESOLVED (2026-07-24, epic/deployment-followups / PR #149). The Fable
+integration review found the companion `isNotFoundError(err)` branch in the same
+example was equally dead (`read()` throws `ContentStoreError` `'NOT_FOUND'`, never
+Node `ENOENT`), and that PR #146 had added three cross-references pointing adopters
+at the broken section. Fixed doc-only (option 1 variant, no new API surface): the
+section now states CMS reads never throw Node fs errors, the example branches on the
+`ContentStoreError` `code` field via an inline `err instanceof Error && 'code' in err`
+check (`'NOT_FOUND' | 'NO_SCHEMA_ITEM'` → `notFound()`, `'FORBIDDEN'` → `notFound()`
+with a leak-avoidance note), and it points URL-driven pages at the null-safe
+`readByUrlPath()`. Exporting `ContentStoreError` / adding `isContentForbiddenError`
+helpers (option 2) remains open if adopters want a first-class guard later.
 **Priority**: P3 (doc/code mismatch — the example silently doesn't do what it says)
 **Origin**: surfaced while implementing level-scoped `defaultPathAccess` and the
 `readByUrlPath` FORBIDDEN-to-null change (2026-07-24, server-mode-500-errors branch).

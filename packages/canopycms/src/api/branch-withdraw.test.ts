@@ -162,9 +162,40 @@ describe('branch withdraw api', () => {
     expect(res.ok).toBe(true)
     expect(res.status).toBe(200)
     expect(convertToDraft).not.toHaveBeenCalled()
+    // The dead PR's metadata is dropped so the editing branch shows no stale PR chip
     expect(mockMetadataSave).toHaveBeenCalledWith(
-      expect.objectContaining({ branch: expect.objectContaining({ status: 'editing' }) }),
+      expect.objectContaining({
+        branch: expect.objectContaining({
+          status: 'editing',
+          pullRequestState: undefined,
+          pullRequestNumber: undefined,
+          pullRequestUrl: undefined,
+        }),
+      }),
     )
+  })
+
+  it('keeps PR metadata when withdrawing an open PR (converted to draft, still live)', async () => {
+    const convertToDraft = vi.fn().mockResolvedValue(undefined)
+    const githubService = { convertToDraft }
+    const ctx = makeCtx(true, githubService)
+    ctx.getBranchContext = vi.fn().mockResolvedValue({
+      ...baseContext,
+      branch: { ...baseContext.branch, pullRequestState: 'open' },
+    })
+    const res = await withdrawHandler(
+      ctx,
+      { user: { type: 'authenticated', userId: 'u1', groups: [] } },
+      { branch: 'feature/x' as BranchName },
+    )
+    expect(res.ok).toBe(true)
+    const saveArg = mockMetadataSave.mock.calls.at(-1)?.[0] as {
+      branch: Record<string, unknown>
+    }
+    expect(saveArg.branch.status).toBe('editing')
+    expect('pullRequestState' in saveArg.branch).toBe(false)
+    expect('pullRequestNumber' in saveArg.branch).toBe(false)
+    expect('pullRequestUrl' in saveArg.branch).toBe(false)
   })
 
   it('still converts the PR to draft when pullRequestState is open', async () => {

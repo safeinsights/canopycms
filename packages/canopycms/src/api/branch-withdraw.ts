@@ -42,15 +42,24 @@ const withdrawBranchHandler = async (
   // Withdraw (back to 'editing') is the deliberate recovery path for a
   // closed-unmerged PR, and a later resubmit opens a fresh PR via
   // createOrUpdatePullRequest, so skip the conversion in that case.
-  if (branchContext.branch.pullRequestState !== 'closed') {
+  const wasClosed = branchContext.branch.pullRequestState === 'closed'
+  if (!wasClosed) {
     await syncConvertToDraft(ctx, branchContext)
   }
 
-  // Update branch status to 'editing'
+  // Update branch status to 'editing'. A closed PR is dead after withdraw
+  // (resubmit opens a fresh one), so drop its metadata rather than leaving a
+  // stale PR chip on an editing branch; a drafted PR is still live, so keep it.
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
 
   const updated = await meta.save({
-    branch: { name: branchContext.branch.name, status: 'editing' },
+    branch: {
+      name: branchContext.branch.name,
+      status: 'editing',
+      ...(wasClosed
+        ? { pullRequestState: undefined, pullRequestNumber: undefined, pullRequestUrl: undefined }
+        : {}),
+    },
   })
 
   return { ok: true, status: 200, data: { branch: updated.branch } }

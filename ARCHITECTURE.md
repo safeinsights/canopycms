@@ -1527,7 +1527,7 @@ Merge detection is automatic. Once a branch is `submitted` or `approved` and has
 2. On its next sync cycle, the worker detects the merge via the GitHub API and archives the branch itself — status moves to "archived", `pullRequestState` is stamped `merged`, and `mergedAt` records when
 3. Site rebuild/deploy happens via other processes (e.g. CI/CD)
 
-If the PR is closed on GitHub **without** merging, the worker records `pullRequestState: 'closed'` but leaves the branch's status untouched — a closed PR isn't necessarily terminal (it can be reopened), so an admin decides the next step rather than the worker guessing. The editor surfaces this as a red "closed" PR badge and disables actions that assume an open, convertible-to-draft PR (withdraw, request changes).
+If the PR is closed on GitHub **without** merging, the worker records `pullRequestState: 'closed'` but leaves the branch's status untouched — a closed PR isn't necessarily terminal (it can be reopened), so an admin decides the next step rather than the worker guessing. The editor surfaces this as a red "closed" PR badge and disables request-changes (which assumes an open, convertible-to-draft PR); withdraw stays available as the recovery path back to `editing`.
 
 A `markAsMerged` API endpoint still exists, now as a manual/ops fallback rather than the primary path — useful when the worker isn't running or an admin wants to force-resolve a branch immediately instead of waiting for the next poll cycle. It verifies the merge via the GitHub API and builds its update through the same shared helper as the automatic path, so both produce identical archived-branch metadata.
 

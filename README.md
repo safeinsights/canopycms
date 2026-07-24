@@ -1576,7 +1576,7 @@ Use `sanitizeHref` anywhere you render an `href` attribute with a value that com
 
 ### Error Handling Utilities
 
-When your code catches errors thrown by CanopyCMS reads (e.g., to render a `notFound()` vs. a `403`), the same typed error helpers CanopyCMS uses internally are available to adopters from the `canopycms/utils/error` subpath:
+The typed error helpers CanopyCMS uses internally are available to adopters from the `canopycms/utils/error` subpath:
 
 ```typescript
 import {
@@ -1590,21 +1590,25 @@ import {
 
 - `getErrorMessage(err)` — safely extract a string message from an `unknown` caught value (avoids `any`)
 - `isNodeError(err)` — type guard narrowing to `NodeJS.ErrnoException` (gives you `.code`, `.path`, etc.)
-- `isNotFoundError(err)` / `isPermissionError(err)` / `isFileExistsError(err)` — classify common filesystem failures (`ENOENT`, `EACCES`/`EPERM`, `EEXIST`)
+- `isNotFoundError(err)` / `isPermissionError(err)` / `isFileExistsError(err)` — classify common **filesystem** failures (`ENOENT`, `EACCES`/`EPERM`, `EEXIST`) — useful when your own code does filesystem work, e.g. reading colocated files via `meta.physicalPath`
+
+Note that CMS reads do **not** throw Node filesystem errors, so the helpers above will not match them. `read()` throws a `ContentStoreError` whose `code` field is one of `'NOT_FOUND' | 'NO_SCHEMA_ITEM' | 'FORBIDDEN' | 'VALIDATION'`. To branch on those (e.g., to render a `notFound()` vs. a `403`), check the `code` field:
 
 ```typescript
 import { notFound } from 'next/navigation'
-import { isNotFoundError, isPermissionError } from 'canopycms/utils/error'
 
 try {
   const { data } = await canopy.read({ entryPath: 'content/posts', slug })
   return <PostView post={data} />
 } catch (err) {
-  if (isNotFoundError(err)) return notFound()
-  if (isPermissionError(err)) return <Forbidden />
+  const code = err instanceof Error && 'code' in err ? err.code : undefined
+  if (code === 'NOT_FOUND' || code === 'NO_SCHEMA_ITEM') return notFound()
+  if (code === 'FORBIDDEN') return notFound() // or render a 403 — notFound() avoids leaking that the entry exists
   throw err
 }
 ```
+
+For URL-driven pages, [`readByUrlPath()`](#load-content-by-url-path) is usually simpler: it already resolves `NOT_FOUND`/`FORBIDDEN` to `null` so you can `if (!result) return notFound()` without a try/catch.
 
 ### Media Configuration
 
