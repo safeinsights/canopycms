@@ -124,7 +124,7 @@ describe('getBranchPermissions', () => {
     expect(perms.canRequestChanges).toBe(true)
   })
 
-  it('blocks withdraw when the PR was closed without merging', () => {
+  it('allows withdraw when the PR was closed without merging (recovery path)', () => {
     const branch: BranchSummary = {
       name: 'main',
       status: 'submitted',
@@ -132,7 +132,7 @@ describe('getBranchPermissions', () => {
       pullRequestState: 'closed',
     }
     const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
-    expect(perms.canWithdraw).toBe(false)
+    expect(perms.canWithdraw).toBe(true)
   })
 
   it('blocks request changes when the PR was closed without merging', () => {
@@ -292,7 +292,7 @@ describe('BranchManager', () => {
     expect(screen.queryByText('Merged')).toBeNull()
   })
 
-  it('disables Withdraw when the submitted branch PR was closed without merging', () => {
+  it('keeps Withdraw enabled when the submitted branch PR was closed without merging', () => {
     const branches: BranchSummary[] = [
       {
         ...baseBranches[1],
@@ -301,7 +301,7 @@ describe('BranchManager', () => {
     ]
     renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
     const withdrawButton = screen.getByRole('button', { name: /withdraw/i })
-    expect(withdrawButton.hasAttribute('disabled')).toBe(true)
+    expect(withdrawButton.hasAttribute('disabled')).toBe(false)
   })
 
   it('disables Request changes when the submitted branch PR was closed without merging', () => {

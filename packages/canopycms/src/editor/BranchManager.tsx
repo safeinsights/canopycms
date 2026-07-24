@@ -91,12 +91,11 @@ export const getBranchPermissions = (
   const canSubmit = canPerformWorkflowActions && branch.status === 'editing'
 
   // Withdraw: Can perform workflow actions AND branch is in submitted status.
-  // A PR closed without merging can't be converted to a draft, so withdraw is
-  // blocked in that case (undefined/'open'/'merged' are unaffected).
-  const canWithdraw =
-    canPerformWorkflowActions &&
-    branch.status === 'submitted' &&
-    branch.pullRequestState !== 'closed'
+  // Allowed even when the PR was closed without merging -- that's the
+  // deliberate recovery path for a closed-unmerged PR (a later resubmit
+  // opens a fresh PR). The server skips the now-impossible draft conversion
+  // in that case; see api/branch-withdraw.ts.
+  const canWithdraw = canPerformWorkflowActions && branch.status === 'submitted'
 
   // Delete: Admin or creator (but not if submitted)
   const canDelete = (userIsAdmin || userIsCreator) && branch.status !== 'submitted'
@@ -406,11 +405,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                       </Button>
                       {b.status === 'submitted' ? (
                         <Tooltip
-                          label={
-                            b.pullRequestState === 'closed'
-                              ? 'PR was closed on GitHub without merging'
-                              : 'Only the branch creator can withdraw'
-                          }
+                          label="Only the branch creator can withdraw"
                           disabled={perms.canWithdraw}
                         >
                           <Button

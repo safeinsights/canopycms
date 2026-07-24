@@ -95,14 +95,16 @@ describe('CmsWorker.pollMergeState()', () => {
   const readBranchMeta = (branchPath: string) =>
     BranchMetadataFileManager.loadOnly(branchPath).then((f) => f?.branch)
 
-  it('archives the branch when the PR is merged, preserving PR number/url', async () => {
+  it('archives the branch when the PR is merged, using GitHub merged_at and preserving PR number/url', async () => {
     const { internals } = makePollWorker()
     const branchPath = await setupBranchMeta('feature-merged', {
       pullRequestNumber: 42,
       pullRequestUrl: 'https://github.com/test-owner/test-repo/pull/42',
       pullRequestState: 'open',
     })
-    internals.octokit.pulls.get.mockResolvedValue({ data: { merged: true, state: 'closed' } })
+    internals.octokit.pulls.get.mockResolvedValue({
+      data: { merged: true, state: 'closed', merged_at: '2024-03-15T10:30:00Z' },
+    })
 
     const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
     await internals.pollMergeState('feature-merged', branchPath, metaFile)
@@ -110,8 +112,8 @@ describe('CmsWorker.pollMergeState()', () => {
     const meta = await readBranchMeta(branchPath)
     expect(meta?.status).toBe('archived')
     expect(meta?.pullRequestState).toBe('merged')
-    expect(meta?.mergedAt).toEqual(expect.any(String))
-    expect(new Date(meta!.mergedAt as string).toISOString()).toBe(meta!.mergedAt)
+    // mergedAt reflects GitHub's actual merge time, not the poll time.
+    expect(meta?.mergedAt).toBe(new Date('2024-03-15T10:30:00Z').toISOString())
     // PR number/url are not part of buildMergedBranchUpdate -- save()'s
     // merge must preserve them from the existing metadata.
     expect(meta?.pullRequestNumber).toBe(42)
@@ -199,6 +201,48 @@ describe('CmsWorker.pollMergeState()', () => {
     expect(internals.octokit.pulls.get).not.toHaveBeenCalled()
   })
 
+  it('records a reopen transition from closed back to open', async () => {
+    const { internals } = makePollWorker()
+    const branchPath = await setupBranchMeta('feature-reopened', {
+      pullRequestNumber: 47,
+      pullRequestState: 'closed',
+    })
+    internals.octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
+
+    const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+    expect(metaFile?.branch.status).toBe('submitted')
+    expect(metaFile?.branch.pullRequestState).toBe('closed')
+
+    await internals.pollMergeState('feature-reopened', branchPath, metaFile)
+
+    const meta = await readBranchMeta(branchPath)
+    expect(meta?.pullRequestState).toBe('open')
+  })
+
+  it('does not throw when the merged-branch metadata save fails, leaving the file unchanged', async () => {
+    const { internals } = makePollWorker()
+    const branchPath = await setupBranchMeta('feature-merge-save-fails', {
+      pullRequestNumber: 49,
+      pullRequestState: 'open',
+    })
+    internals.octokit.pulls.get.mockResolvedValue({ data: { merged: true, state: 'closed' } })
+
+    const saveSpy = vi
+      .spyOn(BranchMetadataFileManager.prototype, 'save')
+      .mockRejectedValueOnce(new Error('simulated EFS write failure'))
+
+    const metaFile = await BranchMetadataFileManager.loadOnly(branchPath)
+    await expect(
+      internals.pollMergeState('feature-merge-save-fails', branchPath, metaFile),
+    ).resolves.toBeUndefined()
+    saveSpy.mockRestore()
+
+    const meta = await readBranchMeta(branchPath)
+    expect(meta?.status).toBe('submitted')
+    expect(meta?.pullRequestState).toBe('open')
+    expect(meta?.mergedAt).toBeUndefined()
+  })
+
   describe('dispatch from rebaseActiveBranches()', () => {
     it('polls approved branches for merge state', async () => {
       const { internals } = makePollWorker()
@@ -212,6 +256,21 @@ describe('CmsWorker.pollMergeState()', () => {
 
       expect(internals.octokit.pulls.get).toHaveBeenCalledWith(
         expect.objectContaining({ pull_number: 50 }),
+      )
+    })
+
+    it('polls submitted branches for merge state (primary production case)', async () => {
+      const { internals } = makePollWorker()
+      await setupGitLikeBranchDir('feature-submitted', {
+        status: 'submitted',
+        pullRequestNumber: 52,
+      })
+      internals.octokit.pulls.get.mockResolvedValue({ data: { merged: false, state: 'open' } })
+
+      await internals.rebaseActiveBranches()
+
+      expect(internals.octokit.pulls.get).toHaveBeenCalledWith(
+        expect.objectContaining({ pull_number: 52 }),
       )
     })
 

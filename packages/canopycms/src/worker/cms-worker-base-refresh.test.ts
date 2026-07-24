@@ -225,6 +225,25 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     expect(after?.branch.conflictFiles).toEqual([])
   })
 
+  it('is non-fatal when the fetch fails, leaving the working tree untouched', async () => {
+    const { basePath } = await createBaseWorkspaceSetup(tmpDir)
+    // Break the clone's origin so fetch() fails.
+    const basePathGit = simpleGit({ baseDir: basePath, unsafe: { allowUnsafeEditor: true } })
+    await basePathGit.raw(['remote', 'set-url', 'origin', '/nonexistent/path'])
+
+    const consoleSpy = mockConsole()
+    const worker = makeWorker(tmpDir)
+
+    await expect(refreshBase(worker)).resolves.toBeUndefined()
+
+    // Caught by refreshBaseBranchWorkspace's outer try/catch and logged.
+    expect(consoleSpy).toHaveErrored(/refresh failed/i)
+    consoleSpy.restore()
+
+    // Working tree untouched -- only the original .gitkeep is present.
+    await expect(fs.readdir(basePath)).resolves.toContain('.gitkeep')
+  })
+
   it('does not save metadata when already up to date and conflict state is already clean', async () => {
     const { basePath, contentBranchesPath } = await createBaseWorkspaceSetup(tmpDir)
     const meta = getBranchMetadataFileManager(basePath, contentBranchesPath)

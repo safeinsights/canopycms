@@ -2,6 +2,15 @@
 
 ## Status: RESOLVED (2026-07-24, fix/post-merge-sync-gaps)
 
+**Live verification pending**: the Gap 2 root cause was never confirmed on the
+live host (no shell access, worker logs unshipped — see
+[[worker-cloudwatch-logs]], PR #145). The pre-fix rebase loop nominally covered
+the base clone too, so the decisive evidence is the next deploy-test iteration:
+after a merge, the worker log must show the
+`Base branch workspace (main): fast-forwarded N commit(s)` line and the editor
+must show current base content plus the auto-archived branch. If the base view
+is still stale with the new loud diagnostics silent, reopen this file.
+
 Both gaps fixed in `packages/canopycms/src/worker/cms-worker.ts`:
 
 - **Gap 1 (merge-poll)**: `rebaseActiveBranches()` now calls a new

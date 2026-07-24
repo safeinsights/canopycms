@@ -22,7 +22,8 @@ import {
 } from '../branch-metadata'
 import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
-import { type ContentId, ROOT_COLLECTION_ID } from '../paths/types'
+import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
+import { sanitizeBranchName } from '../paths/branch'
 import type { PullRequestState } from '../types'
 import { getErrorMessage, isNodeError } from '../utils/error'
 
@@ -190,6 +191,12 @@ export class CmsWorker {
   private remoteGitPath: string
   private contentBranchesPath: string
   private baseBranch: string
+  // Workspace directories use sanitized names; git refs (fetch/rev-list/merge
+  // against origin/<baseBranch>) must keep using the raw `baseBranch` name.
+  // Computed once so both filesystem call sites (refreshBaseBranchWorkspace's
+  // path.join and rebaseActiveBranches' skip comparison) agree, instead of
+  // re-deriving it (and risking drift) at each use.
+  private sanitizedBaseBranch: SanitizedBranchName
   private activeTimeouts = new Set<NodeJS.Timeout>()
   private running = false
   private activeOperations = new Set<Promise<void>>()
@@ -208,6 +215,7 @@ export class CmsWorker {
     this.remoteGitPath = path.join(config.workspacePath, 'remote.git')
     this.contentBranchesPath = path.join(config.workspacePath, 'content-branches')
     this.baseBranch = config.baseBranch ?? 'main'
+    this.sanitizedBaseBranch = sanitizeBranchName(this.baseBranch)
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
@@ -797,12 +805,17 @@ export class CmsWorker {
    * Fast-forward the base branch's own working-tree clone
    * (content-branches/<baseBranch>) to match origin/<baseBranch>.
    *
-   * Nothing else keeps this clone current: Lambda provisions it on demand
-   * from remote.git (already refreshed by the fetch earlier in syncGit()),
-   * but once provisioned it just sits there -- later content PRs merging on
-   * GitHub never reach it. Left unrefreshed, an editor forking a new branch
-   * "from base" is actually forking from a stale snapshot. This runs every
-   * sync cycle so the drift window is bounded by gitSyncInterval.
+   * Previously this clone was refreshed only incidentally, by the generic
+   * rebase loop below (rebaseActiveBranches): for a branch with status
+   * 'editing', rebasing onto origin/<baseBranch> degenerates to a
+   * fast-forward when the clone IS the base branch. But that loop's skip
+   * paths -- a dirty tree, a missing .git -- are silent, which is the
+   * suspected live failure mode: a wedged base clone with no diagnosable
+   * signal in the logs. This dedicated step makes the refresh explicit,
+   * ff-only, and loud, so a stuck base view (an editor forking a new branch
+   * "from base" that's actually a stale snapshot) is diagnosable from logs.
+   * This runs every sync cycle so the drift window is bounded by
+   * gitSyncInterval.
    *
    * ff-only on purpose: this clone must stay a linear mirror of
    * origin/<baseBranch>, so a merge that isn't a fast-forward (diverged
@@ -810,7 +823,9 @@ export class CmsWorker {
    * untouched rather than force-resolved.
    */
   private async refreshBaseBranchWorkspace(): Promise<void> {
-    const basePath = path.join(this.contentBranchesPath, this.baseBranch)
+    // Sanitized name for the workspace directory (a base branch containing
+    // e.g. '/' would otherwise stat a wrong nested path here forever).
+    const basePath = path.join(this.contentBranchesPath, this.sanitizedBaseBranch)
     const gitDir = path.join(basePath, '.git')
 
     try {
@@ -837,6 +852,12 @@ export class CmsWorker {
         // loop's git config below).
         config: ['core.editor=true'],
         unsafe: { allowUnsafeEditor: true },
+        // DEP-H1: a hung fetch/merge against this EFS-backed clone would
+        // stall the sync loop forever (scheduleLoop only reschedules after
+        // completion). The block timeout is inactivity-based, so a
+        // slow-but-flowing transfer is unaffected -- same as syncGit()'s
+        // remote handle.
+        timeout: { block: this.taskTimeoutMs },
       })
 
       // Nothing makes this clone read-only. A direct edit here (or a stray
@@ -850,6 +871,9 @@ export class CmsWorker {
         return
       }
 
+      // Raw (unsanitized) name from here on: these are git ref operations
+      // against origin/<baseBranch>, not filesystem paths, so they must use
+      // the same name GitHub knows the branch by.
       await baseGit.fetch('origin', this.baseBranch)
 
       // Use rev-list instead of status.behind for the same reason as the
@@ -936,7 +960,14 @@ export class CmsWorker {
 
       if (data.merged) {
         const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
-        await meta.save({ branch: buildMergedBranchUpdate(branchDir) })
+        // Use GitHub's actual merge time when available; buildMergedBranchUpdate
+        // falls back to "now" (its default `now` param) when merged_at is absent.
+        await meta.save({
+          branch: buildMergedBranchUpdate(
+            branchDir,
+            data.merged_at ? new Date(data.merged_at) : undefined,
+          ),
+        })
         console.log(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
         return
       }
@@ -968,6 +999,15 @@ export class CmsWorker {
     }
 
     for (const branchDir of branchDirs) {
+      // Known structural entries under content-branches/, not branch
+      // workspaces: branches.json (registry snapshot) and dot-prefixed
+      // entries (.canopy-meta/, transient lock dirs). Skip them silently so
+      // the no-.git skip logs below don't fire for them every cycle.
+      // Everything else still logs loudly on skip.
+      if (branchDir.startsWith('.') || branchDir === 'branches.json') {
+        continue
+      }
+
       const branchPath = path.join(this.contentBranchesPath, branchDir)
       const gitDir = path.join(branchPath, '.git')
 
@@ -986,8 +1026,9 @@ export class CmsWorker {
       // refreshBaseBranchWorkspace() earlier in syncGit(). Routing it
       // through this conflict-resolution rebase loop could rewrite its
       // history (the --theirs loop below) and stamp meaningless conflict
-      // metadata on it.
-      if (branchDir === this.baseBranch) {
+      // metadata on it. Compare sanitized-vs-sanitized: branchDir is a
+      // filesystem name (already sanitized), this.baseBranch is raw.
+      if (branchDir === this.sanitizedBaseBranch) {
         console.log(`  Skipping ${branchDir}: base branch (refreshed separately)`)
         continue
       }
