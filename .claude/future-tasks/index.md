@@ -24,6 +24,7 @@ None currently open.
 | [dual-react-problem.md](dual-react-problem.md)                               | Dual React instance crash when adopters use `file:` references in their Next.js app                                           |
 | [swr.md](swr.md)                                                             | Multiple independent `useEffect` hooks fire duplicate API calls on initial editor load; SWR would deduplicate                 |
 | [editor-state-context-migration.md](editor-state-context-migration.md)       | Complete migration of `Editor.tsx` inline state to `EditorStateContext`                                                       |
+| [post-merge-sync-gaps.md](post-merge-sync-gaps.md)                           | Live-deploy finding: after a content PR merges, the branch stays "submitted" (no auto merge-detection) and the editor's base-branch (main) workspace clone is stale, so editors see old content and fork new branches from stale main |
 
 ---
 
