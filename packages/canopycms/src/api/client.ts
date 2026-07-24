@@ -21,7 +21,7 @@ import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGrou
 import type { UserInfoResponse } from './user'
 import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from './schema'
 import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from './../schema/schema-store-types'
-import type { AdminStatusResponse, AdminTasksResponse } from './admin'
+import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse } from './admin'
 
 /**
  * Options for creating an ApiClient
@@ -454,6 +454,20 @@ export class CanopyApiClient {
      */
     listTasks: (params: Record<string, string>): Promise<AdminTasksResponse> => {
       return this.request('GET', this.buildPath('/admin/tasks/:status', params))
+    },
+
+    /**
+     * retryTask - POST /admin/tasks/:taskId/retry
+     */
+    retryTask: (params: Record<string, string>): Promise<AdminRetryTaskResponse> => {
+      return this.request('POST', this.buildPath('/admin/tasks/:taskId/retry', params))
+    },
+
+    /**
+     * deleteTask - DELETE /admin/tasks/:status/:fileName
+     */
+    deleteTask: (params: Record<string, string>): Promise<AdminDeleteTaskResponse> => {
+      return this.request('DELETE', this.buildPath('/admin/tasks/:status/:fileName', params))
     },
   }
 

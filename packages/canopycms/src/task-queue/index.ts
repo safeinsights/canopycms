@@ -6,6 +6,7 @@ export {
   completeTask,
   failTask,
   retryTask,
+  requeueFailedTask,
   recoverOrphanedTasks,
   cleanupOldTasks,
   getTask,

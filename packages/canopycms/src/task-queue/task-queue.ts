@@ -267,6 +267,67 @@ export async function retryTask(
   logger.debug('Retrying task', { id: taskId, retryCount, backoffMs })
 }
 
+/**
+ * Requeue a permanently-failed task for another attempt. Reads
+ * failed/{taskId}.json and creates a BRAND NEW pending task with a fresh
+ * `id` — the original ID is never reused. This matters because both
+ * `dequeueTask` and `recoverOrphanedTasks` dedup against completed/failed by
+ * ID: a pending file that reused the original ID would be silently deleted
+ * (without running) the moment it was scanned, since its ID already exists
+ * in failed/.
+ *
+ * The new task carries `payload.requeuedFrom` for provenance, starts at
+ * `retryCount: 0`, and gets an honest fresh `createdAt` (it goes to the back
+ * of the FIFO queue rather than jumping ahead on the original timestamp).
+ *
+ * Write-then-unlink ordering: the new pending file is written FIRST, and the
+ * failed original is unlinked only after that succeeds (best-effort — unlink
+ * failures are swallowed). A crash between the two steps leaves the failed
+ * original in place alongside the new pending task, which is harmless
+ * (duplicate history, not a lost task); the reverse order could lose the
+ * task entirely if the process died after the unlink but before the write.
+ *
+ * Returns `{ error: 'not-found' }` if there is no such file in failed/, or
+ * `{ error: 'unparseable' }` if the file exists but isn't valid task JSON
+ * (callers should tell the admin to delete it instead of retrying it).
+ */
+export async function requeueFailedTask(
+  taskDir: string,
+  taskId: string,
+  logger: TaskQueueLogger = nullLogger,
+): Promise<{ newTaskId: string } | { error: 'not-found' | 'unparseable' }> {
+  const failedPath = path.join(taskDir, 'failed', `${taskId}.json`)
+
+  let content: string
+  try {
+    content = await fs.readFile(failedPath, 'utf-8')
+  } catch (err) {
+    if (isNotFoundError(err)) return { error: 'not-found' }
+    throw err
+  }
+
+  const original = parseTaskJson(content)
+  if (!original) return { error: 'unparseable' }
+
+  const newTaskId = crypto.randomUUID()
+  const newTask: Task = {
+    id: newTaskId,
+    action: original.action,
+    payload: { ...original.payload, requeuedFrom: taskId },
+    status: 'pending',
+    createdAt: new Date().toISOString(),
+    retryCount: 0,
+    maxRetries: original.maxRetries,
+  }
+
+  const pendingPath = path.join(taskDir, 'pending', `${newTaskId}.json`)
+  await atomicWriteFile(pendingPath, JSON.stringify(newTask, null, 2))
+  await fs.unlink(failedPath).catch(() => {})
+  logger.debug('Requeued failed task', { originalId: taskId, newTaskId })
+
+  return { newTaskId }
+}
+
 // ============================================================================
 // Recovery & maintenance
 // ============================================================================
