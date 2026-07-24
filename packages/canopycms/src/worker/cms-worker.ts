@@ -25,7 +25,7 @@ import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
 import { sanitizeBranchName } from '../paths/branch'
 import type { PullRequestState, WorkerStatusReport } from '../types'
-import { getErrorMessage, isNodeError } from '../utils/error'
+import { getErrorMessage, isNodeError, redactCredentials } from '../utils/error'
 import { writeWorkerStatus } from './worker-status'
 
 /**
@@ -332,7 +332,10 @@ export class CmsWorker {
       // a status-write failure must never block releasing the lock.
       const report = this.ensureStatusReport()
       report.lastFatalError = {
-        message: getErrorMessage(err),
+        // [HIGH-1] Persisted to worker-status.json and served to the
+        // browser by the admin panel -- must never carry the bot token
+        // that a poisoned/failed git URL (buildGitHubUrl()) can embed.
+        message: redactCredentials(getErrorMessage(err)),
         at: new Date().toISOString(),
         phase: 'startup',
       }
@@ -583,6 +586,12 @@ export class CmsWorker {
         const message = getErrorMessage(err)
         console.error(`Task ${task.id} (${task.action}) failed:`, message)
 
+        // [HIGH-1] task.error is persisted (pending/failed task JSON) and
+        // served to the browser by the admin panel's Tasks tab -- a push
+        // failure's message can embed the bot token via buildGitHubUrl().
+        // Console output above stays raw (journald/CloudWatch is trusted).
+        const persistedMessage = redactCredentials(message)
+
         // DEP-L1: only transient failures (network, 429/5xx, timeouts) are
         // worth retrying; permanent ones (malformed payload, other 4xx) would
         // just burn the retry budget on an identical doomed request.
@@ -590,11 +599,11 @@ export class CmsWorker {
         const retryCount = task.retryCount ?? 0
         const maxRetries = task.maxRetries ?? this.maxRetries
         if (!permanent && retryCount < maxRetries) {
-          await retryTask(this.taskDir, task.id, message, this.log)
+          await retryTask(this.taskDir, task.id, persistedMessage, this.log)
           console.log(`  Will retry (attempt ${retryCount + 1}/${maxRetries})`)
         } else {
-          await failTask(this.taskDir, task.id, message, this.log)
-          await this.updateBranchMetadataOnFailure(task, message)
+          await failTask(this.taskDir, task.id, persistedMessage, this.log)
+          await this.updateBranchMetadataOnFailure(task, persistedMessage)
           console.error(
             permanent
               ? '  Permanently failed (non-retryable error)'
@@ -938,7 +947,13 @@ export class CmsWorker {
       )
     } catch (err) {
       const report = this.ensureStatusReport()
-      report.lastGitSyncError = { message: getErrorMessage(err), at: new Date().toISOString() }
+      // [HIGH-1] Persisted to worker-status.json and served to the browser
+      // by the admin panel -- a fetch/push failure's message can embed the
+      // bot token via buildGitHubUrl().
+      report.lastGitSyncError = {
+        message: redactCredentials(getErrorMessage(err)),
+        at: new Date().toISOString(),
+      }
       await writeWorkerStatus(this.taskDir, report).catch((writeErr) =>
         console.error('Failed to write worker status:', getErrorMessage(writeErr)),
       )
@@ -1221,10 +1236,18 @@ export class CmsWorker {
   ): Promise<void> {
     const RECORD_REFRESH_MS = 60 * 60 * 1000 // 1 hour
 
+    // [HIGH-1] Defense-in-depth redaction: rebaseFailure.message is
+    // persisted to branch.json and served to the browser via the
+    // branch-health admin endpoint. Both call sites in rebaseActiveBranches
+    // already redact before passing in (the failed.push sites below),
+    // redactCredentials is idempotent, so redacting again here is free and
+    // keeps this method safe on its own.
+    const redactedMessage = redactCredentials(message)
+
     try {
       const existing = await BranchMetadataFileManager.loadOnly(branchPath)
       const prior = existing?.branch.rebaseFailure
-      const sameMessage = prior?.message === message
+      const sameMessage = prior?.message === redactedMessage
 
       const now = new Date()
       if (sameMessage) {
@@ -1242,7 +1265,7 @@ export class CmsWorker {
       await meta.save({
         branch: {
           name: branchDir,
-          rebaseFailure: { message, firstAt, lastAt: nowIso },
+          rebaseFailure: { message: redactedMessage, firstAt, lastAt: nowIso },
         },
       })
     } catch (err) {
@@ -1466,9 +1489,13 @@ export class CmsWorker {
           await branchGit.rebase(['--abort']).catch(() => {})
           const rebaseFailureMessage =
             failureReason ?? `did not complete within ${MAX_ROUNDS} rounds`
+          // [HIGH-1] failed[] folds into worker-status.json's
+          // lastGitSync.failed, served to the browser -- failureReason can
+          // be an arbitrary git error message that embeds the bot token.
+          const redactedRebaseFailureMessage = redactCredentials(rebaseFailureMessage)
           failed.push({
             branch: branchDir,
-            error: rebaseFailureMessage,
+            error: redactedRebaseFailureMessage,
           })
           // PR-W2: record once here for the "!completed" exit -- the
           // unexpected-error break above is NOT disjoint from this block (it
@@ -1476,7 +1503,7 @@ export class CmsWorker {
           // would double-record. The outer catch below is the only other
           // record site (a distinct, non-overlapping failure class: errors
           // outside this round loop, e.g. fetch/rev-list failures).
-          await this.recordRebaseFailure(branchPath, branchDir, rebaseFailureMessage)
+          await this.recordRebaseFailure(branchPath, branchDir, redactedRebaseFailureMessage)
           continue
         }
 
@@ -1533,11 +1560,15 @@ export class CmsWorker {
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Unknown error'
         console.warn(`  Failed to sync ${branchDir}: ${message}`)
-        failed.push({ branch: branchDir, error: message })
+        // [HIGH-1] Same rationale as the `if (!completed)` push site above --
+        // this catches fetch/rev-list/unexpected errors, whose message can
+        // embed the bot token.
+        const redactedMessage = redactCredentials(message)
+        failed.push({ branch: branchDir, error: redactedMessage })
         // PR-W2: second (and only other) record site -- see the comment at
         // the `if (!completed)` block above for why these two sites are
         // disjoint.
-        await this.recordRebaseFailure(branchPath, branchDir, message)
+        await this.recordRebaseFailure(branchPath, branchDir, redactedMessage)
       }
     }
 

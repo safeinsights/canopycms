@@ -86,6 +86,11 @@ describe('scanBranchHealth', () => {
     expect(entries[0].parseError).toBeTruthy()
     expect(entries[0].metaMtime).toBeTruthy()
     expect(entries[0].branch).toBeUndefined()
+    // [MEDIUM-2] parseError must be the raw JSON.parse cause, not the
+    // BranchMetadataCorruptError's path-qualified `message` -- never leaks
+    // the absolute workspace root to a client.
+    expect(entries[0].parseError).not.toMatch(/^Corrupt branch metadata/)
+    expect(entries[0].parseError).not.toContain(root)
   })
 
   it('classifies a non-SyntaxError loadOnly failure (branch.json is a directory) as corrupt-metadata', async () => {
@@ -97,10 +102,10 @@ describe('scanBranchHealth', () => {
     expect(entries).toHaveLength(1)
     expect(entries[0].kind).toBe('corrupt-metadata')
     expect(entries[0].dirName).toBe('weird-branch')
-    expect(entries[0].parseError).toBeTruthy()
-    // Not a BranchMetadataCorruptError (no SyntaxError involved) -- the raw
-    // EISDIR-flavored message should surface instead.
-    expect(entries[0].parseError).not.toMatch(/^Corrupt branch metadata/)
+    // [MEDIUM-2] Node errors (EISDIR here) embed the absolute path in their
+    // `message` -- only the error `code` is safe to surface to a client.
+    expect(entries[0].parseError).toBe('EISDIR')
+    expect(entries[0].parseError).not.toContain(root)
   })
 
   it('classifies a directory with no branch.json as orphan, reporting hasGitDir and dir age', async () => {

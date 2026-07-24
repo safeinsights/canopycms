@@ -232,9 +232,40 @@ describe('SystemHealthPanel', () => {
         },
       },
     }
+    const lockedWithRebaseFailure: BranchHealthEntry = {
+      dirName: 'feature-c',
+      kind: 'healthy',
+      branch: {
+        name: 'feature-c',
+        status: 'locked',
+        access: {},
+        createdBy: 'user-1',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+        // [LOW-3] The worker still rebases locked branches, so a locked
+        // branch failing to rebase must surface the icon just like editing.
+        rebaseFailure: {
+          message: 'merge conflict',
+          firstAt: '2026-01-01T00:00:00.000Z',
+          lastAt: '2026-01-02T00:00:00.000Z',
+        },
+      },
+    }
     const corruptEntry: BranchHealthEntry = {
       dirName: 'broken-branch',
       kind: 'corrupt-metadata',
+      parseError: 'Unexpected token in JSON',
+    }
+    const corruptWithFreshLock: BranchHealthEntry = {
+      dirName: 'broken-locked',
+      kind: 'corrupt-metadata',
+      parseError: 'Unexpected token in JSON',
+      provisioningLock: { mtime: '2026-01-01T00:00:00.000Z', ageMs: 60_000 },
+    }
+    const baseBranchCorrupt: BranchHealthEntry = {
+      dirName: 'main',
+      kind: 'corrupt-metadata',
+      isBaseBranch: true,
       parseError: 'Unexpected token in JSON',
     }
     const youngOrphan: BranchHealthEntry = {
@@ -249,6 +280,13 @@ describe('SystemHealthPanel', () => {
       hasGitDir: true,
       ageMs: 20 * 60_000,
     }
+    const baseBranchOrphan: BranchHealthEntry = {
+      dirName: 'main-orphan',
+      kind: 'orphan',
+      isBaseBranch: true,
+      hasGitDir: false,
+      ageMs: 20 * 60_000,
+    }
 
     beforeEach(() => {
       mockClient.admin.branchHealth.mockResolvedValue(
@@ -256,9 +294,13 @@ describe('SystemHealthPanel', () => {
           entries: [
             editingWithRebaseFailure,
             submittedWithStaleRebaseFailure,
+            lockedWithRebaseFailure,
             corruptEntry,
+            corruptWithFreshLock,
+            baseBranchCorrupt,
             youngOrphan,
             oldOrphan,
+            baseBranchOrphan,
           ],
           generatedAt: '2026-01-01T00:00:00.000Z',
         }),
@@ -272,7 +314,9 @@ describe('SystemHealthPanel', () => {
       await waitFor(() => expect(screen.getByText('feature-a')).toBeTruthy())
       expect(screen.getByText('feature-b')).toBeTruthy()
       expect(screen.getByText('broken-branch')).toBeTruthy()
-      expect(screen.getByText('corrupt metadata')).toBeTruthy()
+      // Multiple corrupt-metadata fixtures are seeded in this describe block
+      // (broken-branch, broken-locked, main) -- assert count, not identity.
+      expect(screen.getAllByText('corrupt metadata').length).toBeGreaterThanOrEqual(1)
       expect(screen.getByText('orphan-young')).toBeTruthy()
       expect(screen.getByText('orphan-old')).toBeTruthy()
     })
@@ -293,13 +337,14 @@ describe('SystemHealthPanel', () => {
       )
     })
 
-    it('suppresses the rebaseFailure icon unless the branch is still editing', async () => {
+    it('shows the rebaseFailure icon for editing and locked branches, suppresses it for submitted (LOW-3)', async () => {
       renderPanel()
       await userEvent.click(screen.getByText('Branches'))
       await waitFor(() => expect(screen.getByText('feature-a')).toBeTruthy())
 
-      expect(screen.getByTestId('rebase-failure-feature-a')).toBeTruthy()
-      expect(screen.queryByTestId('rebase-failure-feature-b')).toBeNull()
+      expect(screen.getByTestId('rebase-failure-feature-a')).toBeTruthy() // editing
+      expect(screen.getByTestId('rebase-failure-feature-c')).toBeTruthy() // locked
+      expect(screen.queryByTestId('rebase-failure-feature-b')).toBeNull() // submitted
     })
 
     it('disables purge for a young orphan and confirms the 30-day trash retention for an old one', async () => {
@@ -318,6 +363,27 @@ describe('SystemHealthPanel', () => {
       await waitFor(() =>
         expect(mockClient.admin.purgeBranchDir).toHaveBeenCalledWith({ dirName: 'orphan-old' }),
       )
+    })
+
+    it('disables purge for a corrupt-metadata row while its provisioning lock is fresh (LOW-2)', async () => {
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('broken-branch')).toBeTruthy())
+
+      expect(screen.getByTestId('purge-dir-broken-branch')).toHaveProperty('disabled', false)
+      expect(screen.getByTestId('purge-dir-broken-locked')).toHaveProperty('disabled', true)
+    })
+
+    it('disables purge for the base branch even when corrupt or orphaned (LOW-2)', async () => {
+      renderPanel()
+      await userEvent.click(screen.getByText('Branches'))
+      await waitFor(() => expect(screen.getByText('main')).toBeTruthy())
+
+      const corruptBasePurge = screen.getByTestId('purge-dir-main')
+      expect(corruptBasePurge).toHaveProperty('disabled', true)
+
+      const orphanBasePurge = screen.getByTestId('purge-dir-main-orphan')
+      expect(orphanBasePurge).toHaveProperty('disabled', true)
     })
   })
 })

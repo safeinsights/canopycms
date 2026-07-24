@@ -66,6 +66,39 @@ function formatAgeMs(ms: number): string {
   return `${totalDays}d ${totalHours % 24}h`
 }
 
+/**
+ * [LOW-2] Whether the Purge button should be disabled for a corrupt-metadata
+ * or orphan row, and the tooltip explaining why.
+ * - Base branch: never purgeable -- the server already 400s
+ *   ('The base branch directory can never be purged', see
+ *   purgeBranchDirHandler in api/admin-branch-health.ts); this is UX
+ *   honesty, not a new rail.
+ * - Fresh provisioning lock: provisioning may genuinely be in progress
+ *   (mirrors the server's [H1] freshness rail) -- applies to BOTH kinds,
+ *   not just orphans.
+ * - Orphan-only youth rail: a directory younger than
+ *   ORPHAN_YOUTH_THRESHOLD_MS may still be a clone in progress that hasn't
+ *   written branch.json yet. Corrupt-metadata dirs are exempt from this
+ *   server-side (a parseable-then-corrupted file isn't a mid-clone
+ *   signature), so they're exempt here too.
+ */
+function purgeGateFor(entry: BranchHealthEntry): { disabled: boolean; tooltip?: string } {
+  if (entry.isBaseBranch) {
+    return { disabled: true, tooltip: 'The base branch can never be purged' }
+  }
+  const lockFresh =
+    !!entry.provisioningLock && entry.provisioningLock.ageMs < PROVISIONING_LOCK_FRESH_MS
+  if (entry.kind === 'orphan') {
+    const tooYoung = (entry.ageMs ?? 0) < ORPHAN_YOUTH_THRESHOLD_MS
+    const disabled = lockFresh || tooYoung
+    return { disabled, tooltip: disabled ? 'May be a clone in progress' : undefined }
+  }
+  return {
+    disabled: lockFresh,
+    tooltip: lockFresh ? 'Provisioning may be in progress' : undefined,
+  }
+}
+
 function workerLivenessBadge(
   worker: WorkerLiveness,
   mode: OperatingMode,
@@ -573,7 +606,14 @@ function BranchHealthRow({
 }) {
   if (entry.kind === 'healthy' && entry.branch) {
     const b = entry.branch
-    const showRebaseFailure = b.status === 'editing' && !!b.rebaseFailure
+    // [LOW-3] The worker rebases every non-terminal branch, including
+    // 'locked' ones (only 'submitted'/'approved' -- under an active PR --
+    // and 'archived' -- already merged -- are excluded, see
+    // rebaseActiveBranches' skip logic in worker/cms-worker.ts). Gating on
+    // `status === 'editing'` hid rebase failures on locked branches even
+    // though the worker was still failing to rebase them every cycle.
+    const showRebaseFailure =
+      !['submitted', 'approved', 'archived'].includes(b.status) && !!b.rebaseFailure
     const canMarkMerged =
       (b.status === 'submitted' || b.status === 'approved') && !!b.pullRequestNumber
 
@@ -675,6 +715,7 @@ function BranchHealthRow({
   }
 
   if (entry.kind === 'corrupt-metadata') {
+    const purgeGate = purgeGateFor(entry)
     return (
       <Table.Tr style={{ backgroundColor: 'var(--mantine-color-red-light)' }}>
         <Table.Td>{entry.dirName}</Table.Td>
@@ -705,15 +746,20 @@ function BranchHealthRow({
             >
               Repair
             </Button>
-            <Button
-              size="xs"
-              variant="light"
-              color="red"
-              data-testid={`purge-dir-${entry.dirName}`}
-              onClick={() => onPurge(entry.dirName)}
-            >
-              Purge
-            </Button>
+            <Tooltip label={purgeGate.tooltip} disabled={!purgeGate.disabled}>
+              <span>
+                <Button
+                  size="xs"
+                  variant="light"
+                  color="red"
+                  disabled={purgeGate.disabled}
+                  data-testid={`purge-dir-${entry.dirName}`}
+                  onClick={() => onPurge(entry.dirName)}
+                >
+                  Purge
+                </Button>
+              </span>
+            </Tooltip>
           </Group>
         </Table.Td>
       </Table.Tr>
@@ -721,10 +767,7 @@ function BranchHealthRow({
   }
 
   // orphan
-  const lockFresh =
-    !!entry.provisioningLock && entry.provisioningLock.ageMs < PROVISIONING_LOCK_FRESH_MS
-  const tooYoung = (entry.ageMs ?? 0) < ORPHAN_YOUTH_THRESHOLD_MS
-  const purgeDisabled = lockFresh || tooYoung
+  const purgeGate = purgeGateFor(entry)
 
   return (
     <Table.Tr style={{ opacity: 0.65 }}>
@@ -746,13 +789,13 @@ function BranchHealthRow({
         </Text>
       </Table.Td>
       <Table.Td>
-        <Tooltip label="May be a clone in progress" disabled={!purgeDisabled}>
+        <Tooltip label={purgeGate.tooltip} disabled={!purgeGate.disabled}>
           <span>
             <Button
               size="xs"
               variant="light"
               color="red"
-              disabled={purgeDisabled}
+              disabled={purgeGate.disabled}
               data-testid={`purge-dir-${entry.dirName}`}
               onClick={() => onPurge(entry.dirName)}
             >

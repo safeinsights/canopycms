@@ -5,7 +5,7 @@ import type { Dirent } from 'node:fs'
 import type { BranchMetadata } from './types'
 import { BranchMetadataFileManager, BranchMetadataCorruptError } from './branch-metadata'
 import { sanitizeBranchName } from './paths/branch'
-import { getErrorMessage, isNotFoundError } from './utils/error'
+import { getErrorMessage, isNodeError, isNotFoundError } from './utils/error'
 
 /**
  * Admin-facing health classification of every directory under a branches
@@ -147,8 +147,21 @@ export async function scanBranchHealth(
       // other loadOnly failure (EACCES, EISDIR from a directory named
       // branch.json, etc.) land here: all are "needs admin attention",
       // and none may throw out of the scan.
+      //
+      // [MEDIUM-2] parseError is served to the browser via the admin
+      // branch-health endpoint, so it must never leak the absolute
+      // workspace path. BranchMetadataCorruptError carries `parseCause`
+      // (the raw JSON.parse message, path-free) for exactly this --
+      // `message` embeds branchRoot and is for server logs only. Other node
+      // errors (EISDIR from a directory named branch.json, EACCES, etc.)
+      // embed the path in their `message`, so only their `code` is safe to
+      // surface; non-node errors fall back to getErrorMessage.
       const parseError =
-        loadErr instanceof BranchMetadataCorruptError ? loadErr.message : getErrorMessage(loadErr)
+        loadErr instanceof BranchMetadataCorruptError
+          ? loadErr.parseCause
+          : isNodeError(loadErr)
+            ? (loadErr.code ?? 'read error')
+            : getErrorMessage(loadErr)
       const [metaMtime, provisioningLock] = await Promise.all([
         readMetaMtime(branchRoot),
         readProvisioningLock(resolvedRoot, dirName),
