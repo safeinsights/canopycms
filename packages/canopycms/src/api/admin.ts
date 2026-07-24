@@ -17,6 +17,7 @@ import {
   requeueFailedTask,
 } from '../worker/task-queue'
 import { getTaskQueueDir } from '../worker/task-queue-config'
+import { WORKER_STATUS_FILE } from '../worker/worker-status'
 import type { WorkerStatusReport } from '../types'
 import type { OperatingMode } from '../operating-mode'
 import { defineEndpoint } from './route-builder'
@@ -80,7 +81,7 @@ async function classifyWorkerLiveness(taskDir: string): Promise<WorkerLiveness> 
 async function readWorkerStatus(
   taskDir: string,
 ): Promise<{ workerStatus: WorkerStatusReport | null; statusReadError?: string }> {
-  const statusPath = path.join(taskDir, 'worker-status.json')
+  const statusPath = path.join(taskDir, WORKER_STATUS_FILE)
   let content: string
   try {
     content = await fs.readFile(statusPath, 'utf-8')
