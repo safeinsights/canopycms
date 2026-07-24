@@ -2,6 +2,22 @@
 
 This guide walks through deploying CanopyCMS on AWS using Lambda + EFS + EC2 Worker. This architecture costs ~$5-9/month and is designed for low-traffic CMS editing workflows.
 
+> **Deploy-proven notes (2026-07).** The whole stack was first deployed and
+> exercised end-to-end during the deployment-test epic — see
+> [`.claude/future-tasks/resolved/cms-service-deployment-test.md`](../.claude/future-tasks/resolved/cms-service-deployment-test.md)
+> for the full account of what broke and the fixes. Load-bearing gotchas that
+> guide is the source of truth for: reference secrets by their **full** ARN
+> (below); Lambda **architecture must match the Docker image platform**;
+> **`clerkMiddleware` needs an explicit `jwtKey`** (the env var alone is never
+> read → the no-internet Lambda hangs on sign-in) and the shipped template
+> asserts a secret key; the raw-CloudFront path needs the managed
+> `CACHING_DISABLED` policy and an `x-forwarded-host`-only CloudFront Function;
+> a two-pass deploy for bucket CORS + `CLERK_AUTHORIZED_PARTIES`; and — because
+> a locked-down operator role may not have SSM — **ship the EC2 worker's logs to
+> CloudWatch** (it is otherwise unobservable). Adopters consume the published
+> `canopycms-cdk` package; the constructs referenced here also power `AssetSupport`
+> for media (add it to give the deployed editor an upload/transform backend).
+
 ## Architecture Overview
 
 ```
@@ -142,34 +158,62 @@ export class CmsStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props)
 
-    // Secrets (create these manually or via CDK)
-    const githubToken = secretsmanager.Secret.fromSecretNameV2(
+    // Secrets: reference by their FULL ARN (with the random 6-char suffix,
+    // e.g. `...:secret:canopycms/github-token-Ab12Cd`). `secretsArns` below is
+    // written verbatim into the worker's IAM policy, so a partial/name-based
+    // ARN silently never matches the real secret and the worker gets
+    // AccessDenied at boot. Use fromSecretCompleteArn, not fromSecretNameV2.
+    const githubToken = secretsmanager.Secret.fromSecretCompleteArn(
       this,
       'GitHubToken',
-      'canopycms/github-token',
+      process.env.GITHUB_TOKEN_SECRET_ARN!, // full suffixed ARN
     )
-    const clerkSecretKey = secretsmanager.Secret.fromSecretNameV2(
+    const clerkSecretKey = secretsmanager.Secret.fromSecretCompleteArn(
       this,
       'ClerkSecret',
-      'canopycms/clerk-secret-key',
+      process.env.CLERK_SECRET_KEY_SECRET_ARN!,
     )
 
     // Core infrastructure
     const cmsService = new CanopyCmsService(this, 'CmsService', {
-      cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.'),
+      // architecture MUST match the platform the Docker image is built for.
+      // Building on Apple Silicon defaults to arm64 — pair Platform.LINUX_ARM64
+      // (aws-cdk-lib/aws-ecr-assets) with Architecture.ARM_64 or the Lambda
+      // fails at invoke with an exec-format error.
+      cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.', {
+        file: 'Dockerfile.cms',
+        platform: Platform.LINUX_ARM64,
+        buildArgs: {
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!,
+        },
+      }),
+      architecture: lambda.Architecture.ARM_64,
       githubOwner: 'your-org',
       githubRepo: 'your-docs-site',
       secretsArns: [githubToken.secretArn, clerkSecretKey.secretArn],
       githubTokenSecretArn: githubToken.secretArn,
       clerkSecretKeySecretArn: clerkSecretKey.secretArn,
+      // Optional: give the deployed editor a media backend (see the assets/media
+      // section). Pass an AssetSupport bucket here + wire its behaviors on the
+      // distribution.
+      // assetBucket: assetSupport.bucket,
       environment: {
         CANOPY_AUTH_MODE: 'clerk',
+        // Public JWKS PEM — enables networkless session verification on the
+        // isolated Lambda. Do NOT put CLERK_SECRET_KEY on the Lambda unless you
+        // must (the shipped clerkMiddleware asserts it; see notes below).
         CLERK_JWT_KEY: process.env.CLERK_JWT_KEY ?? '',
         CANOPY_BOOTSTRAP_ADMIN_IDS: 'user_xxx,user_yyy',
       },
     })
 
-    // CloudFront + DNS (optional — use your own if you have existing infra)
+    // CloudFront + DNS (optional — use your own if you have existing infra).
+    // CanopyCmsDistribution needs a Route53 hosted zone + ACM. With no domain,
+    // build a raw cloudfront.Distribution instead (managed CACHING_DISABLED
+    // cache policy + ALL_VIEWER_EXCEPT_HOST_HEADER origin request policy on the
+    // Function-URL origin, and a viewer-request CloudFront Function that sets
+    // x-forwarded-host from Host — but NOT x-forwarded-proto, a disallowed
+    // header). See the deployment-test writeup referenced below.
     new CanopyCmsDistribution(this, 'CmsDist', {
       functionUrl: cmsService.functionUrl,
       domainName: 'cms.docs.example.org',
