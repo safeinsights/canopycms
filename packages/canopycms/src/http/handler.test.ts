@@ -5,6 +5,7 @@ import type { AuthPlugin } from '../auth/plugin'
 import type { CanopyConfig } from '../config'
 import type { CanopyServices } from '../services'
 import { mockConsole } from '../test-utils/console-spy'
+import { BranchMetadataCorruptError } from '../branch-metadata'
 
 // Mock the BranchWorkspaceManager to avoid git operations
 vi.mock('../branch-workspace', () => ({
@@ -227,6 +228,40 @@ describe('createCanopyRequestHandler', () => {
     expect((response.body as { error?: string }).error).toContain(
       'clone failed: remote branch not found',
     )
+  })
+
+  it('serves the request without internal groups when base-branch metadata is corrupt', async () => {
+    const consoleSpy = mockConsole()
+    try {
+      const services: any = createMockServices()
+      const authPlugin = createMockAuthPlugin()
+
+      const handler = createCanopyRequestHandler({
+        services,
+        authPlugin,
+        getBranchContext: async () => {
+          throw new BranchMetadataCorruptError(
+            '/tmp/branches/main',
+            'Unexpected token i in JSON at position 2',
+          )
+        },
+      })
+
+      const req = createMockRequest({
+        method: 'GET',
+        url: 'http://localhost:3000/api/canopycms/branches',
+      })
+
+      const response = await handler(req, ['branches'])
+
+      // Degrades (empty internal groups) instead of 503ing: the /admin
+      // recovery surface must stay reachable when the base branch is the
+      // corrupt one.
+      expect(response.status).toBe(200)
+      expect(consoleSpy).toHaveErrored(/corrupt metadata/)
+    } finally {
+      consoleSpy.restore()
+    }
   })
 
   it('returns 401 for unauthenticated requests', async () => {
