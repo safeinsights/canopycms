@@ -292,6 +292,88 @@ describe('BranchManager', () => {
     expect(screen.queryByText('Merged')).toBeNull()
   })
 
+  it('shows a red Sync failed badge with a tooltip pointing to System health', async () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[0],
+        syncStatus: 'sync-failed',
+      },
+    ]
+    // Non-admin user context -- sync badges are visible to all users, not gated by role.
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+    const badge = screen.getByTestId('sync-failed-badge-main')
+    expect(badge.textContent).toBe('Sync failed')
+    expect(badge.style.getPropertyValue('--badge-bg')).toBe('var(--mantine-color-red-light)')
+
+    await userEvent.hover(badge)
+    expect(await screen.findByText(/System health/)).toBeDefined()
+  })
+
+  it('shows a gray Syncing badge with a tooltip when sync is pending', async () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[0],
+        syncStatus: 'pending-sync',
+      },
+    ]
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+    const badge = screen.getByTestId('pending-sync-badge-main')
+    expect(badge.textContent).toBe('Syncing…')
+    expect(badge.style.getPropertyValue('--badge-bg')).toBe('var(--mantine-color-gray-light)')
+
+    await userEvent.hover(badge)
+    expect(await screen.findByText('Changes are on their way to GitHub.')).toBeDefined()
+  })
+
+  it('shows an orange Conflicts badge with the conflict count and a tooltip', async () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[0],
+        conflictStatus: 'conflicts-detected',
+        conflictFiles: ['content/a.md', 'content/b.md'],
+      },
+    ]
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+    const badge = screen.getByTestId('conflicts-badge-main')
+    expect(badge.textContent).toBe('Conflicts (2)')
+    expect(badge.style.getPropertyValue('--badge-bg')).toBe('var(--mantine-color-orange-light)')
+
+    await userEvent.hover(badge)
+    expect(await screen.findByText(/review the flagged entries/)).toBeDefined()
+  })
+
+  it('omits the count from the Conflicts badge when conflictFiles is empty or absent', () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[0],
+        conflictStatus: 'conflicts-detected',
+      },
+    ]
+    renderBranchManager({ branches, mode: 'prod' })
+    expect(screen.getByTestId('conflicts-badge-main').textContent).toBe('Conflicts')
+  })
+
+  it('shows no sync/conflict badges for a synced, conflict-free branch', () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[0],
+        syncStatus: 'synced',
+        conflictStatus: 'clean',
+      },
+    ]
+    renderBranchManager({ branches, mode: 'prod' })
+    expect(screen.queryByTestId('sync-failed-badge-main')).toBeNull()
+    expect(screen.queryByTestId('pending-sync-badge-main')).toBeNull()
+    expect(screen.queryByTestId('conflicts-badge-main')).toBeNull()
+  })
+
+  it('shows no sync/conflict badges when the fields are undefined', () => {
+    renderBranchManager({ branches: baseBranches, mode: 'prod' })
+    expect(screen.queryByTestId('sync-failed-badge-main')).toBeNull()
+    expect(screen.queryByTestId('pending-sync-badge-main')).toBeNull()
+    expect(screen.queryByTestId('conflicts-badge-main')).toBeNull()
+  })
+
   it('keeps Withdraw enabled when the submitted branch PR was closed without merging', () => {
     const branches: BranchSummary[] = [
       {
