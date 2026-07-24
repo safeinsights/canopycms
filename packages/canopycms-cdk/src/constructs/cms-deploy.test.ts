@@ -386,3 +386,14 @@ describe('CanopyCmsService: boot ordering vs EFS mount targets', () => {
     }
   })
 })
+
+describe('CanopyCmsService worker UserData: ESM bundle bootstrapping', () => {
+  it('installs unzip and writes a type:module package.json next to the ESM worker bundle', () => {
+    const template = synth()
+    const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
+    const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
+    const all = blobs + ltBlobs
+    expect(all).toContain('yum install -y git unzip')
+    expect(all).toContain('{\\"type\\":\\"module\\"}')
+  })
+})
