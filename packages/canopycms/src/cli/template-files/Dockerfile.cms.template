@@ -13,9 +13,13 @@ RUN mkdir -p public
 # would try to open a branch workspace (EFS remote.git) that cannot exist in
 # the image builder. Dev-mode reads require the project to be a git
 # repository, and .git is excluded from the build context by .dockerignore --
-# so synthesize a single-commit repo from the copied files.
+# so synthesize a single-commit repo from the copied files. node_modules
+# (created by npm ci above) is excluded via .git/info/exclude - an adopter
+# repo without its own .gitignore would otherwise commit it into the
+# snapshot (slow build, bloated builder layer).
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
     && git init -q -b main \
+    && printf 'node_modules\n.next\n' > .git/info/exclude \
     && git add -A \
     && git -c user.email=build@canopycms.local -c user.name="Image Build" commit -qm "image build snapshot"
 ENV CANOPY_BUILD=cms

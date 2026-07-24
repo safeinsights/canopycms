@@ -430,6 +430,16 @@ describe('canopycms init-deploy aws', () => {
     expect(dockerfile).not.toContain('ENV CANOPY_MODE=prod')
   })
 
+  it('Dockerfile.cms keeps node_modules out of the synthesized snapshot repo without touching adopter files', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    // npm ci runs before git init, so node_modules exists at `git add -A` time;
+    // .git/info/exclude keeps it out even when the adopter repo has no .gitignore.
+    expect(dockerfile).toContain('.git/info/exclude')
+    expect(dockerfile).toContain('node_modules\\n.next\\n')
+  })
+
   it('creates .dockerignore that excludes host node_modules but keeps vendor/', async () => {
     await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
 
