@@ -1706,3 +1706,42 @@ describe('GitManager content-index invalidation', () => {
     expect(location?.relativePath).not.toContain('post.hello.')
   })
 })
+
+describe('GitManager: spawned git receives allowlisted process.env (deploy-proven regression)', () => {
+  it('GIT_AUTHOR_*/GIT_COMMITTER_* env reaches the spawned git process', async () => {
+    // Deploy-proven (2026-07-24): simple-git's .env(name, value) REPLACES the
+    // child environment entirely, so runtime-provided git env vanished from
+    // every spawn. GitManager now passes an explicit allowlist through. The
+    // commit below has NO repo-level author config - its identity arrives
+    // ONLY via GIT_AUTHOR_*/GIT_COMMITTER_* env, so the env-provided author
+    // appears iff the allowlist reaches the child git. (GIT_CONFIG_* is
+    // deliberately excluded: simple-git hard-blocks env-based config; the
+    // safe.directory workaround lives in the image's system gitconfig.)
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-git-env-'))
+    try {
+      const git = simpleGit({ baseDir: dir })
+      await git.init()
+      await fs.writeFile(path.join(dir, 'probe.txt'), 'env probe')
+      // Env must be set BEFORE construction: the child env is snapshotted
+      // when GitManager wires up simple-git (static env is fine on Lambda).
+      process.env.GIT_AUTHOR_NAME = 'Env Probe'
+      process.env.GIT_AUTHOR_EMAIL = 'env-probe@canopycms.test'
+      process.env.GIT_COMMITTER_NAME = 'Env Probe'
+      process.env.GIT_COMMITTER_EMAIL = 'env-probe@canopycms.test'
+      const manager = new GitManager({ repoPath: dir })
+      try {
+        await manager.add('probe.txt')
+        await manager.commit('env probe commit')
+        const log = await simpleGit({ baseDir: dir }).log({ maxCount: 1 })
+        expect(log.latest?.author_name).toBe('Env Probe')
+      } finally {
+        delete process.env.GIT_AUTHOR_NAME
+        delete process.env.GIT_AUTHOR_EMAIL
+        delete process.env.GIT_COMMITTER_NAME
+        delete process.env.GIT_COMMITTER_EMAIL
+      }
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+  })
+})

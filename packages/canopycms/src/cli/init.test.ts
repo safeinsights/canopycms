@@ -403,6 +403,13 @@ describe('canopycms init-deploy aws', () => {
     expect(dockerfile).toContain('rm -rf .next/cache && ln -s /tmp .next/cache')
   })
 
+  it('Dockerfile.cms sets safe.directory in SYSTEM gitconfig (env-based GIT_CONFIG_* is blocked by simple-git)', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    expect(dockerfile).toContain("git config --system safe.directory '*'")
+  })
+
   it('Dockerfile.cms guards against adopter apps with no public/ dir', async () => {
     await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
 

@@ -332,20 +332,18 @@ describe('CanopyCmsService B1: Lambda and worker resolve the same EFS directory'
 })
 
 describe('CanopyCmsService B7: git dubious-ownership workaround', () => {
-  it('sets GIT_CONFIG_* env vars so git treats the EFS-owned (uid 1000) repo as safe', () => {
+  it('does NOT rely on GIT_CONFIG_* env (simple-git hard-blocks env config; the fix is the image system gitconfig)', () => {
     const template = synth()
-    template.hasResourceProperties(
-      'AWS::Lambda::Function',
-      Match.objectLike({
-        Environment: Match.objectLike({
-          Variables: Match.objectLike({
-            GIT_CONFIG_COUNT: '1',
-            GIT_CONFIG_KEY_0: 'safe.directory',
-            GIT_CONFIG_VALUE_0: '*',
-          }),
-        }),
-      }),
+    const fns = template.findResources('AWS::Lambda::Function')
+    const cms = Object.values(fns).find(
+      (fn) => fn.Properties?.Environment?.Variables?.CANOPYCMS_WORKSPACE_ROOT === '/mnt/efs',
     )
+    expect(cms).toBeDefined()
+    // Deploy-proven 2026-07-24: these were dead config - simple-git refuses
+    // to pass env-based git config to spawned processes. safe.directory is
+    // set via `git config --system` in Dockerfile.cms.template instead.
+    expect(cms?.Properties.Environment.Variables.GIT_CONFIG_COUNT).toBeUndefined()
+    expect(cms?.Properties.Environment.Variables.GIT_CONFIG_KEY_0).toBeUndefined()
   })
 })
 
