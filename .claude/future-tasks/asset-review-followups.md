@@ -29,7 +29,7 @@ happy path.
   public object, and cached transforms stay readable via the raw route (an admin
   "delete" delists but doesn't stop serving, and always returns `{deleted:true}`).
   This is the "later worker GC hard-deletes unreferenced blobs" already noted in
-  [assets-media-system.md](assets-media-system.md); this is the concrete ticket for it.
+  [assets-media-system.md](resolved/assets-media-system.md); this is the concrete ticket for it.
   Decide the contract: synchronous public-object+original delete, or documented
   delist-only + async GC.
 - **Multipart `filename` not shape-validated** (`api/assets.ts` uploadProxied override)

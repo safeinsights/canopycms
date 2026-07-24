@@ -1,5 +1,13 @@
 # Problem: Dual React instances when consuming canopycms via `file:` references
 
+Status: **RESOLVED (verified 2026-07-24)** — the proposed fix shipped: `withCanopy()`
+in `canopycms-next` adds React module aliases resolving to the consumer's copy,
+`canopycms` declares `react`/`react-dom` as peerDependencies (`^18 || ^19`), and
+README documents the failure mode for `file:`/`npm link` adopters (README.md ~line
+120). Residual caveat from the original open question: Turbopack `resolveAlias`
+reliability with absolute paths was the risk area — if a `file:`-consumer crash
+recurs under Turbopack, reopen with that focus.
+
 ## Symptom
 
 When a Next.js app uses canopycms packages via `file:` references (e.g., `"canopycms": "file:../canopycms/packages/canopycms"`) and imports client-side hooks like `useCanopyPreview` from `canopycms/client`, React hooks crash at runtime:

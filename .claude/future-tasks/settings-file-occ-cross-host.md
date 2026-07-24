@@ -2,6 +2,15 @@
 
 **Priority: P2** — authorization data; same failure class the EFS epic fixed elsewhere
 
+**AUDIT CONFIRMED (2026-07-24, steps 1–2 done):** the blind spot is real. The
+`contentVersion` compare-and-swap is application-level only: `api/permissions.ts:121-133`
+(409 on mismatch) and `api/groups.ts:167,245` compare versions, but the writes are
+unlocked `atomicWriteFile` calls (`authorization/permissions/loader.ts:92`,
+`authorization/groups/loader.ts:122`) with no lockfile spanning load→compare→write and
+no use of `writeOccJsonFile`. Two Lambda containers can interleave in the TOCTOU
+window and silently lose an admin edit. Remaining work: steps 3–4 (apply the layered
+lock pattern; update docs/concurrency.md's per-resource table).
+
 ## Problem
 
 The settings workspace files (`permissions.json`, `groups.json`) use their own

@@ -8,7 +8,7 @@ and distributions must not be touched until production lands and the team is usi
 
 Apply the assets epic's Phase 2 wiring to docs-site-proto (this was PR 8 of
 `epic/assets-media-system` before re-scoping; design record:
-[assets-media-system.md](assets-media-system.md)):
+[assets-media-system.md](resolved/assets-media-system.md)):
 
 1. **AssetSupport (BYO-bucket mode)** onto `infrastructure/lib/artifacts-stack.ts`:
    the four `asset*` prefixes' lifecycle rules, bucket CORS for editor origins

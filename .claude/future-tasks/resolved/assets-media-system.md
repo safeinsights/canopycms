@@ -1,9 +1,16 @@
 # Assets / Media System — Design Record + Epic Plan
 
-Status: **Plan B approved 2026-07-21** (JP, after four review rounds). Implementation runs
-as the `epic/assets-media-system` epic (cut from `epic/efs-cross-process-concurrency`;
-rebase onto `main` once that epic merges). Approved plan snapshot lives in the epic PR;
-this file is the durable design record, including the rejected alternative (§ Considered).
+Status: **RESOLVED 2026-07-22** — implemented and merged as epic PR #126 (epic phases
+1–7), with CDK/deploy hardening follow-ups in PRs #128–#140 (deployment-test epic).
+Kept as the durable design record, including the rejected alternative (§ Considered).
+Spun-out remainders live in their own tasks: [asset-review-followups.md](../asset-review-followups.md)
+(deferred review items), [docs-site-assets-wiring.md](../docs-site-assets-wiring.md)
+(epic phase 8, deferred), [adopter-image-field-migration.md](../adopter-image-field-migration.md)
+(phase 9, ready), [finalize-transform-decoder-mismatch.md](../finalize-transform-decoder-mismatch.md)
+(live-deploy finding).
+
+Original status: **Plan B approved 2026-07-21** (JP, after four review rounds). Implementation ran
+as the `epic/assets-media-system` epic (cut from `epic/efs-cross-process-concurrency`).
 
 ## Problem
 
