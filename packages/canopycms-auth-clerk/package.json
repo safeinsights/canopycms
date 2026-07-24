@@ -1,6 +1,6 @@
 {
   "name": "canopycms-auth-clerk",
-  "version": "0.0.58",
+  "version": "0.0.59",
   "description": "Clerk authentication provider for CanopyCMS",
   "license": "MIT",
   "repository": {

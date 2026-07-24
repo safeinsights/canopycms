@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseArgs, resolveSyncSubcommand, parseAuthFlag } from './cli'
+import { parseArgs, resolveSyncSubcommand, parseAuthFlag, parseDualBuildFlag } from './cli'
 
 describe('parseArgs', () => {
   it('parses command as first positional arg', () => {
@@ -118,6 +118,36 @@ describe('parseAuthFlag', () => {
 
   it('throws when given a boolean (defensive — should not happen for a string-declared flag)', () => {
     expect(() => parseAuthFlag(true)).toThrow(/--auth must be "clerk" or "dev"/)
+  })
+})
+
+describe('parseDualBuildFlag', () => {
+  it('returns undefined when the flag was not provided', () => {
+    expect(parseDualBuildFlag(undefined)).toBeUndefined()
+  })
+
+  it('accepts a real boolean true (bare --dual-build)', () => {
+    expect(parseDualBuildFlag(true)).toBe(true)
+  })
+
+  it('accepts a real boolean false (--no-dual-build)', () => {
+    expect(parseDualBuildFlag(false)).toBe(false)
+  })
+
+  it('coerces the string "true" (--dual-build=true / --dual-build true)', () => {
+    expect(parseDualBuildFlag('true')).toBe(true)
+  })
+
+  it('coerces the string "false" (--dual-build=false)', () => {
+    expect(parseDualBuildFlag('false')).toBe(false)
+  })
+
+  it('throws for an unrecognized value', () => {
+    expect(() => parseDualBuildFlag('foo')).toThrow(/--dual-build must be a boolean/)
+  })
+
+  it('throws for an empty string (--dual-build passed with no value)', () => {
+    expect(() => parseDualBuildFlag('')).toThrow(/--dual-build must be a boolean/)
   })
 })
 

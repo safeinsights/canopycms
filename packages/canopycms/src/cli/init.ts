@@ -234,7 +234,18 @@ export async function initDeployAws(options: InitDeployOptions): Promise<void> {
   p.intro('CanopyCMS init-deploy aws')
 
   await writeFile(path.join(projectDir, 'Dockerfile.cms'), await dockerfileCms(), writeOpts)
-  await writeFile(path.join(projectDir, '.dockerignore'), await dockerignore(), writeOpts)
+  const dockerignoreWritten = await writeFile(
+    path.join(projectDir, '.dockerignore'),
+    await dockerignore(),
+    writeOpts,
+  )
+  if (!dockerignoreWritten) {
+    p.log.warn(
+      'Existing .dockerignore kept — verify it excludes .env* (secrets would otherwise ' +
+        'enter the build context) and does NOT exclude vendor/ (needed for `npm ci` with ' +
+        'file: deps).',
+    )
+  }
   await writeFile(
     path.join(projectDir, '.github/workflows/deploy-cms.yml'),
     await githubWorkflowCms(),

@@ -23,5 +23,13 @@ jobs:
 
       # TODO: Configure your ECR login, Docker build, push, and Lambda update
       # See https://canopycms.dev/deploy/aws for details
+      #
+      # Dockerfile.cms declares ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY, baked into
+      # the client bundle at build time — set a repository variable named
+      # NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY (Settings -> Secrets and variables ->
+      # Actions -> Variables) or the client ships with an empty publishable key.
       - name: Build CMS image
-        run: docker build -f Dockerfile.cms -t cms:latest .
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}" \
+            -f Dockerfile.cms -t cms:latest .
