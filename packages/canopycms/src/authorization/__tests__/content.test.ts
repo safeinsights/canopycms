@@ -150,6 +150,38 @@ describe('checkContentAccess', () => {
     expect(res.path.allowed).toBe(true)
     expect(res.path.reason).toBe('no_rule_match')
   })
+
+  // Level-scoped defaultPathAccess end-to-end: same unmatched path, read allowed but
+  // edit denied, via the object form flowing through checkContentAccess.
+  it('respects level-scoped defaultPathAccess: read allowed, edit denied', async () => {
+    const mockLoadPermissions = vi.fn().mockResolvedValue([])
+    const checkContent = createCheckContentAccess({
+      checkBranchAccess: createCheckBranchAccess('allow'),
+      loadPathPermissions: mockLoadPermissions,
+      defaultPathAccess: { read: 'allow', edit: 'deny' },
+      mode: 'dev',
+      getSettingsBranchRoot: () => Promise.resolve('/repo'),
+    })
+
+    const user = { type: 'authenticated' as const, userId: 'u1', groups: [] }
+    const readRes = await checkContent(
+      branchContext,
+      '/repo',
+      unsafeAsPhysicalPath('content/open/page.md'),
+      user,
+      'read',
+    )
+    expect(readRes.allowed).toBe(true)
+
+    const editRes = await checkContent(
+      branchContext,
+      '/repo',
+      unsafeAsPhysicalPath('content/open/page.md'),
+      user,
+      'edit',
+    )
+    expect(editRes.allowed).toBe(false)
+  })
 })
 
 describe('createContentAccessChecker', () => {

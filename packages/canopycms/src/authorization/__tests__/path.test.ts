@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { checkPathAccess, RESERVED_GROUPS } from '../'
+import { checkPathAccess, resolveDefaultPathAccess, RESERVED_GROUPS } from '../'
 import { unsafeAsPermissionPath } from '../test-utils'
 import type { PathPermission } from '../../config'
 import type { CanopyUser } from '../../user'
@@ -129,5 +129,67 @@ describe('path permissions', () => {
     })
     expect(result.allowed).toBe(false)
     expect(result.reason).toBe('denied_by_rule')
+  })
+
+  // Level-scoped defaultPathAccess (object form): unmatched paths resolve per level,
+  // with an absent level failing closed to 'deny'.
+  it('respects level-scoped defaultAccess: read allowed, edit denied when no rule matches', () => {
+    const allowed = checkPathAccess({
+      rules,
+      relativePath: unsafeAsPhysicalPath('content/open/page.md'),
+      user: createUser('user-x'),
+      defaultAccess: { read: 'allow', edit: 'deny' },
+      level: 'read',
+    })
+    expect(allowed.allowed).toBe(true)
+    expect(allowed.reason).toBe('no_rule_match')
+
+    const denied = checkPathAccess({
+      rules,
+      relativePath: unsafeAsPhysicalPath('content/open/page.md'),
+      user: createUser('user-x'),
+      defaultAccess: { read: 'allow', edit: 'deny' },
+      level: 'edit',
+    })
+    expect(denied.allowed).toBe(false)
+  })
+
+  it('fails closed to deny for a level absent from the defaultAccess object', () => {
+    const result = checkPathAccess({
+      rules,
+      relativePath: unsafeAsPhysicalPath('content/open/page.md'),
+      user: createUser('user-x'),
+      defaultAccess: { read: 'allow' },
+      level: 'review',
+    })
+    expect(result.allowed).toBe(false)
+  })
+
+  it('string-form defaultAccess=allow still applies to every level (regression)', () => {
+    const result = checkPathAccess({
+      rules,
+      relativePath: unsafeAsPhysicalPath('content/open/page.md'),
+      user: createUser('user-x'),
+      defaultAccess: 'allow',
+      level: 'review',
+    })
+    expect(result.allowed).toBe(true)
+  })
+})
+
+describe('resolveDefaultPathAccess', () => {
+  it('applies a string default to every level', () => {
+    expect(resolveDefaultPathAccess('allow', 'read')).toBe('allow')
+    expect(resolveDefaultPathAccess('allow', 'edit')).toBe('allow')
+    expect(resolveDefaultPathAccess('deny', 'review')).toBe('deny')
+  })
+
+  it('looks up a present level in the object form', () => {
+    expect(resolveDefaultPathAccess({ read: 'allow' }, 'read')).toBe('allow')
+  })
+
+  it('fails closed to deny for a level absent from the object form', () => {
+    expect(resolveDefaultPathAccess({ read: 'allow' }, 'edit')).toBe('deny')
+    expect(resolveDefaultPathAccess({}, 'read')).toBe('deny')
   })
 })
