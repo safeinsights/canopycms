@@ -35,8 +35,9 @@ const log = createDebugLogger({ prefix: 'GitManager' })
  * see Dockerfile.cms.template's `git config --system` line.
  */
 const GIT_ENV_PASSTHROUGH =
-  /^(PATH|HOME|USER|LANG|LC_[A-Z]+|TZ|TMPDIR|GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL|DATE)|GIT_TERMINAL_PROMPT|GIT_TRACE[A-Z_]*)$/
-function gitChildEnv(overrides: Record<string, string>): Record<string, string> {
+  /^(PATH|HOME|USER|LANG|LC_[A-Z]+|TZ|TMPDIR|GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL|DATE)|GIT_TERMINAL_PROMPT|GIT_TRACE[0-9A-Z_]*)$/
+/** @internal — exported for tests only. */
+export function gitChildEnv(overrides: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && GIT_ENV_PASSTHROUGH.test(key)) env[key] = value
@@ -163,10 +164,21 @@ export class GitManager {
     this.remote = options.remote ?? 'origin'
     this.skipIndexMarker = options.skipIndexMarker ?? false
     this.git = simpleGit({ baseDir: this.repoPath, ...gitOptions })
-    // `this.git` is for LOCAL working-tree ops only (its env is the allowlist
-    // from gitChildEnv, which intentionally drops HTTPS_PROXY/GIT_SSL_*/etc.).
-    // Do NOT route GitHub network I/O through it - the worker uses fresh
-    // full-env simpleGit() instances for push/fetch so proxy/TLS vars survive.
+    // `this.git` is for LOCAL working-tree ops in the intended prod topology,
+    // where `origin` resolves to a local path (an auto-detected/initialized
+    // `remote.git`) - its env is the allowlist from gitChildEnv, which
+    // intentionally drops HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND/etc. Do NOT
+    // route GitHub network I/O through it - the worker uses fresh full-env
+    // simpleGit() instances for push/fetch so proxy/TLS vars survive.
+    //
+    // Under the `allowNetworkRemoteInProd` escape hatch, `this.remote` CAN be
+    // a network URL, and this.git.fetch(this.remote, ...)/this.git.raw(['push',
+    // ...]) do hit it - those calls still run with the restricted allowlist
+    // env above, so they will drop HTTPS_PROXY/GIT_SSL_*/GIT_SSH_COMMAND. This
+    // is a known limitation of that escape hatch (tracked in
+    // .claude/future-tasks/network-escape-hatch-git-env.md), not a bug: full
+    // proxy/TLS-env support for `this.remote` ops when the escape hatch is on
+    // is still open work.
     //
     // Prevent git from traversing above repoPath to find a parent .git directory.
     // If the workspace's .git is corrupt/missing, git should fail rather than

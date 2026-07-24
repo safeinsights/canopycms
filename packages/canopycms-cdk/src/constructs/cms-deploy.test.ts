@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { App, Stack } from 'aws-cdk-lib'
 import { Template, Match } from 'aws-cdk-lib/assertions'
+import { RetentionDays } from 'aws-cdk-lib/aws-logs'
 import {
   aws_ecr as ecr,
   aws_lambda as lambda,
@@ -51,6 +52,21 @@ function synth(withDistribution = false, overrides: Partial<CanopyCmsServiceProp
   }
 
   return Template.fromStack(stack)
+}
+
+/**
+ * Concatenated JSON of every worker UserData-bearing resource in the
+ * template. M4 migrated the worker off AutoScalingGroup's deprecated
+ * LaunchConfiguration shorthand onto an explicit LaunchTemplate, so UserData
+ * now lives on AWS::EC2::LaunchTemplate instead of
+ * AWS::AutoScaling::LaunchConfiguration. Stringifying both keeps these
+ * assertions correct regardless of which resource type actually carries it.
+ */
+function workerUserDataBlobs(template: Template): string {
+  return (
+    JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration')) +
+    JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
+  )
 }
 
 describe('CanopyCmsService deploy blockers', () => {
@@ -356,11 +372,16 @@ describe('CanopyCmsService B1: Lambda and worker resolve the same EFS directory'
     // The worker instead mounts the filesystem ROOT at /mnt/efs and reaches
     // the same EFS:/workspace directory via /mnt/efs/workspace - assert its
     // UserData actually references that mount-root + workspace path.
-    const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
-    const userDataBlobs = Object.values(launchConfigs).map((lc) =>
-      JSON.stringify((lc.Properties as { UserData?: unknown }).UserData),
+    expect(workerUserDataBlobs(template)).toContain('/mnt/efs/workspace')
+    // Guard the other half of the split: the access point itself must be
+    // rooted at /workspace, or drift there (e.g. to /other) would silently
+    // desync from the Lambda/worker paths asserted above while still passing.
+    template.hasResourceProperties(
+      'AWS::EFS::AccessPoint',
+      Match.objectLike({
+        RootDirectory: Match.objectLike({ Path: '/workspace' }),
+      }),
     )
-    expect(userDataBlobs.some((blob) => blob.includes('/mnt/efs/workspace'))).toBe(true)
   })
 })
 
@@ -368,26 +389,26 @@ describe('CanopyCmsService B7: git dubious-ownership workaround', () => {
   it('does NOT rely on GIT_CONFIG_* env (simple-git hard-blocks env config; the fix is the image system gitconfig)', () => {
     const template = synth()
     const fns = template.findResources('AWS::Lambda::Function')
+    type LambdaProps = { Environment?: { Variables?: Record<string, unknown> } }
     const cms = Object.values(fns).find(
-      (fn) => fn.Properties?.Environment?.Variables?.CANOPYCMS_WORKSPACE_ROOT === '/mnt/efs',
+      (fn) =>
+        (fn.Properties as LambdaProps).Environment?.Variables?.CANOPYCMS_WORKSPACE_ROOT ===
+        '/mnt/efs',
     )
     expect(cms).toBeDefined()
+    const cmsProps = cms?.Properties as LambdaProps
     // Deploy-proven 2026-07-24: these were dead config - simple-git refuses
     // to pass env-based git config to spawned processes. safe.directory is
     // set via `git config --system` in Dockerfile.cms.template instead.
-    expect(cms?.Properties.Environment.Variables.GIT_CONFIG_COUNT).toBeUndefined()
-    expect(cms?.Properties.Environment.Variables.GIT_CONFIG_KEY_0).toBeUndefined()
+    expect(cmsProps.Environment?.Variables?.GIT_CONFIG_COUNT).toBeUndefined()
+    expect(cmsProps.Environment?.Variables?.GIT_CONFIG_KEY_0).toBeUndefined()
   })
 })
 
 describe('CanopyCmsService B8: worker region resolution', () => {
   it('writes an AWS_REGION line into the worker UserData env file', () => {
     const template = synth()
-    const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
-    const userDataBlobs = Object.values(launchConfigs).map((lc) =>
-      JSON.stringify((lc.Properties as { UserData?: unknown }).UserData),
-    )
-    expect(userDataBlobs.some((blob) => /AWS_REGION=/.test(blob))).toBe(true)
+    expect(/AWS_REGION=/.test(workerUserDataBlobs(template))).toBe(true)
   })
 })
 
@@ -431,9 +452,7 @@ describe('CanopyCmsService: boot ordering vs EFS mount targets', () => {
 describe('CanopyCmsService: EFS mount survives instance reboots', () => {
   it('writes an fstab entry and gates the worker unit on the mount', () => {
     const template = synth()
-    const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
-    const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
-    const all = blobs + ltBlobs
+    const all = workerUserDataBlobs(template)
     expect(all).toContain('>> /etc/fstab')
     expect(all).toContain('RequiresMountsFor=/mnt/efs')
   })
@@ -442,10 +461,167 @@ describe('CanopyCmsService: EFS mount survives instance reboots', () => {
 describe('CanopyCmsService worker UserData: ESM bundle bootstrapping', () => {
   it('installs unzip and writes a type:module package.json next to the ESM worker bundle', () => {
     const template = synth()
+    const all = workerUserDataBlobs(template)
+    expect(all).toContain('yum install -y git unzip')
+    expect(all).toContain('{\\"type\\":\\"module\\"}')
+  })
+})
+
+describe('CanopyCmsService M4: worker ASG uses a LaunchTemplate, not LaunchConfiguration', () => {
+  it('synth produces zero LaunchConfigurations and exactly one LaunchTemplate', () => {
+    // AWS accounts created after ~mid-2023 cannot create
+    // AWS::AutoScaling::LaunchConfiguration resources at all, so relying on
+    // AutoScalingGroup's deprecated instanceType/machineImage/... shorthand
+    // (which synthesizes one) would hard-fail `cdk deploy` for fresh adopter
+    // accounts. Pin the migration to an explicit LaunchTemplate.
+    const template = synth()
+    const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
+    const launchTemplates = template.findResources('AWS::EC2::LaunchTemplate')
+    expect(Object.keys(launchConfigs)).toHaveLength(0)
+    expect(Object.keys(launchTemplates)).toHaveLength(1)
+  })
+})
+
+describe('CanopyCmsService: worker CloudWatch log shipping', () => {
+  it('creates a dedicated worker log group named /canopycms/<stackName>/worker with 90-day default retention and DESTROY removal', () => {
+    const template = synth()
+    template.hasResourceProperties(
+      'AWS::Logs::LogGroup',
+      Match.objectLike({
+        LogGroupName: '/canopycms/TestStack/worker',
+        RetentionInDays: 90,
+      }),
+    )
+    template.hasResource('AWS::Logs::LogGroup', { DeletionPolicy: 'Delete' })
+  })
+
+  it('honors workerLogRetention to override the default retention', () => {
+    const template = synth(false, { workerLogRetention: RetentionDays.ONE_WEEK })
+    template.hasResourceProperties('AWS::Logs::LogGroup', Match.objectLike({ RetentionInDays: 7 }))
+  })
+
+  it('honors workerLogGroupName to override the default name', () => {
+    const template = synth(false, { workerLogGroupName: '/custom/worker' })
+    template.hasResourceProperties(
+      'AWS::Logs::LogGroup',
+      Match.objectLike({ LogGroupName: '/custom/worker' }),
+    )
+  })
+
+  it('grants the worker role a log-group-scoped IAM statement (CreateLogStream + PutLogEvents only), not a broad grant', () => {
+    const template = synth()
+    template.hasResourceProperties(
+      'AWS::IAM::Policy',
+      Match.objectLike({
+        PolicyDocument: Match.objectLike({
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Effect: 'Allow',
+              Action: ['logs:CreateLogStream', 'logs:PutLogEvents'],
+              Resource: Match.objectLike({
+                'Fn::GetAtt': Match.arrayWith([Match.stringLikeRegexp('WorkerLogs')]),
+              }),
+            }),
+          ]),
+        }),
+      }),
+    )
+  })
+
+  it('does not grant the worker role the broad CloudWatchAgentServerPolicy managed policy', () => {
+    const template = synth()
+    const roles = template.findResources('AWS::IAM::Role', {
+      Properties: Match.objectLike({ Description: 'CanopyCMS EC2 Worker role' }),
+    })
+    // Guard against a vacuous pass: if the role description ever changes, the
+    // filter would match nothing and the negative assertion below would
+    // "succeed" while pinning nothing.
+    expect(Object.keys(roles).length).toBeGreaterThan(0)
+    const managedPolicyArns = Object.values(roles).flatMap(
+      (role) => (role.Properties as { ManagedPolicyArns?: unknown[] }).ManagedPolicyArns ?? [],
+    )
+    const serialized = managedPolicyArns.map((arn) => JSON.stringify(arn)).join('\n')
+    expect(serialized).not.toContain('CloudWatchAgentServerPolicy')
+  })
+
+  it('wires the CloudWatch agent into UserData: installs it, points it at the worker log file, and starts it', () => {
+    const template = synth()
     const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
     const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
     const all = blobs + ltBlobs
-    expect(all).toContain('yum install -y git unzip')
-    expect(all).toContain('{\\"type\\":\\"module\\"}')
+    expect(all).toContain('yum install -y amazon-cloudwatch-agent')
+    expect(all).toContain('/var/log/canopy-worker/worker.log')
+    expect(all).toContain('\\"log_stream_name\\": \\"{instance_id}\\"')
+    expect(all).toContain('amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s')
+  })
+
+  it('references the WorkerLogs log group logical id as a deploy-time token in UserData (pins the implicit CFN dependency)', () => {
+    const template = synth()
+    const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
+    const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
+    const all = blobs + ltBlobs
+    // The agent config's log_group_name is interpolated from `this.workerLogGroup.logGroupName`,
+    // an unresolved CDK token - it must show up as an Fn::Join-embedded Ref to the WorkerLogs
+    // logical id (not a plain string), or the CFN dependency on the log group would be silently lost.
+    expect(/"Ref":"[^"]*WorkerLogs[^"]*"/.test(all)).toBe(true)
+  })
+
+  it('rewrites the systemd unit for file-based output (not journal) and installs logrotate', () => {
+    const template = synth()
+    const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
+    const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
+    const all = blobs + ltBlobs
+    expect(all).toContain('StandardOutput=append:/var/log/canopy-worker/worker.log')
+    expect(all).toContain('LogsDirectory=canopy-worker')
+    expect(all).not.toContain('StandardOutput=journal')
+    expect(all).toContain('/etc/logrotate.d/canopy-worker')
+  })
+
+  it('installs/starts the CloudWatch agent AFTER the worker service starts (best-effort: agent failure must not block the worker)', () => {
+    const template = synth()
+    const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
+    const launchTemplates = template.findResources('AWS::EC2::LaunchTemplate')
+    const blobs = [
+      ...Object.values(launchConfigs).map((r) => JSON.stringify(r)),
+      ...Object.values(launchTemplates).map((r) => JSON.stringify(r)),
+    ]
+    expect(blobs.length).toBeGreaterThan(0)
+    for (const blob of blobs) {
+      const startIdx = blob.indexOf('systemctl start canopy-worker')
+      // The failure-isolation invariant is that the ENTIRE agent block runs
+      // after worker start under set -euo pipefail — the yum install is the
+      // first (and most failure-prone: network + repo) command of that block,
+      // so pin it explicitly, not just the final ctl call.
+      const yumIdx = blob.indexOf('yum install -y amazon-cloudwatch-agent')
+      const agentIdx = blob.indexOf('amazon-cloudwatch-agent-ctl')
+      expect(startIdx).toBeGreaterThanOrEqual(0)
+      expect(yumIdx).toBeGreaterThanOrEqual(0)
+      expect(agentIdx).toBeGreaterThanOrEqual(0)
+      expect(startIdx).toBeLessThan(yumIdx)
+      expect(startIdx).toBeLessThan(agentIdx)
+    }
+  })
+
+  it('pre-creates /var/log/canopy-worker BEFORE starting the worker (systemd#27591 crash-loop guard)', () => {
+    const template = synth()
+    const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
+    const launchTemplates = template.findResources('AWS::EC2::LaunchTemplate')
+    const blobs = [
+      ...Object.values(launchConfigs).map((r) => JSON.stringify(r)),
+      ...Object.values(launchTemplates).map((r) => JSON.stringify(r)),
+    ]
+    expect(blobs.length).toBeGreaterThan(0)
+    for (const blob of blobs) {
+      // systemd opens StandardOutput=append: targets before it creates
+      // LogsDirectory= dirs (systemd#27591): if this mkdir ever moves after
+      // the first `systemctl start canopy-worker`, every fresh instance
+      // fails exec with 209/STDOUT and Restart=always crash-loops forever —
+      // the worker would be silently down while the ASG sees a healthy box.
+      const mkdirIdx = blob.indexOf('mkdir -p /var/log/canopy-worker')
+      const startIdx = blob.indexOf('systemctl start canopy-worker')
+      expect(mkdirIdx).toBeGreaterThanOrEqual(0)
+      expect(startIdx).toBeGreaterThanOrEqual(0)
+      expect(mkdirIdx).toBeLessThan(startIdx)
+    }
   })
 })

@@ -396,6 +396,7 @@ AWS CDK constructs for deploying CanopyCMS to AWS.
 - Lambda function (Docker image, EFS mount, private subnet, no internet)
 - Lambda Function URL (for CloudFront origin)
 - EC2 Worker (t4g.nano spot in ASG, public subnet, EFS mount, systemd service)
+- CloudWatch log group (`workerLogGroup`) for worker stdout/stderr, shipped via the amazon-cloudwatch-agent (file-based `/var/log/canopy-worker/worker.log`, not journald); worker IAM role gets a scoped `CreateLogStream`/`PutLogEvents` grant. Configurable via `workerLogRetention` (default `THREE_MONTHS`) and `workerLogGroupName` (default `/canopycms/<stackName>/worker`)
 
 **CanopyCmsDistribution creates** (optional):
 

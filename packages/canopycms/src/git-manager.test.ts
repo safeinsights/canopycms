@@ -7,7 +7,7 @@ import { simpleGit } from 'simple-git'
 
 import { flattenSchema } from './config'
 import { ContentStore } from './content-store'
-import { GitManager, GitConflictError } from './git-manager'
+import { GitManager, GitConflictError, gitChildEnv } from './git-manager'
 import { generateId } from './id'
 import { initTestRepo, openBareRepo } from './test-utils'
 
@@ -831,6 +831,26 @@ describe('GitManager.resolveRemoteUrl prod-mode network-remote guard', () => {
       GitManager.resolveRemoteUrl({
         mode: 'prod',
         remoteUrl: 'git@github.com:owner/repo.git',
+        baseBranch: 'main',
+      }),
+    ).rejects.toThrow(/network remote/i)
+  })
+
+  it('throws for a git transport-helper URL (ext::sh -c whoami) in prod mode', async () => {
+    await expect(
+      GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        remoteUrl: 'ext::sh -c whoami',
+        baseBranch: 'main',
+      }),
+    ).rejects.toThrow(/network remote/i)
+  })
+
+  it('throws for a bare scp-like remote URL with no @ (github.com:owner/repo.git) in prod mode', async () => {
+    await expect(
+      GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        remoteUrl: 'github.com:owner/repo.git',
         baseBranch: 'main',
       }),
     ).rejects.toThrow(/network remote/i)
@@ -1743,5 +1763,47 @@ describe('GitManager: spawned git receives allowlisted process.env (deploy-prove
     } finally {
       await fs.rm(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('gitChildEnv', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('passes through allowlisted basics (PATH, HOME) and author/tracing families', () => {
+    vi.stubEnv('PATH', '/usr/bin:/bin')
+    vi.stubEnv('HOME', '/home/probe')
+    vi.stubEnv('GIT_AUTHOR_NAME', 'Env Probe')
+    vi.stubEnv('GIT_TRACE2', '1')
+
+    const env = gitChildEnv({})
+
+    expect(env.PATH).toBe('/usr/bin:/bin')
+    expect(env.HOME).toBe('/home/probe')
+    expect(env.GIT_AUTHOR_NAME).toBe('Env Probe')
+    expect(env.GIT_TRACE2).toBe('1')
+  })
+
+  it('drops non-allowlisted vars (GIT_SSH_COMMAND, HTTPS_PROXY, GIT_CONFIG_COUNT, GIT_EDITOR)', () => {
+    vi.stubEnv('GIT_SSH_COMMAND', 'ssh -oStrictHostKeyChecking=no')
+    vi.stubEnv('HTTPS_PROXY', 'http://proxy.example:8080')
+    vi.stubEnv('GIT_CONFIG_COUNT', '1')
+    vi.stubEnv('GIT_EDITOR', 'vim')
+
+    const env = gitChildEnv({})
+
+    expect(env.GIT_SSH_COMMAND).toBeUndefined()
+    expect(env.HTTPS_PROXY).toBeUndefined()
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined()
+    expect(env.GIT_EDITOR).toBeUndefined()
+  })
+
+  it('overrides win over process.env values', () => {
+    vi.stubEnv('PATH', '/usr/bin:/bin')
+
+    const env = gitChildEnv({ PATH: '/overridden/path' })
+
+    expect(env.PATH).toBe('/overridden/path')
   })
 })

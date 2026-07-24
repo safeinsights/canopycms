@@ -1,6 +1,6 @@
 {
   "name": "canopycms-next",
-  "version": "0.0.58",
+  "version": "0.0.59",
   "description": "Next.js adapter for CanopyCMS",
   "license": "MIT",
   "repository": {
@@ -42,6 +42,7 @@
     }
   },
   "scripts": {
+    "prepack": "pnpm run build",
     "build": "tsc -p tsconfig.build.json && esbuild src/config.ts --bundle --platform=node --packages=external --external:next --format=cjs --outfile=dist/config.cjs && esbuild src/config.ts --bundle --platform=node --packages=external --external:next --format=esm --outfile=dist/config.mjs",
     "lint": "eslint src/",
     "test": "vitest run --reporter=dot",
