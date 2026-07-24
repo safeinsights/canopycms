@@ -1507,9 +1507,9 @@ In production (`mode: 'prod'`), permission and group changes are stored on a sep
 
 4. **Deployment-Specific:** Each deployment environment (prod, staging, dev) has its own independent settings branch
 
-5. **Optimistic Locking:** Settings files include a `contentVersion` field that prevents concurrent admin updates from overwriting each other. If a version conflict is detected, the API returns a 409 status code.
+5. **Concurrency-Safe Writes:** Permissions and groups files are written through a **mutate-callback** contract -- `mutatePermissionsFile`/`mutateGroupsFile` (`authorization/`), built on `authorization/settings-file-store.ts`'s `mutateSettingsJsonFile` -- rather than a plain `save*()` function. This closes the load -> compare -> write TOCTOU window under the layered lock + OCC stack described in [docs/concurrency.md](docs/concurrency.md). The old hand-rolled `contentVersion` field is gone; the OCC `version` field is now the single counter. Your `mutate` callback receives the freshly-loaded file and its current `version`, and **must be safe to call more than once** -- it re-runs against freshly reloaded state on every OCC retry attempt. Throw `SettingsVersionConflictError` from inside the callback when an app-level `expectedContentVersion` doesn't match; the API translates that to a 409.
 
-6. **Cross-Process Locking:** `SettingsWorkspaceManager` uses two layers of locking for safe concurrent access on shared filesystems like EFS:
+6. **Cross-Process Workspace Locking:** Separately from the per-file write locking in item 5, `SettingsWorkspaceManager` uses two layers of locking for safe concurrent _workspace provisioning_ on shared filesystems like EFS:
    - **In-memory Promise lock:** Prevents redundant async calls within the same Node.js process (Lambda request lifecycle)
    - **File-based lock (`wx` flag):** Uses `fs.open(path, 'wx')` (O_CREAT|O_EXCL) for atomic cross-process synchronization. Stale locks (>30s) are automatically cleaned up.
 
@@ -1529,28 +1529,29 @@ export default defineCanopyConfig({
 
 ```typescript
 // Internal flow when updating permissions in prod mode
-// 1. Check current contentVersion for optimistic locking
-const currentFile = await loadPermissionsFile(branchRoot, mode)
-if (
-  expectedContentVersion !== undefined &&
-  currentFile?.contentVersion !== expectedContentVersion
-) {
-  return { status: 409, error: 'Permissions were modified by another user' }
-}
 
-// 2. Get settings branch name from deploymentName config
+// 1. Get settings branch name from deploymentName config
 const settingsBranchName = `canopycms-settings-${config.deploymentName}`
 const settingsRoot = getBranchRoot(settingsBranchName)
 
-// 3. SettingsWorkspaceManager ensures git workspace (dual-layer locking)
-const manager = new SettingsWorkspaceManager(config)
-await manager.ensureGitWorkspace({ settingsRoot, branchName, mode, remoteUrl })
+// 2. mutatePermissionsFile runs load -> mutate -> write atomically under the
+// cross-host layered lock (see docs/concurrency.md) -- no separate pre-read,
+// so there's no TOCTOU window between the version check and the write. The
+// callback must be safe to call more than once (re-run on every OCC retry).
+await mutatePermissionsFile(settingsRoot, mode, (currentFile, version) => {
+  if (expectedContentVersion !== undefined && expectedContentVersion !== version) {
+    throw new SettingsVersionConflictError()
+  }
 
-// 4. Commits changes with incremented version
-const newContentVersion = (currentFile?.contentVersion ?? 0) + 1
-await savePermissions(settingsRoot, permissions, userId, mode, newContentVersion)
+  return {
+    updatedAt: new Date().toISOString(),
+    updatedBy: userId,
+    pathPermissions: permissions,
+  }
+})
 
-// 5. commitToSettingsBranch handles commit + push + PR (dual-path)
+// 3. commitToSettingsBranch handles commit + push + PR (dual-path), OUTSIDE
+// the write lock -- git I/O is comparatively slow, see settings-file-store.ts
 const result = await services.commitToSettingsBranch({
   branchRoot: settingsRoot,
   files: 'permissions.json', // At root of orphan branch
@@ -1584,6 +1585,26 @@ git reset HEAD .canopy-dev/
 **Common mistake:** Forgetting to add `.canopy*/` to `.gitignore` when setting up a new app.
 
 **Fix:** Always add `.canopy*/` to your `.gitignore`. The `npx canopycms init` command does this automatically.
+
+### Schema Mutations (`SchemaOps`)
+
+`SchemaOps` (`schema/schema-store.ts`) is the CRUD layer behind the schema-editing API (`api/schema.ts`): create/update/delete collections, add/update/remove entry types, reorder. All of its public mutators run under a single **non-reentrant, coarse per-branch lock** (`withSchemaLock`, keyed on `{branchRoot}/.canopy-meta/schema`). See [docs/concurrency.md](docs/concurrency.md) for why `.collection.json` deliberately carries no OCC `version`/lockfile of its own (it's an adopter-visible, git-committed file that rebases rewrite wholesale).
+
+**Gotcha:** because the lock is non-reentrant, a public mutator must never call _another_ public mutator from inside its own `withSchemaLock` critical section -- that deadlocks waiting on a lock it already holds. Each public mutator (`createCollection`, `updateCollection`, `deleteCollection`, `addEntryType`, ...) has a private `*Inner` counterpart (`createCollectionInner`, `updateCollectionInner`, ...) that does the real work _without_ acquiring the lock. When one mutation needs another's logic, call the `*Inner` method directly:
+
+```typescript
+// Inside SchemaOps -- already holding the lock via the public entrypoint.
+// updateOrderInner reuses updateCollectionInner for non-root collections:
+private async updateOrderInner(collectionPath: LogicalPath, order: string[]): Promise<void> {
+  // ...
+  await this.updateCollectionInner(collectionPath, { order }) // safe: no lock acquisition
+
+  // NEVER do this instead -- re-enters withSchemaLock and deadlocks:
+  // await this.updateCollection(collectionPath, { order })
+}
+```
+
+When adding a new mutator, follow the existing pattern: a thin public method that wraps the real logic in `withSchemaLock` and invalidates the schema cache afterward (outside the lock, per `withSchemaLock`'s doc comment), plus a private `*Inner` method other mutators can call directly.
 
 ### Dev Content Sync (`dev.contentSync`)
 
@@ -1821,6 +1842,38 @@ it('integrates with real services', async () => {
 | ------------------------------ | --------------------------------- | ------------------------------------- | ------------------------------------------- |
 | `createMockServices()`         | Unit tests, simple scenarios      | Fast, no filesystem access            | Must manually set `entrySchemaRegistry: {}` |
 | `await createCanopyServices()` | Integration tests, schema testing | Tests real behavior, loads meta files | Slower, requires test workspace             |
+
+### Testing Settings Mutation Handlers (`createMockSettingsMutation`)
+
+Handlers for the permissions/groups APIs (`api/permissions.ts`, `api/groups.ts`) call `mutatePermissionsFile`/`mutateGroupsFile` -- a mutate-callback contract on top of `authorization/settings-file-store.ts`'s `mutateSettingsJsonFile` (see [docs/concurrency.md](docs/concurrency.md)) -- rather than a plain `save*()` function. `createMockSettingsMutation()` from `test-utils/api-test-helpers.ts` mirrors that contract closely enough for handler-level tests: it invokes your real mutator callback against a configured `currentFile`/version, captures whatever payload the callback returns, and lets anything the callback throws (`SettingsVersionConflictError`, a groups validation error, ...) propagate untouched -- exactly like the real implementation.
+
+```typescript
+import { createMockSettingsMutation } from '../test-utils/api-test-helpers'
+import * as permissionsLoader from '../authorization'
+
+const settingsMutation = createMockSettingsMutation({ currentFile: null })
+vi.mocked(permissionsLoader.mutatePermissionsFile).mockImplementation(
+  settingsMutation.impl as typeof permissionsLoader.mutatePermissionsFile,
+)
+
+const result = await updatePermissions(mockContext, req, { permissions: newPermissions })
+
+expect(result.ok).toBe(true)
+expect(settingsMutation.getPayload()).toMatchObject({
+  updatedBy: 'admin-1',
+  pathPermissions: newPermissions,
+})
+```
+
+**Does NOT model lock contention.** For a "settings are busy" (`SettingsFileConflictError`) test case, mock the rejection directly instead of going through the mutation helper:
+
+```typescript
+vi.mocked(permissionsLoader.mutatePermissionsFile).mockRejectedValueOnce(
+  new SettingsFileConflictError(),
+)
+```
+
+See `api/permissions.test.ts` and `api/groups.test.ts` for further examples.
 
 ### Testing with Schema Meta Files
 

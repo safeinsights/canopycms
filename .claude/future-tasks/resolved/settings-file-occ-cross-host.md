@@ -2,6 +2,17 @@
 
 **Priority: P2** — authorization data; same failure class the EFS epic fixed elsewhere
 
+**RESOLVED (2026-07-24, branch claude/settings-schema-protection-3b78af):** steps 3–4
+done. `authorization/settings-file-store.ts` now runs every permissions/groups write
+through the full layered stack (`withLock` → `withOccFileLock` → `withOccRetry` →
+`writeOccJsonFile`); the old app-level `contentVersion` scheme was unified into the OCC
+`version` (advisory here — the settings branch is git-committed, merges can rewrite the
+counter; the lockfile is the cross-host guarantee). Handlers run the
+`expectedContentVersion` compare inside the mutator under the lock; GETs now return
+`version` and the editor hooks send it (conflicts surface via the existing error
+notification — richer conflict UX tracked in `../settings-conflict-resolution-ux.md`).
+docs/concurrency.md table updated.
+
 ## Problem
 
 The settings workspace files (`permissions.json`, `groups.json`) use their own
