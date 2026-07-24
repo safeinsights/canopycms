@@ -5,7 +5,7 @@ CanopyCMS prod-mode stack was deployed to the sandbox account (905418271997 /
 us-east-1, `canopy` bootstrap) for the first time and exercised end-to-end against
 real AWS + real Clerk. Original kickoff prompt preserved at the bottom.
 
-## Outcome: it works end-to-end — after 16 fixes
+## Outcome: it works end-to-end — after 13 PRs of fixes
 
 Everything the kickoff asked to prove was proven on the live deployment
 (CloudFront `https://d1rxq1tjvketcw.cloudfront.net`). None of it worked on the first
@@ -41,7 +41,7 @@ try; the value of the test was the defect list below.
 9. **Static rebuild** — `CANOPY_BUILD=static` build of merged `main` contains the
    edited title in `out/index.html`.
 
-## Fixes required to get there (16 PRs, all on `epic/deployment-test`)
+## Fixes required to get there (13 PRs, all on `epic/deployment-test`)
 
 Pre-deploy design review, dogfooding, template review, and the live deploy each
 caught defects unit tests could not:
@@ -114,8 +114,8 @@ swept the CDK app); CDK `generateLaunchTemplateInsteadOfLaunchConfig` feature fl
   (Contents + PR RW). GraphQL draft-conversion (withdraw/request-changes) was not
   exercised and is the known fine-grained-PAT risk; a real deploy should use a
   dedicated machine account. `middleware.ts` freezes auth mode at init (documented
-  footgun). `deploying-to-aws.md` still feeds `fromSecretNameV2` partial ARNs into
-  `secretsArns` (silent IAM mismatch) — PR-D should fix.
+  footgun). (`deploying-to-aws.md`'s `fromSecretNameV2` partial-ARN trap was fixed in
+  this epic's docs pass.)
 - **Minor:** finalize accepts a PNG the transform Lambda's libpng rejects (broken
   thumbnail, clean 422); "TODO: replace with real modified file list" placeholder
   visible in the All-Files menu.
