@@ -78,31 +78,17 @@ export class CanopyCmsDistribution extends Construct {
     // the OAC and grants CloudFront lambda:InvokeFunctionUrl automatically.
     const origin = origins.FunctionUrlOrigin.withOriginAccessControl(props.functionUrl)
 
-    // Cache policy for API/editor routes: caching is fully disabled (all
-    // TTLs 0), so headerBehavior must stay `none()` - it governs the CACHE
-    // KEY, not what reaches the origin. Two concrete failure modes if it
-    // doesn't:
-    //   - CloudFront REJECTS any cache policy that allowlists `Authorization`
-    //     while all TTLs are 0 - a deploy-time synth/deploy failure (see
-    //     aws/aws-cdk#16977).
-    //   - Allowlisting `Host` here would forward the viewer's Host header to
-    //     the Lambda Function URL origin, which breaks the OAC-signed
-    //     Function URL (the managed `ALL_VIEWER_EXCEPT_HOST_HEADER` origin
-    //     request policy below exists precisely to strip that header).
-    // `Cookie` doesn't belong in headerBehavior either - cookies are
-    // controlled by cookieBehavior (all(), below). None of this reduces what
-    // the origin actually receives: defaultBehavior pairs this policy with
-    // the `ALL_VIEWER_EXCEPT_HOST_HEADER` origin request policy, which
-    // forwards the full viewer request (headers/cookies/query string, minus
-    // Host) to the origin regardless of the (empty) cache key.
-    const noCachePolicy = new cloudfront.CachePolicy(this, 'NoCachePolicy', {
-      defaultTtl: Duration.seconds(0),
-      maxTtl: Duration.seconds(0),
-      minTtl: Duration.seconds(0),
-      headerBehavior: cloudfront.CacheHeaderBehavior.none(),
-      queryStringBehavior: cloudfront.CacheQueryStringBehavior.all(),
-      cookieBehavior: cloudfront.CacheCookieBehavior.all(),
-    })
+    // Cache policy for API/editor routes: AWS's managed CACHING_DISABLED
+    // policy. Deploy-proven (deploy-test epic, 2026-07-23): CloudFront
+    // rejects ANY non-none cache-key setting on a caching-disabled policy -
+    // Authorization in a header allowlist (aws/aws-cdk#16977) but also
+    // cookieBehavior/queryStringBehavior `all()` ("The parameter
+    // CookieBehavior is invalid for policy with caching disabled"). With
+    // TTL 0 the cache key is meaningless anyway; the origin still receives
+    // the full viewer request (headers/cookies/query string, minus Host -
+    // forwarding Host would break the OAC-signed Function URL) via the
+    // ALL_VIEWER_EXCEPT_HOST_HEADER origin request policy on the behavior.
+    const noCachePolicy = cloudfront.CachePolicy.CACHING_DISABLED
 
     // Cache policy for static assets
     const staticCachePolicy = new cloudfront.CachePolicy(this, 'StaticCachePolicy', {

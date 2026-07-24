@@ -124,17 +124,27 @@ describe('CanopyCmsDistribution B5/B9: cache policy cache-key hygiene', () => {
       expect(headersConfig.Headers).toBeUndefined()
     }
 
-    // The no-cache policy (all TTLs 0) is the one that carries the cache
-    // key's cookie/query-string behavior for API/editor routes.
-    const noCachePolicy = configs.find((config) => config.MinTTL === 0 && config.MaxTTL === 0)
-    expect(noCachePolicy).toBeDefined()
-    expect(
-      noCachePolicy?.ParametersInCacheKeyAndForwardedToOrigin.CookiesConfig.CookieBehavior,
-    ).toBe('all')
-    expect(
-      noCachePolicy?.ParametersInCacheKeyAndForwardedToOrigin.QueryStringsConfig
-        .QueryStringBehavior,
-    ).toBe('all')
+    // Deploy-proven (deploy-test epic, 2026-07-23): CloudFront rejects ANY
+    // non-none cache-key setting on a caching-disabled policy, so no custom
+    // TTL-0 policy may exist at all - the default behavior must use the
+    // managed CACHING_DISABLED policy instead.
+    const ttlZeroPolicies = configs.filter((config) => config.MinTTL === 0 && config.MaxTTL === 0)
+    expect(ttlZeroPolicies).toHaveLength(0)
+  })
+
+  it('the default behavior uses the managed CACHING_DISABLED cache policy', () => {
+    const template = synth(true)
+    template.hasResourceProperties(
+      'AWS::CloudFront::Distribution',
+      Match.objectLike({
+        DistributionConfig: Match.objectLike({
+          DefaultCacheBehavior: Match.objectLike({
+            // Managed "CachingDisabled" cache policy id.
+            CachePolicyId: '4135ea2d-6df8-44a3-9df3-4b5a84be39ad',
+          }),
+        }),
+      }),
+    )
   })
 
   it('the default behavior forwards the full viewer request to the origin via the ALL_VIEWER_EXCEPT_HOST_HEADER managed origin request policy', () => {
