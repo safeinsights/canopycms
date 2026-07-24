@@ -85,6 +85,20 @@ export default withCanopy({
 - `npm run build` → static export for S3 (public site)
 - `CANOPY_BUILD=cms npm run build` → standalone server for Lambda (CMS)
 
+For a content route shared by both builds (e.g. `app/[slug]/`, or a fixed page like the home route), don't use a single `page.tsx`: `output: 'export'` requires `dynamicParams = false`, but on the CMS Lambda that makes an unknown slug throw Next's internal `NoFallbackError` (a 500) before your page's `notFound()` runs — and Next statically parses route-segment config, so the value can't be a conditional expression. The CMS build also must not prerender content pages: a build-time prerender serves build-time content to anonymous visitors (bypassing runtime path ACLs), and rendering a not-prerendered slug as on-demand static generation makes the request-scoped read throw `DYNAMIC_SERVER_USAGE` (also a 500). Split the page instead:
+
+```tsx
+// app/[slug]/slug-page.tsx — shared implementation
+// app/[slug]/page.static.tsx — static export build:
+//   re-exports default + generateStaticParams, plus `dynamicParams = false`
+// app/[slug]/page.server.tsx — CMS build: re-exports default only,
+//   plus `export const dynamic = 'force-dynamic'` (no generateStaticParams)
+```
+
+`withCanopy(nextConfig, { staticBuild })` picks the matching variant per build (see [README Dual-Build Sites](../README.md#dual-build-sites-static-export--cms-server) for the full example).
+
+Anonymous/public read on the CMS Lambda also needs `defaultPathAccess: { read: 'allow' }` in `canopycms.config.ts` (see [README Permission Model](../README.md#permission-model)); without it, forbidden reads render a 404 instead of a 500, but genuinely public content still needs the explicit allow.
+
 ### Preview Support
 
 Add `useCanopyPreview` to your page components so the editor can show live previews:
