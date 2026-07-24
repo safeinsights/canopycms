@@ -29,6 +29,11 @@ RUN npm run build
 FROM public.ecr.aws/docker/library/node:20-slim AS runner
 # Git is required by CanopyCMS for branch operations
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+# The runtime user's uid differs from the uid that owns EFS workspace files
+# (access point forces 1000); git >= 2.35.2 refuses "dubious ownership".
+# safe.directory must live in PROTECTED configuration - system config is the
+# most robust scope (env-based GIT_CONFIG_* can be stripped by spawn wrappers).
+RUN git config --system safe.directory '*'
 # Lambda Web Adapter converts Lambda events to HTTP
 COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1 /lambda-adapter /opt/extensions/lambda-adapter
 WORKDIR /app

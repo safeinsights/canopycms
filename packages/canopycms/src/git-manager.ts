@@ -19,6 +19,31 @@ import { acquireProvisioningLock } from './utils/provisioning-lock'
 
 const log = createDebugLogger({ prefix: 'GitManager' })
 
+/**
+ * Child environment for spawned git processes. simple-git's .env() REPLACES
+ * the child env entirely (deploy-proven 2026-07-24: every Lambda git spawn
+ * failed with "dubious ownership" on the uid-1000-owned EFS clones because
+ * the child env lost the runtime's git variables). Spreading ALL of
+ * process.env trips simple-git's unsafe-variable blocklist on hosts where
+ * GIT_EDITOR/GIT_SSH_COMMAND etc. are set - so pass through a deterministic
+ * ALLOWLIST of process basics + author/tracing families.
+ *
+ * GIT_CONFIG_* is deliberately NOT passed through: simple-git hard-blocks
+ * env-based git config (allowUnsafeConfigEnvCount) since it can inject
+ * arbitrary settings. Host-level config like the safe.directory workaround
+ * for uid-mismatched EFS clones belongs in the image's SYSTEM gitconfig -
+ * see Dockerfile.cms.template's `git config --system` line.
+ */
+const GIT_ENV_PASSTHROUGH =
+  /^(PATH|HOME|USER|LANG|LC_[A-Z]+|TZ|TMPDIR|GIT_(AUTHOR|COMMITTER)_(NAME|EMAIL|DATE)|GIT_TERMINAL_PROMPT|GIT_TRACE[A-Z_]*)$/
+function gitChildEnv(overrides: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined && GIT_ENV_PASSTHROUGH.test(key)) env[key] = value
+  }
+  return { ...env, ...overrides }
+}
+
 // In-memory lock to prevent concurrent remote.git initialization
 // Maps remotePath -> Promise<void> to serialize access
 const remoteInitLocks = new Map<string, Promise<void>>()
@@ -141,7 +166,7 @@ export class GitManager {
     // Prevent git from traversing above repoPath to find a parent .git directory.
     // If the workspace's .git is corrupt/missing, git should fail rather than
     // silently operating on the host repo above.
-    this.git.env('GIT_CEILING_DIRECTORIES', path.dirname(this.repoPath))
+    this.git.env(gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(this.repoPath) }))
   }
 
   static async cloneRepo(
@@ -612,7 +637,7 @@ export class GitManager {
     try {
       const checkGit = simpleGit({ baseDir: options.workspacePath })
       // Ceiling prevents git from traversing to a parent repo if .git is corrupt
-      checkGit.env('GIT_CEILING_DIRECTORIES', path.dirname(options.workspacePath))
+      checkGit.env(gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(options.workspacePath) }))
       await checkGit.raw(['rev-parse', '--git-dir'])
       repoExists = true
     } catch {
@@ -669,7 +694,7 @@ export class GitManager {
       // global gitconfig, and internal commits (e.g., orphan branch init) need one.
       // The real bot author is set later via ensureAuthor() before user-facing commits.
       const freshGit = simpleGit({ baseDir: options.workspacePath })
-      freshGit.env('GIT_CEILING_DIRECTORIES', path.dirname(options.workspacePath))
+      freshGit.env(gitChildEnv({ GIT_CEILING_DIRECTORIES: path.dirname(options.workspacePath) }))
       await freshGit.addConfig('canopycms.managed', 'true')
       await freshGit.addConfig('user.name', options.gitBotAuthorName)
       await freshGit.addConfig('user.email', options.gitBotAuthorEmail)

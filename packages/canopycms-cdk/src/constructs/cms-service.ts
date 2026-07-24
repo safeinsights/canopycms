@@ -240,14 +240,12 @@ export class CanopyCmsService extends Construct {
         // or the Lambda and worker silently operate on different directories.
         CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs',
         CANOPY_AUTH_CACHE_PATH: '/mnt/efs/.cache',
-        // B7: git >= 2.35.2 refuses to operate on repos owned by another uid;
-        // the access point above forces uid/gid 1000 on EFS files, but Lambda
-        // runs container images as its own non-1000 user. Scoped to this
-        // function's env only (not baked into the image) and works regardless
-        // of the runtime uid.
-        GIT_CONFIG_COUNT: '1',
-        GIT_CONFIG_KEY_0: 'safe.directory',
-        GIT_CONFIG_VALUE_0: '*',
+        // B7 note: git >= 2.35.2 refuses repos owned by another uid (the
+        // access point forces uid 1000; Lambda containers run as a different
+        // user). Env-based GIT_CONFIG_* CANNOT fix this - simple-git
+        // hard-blocks env config (deploy-proven 2026-07-24). The fix lives in
+        // the image: Dockerfile.cms.template runs
+        // `git config --system safe.directory '*'`.
         ...props.environment,
       },
     })
