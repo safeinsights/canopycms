@@ -131,10 +131,13 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     consoleSpy.restore()
   })
 
-  it('logs loudly and skips the refresh when the base workspace has uncommitted changes', async () => {
-    const { basePath, pushToRemote } = await createBaseWorkspaceSetup(tmpDir)
+  it('logs loudly and skips the refresh when the base workspace has uncommitted tracked changes', async () => {
+    const { basePath, pushToRemote } = await createBaseWorkspaceSetup(tmpDir, {
+      initialFiles: { 'tracked.txt': 'original' },
+    })
     await pushToRemote({ 'remote-update.txt': 'from origin' })
-    await fs.writeFile(path.join(basePath, 'dirty.txt'), 'uncommitted editor draft')
+    // Modify a TRACKED file — untracked files no longer block (see next test)
+    await fs.writeFile(path.join(basePath, 'tracked.txt'), 'uncommitted editor draft')
 
     const consoleSpy = mockConsole()
     const worker = makeWorker(tmpDir)
@@ -144,10 +147,30 @@ describe('CmsWorker.refreshBaseBranchWorkspace()', () => {
     consoleSpy.restore()
 
     // Dirty file untouched, remote content never fetched/merged in.
-    await expect(fs.readFile(path.join(basePath, 'dirty.txt'), 'utf8')).resolves.toBe(
+    await expect(fs.readFile(path.join(basePath, 'tracked.txt'), 'utf8')).resolves.toBe(
       'uncommitted editor draft',
     )
     await expect(fs.stat(path.join(basePath, 'remote-update.txt'))).rejects.toThrow()
+  })
+
+  it('still fast-forwards when only untracked files are present (no silent wedge)', async () => {
+    // A stray untracked file (e.g. runtime metadata missing from
+    // .git/info/exclude) must not block the refresh forever — only tracked
+    // changes indicate content that a fast-forward could interact with.
+    const { basePath, pushToRemote } = await createBaseWorkspaceSetup(tmpDir)
+    await pushToRemote({ 'remote-update.txt': 'from origin' })
+    await fs.writeFile(path.join(basePath, 'stray-untracked.txt'), 'runtime artifact')
+
+    const worker = makeWorker(tmpDir)
+    await refreshBase(worker)
+
+    // Refresh proceeded: remote content arrived, untracked file untouched.
+    await expect(fs.readFile(path.join(basePath, 'remote-update.txt'), 'utf8')).resolves.toBe(
+      'from origin',
+    )
+    await expect(fs.readFile(path.join(basePath, 'stray-untracked.txt'), 'utf8')).resolves.toBe(
+      'runtime artifact',
+    )
   })
 
   it('fast-forwards when behind and invalidates the content-index cache', async () => {

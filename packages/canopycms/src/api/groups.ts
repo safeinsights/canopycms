@@ -4,7 +4,6 @@ import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { CanopyGroupId } from '../types'
 import {
   type InternalGroup,
-  loadInternalGroups,
   loadGroupsFile,
   deriveInternalGroups,
   mutateGroupsFile,
@@ -132,10 +131,11 @@ const getInternalGroupsHandler = async (
     }
 
     const { context, mode } = result
-    const [groups, file] = await Promise.all([
-      loadInternalGroups(context.branchRoot, mode, ctx.services.bootstrapAdminIds),
-      loadGroupsFile(context.branchRoot, mode),
-    ])
+    // Single read: deriving groups and version from one snapshot keeps the
+    // returned OCC version consistent with the returned groups (two reads
+    // could straddle a cross-host write and defeat the version check).
+    const file = await loadGroupsFile(context.branchRoot, mode)
+    const groups = deriveInternalGroups(file?.groups ?? [], ctx.services.bootstrapAdminIds)
 
     // NOTE: groups always includes the derived reserved groups (Admins,
     // Reviewers) even when the file doesn't exist yet, so `version: 0` with

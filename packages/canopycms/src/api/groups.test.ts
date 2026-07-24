@@ -105,8 +105,7 @@ describe('groups API', () => {
       })
     })
 
-    it('should return empty array and version 0 when groups file does not exist', async () => {
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue([])
+    it('should return derived reserved groups and version 0 when groups file does not exist', async () => {
       vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue(null)
 
       const req: ApiRequest<undefined> = {
@@ -122,7 +121,10 @@ describe('groups API', () => {
       expect(result.ok).toBe(true)
       expect(result.status).toBe(200)
       if (result.ok) {
-        expect(result.data?.groups).toEqual([])
+        // Even with no file, the handler derives the reserved Admins/Reviewers
+        // groups (deriveInternalGroups is real here) — version 0 with a
+        // non-empty groups array is the documented legitimate combination
+        expect(result.data?.groups).toEqual(authorization.deriveInternalGroups([]))
         expect(result.data?.version).toBe(0)
       }
     })
@@ -136,7 +138,6 @@ describe('groups API', () => {
         },
         { id: RESERVED_GROUPS.REVIEWERS as CanopyGroupId, name: 'Reviewers', members: [] },
       ]
-      vi.mocked(groupsLoader.loadInternalGroups).mockResolvedValue(derivedGroups)
       vi.mocked(groupsLoader.loadGroupsFile).mockResolvedValue(groupsFile(derivedGroups, 7))
 
       const req: ApiRequest<undefined> = {

@@ -123,7 +123,9 @@ describe('BranchMetadataFileManager', () => {
         },
       })
 
-      // Then update
+      // Then update (after a real tick so the strictly-greater assertion below
+      // can't collide with a same-millisecond save)
+      await new Promise((resolve) => setTimeout(resolve, 5))
       const updated = await meta.save({
         branch: {
           name: 'feature/y',
@@ -138,8 +140,10 @@ describe('BranchMetadataFileManager', () => {
       expect(updated.branch.pullRequestNumber).toBe(10)
       expect(updated.branch.access.managerOrAdminAllowed).toBe(true)
       expect(updated.branch.createdAt).toBe(created.branch.createdAt) // createdAt unchanged
-      expect(new Date(updated.branch.updatedAt).getTime()).toBeGreaterThanOrEqual(
-        new Date(created.branch.createdAt).getTime(),
+      // Strictly greater: updatedAt must ADVANCE on save, not stay frozen at
+      // the creation timestamp (regression guard for the spread-order bug)
+      expect(new Date(updated.branch.updatedAt).getTime()).toBeGreaterThan(
+        new Date(created.branch.updatedAt).getTime(),
       )
     })
   })

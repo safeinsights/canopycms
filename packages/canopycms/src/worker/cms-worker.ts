@@ -692,7 +692,17 @@ export class CmsWorker {
         updates.pullRequestNumber = result.prNumber
         // As soon as the PR exists the field should read 'open' -- without
         // this it would stay absent until the next poll cycle observes it.
-        updates.pullRequestState = 'open'
+        // Exception: the git-sync loop may have archived this branch (PR
+        // merged/closed) while this task was in flight; a late task
+        // completion must not downgrade that terminal state back to 'open'.
+        const current = await BranchMetadataFileManager.loadOnly(branchPath)
+        const terminal =
+          current?.branch.status === 'archived' ||
+          current?.branch.pullRequestState === 'merged' ||
+          current?.branch.pullRequestState === 'closed'
+        if (!terminal) {
+          updates.pullRequestState = 'open'
+        }
       }
       await meta.save({ branch: updates })
     } catch (err) {
@@ -863,10 +873,16 @@ export class CmsWorker {
       // Nothing makes this clone read-only. A direct edit here (or a stray
       // process) wedges every editor's view of the base branch until an
       // operator intervenes, so a dirty tree is loud, not a quiet skip.
+      // Only TRACKED changes block the refresh: a stray untracked file (e.g.
+      // runtime metadata missing from .git/info/exclude) must not wedge the
+      // fast-forward forever — if an untracked file would collide with
+      // incoming content, the --ff-only merge below refuses on its own and
+      // that failure is already logged loudly.
       const status = await baseGit.status()
-      if (status.files.length > 0) {
+      const trackedDirty = status.files.filter((f) => f.index !== '?' || f.working_dir !== '?')
+      if (trackedDirty.length > 0) {
         console.error(
-          `Base branch workspace (${this.baseBranch}) has uncommitted changes -- skipping refresh. Dirty files: ${status.files.map((f) => f.path).join(', ')}`,
+          `Base branch workspace (${this.baseBranch}) has uncommitted changes -- skipping refresh. Dirty files: ${trackedDirty.map((f) => f.path).join(', ')}`,
         )
         return
       }

@@ -33,6 +33,7 @@ type MergePollInternals = {
     metaFile: BranchMetadataFile | null,
   ): Promise<void>
   rebaseActiveBranches(): Promise<void>
+  updateBranchMetadata(task: unknown, result: Record<string, unknown>): Promise<void>
 }
 
 describe('CmsWorker.pollMergeState()', () => {
@@ -284,6 +285,48 @@ describe('CmsWorker.pollMergeState()', () => {
       await internals.rebaseActiveBranches()
 
       expect(internals.octokit.pulls.get).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('updateBranchMetadata() vs concurrent archive', () => {
+    // The task-queue loop interleaves with the git-sync loop: a push/create-PR
+    // task can complete AFTER the merge-poll already archived the branch. The
+    // late completion must not downgrade the terminal PR state back to 'open'.
+    it('does not reset pullRequestState to open on a branch the poll archived', async () => {
+      const { internals } = makePollWorker()
+      const branchPath = await setupBranchMeta('feature-late-task', {
+        status: 'archived',
+        pullRequestState: 'merged',
+        pullRequestNumber: 60,
+        mergedAt: '2026-07-24T00:00:00.000Z',
+      })
+
+      await internals.updateBranchMetadata(
+        { payload: { branch: 'feature-late-task' } },
+        { prNumber: 60, prUrl: 'https://example.com/pr/60' },
+      )
+
+      const meta = await readBranchMeta(branchPath)
+      expect(meta?.pullRequestState).toBe('merged')
+      expect(meta?.status).toBe('archived')
+      // The rest of the completion bookkeeping still lands
+      expect(meta?.syncStatus).toBe('synced')
+    })
+
+    it('still stamps pullRequestState open for a live branch', async () => {
+      const { internals } = makePollWorker()
+      const branchPath = await setupBranchMeta('feature-live-task', {
+        status: 'submitted',
+      })
+
+      await internals.updateBranchMetadata(
+        { payload: { branch: 'feature-live-task' } },
+        { prNumber: 61, prUrl: 'https://example.com/pr/61' },
+      )
+
+      const meta = await readBranchMeta(branchPath)
+      expect(meta?.pullRequestState).toBe('open')
+      expect(meta?.pullRequestNumber).toBe(61)
     })
   })
 })

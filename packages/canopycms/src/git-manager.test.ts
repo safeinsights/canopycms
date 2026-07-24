@@ -1292,7 +1292,7 @@ describe('GitManager.initializeWorkspace gitExcludePattern', () => {
     expect(exclude.split('\n').map((l) => l.trim())).toContain('.canopy-meta/')
   })
 
-  it('does not modify .git/info/exclude on an orphan settings branch', async () => {
+  it('excludes *.lock (but not the content pattern) on an orphan settings branch', async () => {
     const remotePath = await makeRemote()
     const workspacePath = path.join(tmpDir, 'workspace')
 
@@ -1308,16 +1308,16 @@ describe('GitManager.initializeWorkspace gitExcludePattern', () => {
       gitExcludePattern: '.canopy-meta/',
     })
 
-    let excludeContents = ''
-    try {
-      excludeContents = await fs.readFile(
-        path.join(workspacePath, '.git', 'info', 'exclude'),
-        'utf-8',
-      )
-    } catch {
-      // File may not exist at all on a fresh clone — that's fine.
-    }
-    expect(excludeContents.split('\n').map((l) => l.trim())).not.toContain('.canopy-meta/')
+    const excludeContents = await fs.readFile(
+      path.join(workspacePath, '.git', 'info', 'exclude'),
+      'utf-8',
+    )
+    const lines = excludeContents.split('\n').map((l) => l.trim())
+    // OCC lockfiles (<file>.lock, see authorization/settings-file-store.ts)
+    // live inside this git-committed workspace and must never be committable
+    expect(lines).toContain('*.lock')
+    // The content-branch metadata pattern still doesn't apply to settings
+    expect(lines).not.toContain('.canopy-meta/')
   })
 
   it('is idempotent across repeated initializeWorkspace calls', async () => {

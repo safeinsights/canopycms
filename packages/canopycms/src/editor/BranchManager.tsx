@@ -301,7 +301,13 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         )}
                         {b.pullRequestNumber && (
                           <Badge
-                            color={b.pullRequestState === 'closed' ? 'red' : 'blue'}
+                            color={
+                              b.pullRequestState === 'closed'
+                                ? 'red'
+                                : b.pullRequestState === 'merged'
+                                  ? 'violet'
+                                  : 'blue'
+                            }
                             variant="light"
                           >
                             PR #{b.pullRequestNumber}

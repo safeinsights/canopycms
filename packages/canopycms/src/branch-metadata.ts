@@ -213,6 +213,10 @@ export class BranchMetadataFileManager {
                 createdAt: existing?.branch.createdAt ?? defaults.createdAt,
                 // Fork point is recorded once at creation; later saves must not move it
                 baseBranch: existing?.branch.baseBranch ?? incoming.branch?.baseBranch,
+                // Always stamped fresh — the spreads above would otherwise let
+                // the existing (creation-time) value win forever, freezing the
+                // timestamp the editor's Branches panel sorts and displays by
+                updatedAt: now,
               },
             }
             const written = await this.write(merged, version)

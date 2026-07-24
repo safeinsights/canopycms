@@ -246,9 +246,14 @@ export function withCanopy(
   // Dual-build support: a static build gets STATIC_PAGE_EXTENSIONS (e.g. `page.static.tsx`)
   // instead of CMS_PAGE_EXTENSIONS, so CMS-only files (`route.server.ts`, `page.server.tsx`)
   // are excluded from static export while the static-only page variants are included.
-  const pageExtensions = options.staticBuild
-    ? [...(nextConfig.pageExtensions ?? NEXTJS_DEFAULT_PAGE_EXTENSIONS), ...STATIC_PAGE_EXTENSIONS]
-    : [...(nextConfig.pageExtensions ?? NEXTJS_DEFAULT_PAGE_EXTENSIONS), ...CMS_PAGE_EXTENSIONS]
+  // Set-dedupe guards against a consumer config that already lists any of the
+  // canopy variant extensions (duplicates would be harmless to Next but noisy).
+  const pageExtensions = [
+    ...new Set([
+      ...(nextConfig.pageExtensions ?? NEXTJS_DEFAULT_PAGE_EXTENSIONS),
+      ...(options.staticBuild ? STATIC_PAGE_EXTENSIONS : CMS_PAGE_EXTENSIONS),
+    ]),
+  ]
 
   return {
     ...nextConfig,

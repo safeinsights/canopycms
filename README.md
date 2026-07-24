@@ -2006,15 +2006,21 @@ Access control uses three layers:
 
 #### Public read on server deployments
 
-By default `defaultPathAccess` is `'deny'`, so an anonymous or unauthenticated request on a `server` deployment gets no content at all. To let unauthenticated visitors read published content while keeping edit/review locked down, scope the default per permission level:
+By default `defaultPathAccess` is `'deny'`, so an anonymous or unauthenticated request on a `server` deployment gets no content at all. To let unauthenticated visitors read published content while keeping edit/review locked down, scope the path default per permission level — and note that every content read must pass **both** the branch layer and the path layer, so the branch default has to open up too:
 
 ```typescript
 // canopycms.config.ts
 export default defineCanopyConfig({
   // ...
+  defaultBranchAccess: 'allow', // reads check branch access first; the base branch has no ACL, so it follows this default
   defaultPathAccess: { read: 'allow' }, // edit/review still resolve to 'deny'
 })
 ```
+
+Two things to weigh before enabling this:
+
+- **`defaultBranchAccess: 'allow'` is not read-scoped.** It is the fallback for _any_ branch with no ACL, so un-ACL'd work branches also become accessible to other signed-in users (writes are still gated per-path). If that matters, set explicit ACLs on work branches.
+- **`{ read: 'allow' }` inverts deny-by-default for reads.** Any content path with **no matching rule** becomes publicly readable, and a rule that only targets `edit` does not restrict reading (an unmatched `read` still falls through to the allow default). To keep a subtree private, add an explicit rule whose `read` target denies it — don't rely on the absence of a rule.
 
 A `FORBIDDEN` denial from a server-component read via `readByUrlPath` renders as `null`, so your page's existing `if (!result) return notFound()` produces an ordinary 404 -- not a 500, and without revealing that the content exists but is restricted. The denial reason is still emitted to the debug log (`CANOPYCMS_DEBUG=true`) for troubleshooting.
 

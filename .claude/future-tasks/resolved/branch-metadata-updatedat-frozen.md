@@ -2,6 +2,13 @@
 
 Found by the Fable review of PR #144 (2026-07-24), verified against the code.
 
+**RESOLVED (2026-07-24, epic/deployment-followups / PR #149):** the human review of
+PR #149 recommended taking the fix, so `save()` now stamps `updatedAt: now` after the
+merge spreads (explicit override alongside the createdBy/createdAt/baseBranch
+immutability overrides), and the branch-metadata test asserts strictly-greater
+`updatedAt` across an update (with a real tick between saves so same-millisecond
+writes can't mask a regression).
+
 ## Problem
 
 `BranchMetadataFileManager.save()` (branch-metadata.ts ~:188-217) computes a fresh
