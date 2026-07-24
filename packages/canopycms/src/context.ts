@@ -24,10 +24,24 @@ import {
   type ListEntriesOptions,
   type ListEntriesItem,
 } from './content-listing'
+import { createDebugLogger } from './utils/debug'
+
+const log = createDebugLogger({ prefix: 'Context' })
 
 /** True when a ContentStoreError indicates a path/entry wasn't found (expected during candidate probing). */
 function isLookupFailure(err: ContentStoreError): boolean {
   return err.code === 'NOT_FOUND' || err.code === 'NO_SCHEMA_ITEM'
+}
+
+/**
+ * True when a ContentStoreError should render as "not found" to page-level callers of
+ * readByUrlPath rather than escape as a thrown error. FORBIDDEN is included so a
+ * denied/anonymous read produces the adopter's ordinary `if (!result) return notFound()`
+ * (404) instead of an unhandled 500 from the server component. The strict `read()` API is
+ * unaffected and still throws.
+ */
+function isPageSwallowable(err: ContentStoreError): boolean {
+  return isLookupFailure(err) || err.code === 'FORBIDDEN'
 }
 
 export interface CanopyContextOptions {
@@ -96,6 +110,9 @@ export interface CanopyBuildContext {
    * Returns null if no content matches the path — including collection URLs that have no
    * index entry (use buildContentTree for those) and non-entry/invalid paths such as
    * `/favicon.ico` or Next internals (the slug validator rejects them, treated as a miss).
+   * Also returns null for paths the current user is not permitted to read (a FORBIDDEN
+   * denial renders as a 404 via `notFound()` instead of a 500); the strict `read()` API
+   * still throws on permission errors.
    *
    * The result's `meta.physicalPath` is the absolute filesystem path to the resolved
    * entry file. It is **server-only** — do not serialize it to the client or embed it
@@ -221,9 +238,20 @@ export function createCanopyContext(options: CanopyContextOptions) {
             resolveReferences,
           })
         } catch (err) {
-          // Only swallow "not found" errors from trying candidate paths.
-          // Re-throw real errors (path traversal, permission, corruption).
-          if (err instanceof ContentStoreError && isLookupFailure(err)) continue
+          // Swallow "not found" errors from trying candidate paths, and FORBIDDEN (a denied
+          // or anonymous read renders as a 404 via the adopter's `if (!result) return
+          // notFound()` rather than an unhandled 500). Re-throw real errors (validation,
+          // corruption, non-ContentStoreError).
+          if (err instanceof ContentStoreError && isPageSwallowable(err)) {
+            if (err.code === 'FORBIDDEN') {
+              log.debug('readByUrlPath', 'Read denied, treating as not-found: ' + err.message, {
+                urlPath,
+                entryPath: candidate.entryPath,
+                slug: candidate.slug,
+              })
+            }
+            continue
+          }
           throw err
         }
       }
