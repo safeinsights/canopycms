@@ -1,6 +1,6 @@
 # Worker CloudWatch log shipping (REQUIRED for a real deploy)
 
-## Status: RESOLVED (2026-07-24, PR #TBD)
+## Status: RESOLVED (2026-07-24, PR #145)
 
 ### What shipped
 
