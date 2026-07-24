@@ -1,16 +1,60 @@
 # E2E Failure Analysis (2026-07-24)
 
 Handoff brief for a follow-up session. Captures why `pnpm test:e2e` currently
-fails a large batch of tests, the confirmed root cause, ranked fix options, and
+fails a large batch of tests, the confirmed root causes, ranked fix options, and
 the console-noise + CI-gating context that came up alongside it.
 
-**TL;DR:** 16 of 52 e2e tests fail, and it is **not** flakiness or stale
-workspace state — it reproduces on a pristine workspace. The suite implicitly
-assumes **the dev server's git checkout is on branch `main`**. When it isn't
-(a worktree, a feature branch, an integration branch), the editor edits a
-different content branch than the tests read, so every "edit → save → read the
-file on disk" assertion sees the untouched seed value. Fix belongs in the test
-harness (pin the branch), not the app.
+**TL;DR — there are TWO root causes, both verified by live experiment (§0):**
+
+1. **Branch mismatch (harness assumption, ~10 tests):** the suite implicitly
+   assumes **the dev server's git checkout is on branch `main`**. When it isn't
+   (a worktree, a feature branch, an integration branch), the editor edits a
+   different content branch than the tests read, so "edit → save → read the
+   file on disk" assertions see the untouched seed value. Fix belongs in the
+   test harness (pin the branch), not the app.
+2. **Reference-save product bug (branch-INDEPENDENT, 3 tests):** the server's
+   write-boundary reference validator rejects every reference save whose schema
+   uses the documented `collections: ['posts']` convention with **422**
+   ("Entry is in collection \"content/posts\", but only [posts] are allowed").
+   It compares the ID-index's root-prefixed collection _path_ against the
+   schema's unprefixed collection _name_. This fails on git `main` too —
+   pinning the branch will NOT fix `reference-fields.spec.ts`. Real bug in
+   `packages/canopycms/src/validation/reference-validator.ts` (~lines 100–115,
+   169–181), masked in unit tests by root-prefixed fixtures.
+
+## 0. Live verification (2026-07-24, later session)
+
+A second session re-verified the first analysis by experiment against a running
+dev server started from this worktree (git branch
+`claude/test-output-noise-audit-9c7d34`), not just by code reading:
+
+- `GET /api/canopycms/branches` returned
+  `defaultBranch: "claude/test-output-noise-audit-9c7d34"` — the **raw git
+  HEAD name** — while the branch list contained the sanitized CMS names
+  `["claude-test-output-noise-audit-9c7d34", "main"]`. Root cause 1 confirmed
+  at the API level. (Bonus wart: the raw name doesn't match ANY registry
+  branch name, so `useBranchManager`'s `branches.find(b => b.name ===
+branchName)` yields `currentBranch = undefined`; content APIs still work
+  because the server sanitizes the branch segment when resolving the
+  workspace dir. Consider returning the sanitized registry name from the API.)
+- `PUT /api/canopycms/<defaultBranch>/content/home` with a changed title →
+  **200**, and the write landed in
+  `content-branches/claude-test-output-noise-audit-9c7d34/content/home...json`
+  while `main/content/home...json` kept the seed. Exactly the failing tests'
+  signature.
+- Reference save replicated via API on BOTH branches: create a post (200),
+  then `PUT .../content/home` with `relatedPost: <new post id>` → **422** with
+  the collection-mismatch error, identically on the git-named branch and on
+  `main`. So the 3 `reference-fields` failures die inside `saveAndVerify`
+  (its `waitForResponse` predicate requires status 200; a 422 never matches →
+  10s timeout), and they will keep failing after the branch fix.
+- Convention check: README (`collections: ['authors']`, `['posts']`) and
+  `apps/example1/app/schemas.ts` (`collections: ['authors']`) both use
+  unprefixed names; `reference-validator.test.ts` fixtures use prefixed
+  `'content/data-catalog'` — which is why 2900+ unit tests pass while the real
+  write path 422s. When fixing, normalize against the configured `contentRoot`
+  (don't hard-code `'content/'`), fix the unit fixtures to the documented
+  convention, and add a regression test using `collections: ['posts']`.
 
 ---
 
@@ -34,13 +78,19 @@ The workspace is ephemeral and gitignored: `apps/test-app/.canopy-dev/`
 
 ## 2. The failing tests
 
-**Core — save/persistence assertions (root cause below), ~13:**
+**Root cause 1 — branch mismatch (save lands off-`main`), ~10:**
 
 - `editor-happy-path.spec.ts:51` — complete edit workflow: load → select → edit → save → verify
 - `field-types.spec.ts:26,164,199,217,234,252` — text/multi-field/unicode/empty/large/rapid edits
 - `field-groups.spec.ts:83,117` — group fields saved flat in content / no sibling clobber
-- `reference-fields.spec.ts:65,111,139` — single/clear/multi reference persist (these fail as `page.waitForResponse` timeouts — see note)
 - `yaml-format.spec.ts:62` — edit and save YAML entry writes valid YAML to disk
+
+**Root cause 2 — reference-validator 422 (branch-independent product bug), 3:**
+
+- `reference-fields.spec.ts:65,111,139` — single/clear/multi reference persist.
+  These die inside `saveAndVerify` (`waitForResponse` 10s timeout) because the
+  PUT returns **422**, not 200 — see §0. Fixing the branch mismatch will not
+  clear these; fix `reference-validator.ts` collection normalization.
 
 **Verify separately — may be the same root cause or distinct, ~3:**
 
@@ -53,7 +103,7 @@ reading the content file (e.g. `editor-happy-path.spec.ts:76` "edited value
 persists after page reload", all of `draft-behavior`) — a key discriminator (see
 §4).
 
-## 3. Root cause (confirmed)
+## 3. Root cause 1: branch mismatch (confirmed by live experiment, §0)
 
 The dev operating mode **auto-detects the active branch from git `HEAD`**, and
 the editor opens that branch by default. The tests hard-code a content branch
@@ -131,13 +181,17 @@ The test-app config does **not** pin the branch:
   the content file fail**. Reload shows the branch the editor is on; the file
   read looks at `main`. Exactly the branch-mismatch signature.
 - Reference-field failures surface as `page.waitForResponse` 10s timeouts rather
-  than a value mismatch — confirm whether that flow is the same root cause or a
-  second issue.
+  than a value mismatch — RESOLVED: it IS a second issue; the PUT returns 422
+  from the reference validator on any branch (see §0).
 
 ## 5. Fix options (ranked)
 
 **A. Pin the editor to `main` in the e2e harness (recommended — surgical, test-only).**
-Make `EditorPage.goto()` navigate to `/edit?branch=main` (the param is honored
+Make `EditorPage.goto()` navigate to `/edit?branch=main`. Verified wiring: the
+test-app's `/edit` page uses `NextCanopyEditorPage` (`packages/canopycms-next/
+src/client.tsx`), which reads `?branch=` via `useSearchParams` and forwards it
+as `searchParams.branch` — and every editor navigation funnels through the one
+`EditorPage.goto()` (the param is honored
 at `CanopyEditorPage.tsx:14`). Confirm every other navigation that expects to
 edit `main` also pins it. Pro: no app/config change; deterministic regardless of
 the developer's git branch. Con: must audit all navigations.
@@ -160,7 +214,8 @@ Do **not** "fix" this in the app — dev-mode git-HEAD detection is intentional 
 documented. The fragility is the test suite's assumption.
 
 **Verify a fix:** re-run `pnpm test:e2e` from a **non-`main`** git branch and
-expect the 13 core failures to clear. Then re-check the 3 "verify separately"
+expect the ~10 root-cause-1 failures to clear (reference-fields stays red until
+the validator fix lands). Then re-check the 3 "verify separately"
 tests; anything still red is a distinct bug.
 
 ## 6. Console noise in the e2e run (separate cleanup)
