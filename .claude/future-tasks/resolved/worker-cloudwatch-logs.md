@@ -1,8 +1,34 @@
 # Worker CloudWatch log shipping (REQUIRED for a real deploy)
 
+## Status: RESOLVED (2026-07-24, PR #TBD)
+
+### What shipped
+
+`CanopyCmsService` now ships the EC2 worker's stdout/stderr to a dedicated
+CloudWatch log group by default via the amazon-cloudwatch-agent (installed and
+configured in worker user-data, since the agent cannot read journald — the
+systemd unit was switched from `StandardOutput=journal` to a file at
+`/var/log/canopy-worker/worker.log`, bounded by a logrotate policy). The log
+group has a predictable name (`/canopycms/<stackName>/worker`, overridable via
+`workerLogGroupName`) and a 90-day default retention (overridable via
+`workerLogRetention`), both exposed as `CanopyCmsServiceProps`, with the group
+itself exposed as `service.workerLogGroup`. The worker role's IAM grant is
+scoped to exactly `logs:CreateLogStream`/`logs:PutLogEvents` on that one log
+group — no broad `CloudWatchAgentServerPolicy`, no `CreateLogGroup` (the group
+is CFN-managed so retention/removal policy stay under CDK's control). The
+agent install/config is ordered *after* `systemctl start canopy-worker` in
+user-data so a yum/agent failure never prevents the worker itself from
+running (log shipping is deliberately best-effort).
+
+Original description below.
+
+---
+
+# Worker CloudWatch log shipping (REQUIRED for a real deploy)
+
 Spun out of the deployment-test epic (2026-07-24) — flagged as "now REQUIRED, not
 optional" in the epic writeup
-([resolved/cms-service-deployment-test.md](resolved/cms-service-deployment-test.md))
+([resolved/cms-service-deployment-test.md](cms-service-deployment-test.md))
 but never captured as its own task file until now.
 
 ## Problem

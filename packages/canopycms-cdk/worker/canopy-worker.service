@@ -10,8 +10,12 @@ ExecStart=/usr/bin/node index.js
 Restart=always
 RestartSec=5
 TimeoutStartSec=300
-StandardOutput=journal
-StandardError=journal
+LogsDirectory=canopy-worker
+# File output, not journal: the CloudWatch agent cannot read journald,
+# so it tails this file instead (agent config lives in the cms-service.ts
+# user-data, which writes the deployed copy of this unit).
+StandardOutput=append:/var/log/canopy-worker/worker.log
+StandardError=append:/var/log/canopy-worker/worker.log
 
 # Environment
 EnvironmentFile=/opt/canopy-worker/.env
