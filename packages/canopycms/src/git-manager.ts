@@ -163,6 +163,11 @@ export class GitManager {
     this.remote = options.remote ?? 'origin'
     this.skipIndexMarker = options.skipIndexMarker ?? false
     this.git = simpleGit({ baseDir: this.repoPath, ...gitOptions })
+    // `this.git` is for LOCAL working-tree ops only (its env is the allowlist
+    // from gitChildEnv, which intentionally drops HTTPS_PROXY/GIT_SSL_*/etc.).
+    // Do NOT route GitHub network I/O through it - the worker uses fresh
+    // full-env simpleGit() instances for push/fetch so proxy/TLS vars survive.
+    //
     // Prevent git from traversing above repoPath to find a parent .git directory.
     // If the workspace's .git is corrupt/missing, git should fail rather than
     // silently operating on the host repo above.

@@ -89,7 +89,16 @@ export const CanopyConfigSchema = z
  * Helper to get schema default values.
  * This centralizes default value extraction from Zod schemas.
  */
-/** Default workspace path for prod mode (used when CANOPYCMS_WORKSPACE_ROOT is not set) */
+/**
+ * Default workspace path for prod mode (used when CANOPYCMS_WORKSPACE_ROOT is not set).
+ *
+ * WARNING: this fallback assumes a worker-style ROOT mount of EFS at /mnt/efs.
+ * The CanopyCmsService Lambda mounts EFS THROUGH an access point already rooted
+ * at /workspace and therefore sets CANOPYCMS_WORKSPACE_ROOT=/mnt/efs explicitly;
+ * if that env were ever unset on the Lambda this default would resolve to
+ * /mnt/efs/workspace = EFS:/workspace/workspace (a wrong, nested dir). The CDK
+ * always sets the env, so this only bites a hand-rolled misconfiguration.
+ */
 export const DEFAULT_PROD_WORKSPACE = '/mnt/efs/workspace'
 
 // Note: `mode` has no default by design (SEC-C1) and is intentionally omitted here —
