@@ -2393,6 +2393,18 @@ This approach ensures:
 - Unexpected console output still surfaces (helping catch real issues)
 - Console behavior is properly tested as part of the functionality
 
+**Enforced in CI (keep the reporter "all dots"):** the Vitest `dot` reporter
+prints an intercepted `stdout | <file> > <test>` / `stderr | ...` block for any
+test that writes to the console, which makes it hard to tell expected output
+from real problems at a glance. To stop that from creeping back in, an
+`onConsoleLog` hook in [`packages/canopycms/vitest.config.ts`](packages/canopycms/vitest.config.ts)
+throws when a test logs to the console **while `CI` is set** (GitHub Actions sets
+`CI=true`, so the existing `pnpm test` step enforces it — no extra workflow
+step). Locally the log passes through unchanged, so ad-hoc `console.log`
+debugging still works. When CI fails with this error, wrap the expected output
+in `mockConsole()` (swallow + assert) as shown above, or remove the stray log —
+do **not** silence the guard.
+
 ### Testing GC-Dependent Code Deterministically (`WeakRef`/`FinalizationRegistry`)
 
 Code that prunes dead `WeakRef`s or registers a `FinalizationRegistry` callback can't be exercised by waiting for real garbage collection in a test -- GC timing is non-deterministic. `src/content-index-registry.test.ts` stubs the globals instead, so the pruning logic runs on command:

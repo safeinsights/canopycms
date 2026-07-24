@@ -12,7 +12,7 @@ import { simpleGit } from 'simple-git'
 
 import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-worker'
 import { enqueueTask } from './task-queue'
-import { initTestRepo, mockConsole } from '../test-utils'
+import { initTestRepo, mockConsole, type MockConsole } from '../test-utils'
 
 const makeWorker = () =>
   new CmsWorker({
@@ -28,6 +28,17 @@ const makeWorker = () =>
 // ---------------------------------------------------------------------------
 
 describe('CmsWorker.stop()', () => {
+  // worker.stop() logs "CMS Worker stopped" by design; swallow it.
+  let consoleSpy: MockConsole
+
+  beforeEach(() => {
+    consoleSpy = mockConsole()
+  })
+
+  afterEach(() => {
+    consoleSpy.restore()
+  })
+
   it('awaits all active operations before returning', async () => {
     const worker = makeWorker()
     const activeOps = (worker as unknown as { activeOperations: Set<Promise<void>> })
@@ -174,13 +185,17 @@ type TaskInternals = {
 describe('CmsWorker task timeout (DEP-H1)', () => {
   let tmpDir: string
   let taskDir: string
+  // The timed-out task is logged as a failure by design; swallow it.
+  let consoleSpy: MockConsole
 
   beforeEach(async () => {
+    consoleSpy = mockConsole()
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-timeout-test-'))
     taskDir = path.join(tmpDir, '.tasks')
   })
 
   afterEach(async () => {
+    consoleSpy.restore()
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
@@ -214,6 +229,7 @@ describe('CmsWorker task timeout (DEP-H1)', () => {
     const task = JSON.parse(await fs.readFile(pendingPath, 'utf-8'))
     expect(task.retryCount).toBe(1)
     expect(task.error).toMatch(/timed out after 200ms/)
+    expect(consoleSpy).toHaveLogged('Will retry')
   })
 })
 
@@ -278,13 +294,18 @@ describe('isPermanentTaskFailure (DEP-L1)', () => {
 describe('CmsWorker retry behavior (DEP-L1)', () => {
   let tmpDir: string
   let taskDir: string
+  // Every test here drives a task failure, which the worker logs by design;
+  // swallow that output and assert on it via the spy instead.
+  let consoleSpy: MockConsole
 
   beforeEach(async () => {
+    consoleSpy = mockConsole()
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-retry-test-'))
     taskDir = path.join(tmpDir, '.tasks')
   })
 
   afterEach(async () => {
+    consoleSpy.restore()
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 
@@ -330,6 +351,7 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
     expect(failed.retryCount).toBe(0) // no retry attempts were spent
     expect(failed.error).toMatch(/Validation Failed/)
     expect(await fileExists(path.join(taskDir, 'pending', `${id}.json`))).toBe(false)
+    expect(consoleSpy).toHaveErrored('Permanently failed')
   })
 
   it('retries a transient 5xx error', async () => {
@@ -341,6 +363,7 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
     expect(pending.retryCount).toBe(1)
     expect(pending.retryAfter).toBeTruthy()
     expect(await fileExists(path.join(taskDir, 'failed', `${id}.json`))).toBe(false)
+    expect(consoleSpy).toHaveLogged('Will retry')
   })
 
   it('retries a 429 rate limit', async () => {
@@ -350,6 +373,7 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
       await fs.readFile(path.join(taskDir, 'pending', `${id}.json`), 'utf-8'),
     )
     expect(pending.retryCount).toBe(1)
+    expect(consoleSpy).toHaveLogged('Will retry')
   })
 
   it('fails fast on a malformed payload via the real executeTask', async () => {
@@ -366,6 +390,7 @@ describe('CmsWorker retry behavior (DEP-L1)', () => {
     )
     expect(failed.error).toMatch(/missing required string field: branch/)
     expect(failed.retryCount).toBe(0)
+    expect(consoleSpy).toHaveErrored('Permanently failed')
   })
 })
 
@@ -397,14 +422,19 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
   let tmpDir: string
   let taskDir: string
   let contentBranchesPath: string
+  // These tests exercise PR create/update/draft paths, each of which logs an
+  // operational line by design; swallow that output so the reporter stays quiet.
+  let consoleSpy: MockConsole
 
   beforeEach(async () => {
+    consoleSpy = mockConsole()
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-pr-test-'))
     taskDir = path.join(tmpDir, '.tasks')
     contentBranchesPath = path.join(tmpDir, 'content-branches')
   })
 
   afterEach(async () => {
+    consoleSpy.restore()
     await fs.rm(tmpDir, { recursive: true, force: true })
   })
 

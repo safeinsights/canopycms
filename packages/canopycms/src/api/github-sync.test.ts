@@ -208,6 +208,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
     })
 
     it('sets sync-failed (not a throw) when the GitHub API call itself fails', async () => {
+      const consoleSpy = mockConsole()
       const githubService = makeGitHubService({
         createOrUpdatePR: vi.fn().mockRejectedValue(new Error('network error')),
       })
@@ -219,6 +220,8 @@ describe('syncSubmitPr (GIT-H1)', () => {
       const result = await syncSubmitPr(ctx, branchContext)
 
       expect(result.syncStatus).toBe('sync-failed')
+      expect(consoleSpy).toHaveErrored('Failed to create/update PR')
+      consoleSpy.restore()
     })
   })
 
@@ -268,6 +271,7 @@ describe('syncSubmitPr (GIT-H1)', () => {
     })
 
     it('returns sync-failed if enqueueing itself fails', async () => {
+      const consoleSpy = mockConsole()
       mockEnqueueTask.mockRejectedValue(new Error('disk full'))
       const ctx = createMockApiContext({
         services: { config: baseConfig, githubService: undefined },
@@ -277,6 +281,8 @@ describe('syncSubmitPr (GIT-H1)', () => {
       const result = await syncSubmitPr(ctx, branchContext)
 
       expect(result).toEqual({ syncStatus: 'sync-failed' })
+      expect(consoleSpy).toHaveErrored('Failed to enqueue task')
+      consoleSpy.restore()
     })
   })
 })
