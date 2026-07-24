@@ -5,7 +5,7 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { simpleGit } from 'simple-git'
 
-import { detectHeadBranch, resolveBaseBranch } from './git'
+import { detectHeadBranch, isNetworkRemoteUrl, resolveBaseBranch } from './git'
 
 const tmpDir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'canopycms-utilsgit-'))
 
@@ -24,6 +24,34 @@ async function initRepo(branch = 'main'): Promise<string> {
   }
   return root
 }
+
+describe('isNetworkRemoteUrl', () => {
+  it.each([
+    ['/abs/path/remote.git'],
+    ['./relative/path'],
+    ['relative/path/repo.git'],
+    ['file:///srv/git/repo.git'],
+    ['C:\\repos\\repo.git'],
+    ['C:/repos/repo.git'],
+  ])('treats %s as local', (url) => {
+    expect(isNetworkRemoteUrl(url)).toBe(false)
+  })
+
+  it.each([
+    ['https://github.com/o/r.git'],
+    ['ssh://git@host/r.git'],
+    ['git://host/r.git'],
+    ['git@github.com:o/r.git'],
+    ['github.com:owner/repo.git'],
+    ['host:path'],
+    ['ext::sh -c whoami'],
+    ['fd::7'],
+    ['--upload-pack=/tmp/evil'],
+    ['-o=foo'],
+  ])('treats %s as network', (url) => {
+    expect(isNetworkRemoteUrl(url)).toBe(true)
+  })
+})
 
 describe('detectHeadBranch', () => {
   it('returns the checked-out branch', async () => {

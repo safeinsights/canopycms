@@ -53,6 +53,21 @@ function synth(withDistribution = false, overrides: Partial<CanopyCmsServiceProp
   return Template.fromStack(stack)
 }
 
+/**
+ * Concatenated JSON of every worker UserData-bearing resource in the
+ * template. M4 migrated the worker off AutoScalingGroup's deprecated
+ * LaunchConfiguration shorthand onto an explicit LaunchTemplate, so UserData
+ * now lives on AWS::EC2::LaunchTemplate instead of
+ * AWS::AutoScaling::LaunchConfiguration. Stringifying both keeps these
+ * assertions correct regardless of which resource type actually carries it.
+ */
+function workerUserDataBlobs(template: Template): string {
+  return (
+    JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration')) +
+    JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
+  )
+}
+
 describe('CanopyCmsService deploy blockers', () => {
   it('DEP-C1: the Lambda security group has egress to EFS on 2049', () => {
     const template = synth()
@@ -356,11 +371,16 @@ describe('CanopyCmsService B1: Lambda and worker resolve the same EFS directory'
     // The worker instead mounts the filesystem ROOT at /mnt/efs and reaches
     // the same EFS:/workspace directory via /mnt/efs/workspace - assert its
     // UserData actually references that mount-root + workspace path.
-    const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
-    const userDataBlobs = Object.values(launchConfigs).map((lc) =>
-      JSON.stringify((lc.Properties as { UserData?: unknown }).UserData),
+    expect(workerUserDataBlobs(template)).toContain('/mnt/efs/workspace')
+    // Guard the other half of the split: the access point itself must be
+    // rooted at /workspace, or drift there (e.g. to /other) would silently
+    // desync from the Lambda/worker paths asserted above while still passing.
+    template.hasResourceProperties(
+      'AWS::EFS::AccessPoint',
+      Match.objectLike({
+        RootDirectory: Match.objectLike({ Path: '/workspace' }),
+      }),
     )
-    expect(userDataBlobs.some((blob) => blob.includes('/mnt/efs/workspace'))).toBe(true)
   })
 })
 
@@ -368,26 +388,26 @@ describe('CanopyCmsService B7: git dubious-ownership workaround', () => {
   it('does NOT rely on GIT_CONFIG_* env (simple-git hard-blocks env config; the fix is the image system gitconfig)', () => {
     const template = synth()
     const fns = template.findResources('AWS::Lambda::Function')
+    type LambdaProps = { Environment?: { Variables?: Record<string, unknown> } }
     const cms = Object.values(fns).find(
-      (fn) => fn.Properties?.Environment?.Variables?.CANOPYCMS_WORKSPACE_ROOT === '/mnt/efs',
+      (fn) =>
+        (fn.Properties as LambdaProps).Environment?.Variables?.CANOPYCMS_WORKSPACE_ROOT ===
+        '/mnt/efs',
     )
     expect(cms).toBeDefined()
+    const cmsProps = cms?.Properties as LambdaProps
     // Deploy-proven 2026-07-24: these were dead config - simple-git refuses
     // to pass env-based git config to spawned processes. safe.directory is
     // set via `git config --system` in Dockerfile.cms.template instead.
-    expect(cms?.Properties.Environment.Variables.GIT_CONFIG_COUNT).toBeUndefined()
-    expect(cms?.Properties.Environment.Variables.GIT_CONFIG_KEY_0).toBeUndefined()
+    expect(cmsProps.Environment?.Variables?.GIT_CONFIG_COUNT).toBeUndefined()
+    expect(cmsProps.Environment?.Variables?.GIT_CONFIG_KEY_0).toBeUndefined()
   })
 })
 
 describe('CanopyCmsService B8: worker region resolution', () => {
   it('writes an AWS_REGION line into the worker UserData env file', () => {
     const template = synth()
-    const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
-    const userDataBlobs = Object.values(launchConfigs).map((lc) =>
-      JSON.stringify((lc.Properties as { UserData?: unknown }).UserData),
-    )
-    expect(userDataBlobs.some((blob) => /AWS_REGION=/.test(blob))).toBe(true)
+    expect(/AWS_REGION=/.test(workerUserDataBlobs(template))).toBe(true)
   })
 })
 
@@ -431,9 +451,7 @@ describe('CanopyCmsService: boot ordering vs EFS mount targets', () => {
 describe('CanopyCmsService: EFS mount survives instance reboots', () => {
   it('writes an fstab entry and gates the worker unit on the mount', () => {
     const template = synth()
-    const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
-    const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
-    const all = blobs + ltBlobs
+    const all = workerUserDataBlobs(template)
     expect(all).toContain('>> /etc/fstab')
     expect(all).toContain('RequiresMountsFor=/mnt/efs')
   })
@@ -442,10 +460,23 @@ describe('CanopyCmsService: EFS mount survives instance reboots', () => {
 describe('CanopyCmsService worker UserData: ESM bundle bootstrapping', () => {
   it('installs unzip and writes a type:module package.json next to the ESM worker bundle', () => {
     const template = synth()
-    const blobs = JSON.stringify(template.findResources('AWS::AutoScaling::LaunchConfiguration'))
-    const ltBlobs = JSON.stringify(template.findResources('AWS::EC2::LaunchTemplate'))
-    const all = blobs + ltBlobs
+    const all = workerUserDataBlobs(template)
     expect(all).toContain('yum install -y git unzip')
     expect(all).toContain('{\\"type\\":\\"module\\"}')
+  })
+})
+
+describe('CanopyCmsService M4: worker ASG uses a LaunchTemplate, not LaunchConfiguration', () => {
+  it('synth produces zero LaunchConfigurations and exactly one LaunchTemplate', () => {
+    // AWS accounts created after ~mid-2023 cannot create
+    // AWS::AutoScaling::LaunchConfiguration resources at all, so relying on
+    // AutoScalingGroup's deprecated instanceType/machineImage/... shorthand
+    // (which synthesizes one) would hard-fail `cdk deploy` for fresh adopter
+    // accounts. Pin the migration to an explicit LaunchTemplate.
+    const template = synth()
+    const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
+    const launchTemplates = template.findResources('AWS::EC2::LaunchTemplate')
+    expect(Object.keys(launchConfigs)).toHaveLength(0)
+    expect(Object.keys(launchTemplates)).toHaveLength(1)
   })
 })
