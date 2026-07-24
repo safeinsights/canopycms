@@ -12,7 +12,7 @@ Remaining live items are marked OPEN below; everything else is annotated.
 - [ ] OPEN: After you publish a branch, you can still save. Should editing be locked
       so reviewers see stable content? Also can't republish currently. (Workflow
       decision; related to the post-merge lifecycle work in
-      [post-merge-sync-gaps.md](post-merge-sync-gaps.md).)
+      [post-merge-sync-gaps.md](resolved/post-merge-sync-gaps.md).)
 
 ## Bigger items not listed in master plan
 
@@ -35,5 +35,5 @@ Remaining live items are marked OPEN below; everything else is annotated.
 - [ ] OPEN (planning): think through editorial + development scenarios
       (dev/staging/prod flow, schema changes vs content branches, long- vs
       short-lived branches, synchronization). Partially overlaps
-      [post-merge-sync-gaps.md](post-merge-sync-gaps.md); the broader
-      scenario-planning exercise remains unowned.
+      [post-merge-sync-gaps.md](resolved/post-merge-sync-gaps.md) (RESOLVED); the
+      broader scenario-planning exercise remains unowned.

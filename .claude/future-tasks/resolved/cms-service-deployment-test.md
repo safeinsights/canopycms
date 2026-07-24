@@ -105,7 +105,8 @@ swept the CDK app); CDK `generateLaunchTemplateInsteadOfLaunchConfig` feature fl
   SSO role (`SafeInsights-DevAdmin`) cannot `ssm:StartSession`/`SendCommand`, so the
   worker was a black box observable only via EC2 console output + EFS metrics. A real
   deploy needs the worker's journald shipped to CloudWatch (add the agent in
-  user-data, or grant SSM to the operating role).
+  user-data, or grant SSM to the operating role). (resolved — see
+  [worker-cloudwatch-logs.md](worker-cloudwatch-logs.md))
 - **[[server-mode-anonymous-read-500]]** + **[[slug-route-nofallback-500]]** (P2) —
   content-read edge cases surface as 500 on the server build.
 - **[[canopycms-pack-needs-prepack]]** (P2) — `canopycms` and siblings need the same

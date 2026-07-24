@@ -8,6 +8,7 @@ import {
   BranchMetadataFileManager,
   BranchMetadataConflictError,
   getBranchMetadataFileManager,
+  buildMergedBranchUpdate,
   type BranchMetadataFile,
 } from './branch-metadata'
 
@@ -347,6 +348,31 @@ describe('BranchMetadataFileManager', () => {
       const raw = await fs.readFile(filePath, 'utf8')
       expect(() => JSON.parse(raw)).not.toThrow()
       expect(raw.endsWith('\n')).toBe(true)
+    })
+  })
+
+  describe('buildMergedBranchUpdate', () => {
+    it('produces archived/merged metadata with an ISO mergedAt and the branch name preserved', () => {
+      const now = new Date('2026-01-01T12:00:00.000Z')
+      const update = buildMergedBranchUpdate('feature/x', now)
+
+      expect(update).toEqual({
+        name: 'feature/x',
+        status: 'archived',
+        pullRequestState: 'merged',
+        mergedAt: '2026-01-01T12:00:00.000Z',
+      })
+    })
+
+    it('defaults `now` to the current time when omitted', () => {
+      const before = Date.now()
+      const update = buildMergedBranchUpdate('feature/y')
+      const after = Date.now()
+
+      expect(update.mergedAt).toEqual(expect.any(String))
+      const mergedAtMs = new Date(update.mergedAt as string).getTime()
+      expect(mergedAtMs).toBeGreaterThanOrEqual(before)
+      expect(mergedAtMs).toBeLessThanOrEqual(after)
     })
   })
 

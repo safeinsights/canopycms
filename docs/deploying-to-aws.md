@@ -12,11 +12,13 @@ This guide walks through deploying CanopyCMS on AWS using Lambda + EFS + EC2 Wor
 > read → the no-internet Lambda hangs on sign-in) and the shipped template
 > asserts a secret key; the raw-CloudFront path needs the managed
 > `CACHING_DISABLED` policy and an `x-forwarded-host`-only CloudFront Function;
-> a two-pass deploy for bucket CORS + `CLERK_AUTHORIZED_PARTIES`; and — because
-> a locked-down operator role may not have SSM — **ship the EC2 worker's logs to
-> CloudWatch** (it is otherwise unobservable). Adopters consume the published
-> `canopycms-cdk` package; the constructs referenced here also power `AssetSupport`
-> for media (add it to give the deployed editor an upload/transform backend).
+> and a two-pass deploy for bucket CORS + `CLERK_AUTHORIZED_PARTIES`. The
+> EC2 worker's logs now ship to CloudWatch by default (see
+> [Worker observability](#worker-observability) below) — a locked-down
+> operator role may not have SSM, and the worker was otherwise unobservable.
+> Adopters consume the published `canopycms-cdk` package; the constructs
+> referenced here also power `AssetSupport` for media (add it to give the
+> deployed editor an upload/transform backend).
 
 ## Architecture Overview
 
@@ -324,6 +326,32 @@ Settings changes (permissions and groups) follow the same Lambda→worker patter
 5. EC2 worker dequeues the task, pushes the settings branch from `remote.git` to GitHub, and creates/updates a PR
 6. Additionally, the worker's `syncGit()` pushes settings branches on every cycle as a safety net
 
+## Worker observability
+
+The EC2 worker's stdout/stderr ships to CloudWatch Logs by default via the
+amazon-cloudwatch-agent — no SSM or shell access needed to see what it's doing.
+
+- **Log group**: `/canopycms/<stackName>/worker`, created by `CanopyCmsService`
+  (90-day default retention, `RemovalPolicy.DESTROY`). Filter on the `/canopycms/`
+  prefix in the CloudWatch console to see every deployment's worker log group at
+  once. Override retention with `workerLogRetention` and the name with
+  `workerLogGroupName` (also useful if you instantiate `CanopyCmsService` twice in
+  one stack, since the default name would otherwise collide); the group itself is
+  available off the construct as `service.workerLogGroup`.
+- **Log streams**: one per instance id — a new stream appears every time the spot
+  worker is replaced.
+- **Timestamps**: log events carry ingestion timestamps (the worker doesn't emit
+  its own yet — see
+  [`.claude/future-tasks/worker-log-timestamps.md`](../.claude/future-tasks/worker-log-timestamps.md)).
+- **On-instance file**: `/var/log/canopy-worker/worker.log`, bounded by a
+  logrotate policy (10 MB, 5 rotations, compressed). The CloudWatch agent tails
+  this file — `journalctl -u canopy-worker` no longer carries the worker's
+  output, though `systemctl status canopy-worker` still works for a basic
+  running/not-running check.
+- **Org tagging**: tag aspects applied stack-wide (`Tags.of(stack).add(...)`)
+  cascade to the log group automatically like any other CDK resource, so org-wide
+  tagging policies need no Canopy-specific configuration.
+
 ## Security Model
 
 | Lambda                           | EC2 Worker                                      |
@@ -365,7 +393,11 @@ new CmsStack(app, 'CmsProd', {
 
 **Lambda cold start is slow**: Consider adding provisioned concurrency (1 instance, ~$15/month).
 
-**Tasks stuck in pending**: Check if the EC2 worker is running. `systemctl status canopy-worker` on the EC2 instance.
+**Tasks stuck in pending**: Check if the EC2 worker is running. First look at its
+CloudWatch log group (`/canopycms/<stackName>/worker` — see
+[Worker observability](#worker-observability)); no shell access needed. If you can
+shell in (SSM or SSH), `systemctl status canopy-worker` on the EC2 instance also
+works.
 
 **Auth cache empty**: Run `npx canopycms worker run-once` to populate, or wait for the EC2 worker's 15-minute refresh cycle.
 

@@ -123,6 +123,66 @@ describe('getBranchPermissions', () => {
     })
     expect(perms.canRequestChanges).toBe(true)
   })
+
+  it('allows withdraw when the PR was closed without merging (recovery path)', () => {
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'submitted',
+      createdBy: 'user1',
+      pullRequestState: 'closed',
+    }
+    const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+    expect(perms.canWithdraw).toBe(true)
+  })
+
+  it('blocks request changes when the PR was closed without merging', () => {
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'submitted',
+      createdBy: 'other',
+      pullRequestState: 'closed',
+    }
+    const perms = getBranchPermissions(branch, {
+      userId: 'reviewer',
+      groups: [RESERVED_GROUPS.REVIEWERS],
+    })
+    expect(perms.canRequestChanges).toBe(false)
+  })
+
+  it('allows withdraw when pullRequestState is undefined (never polled)', () => {
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'submitted',
+      createdBy: 'user1',
+    }
+    const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+    expect(perms.canWithdraw).toBe(true)
+  })
+
+  it('allows withdraw when pullRequestState is open', () => {
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'submitted',
+      createdBy: 'user1',
+      pullRequestState: 'open',
+    }
+    const perms = getBranchPermissions(branch, { userId: 'user1', groups: [] })
+    expect(perms.canWithdraw).toBe(true)
+  })
+
+  it('allows request changes when pullRequestState is open', () => {
+    const branch: BranchSummary = {
+      name: 'main',
+      status: 'submitted',
+      createdBy: 'other',
+      pullRequestState: 'open',
+    }
+    const perms = getBranchPermissions(branch, {
+      userId: 'reviewer',
+      groups: [RESERVED_GROUPS.REVIEWERS],
+    })
+    expect(perms.canRequestChanges).toBe(true)
+  })
 })
 
 describe('BranchManager', () => {
@@ -170,6 +230,108 @@ describe('BranchManager', () => {
   it('shows comment count badge when present', () => {
     renderBranchManager({ branches: baseBranches, mode: 'prod' })
     expect(screen.getByText(/3 comments/)).toBeDefined()
+  })
+
+  it('shows closed styling on the PR badge when pullRequestState is closed', () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[1],
+        pullRequestState: 'closed',
+      },
+    ]
+    renderBranchManager({ branches, mode: 'prod' })
+    expect(screen.getByText(/PR #1 \(closed\)/)).toBeDefined()
+  })
+
+  it('does not append (closed) to the PR badge when pullRequestState is open', () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[1],
+        pullRequestState: 'open',
+      },
+    ]
+    renderBranchManager({ branches, mode: 'prod' })
+    expect(screen.getByText('PR #1')).toBeDefined()
+  })
+
+  it('shows a Merged badge for archived branches with mergedAt', () => {
+    const branches: BranchSummary[] = [
+      {
+        name: 'feature/done',
+        status: 'archived',
+        createdBy: 'user1',
+        mergedAt: '2024-02-01T00:00:00.000Z',
+      },
+    ]
+    renderBranchManager({ branches, mode: 'prod' })
+    expect(screen.getByText('Merged')).toBeDefined()
+  })
+
+  it('does not show a Merged badge for archived branches without mergedAt', () => {
+    const branches: BranchSummary[] = [
+      {
+        name: 'feature/manually-archived',
+        status: 'archived',
+        createdBy: 'user1',
+      },
+    ]
+    renderBranchManager({ branches, mode: 'prod' })
+    expect(screen.queryByText('Merged')).toBeNull()
+  })
+
+  it('does not show a Merged badge for non-archived branches with mergedAt', () => {
+    const branches: BranchSummary[] = [
+      {
+        name: 'feature/weird',
+        status: 'submitted',
+        createdBy: 'user1',
+        mergedAt: '2024-02-01T00:00:00.000Z',
+      },
+    ]
+    renderBranchManager({ branches, mode: 'prod' })
+    expect(screen.queryByText('Merged')).toBeNull()
+  })
+
+  it('keeps Withdraw enabled when the submitted branch PR was closed without merging', () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[1],
+        pullRequestState: 'closed',
+      },
+    ]
+    renderBranchManager({ branches, user: creatorUser, mode: 'prod' })
+    const withdrawButton = screen.getByRole('button', { name: /withdraw/i })
+    expect(withdrawButton.hasAttribute('disabled')).toBe(false)
+  })
+
+  it('disables Request changes when the submitted branch PR was closed without merging', () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[1],
+        pullRequestState: 'closed',
+      },
+    ]
+    renderBranchManager({ branches, user: adminUser, mode: 'prod' })
+    const requestChangesButton = screen.getByRole('button', { name: /request changes/i })
+    expect(requestChangesButton.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('keeps Withdraw enabled when pullRequestState is undefined', () => {
+    renderBranchManager({ branches: baseBranches, user: creatorUser, mode: 'prod' })
+    const withdrawButton = screen.getByRole('button', { name: /withdraw/i })
+    expect(withdrawButton.hasAttribute('disabled')).toBe(false)
+  })
+
+  it('keeps Request changes enabled when pullRequestState is open', () => {
+    const branches: BranchSummary[] = [
+      {
+        ...baseBranches[1],
+        pullRequestState: 'open',
+      },
+    ]
+    renderBranchManager({ branches, user: adminUser, mode: 'prod' })
+    const requestChangesButton = screen.getByRole('button', { name: /request changes/i })
+    expect(requestChangesButton.hasAttribute('disabled')).toBe(false)
   })
 
   it('calls onSubmit when Submit button clicked', async () => {
