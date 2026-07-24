@@ -1,6 +1,15 @@
 # Worker CloudWatch log shipping (REQUIRED for a real deploy)
 
-## Status: RESOLVED (2026-07-24, PR #145)
+## Status: RESOLVED (2026-07-24, PR #145; sandbox-verified pre-merge)
+
+Verified live on the `canopy-cms-deploy-test` sandbox stack before merge:
+fresh-instance boot (the systemd#27591 crash-loop path) came up clean with
+logs shipping within ~75s of launch; scoped IAM sufficed (no CreateLogGroup
+denial); reboot persistence held (agent auto-restarted, fstab kept /mnt/efs,
+worker resumed sync cycles); log group `/canopycms/<stackName>/worker` with
+90-day retention. A spot reclaim during the deploy conveniently exercised
+the ASG-replacement path too — and confirmed [[worker-asg-rolling-update]]
+(CFN alone never replaces the instance).
 
 ### What shipped
 
