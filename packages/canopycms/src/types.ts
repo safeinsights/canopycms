@@ -67,3 +67,25 @@ export interface BranchContext extends BranchPaths {
 export interface BranchContextWithSchema extends BranchContext {
   flatSchema: import('./config').FlatSchemaItem[]
 }
+
+/**
+ * Wire shape of the worker's self-reported status file (worker-status.json,
+ * written under the task queue dir). Written by the CmsWorker daemon
+ * (PR-W1); this type is read-only here — GET /admin/status parses it as-is.
+ */
+export interface WorkerStatusReport {
+  version: 1
+  workerVersion?: string
+  startedAt: string
+  updatedAt: string
+  lastTaskCycleAt?: string
+  lastGitSyncAt?: string
+  lastGitSyncError?: { message: string; at: string }
+  lastGitSync?: {
+    durationMs: number
+    rebased: string[]
+    skippedDirty: string[]
+    failed: { branch: string; error: string }[]
+  }
+  lastFatalError?: { message: string; at: string; phase: 'startup' | 'run' }
+}
