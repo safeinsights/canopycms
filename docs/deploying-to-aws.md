@@ -175,6 +175,13 @@ export class CmsStack extends Stack {
       process.env.CLERK_SECRET_KEY_SECRET_ARN!,
     )
 
+    // Public JWKS PEM — enables networkless session verification on the
+    // isolated Lambda. Fail at synth if missing: an empty value makes Clerk
+    // silently fall back to a network JWKS fetch, and the no-internet Lambda
+    // hangs at sign-in (the exact trap this guide's deploy test diagnosed).
+    const clerkJwtKey = process.env.CLERK_JWT_KEY
+    if (!clerkJwtKey) throw new Error('CLERK_JWT_KEY must be set at synth time')
+
     // Core infrastructure
     const cmsService = new CanopyCmsService(this, 'CmsService', {
       // architecture MUST match the platform the Docker image is built for.
@@ -200,10 +207,9 @@ export class CmsStack extends Stack {
       // assetBucket: assetSupport.bucket,
       environment: {
         CANOPY_AUTH_MODE: 'clerk',
-        // Public JWKS PEM — enables networkless session verification on the
-        // isolated Lambda. Do NOT put CLERK_SECRET_KEY on the Lambda unless you
-        // must (the shipped clerkMiddleware asserts it; see notes below).
-        CLERK_JWT_KEY: process.env.CLERK_JWT_KEY ?? '',
+        // Do NOT put CLERK_SECRET_KEY on the Lambda unless you must (the
+        // shipped clerkMiddleware asserts it; see notes below).
+        CLERK_JWT_KEY: clerkJwtKey,
         CANOPY_BOOTSTRAP_ADMIN_IDS: 'user_xxx,user_yyy',
       },
     })
