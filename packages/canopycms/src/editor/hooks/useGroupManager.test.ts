@@ -51,7 +51,7 @@ describe('useGroupManager', () => {
     mockClient.groups.getInternal.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { groups: mockGroups },
+      data: { groups: mockGroups, version: 0 },
     })
 
     const { result } = renderHook(() => useGroupManager({ isOpen: true }), {
@@ -95,7 +95,7 @@ describe('useGroupManager', () => {
     mockClient.groups.getInternal.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { groups: [] },
+      data: { groups: [], version: 0 },
     })
 
     const { result } = renderHook(() => useGroupManager({ isOpen: true }), {
@@ -116,7 +116,7 @@ describe('useGroupManager', () => {
     mockClient.groups.getInternal.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { groups: mockGroups },
+      data: { groups: mockGroups, version: 1 },
     })
 
     await result.current.handleSaveGroups(mockGroups)
@@ -125,8 +125,41 @@ describe('useGroupManager', () => {
       expect(result.current.groupsData).toEqual(mockGroups)
     })
 
+    // The initial load resolved with no `version` field, so the hook tracks
+    // it as 0 and sends that back as expectedContentVersion.
     expect(mockClient.groups.updateInternal).toHaveBeenCalledWith({
       groups: mockGroups,
+      expectedContentVersion: 0,
+    })
+  })
+
+  it('sends the version observed at the last load as expectedContentVersion', async () => {
+    mockClient.groups.getInternal.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { groups: [], version: 4 },
+    })
+
+    const { result } = renderHook(() => useGroupManager({ isOpen: true }), {
+      wrapper,
+    })
+
+    await waitFor(() => {
+      expect(result.current.groupsLoading).toBe(false)
+    })
+
+    mockClient.groups.updateInternal.mockResolvedValueOnce({ ok: true, status: 200 })
+    mockClient.groups.getInternal.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { groups: [], version: 5 },
+    })
+
+    await result.current.handleSaveGroups([])
+
+    expect(mockClient.groups.updateInternal).toHaveBeenCalledWith({
+      groups: [],
+      expectedContentVersion: 4,
     })
   })
 
@@ -142,6 +175,22 @@ describe('useGroupManager', () => {
     })
 
     await expect(result.current.handleSaveGroups([])).rejects.toThrow('Save failed')
+  })
+
+  it('surfaces a version-conflict (409) message from the server', async () => {
+    mockClient.groups.updateInternal.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      error: 'Groups were modified by another user. Please reload and try again.',
+    })
+
+    const { result } = renderHook(() => useGroupManager({ isOpen: false }), {
+      wrapper,
+    })
+
+    await expect(result.current.handleSaveGroups([])).rejects.toThrow(
+      'Groups were modified by another user. Please reload and try again.',
+    )
   })
 
   it('searches users successfully', async () => {
@@ -261,7 +310,7 @@ describe('useGroupManager', () => {
     mockClient.groups.getInternal.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { groups: mockGroups },
+      data: { groups: mockGroups, version: 0 },
     })
 
     const { result } = renderHook(() => useGroupManager({ isOpen: false }), {

@@ -1,16 +1,18 @@
 /**
  * Groups file loader
  *
- * Handles loading and saving internal groups from the filesystem.
+ * Handles loading internal groups from the filesystem and mutating
+ * groups.json under the cross-host layered lock in
+ * authorization/settings-file-store.ts.
  */
 
 import { promises as fs } from 'node:fs'
-import type { CanopyUserId } from '../../types'
 import { GroupsFileSchema, type InternalGroup, type GroupsFile } from './schema'
 import type { OperatingMode } from '../../operating-mode'
 import { operatingStrategy } from '../../operating-mode'
 import { RESERVED_GROUPS } from '../helpers'
-import { atomicWriteFile } from '../../utils/atomic-write'
+import { mutateSettingsJsonFile } from '../settings-file-store'
+import type { OccWriteResult } from '../../utils/occ-json-write'
 
 /**
  * Get the appropriate groups file path based on mode
@@ -44,18 +46,17 @@ export async function loadGroupsFile(
 }
 
 /**
- * Load internal groups from .canopycms/groups.json (or .local.json in dev mode)
- * Ensures Admins and Reviewers groups always exist, adding them dynamically if not present.
- * If Admins group exists in file, merges with bootstrap admin IDs.
+ * Derive the effective internal groups list from the raw groups array
+ * stored on disk: ensures the reserved Admins/Reviewers groups always exist
+ * (synthesizing defaults when absent) and merges bootstrap admin IDs into
+ * Admins. Pure — no disk I/O — so a caller that already holds a freshly
+ * loaded file (e.g. a settings-file mutator, which reloads on every retry
+ * attempt) can reconcile against it without a second read.
  */
-export async function loadInternalGroups(
-  branchRoot: string,
-  mode: OperatingMode,
+export function deriveInternalGroups(
+  fileGroups: InternalGroup[],
   bootstrapAdminIds: Set<string> = new Set(),
-): Promise<InternalGroup[]> {
-  const file = await loadGroupsFile(branchRoot, mode)
-  const fileGroups = file?.groups ?? []
-
+): InternalGroup[] {
   // Find existing Admins and Reviewers groups
   let adminsGroup = fileGroups.find((g) => g.id === RESERVED_GROUPS.ADMINS)
   let reviewersGroup = fileGroups.find((g) => g.id === RESERVED_GROUPS.REVIEWERS)
@@ -97,27 +98,45 @@ export async function loadInternalGroups(
 }
 
 /**
- * Save internal groups to .canopycms/groups.json (or .local.json in dev mode)
+ * Load internal groups from .canopycms/groups.json (or .local.json in dev mode)
+ * Ensures Admins and Reviewers groups always exist, adding them dynamically if not present.
+ * If Admins group exists in file, merges with bootstrap admin IDs.
  */
-export async function saveInternalGroups(
+export async function loadInternalGroups(
   branchRoot: string,
-  groups: InternalGroup[],
-  updatedBy: CanopyUserId,
   mode: OperatingMode,
-  contentVersion?: number,
-): Promise<void> {
+  bootstrapAdminIds: Set<string> = new Set(),
+): Promise<InternalGroup[]> {
+  const file = await loadGroupsFile(branchRoot, mode)
+  return deriveInternalGroups(file?.groups ?? [], bootstrapAdminIds)
+}
+
+/**
+ * Mutate groups.json (or .local.json in dev mode) under the full cross-host
+ * lock + OCC-retry stack (see authorization/settings-file-store.ts).
+ * `mutate` is called with the current parsed file (`null` if it doesn't
+ * exist yet) and the version to write under; it returns the next raw
+ * payload, or `null` for a deliberate no-op. The returned payload is
+ * validated against {@link GroupsFileSchema} before being written,
+ * preserving the previous validate-before-write behavior of the old
+ * `saveInternalGroups`.
+ */
+export async function mutateGroupsFile(
+  branchRoot: string,
+  mode: OperatingMode,
+  mutate: (current: GroupsFile | null, version: number) => Record<string, unknown> | null,
+  options?: { settleMs?: number; maxAttempts?: number },
+): Promise<OccWriteResult | null> {
   const groupsPath = getGroupsFilePath(branchRoot, mode)
 
-  const groupsFile: GroupsFile = {
-    version: 1,
-    contentVersion: contentVersion ?? 1,
-    updatedAt: new Date().toISOString(),
-    updatedBy,
-    groups,
-  }
-
-  // Validate before writing
-  GroupsFileSchema.parse(groupsFile)
-
-  await atomicWriteFile(groupsPath, JSON.stringify(groupsFile, null, 2))
+  return mutateSettingsJsonFile<GroupsFile>({
+    filePath: groupsPath,
+    parse: (raw) => GroupsFileSchema.parse(JSON.parse(raw)),
+    mutate: (current, version) => {
+      const payload = mutate(current, version)
+      return payload === null ? null : GroupsFileSchema.parse(payload)
+    },
+    settleMs: options?.settleMs,
+    maxAttempts: options?.maxAttempts,
+  })
 }

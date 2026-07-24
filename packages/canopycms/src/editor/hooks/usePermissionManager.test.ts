@@ -56,7 +56,7 @@ describe('usePermissionManager', () => {
     mockClient.permissions.get.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { permissions: mockPermissions },
+      data: { permissions: mockPermissions, version: 0 },
     })
 
     const { result } = renderHook(() => usePermissionManager({ isOpen: true }), { wrapper })
@@ -101,7 +101,7 @@ describe('usePermissionManager', () => {
     mockClient.permissions.get.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { permissions: [] },
+      data: { permissions: [], version: 0 },
     })
 
     const { result } = renderHook(() => usePermissionManager({ isOpen: true }), { wrapper })
@@ -120,7 +120,7 @@ describe('usePermissionManager', () => {
     mockClient.permissions.get.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { permissions: mockPermissions },
+      data: { permissions: mockPermissions, version: 1 },
     })
 
     await result.current.handleSavePermissions(mockPermissions)
@@ -129,8 +129,39 @@ describe('usePermissionManager', () => {
       expect(result.current.permissionsData).toEqual(mockPermissions)
     })
 
+    // The initial load resolved with no `version` field, so the hook tracks
+    // it as 0 and sends that back as expectedContentVersion.
     expect(mockClient.permissions.update).toHaveBeenCalledWith({
       permissions: mockPermissions,
+      expectedContentVersion: 0,
+    })
+  })
+
+  it('sends the version observed at the last load as expectedContentVersion', async () => {
+    mockClient.permissions.get.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { permissions: [], version: 7 },
+    })
+
+    const { result } = renderHook(() => usePermissionManager({ isOpen: true }), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.permissionsLoading).toBe(false)
+    })
+
+    mockClient.permissions.update.mockResolvedValueOnce({ ok: true, status: 200 })
+    mockClient.permissions.get.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      data: { permissions: [], version: 8 },
+    })
+
+    await result.current.handleSavePermissions([])
+
+    expect(mockClient.permissions.update).toHaveBeenCalledWith({
+      permissions: [],
+      expectedContentVersion: 7,
     })
   })
 
@@ -144,6 +175,20 @@ describe('usePermissionManager', () => {
     const { result } = renderHook(() => usePermissionManager({ isOpen: false }), { wrapper })
 
     await expect(result.current.handleSavePermissions([])).rejects.toThrow('Save failed')
+  })
+
+  it('surfaces a version-conflict (409) message from the server', async () => {
+    mockClient.permissions.update.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      error: 'Permissions were modified by another user. Please reload and try again.',
+    })
+
+    const { result } = renderHook(() => usePermissionManager({ isOpen: false }), { wrapper })
+
+    await expect(result.current.handleSavePermissions([])).rejects.toThrow(
+      'Permissions were modified by another user. Please reload and try again.',
+    )
   })
 
   it('lists groups successfully', async () => {
@@ -197,7 +242,7 @@ describe('usePermissionManager', () => {
     mockClient.permissions.get.mockResolvedValueOnce({
       ok: true,
       status: 200,
-      data: { permissions: mockPermissions },
+      data: { permissions: mockPermissions, version: 0 },
     })
 
     const { result } = renderHook(() => usePermissionManager({ isOpen: false }), { wrapper })
