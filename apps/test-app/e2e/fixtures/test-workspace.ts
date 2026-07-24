@@ -496,7 +496,12 @@ export async function pushConflictingChangeToMain(
   await git.addConfig('user.email', 'test@example.com')
   await git.add('.')
   await git.commit('E2E: upstream conflict trigger')
-  await git.push('origin', 'main')
+  // Force: remote.git is preserved across runs (see resetWorkspace) while the
+  // main workspace is re-cloned fresh from the base snapshot, so remote
+  // refs/heads/main may hold a diverged history from a previous run. This
+  // fixture's contract is "make remote main exactly this state", and the
+  // remote is a local test-only bare repo — force-push is the correct tool.
+  await git.push('origin', 'main', ['--force'])
 }
 
 /**

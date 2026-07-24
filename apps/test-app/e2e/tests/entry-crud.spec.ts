@@ -14,7 +14,7 @@ test.describe('Entry CRUD Operations', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
-      ;(window as any).__E2E_TEST__ = true
+      ;(window as unknown as { __E2E_TEST__?: boolean }).__E2E_TEST__ = true
     })
     await test.step('reset workspace', () => resetWorkspace())
     await test.step('ensure main branch', () => ensureMainBranch(BASE_URL))
@@ -74,15 +74,21 @@ test.describe('Entry CRUD Operations', () => {
       await editorPage.waitForReady()
       await editorPage.openEntryNavigator()
 
-      // Expand the Posts collection (collapsed after reload)
       const postsCollection = page.locator('[data-testid="entry-nav-item-posts"]')
       await postsCollection.waitFor({
         state: 'visible',
         timeout: STANDARD_TIMEOUT,
       })
-      await postsCollection.click()
 
+      // The editor restores the created entry after reload, and the navigator
+      // auto-expands the path to the current entry (EntryNavigator merges
+      // calculatePathToEntry into the expanded state). Only click to expand
+      // when the collection is NOT already expanded — an unconditional click
+      // would toggle it collapsed and hide the entry we're asserting on.
       const navItem = page.locator('[data-testid="entry-nav-item-post"]')
+      if (!(await navItem.isVisible())) {
+        await postsCollection.click()
+      }
       await expect(navItem).toBeVisible({ timeout: STANDARD_TIMEOUT })
     })
   })

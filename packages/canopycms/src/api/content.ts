@@ -355,7 +355,11 @@ const writeContentHandler = async (
       // read, so collapse them to id strings before checking.
       if (fieldErrors.length === 0) {
         const idIndex = await store.idIndex()
-        const refValidator = new ReferenceValidator(idIndex, fields)
+        const refValidator = new ReferenceValidator(
+          idIndex,
+          fields,
+          (name) => store.resolveCollectionItem(name)?.logicalPath,
+        )
         const refResult = await refValidator.validate(normalizeReferenceValues(fields, data))
         fieldErrors.push(
           ...refResult.errors.map((e) => ({ fieldPath: e.fieldPath, message: e.error })),
@@ -529,7 +533,11 @@ const validateReferencesHandler = async (
   }
 
   // Validate references
-  const validator = new ReferenceValidator(idIndex, fields)
+  const validator = new ReferenceValidator(
+    idIndex,
+    fields,
+    (name) => store.resolveCollectionItem(name)?.logicalPath,
+  )
   const result = await validator.validate(body.data)
 
   return {

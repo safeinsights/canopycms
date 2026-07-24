@@ -5,6 +5,11 @@ import type { ReferenceFieldConfig, FieldConfig } from '../config'
 import { ReferenceValidator } from './reference-validator'
 import { unsafeAsLogicalPath, unsafeAsPhysicalPath, unsafeAsSlug } from '../paths/test-utils'
 
+// Stub for ContentStore.resolveCollectionItem(...)?.logicalPath, which content.ts
+// injects so schema-declared collection names (the documented unprefixed form,
+// e.g. 'posts') resolve to the ID index's canonical logical paths ('content/posts').
+const resolveCollection = (name: string) => `content/${name}`
+
 describe('ReferenceValidator entryTypes', () => {
   let idIndex: ContentIdIndex
   const partnerId = 'p1r2t3n4a5b6'
@@ -63,12 +68,12 @@ describe('ReferenceValidator entryTypes', () => {
         name: 'partner',
         type: 'reference',
         label: 'Partner',
-        collections: ['content/data-catalog'],
+        collections: ['data-catalog'],
         entryTypes: ['partner'],
       } as ReferenceFieldConfig,
     ]
 
-    const validator = new ReferenceValidator(idIndex, schema)
+    const validator = new ReferenceValidator(idIndex, schema, resolveCollection)
 
     // Partner in data-catalog tree should pass
     const validResult = await validator.validate({ partner: partnerId })
@@ -86,11 +91,11 @@ describe('ReferenceValidator entryTypes', () => {
         name: 'ref',
         type: 'reference',
         label: 'Reference',
-        collections: ['content/data-catalog'],
+        collections: ['data-catalog'],
       } as ReferenceFieldConfig,
     ]
 
-    const validator = new ReferenceValidator(idIndex, schema)
+    const validator = new ReferenceValidator(idIndex, schema, resolveCollection)
 
     // Both partner and doc should pass
     const partnerResult = await validator.validate({ ref: partnerId })
@@ -163,17 +168,101 @@ describe('ReferenceValidator entryTypes', () => {
         name: 'partner',
         type: 'reference',
         label: 'Partner',
-        collections: ['content/data-catalog'],
+        collections: ['data-catalog'],
         entryTypes: ['partner'],
       }
 
-      const validator = new ReferenceValidator(idIndex, [])
+      const validator = new ReferenceValidator(idIndex, [], resolveCollection)
 
       // Should fail on collection constraint (not in data-catalog tree)
       const error = await validator.validateSingle(otherId, field)
       expect(error).not.toBeNull()
       expect(error!.error).toContain('content/blog')
     })
+  })
+})
+
+describe('ReferenceValidator collection-name convention (E2E regression)', () => {
+  // Regression: schemas declare collections by the documented unprefixed name
+  // (`collections: ['posts']` — see README, example1, test-app), while the ID
+  // index stores canonical logical paths ('content/posts'). The validator used
+  // to compare them raw, so EVERY reference save written per the docs was
+  // rejected with 422 at the write boundary ("Entry is in collection
+  // \"content/posts\", but only [posts] are allowed") — found via e2e
+  // reference-fields failures; masked here by prefixed fixtures.
+  let idIndex: ContentIdIndex
+  const postId = 'a1b2c3d4e5f6'
+
+  const schema: FieldConfig[] = [
+    {
+      name: 'relatedPost',
+      type: 'reference',
+      label: 'Related Post',
+      collections: ['posts'],
+    } as ReferenceFieldConfig,
+  ]
+
+  beforeEach(() => {
+    idIndex = new ContentIdIndex('/tmp/test')
+    idIndex.add({
+      type: 'entry',
+      relativePath: unsafeAsPhysicalPath(`content/posts/post.hello.${postId}.json`),
+      collection: unsafeAsLogicalPath('content/posts'),
+      slug: unsafeAsSlug('hello'),
+    })
+  })
+
+  it('accepts a reference declared with the documented unprefixed collection name', async () => {
+    const validator = new ReferenceValidator(idIndex, schema, resolveCollection)
+
+    const result = await validator.validate({ relatedPost: postId })
+
+    expect(result.errors).toEqual([])
+    expect(result.valid).toBe(true)
+  })
+
+  it('still rejects entries outside the allowed collection', async () => {
+    const otherId = 'q1w2e3r4t5y6'
+    idIndex.add({
+      type: 'entry',
+      relativePath: unsafeAsPhysicalPath(`content/authors/author.jane.${otherId}.json`),
+      collection: unsafeAsLogicalPath('content/authors'),
+      slug: unsafeAsSlug('jane'),
+    })
+
+    const validator = new ReferenceValidator(idIndex, schema, resolveCollection)
+
+    const result = await validator.validate({ relatedPost: otherId })
+
+    expect(result.valid).toBe(false)
+    expect(result.errors[0].error).toContain('only [posts] are allowed')
+  })
+
+  it('treats an empty string as a cleared reference, not a malformed ID (E2E regression)', async () => {
+    // Clearing a single-select reference sends '' (ReferenceField coerces
+    // Mantine's null); the write boundary must not 422 on it.
+    const validator = new ReferenceValidator(idIndex, schema, resolveCollection)
+
+    const result = await validator.validate({ relatedPost: '' })
+
+    expect(result.errors).toEqual([])
+    expect(result.valid).toBe(true)
+  })
+
+  it('accepts entries in subcollections of an allowed collection', async () => {
+    const nestedId = 'n1e2s3t4e5d6'
+    idIndex.add({
+      type: 'entry',
+      relativePath: unsafeAsPhysicalPath(`content/posts/archive/post.old.${nestedId}.json`),
+      collection: unsafeAsLogicalPath('content/posts/archive'),
+      slug: unsafeAsSlug('old'),
+    })
+
+    const validator = new ReferenceValidator(idIndex, schema, resolveCollection)
+
+    const result = await validator.validate({ relatedPost: nestedId })
+
+    expect(result.valid).toBe(true)
   })
 })
 
@@ -198,7 +287,7 @@ describe('ReferenceValidator block-nested references (SCH-H-block)', () => {
               name: 'link',
               type: 'reference',
               label: 'Link',
-              collections: ['content/pages'],
+              collections: ['pages'],
             } as ReferenceFieldConfig,
           ],
         },
@@ -217,7 +306,7 @@ describe('ReferenceValidator block-nested references (SCH-H-block)', () => {
   })
 
   it('rejects a non-existent reference ID inside a block', async () => {
-    const validator = new ReferenceValidator(idIndex, schema)
+    const validator = new ReferenceValidator(idIndex, schema, resolveCollection)
 
     const result = await validator.validate({
       sections: [{ template: 'callout', value: { link: 'z9z9z9z9z9z9' } }],
@@ -230,7 +319,7 @@ describe('ReferenceValidator block-nested references (SCH-H-block)', () => {
   })
 
   it('rejects a malformed reference ID inside a block', async () => {
-    const validator = new ReferenceValidator(idIndex, schema)
+    const validator = new ReferenceValidator(idIndex, schema, resolveCollection)
 
     const result = await validator.validate({
       sections: [{ template: 'callout', value: { link: 'not-an-id' } }],
@@ -242,7 +331,7 @@ describe('ReferenceValidator block-nested references (SCH-H-block)', () => {
   })
 
   it('accepts a valid reference ID inside a block', async () => {
-    const validator = new ReferenceValidator(idIndex, schema)
+    const validator = new ReferenceValidator(idIndex, schema, resolveCollection)
 
     const result = await validator.validate({
       sections: [{ template: 'callout', value: { link: pageId } }],

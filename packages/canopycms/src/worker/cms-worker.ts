@@ -895,14 +895,20 @@ export class CmsWorker {
       // Use rev-list instead of status.behind for the same reason as the
       // rebase loop below: status.behind only works with an upstream
       // tracking branch configured, which isn't guaranteed here.
+      // Compare against FETCH_HEAD (the tip the fetch above just retrieved)
+      // rather than origin/<base>: workspaces are cloned --single-branch
+      // (git-manager.ts), so their fetch refspec only materializes a
+      // remote-tracking ref for the branch they were cloned from — for any
+      // other base branch, origin/<base> simply never exists and rev-list
+      // dies with "ambiguous argument".
       const behindCount = parseInt(
-        (await baseGit.raw(['rev-list', '--count', `HEAD..origin/${this.baseBranch}`])).trim(),
+        (await baseGit.raw(['rev-list', '--count', 'HEAD..FETCH_HEAD'])).trim(),
         10,
       )
 
       if (behindCount > 0) {
         try {
-          await baseGit.merge(['--ff-only', `origin/${this.baseBranch}`])
+          await baseGit.merge(['--ff-only', 'FETCH_HEAD'])
         } catch (err) {
           console.error(
             `Base branch workspace (${this.baseBranch}) failed to fast-forward (diverged local history?): ${getErrorMessage(err)}`,
@@ -1095,8 +1101,11 @@ export class CmsWorker {
         // Use rev-list instead of status.behind — status.behind only works when the
         // branch has an upstream tracking branch configured, which isn't guaranteed
         // (checkoutBranch fallback paths create branches without --track).
+        // FETCH_HEAD, not origin/<base>: branch clones are --single-branch, so
+        // no remote-tracking ref exists for a base branch other than the one
+        // they were cloned from (see the base-refresh comment above).
         const behindCount = parseInt(
-          (await branchGit.raw(['rev-list', '--count', `HEAD..origin/${this.baseBranch}`])).trim(),
+          (await branchGit.raw(['rev-list', '--count', 'HEAD..FETCH_HEAD'])).trim(),
           10,
         )
         const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
@@ -1144,7 +1153,9 @@ export class CmsWorker {
         for (let round = 0; round < MAX_ROUNDS && !completed; round++) {
           try {
             if (nextAction === 'start') {
-              await branchGit.rebase([`origin/${this.baseBranch}`])
+              // FETCH_HEAD == the base tip fetched above (single-branch clones
+              // have no origin/<base> remote-tracking ref for other branches).
+              await branchGit.rebase(['FETCH_HEAD'])
             } else if (nextAction === 'continue') {
               await branchGit.rebase(['--continue'])
             } else {

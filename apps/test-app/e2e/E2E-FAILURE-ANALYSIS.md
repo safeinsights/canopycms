@@ -1,5 +1,40 @@
 # E2E Failure Analysis (2026-07-24)
 
+> **STATUS: ALL FIXES LANDED (same day, this branch).** Six fixes, each
+> verified live and by suite runs:
+>
+> 1. `EditorPage.goto()` pins `/edit?branch=main` (fix option A).
+> 2. `ReferenceValidator` resolves schema-declared collection names via
+>    `ContentStore.resolveCollectionItem` (the same normalization the
+>    reference-options dropdown uses) — reference saves 200 where they 422'd.
+> 3. `ReferenceValidator` treats `''` as a cleared reference (the editor sends
+>    `''` when a single-select is cleared) instead of 422 "Invalid content ID
+>    format".
+> 4. `listBranchesHandler` returns a sanitized `defaultBranch` that matches
+>    registry branch names.
+> 5. `cms-worker.ts` rebase/refresh compares against `FETCH_HEAD` instead of
+>    `origin/<base>` — workspaces are `--single-branch` clones, so on any
+>    checkout whose git HEAD isn't the compared base, `origin/<base>` never
+>    exists and every sync died with "ambiguous argument 'HEAD..origin/main'"
+>    (this is what kept the conflict badge from ever appearing).
+> 6. E2E fixtures: `pushConflictingChangeToMain` force-pushes (remote.git is
+>    preserved across runs while `main` is re-cloned fresh, so plain push hits
+>    non-fast-forward rejections from prior-run history), and
+>    `entry-crud.spec.ts` only expands the Posts collection when the navigator
+>    hasn't already auto-expanded it (EntryNavigator auto-expands the path to
+>    the restored current entry — an unconditional click toggled it closed).
+>
+> Result: **49 passed / 2 failed / 1 skipped** on a pristine-workspace full
+> run from this non-`main` worktree (was **35/16/1**), and every previously
+> failing spec passes in isolation. The 2 residual failures are a distinct
+> PRE-EXISTING intermittent race, not one of the classes fixed here: an
+> mtime-based OCC 409 ("modified by another editor") when saving immediately
+> after branch create/switch — which test hits it varies per run and it never
+> reproduces in isolation. Filed as
+> `.claude/future-tasks/e2e-occ-save-race-after-branch-create.md` with the
+> established mechanism and suspects. Other remaining follow-ups: console
+> noise (§6), CI gating (§7).
+
 Handoff brief for a follow-up session. Captures why `pnpm test:e2e` currently
 fails a large batch of tests, the confirmed root causes, ranked fix options, and
 the console-noise + CI-gating context that came up alongside it.
