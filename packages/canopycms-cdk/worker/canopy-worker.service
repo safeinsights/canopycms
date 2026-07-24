@@ -1,6 +1,10 @@
 [Unit]
 Description=CanopyCMS Worker Daemon
 After=network.target
+# Never run against an unmounted workspace filesystem (matches the deployed
+# copy of this unit, which cms-service.ts user-data writes with an fstab
+# entry for /mnt/efs).
+RequiresMountsFor=/mnt/efs
 
 [Service]
 Type=simple
@@ -10,10 +14,16 @@ ExecStart=/usr/bin/node index.js
 Restart=always
 RestartSec=5
 TimeoutStartSec=300
-LogsDirectory=canopy-worker
 # File output, not journal: the CloudWatch agent cannot read journald,
 # so it tails this file instead (agent config lives in the cms-service.ts
 # user-data, which writes the deployed copy of this unit).
+# CAUTION: /var/log/canopy-worker must exist BEFORE first start. systemd
+# opens append: targets before it creates LogsDirectory= dirs
+# (systemd#27591), so without the pre-created dir the exec fails with
+# 209/STDOUT and Restart=always crash-loops forever. The deployed user-data
+# runs mkdir first; do the same if you install this unit by hand.
+# LogsDirectory= is kept for ownership management on subsequent starts.
+LogsDirectory=canopy-worker
 StandardOutput=append:/var/log/canopy-worker/worker.log
 StandardError=append:/var/log/canopy-worker/worker.log
 

@@ -20,6 +20,16 @@ agent install/config is ordered *after* `systemctl start canopy-worker` in
 user-data so a yum/agent failure never prevents the worker itself from
 running (log shipping is deliberately best-effort).
 
+A pre-merge Fable review caught a blocker the CFN-assertion tests could not
+see: systemd opens `StandardOutput=append:` targets *before* it creates
+`LogsDirectory=` dirs (systemd#27591), so without a pre-created
+`/var/log/canopy-worker` every fresh instance would fail exec (209/STDOUT)
+and crash-loop — worker silently down while the ASG sees a healthy box.
+User-data now mkdirs + chowns the directory before the first start, with a
+regression test pinning the ordering; the review also added
+`systemctl enable --now logrotate.timer` (size caps never fire if the timer
+is disabled) and hardened the ordering/negative tests.
+
 Original description below.
 
 ---

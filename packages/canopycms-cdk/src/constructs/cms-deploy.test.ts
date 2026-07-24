@@ -502,6 +502,10 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     const roles = template.findResources('AWS::IAM::Role', {
       Properties: Match.objectLike({ Description: 'CanopyCMS EC2 Worker role' }),
     })
+    // Guard against a vacuous pass: if the role description ever changes, the
+    // filter would match nothing and the negative assertion below would
+    // "succeed" while pinning nothing.
+    expect(Object.keys(roles).length).toBeGreaterThan(0)
     const managedPolicyArns = Object.values(roles).flatMap(
       (role) => (role.Properties as { ManagedPolicyArns?: unknown[] }).ManagedPolicyArns ?? [],
     )
@@ -553,10 +557,40 @@ describe('CanopyCmsService: worker CloudWatch log shipping', () => {
     expect(blobs.length).toBeGreaterThan(0)
     for (const blob of blobs) {
       const startIdx = blob.indexOf('systemctl start canopy-worker')
+      // The failure-isolation invariant is that the ENTIRE agent block runs
+      // after worker start under set -euo pipefail — the yum install is the
+      // first (and most failure-prone: network + repo) command of that block,
+      // so pin it explicitly, not just the final ctl call.
+      const yumIdx = blob.indexOf('yum install -y amazon-cloudwatch-agent')
       const agentIdx = blob.indexOf('amazon-cloudwatch-agent-ctl')
       expect(startIdx).toBeGreaterThanOrEqual(0)
+      expect(yumIdx).toBeGreaterThanOrEqual(0)
       expect(agentIdx).toBeGreaterThanOrEqual(0)
+      expect(startIdx).toBeLessThan(yumIdx)
       expect(startIdx).toBeLessThan(agentIdx)
+    }
+  })
+
+  it('pre-creates /var/log/canopy-worker BEFORE starting the worker (systemd#27591 crash-loop guard)', () => {
+    const template = synth()
+    const launchConfigs = template.findResources('AWS::AutoScaling::LaunchConfiguration')
+    const launchTemplates = template.findResources('AWS::EC2::LaunchTemplate')
+    const blobs = [
+      ...Object.values(launchConfigs).map((r) => JSON.stringify(r)),
+      ...Object.values(launchTemplates).map((r) => JSON.stringify(r)),
+    ]
+    expect(blobs.length).toBeGreaterThan(0)
+    for (const blob of blobs) {
+      // systemd opens StandardOutput=append: targets before it creates
+      // LogsDirectory= dirs (systemd#27591): if this mkdir ever moves after
+      // the first `systemctl start canopy-worker`, every fresh instance
+      // fails exec with 209/STDOUT and Restart=always crash-loops forever —
+      // the worker would be silently down while the ASG sees a healthy box.
+      const mkdirIdx = blob.indexOf('mkdir -p /var/log/canopy-worker')
+      const startIdx = blob.indexOf('systemctl start canopy-worker')
+      expect(mkdirIdx).toBeGreaterThanOrEqual(0)
+      expect(startIdx).toBeGreaterThanOrEqual(0)
+      expect(mkdirIdx).toBeLessThan(startIdx)
     }
   })
 })
