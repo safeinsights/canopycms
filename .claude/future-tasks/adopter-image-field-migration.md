@@ -3,7 +3,7 @@
 Status: **ready to run** once the assets epic (`epic/assets-media-system`) has merged to
 main and a version is published/linked into the adopter apps. Split out of the epic
 deliberately (JP 2026-07-22) because it edits the two live adopter repos on their own
-schedule. Design context: [assets-media-system.md](assets-media-system.md).
+schedule. Design context: [assets-media-system.md](resolved/assets-media-system.md).
 
 ## Why this is separate work
 

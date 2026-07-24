@@ -4,12 +4,14 @@ import { Construct } from 'constructs'
 import {
   Duration,
   RemovalPolicy,
+  Stack,
   aws_ec2 as ec2,
   aws_efs as efs,
   aws_iam as iam,
   aws_lambda as lambda,
   aws_autoscaling as autoscaling,
   aws_s3_assets as s3assets,
+  aws_logs as logs,
 } from 'aws-cdk-lib'
 import type { IBucket } from 'aws-cdk-lib/aws-s3'
 
@@ -37,6 +39,15 @@ export interface CanopyCmsServiceProps {
 
   /** Lambda reserved concurrency cap (default: 10) */
   reservedConcurrency?: number
+
+  /**
+   * Lambda architecture (default: `Architecture.X86_64`, Lambda's own
+   * default). MUST match the platform the Docker image was built for - e.g.
+   * an image built for `Platform.LINUX_ARM64` requires
+   * `Architecture.ARM_64` here, or the function fails at invoke time with
+   * an exec format error.
+   */
+  architecture?: lambda.Architecture
 
   /** EC2 spot max price (default: on-demand rate for t4g.nano) */
   spotMaxPrice?: string
@@ -74,6 +85,20 @@ export interface CanopyCmsServiceProps {
    * construct directly, so `canopycms-cdk`'s two constructs stay decoupled.
    */
   assetBucket?: IBucket
+
+  /**
+   * Retention for the EC2 worker's CloudWatch log group (default: three
+   * months). Worker-only: the Lambdas keep their auto-created log groups.
+   */
+  workerLogRetention?: logs.RetentionDays
+
+  /**
+   * Name for the worker's CloudWatch log group (default:
+   * `/canopycms/<stackName>/worker`). Override to follow an org naming
+   * convention, or when instantiating this construct twice in one stack (the
+   * default name would collide).
+   */
+  workerLogGroupName?: string
 }
 
 /**
@@ -85,8 +110,11 @@ export interface CanopyCmsServiceProps {
  * - Lambda function (Docker image, EFS mount, private subnet, no internet)
  * - Lambda Function URL (for CloudFront origin)
  * - EC2 Worker (t4g.nano spot in ASG, public subnet, EFS mount, systemd)
+ * - Dedicated CloudWatch log group for the worker's stdout/stderr, shipped
+ *   via the amazon-cloudwatch-agent (journald is not agent-readable)
  * - Security groups (least-privilege)
- * - IAM roles (Lambda: EFS only; EC2: EFS + Secrets Manager)
+ * - IAM roles (Lambda: EFS only; EC2: EFS + Secrets Manager + CloudWatch
+ *   Logs write, scoped to its own log group)
  */
 export class CanopyCmsService extends Construct {
   /** Lambda Function URL — use as CloudFront origin */
@@ -103,6 +131,9 @@ export class CanopyCmsService extends Construct {
 
   /** The EC2 worker Auto Scaling Group */
   public readonly workerAsg: autoscaling.AutoScalingGroup
+
+  /** The EC2 worker's CloudWatch log group (worker stdout/stderr) */
+  public readonly workerLogGroup: logs.LogGroup
 
   constructor(scope: Construct, id: string, props: CanopyCmsServiceProps) {
     super(scope, id)
@@ -216,13 +247,26 @@ export class CanopyCmsService extends Construct {
       memorySize: props.memorySize ?? 2048,
       timeout: props.timeout ?? Duration.seconds(60),
       reservedConcurrentExecutions: props.reservedConcurrency ?? 10,
+      architecture: props.architecture,
       vpc: this.vpc,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
       securityGroups: [lambdaSg],
       filesystem: lambda.FileSystem.fromEfsAccessPoint(accessPoint, '/mnt/efs'),
       environment: {
-        CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs/workspace',
-        CANOPY_AUTH_CACHE_PATH: '/mnt/efs/workspace/.cache',
+        // INVARIANT (B1): the Lambda mounts EFS through the WorkspaceAP access
+        // point above, which is already rooted at EFS:/workspace - so /mnt/efs
+        // here IS EFS:/workspace. The EC2 worker instead mounts the filesystem
+        // ROOT at /mnt/efs (see UserData below) and reaches the same directory
+        // via /mnt/efs/workspace. Both paths must resolve to EFS:/workspace,
+        // or the Lambda and worker silently operate on different directories.
+        CANOPYCMS_WORKSPACE_ROOT: '/mnt/efs',
+        CANOPY_AUTH_CACHE_PATH: '/mnt/efs/.cache',
+        // B7 note: git >= 2.35.2 refuses repos owned by another uid (the
+        // access point forces uid 1000; Lambda containers run as a different
+        // user). Env-based GIT_CONFIG_* CANNOT fix this - simple-git
+        // hard-blocks env config (deploy-proven 2026-07-24). The fix lives in
+        // the image: Dockerfile.cms.template runs
+        // `git config --system safe.directory '*'`.
         ...props.environment,
       },
     })
@@ -305,6 +349,24 @@ export class CanopyCmsService extends Construct {
       iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonElasticFileSystemClientReadWriteAccess'),
     )
 
+    // Observation channel for a NAT-less deploy (SSM Session Manager / send-command);
+    // worker SG already allows 443 egress.
+    workerRole.addManagedPolicy(
+      iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
+    )
+
+    // Dedicated CloudWatch log group for the worker's stdout/stderr (shipped by
+    // the CloudWatch agent in user-data below - the agent cannot read journald,
+    // so the systemd unit is switched to file output further down).
+    this.workerLogGroup = new logs.LogGroup(this, 'WorkerLogs', {
+      logGroupName: props.workerLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/worker`,
+      retention: props.workerLogRetention ?? logs.RetentionDays.THREE_MONTHS,
+      removalPolicy: RemovalPolicy.DESTROY,
+    })
+    // CreateLogStream + PutLogEvents scoped to this group only (least privilege;
+    // the group is pre-created by CFN so the agent never needs CreateLogGroup).
+    this.workerLogGroup.grantWrite(workerRole)
+
     // Worker S3 Asset — upload bundled worker code to CDK assets bucket
     // The worker is bundled with esbuild into a single JS file (npm run build:worker)
     const workerAsset = new s3assets.Asset(this, 'WorkerCode', {
@@ -318,6 +380,10 @@ export class CanopyCmsService extends Construct {
       `CANOPYCMS_GITHUB_OWNER=${props.githubOwner}`,
       `CANOPYCMS_GITHUB_REPO=${props.githubRepo}`,
       `CANOPYCMS_BASE_BRANCH=${props.baseBranch ?? 'main'}`,
+      // B8: the AWS SDK JS v3 cannot resolve a region from IMDS on its own -
+      // without this the worker's bare `SecretsManagerClient({})` crash-loops
+      // with "Region is missing".
+      `AWS_REGION=${Stack.of(this).region}`,
     ]
     if (props.githubTokenSecretArn) {
       envLines.push(`CANOPYCMS_GITHUB_TOKEN_SECRET_ARN=${props.githubTokenSecretArn}`)
@@ -333,8 +399,8 @@ export class CanopyCmsService extends Construct {
       '#!/bin/bash',
       'set -euo pipefail',
       '',
-      '# Install dependencies',
-      'yum install -y git',
+      '# Install dependencies (unzip is not guaranteed in the AL2023 AMI)',
+      'yum install -y git unzip',
       'curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -',
       'yum install -y nodejs',
       '',
@@ -342,12 +408,21 @@ export class CanopyCmsService extends Construct {
       'yum install -y amazon-efs-utils',
       'mkdir -p /mnt/efs',
       `mount -t efs ${this.fileSystem.fileSystemId}:/ /mnt/efs`,
+      '# Persist the mount across instance reboots: user-data runs once per',
+      '# instance, so without an fstab entry a plain reboot leaves /mnt/efs an',
+      '# empty local dir and the worker would clone a divergent remote.git',
+      '# onto the instance disk, invisible to the Lambda.',
+      `echo '${this.fileSystem.fileSystemId}:/ /mnt/efs efs _netdev 0 0' >> /etc/fstab`,
       '',
       '# Download worker from CDK S3 Asset',
       `aws s3 cp s3://${workerAsset.s3BucketName}/${workerAsset.s3ObjectKey} /tmp/canopy-worker.zip`,
       'mkdir -p /opt/canopy-worker',
       'cd /opt/canopy-worker',
       'unzip -o /tmp/canopy-worker.zip',
+      '# The worker bundle is ESM (esbuild --format=esm). Node 20 treats .js as',
+      '# CommonJS without this marker and crash-loops on the import statement',
+      '# (Node >=22.7 auto-detects and masks the bug locally).',
+      `echo '{"type":"module"}' > /opt/canopy-worker/package.json`,
       '',
       '# Write environment file for systemd service',
       `cat > /opt/canopy-worker/.env << 'ENVEOF'`,
@@ -359,6 +434,8 @@ export class CanopyCmsService extends Construct {
       '[Unit]',
       'Description=CanopyCMS Worker Daemon',
       'After=network.target',
+      '# Never run against an unmounted /mnt/efs (see the fstab note above).',
+      'RequiresMountsFor=/mnt/efs',
       '',
       '[Service]',
       'Type=simple',
@@ -368,8 +445,16 @@ export class CanopyCmsService extends Construct {
       'Restart=always',
       'RestartSec=5',
       'TimeoutStartSec=300',
-      'StandardOutput=journal',
-      'StandardError=journal',
+      '# File output, not journal: the CloudWatch agent cannot read journald,',
+      '# so it tails this file instead (see the agent config below).',
+      '# CAUTION: /var/log/canopy-worker must exist BEFORE first start. systemd',
+      '# opens append: targets before it creates LogsDirectory= dirs',
+      '# (systemd#27591), so without the pre-created dir the exec fails with',
+      '# 209/STDOUT and Restart=always crash-loops forever. User-data runs',
+      '# mkdir before systemctl start; LogsDirectory= is kept for ownership.',
+      'LogsDirectory=canopy-worker',
+      'StandardOutput=append:/var/log/canopy-worker/worker.log',
+      'StandardError=append:/var/log/canopy-worker/worker.log',
       'EnvironmentFile=/opt/canopy-worker/.env',
       '',
       '[Install]',
@@ -385,29 +470,101 @@ export class CanopyCmsService extends Construct {
       'mkdir -p /mnt/efs/workspace',
       'chown ec2-user:ec2-user /mnt/efs/workspace',
       '',
+      '# Pre-create the worker log dir (crash-loop guard, MUST precede the',
+      '# first systemctl start): systemd opens StandardOutput=append: files',
+      '# BEFORE it creates LogsDirectory= dirs (systemd#27591), so on a fresh',
+      '# instance the unit would fail exec with 209/STDOUT and crash-loop',
+      '# forever without this. The unit keeps LogsDirectory= for ownership',
+      '# management on subsequent starts.',
+      'mkdir -p /var/log/canopy-worker',
+      'chown ec2-user:ec2-user /var/log/canopy-worker',
+      '',
       '# Start worker',
       'systemctl daemon-reload',
       'systemctl enable canopy-worker',
       'systemctl start canopy-worker',
+      '',
+      '# ---- CloudWatch log shipping ----',
+      '# Placed AFTER worker start: with set -euo pipefail, a yum/agent failure',
+      '# here must not prevent the worker from running (shipping is best-effort).',
+      'yum install -y amazon-cloudwatch-agent logrotate',
+      '',
+      '# Bound on-disk growth; copytruncate keeps the fd the CW agent tails valid',
+      '# (tiny copy->truncate loss window is acceptable for diagnostic logs).',
+      `cat > /etc/logrotate.d/canopy-worker << 'ROTEOF'`,
+      '/var/log/canopy-worker/worker.log {',
+      '    size 10M',
+      '    rotate 5',
+      '    compress',
+      '    copytruncate',
+      '    missingok',
+      '    notifempty',
+      '}',
+      'ROTEOF',
+      '# The config above only fires when logrotate actually runs; AL2023',
+      '# presets may leave logrotate.timer disabled, and without it the size',
+      '# cap never triggers and worker.log grows until the nano disk fills.',
+      '# --now is idempotent if the timer is already enabled/running.',
+      'systemctl enable --now logrotate.timer',
+      '',
+      '# No retention_in_days here: CDK owns retention on the pre-created group.',
+      `cat > /opt/aws/amazon-cloudwatch-agent/etc/canopy-worker-logs.json << 'CWEOF'`,
+      '{',
+      '  "logs": {',
+      '    "logs_collected": {',
+      '      "files": {',
+      '        "collect_list": [',
+      '          {',
+      '            "file_path": "/var/log/canopy-worker/worker.log",',
+      `            "log_group_name": "${this.workerLogGroup.logGroupName}",`,
+      '            "log_stream_name": "{instance_id}"',
+      '          }',
+      '        ]',
+      '      }',
+      '    }',
+      '  }',
+      '}',
+      'CWEOF',
+      '# fetch-config -s starts AND systemctl-enables the agent (reboot-persistent).',
+      '/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/canopy-worker-logs.json',
     )
 
-    // Auto Scaling Group
-    this.workerAsg = new autoscaling.AutoScalingGroup(this, 'WorkerAsg', {
-      vpc: this.vpc,
-      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+    // Launch template (not the deprecated AutoScalingGroup instanceType/
+    // machineImage/... shorthand): that shorthand synthesizes an
+    // AWS::AutoScaling::LaunchConfiguration, which AWS accounts created after
+    // ~mid-2023 cannot create at all — `cdk deploy` would hard-fail for any
+    // fresh adopter account. An explicit LaunchTemplate synthesizes
+    // AWS::EC2::LaunchTemplate instead, which every account can use.
+    const launchTemplate = new ec2.LaunchTemplate(this, 'WorkerLaunchTemplate', {
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.NANO),
       machineImage: ec2.MachineImage.latestAmazonLinux2023({
         cpuType: ec2.AmazonLinuxCpuType.ARM_64,
       }),
       role: workerRole,
       securityGroup: workerSg,
+      userData,
+      spotOptions: {
+        requestType: ec2.SpotRequestType.ONE_TIME, // required for ASG-managed spot
+        maxPrice: parseFloat(props.spotMaxPrice ?? '0.0042'), // On-demand rate for t4g.nano
+      },
+    })
+
+    // Auto Scaling Group
+    this.workerAsg = new autoscaling.AutoScalingGroup(this, 'WorkerAsg', {
+      vpc: this.vpc,
+      vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
+      launchTemplate,
       minCapacity: 1,
       maxCapacity: 1,
-      userData,
-      spotPrice: props.spotMaxPrice ?? '0.0042', // On-demand rate for t4g.nano
       healthCheck: autoscaling.HealthCheck.ec2({
         grace: Duration.minutes(5),
       }),
     })
+
+    // Boot ordering: the ASG can launch before EFS mount targets are
+    // available; user-data runs with `set -euo pipefail`, so an early
+    // `mount -t efs` failure kills the whole bootstrap and the
+    // EC2-health-checked ASG never notices.
+    this.workerAsg.node.addDependency(this.fileSystem.mountTargetsAvailable)
   }
 }

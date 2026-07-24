@@ -217,21 +217,38 @@ export class CmsWorker {
     // Acquire lock to prevent concurrent workers
     await this.acquireLock()
 
-    // Ensure remote.git exists (init bare repo if first run)
-    await this.ensureRemoteGit()
+    // Everything below runs while holding the cross-host worker lock. A
+    // failure here (most notably the empty-remote guard inside
+    // ensureRemoteGit) means the process is about to exit, and systemd
+    // (Restart=always) will retry — but a still-held lock would make every
+    // retry fail with ELOCKED for up to lockStaleMs. Release before
+    // rethrowing so the next start() (this process's retry, or another host)
+    // can acquire immediately. We deliberately do NOT reorder ensureRemoteGit
+    // ahead of acquireLock: two hosts cold-starting at once would then both
+    // race to `git clone --bare` into the same remoteGitPath (the same class
+    // of race that acquireProvisioningLock guards against for workspace
+    // clones elsewhere) — acquiring the lock first is what already
+    // serializes that.
+    try {
+      // Ensure remote.git exists (init bare repo if first run)
+      await this.ensureRemoteGit()
 
-    // Recover any orphaned tasks from a previous crash
-    const recovered = await recoverOrphanedTasks(this.taskDir, undefined, this.log)
-    if (recovered > 0) {
-      console.log(`Recovered ${recovered} orphaned task(s)`)
-    }
+      // Recover any orphaned tasks from a previous crash
+      const recovered = await recoverOrphanedTasks(this.taskDir, undefined, this.log)
+      if (recovered > 0) {
+        console.log(`Recovered ${recovered} orphaned task(s)`)
+      }
 
-    // Run initial sync + cache refresh immediately
-    const initialTasks: Promise<void>[] = [this.syncGit()]
-    if (this.config.refreshAuthCache) {
-      initialTasks.push(this.refreshAuthCache())
+      // Run initial sync + cache refresh immediately
+      const initialTasks: Promise<void>[] = [this.syncGit()]
+      if (this.config.refreshAuthCache) {
+        initialTasks.push(this.refreshAuthCache())
+      }
+      await Promise.allSettled(initialTasks)
+    } catch (err) {
+      await this.releaseLock()
+      throw err
     }
-    await Promise.allSettled(initialTasks)
 
     // Start recurring task loops using setTimeout chaining
     // (avoids setInterval overlap when tasks take longer than the interval)
@@ -356,22 +373,93 @@ export class CmsWorker {
   }
 
   /**
+   * Whether the bare repo at `gitDir` has a local `refs/heads/<baseBranch>`.
+   *
+   * Uses an explicit `--git-dir` invocation rather than `simpleGit({ baseDir
+   * })` so this also works in sandboxed/CI git environments that set
+   * `safe.bareRepository=explicit` (which refuses cwd-based discovery of
+   * bare repos but expressly allows `--git-dir` — see
+   * GitManager.bareRemoteHasBranch for the same pattern).
+   *
+   * Deliberately omits `--quiet`: simple-git only treats a task as failed
+   * when the process both exits non-zero AND writes to stderr
+   * (isTaskError), so a quiet, silent-on-failure `--verify` would leave a
+   * missing branch indistinguishable from success. Without `--quiet`,
+   * `rev-parse --verify` writes its "fatal: ..." to stderr on failure, which
+   * is what makes simple-git reject the promise here.
+   */
+  private async verifyBaseBranchExists(gitDir: string): Promise<void> {
+    await simpleGit().raw([
+      '--git-dir',
+      gitDir,
+      'rev-parse',
+      '--verify',
+      `refs/heads/${this.baseBranch}`,
+    ])
+  }
+
+  /**
    * Ensure remote.git bare repo exists.
    * On first run, clone from GitHub as a bare repo.
+   *
+   * Empty-remote guard: simple-git's bare clone of an EMPTY GitHub repo (no
+   * commits, or a base branch that's never been pushed) exits 0 and produces
+   * a refs-less bare repo — HEAD points at an unborn branch. `fs.stat`
+   * cannot distinguish this from a healthy clone, so left unchecked it
+   * silently poisons remote.git: every later branch operation (Lambda-side
+   * clone provisioning, worker pushes) breaks, and the fs.stat short-circuit
+   * means it never heals on its own. We verify the base branch exists right
+   * after cloning and again on the already-exists fast path, since a
+   * previous run could have left a poisoned remote.git behind before this
+   * guard existed.
    */
   private async ensureRemoteGit(): Promise<void> {
+    let exists: boolean
     try {
       await fs.stat(this.remoteGitPath)
-      return // Already exists
+      exists = true
     } catch {
-      console.log('Initializing remote.git from GitHub...')
-      const git = simpleGit()
-      await git.clone(this.buildGitHubUrl(), this.remoteGitPath, ['--bare'])
-      // Remove the origin remote so the token doesn't persist in config
-      const bareGit = simpleGit({ baseDir: this.remoteGitPath })
-      await bareGit.removeRemote('origin').catch(() => {})
-      console.log('remote.git initialized')
+      exists = false
     }
+
+    if (exists) {
+      try {
+        await this.verifyBaseBranchExists(this.remoteGitPath)
+      } catch (err) {
+        console.error(`remote.git base branch verification failed: ${getErrorMessage(err)}`)
+        // Do NOT auto-delete: an existing remote.git could hold unpushed
+        // canopycms-settings-* branches or other state worth preserving.
+        // Deletion here is the operator's call, not ours.
+        throw new Error(
+          `remote.git at ${this.remoteGitPath} has no branch '${this.baseBranch}' (likely cloned while the GitHub repo was empty). Delete ${this.remoteGitPath} and restart the worker to re-clone.`,
+        )
+      }
+      return // Already exists and has the base branch
+    }
+
+    console.log('Initializing remote.git from GitHub...')
+    const git = simpleGit()
+    await git.clone(this.buildGitHubUrl(), this.remoteGitPath, ['--bare'])
+
+    try {
+      await this.verifyBaseBranchExists(this.remoteGitPath)
+    } catch (err) {
+      console.error(
+        `remote.git base branch verification failed after clone: ${getErrorMessage(err)}`,
+      )
+      // Deleting before throwing is what makes this recoverable: the next
+      // start() sees no remote.git and re-clones, instead of being stuck
+      // forever behind a poisoned bare repo that fs.stat alone can't detect.
+      await fs.rm(this.remoteGitPath, { recursive: true, force: true })
+      throw new Error(
+        `remote.git clone of ${this.config.githubOwner}/${this.config.githubRepo} has no branch '${this.baseBranch}' - the GitHub repository is empty or the base branch does not exist. Push an initial commit to '${this.baseBranch}' and restart the worker (systemd will retry automatically).`,
+      )
+    }
+
+    // Remove the origin remote so the token doesn't persist in config
+    const bareGit = simpleGit({ baseDir: this.remoteGitPath })
+    await bareGit.removeRemote('origin').catch(() => {})
+    console.log('remote.git initialized')
   }
 
   /**

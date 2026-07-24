@@ -8,7 +8,7 @@
  *
  *   1. esbuild bundles handler.ts (+ its canopycms/aws-sdk imports) into a
  *      single CJS file, with `sharp`/`@img/*` (native bindings) and
- *      `@aws-sdk/*` (already present in the Node 20.x Lambda managed
+ *      `@aws-sdk/*` (already present in the nodejs22.x Lambda managed
  *      runtime) left external.
  *   2. `npm install sharp@<range> --os=linux --cpu=arm64 --libc=glibc` runs
  *      directly in the output directory. sharp >=0.33 ships its native

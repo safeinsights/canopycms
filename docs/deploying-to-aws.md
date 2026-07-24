@@ -2,6 +2,24 @@
 
 This guide walks through deploying CanopyCMS on AWS using Lambda + EFS + EC2 Worker. This architecture costs ~$5-9/month and is designed for low-traffic CMS editing workflows.
 
+> **Deploy-proven notes (2026-07).** The whole stack was first deployed and
+> exercised end-to-end during the deployment-test epic — see
+> [`.claude/future-tasks/resolved/cms-service-deployment-test.md`](../.claude/future-tasks/resolved/cms-service-deployment-test.md)
+> for the full account of what broke and the fixes. Load-bearing gotchas that
+> guide is the source of truth for: reference secrets by their **full** ARN
+> (below); Lambda **architecture must match the Docker image platform**;
+> **`clerkMiddleware` needs an explicit `jwtKey`** (the env var alone is never
+> read → the no-internet Lambda hangs on sign-in) and the shipped template
+> asserts a secret key; the raw-CloudFront path needs the managed
+> `CACHING_DISABLED` policy and an `x-forwarded-host`-only CloudFront Function;
+> and a two-pass deploy for bucket CORS + `CLERK_AUTHORIZED_PARTIES`. The
+> EC2 worker's logs now ship to CloudWatch by default (see
+> [Worker observability](#worker-observability) below) — a locked-down
+> operator role may not have SSM, and the worker was otherwise unobservable.
+> Adopters consume the published `canopycms-cdk` package; the constructs
+> referenced here also power `AssetSupport` for media (add it to give the
+> deployed editor an upload/transform backend).
+
 ## Architecture Overview
 
 ```
@@ -136,40 +154,76 @@ import { Stack, StackProps } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager'
+import { Platform } from 'aws-cdk-lib/aws-ecr-assets'
 import { CanopyCmsService, CanopyCmsDistribution } from 'canopycms-cdk'
 
 export class CmsStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props)
 
-    // Secrets (create these manually or via CDK)
-    const githubToken = secretsmanager.Secret.fromSecretNameV2(
+    // Secrets: reference by their FULL ARN (with the random 6-char suffix,
+    // e.g. `...:secret:canopycms/github-token-Ab12Cd`). `secretsArns` below is
+    // written verbatim into the worker's IAM policy, so a partial/name-based
+    // ARN silently never matches the real secret and the worker gets
+    // AccessDenied at boot. Use fromSecretCompleteArn, not fromSecretNameV2.
+    const githubToken = secretsmanager.Secret.fromSecretCompleteArn(
       this,
       'GitHubToken',
-      'canopycms/github-token',
+      process.env.GITHUB_TOKEN_SECRET_ARN!, // full suffixed ARN
     )
-    const clerkSecretKey = secretsmanager.Secret.fromSecretNameV2(
+    const clerkSecretKey = secretsmanager.Secret.fromSecretCompleteArn(
       this,
       'ClerkSecret',
-      'canopycms/clerk-secret-key',
+      process.env.CLERK_SECRET_KEY_SECRET_ARN!,
     )
+
+    // Public JWKS PEM — enables networkless session verification on the
+    // isolated Lambda. Fail at synth if missing: an empty value makes Clerk
+    // silently fall back to a network JWKS fetch, and the no-internet Lambda
+    // hangs at sign-in (the exact trap this guide's deploy test diagnosed).
+    const clerkJwtKey = process.env.CLERK_JWT_KEY
+    if (!clerkJwtKey) throw new Error('CLERK_JWT_KEY must be set at synth time')
 
     // Core infrastructure
     const cmsService = new CanopyCmsService(this, 'CmsService', {
-      cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.'),
+      // architecture MUST match the platform the Docker image is built for.
+      // Building on Apple Silicon defaults to arm64 — pair Platform.LINUX_ARM64
+      // (aws-cdk-lib/aws-ecr-assets) with Architecture.ARM_64 or the Lambda
+      // fails at invoke with an exec-format error.
+      cmsDockerImage: lambda.DockerImageCode.fromImageAsset('.', {
+        file: 'Dockerfile.cms',
+        platform: Platform.LINUX_ARM64,
+        buildArgs: {
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!,
+        },
+      }),
+      architecture: lambda.Architecture.ARM_64,
       githubOwner: 'your-org',
       githubRepo: 'your-docs-site',
       secretsArns: [githubToken.secretArn, clerkSecretKey.secretArn],
       githubTokenSecretArn: githubToken.secretArn,
       clerkSecretKeySecretArn: clerkSecretKey.secretArn,
+      // Optional: give the deployed editor a media backend (see the assets/media
+      // section). Pass an AssetSupport bucket here + wire its behaviors on the
+      // distribution.
+      // assetBucket: assetSupport.bucket,
       environment: {
         CANOPY_AUTH_MODE: 'clerk',
-        CLERK_JWT_KEY: process.env.CLERK_JWT_KEY ?? '',
+        // Do NOT put CLERK_SECRET_KEY on the Lambda unless you must (the
+        // shipped clerkMiddleware asserts it; see notes below).
+        CLERK_JWT_KEY: clerkJwtKey,
         CANOPY_BOOTSTRAP_ADMIN_IDS: 'user_xxx,user_yyy',
       },
     })
 
-    // CloudFront + DNS (optional — use your own if you have existing infra)
+    // CloudFront + DNS (optional — use your own if you have existing infra).
+    // CanopyCmsDistribution needs a Route53 hosted zone + ACM. With no domain,
+    // build a raw cloudfront.Distribution instead (managed CACHING_DISABLED
+    // cache policy + ALL_VIEWER_EXCEPT_HOST_HEADER origin request policy on the
+    // Function-URL origin, and a viewer-request CloudFront Function that sets
+    // x-forwarded-host from Host — but NOT x-forwarded-proto, a disallowed
+    // header). See the deployment-test writeup referenced below.
+    // (CanopyCmsDistribution wires the x-forwarded-host function automatically.)
     new CanopyCmsDistribution(this, 'CmsDist', {
       functionUrl: cmsService.functionUrl,
       domainName: 'cms.docs.example.org',
@@ -258,6 +312,32 @@ Settings changes (permissions and groups) follow the same Lambda→worker patter
 5. EC2 worker dequeues the task, pushes the settings branch from `remote.git` to GitHub, and creates/updates a PR
 6. Additionally, the worker's `syncGit()` pushes settings branches on every cycle as a safety net
 
+## Worker observability
+
+The EC2 worker's stdout/stderr ships to CloudWatch Logs by default via the
+amazon-cloudwatch-agent — no SSM or shell access needed to see what it's doing.
+
+- **Log group**: `/canopycms/<stackName>/worker`, created by `CanopyCmsService`
+  (90-day default retention, `RemovalPolicy.DESTROY`). Filter on the `/canopycms/`
+  prefix in the CloudWatch console to see every deployment's worker log group at
+  once. Override retention with `workerLogRetention` and the name with
+  `workerLogGroupName` (also useful if you instantiate `CanopyCmsService` twice in
+  one stack, since the default name would otherwise collide); the group itself is
+  available off the construct as `service.workerLogGroup`.
+- **Log streams**: one per instance id — a new stream appears every time the spot
+  worker is replaced.
+- **Timestamps**: log events carry ingestion timestamps (the worker doesn't emit
+  its own yet — see
+  [`.claude/future-tasks/worker-log-timestamps.md`](../.claude/future-tasks/worker-log-timestamps.md)).
+- **On-instance file**: `/var/log/canopy-worker/worker.log`, bounded by a
+  logrotate policy (10 MB, 5 rotations, compressed). The CloudWatch agent tails
+  this file — `journalctl -u canopy-worker` no longer carries the worker's
+  output, though `systemctl status canopy-worker` still works for a basic
+  running/not-running check.
+- **Org tagging**: tag aspects applied stack-wide (`Tags.of(stack).add(...)`)
+  cascade to the log group automatically like any other CDK resource, so org-wide
+  tagging policies need no Canopy-specific configuration.
+
 ## Security Model
 
 | Lambda                           | EC2 Worker                                      |
@@ -299,7 +379,11 @@ new CmsStack(app, 'CmsProd', {
 
 **Lambda cold start is slow**: Consider adding provisioned concurrency (1 instance, ~$15/month).
 
-**Tasks stuck in pending**: Check if the EC2 worker is running. `systemctl status canopy-worker` on the EC2 instance.
+**Tasks stuck in pending**: Check if the EC2 worker is running. First look at its
+CloudWatch log group (`/canopycms/<stackName>/worker` — see
+[Worker observability](#worker-observability)); no shell access needed. If you can
+shell in (SSM or SSH), `systemctl status canopy-worker` on the EC2 instance also
+works.
 
 **Auth cache empty**: Run `npx canopycms worker run-once` to populate, or wait for the EC2 worker's 15-minute refresh cycle.
 
