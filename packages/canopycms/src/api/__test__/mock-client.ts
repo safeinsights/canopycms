@@ -23,7 +23,7 @@ import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGrou
 import type { UserInfoResponse } from '../user'
 import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from '../schema'
 import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from '../../schema/schema-store-types'
-import type { AdminStatusResponse, AdminTasksResponse } from '../admin'
+import type { AdminDeleteTaskResponse, AdminRetryTaskResponse, AdminStatusResponse, AdminTasksResponse } from '../admin'
 
 /**
  * Type utility to convert CanopyApiClient methods to Vitest mocks.
@@ -121,6 +121,8 @@ export function createMockApiClient(): MockApiClient {
   admin: {
     status: vi.fn().mockResolvedValue(mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null})),
     listTasks: vi.fn().mockResolvedValue(mockSuccess({"tasks":[]})),
+    retryTask: vi.fn().mockResolvedValue(mockSuccess({"newTaskId":"00000000-0000-0000-0000-000000000000"})),
+    deleteTask: vi.fn().mockResolvedValue(mockSuccess({"deleted":true})),
   },
   } as MockApiClient
 }
@@ -429,4 +431,18 @@ export function mockAdminStatusResponse(): AdminStatusResponse {
  */
 export function mockAdminTasksResponse(): AdminTasksResponse {
   return mockSuccess({"tasks":[]})
+}
+
+/**
+ * Create a AdminRetryTaskResponse for testing
+ */
+export function mockAdminRetryTaskResponse(): AdminRetryTaskResponse {
+  return mockSuccess({"newTaskId":"00000000-0000-0000-0000-000000000000"})
+}
+
+/**
+ * Create a AdminDeleteTaskResponse for testing
+ */
+export function mockAdminDeleteTaskResponse(): AdminDeleteTaskResponse {
+  return mockSuccess({"deleted":true})
 }

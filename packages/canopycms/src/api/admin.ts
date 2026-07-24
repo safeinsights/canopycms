@@ -1,7 +1,7 @@
 /**
  * Admin observability endpoints: task queue stats/listing and worker
- * liveness, for an admin-only dashboard. Read-only (PR-A1) — task recovery
- * actions (retry/delete) land in a later PR.
+ * liveness (PR-A1), plus task recovery actions — retry a failed task or
+ * delete a stuck/corrupt task file (PR-A2) — for an admin-only dashboard.
  */
 
 import fs from 'node:fs/promises'
@@ -10,7 +10,12 @@ import { z } from 'zod'
 
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { Task, QueueStats, CorruptTaskFile } from '../worker/task-queue'
-import { getQueueStats, listTasks, listCorruptTaskFiles } from '../worker/task-queue'
+import {
+  getQueueStats,
+  listTasks,
+  listCorruptTaskFiles,
+  requeueFailedTask,
+} from '../worker/task-queue'
 import { getTaskQueueDir } from '../worker/task-queue-config'
 import type { WorkerStatusReport } from '../types'
 import type { OperatingMode } from '../operating-mode'
@@ -146,6 +151,20 @@ export interface AdminTasksData {
 /** Response type for GET /admin/tasks/:status */
 export type AdminTasksResponse = ApiResponse<AdminTasksData>
 
+export interface AdminRetryTaskData {
+  newTaskId: string
+}
+
+/** Response type for POST /admin/tasks/:taskId/retry */
+export type AdminRetryTaskResponse = ApiResponse<AdminRetryTaskData>
+
+export interface AdminDeleteTaskData {
+  deleted: true
+}
+
+/** Response type for DELETE /admin/tasks/:status/:fileName */
+export type AdminDeleteTaskResponse = ApiResponse<AdminDeleteTaskData>
+
 // ============================================================================
 // Zod Schemas for Validation
 // ============================================================================
@@ -159,6 +178,27 @@ const listAdminTasksParamsSchema = z.object({
   limit: z.coerce.number().int().min(1).max(MAX_ADMIN_TASKS_LIMIT).optional(),
 })
 export type ListAdminTasksParams = z.infer<typeof listAdminTasksParamsSchema>
+
+// Task ids are crypto.randomUUID() output — keep the regex conservative (no
+// dots/slashes) rather than trying to validate exact UUID shape.
+const retryTaskParamsSchema = z.object({
+  taskId: z.string().regex(/^[A-Za-z0-9-]{1,80}$/),
+})
+export type RetryTaskParams = z.infer<typeof retryTaskParamsSchema>
+
+// processing/ and completed/ are deliberately excluded: processing/ is
+// worker-owned (deleting there races completeTask's read-then-unlink), and
+// completed/ is retained history, not a recovery target.
+const deletableTaskStatusSchema = z.enum(['pending', 'failed', 'corrupt'])
+
+const deleteTaskParamsSchema = z.object({
+  status: deletableTaskStatusSchema,
+  fileName: z
+    .string()
+    .regex(/^[A-Za-z0-9._-]{1,120}\.json$/)
+    .refine((v) => !v.includes('..'), { message: 'fileName must not contain ..' }),
+})
+export type DeleteTaskParams = z.infer<typeof deleteTaskParamsSchema>
 
 // ============================================================================
 // Handlers
@@ -228,6 +268,85 @@ const listAdminTasksHandler = async (
   }
 }
 
+/**
+ * Requeue a permanently-failed task as a brand-new pending task (see
+ * `requeueFailedTask` for why the ID must be fresh, not reused).
+ *
+ * Accepted races (surfaced in the admin UI's confirm modal): retrying may
+ * duplicate work if two admins race each other on the same failed task —
+ * task actions are idempotent-or-benign by design, so a duplicate run is
+ * expected to be harmless rather than prevented.
+ */
+const retryTaskHandler = async (
+  _gc: Record<string, never>,
+  ctx: ApiContext,
+  _req: ApiRequest,
+  params: RetryTaskParams,
+): Promise<AdminRetryTaskResponse> => {
+  const taskDir = getTaskQueueDir(ctx.services.config)
+
+  try {
+    const result = await requeueFailedTask(taskDir, params.taskId)
+    if ('error' in result) {
+      if (result.error === 'not-found') {
+        return { ok: false, status: 404, error: 'Task not found in failed/' }
+      }
+      return {
+        ok: false,
+        status: 409,
+        error: 'Failed task file is unparseable; delete it instead of retrying',
+      }
+    }
+    return { ok: true, status: 200, data: { newTaskId: result.newTaskId } }
+  } catch (err) {
+    return { ok: false, status: 500, error: getErrorMessage(err) }
+  }
+}
+
+/**
+ * Delete a task file from pending/, failed/, or corrupt/. processing/ and
+ * completed/ are not reachable here (see `deletableTaskStatusSchema`).
+ *
+ * Accepted races (surfaced in the admin UI's confirm modal): deleting from
+ * pending/ does not guarantee the task never runs — the worker may have
+ * already dequeued it, and if this unlink lands mid-dequeue (after the
+ * worker's processing/ copy is written but before it unlinks the pending
+ * source) the pending file is simply gone and the processing/ copy proceeds
+ * normally; if instead the unlink races a copy that gets orphaned, that
+ * orphan resurrects as a fresh pending task at the next worker restart via
+ * `recoverOrphanedTasks`. Task actions are idempotent-or-benign by design,
+ * so a task that ends up running anyway is not a correctness problem.
+ */
+const deleteTaskHandler = async (
+  _gc: Record<string, never>,
+  ctx: ApiContext,
+  _req: ApiRequest,
+  params: DeleteTaskParams,
+): Promise<AdminDeleteTaskResponse> => {
+  const taskDir = getTaskQueueDir(ctx.services.config)
+  const dir = path.join(taskDir, params.status)
+  const resolvedDir = path.resolve(dir)
+  const filePath = path.resolve(dir, params.fileName)
+  const dirWithSep = resolvedDir.endsWith(path.sep) ? resolvedDir : resolvedDir + path.sep
+
+  // Belt-and-suspenders on top of the regex: guards against the resolved
+  // path escaping the status directory (matches LocalAssetStore.resolveKey's
+  // pattern in assets/store-local.ts).
+  if (!filePath.startsWith(dirWithSep)) {
+    return { ok: false, status: 400, error: 'Invalid task file name' }
+  }
+
+  try {
+    await fs.unlink(filePath)
+    return { ok: true, status: 200, data: { deleted: true } }
+  } catch (err) {
+    if (isNotFoundError(err)) {
+      return { ok: false, status: 404, error: 'Task file not found' }
+    }
+    return { ok: false, status: 500, error: getErrorMessage(err) }
+  }
+}
+
 // ============================================================================
 // Route Definitions with defineEndpoint
 // ============================================================================
@@ -272,9 +391,45 @@ const listAdminTasks = defineEndpoint({
 })
 
 /**
+ * Requeue a failed task as a fresh pending task
+ * POST /admin/tasks/:taskId/retry
+ */
+const retryTask = defineEndpoint({
+  namespace: 'admin',
+  name: 'retryTask',
+  method: 'POST',
+  path: '/admin/tasks/:taskId/retry',
+  params: retryTaskParamsSchema,
+  responseType: 'AdminRetryTaskResponse',
+  response: {} as AdminRetryTaskResponse,
+  defaultMockData: { newTaskId: '00000000-0000-0000-0000-000000000000' },
+  guards: ['admin'] as const,
+  handler: retryTaskHandler,
+})
+
+/**
+ * Delete a task file from pending/, failed/, or corrupt/
+ * DELETE /admin/tasks/:status/:fileName
+ */
+const deleteTask = defineEndpoint({
+  namespace: 'admin',
+  name: 'deleteTask',
+  method: 'DELETE',
+  path: '/admin/tasks/:status/:fileName',
+  params: deleteTaskParamsSchema,
+  responseType: 'AdminDeleteTaskResponse',
+  response: {} as AdminDeleteTaskResponse,
+  defaultMockData: { deleted: true },
+  guards: ['admin'] as const,
+  handler: deleteTaskHandler,
+})
+
+/**
  * Exported routes for router registration
  */
 export const ADMIN_ROUTES = {
   status: getAdminStatus,
   listTasks: listAdminTasks,
+  retryTask,
+  deleteTask,
 } as const

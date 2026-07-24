@@ -86,6 +86,12 @@ export type {
   AdminTasksResponse,
   AdminTasksData,
   ListAdminTasksParams,
+  AdminRetryTaskResponse,
+  AdminRetryTaskData,
+  RetryTaskParams,
+  AdminDeleteTaskResponse,
+  AdminDeleteTaskData,
+  DeleteTaskParams,
   WorkerLiveness,
   WorkerLivenessState,
 } from './admin'

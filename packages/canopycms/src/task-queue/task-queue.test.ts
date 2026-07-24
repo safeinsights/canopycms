@@ -8,6 +8,7 @@ import {
   completeTask,
   failTask,
   retryTask,
+  requeueFailedTask,
   getTask,
   listTasks,
   getQueueStats,
@@ -384,6 +385,69 @@ describe('Task Queue', () => {
       await recoverOrphanedTasks(tmpDir, 0)
 
       await expect(fs.stat(path.join(tmpDir, 'corrupt', 'bad.json'))).resolves.toBeTruthy()
+    })
+  })
+
+  // ========================================================================
+  // requeueFailedTask
+  // ========================================================================
+
+  describe('requeueFailedTask', () => {
+    it('requeues with a fresh ID and survives the dequeue dedup that would delete a reused ID', async () => {
+      const originalId = await enqueueTask(tmpDir, { action: 'push', payload: { branch: 'x' } })
+      await dequeueTask(tmpDir)
+      await failTask(tmpDir, originalId, 'boom')
+
+      const result = await requeueFailedTask(tmpDir, originalId)
+      expect('newTaskId' in result).toBe(true)
+      const { newTaskId } = result as { newTaskId: string }
+      expect(newTaskId).not.toBe(originalId)
+
+      const pendingContent = JSON.parse(
+        await fs.readFile(path.join(tmpDir, 'pending', `${newTaskId}.json`), 'utf-8'),
+      )
+      expect(pendingContent.id).toBe(newTaskId)
+      expect(pendingContent.status).toBe('pending')
+      expect(pendingContent.retryCount).toBe(0)
+      expect(pendingContent.payload.requeuedFrom).toBe(originalId)
+      expect(pendingContent.payload.branch).toBe('x')
+      expect(pendingContent.createdAt).toBeTruthy()
+
+      // The failed original was unlinked.
+      await expect(fs.stat(path.join(tmpDir, 'failed', `${originalId}.json`))).rejects.toThrow()
+
+      // Proves the dedup-by-ID in dequeueTask (which would silently delete a
+      // pending file whose ID already exists in failed/) does NOT eat this
+      // requeue, because the requeued task has a brand-new ID.
+      const dequeued = await dequeueTask(tmpDir)
+      expect(dequeued).not.toBeNull()
+      expect(dequeued!.id).toBe(newTaskId)
+    })
+
+    it('returns not-found when there is no such file in failed/', async () => {
+      const result = await requeueFailedTask(tmpDir, 'does-not-exist')
+      expect(result).toEqual({ error: 'not-found' })
+    })
+
+    it('returns unparseable and leaves the garbage file in place', async () => {
+      await fs.mkdir(path.join(tmpDir, 'failed'), { recursive: true })
+      await fs.writeFile(path.join(tmpDir, 'failed', 'garbage.json'), 'not json {{{', 'utf-8')
+
+      const result = await requeueFailedTask(tmpDir, 'garbage')
+      expect(result).toEqual({ error: 'unparseable' })
+      await expect(fs.stat(path.join(tmpDir, 'failed', 'garbage.json'))).resolves.toBeTruthy()
+    })
+
+    it('the new pending file and the failed-original unlink are both observable post-call', async () => {
+      const originalId = await enqueueTask(tmpDir, { action: 'push', payload: {} })
+      await dequeueTask(tmpDir)
+      await failTask(tmpDir, originalId, 'boom')
+
+      const result = await requeueFailedTask(tmpDir, originalId)
+      const { newTaskId } = result as { newTaskId: string }
+
+      await expect(fs.stat(path.join(tmpDir, 'pending', `${newTaskId}.json`))).resolves.toBeTruthy()
+      await expect(fs.stat(path.join(tmpDir, 'failed', `${originalId}.json`))).rejects.toThrow()
     })
   })
 
