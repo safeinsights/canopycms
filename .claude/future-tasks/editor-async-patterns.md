@@ -1,5 +1,11 @@
 # Editor Async Patterns: Cancellation & Stale Response Prevention
 
+> **Do together with [swr.md](swr.md)** — one combined work item (decided
+> 2026-07-24): adopt SWR first for the fetch-on-load hooks (dedup + stale
+> handling for free), then apply the generation-counter/cancellation patterns
+> below to whatever async paths SWR doesn't cover (reference resolution,
+> loadEntry navigation).
+
 ## Problem
 
 Several editor hooks fire async requests but don't cancel or ignore responses when the relevant context changes (entry navigation, branch switch, unmount). This causes:

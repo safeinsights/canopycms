@@ -22,6 +22,16 @@ worker is incoherent if anything ever DID set it:
 - If not, delete the literal from `BranchStatus` and let the compiler flag any
   latent references.
 
+## Related open question: lock editing after submit? (folded in from FIXES.md, 2026-07-24)
+
+The oldest form of this design question, from the original FIXES.md catch-all:
+after a branch is submitted/published, the editor still allows Save — should
+editing be locked so reviewers see stable content? (Also: a branch cannot
+currently be re-published.) If branch locking gets real semantics, "auto-lock on
+submit, unlock on request-changes" is the natural first consumer; if the literal
+is deleted instead, the submit-time write-guard question still needs an answer
+in the protected-branch work.
+
 Note: the "Main branch PR protections" session (2026-07-24, branch
 claude/canopy-main-branch-protections-ce63c0) is building a protected-branch
 concept (`isProtected`/`submitBlocked`/`readOnly`) keyed off `defaultBaseBranch`

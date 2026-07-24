@@ -4,6 +4,11 @@
 **Priority**: Low-Medium
 **Created**: 2024-12-27
 
+> **Do together with [editor-async-patterns.md](editor-async-patterns.md)** —
+> one combined work item (decided 2026-07-24): SWR provides the dedup, caching,
+> and cancellation-on-key-change layer; the generation-counter/AbortController
+> fixes in editor-async-patterns cover the non-SWR paths that remain.
+
 ---
 
 ## Problem
