@@ -21,6 +21,7 @@ import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGrou
 import type { UserInfoResponse } from './user'
 import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from './schema'
 import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from './../schema/schema-store-types'
+import type { AdminStatusResponse, AdminTasksResponse } from './admin'
 
 /**
  * Options for creating an ApiClient
@@ -434,6 +435,25 @@ export class CanopyApiClient {
      */
     invalidateSchemaCache: (params: Record<string, string>): Promise<InvalidateSchemaCacheApiResponse> => {
       return this.request('POST', this.buildPath('/:branch/schema/invalidate-cache', params))
+    },
+  }
+
+  /**
+   * admin - Auto-generated methods
+   */
+  readonly admin = {
+    /**
+     * status - GET /admin/status
+     */
+    status: (): Promise<AdminStatusResponse> => {
+      return this.request('GET', '/admin/status')
+    },
+
+    /**
+     * listTasks - GET /admin/tasks/:status
+     */
+    listTasks: (params: Record<string, string>): Promise<AdminTasksResponse> => {
+      return this.request('GET', this.buildPath('/admin/tasks/:status', params))
     },
   }
 

@@ -19,7 +19,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import type { Task, TaskStatus, QueueStats, TaskQueueLogger } from './types'
+import type { Task, TaskStatus, QueueStats, TaskQueueLogger, CorruptTaskFile } from './types'
 
 const DEFAULT_MAX_RETRIES = 3
 
@@ -462,9 +462,62 @@ export async function getQueueStats(taskDir: string): Promise<QueueStats> {
   return stats
 }
 
+/**
+ * List quarantined files in corrupt/ for diagnosis.
+ * `listTasks()` silently drops unparseable files (see `parseTaskJson`), which
+ * is why corrupt/ needs this dedicated listing. Tolerates a missing corrupt/
+ * dir (returns []). Sorted newest-mtime first, capped at `limit`.
+ */
+export async function listCorruptTaskFiles(
+  taskDir: string,
+  limit = 50,
+  logger: TaskQueueLogger = nullLogger,
+): Promise<CorruptTaskFile[]> {
+  const corruptDir = path.join(taskDir, 'corrupt')
+  let files: string[]
+  try {
+    files = await fs.readdir(corruptDir)
+  } catch (err) {
+    if (isNotFoundError(err)) return []
+    throw err
+  }
+
+  const entries: CorruptTaskFile[] = []
+  for (const fileName of files.filter((f) => f.endsWith('.json'))) {
+    const filePath = path.join(corruptDir, fileName)
+    try {
+      const stat = await fs.stat(filePath)
+      entries.push({
+        fileName,
+        size: stat.size,
+        mtime: stat.mtime.toISOString(),
+        rawSnippet: await readSnippet(filePath, 500),
+      })
+    } catch (err) {
+      if (isNotFoundError(err)) continue
+      logger.debug('Failed to read corrupt task file', { fileName })
+    }
+  }
+
+  entries.sort((a, b) => new Date(b.mtime).getTime() - new Date(a.mtime).getTime())
+  return entries.slice(0, limit)
+}
+
 // ============================================================================
 // Internal helpers
 // ============================================================================
+
+/** Read up to `maxBytes` from the start of a file, as utf-8 text. */
+async function readSnippet(filePath: string, maxBytes: number): Promise<string> {
+  const handle = await fs.open(filePath, 'r')
+  try {
+    const buffer = Buffer.alloc(maxBytes)
+    const { bytesRead } = await handle.read(buffer, 0, maxBytes, 0)
+    return buffer.subarray(0, bytesRead).toString('utf-8')
+  } finally {
+    await handle.close()
+  }
+}
 
 /** Parse JSON into a Task, returning null if invalid. */
 function parseTaskJson(content: string): Task | null {

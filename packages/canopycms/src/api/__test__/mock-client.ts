@@ -23,6 +23,7 @@ import type { ExternalGroupsResponse, InternalGroupsResponse, UpdateInternalGrou
 import type { UserInfoResponse } from '../user'
 import type { AddEntryTypeApiResponse, CreateCollectionApiResponse, DeleteCollectionApiResponse, GetCollectionApiResponse, GetSchemaApiResponse, InvalidateSchemaCacheApiResponse, RemoveEntryTypeApiResponse, UpdateCollectionApiResponse, UpdateEntryTypeApiResponse, UpdateOrderApiResponse, UpdateOrderBody } from '../schema'
 import type { CreateCollectionInput, CreateEntryTypeInput, UpdateCollectionInput, UpdateEntryTypeInput } from '../../schema/schema-store-types'
+import type { AdminStatusResponse, AdminTasksResponse } from '../admin'
 
 /**
  * Type utility to convert CanopyApiClient methods to Vitest mocks.
@@ -115,6 +116,11 @@ export function createMockApiClient(): MockApiClient {
     removeEntryType: vi.fn().mockResolvedValue(mockSuccess({"success":true})),
     updateOrder: vi.fn().mockResolvedValue(mockSuccess({"success":true})),
     invalidateSchemaCache: vi.fn().mockResolvedValue(mockSuccess({"success":true,"message":"Cache invalidated"})),
+  },
+
+  admin: {
+    status: vi.fn().mockResolvedValue(mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null})),
+    listTasks: vi.fn().mockResolvedValue(mockSuccess({"tasks":[]})),
   },
   } as MockApiClient
 }
@@ -409,4 +415,18 @@ export function mockUpdateOrderApiResponse(): UpdateOrderApiResponse {
  */
 export function mockInvalidateSchemaCacheApiResponse(): InvalidateSchemaCacheApiResponse {
   return mockSuccess({"success":true,"message":"Cache invalidated"})
+}
+
+/**
+ * Create a AdminStatusResponse for testing
+ */
+export function mockAdminStatusResponse(): AdminStatusResponse {
+  return mockSuccess({"generatedAt":"2024-01-01T00:00:00.000Z","mode":"prod","queue":{"pending":0,"processing":0,"completed":0,"failed":0,"corrupt":0},"worker":{"state":"absent"},"workerStatus":null})
+}
+
+/**
+ * Create a AdminTasksResponse for testing
+ */
+export function mockAdminTasksResponse(): AdminTasksResponse {
+  return mockSuccess({"tasks":[]})
 }
