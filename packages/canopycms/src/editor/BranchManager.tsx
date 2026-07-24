@@ -16,6 +16,7 @@ import {
   Tooltip,
 } from '@mantine/core'
 import type { OperatingMode } from '../operating-mode'
+import type { PullRequestState } from '../types'
 import type { CommentThread } from '../comment-store'
 import type { UserSearchResult } from '../auth/types'
 import { BranchComments } from './comments/BranchComments'
@@ -35,6 +36,8 @@ export interface BranchSummary {
   }
   pullRequestUrl?: string
   pullRequestNumber?: number
+  pullRequestState?: PullRequestState
+  mergedAt?: string
   commentCount?: number
 }
 
@@ -87,14 +90,23 @@ export const getBranchPermissions = (
   // Submit: Can perform workflow actions AND branch is in editing status
   const canSubmit = canPerformWorkflowActions && branch.status === 'editing'
 
-  // Withdraw: Can perform workflow actions AND branch is in submitted status
-  const canWithdraw = canPerformWorkflowActions && branch.status === 'submitted'
+  // Withdraw: Can perform workflow actions AND branch is in submitted status.
+  // A PR closed without merging can't be converted to a draft, so withdraw is
+  // blocked in that case (undefined/'open'/'merged' are unaffected).
+  const canWithdraw =
+    canPerformWorkflowActions &&
+    branch.status === 'submitted' &&
+    branch.pullRequestState !== 'closed'
 
   // Delete: Admin or creator (but not if submitted)
   const canDelete = (userIsAdmin || userIsCreator) && branch.status !== 'submitted'
 
-  // Request changes: Only Reviewers or Admins can request changes on submitted branches
-  const canRequestChanges = (userIsAdmin || userIsReviewer) && branch.status === 'submitted'
+  // Request changes: Only Reviewers or Admins can request changes on submitted
+  // branches. Same closed-PR restriction as withdraw applies (converts PR to draft).
+  const canRequestChanges =
+    (userIsAdmin || userIsReviewer) &&
+    branch.status === 'submitted' &&
+    branch.pullRequestState !== 'closed'
 
   return { canSubmit, canWithdraw, canDelete, canRequestChanges }
 }
@@ -279,9 +291,22 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         >
                           {b.status}
                         </Badge>
+                        {b.status === 'archived' && b.mergedAt && (
+                          <Badge
+                            color="teal"
+                            variant="light"
+                            data-testid={`branch-merged-badge-${b.name}`}
+                          >
+                            Merged
+                          </Badge>
+                        )}
                         {b.pullRequestNumber && (
-                          <Badge color="blue" variant="light">
+                          <Badge
+                            color={b.pullRequestState === 'closed' ? 'red' : 'blue'}
+                            variant="light"
+                          >
                             PR #{b.pullRequestNumber}
+                            {b.pullRequestState === 'closed' ? ' (closed)' : ''}
                           </Badge>
                         )}
                         {b.commentCount !== undefined && b.commentCount > 0 && (
@@ -381,7 +406,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                       </Button>
                       {b.status === 'submitted' ? (
                         <Tooltip
-                          label="Only the branch creator can withdraw"
+                          label={
+                            b.pullRequestState === 'closed'
+                              ? 'PR was closed on GitHub without merging'
+                              : 'Only the branch creator can withdraw'
+                          }
                           disabled={perms.canWithdraw}
                         >
                           <Button
@@ -413,7 +442,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({
                         </Tooltip>
                       )}
                       <Tooltip
-                        label="Only Reviewers or Admins can request changes"
+                        label={
+                          b.pullRequestState === 'closed'
+                            ? 'PR was closed on GitHub without merging'
+                            : 'Only Reviewers or Admins can request changes'
+                        }
                         disabled={perms.canRequestChanges}
                       >
                         <Button

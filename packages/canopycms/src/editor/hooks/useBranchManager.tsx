@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Text } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import { notifications } from '@mantine/notifications'
-import type { BranchMetadata } from '../../types'
+import type { BranchMetadata, PullRequestState } from '../../types'
 import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
 import { useApiClient } from '../context'
@@ -67,6 +67,8 @@ export interface BranchSummary {
   }
   pullRequestUrl?: string
   pullRequestNumber?: number
+  pullRequestState?: PullRequestState
+  mergedAt?: string
   commentCount: number
 }
 
@@ -166,6 +168,8 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
         },
         pullRequestUrl: b.pullRequestUrl,
         pullRequestNumber: b.pullRequestNumber,
+        pullRequestState: b.pullRequestState,
+        mergedAt: b.mergedAt,
         commentCount: unresolvedCount,
       }
     })

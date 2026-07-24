@@ -14,10 +14,16 @@ import {
 } from './task-queue'
 import type { Task } from './task-queue'
 import { createOrUpdatePullRequest, createCanopyOctokit } from '../github-service'
-import { getBranchMetadataFileManager, BranchMetadataFileManager } from '../branch-metadata'
+import {
+  getBranchMetadataFileManager,
+  BranchMetadataFileManager,
+  buildMergedBranchUpdate,
+  type BranchMetadataFile,
+} from '../branch-metadata'
 import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
 import { type ContentId, ROOT_COLLECTION_ID } from '../paths/types'
+import type { PullRequestState } from '../types'
 import { getErrorMessage, isNodeError } from '../utils/error'
 
 /**
@@ -674,7 +680,12 @@ export class CmsWorker {
         syncStatus: 'synced',
       }
       if (result.prUrl) updates.pullRequestUrl = result.prUrl
-      if (result.prNumber) updates.pullRequestNumber = result.prNumber
+      if (result.prNumber) {
+        updates.pullRequestNumber = result.prNumber
+        // As soon as the PR exists the field should read 'open' -- without
+        // this it would stay absent until the next poll cycle observes it.
+        updates.pullRequestState = 'open'
+      }
       await meta.save({ branch: updates })
     } catch (err) {
       console.error(
@@ -774,10 +785,178 @@ export class CmsWorker {
     // Ensures settings reach GitHub even if a task queue entry is lost.
     await this.pushSettingsBranches(git)
 
+    await this.refreshBaseBranchWorkspace()
+
     await this.rebaseActiveBranches()
 
     // Periodically clean up old completed/failed tasks
     await cleanupOldTasks(this.taskDir, undefined, this.log)
+  }
+
+  /**
+   * Fast-forward the base branch's own working-tree clone
+   * (content-branches/<baseBranch>) to match origin/<baseBranch>.
+   *
+   * Nothing else keeps this clone current: Lambda provisions it on demand
+   * from remote.git (already refreshed by the fetch earlier in syncGit()),
+   * but once provisioned it just sits there -- later content PRs merging on
+   * GitHub never reach it. Left unrefreshed, an editor forking a new branch
+   * "from base" is actually forking from a stale snapshot. This runs every
+   * sync cycle so the drift window is bounded by gitSyncInterval.
+   *
+   * ff-only on purpose: this clone must stay a linear mirror of
+   * origin/<baseBranch>, so a merge that isn't a fast-forward (diverged
+   * local history) is treated as a should-never-happen condition and left
+   * untouched rather than force-resolved.
+   */
+  private async refreshBaseBranchWorkspace(): Promise<void> {
+    const basePath = path.join(this.contentBranchesPath, this.baseBranch)
+    const gitDir = path.join(basePath, '.git')
+
+    try {
+      let gitDirStat
+      try {
+        gitDirStat = await fs.stat(gitDir)
+      } catch {
+        gitDirStat = null
+      }
+      if (!gitDirStat || !gitDirStat.isDirectory()) {
+        console.log(
+          `Base branch workspace (${this.baseBranch}): not yet provisioned, skipping refresh`,
+        )
+        return
+      }
+
+      const baseGit = simpleGit({
+        baseDir: basePath,
+        // Keep git non-interactive during the merge so it never blocks on an
+        // editor. simple-git >=3.32 blocks setting core.editor unless
+        // explicitly opted in; the value here is a hardcoded literal
+        // ("true", the shell no-op), not user input, so enabling
+        // allowUnsafeEditor carries no injection risk (same as the rebase
+        // loop's git config below).
+        config: ['core.editor=true'],
+        unsafe: { allowUnsafeEditor: true },
+      })
+
+      // Nothing makes this clone read-only. A direct edit here (or a stray
+      // process) wedges every editor's view of the base branch until an
+      // operator intervenes, so a dirty tree is loud, not a quiet skip.
+      const status = await baseGit.status()
+      if (status.files.length > 0) {
+        console.error(
+          `Base branch workspace (${this.baseBranch}) has uncommitted changes -- skipping refresh. Dirty files: ${status.files.map((f) => f.path).join(', ')}`,
+        )
+        return
+      }
+
+      await baseGit.fetch('origin', this.baseBranch)
+
+      // Use rev-list instead of status.behind for the same reason as the
+      // rebase loop below: status.behind only works with an upstream
+      // tracking branch configured, which isn't guaranteed here.
+      const behindCount = parseInt(
+        (await baseGit.raw(['rev-list', '--count', `HEAD..origin/${this.baseBranch}`])).trim(),
+        10,
+      )
+
+      if (behindCount > 0) {
+        try {
+          await baseGit.merge(['--ff-only', `origin/${this.baseBranch}`])
+        } catch (err) {
+          console.error(
+            `Base branch workspace (${this.baseBranch}) failed to fast-forward (diverged local history?): ${getErrorMessage(err)}`,
+          )
+          return
+        }
+        await invalidateBranchContentCaches(basePath)
+      }
+
+      // Hygiene: conflictStatus/conflictFiles are meaningless for the base
+      // branch's own metadata and may be left over from before the base was
+      // excluded from rebaseActiveBranches()'s conflict-resolution loop.
+      // Reuse the already-clean no-op-save guard from that loop: save()
+      // eager-regenerates the branch registry (O(branch count) EFS reads),
+      // so skip it when there's nothing to clear.
+      const currentMeta = await BranchMetadataFileManager.loadOnly(basePath)
+      const conflictStatus = currentMeta?.branch.conflictStatus
+      const conflictFiles = currentMeta?.branch.conflictFiles
+      const alreadyClean =
+        (conflictStatus === undefined || conflictStatus === 'clean') &&
+        (conflictFiles === undefined || conflictFiles.length === 0)
+      if (!alreadyClean) {
+        const meta = getBranchMetadataFileManager(basePath, this.contentBranchesPath)
+        await meta.save({
+          branch: { name: this.baseBranch, conflictStatus: 'clean', conflictFiles: [] },
+        })
+      }
+
+      // One concise per-cycle line -- the diagnostic for the next live deploy.
+      console.log(
+        behindCount > 0
+          ? `Base branch workspace (${this.baseBranch}): fast-forwarded ${behindCount} commit(s)`
+          : `Base branch workspace (${this.baseBranch}): up to date`,
+      )
+    } catch (err) {
+      console.error(
+        `Base branch workspace (${this.baseBranch}) refresh failed: ${getErrorMessage(err)}`,
+      )
+    }
+  }
+
+  /**
+   * Poll GitHub for a submitted/approved branch's PR resolution.
+   *
+   * submitted/approved branches sit outside the rebase loop and get no
+   * other signal that their PR resolved on GitHub -- nothing pushes a
+   * merge/close webhook back into the branch workspace. merged ->
+   * auto-archive via buildMergedBranchUpdate (shared with the manual
+   * markAsMerged API so both paths produce identical archived-branch
+   * metadata). closed-without-merge -> record pullRequestState only; an
+   * admin decides the workflow transition from there. Best-effort: any
+   * failure here is logged and swallowed, retried next sync cycle.
+   */
+  private async pollMergeState(
+    branchDir: string,
+    branchPath: string,
+    metaFile: BranchMetadataFile | null,
+  ): Promise<void> {
+    const prNumber = metaFile?.branch.pullRequestNumber
+    if (!prNumber) return
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), this.taskTimeoutMs)
+    try {
+      const { data } = await this.octokit.pulls.get({
+        owner: this.config.githubOwner,
+        repo: this.config.githubRepo,
+        pull_number: prNumber,
+        request: { signal: controller.signal },
+      })
+
+      if (data.merged) {
+        const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
+        await meta.save({ branch: buildMergedBranchUpdate(branchDir) })
+        console.log(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
+        return
+      }
+
+      const newState: PullRequestState = data.state === 'closed' ? 'closed' : 'open'
+      // Re-load fresh (not the loop-top `metaFile` snapshot passed in) -- a
+      // concurrent Lambda write (e.g. an editor re-submitting) may have
+      // landed since that snapshot was taken.
+      const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
+      if (currentMeta?.branch.pullRequestState === newState) return
+
+      const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
+      await meta.save({ branch: { name: branchDir, pullRequestState: newState } })
+      console.log(`  PR #${prNumber} for ${branchDir}: pullRequestState -> ${newState}`)
+    } catch (err) {
+      // Non-fatal: transient GitHub/network errors are retried next cycle.
+      console.warn(`  Failed to poll PR #${prNumber} for ${branchDir}: ${getErrorMessage(err)}`)
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   private async rebaseActiveBranches(): Promise<void> {
@@ -794,8 +973,22 @@ export class CmsWorker {
 
       try {
         const stat = await fs.stat(gitDir)
-        if (!stat.isDirectory()) continue
+        if (!stat.isDirectory()) {
+          console.log(`  Skipping ${branchDir}: .git is not a directory`)
+          continue
+        }
       } catch {
+        console.log(`  Skipping ${branchDir}: no .git directory (not a branch workspace)`)
+        continue
+      }
+
+      // The base branch's own clone is refreshed ff-only by
+      // refreshBaseBranchWorkspace() earlier in syncGit(). Routing it
+      // through this conflict-resolution rebase loop could rewrite its
+      // history (the --theirs loop below) and stamp meaningless conflict
+      // metadata on it.
+      if (branchDir === this.baseBranch) {
+        console.log(`  Skipping ${branchDir}: base branch (refreshed separately)`)
         continue
       }
 
@@ -805,13 +998,17 @@ export class CmsWorker {
         const branchStatus = metaFile?.branch.status
 
         // Skip branches that shouldn't be mutated:
-        // - submitted/approved: in review, don't rewrite history under an active PR
-        // - archived: already merged, no reason to rebase
-        if (
-          branchStatus === 'submitted' ||
-          branchStatus === 'approved' ||
-          branchStatus === 'archived'
-        ) {
+        // - submitted/approved: in review, don't rewrite history under an
+        //   active PR -- but do poll GitHub for the PR's resolution, since
+        //   nothing else tells the worker a merge/close happened.
+        // - archived: already merged, no reason to rebase and no PR left to
+        //   poll (avoid the wasted API call).
+        if (branchStatus === 'submitted' || branchStatus === 'approved') {
+          console.log(`  Skipping ${branchDir} (${branchStatus})`)
+          await this.pollMergeState(branchDir, branchPath, metaFile)
+          continue
+        }
+        if (branchStatus === 'archived') {
           console.log(`  Skipping ${branchDir} (${branchStatus})`)
           continue
         }
