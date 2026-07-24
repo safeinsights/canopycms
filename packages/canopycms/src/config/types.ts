@@ -276,7 +276,17 @@ export interface CanopyEditorConfig {
 
 // Default value types
 export type DefaultBranchAccess = 'allow' | 'deny'
-export type DefaultPathAccess = 'allow' | 'deny'
+export type DefaultPathAccessLevel = 'allow' | 'deny'
+/** Per-permission-level scoping for `defaultPathAccess`. An omitted level resolves to 'deny' (fail-closed). */
+export type DefaultPathAccessLevels = Partial<Record<PermissionLevel, DefaultPathAccessLevel>>
+/**
+ * Default access policy for content paths when no permission rule matches.
+ *
+ * Either a single value applied to all levels (existing behavior), or an object scoping
+ * the default per permission level (e.g. `{ read: 'allow' }` for public read while
+ * edit/review stay deny).
+ */
+export type DefaultPathAccess = DefaultPathAccessLevel | DefaultPathAccessLevels
 export type DefaultBaseBranch = string
 export type DefaultRemoteName = string
 export type DefaultRemoteUrl = string
@@ -353,6 +363,16 @@ export interface CanopyConfig {
   mode: CanopyOperatingMode
   /** How this build is deployed. 'static' = no request context, no auth. Default: 'server'. */
   deployedAs: DeployedAs
+  /**
+   * Escape hatch: allow git operations in prod mode to target a NETWORK remote
+   * (http(s)://, ssh://, git://, or scp-like `user@host:path`) instead of the
+   * EFS-local `remote.git` the standard AWS Lambda+worker topology expects.
+   * Default false/unset. The standard topology's Lambda has no internet access
+   * and would hang trying to reach a network remote directly — only set this
+   * for prod hosts that DO have internet (e.g. a single-VM deployment) and
+   * intentionally run git against a network remote.
+   */
+  allowNetworkRemoteInProd?: boolean
   settingsBranch?: string
   autoCreateSettingsPR?: boolean
   deploymentName?: string
@@ -391,6 +411,16 @@ export interface CanopyConfigInput {
   mode: OperatingMode
   /** How this build is deployed. 'static' = no request context, no auth. Default: 'server'. */
   deployedAs?: DeployedAs
+  /**
+   * Escape hatch: allow git operations in prod mode to target a NETWORK remote
+   * (http(s)://, ssh://, git://, or scp-like `user@host:path`) instead of the
+   * EFS-local `remote.git` the standard AWS Lambda+worker topology expects.
+   * Default false/unset. The standard topology's Lambda has no internet access
+   * and would hang trying to reach a network remote directly — only set this
+   * for prod hosts that DO have internet (e.g. a single-VM deployment) and
+   * intentionally run git against a network remote.
+   */
+  allowNetworkRemoteInProd?: boolean
   settingsBranch?: string
   autoCreateSettingsPR?: boolean
   deploymentName?: string

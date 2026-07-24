@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { branchNameSchema } from './validators'
 import type { ApiContext, ApiRequest, ApiResponse } from './types'
 import type { BranchContext } from '../types'
-import { getBranchMetadataFileManager } from '../branch-metadata'
+import { getBranchMetadataFileManager, buildMergedBranchUpdate } from '../branch-metadata'
 import { defineEndpoint } from './route-builder'
 
 const markAsMergedParamsSchema = z.object({
@@ -65,11 +65,7 @@ const markAsMergedHandler = async (
 
   // Update branch status to 'archived'
   const meta = getBranchMetadataFileManager(branchContext.branchRoot, branchContext.baseRoot)
-  await meta.save({
-    branch: {
-      status: 'archived',
-    },
-  })
+  await meta.save({ branch: buildMergedBranchUpdate(branchName) })
 
   // Optionally delete remote branch (disabled by default for safety)
   // if (ctx.services.githubService && req.body?.deleteRemoteBranch) {

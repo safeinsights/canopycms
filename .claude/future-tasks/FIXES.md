@@ -1,29 +1,39 @@
+# FIXES.md — older catch-all list (triaged 2026-07-24)
+
+Triage note: most items here are done or superseded by dedicated task files.
+Remaining live items are marked OPEN below; everything else is annotated.
+
 ## Small fixes / open questions
 
-- [ ] Lambda-friendly initialization: cache services in memory outside of request handler (singleton pattern)
-- [ ] After you publish a branch, you can still save. Should editing be locked so reviewers see stable content? Also can't republish currently.
+- [x] Lambda-friendly initialization: cache services in memory outside of request
+      handler — DONE: the Next adapter creates services once at module init
+      (`canopycms-next/src/context-wrapper.ts` "Create services ONCE at
+      initialization"), which persists across warm Lambda invocations.
+- [ ] OPEN: After you publish a branch, you can still save. Should editing be locked
+      so reviewers see stable content? Also can't republish currently. (Workflow
+      decision; related to the post-merge lifecycle work in
+      [post-merge-sync-gaps.md](resolved/post-merge-sync-gaps.md).)
 
 ## Bigger items not listed in master plan
 
-- [ ] SEO (meta tags, sitemap, robots.txt)
-- [ ] GitHub build/deploy (to environment based on branch)
-- [ ] PR workflows: accessibility checks? SEO check? Image shrinking?
-- [ ] Assets: original-assets.safeinsights.org? then use image shrinker?
-- [ ] Without even thinking about it from a how-to-do-it in code perspective, think through the editorial and development scenarios:
-  - devs will still be coding -- do they go through dev/staging/production?
-  - do content branches through Canopy never change the schema? What happens when the schema changes (because of a code change)
-  - long lived vs short lived branches (I think short lived)
-  - think through all the scenarios and plan them out
-  - this will lead into the synchronization work
-  - separately planner to scour all old plans in case we already thought about this
-
----
-
-Assets uploaded in a branch only visible to that branch
-Assets attached to collections
-collection has assets.json? alt text, pointer to cloud
-Once merged to main, visible to anyone with read access to the collection
-when browsing asset manager, see any assets in current collection or higher
-upload has hashed filename from content fingerprint, to replicated s3 bucket frontend by cloudfront (assets.safeinsights.org)
-images are retrieved via image-cdn images.safeinsights.org/<URL to assets>/instructions
-gotta handle PDFs, too. Potentially other file types.
+- [ ] SEO (meta tags, sitemap, robots.txt) — SUPERSEDED by
+      [static-export-sitemap.md](static-export-sitemap.md) and
+      [static-export-seo-metadata.md](static-export-seo-metadata.md).
+- [ ] GitHub build/deploy (to environment based on branch) — largely covered by the
+      deployment-test epic's CLI templates (`deploy-cms.yml.template`) and the
+      docs-site infra; remaining CI-shape work tracked in
+      [dual-build-ci.md](dual-build-ci.md).
+- [ ] OPEN (unowned): PR workflows — accessibility checks? SEO check? Image
+      shrinking? (Image shrinking is now moot: on-demand transform layer shipped
+      with the assets epic.)
+- [x] Assets — SUPERSEDED/DONE: the assets/media epic (PR #126, design record
+      [resolved/assets-media-system.md](resolved/assets-media-system.md)) shipped
+      content-addressed S3 storage, presigned upload, transform CDN, and editor
+      media UX. The sketch at the bottom of this file described branch-scoped
+      collection-attached assets; the shipped design deliberately went
+      branch-agnostic + content-addressed instead.
+- [ ] OPEN (planning): think through editorial + development scenarios
+      (dev/staging/prod flow, schema changes vs content branches, long- vs
+      short-lived branches, synchronization). Partially overlaps
+      [post-merge-sync-gaps.md](resolved/post-merge-sync-gaps.md) (RESOLVED); the
+      broader scenario-planning exercise remains unowned.

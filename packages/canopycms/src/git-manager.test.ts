@@ -7,7 +7,7 @@ import { simpleGit } from 'simple-git'
 
 import { flattenSchema } from './config'
 import { ContentStore } from './content-store'
-import { GitManager, GitConflictError } from './git-manager'
+import { GitManager, GitConflictError, gitChildEnv } from './git-manager'
 import { generateId } from './id'
 import { initTestRepo, openBareRepo } from './test-utils'
 
@@ -691,6 +691,11 @@ describe('GitManager.resolveRemoteUrl', () => {
     await fs.mkdir(remoteGitPath, { recursive: true })
     await simpleGit({ baseDir: remoteGitPath }).init(true)
 
+    // A local path distinct from the auto-detected remote.git — this test is
+    // about priority ordering, not the network-remote guard (PR-F), so it
+    // must stay a LOCAL url to avoid tripping that guard in prod mode.
+    const explicitLocalRemote = path.join(tmpDir, 'explicit-local-remote.git')
+
     const origWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
     process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
 
@@ -700,12 +705,12 @@ describe('GitManager.resolveRemoteUrl', () => {
 
       const result = await GitManager.resolveRemoteUrl({
         mode: 'prod',
-        remoteUrl: 'https://explicit.com/repo.git',
+        remoteUrl: explicitLocalRemote,
         baseBranch: 'main',
       })
 
       // Explicit URL should win over auto-detected path
-      expect(result).toBe('https://explicit.com/repo.git')
+      expect(result).toBe(explicitLocalRemote)
     } finally {
       if (origWorkspace !== undefined) {
         process.env.CANOPYCMS_WORKSPACE_ROOT = origWorkspace
@@ -724,9 +729,14 @@ describe('GitManager.resolveRemoteUrl', () => {
     await fs.mkdir(remoteGitPath, { recursive: true })
     await simpleGit({ baseDir: remoteGitPath }).init(true)
 
+    // A local path distinct from the auto-detected remote.git — this test is
+    // about priority ordering, not the network-remote guard (PR-F), so it
+    // must stay a LOCAL url to avoid tripping that guard in prod mode.
+    const envLocalRemote = path.join(tmpDir, 'env-local-remote.git')
+
     const origWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
     process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
-    process.env.CANOPYCMS_REMOTE_URL = 'https://env.com/repo.git'
+    process.env.CANOPYCMS_REMOTE_URL = envLocalRemote
 
     try {
       const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
@@ -738,7 +748,7 @@ describe('GitManager.resolveRemoteUrl', () => {
       })
 
       // Env var should win over auto-detected path
-      expect(result).toBe('https://env.com/repo.git')
+      expect(result).toBe(envLocalRemote)
     } finally {
       if (origWorkspace !== undefined) {
         process.env.CANOPYCMS_WORKSPACE_ROOT = origWorkspace
@@ -750,6 +760,182 @@ describe('GitManager.resolveRemoteUrl', () => {
     }
   })
 }, 10000)
+
+// PR-F: prod-mode network-remote guard. In the intended prod architecture the
+// CMS Lambda has no internet — all git network I/O happens on the EC2 worker
+// against the EFS-local bare repo `{workspace}/remote.git`, reached via
+// auto-detect. A network URL supplied via any of the three resolvable
+// sources (explicit param, config, env var) is almost always a
+// misconfiguration in prod (the internet-less Lambda would hang trying to
+// reach it directly), so resolveRemoteUrl rejects it unless the adopter opts
+// in via `allowNetworkRemoteInProd`.
+describe('GitManager.resolveRemoteUrl prod-mode network-remote guard', () => {
+  let tmpDir: string
+  let originalEnv: string | undefined
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-network-guard-test-'))
+    originalEnv = process.env.CANOPYCMS_REMOTE_URL
+    delete process.env.CANOPYCMS_REMOTE_URL
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+    if (originalEnv !== undefined) {
+      process.env.CANOPYCMS_REMOTE_URL = originalEnv
+    } else {
+      delete process.env.CANOPYCMS_REMOTE_URL
+    }
+  })
+
+  it('throws when prod config.defaultRemoteUrl is an https URL, naming the source and escape hatch', async () => {
+    await expect(
+      GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        defaultRemoteUrl: 'https://github.com/acme/site.git',
+        baseBranch: 'main',
+      }),
+    ).rejects.toThrow(/defaultRemoteUrl/)
+    await expect(
+      GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        defaultRemoteUrl: 'https://github.com/acme/site.git',
+        baseBranch: 'main',
+      }),
+    ).rejects.toThrow(/allowNetworkRemoteInProd/)
+  })
+
+  it('throws when the prod env var (CANOPYCMS_REMOTE_URL) is an https URL, naming the env var', async () => {
+    process.env.CANOPYCMS_REMOTE_URL = 'https://github.com/acme/site.git'
+
+    await expect(
+      GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        baseBranch: 'main',
+      }),
+    ).rejects.toThrow(/CANOPYCMS_REMOTE_URL/)
+  })
+
+  it('throws when the explicit remoteUrl parameter is a network URL in prod mode', async () => {
+    await expect(
+      GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        remoteUrl: 'https://github.com/acme/site.git',
+        baseBranch: 'main',
+      }),
+    ).rejects.toThrow(/network remote/i)
+  })
+
+  it('throws for a scp-like remote URL (git@github.com:owner/repo.git) in prod mode', async () => {
+    await expect(
+      GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        remoteUrl: 'git@github.com:owner/repo.git',
+        baseBranch: 'main',
+      }),
+    ).rejects.toThrow(/network remote/i)
+  })
+
+  it('throws for a git transport-helper URL (ext::sh -c whoami) in prod mode', async () => {
+    await expect(
+      GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        remoteUrl: 'ext::sh -c whoami',
+        baseBranch: 'main',
+      }),
+    ).rejects.toThrow(/network remote/i)
+  })
+
+  it('throws for a bare scp-like remote URL with no @ (github.com:owner/repo.git) in prod mode', async () => {
+    await expect(
+      GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        remoteUrl: 'github.com:owner/repo.git',
+        baseBranch: 'main',
+      }),
+    ).rejects.toThrow(/network remote/i)
+  })
+
+  it('allows a network URL in prod mode when allowNetworkRemoteInProd is true', async () => {
+    const result = await GitManager.resolveRemoteUrl({
+      mode: 'prod',
+      defaultRemoteUrl: 'https://github.com/acme/site.git',
+      baseBranch: 'main',
+      allowNetworkRemoteInProd: true,
+    })
+
+    expect(result).toBe('https://github.com/acme/site.git')
+  })
+
+  it('allows a file:// URL in prod mode (local, not network)', async () => {
+    const result = await GitManager.resolveRemoteUrl({
+      mode: 'prod',
+      defaultRemoteUrl: 'file:///mnt/efs/workspace/remote.git',
+      baseBranch: 'main',
+    })
+
+    expect(result).toBe('file:///mnt/efs/workspace/remote.git')
+  })
+
+  it('allows an absolute filesystem path in prod mode (local, not network)', async () => {
+    const result = await GitManager.resolveRemoteUrl({
+      mode: 'prod',
+      defaultRemoteUrl: '/mnt/efs/workspace/remote.git',
+      baseBranch: 'main',
+    })
+
+    expect(result).toBe('/mnt/efs/workspace/remote.git')
+  })
+
+  it('still auto-detects the local remote.git in prod mode without throwing (no regression)', async () => {
+    const workspaceRoot = path.join(tmpDir, 'workspace')
+    const remoteGitPath = path.join(workspaceRoot, 'remote.git')
+    await fs.mkdir(remoteGitPath, { recursive: true })
+    await simpleGit({ baseDir: remoteGitPath }).init(true)
+
+    const origWorkspace = process.env.CANOPYCMS_WORKSPACE_ROOT
+    process.env.CANOPYCMS_WORKSPACE_ROOT = workspaceRoot
+    try {
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+
+      const result = await GitManager.resolveRemoteUrl({
+        mode: 'prod',
+        baseBranch: 'main',
+      })
+
+      expect(result).toBe(remoteGitPath)
+    } finally {
+      if (origWorkspace !== undefined) {
+        process.env.CANOPYCMS_WORKSPACE_ROOT = origWorkspace
+      } else {
+        delete process.env.CANOPYCMS_WORKSPACE_ROOT
+      }
+      const { clearStrategyCache } = await import('./operating-mode/client-unsafe-strategy')
+      clearStrategyCache()
+    }
+  })
+
+  it('leaves dev mode unaffected — a network defaultRemoteUrl still resolves (unchanged behavior)', async () => {
+    const result = await GitManager.resolveRemoteUrl({
+      mode: 'dev',
+      defaultRemoteUrl: 'https://github.com/acme/site.git',
+      baseBranch: 'main',
+    })
+
+    expect(result).toBe('https://github.com/acme/site.git')
+  })
+
+  it('leaves dev mode unaffected — an scp-like remoteUrl still resolves (unchanged behavior)', async () => {
+    const result = await GitManager.resolveRemoteUrl({
+      mode: 'dev',
+      remoteUrl: 'git@github.com:owner/repo.git',
+      baseBranch: 'main',
+    })
+
+    expect(result).toBe('git@github.com:owner/repo.git')
+  })
+})
 
 describe('GitManager.ensureAuthor', () => {
   let tmpDir: string
@@ -1538,5 +1724,86 @@ describe('GitManager content-index invalidation', () => {
     const location = (await store.idIndex()).findById(id)
     expect(location?.relativePath).toContain('post.renamed.')
     expect(location?.relativePath).not.toContain('post.hello.')
+  })
+})
+
+describe('GitManager: spawned git receives allowlisted process.env (deploy-proven regression)', () => {
+  it('GIT_AUTHOR_*/GIT_COMMITTER_* env reaches the spawned git process', async () => {
+    // Deploy-proven (2026-07-24): simple-git's .env(name, value) REPLACES the
+    // child environment entirely, so runtime-provided git env vanished from
+    // every spawn. GitManager now passes an explicit allowlist through. The
+    // commit below has NO repo-level author config - its identity arrives
+    // ONLY via GIT_AUTHOR_*/GIT_COMMITTER_* env, so the env-provided author
+    // appears iff the allowlist reaches the child git. (GIT_CONFIG_* is
+    // deliberately excluded: simple-git hard-blocks env-based config; the
+    // safe.directory workaround lives in the image's system gitconfig.)
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-git-env-'))
+    try {
+      const git = simpleGit({ baseDir: dir })
+      await git.init()
+      await fs.writeFile(path.join(dir, 'probe.txt'), 'env probe')
+      // Env must be set BEFORE construction: the child env is snapshotted
+      // when GitManager wires up simple-git (static env is fine on Lambda).
+      process.env.GIT_AUTHOR_NAME = 'Env Probe'
+      process.env.GIT_AUTHOR_EMAIL = 'env-probe@canopycms.test'
+      process.env.GIT_COMMITTER_NAME = 'Env Probe'
+      process.env.GIT_COMMITTER_EMAIL = 'env-probe@canopycms.test'
+      const manager = new GitManager({ repoPath: dir })
+      try {
+        await manager.add('probe.txt')
+        await manager.commit('env probe commit')
+        const log = await simpleGit({ baseDir: dir }).log({ maxCount: 1 })
+        expect(log.latest?.author_name).toBe('Env Probe')
+      } finally {
+        delete process.env.GIT_AUTHOR_NAME
+        delete process.env.GIT_AUTHOR_EMAIL
+        delete process.env.GIT_COMMITTER_NAME
+        delete process.env.GIT_COMMITTER_EMAIL
+      }
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('gitChildEnv', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('passes through allowlisted basics (PATH, HOME) and author/tracing families', () => {
+    vi.stubEnv('PATH', '/usr/bin:/bin')
+    vi.stubEnv('HOME', '/home/probe')
+    vi.stubEnv('GIT_AUTHOR_NAME', 'Env Probe')
+    vi.stubEnv('GIT_TRACE2', '1')
+
+    const env = gitChildEnv({})
+
+    expect(env.PATH).toBe('/usr/bin:/bin')
+    expect(env.HOME).toBe('/home/probe')
+    expect(env.GIT_AUTHOR_NAME).toBe('Env Probe')
+    expect(env.GIT_TRACE2).toBe('1')
+  })
+
+  it('drops non-allowlisted vars (GIT_SSH_COMMAND, HTTPS_PROXY, GIT_CONFIG_COUNT, GIT_EDITOR)', () => {
+    vi.stubEnv('GIT_SSH_COMMAND', 'ssh -oStrictHostKeyChecking=no')
+    vi.stubEnv('HTTPS_PROXY', 'http://proxy.example:8080')
+    vi.stubEnv('GIT_CONFIG_COUNT', '1')
+    vi.stubEnv('GIT_EDITOR', 'vim')
+
+    const env = gitChildEnv({})
+
+    expect(env.GIT_SSH_COMMAND).toBeUndefined()
+    expect(env.HTTPS_PROXY).toBeUndefined()
+    expect(env.GIT_CONFIG_COUNT).toBeUndefined()
+    expect(env.GIT_EDITOR).toBeUndefined()
+  })
+
+  it('overrides win over process.env values', () => {
+    vi.stubEnv('PATH', '/usr/bin:/bin')
+
+    const env = gitChildEnv({ PATH: '/overridden/path' })
+
+    expect(env.PATH).toBe('/overridden/path')
   })
 })

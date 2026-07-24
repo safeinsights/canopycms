@@ -1004,8 +1004,9 @@ For low-cost AWS deployments, CanopyCMS supports splitting into two components t
 - Pushes `canopycms-settings-*` branches to GitHub on each sync cycle (belt-and-suspenders for the task queue)
 - Rebases active branch workspaces onto updated base branch (with conflict detection and resolution)
 - Refreshes auth metadata cache (Clerk users/orgs, or dev test users)
+- Ships its own stdout/stderr to a dedicated CloudWatch log group
 
-This architecture eliminates NAT Gateway ($32/month) and keeps all secrets on the worker (not Lambda).
+This architecture eliminates NAT Gateway ($32/month) and keeps all secrets on the worker (not Lambda). The worker's AWS permissions: EFS client access (managed policy), Secrets Manager reads for its specific secrets, SSM core (`AmazonSSMManagedInstanceCore`, the Session Manager observation channel for operators whose roles allow it), read access to the CDK asset bucket (its own code bundle), and write-only access to its one CloudWatch log group — no broader logging or monitoring policy (no `CloudWatchAgentServerPolicy`). Log shipping exists because production operators may not have SSM Session Manager access into the instance (an organization's SSO role can be provisioned without `ssm:StartSession`), leaving the shipped logs as the only window into worker behavior beyond the task queue's own success/failure records. Because the worker is otherwise silent — no HTTP endpoint, no health API — log delivery is treated as best-effort rather than a hard dependency: the worker daemon starts and keeps running even if the log agent fails to install or configure.
 
 ### Key Deployment Components
 
@@ -1017,6 +1018,8 @@ Both `prod` and `dev` modes use a local bare git repository as the "remote" for 
 - **prod**: Created by the EC2 worker at `{workspaceRoot}/remote.git`, synced with GitHub
 
 CanopyCMS auto-detects `remote.git` at the workspace root (via `autoDetectRemotePath` in the operating mode strategy). No explicit `CANOPYCMS_REMOTE_URL` env var needed if `remote.git` exists.
+
+**Prod-mode network-remote guard:** because the Lambda in this topology has no internet access, `GitManager.resolveRemoteUrl` rejects a resolved NETWORK remote URL (`http(s)://`, `ssh://`, `git://`, or scp-like `user@host:path`) in `prod` mode, regardless of whether it came from an explicit `remoteUrl` param, `config.defaultRemoteUrl`, or the `CANOPYCMS_REMOTE_URL` env var — pointing any of those at GitHub directly would make the internet-less Lambda hang trying to clone/fetch/push it. `file://` URLs and plain filesystem paths (including the auto-detected `remote.git` above) are local and unaffected. Prod hosts that genuinely have internet access and intentionally run git against a network remote (e.g. a single-VM deployment outside this topology) can opt out per-deployment via `config.allowNetworkRemoteInProd: true`.
 
 #### Auth Caching (CachingAuthPlugin)
 
@@ -1146,7 +1149,7 @@ This factory is framework-agnostic—it doesn't know about Next.js, Express, or 
 Calling `getContext()` returns a `CanopyContext` with:
 
 - **read()**: Content reader with user already injected, no need to pass user manually
-- **readByUrlPath()**: URL-path-based content reader that resolves URL paths to entries (tries direct slug match first, then falls back to index entry lookup; root path '/' resolves to the content root's index entry)
+- **readByUrlPath()**: URL-path-based content reader that resolves URL paths to entries (tries direct slug match first, then falls back to index entry lookup; root path '/' resolves to the content root's index entry). A denied read (no access, or an anonymous request against a private path) resolves to `null` rather than throwing, so a page's ordinary `if (!result) return notFound()` renders a privacy-preserving 404 instead of an unhandled 500 escaping the server component — the same choice (don't reveal _why_ a path is inaccessible) the JSON API already makes by returning 401/403 rather than leaking content. The stricter **read()** always throws on a denied read, for callers that need to distinguish "not found" from "forbidden."
 - **buildContentTree()**: Build-time content tree builder (see [Content Tree Builder](#content-tree-builder) below)
 - **listEntries()**: Flat content listing for static params, search indexes, sitemaps, etc. (see [Content Entry Listing](#content-entry-listing) below)
 - **services**: Access to underlying services if needed
@@ -1179,7 +1182,7 @@ This covers situations like `getCanopy()` being called from `generateStaticParam
 
 **Combined check**: The content reader and context factory use `isDeployedStatic(config) || isBuildMode()` to determine when to bypass auth. The static deployment check is config-driven (stable, explicit); the build mode check is environment-driven (dynamic, safety net).
 
-**Two-deployment model**: A single codebase can produce both a static export and a CMS server build. The `deployedAs` field in each build's config controls which deployment type is active. This enables patterns like a public-facing static site alongside a separate CMS editor deployment, both reading from the same content repository. At the build-tooling level, the `withCanopy()` Next.js config wrapper supports this via its `staticBuild` option, which controls whether CMS-only files (using the `.server.ts`/`.server.tsx` convention) are included in `pageExtensions`. See [Framework Adapters](#framework-adapters) for details.
+**Two-deployment model**: A single codebase can produce both a static export and a CMS server build. The `deployedAs` field in each build's config controls which deployment type is active. This enables patterns like a public-facing static site alongside a separate CMS editor deployment, both reading from the same content repository. At the build-tooling level, the `withCanopy()` Next.js config wrapper supports this via its `staticBuild` option, which controls whether CMS-only files (using the `.server.ts`/`.server.tsx` convention) are included in `pageExtensions`. A content route whose rendering must itself differ between the two builds (prerendered vs. request-time) additionally ships a matching `.static.ts`/`.static.tsx` variant — see [Why split a dual-build content route into static and server page variants?](#why-split-a-dual-build-content-route-into-static-and-server-page-variants). See [Framework Adapters](#framework-adapters) for details.
 
 This means you can use the same `read()` calls in both authenticated pages and static generation—the context handles the difference automatically.
 
@@ -1269,6 +1272,8 @@ Per-branch ACLs control who can access a branch. Branches can be restricted to s
 ### Layer 2: Path Permissions
 
 Glob patterns (e.g., `content/posts/**`) restrict who can edit specific content paths. First matching rule wins. Only admins bypass path rules. Implemented in the `path.ts` submodule.
+
+**Level-scoped defaults**: `defaultPathAccess` (the fallback verdict when no rule matches a path) accepts either a single value applied to every permission level, or an object scoped per level, e.g. `{ read: 'allow' }`. This lets a `deployedAs: 'server'` site declare public read as its default while edit and review stay deny-by-default — the primary use case is a CMS-served site that is also publicly readable without auth. Any level left unspecified in the object form resolves to `deny`, so scoping read access can never accidentally loosen edit or review by omission.
 
 ### Layer 3: Content Access
 
@@ -1516,11 +1521,15 @@ Saves run through server-side validation in the content write handler:
 
 ### Merging and Archiving
 
+Merge detection is automatic. Once a branch is `submitted` or `approved` and has a recorded PR, the worker's sync cycle polls GitHub for that PR's resolution on every pass (see [Branch Synchronization and Conflict Detection](#branch-synchronization-and-conflict-detection)):
+
 1. PR is merged on GitHub (outside CanopyCMS, by someone with merge permissions)
-2. User clicks "Mark as Merged" in CanopyCMS
-3. System verifies merge via GitHub API
-4. Branch moves to "archived" status
-5. Site rebuild/deploy happens via other processes (e.g. CI/CD)
+2. On its next sync cycle, the worker detects the merge via the GitHub API and archives the branch itself — status moves to "archived", `pullRequestState` is stamped `merged`, and `mergedAt` records when
+3. Site rebuild/deploy happens via other processes (e.g. CI/CD)
+
+If the PR is closed on GitHub **without** merging, the worker records `pullRequestState: 'closed'` but leaves the branch's status untouched — a closed PR isn't necessarily terminal (it can be reopened), so an admin decides the next step rather than the worker guessing. The editor surfaces this as a red "closed" PR badge and disables actions that assume an open, convertible-to-draft PR (withdraw, request changes).
+
+A `markAsMerged` API endpoint still exists, now as a manual/ops fallback rather than the primary path — useful when the worker isn't running or an admin wants to force-resolve a branch immediately instead of waiting for the next poll cycle. It verifies the merge via the GitHub API and builds its update through the same shared helper as the automatic path, so both produce identical archived-branch metadata.
 
 ## Branch Synchronization and Conflict Detection
 
@@ -1528,12 +1537,13 @@ When the base branch (typically `main`) receives new commits from merged PRs, ac
 
 ### Rebase Behavior
 
-The worker's synchronization cycle fetches the latest base branch from GitHub into the local bare repo, then iterates over all active branch workspaces and rebases them.
+The worker's synchronization cycle fetches the latest base branch from GitHub into the local bare repo, fast-forwards the base branch's own workspace clone to match it, then iterates over all other active branch workspaces and rebases them. Previously that base-branch clone was refreshed only incidentally, by the same generic rebase loop that handles other branches: for a clone in `editing` status, rebasing onto `origin/<baseBranch>` degenerates to a fast-forward when the clone IS the base branch. But that loop's skip paths — a dirty tree, a missing `.git` — were silent, the suspected live failure mode behind a wedged base view with no diagnosable signal. A dedicated step now fast-forwards it (`merge --ff-only`) explicitly every cycle and invalidates its content caches when it advances. This clone must stay a linear mirror of the remote: an unprovisioned workspace is a quiet skip, but a dirty working tree or a non-fast-forward (diverged local history) state is a loud error left untouched, since nothing else would surface a silently wedged base view.
 
-**Branches that are skipped:**
+**Branches that are skipped by the rebase loop:**
 
-- **In review** (`submitted` or `approved` status): Rebasing would rewrite commit history under a PR that reviewers are actively looking at. These branches are left untouched until they return to `editing` status.
-- **Archived**: Already merged branches have no reason to be rebased.
+- **The base branch's own workspace**: Kept current by the fast-forward step above, not this loop — routing it through the `--theirs` conflict-resolution path below could rewrite its history.
+- **In review** (`submitted` or `approved` status): Rebasing would rewrite commit history under a PR that reviewers are actively looking at. These branches are left untouched until they return to `editing` status — but the same cycle polls GitHub for their PR's resolution (see [Merging and Archiving](#merging-and-archiving)), since nothing else tells the worker a merge or close happened.
+- **Archived**: Already merged branches have no reason to be rebased or polled — there's no open PR left to check.
 - **Dirty working tree**: If the branch has uncommitted changes (an editor is actively saving), rebasing would fail or destroy their work. The worker skips the branch and tries again on the next cycle.
 
 **Clean rebases**: When no files conflict, the rebase applies cleanly. The branch gets the base branch's latest changes, and any previous conflict state is cleared.
@@ -2117,7 +2127,7 @@ The `canopycms-next` package also provides a `withCanopy()` function that wraps 
 
 - **Module transpilation**: CanopyCMS packages export raw TypeScript. `withCanopy()` auto-detects which Canopy packages are installed (via `require.resolve`) and adds only those to `transpilePackages`. The core `canopycms` package is always included; optional packages like `canopycms-next`, `canopycms-auth-clerk`, `canopycms-auth-dev`, and `canopycms-cdk` are included only if found in the consumer's `node_modules`. This avoids Next.js build errors from listing uninstalled packages.
 - **React deduplication**: When consuming Canopy packages via `file:` references or linked packages during local development, the bundler can follow symlinks into the linked package's `node_modules` and resolve a second copy of React. Dual React instances cause "Invalid hook call" crashes. `withCanopy()` resolves React modules from the consumer's project root via scoped Webpack aliases (applied only to canopycms source files), ensuring a single React instance without interfering with Next.js internals.
-- **Dual-build page extensions**: `withCanopy()` supports a `staticBuild` option that controls whether CMS-only files are included in the Next.js build. By convention, CMS-only routes (API handlers, editor pages) use `.server.ts` or `.server.tsx` file extensions. In dev and CMS builds (default), `withCanopy()` adds `server.ts` and `server.tsx` to Next.js `pageExtensions` so these files are processed normally. When `staticBuild: true` is set, these extensions are omitted, causing Next.js to ignore the CMS-only files entirely. This is the build-tooling mechanism that enables the two-deployment model described above -- a single codebase produces both a public static export (no editor code) and a CMS server build (with editor routes), controlled by a build-time flag rather than runtime checks.
+- **Dual-build page extensions**: `withCanopy()` supports a `staticBuild` option that controls which per-build file variants Next.js includes. By convention, CMS-only routes (API handlers, editor pages) use `.server.ts`/`.server.tsx` file extensions; a content route that needs to render differently per build additionally ships a `.static.ts`/`.static.tsx` variant (a prerendered `page.static.tsx` alongside a request-time `page.server.tsx`). In dev and CMS builds (default, `staticBuild: false`), `withCanopy()` adds `server.ts`/`server.tsx` to `pageExtensions`, so CMS-only files and `.server.tsx` route variants are processed while `.static.tsx` variants are ignored. When `staticBuild: true` is set, it adds `static.ts`/`static.tsx` instead, so the static-only variants are processed and every `.server.*` file — CMS-only routes and route variants alike — is ignored. This is the build-tooling mechanism that enables the two-deployment model described above -- a single codebase produces both a public static export (no editor code) and a CMS server build (with editor routes), controlled by a build-time flag rather than runtime checks. See [Why split a dual-build content route into static and server page variants?](#why-split-a-dual-build-content-route-into-static-and-server-page-variants) for why a shared page can't switch this behavior on its own.
 
 When installed from npm (not symlinked), the React aliases are harmless -- they resolve to the same React the project already uses. Note that Turbopack does not currently support the absolute-path aliases used for React deduplication, so consumers using `file:` symlinks for local development must use `next dev --webpack`; Turbopack works fine when packages are installed from npm.
 
@@ -2201,6 +2211,10 @@ File paths can change when entries are renamed (slug changes). ContentIds are im
 ### Why three permission layers?
 
 Defense in depth. Branch access controls who can see a branch. Path permissions control what content they can edit. Combining them provides flexible policies: you might let someone access a branch but restrict them to certain content paths within it.
+
+### Why scope `defaultPathAccess` by permission level?
+
+Before this, `defaultPathAccess` applied a single verdict to every permission level, so a deployment that wanted public read either had to deny everything by default (forcing an explicit read-only rule for every public path) or allow everything by default (accidentally opening edit and review too). The object form (`{ read: 'allow' }`) lets a `deployedAs: 'server'` site express "public read, everything else still requires a rule" as one config value. Unspecified levels fail closed to `deny` rather than inheriting a specified sibling level, so scoping read access can never accidentally loosen edit or review by omission.
 
 ### Why is `mode` required, and why an allowlist (not a denylist) for auth plugin trust?
 
@@ -2460,6 +2474,15 @@ The `withCanopy()` wrapper in `canopycms-next` solves both problems in one call:
 **Why solve this in the adapter package?** The dual-React problem is specific to how Next.js resolves modules through symlinks. It is a build-tooling concern, not business logic. Placing it in the adapter keeps the core package clean and makes the fix discoverable for Next.js adopters in the package they already import. Other framework adapters would handle their bundler's equivalent quirks in their own way.
 
 **Why not require pre-compilation?** Pre-compiling Canopy packages would eliminate the `transpilePackages` requirement but would add a build step to the development workflow, slow down iteration, and make debugging harder (source maps through compiled output). Exporting raw TypeScript keeps the development loop fast and debuggable.
+
+### Why split a dual-build content route into static and server page variants?
+
+A content route in a dual-build site (e.g. a catch-all `[slug]` page) needs to behave differently per build: the static export must prerender every known path (`dynamicParams = false`, required by `output: 'export'`), while the CMS server build must render every request live so runtime path ACLs apply and unknown slugs 404 correctly. Two single-page approaches were tried and rejected, empirically, before landing on a per-build file split:
+
+- **A route-segment config value computed from an env var** (e.g. `export const dynamicParams = process.env.CANOPY_BUILD === 'static'`) fails at build time: Next.js statically parses route-segment config and requires literal values, so a computed expression is a hard build error, not a runtime branch.
+- **A single page with `dynamicParams = true` plus `generateStaticParams`** builds and avoids the config-parsing error, but on the CMS server an unknown slug is then served via on-demand static generation rather than an ordinary request — and the request-scoped read's `headers()` call throws `DYNAMIC_SERVER_USAGE`, still surfacing as a 500. Worse, prerendering on the CMS build means build-time content gets served to anonymous visitors, bypassing runtime path ACLs entirely.
+
+The shipped design instead gives each build its own thin page file re-exporting a shared implementation: the static variant re-exports `generateStaticParams` and sets `dynamicParams = false` (prerendered, matching `output: 'export'`); the server variant sets `dynamic = 'force-dynamic'` and has no `generateStaticParams` (every request renders live, ACL-enforced, and unknown slugs reach the page's own `notFound()`). The server variant deliberately prerenders nothing, so it can never serve build-time content to a request-time visitor. `withCanopy()`'s `staticBuild` option ensures each build's `pageExtensions` only pick up its own variant (see [Framework Adapters](#framework-adapters)), so no runtime branching is needed in the page code at all.
 
 ### Why branded types for paths?
 

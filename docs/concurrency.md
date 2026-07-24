@@ -129,7 +129,8 @@ over anything the old code wrote; the window closes when the old processes drain
 | Workspace provisioning                                            | —                   | —          | ✔ provisioning-lock     | —                                             | Parallel build workers provisioning the same clone                                                                                                                                                                                                                                                                                                   |
 | Worker task queue                                                 | —                   | —          | proper-lockfile lease   | —                                             | Single consumer; cross-directory rename claims                                                                                                                                                                                                                                                                                                       |
 
-Bulk working-tree mutations (git checkout/merge/rebase, sync, CLI sync, migrate) go
+Bulk working-tree mutations (git checkout/merge/rebase — including the worker's
+ff-only base-branch refresh in `refreshBaseBranchWorkspace()` — sync, CLI sync, migrate) go
 through `invalidateBranchContentCaches()` in content-index-generation.ts, which bumps
 the `content-index` **and** `schema` markers — a rebase can pull in upstream
 `.collection.json` changes, so both caches must be told. `invalidateContentIndexesDurable()`

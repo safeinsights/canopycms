@@ -12,7 +12,20 @@ import { mediaSchema } from './media'
 
 // Default value schemas
 export const defaultBranchAccessSchema = z.enum(['allow', 'deny']).default('deny')
-export const defaultPathAccessSchema = z.enum(['allow', 'deny']).default('deny')
+export const defaultPathAccessLevelSchema = z.enum(['allow', 'deny'])
+// Per-level object form: an omitted level stays undefined after parse (no per-field
+// defaults here) so the runtime resolver (resolveDefaultPathAccess) can fail closed to
+// 'deny' for any level the config author didn't explicitly scope.
+export const defaultPathAccessLevelsSchema = z
+  .object({
+    read: defaultPathAccessLevelSchema.optional(),
+    edit: defaultPathAccessLevelSchema.optional(),
+    review: defaultPathAccessLevelSchema.optional(),
+  })
+  .strict()
+export const defaultPathAccessSchema = z
+  .union([defaultPathAccessLevelSchema, defaultPathAccessLevelsSchema])
+  .default('deny')
 export const defaultBaseBranchSchema = z.string().default('main')
 export const defaultRemoteNameSchema = z.string().default('origin')
 export const defaultRemoteUrlSchema = z.string().min(1)
@@ -52,6 +65,10 @@ export const CanopyConfigSchema = z
     // have .default('deny'), so the field is optional on input but always resolves to
     // 'allow'/'deny' (never undefined) on output. An outer .optional() would short-circuit
     // before the inner default runs, defeating the fail-closed default (SCH-M1).
+    // defaultPathAccessSchema's union keeps the same rule: the .default('deny') sits on the
+    // OUTER union, not inside defaultPathAccessLevelsSchema, so an omitted top-level field
+    // still resolves to 'deny' and an omitted level inside the object form stays undefined
+    // (resolved to 'deny' at read time by resolveDefaultPathAccess).
     defaultBranchAccess: defaultBranchAccessSchema,
     defaultPathAccess: defaultPathAccessSchema,
     // .optional() deliberately defeats defaultBaseBranchSchema's .default('main'):
@@ -68,6 +85,10 @@ export const CanopyConfigSchema = z
     // validation loudly rather than silently running header-trusting dev auth semantics.
     mode: operatingModeSchema,
     deployedAs: deployedAsSchema, // Has .default('server'), so always present after validation
+    // Escape hatch for prod hosts that genuinely have internet access and intentionally
+    // run git against a network remote (see GitManager.resolveRemoteUrl's prod-mode guard).
+    // Default false/unset — the standard AWS Lambda+worker topology must leave this unset.
+    allowNetworkRemoteInProd: z.boolean().optional(),
     settingsBranch: z.string().optional(),
     autoCreateSettingsPR: z.boolean().optional(),
     deploymentName: deploymentNameSchema.optional(),
@@ -85,7 +106,16 @@ export const CanopyConfigSchema = z
  * Helper to get schema default values.
  * This centralizes default value extraction from Zod schemas.
  */
-/** Default workspace path for prod mode (used when CANOPYCMS_WORKSPACE_ROOT is not set) */
+/**
+ * Default workspace path for prod mode (used when CANOPYCMS_WORKSPACE_ROOT is not set).
+ *
+ * WARNING: this fallback assumes a worker-style ROOT mount of EFS at /mnt/efs.
+ * The CanopyCmsService Lambda mounts EFS THROUGH an access point already rooted
+ * at /workspace and therefore sets CANOPYCMS_WORKSPACE_ROOT=/mnt/efs explicitly;
+ * if that env were ever unset on the Lambda this default would resolve to
+ * /mnt/efs/workspace = EFS:/workspace/workspace (a wrong, nested dir). The CDK
+ * always sets the env, so this only bites a hand-rolled misconfiguration.
+ */
 export const DEFAULT_PROD_WORKSPACE = '/mnt/efs/workspace'
 
 // Note: `mode` has no default by design (SEC-C1) and is intentionally omitted here —

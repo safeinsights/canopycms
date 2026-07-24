@@ -14,10 +14,17 @@ import {
 } from './task-queue'
 import type { Task } from './task-queue'
 import { createOrUpdatePullRequest, createCanopyOctokit } from '../github-service'
-import { getBranchMetadataFileManager, BranchMetadataFileManager } from '../branch-metadata'
+import {
+  getBranchMetadataFileManager,
+  BranchMetadataFileManager,
+  buildMergedBranchUpdate,
+  type BranchMetadataFile,
+} from '../branch-metadata'
 import { extractIdFromFilename } from '../content-id-index'
 import { invalidateBranchContentCaches } from '../content-index-generation'
-import { type ContentId, ROOT_COLLECTION_ID } from '../paths/types'
+import { type ContentId, type SanitizedBranchName, ROOT_COLLECTION_ID } from '../paths/types'
+import { sanitizeBranchName } from '../paths/branch'
+import type { PullRequestState } from '../types'
 import { getErrorMessage, isNodeError } from '../utils/error'
 
 /**
@@ -184,6 +191,12 @@ export class CmsWorker {
   private remoteGitPath: string
   private contentBranchesPath: string
   private baseBranch: string
+  // Workspace directories use sanitized names; git refs (fetch/rev-list/merge
+  // against origin/<baseBranch>) must keep using the raw `baseBranch` name.
+  // Computed once so both filesystem call sites (refreshBaseBranchWorkspace's
+  // path.join and rebaseActiveBranches' skip comparison) agree, instead of
+  // re-deriving it (and risking drift) at each use.
+  private sanitizedBaseBranch: SanitizedBranchName
   private activeTimeouts = new Set<NodeJS.Timeout>()
   private running = false
   private activeOperations = new Set<Promise<void>>()
@@ -202,6 +215,7 @@ export class CmsWorker {
     this.remoteGitPath = path.join(config.workspacePath, 'remote.git')
     this.contentBranchesPath = path.join(config.workspacePath, 'content-branches')
     this.baseBranch = config.baseBranch ?? 'main'
+    this.sanitizedBaseBranch = sanitizeBranchName(this.baseBranch)
     this.maxTasksPerCycle = config.maxTasksPerCycle ?? 10
     this.taskTimeoutMs = config.taskTimeoutMs ?? DEFAULT_TASK_TIMEOUT
     this.maxRetries = config.maxRetries ?? DEFAULT_MAX_RETRIES
@@ -217,21 +231,38 @@ export class CmsWorker {
     // Acquire lock to prevent concurrent workers
     await this.acquireLock()
 
-    // Ensure remote.git exists (init bare repo if first run)
-    await this.ensureRemoteGit()
+    // Everything below runs while holding the cross-host worker lock. A
+    // failure here (most notably the empty-remote guard inside
+    // ensureRemoteGit) means the process is about to exit, and systemd
+    // (Restart=always) will retry — but a still-held lock would make every
+    // retry fail with ELOCKED for up to lockStaleMs. Release before
+    // rethrowing so the next start() (this process's retry, or another host)
+    // can acquire immediately. We deliberately do NOT reorder ensureRemoteGit
+    // ahead of acquireLock: two hosts cold-starting at once would then both
+    // race to `git clone --bare` into the same remoteGitPath (the same class
+    // of race that acquireProvisioningLock guards against for workspace
+    // clones elsewhere) — acquiring the lock first is what already
+    // serializes that.
+    try {
+      // Ensure remote.git exists (init bare repo if first run)
+      await this.ensureRemoteGit()
 
-    // Recover any orphaned tasks from a previous crash
-    const recovered = await recoverOrphanedTasks(this.taskDir, undefined, this.log)
-    if (recovered > 0) {
-      console.log(`Recovered ${recovered} orphaned task(s)`)
-    }
+      // Recover any orphaned tasks from a previous crash
+      const recovered = await recoverOrphanedTasks(this.taskDir, undefined, this.log)
+      if (recovered > 0) {
+        console.log(`Recovered ${recovered} orphaned task(s)`)
+      }
 
-    // Run initial sync + cache refresh immediately
-    const initialTasks: Promise<void>[] = [this.syncGit()]
-    if (this.config.refreshAuthCache) {
-      initialTasks.push(this.refreshAuthCache())
+      // Run initial sync + cache refresh immediately
+      const initialTasks: Promise<void>[] = [this.syncGit()]
+      if (this.config.refreshAuthCache) {
+        initialTasks.push(this.refreshAuthCache())
+      }
+      await Promise.allSettled(initialTasks)
+    } catch (err) {
+      await this.releaseLock()
+      throw err
     }
-    await Promise.allSettled(initialTasks)
 
     // Start recurring task loops using setTimeout chaining
     // (avoids setInterval overlap when tasks take longer than the interval)
@@ -356,22 +387,93 @@ export class CmsWorker {
   }
 
   /**
+   * Whether the bare repo at `gitDir` has a local `refs/heads/<baseBranch>`.
+   *
+   * Uses an explicit `--git-dir` invocation rather than `simpleGit({ baseDir
+   * })` so this also works in sandboxed/CI git environments that set
+   * `safe.bareRepository=explicit` (which refuses cwd-based discovery of
+   * bare repos but expressly allows `--git-dir` — see
+   * GitManager.bareRemoteHasBranch for the same pattern).
+   *
+   * Deliberately omits `--quiet`: simple-git only treats a task as failed
+   * when the process both exits non-zero AND writes to stderr
+   * (isTaskError), so a quiet, silent-on-failure `--verify` would leave a
+   * missing branch indistinguishable from success. Without `--quiet`,
+   * `rev-parse --verify` writes its "fatal: ..." to stderr on failure, which
+   * is what makes simple-git reject the promise here.
+   */
+  private async verifyBaseBranchExists(gitDir: string): Promise<void> {
+    await simpleGit().raw([
+      '--git-dir',
+      gitDir,
+      'rev-parse',
+      '--verify',
+      `refs/heads/${this.baseBranch}`,
+    ])
+  }
+
+  /**
    * Ensure remote.git bare repo exists.
    * On first run, clone from GitHub as a bare repo.
+   *
+   * Empty-remote guard: simple-git's bare clone of an EMPTY GitHub repo (no
+   * commits, or a base branch that's never been pushed) exits 0 and produces
+   * a refs-less bare repo — HEAD points at an unborn branch. `fs.stat`
+   * cannot distinguish this from a healthy clone, so left unchecked it
+   * silently poisons remote.git: every later branch operation (Lambda-side
+   * clone provisioning, worker pushes) breaks, and the fs.stat short-circuit
+   * means it never heals on its own. We verify the base branch exists right
+   * after cloning and again on the already-exists fast path, since a
+   * previous run could have left a poisoned remote.git behind before this
+   * guard existed.
    */
   private async ensureRemoteGit(): Promise<void> {
+    let exists: boolean
     try {
       await fs.stat(this.remoteGitPath)
-      return // Already exists
+      exists = true
     } catch {
-      console.log('Initializing remote.git from GitHub...')
-      const git = simpleGit()
-      await git.clone(this.buildGitHubUrl(), this.remoteGitPath, ['--bare'])
-      // Remove the origin remote so the token doesn't persist in config
-      const bareGit = simpleGit({ baseDir: this.remoteGitPath })
-      await bareGit.removeRemote('origin').catch(() => {})
-      console.log('remote.git initialized')
+      exists = false
     }
+
+    if (exists) {
+      try {
+        await this.verifyBaseBranchExists(this.remoteGitPath)
+      } catch (err) {
+        console.error(`remote.git base branch verification failed: ${getErrorMessage(err)}`)
+        // Do NOT auto-delete: an existing remote.git could hold unpushed
+        // canopycms-settings-* branches or other state worth preserving.
+        // Deletion here is the operator's call, not ours.
+        throw new Error(
+          `remote.git at ${this.remoteGitPath} has no branch '${this.baseBranch}' (likely cloned while the GitHub repo was empty). Delete ${this.remoteGitPath} and restart the worker to re-clone.`,
+        )
+      }
+      return // Already exists and has the base branch
+    }
+
+    console.log('Initializing remote.git from GitHub...')
+    const git = simpleGit()
+    await git.clone(this.buildGitHubUrl(), this.remoteGitPath, ['--bare'])
+
+    try {
+      await this.verifyBaseBranchExists(this.remoteGitPath)
+    } catch (err) {
+      console.error(
+        `remote.git base branch verification failed after clone: ${getErrorMessage(err)}`,
+      )
+      // Deleting before throwing is what makes this recoverable: the next
+      // start() sees no remote.git and re-clones, instead of being stuck
+      // forever behind a poisoned bare repo that fs.stat alone can't detect.
+      await fs.rm(this.remoteGitPath, { recursive: true, force: true })
+      throw new Error(
+        `remote.git clone of ${this.config.githubOwner}/${this.config.githubRepo} has no branch '${this.baseBranch}' - the GitHub repository is empty or the base branch does not exist. Push an initial commit to '${this.baseBranch}' and restart the worker (systemd will retry automatically).`,
+      )
+    }
+
+    // Remove the origin remote so the token doesn't persist in config
+    const bareGit = simpleGit({ baseDir: this.remoteGitPath })
+    await bareGit.removeRemote('origin').catch(() => {})
+    console.log('remote.git initialized')
   }
 
   /**
@@ -586,7 +688,12 @@ export class CmsWorker {
         syncStatus: 'synced',
       }
       if (result.prUrl) updates.pullRequestUrl = result.prUrl
-      if (result.prNumber) updates.pullRequestNumber = result.prNumber
+      if (result.prNumber) {
+        updates.pullRequestNumber = result.prNumber
+        // As soon as the PR exists the field should read 'open' -- without
+        // this it would stay absent until the next poll cycle observes it.
+        updates.pullRequestState = 'open'
+      }
       await meta.save({ branch: updates })
     } catch (err) {
       console.error(
@@ -686,10 +793,201 @@ export class CmsWorker {
     // Ensures settings reach GitHub even if a task queue entry is lost.
     await this.pushSettingsBranches(git)
 
+    await this.refreshBaseBranchWorkspace()
+
     await this.rebaseActiveBranches()
 
     // Periodically clean up old completed/failed tasks
     await cleanupOldTasks(this.taskDir, undefined, this.log)
+  }
+
+  /**
+   * Fast-forward the base branch's own working-tree clone
+   * (content-branches/<baseBranch>) to match origin/<baseBranch>.
+   *
+   * Previously this clone was refreshed only incidentally, by the generic
+   * rebase loop below (rebaseActiveBranches): for a branch with status
+   * 'editing', rebasing onto origin/<baseBranch> degenerates to a
+   * fast-forward when the clone IS the base branch. But that loop's skip
+   * paths -- a dirty tree, a missing .git -- are silent, which is the
+   * suspected live failure mode: a wedged base clone with no diagnosable
+   * signal in the logs. This dedicated step makes the refresh explicit,
+   * ff-only, and loud, so a stuck base view (an editor forking a new branch
+   * "from base" that's actually a stale snapshot) is diagnosable from logs.
+   * This runs every sync cycle so the drift window is bounded by
+   * gitSyncInterval.
+   *
+   * ff-only on purpose: this clone must stay a linear mirror of
+   * origin/<baseBranch>, so a merge that isn't a fast-forward (diverged
+   * local history) is treated as a should-never-happen condition and left
+   * untouched rather than force-resolved.
+   */
+  private async refreshBaseBranchWorkspace(): Promise<void> {
+    // Sanitized name for the workspace directory (a base branch containing
+    // e.g. '/' would otherwise stat a wrong nested path here forever).
+    const basePath = path.join(this.contentBranchesPath, this.sanitizedBaseBranch)
+    const gitDir = path.join(basePath, '.git')
+
+    try {
+      let gitDirStat
+      try {
+        gitDirStat = await fs.stat(gitDir)
+      } catch {
+        gitDirStat = null
+      }
+      if (!gitDirStat || !gitDirStat.isDirectory()) {
+        console.log(
+          `Base branch workspace (${this.baseBranch}): not yet provisioned, skipping refresh`,
+        )
+        return
+      }
+
+      const baseGit = simpleGit({
+        baseDir: basePath,
+        // Keep git non-interactive during the merge so it never blocks on an
+        // editor. simple-git >=3.32 blocks setting core.editor unless
+        // explicitly opted in; the value here is a hardcoded literal
+        // ("true", the shell no-op), not user input, so enabling
+        // allowUnsafeEditor carries no injection risk (same as the rebase
+        // loop's git config below).
+        config: ['core.editor=true'],
+        unsafe: { allowUnsafeEditor: true },
+        // DEP-H1: a hung fetch/merge against this EFS-backed clone would
+        // stall the sync loop forever (scheduleLoop only reschedules after
+        // completion). The block timeout is inactivity-based, so a
+        // slow-but-flowing transfer is unaffected -- same as syncGit()'s
+        // remote handle.
+        timeout: { block: this.taskTimeoutMs },
+      })
+
+      // Nothing makes this clone read-only. A direct edit here (or a stray
+      // process) wedges every editor's view of the base branch until an
+      // operator intervenes, so a dirty tree is loud, not a quiet skip.
+      const status = await baseGit.status()
+      if (status.files.length > 0) {
+        console.error(
+          `Base branch workspace (${this.baseBranch}) has uncommitted changes -- skipping refresh. Dirty files: ${status.files.map((f) => f.path).join(', ')}`,
+        )
+        return
+      }
+
+      // Raw (unsanitized) name from here on: these are git ref operations
+      // against origin/<baseBranch>, not filesystem paths, so they must use
+      // the same name GitHub knows the branch by.
+      await baseGit.fetch('origin', this.baseBranch)
+
+      // Use rev-list instead of status.behind for the same reason as the
+      // rebase loop below: status.behind only works with an upstream
+      // tracking branch configured, which isn't guaranteed here.
+      const behindCount = parseInt(
+        (await baseGit.raw(['rev-list', '--count', `HEAD..origin/${this.baseBranch}`])).trim(),
+        10,
+      )
+
+      if (behindCount > 0) {
+        try {
+          await baseGit.merge(['--ff-only', `origin/${this.baseBranch}`])
+        } catch (err) {
+          console.error(
+            `Base branch workspace (${this.baseBranch}) failed to fast-forward (diverged local history?): ${getErrorMessage(err)}`,
+          )
+          return
+        }
+        await invalidateBranchContentCaches(basePath)
+      }
+
+      // Hygiene: conflictStatus/conflictFiles are meaningless for the base
+      // branch's own metadata and may be left over from before the base was
+      // excluded from rebaseActiveBranches()'s conflict-resolution loop.
+      // Reuse the already-clean no-op-save guard from that loop: save()
+      // eager-regenerates the branch registry (O(branch count) EFS reads),
+      // so skip it when there's nothing to clear.
+      const currentMeta = await BranchMetadataFileManager.loadOnly(basePath)
+      const conflictStatus = currentMeta?.branch.conflictStatus
+      const conflictFiles = currentMeta?.branch.conflictFiles
+      const alreadyClean =
+        (conflictStatus === undefined || conflictStatus === 'clean') &&
+        (conflictFiles === undefined || conflictFiles.length === 0)
+      if (!alreadyClean) {
+        const meta = getBranchMetadataFileManager(basePath, this.contentBranchesPath)
+        await meta.save({
+          branch: { name: this.baseBranch, conflictStatus: 'clean', conflictFiles: [] },
+        })
+      }
+
+      // One concise per-cycle line -- the diagnostic for the next live deploy.
+      console.log(
+        behindCount > 0
+          ? `Base branch workspace (${this.baseBranch}): fast-forwarded ${behindCount} commit(s)`
+          : `Base branch workspace (${this.baseBranch}): up to date`,
+      )
+    } catch (err) {
+      console.error(
+        `Base branch workspace (${this.baseBranch}) refresh failed: ${getErrorMessage(err)}`,
+      )
+    }
+  }
+
+  /**
+   * Poll GitHub for a submitted/approved branch's PR resolution.
+   *
+   * submitted/approved branches sit outside the rebase loop and get no
+   * other signal that their PR resolved on GitHub -- nothing pushes a
+   * merge/close webhook back into the branch workspace. merged ->
+   * auto-archive via buildMergedBranchUpdate (shared with the manual
+   * markAsMerged API so both paths produce identical archived-branch
+   * metadata). closed-without-merge -> record pullRequestState only; an
+   * admin decides the workflow transition from there. Best-effort: any
+   * failure here is logged and swallowed, retried next sync cycle.
+   */
+  private async pollMergeState(
+    branchDir: string,
+    branchPath: string,
+    metaFile: BranchMetadataFile | null,
+  ): Promise<void> {
+    const prNumber = metaFile?.branch.pullRequestNumber
+    if (!prNumber) return
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), this.taskTimeoutMs)
+    try {
+      const { data } = await this.octokit.pulls.get({
+        owner: this.config.githubOwner,
+        repo: this.config.githubRepo,
+        pull_number: prNumber,
+        request: { signal: controller.signal },
+      })
+
+      if (data.merged) {
+        const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
+        // Use GitHub's actual merge time when available; buildMergedBranchUpdate
+        // falls back to "now" (its default `now` param) when merged_at is absent.
+        await meta.save({
+          branch: buildMergedBranchUpdate(
+            branchDir,
+            data.merged_at ? new Date(data.merged_at) : undefined,
+          ),
+        })
+        console.log(`  PR #${prNumber} for ${branchDir} is merged -> archived`)
+        return
+      }
+
+      const newState: PullRequestState = data.state === 'closed' ? 'closed' : 'open'
+      // Re-load fresh (not the loop-top `metaFile` snapshot passed in) -- a
+      // concurrent Lambda write (e.g. an editor re-submitting) may have
+      // landed since that snapshot was taken.
+      const currentMeta = await BranchMetadataFileManager.loadOnly(branchPath)
+      if (currentMeta?.branch.pullRequestState === newState) return
+
+      const meta = getBranchMetadataFileManager(branchPath, this.contentBranchesPath)
+      await meta.save({ branch: { name: branchDir, pullRequestState: newState } })
+      console.log(`  PR #${prNumber} for ${branchDir}: pullRequestState -> ${newState}`)
+    } catch (err) {
+      // Non-fatal: transient GitHub/network errors are retried next cycle.
+      console.warn(`  Failed to poll PR #${prNumber} for ${branchDir}: ${getErrorMessage(err)}`)
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   private async rebaseActiveBranches(): Promise<void> {
@@ -701,13 +999,37 @@ export class CmsWorker {
     }
 
     for (const branchDir of branchDirs) {
+      // Known structural entries under content-branches/, not branch
+      // workspaces: branches.json (registry snapshot) and dot-prefixed
+      // entries (.canopy-meta/, transient lock dirs). Skip them silently so
+      // the no-.git skip logs below don't fire for them every cycle.
+      // Everything else still logs loudly on skip.
+      if (branchDir.startsWith('.') || branchDir === 'branches.json') {
+        continue
+      }
+
       const branchPath = path.join(this.contentBranchesPath, branchDir)
       const gitDir = path.join(branchPath, '.git')
 
       try {
         const stat = await fs.stat(gitDir)
-        if (!stat.isDirectory()) continue
+        if (!stat.isDirectory()) {
+          console.log(`  Skipping ${branchDir}: .git is not a directory`)
+          continue
+        }
       } catch {
+        console.log(`  Skipping ${branchDir}: no .git directory (not a branch workspace)`)
+        continue
+      }
+
+      // The base branch's own clone is refreshed ff-only by
+      // refreshBaseBranchWorkspace() earlier in syncGit(). Routing it
+      // through this conflict-resolution rebase loop could rewrite its
+      // history (the --theirs loop below) and stamp meaningless conflict
+      // metadata on it. Compare sanitized-vs-sanitized: branchDir is a
+      // filesystem name (already sanitized), this.baseBranch is raw.
+      if (branchDir === this.sanitizedBaseBranch) {
+        console.log(`  Skipping ${branchDir}: base branch (refreshed separately)`)
         continue
       }
 
@@ -717,13 +1039,17 @@ export class CmsWorker {
         const branchStatus = metaFile?.branch.status
 
         // Skip branches that shouldn't be mutated:
-        // - submitted/approved: in review, don't rewrite history under an active PR
-        // - archived: already merged, no reason to rebase
-        if (
-          branchStatus === 'submitted' ||
-          branchStatus === 'approved' ||
-          branchStatus === 'archived'
-        ) {
+        // - submitted/approved: in review, don't rewrite history under an
+        //   active PR -- but do poll GitHub for the PR's resolution, since
+        //   nothing else tells the worker a merge/close happened.
+        // - archived: already merged, no reason to rebase and no PR left to
+        //   poll (avoid the wasted API call).
+        if (branchStatus === 'submitted' || branchStatus === 'approved') {
+          console.log(`  Skipping ${branchDir} (${branchStatus})`)
+          await this.pollMergeState(branchDir, branchPath, metaFile)
+          continue
+        }
+        if (branchStatus === 'archived') {
           console.log(`  Skipping ${branchDir} (${branchStatus})`)
           continue
         }

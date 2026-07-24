@@ -1,19 +1,51 @@
 FROM public.ecr.aws/docker/library/node:20-slim AS builder
 WORKDIR /app
 COPY package*.json ./
+# If your app uses `file:` dependencies (e.g. vendored tarballs under vendor/),
+# COPY that directory here, before `npm ci` -- otherwise the install fails.
 RUN npm ci
 COPY . .
+# Guard against adopter apps with no public/ directory: Next's standalone
+# output still expects one, and the runner stage below copies it.
+RUN mkdir -p public
+# Build-time content reads (generateStaticParams / prerendering) run in dev
+# mode -- never set CANOPY_MODE=prod for `next build`: prod-mode build reads
+# would try to open a branch workspace (EFS remote.git) that cannot exist in
+# the image builder. Dev-mode reads require the project to be a git
+# repository, and .git is excluded from the build context by .dockerignore --
+# so synthesize a single-commit repo from the copied files. node_modules
+# (created by npm ci above) is excluded via .git/info/exclude - an adopter
+# repo without its own .gitignore would otherwise commit it into the
+# snapshot (slow build, bloated builder layer).
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
+    && git init -q -b main \
+    && printf 'node_modules\n.next\n' > .git/info/exclude \
+    && git add -A \
+    && git -c user.email=build@canopycms.local -c user.name="Image Build" commit -qm "image build snapshot"
 ENV CANOPY_BUILD=cms
+# Next.js inlines NEXT_PUBLIC_* values into the client bundle at `next build`
+# time, and the generated Clerk edit page needs the publishable key. The
+# publishable key is public material, so it's safe to bake into image layers.
+ARG NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+ENV NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
 RUN npm run build
 
 FROM public.ecr.aws/docker/library/node:20-slim AS runner
 # Git is required by CanopyCMS for branch operations
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+# The runtime user's uid differs from the uid that owns EFS workspace files
+# (access point forces 1000); git >= 2.35.2 refuses "dubious ownership".
+# safe.directory must live in PROTECTED configuration - system config is the
+# most robust scope (env-based GIT_CONFIG_* can be stripped by spawn wrappers).
+RUN git config --system safe.directory '*'
 # Lambda Web Adapter converts Lambda events to HTTP
-COPY --from=public.ecr.aws/awsguru/aws-lambda-web-adapter:0.8.4 /lambda-adapter /opt/extensions/lambda-adapter
+COPY --from=public.ecr.aws/awsguru/aws-lambda-adapter:1.0.1 /lambda-adapter /opt/extensions/lambda-adapter
 WORKDIR /app
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+# Lambda's filesystem is read-only outside /tmp. Next may write to .next/cache
+# at runtime; symlink it to /tmp so those writes succeed instead of failing (EROFS).
+RUN rm -rf .next/cache && ln -s /tmp .next/cache
 ENV PORT=8080 AWS_LWA_PORT=8080 HOSTNAME=0.0.0.0 NODE_ENV=production
 CMD ["node", "server.js"]

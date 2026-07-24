@@ -46,6 +46,8 @@ export type {
   // Config types
   DefaultBranchAccess,
   DefaultPathAccess,
+  DefaultPathAccessLevel,
+  DefaultPathAccessLevels,
   DefaultBaseBranch,
   DefaultRemoteName,
   DefaultRemoteUrl,

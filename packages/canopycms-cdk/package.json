@@ -1,6 +1,6 @@
 {
   "name": "canopycms-cdk",
-  "version": "0.0.58",
+  "version": "0.0.59",
   "description": "AWS CDK constructs and EC2 worker for CanopyCMS deployment",
   "license": "MIT",
   "repository": {
@@ -18,7 +18,8 @@
   "files": [
     "dist",
     "worker/dist",
-    "worker/canopy-worker.service"
+    "worker/canopy-worker.service",
+    "lambda/asset-transform/dist"
   ],
   "publishConfig": {
     "exports": {
@@ -29,6 +30,7 @@
     }
   },
   "scripts": {
+    "prepack": "pnpm run build && pnpm run build:worker && pnpm run build:lambda",
     "build": "tsc",
     "build:worker": "esbuild worker/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=worker/dist/index.js --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "build:lambda": "node lambda/asset-transform/build.mjs",

@@ -117,4 +117,99 @@ describe('CLI binary execution (source via tsx)', () => {
       await fs.rm(tmpDir, { recursive: true, force: true })
     }
   })
+
+  it('defaults unchanged: non-interactive with no auth/dual-build flags yields dev auth, no dual-build', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-cli-defaults-'))
+    try {
+      await execFileAsync(tsxBin, [SRC_BIN, 'init', '--non-interactive', '--force'], {
+        cwd: tmpDir,
+        timeout: 15_000,
+      })
+
+      const canopy = await fs.readFile(path.join(tmpDir, 'app/lib/canopy.ts'), 'utf-8')
+      expect(canopy).toContain('createDevAuthPlugin')
+      expect(canopy).not.toContain('createClerkAuthPlugin')
+
+      // Dual-build off: no .server extensions, plain route/page names.
+      expect(await fileExists(path.join(tmpDir, 'app/edit/page.tsx'))).toBe(true)
+      expect(await fileExists(path.join(tmpDir, 'app/edit/page.server.tsx'))).toBe(false)
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('runs init --non-interactive --auth clerk --force and generates clerk-flavored files', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-cli-auth-clerk-'))
+    try {
+      await execFileAsync(
+        tsxBin,
+        [SRC_BIN, 'init', '--non-interactive', '--auth', 'clerk', '--force'],
+        { cwd: tmpDir, timeout: 15_000 },
+      )
+
+      const canopy = await fs.readFile(path.join(tmpDir, 'app/lib/canopy.ts'), 'utf-8')
+      expect(canopy).toContain('createClerkAuthPlugin')
+
+      const middleware = await fs.readFile(path.join(tmpDir, 'middleware.ts'), 'utf-8')
+      expect(middleware).toContain('clerkMiddleware')
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('runs init --non-interactive --auth dev --force and generates dev-only files', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-cli-auth-dev-'))
+    try {
+      await execFileAsync(
+        tsxBin,
+        [SRC_BIN, 'init', '--non-interactive', '--auth', 'dev', '--force'],
+        { cwd: tmpDir, timeout: 15_000 },
+      )
+
+      const canopy = await fs.readFile(path.join(tmpDir, 'app/lib/canopy.ts'), 'utf-8')
+      expect(canopy).toContain('createDevAuthPlugin')
+      expect(canopy).not.toContain('createClerkAuthPlugin')
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('runs init --non-interactive --dual-build --force and generates dual-build files', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-cli-dual-build-'))
+    try {
+      await execFileAsync(
+        tsxBin,
+        [SRC_BIN, 'init', '--non-interactive', '--dual-build', '--force'],
+        { cwd: tmpDir, timeout: 15_000 },
+      )
+
+      const config = await fs.readFile(path.join(tmpDir, 'next.config.ts'), 'utf-8')
+      expect(config).toContain('CANOPY_BUILD')
+
+      expect(await fileExists(path.join(tmpDir, 'app/edit/page.server.tsx'))).toBe(true)
+      expect(
+        await fileExists(path.join(tmpDir, 'app/api/canopycms/[...canopycms]/route.server.ts')),
+      ).toBe(true)
+      expect(await fileExists(path.join(tmpDir, 'app/edit/page.tsx'))).toBe(false)
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true })
+    }
+  })
+
+  it('exits non-zero and prints an error for an invalid --auth value', async () => {
+    const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-cli-auth-invalid-'))
+    try {
+      await expect(
+        execFileAsync(tsxBin, [SRC_BIN, 'init', '--non-interactive', '--auth', 'foo', '--force'], {
+          cwd: tmpDir,
+          timeout: 15_000,
+        }),
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining('--auth must be "clerk" or "dev"'),
+      })
+    } finally {
+      await fs.rm(tmpDir, { recursive: true, force: true })
+    }
+  })
 })

@@ -58,6 +58,13 @@ const initSrc = resolve(root, 'dist/cli/init.js')
 const initCode = await readFile(initSrc, 'utf8')
 await writeFile(initSrc, initCode.replace(/^#!.*\n/, ''))
 
+// Same for cli.js — the published bin entrypoint. Without this, the tsx
+// shebang survives into the package and every adopter's `npx canopycms`
+// fails with `env: tsx: No such file or directory`.
+const cliSrc = resolve(root, 'dist/cli/cli.js')
+const cliCode = await readFile(cliSrc, 'utf8')
+await writeFile(cliSrc, cliCode.replace(/^#!.*\n/, ''))
+
 // Bundle CLI entry points with esbuild so all internal imports are resolved.
 // This fixes Node 20 ESM errors from bare directory imports emitted by tsc.
 const commonOptions = {
@@ -87,3 +94,23 @@ await build({
   outfile: genTmp,
 })
 await rename(genTmp, genSrc)
+
+// Bundle cli.js (the published bin entrypoint; dynamic relative imports get inlined)
+const cliTmp = resolve(root, 'dist/cli/cli.bundled.js')
+await build({
+  ...commonOptions,
+  entryPoints: [cliSrc],
+  outfile: cliTmp,
+  banner: { js: '#!/usr/bin/env node' },
+})
+await rename(cliTmp, cliSrc)
+
+// Guard: no CLI entrypoint may ship a non-node shebang. A tsx shebang here
+// means `npx canopycms` breaks for every adopter — fail the build instead.
+for (const name of await readdir(resolve(root, 'dist/cli'))) {
+  if (!name.endsWith('.js')) continue
+  const firstLine = (await readFile(resolve(root, 'dist/cli', name), 'utf8')).split('\n', 1)[0]
+  if (firstLine.startsWith('#!') && !firstLine.includes('node')) {
+    throw new Error(`dist/cli/${name} has a non-node shebang: ${firstLine}`)
+  }
+}

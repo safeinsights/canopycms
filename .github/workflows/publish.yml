@@ -70,6 +70,8 @@ jobs:
           pnpm --filter canopycms-auth-clerk run build
           pnpm --filter canopycms-auth-dev run build
           pnpm --filter canopycms-cdk run build
+          pnpm --filter canopycms-cdk run build:worker
+          pnpm --filter canopycms-cdk run build:lambda
 
       # pnpm pack resolves workspace: protocol refs to real versions.
       # npm publish handles OIDC trusted publishing auth + provenance.

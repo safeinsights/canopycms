@@ -8,9 +8,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { simpleGit } from 'simple-git'
 
 import { CmsWorker, PermanentTaskError, isPermanentTaskFailure } from './cms-worker'
 import { enqueueTask } from './task-queue'
+import { initTestRepo, mockConsole } from '../test-utils'
 
 const makeWorker = () =>
   new CmsWorker({
@@ -576,5 +578,148 @@ describe('CmsWorker push-and-create-or-update-pr (GIT-H1)', () => {
     const meta = await readBranchMeta('settings-sync')
     expect(meta.branch.pullRequestNumber).toBe(89)
     expect(meta.branch.syncStatus).toBe('synced')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// ensureRemoteGit(): empty-remote guard (adopter protection)
+//
+// simple-git's bare clone of an EMPTY GitHub repo (no commits, or a base
+// branch that's never been pushed) exits 0 and produces a refs-less bare
+// repo -- HEAD points at an unborn branch, and `fs.stat` alone can't tell
+// this apart from a healthy clone. Left unchecked this silently poisons
+// remote.git for every later branch operation (Lambda-side clone
+// provisioning, worker pushes), and the fs.stat short-circuit means it never
+// heals on its own.
+//
+// These tests exercise the guard against real git repos (no network calls --
+// buildGitHubUrl is stubbed to point at a local bare "GitHub" fixture).
+// ---------------------------------------------------------------------------
+
+type RemoteGitInternals = {
+  ensureRemoteGit(): Promise<void>
+  buildGitHubUrl(): string
+}
+
+describe('CmsWorker.ensureRemoteGit() empty-remote guard', () => {
+  let tmpDir: string
+  let fixtureRemote: string // simulated "GitHub" repo
+  let workspacePath: string
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-empty-remote-test-'))
+    fixtureRemote = path.join(tmpDir, 'fixture-github.git')
+    workspacePath = path.join(tmpDir, 'workspace')
+    await fs.mkdir(workspacePath, { recursive: true })
+    // The simulated GitHub repo: bare, no commits, no refs at all.
+    await simpleGit().raw(['init', '--bare', fixtureRemote])
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const makeGuardWorker = (baseBranch = 'main') => {
+    const worker = new CmsWorker({
+      workspacePath,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+      baseBranch,
+    })
+    // Point clone/fetch/push at the local fixture instead of a real GitHub URL.
+    ;(worker as unknown as RemoteGitInternals).buildGitHubUrl = () => fixtureRemote
+    return worker
+  }
+
+  const remoteGitPath = () => path.join(workspacePath, 'remote.git')
+
+  const fileExists = async (p: string) => {
+    try {
+      await fs.stat(p)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /** Push an initial commit to the fixture's base branch, as an operator would after the guard fires. */
+  const pushInitialCommitToFixture = async (seedName: string, baseBranch = 'main') => {
+    const seedPath = path.join(tmpDir, seedName)
+    await fs.mkdir(seedPath, { recursive: true })
+    const seedGit = await initTestRepo(seedPath)
+    await seedGit.raw(['branch', '-M', baseBranch])
+    await fs.writeFile(path.join(seedPath, 'README.md'), '# hello\n')
+    await seedGit.add(['.'])
+    await seedGit.commit('initial commit')
+    await seedGit.addRemote('origin', fixtureRemote)
+    await seedGit.push('origin', baseBranch)
+  }
+
+  it('rejects a fresh clone of an empty repo and deletes the poisoned clone', async () => {
+    const worker = makeGuardWorker()
+    const internals = worker as unknown as RemoteGitInternals
+
+    await expect(internals.ensureRemoteGit()).rejects.toThrow(/no branch/)
+    // The just-cloned, refs-less remote.git must be removed -- that's what
+    // makes the failure recoverable (the next start() re-clones instead of
+    // being stuck behind a poisoned clone that fs.stat can't detect).
+    expect(await fileExists(remoteGitPath())).toBe(false)
+  })
+
+  it('self-heals: a subsequent ensureRemoteGit succeeds after the base branch is pushed', async () => {
+    const worker = makeGuardWorker()
+    const internals = worker as unknown as RemoteGitInternals
+    await expect(internals.ensureRemoteGit()).rejects.toThrow(/no branch/)
+    expect(await fileExists(remoteGitPath())).toBe(false)
+
+    await pushInitialCommitToFixture('seed')
+
+    // A fresh worker (matching a systemd restart) succeeds now.
+    const retryWorker = makeGuardWorker()
+    await (retryWorker as unknown as RemoteGitInternals).ensureRemoteGit()
+    expect(await fileExists(remoteGitPath())).toBe(true)
+  })
+
+  it('rejects an already-existing remote.git that lacks the base branch, without deleting it', async () => {
+    // Simulate a remote.git left behind by a pre-guard worker run (or any
+    // other means) that never got a base branch: an empty bare repo created
+    // directly at the workspace's remote.git path, with no fixture clone
+    // involved.
+    await simpleGit().raw(['init', '--bare', remoteGitPath()])
+
+    const worker = makeGuardWorker()
+    const internals = worker as unknown as RemoteGitInternals
+
+    await expect(internals.ensureRemoteGit()).rejects.toThrow(/no branch/)
+    // Existing repos are not auto-deleted -- they may hold unpushed
+    // canopycms-settings-* branches or other state; removal is the
+    // operator's call, per the error message's recovery hint.
+    expect(await fileExists(remoteGitPath())).toBe(true)
+  })
+
+  it('does not leave the cross-host lock held after start() fails on the empty-remote guard', async () => {
+    const worker = makeGuardWorker()
+    await expect(worker.start()).rejects.toThrow(/no branch/)
+
+    // A second worker against the same workspace must be able to acquire the
+    // lock immediately -- it must not still be held from the failed start().
+    const contender = makeGuardWorker()
+    await lockInternals(contender).acquireLock()
+    await lockInternals(contender).releaseLock()
+  })
+
+  it('clones successfully when the fixture already has a base branch commit (happy path unaffected)', async () => {
+    await pushInitialCommitToFixture('seed-happy')
+
+    const worker = makeGuardWorker()
+    const internals = worker as unknown as RemoteGitInternals
+    await internals.ensureRemoteGit()
+    expect(await fileExists(remoteGitPath())).toBe(true)
+
+    // Already-exists fast path must also succeed without error on a second call.
+    await internals.ensureRemoteGit()
+    expect(await fileExists(remoteGitPath())).toBe(true)
   })
 })

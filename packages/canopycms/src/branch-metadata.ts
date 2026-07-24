@@ -256,6 +256,28 @@ export interface BranchMetadataUpdate {
 }
 
 /**
+ * Build the metadata update for archiving a branch because its PR merged.
+ * Shared by the worker's merge-poll (CmsWorker.pollMergeState) and the
+ * manual markAsMerged API (api/branch-merge.ts) so both paths produce
+ * identical archived-branch metadata.
+ *
+ * Deliberately omits pullRequestNumber/pullRequestUrl: save()'s merge keeps
+ * whatever the existing metadata already has for fields not present in the
+ * incoming update, so the PR number/URL recorded earlier survive untouched.
+ */
+export function buildMergedBranchUpdate(
+  branchName: string,
+  now: Date = new Date(),
+): NonNullable<BranchMetadataUpdate['branch']> {
+  return {
+    name: branchName,
+    status: 'archived',
+    pullRequestState: 'merged',
+    mergedAt: now.toISOString(),
+  }
+}
+
+/**
  * Get a BranchMetadataFileManager instance configured for registry invalidation.
  * Use this in API handlers to ensure registry cache is invalidated on updates.
  */

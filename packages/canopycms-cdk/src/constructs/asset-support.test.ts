@@ -68,7 +68,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
     )
   })
 
-  it('configures the transform Lambda: arm64/nodejs20.x, memory/timeout, and the bucket name in its environment', () => {
+  it('configures the transform Lambda: arm64/nodejs22.x, memory/timeout, and the bucket name in its environment', () => {
     const stack = makeStack()
     new AssetSupport(stack, 'Assets', { editorOrigins: EDITOR_ORIGINS })
     const template = Template.fromStack(stack)
@@ -76,7 +76,7 @@ describe('AssetSupport - standalone mode (creates its own bucket)', () => {
     template.hasResourceProperties(
       'AWS::Lambda::Function',
       Match.objectLike({
-        Runtime: 'nodejs20.x',
+        Runtime: 'nodejs22.x',
         Architectures: ['arm64'],
         MemorySize: 1536,
         Timeout: 30,

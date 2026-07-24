@@ -54,7 +54,7 @@ export {
 } from './branch'
 
 // Path-level access
-export { checkPathAccess, createCheckPathAccess } from './path'
+export { checkPathAccess, createCheckPathAccess, resolveDefaultPathAccess } from './path'
 
 // Helper functions
 export {

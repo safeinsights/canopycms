@@ -54,6 +54,21 @@ function isAllowedByTarget(target: PermissionTarget, user: CanopyUser): boolean 
 }
 
 /**
+ * Resolve a `defaultPathAccess` config value to an 'allow'/'deny' verdict for one
+ * permission level. String form applies the same value to every level (unchanged
+ * behavior). Object form looks up the level; an absent level resolves to 'deny'
+ * (fail-closed), so scoping e.g. `{ read: 'allow' }` doesn't accidentally open
+ * edit/review.
+ */
+export function resolveDefaultPathAccess(
+  defaultAccess: DefaultPathAccess,
+  level: PermissionLevel,
+): 'allow' | 'deny' {
+  if (typeof defaultAccess === 'string') return defaultAccess
+  return defaultAccess[level] ?? 'deny'
+}
+
+/**
  * Evaluate access for a relative path against config-defined rules.
  * Uses defaultAccess when no rule matches. First matching rule wins.
  */
@@ -97,7 +112,10 @@ export function checkPathAccess({
     }
   }
 
-  return { allowed: defaultAccess === 'allow', reason: 'no_rule_match' }
+  return {
+    allowed: resolveDefaultPathAccess(defaultAccess, level) === 'allow',
+    reason: 'no_rule_match',
+  }
 }
 
 /**

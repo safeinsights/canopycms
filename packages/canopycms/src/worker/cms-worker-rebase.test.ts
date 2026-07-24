@@ -244,6 +244,52 @@ describe('CmsWorker rebaseActiveBranches', () => {
       const status = await setup.branchGit.status()
       expect(status.behind).toBeGreaterThan(0)
     })
+
+    it('skips the base branch directory entirely (no rebase, no metadata save)', async () => {
+      // No real repo needed: the base-branch check happens right after the
+      // .git-directory check, before any git ops or metadata load.
+      const basePath = path.join(tmpDir, 'content-branches', 'main')
+      await fs.mkdir(path.join(basePath, '.git'), { recursive: true })
+
+      const saveSpy = vi.spyOn(BranchMetadataFileManager.prototype, 'save')
+      const consoleSpy = mockConsole()
+      const worker = makeWorker(tmpDir, 'main')
+      await runRebase(worker)
+
+      expect(saveSpy).not.toHaveBeenCalled()
+      expect(consoleSpy).toHaveLogged(/base branch \(refreshed separately\)/)
+      const meta = await readMeta(basePath)
+      expect(meta).toBeUndefined()
+
+      consoleSpy.restore()
+      saveSpy.mockRestore()
+    })
+
+    it('logs when skipping a directory without a .git subdirectory', async () => {
+      const notABranchDir = path.join(tmpDir, 'content-branches', 'not-a-branch')
+      await fs.mkdir(notABranchDir, { recursive: true })
+      await fs.writeFile(path.join(notABranchDir, 'stray-file.txt'), 'oops')
+
+      const consoleSpy = mockConsole()
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker)
+
+      expect(consoleSpy).toHaveLogged(/no \.git directory/i)
+      consoleSpy.restore()
+    })
+
+    it('logs when .git exists but is not a directory', async () => {
+      const weirdDir = path.join(tmpDir, 'content-branches', 'weird-branch')
+      await fs.mkdir(weirdDir, { recursive: true })
+      await fs.writeFile(path.join(weirdDir, '.git'), 'not a directory')
+
+      const consoleSpy = mockConsole()
+      const worker = makeWorker(tmpDir)
+      await runRebase(worker)
+
+      expect(consoleSpy).toHaveLogged(/\.git is not a directory/i)
+      consoleSpy.restore()
+    })
   })
 
   // -------------------------------------------------------------------------
