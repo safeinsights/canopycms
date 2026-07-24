@@ -24,6 +24,7 @@ None currently open.
 | [dual-react-problem.md](dual-react-problem.md)                               | Dual React instance crash when adopters use `file:` references in their Next.js app                                           |
 | [swr.md](swr.md)                                                             | Multiple independent `useEffect` hooks fire duplicate API calls on initial editor load; SWR would deduplicate                 |
 | [editor-state-context-migration.md](editor-state-context-migration.md)       | Complete migration of `Editor.tsx` inline state to `EditorStateContext`                                                       |
+| [ux-review-deploy-test-findings.md](ux-review-deploy-test-findings.md)       | Deployed-editor UX review: false submit-permission tooltip, save doesn't clear draft, submitted state invisible/unenforced, branch↔PR status drift, TODO text in menus, plus P2/P3 polish list |
 
 ---
 
