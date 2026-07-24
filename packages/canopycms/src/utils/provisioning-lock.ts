@@ -37,3 +37,34 @@ export async function acquireProvisioningLock(
     stale: 30_000,
   })
 }
+
+/**
+ * Zero-retry variant of {@link acquireProvisioningLock}, for admin actions
+ * running inside a synchronous request/response cycle (e.g. a Lambda-backed
+ * API handler). `acquireProvisioningLock`'s ~600-retry budget is sized for a
+ * build worker that can afford to wait several minutes for a live
+ * provisioner to finish; an admin request must fail fast on contention
+ * instead (409 immediately) rather than hang the request for that long.
+ *
+ * `stale: 30_000` is unchanged from the patient variant: a genuinely stale
+ * lock (holder crashed more than 30s ago) is still taken over normally --
+ * this only removes the RETRY loop for live contention, not the staleness
+ * recovery a caller depends on (see branch-health.ts's [H1] freshness rail,
+ * which reads this same lock's mtime to decide whether it is fresh or
+ * stale before an admin purge/repair proceeds).
+ *
+ * Throws with `err.code === 'ELOCKED'` on contention (a live, non-stale
+ * holder) -- callers should translate that into a 409.
+ */
+export async function tryAcquireProvisioningLock(
+  lockTargetDir: string,
+  lockName: string,
+): Promise<() => Promise<void>> {
+  await fs.mkdir(lockTargetDir, { recursive: true })
+
+  return lockfile.lock(lockTargetDir, {
+    lockfilePath: path.join(lockTargetDir, lockName),
+    retries: 0,
+    stale: 30_000,
+  })
+}

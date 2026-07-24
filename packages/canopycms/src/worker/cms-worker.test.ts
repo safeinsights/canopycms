@@ -921,3 +921,121 @@ describe('CmsWorker.processTaskQueue() worker-status.json bookkeeping', () => {
     await expect(fs.stat(statusPath())).rejects.toThrow()
   })
 })
+
+// ---------------------------------------------------------------------------
+// cleanupTrashedBranchDirs() [C1] -- worker-only retention sweep for the
+// admin purge action's `.trash-{dirName}-{STAMP}` directories
+// (api/admin-branch-health.ts). Age comes ONLY from the name-embedded stamp
+// (constructed by hand here), never the directory's own mtime -- see the
+// method's doc comment in cms-worker.ts for why.
+// ---------------------------------------------------------------------------
+
+type TrashCleanupInternals = {
+  cleanupTrashedBranchDirs(): Promise<number>
+}
+
+describe('CmsWorker.cleanupTrashedBranchDirs() [C1]', () => {
+  let tmpDir: string
+  let contentBranchesPath: string
+
+  beforeEach(async () => {
+    mockConsole()
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'canopy-worker-trash-cleanup-test-'))
+    contentBranchesPath = path.join(tmpDir, 'content-branches')
+    await fs.mkdir(contentBranchesPath, { recursive: true })
+  })
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true })
+  })
+
+  const makeWorker = () =>
+    new CmsWorker({
+      workspacePath: tmpDir,
+      githubOwner: 'test-owner',
+      githubRepo: 'test-repo',
+      githubToken: 'fake-token',
+    })
+
+  /** Format a Date as the purge-generated `YYYYMMDDTHHMMSSZ` stamp (no colons). */
+  const stamp = (date: Date) =>
+    date
+      .toISOString()
+      .replace(/[-:]/g, '')
+      .replace(/\.\d{3}Z$/, 'Z')
+
+  const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60_000)
+
+  it('removes a trash dir stamped more than 30 days ago', async () => {
+    const dirName = `.trash-old-branch-${stamp(daysAgo(31))}`
+    await fs.mkdir(path.join(contentBranchesPath, dirName), { recursive: true })
+
+    const worker = makeWorker()
+    const removed = await (worker as unknown as TrashCleanupInternals).cleanupTrashedBranchDirs()
+
+    expect(removed).toBe(1)
+    await expect(fs.stat(path.join(contentBranchesPath, dirName))).rejects.toThrow()
+  })
+
+  it('keeps a trash dir stamped 1 day ago', async () => {
+    const dirName = `.trash-recent-branch-${stamp(daysAgo(1))}`
+    await fs.mkdir(path.join(contentBranchesPath, dirName), { recursive: true })
+
+    const worker = makeWorker()
+    const removed = await (worker as unknown as TrashCleanupInternals).cleanupTrashedBranchDirs()
+
+    expect(removed).toBe(0)
+    await expect(fs.stat(path.join(contentBranchesPath, dirName))).resolves.toBeTruthy()
+  })
+
+  it('keeps and logs an unparseable trash dir name instead of throwing', async () => {
+    const dirName = '.trash-foo'
+    await fs.mkdir(path.join(contentBranchesPath, dirName), { recursive: true })
+
+    const worker = makeWorker()
+    const removed = await (worker as unknown as TrashCleanupInternals).cleanupTrashedBranchDirs()
+
+    expect(removed).toBe(0)
+    await expect(fs.stat(path.join(contentBranchesPath, dirName))).resolves.toBeTruthy()
+  })
+
+  it('ignores an mtime-only rewrite of an old-stamped dir -- age comes from the name, not mtime', async () => {
+    // Simulates the exact scenario the [C1] design note warns about:
+    // fs.rename (what purge does) preserves the original directory's mtime,
+    // so a months-stale orphan's trash dir would otherwise look "fresh" only
+    // if cleanup incorrectly used mtime. Here we go the other way -- an
+    // old-stamped name whose mtime we bump to "now" must still be removed,
+    // proving age is read from the name alone.
+    const dirName = `.trash-touched-branch-${stamp(daysAgo(60))}`
+    const dirPath = path.join(contentBranchesPath, dirName)
+    await fs.mkdir(dirPath, { recursive: true })
+    const now = new Date()
+    await fs.utimes(dirPath, now, now)
+
+    const worker = makeWorker()
+    const removed = await (worker as unknown as TrashCleanupInternals).cleanupTrashedBranchDirs()
+
+    expect(removed).toBe(1)
+    await expect(fs.stat(dirPath)).rejects.toThrow()
+  })
+
+  it('returns 0 when contentBranchesPath does not exist yet', async () => {
+    await fs.rm(contentBranchesPath, { recursive: true, force: true })
+
+    const worker = makeWorker()
+    const removed = await (worker as unknown as TrashCleanupInternals).cleanupTrashedBranchDirs()
+
+    expect(removed).toBe(0)
+  })
+
+  it('ignores non-trash directories entirely', async () => {
+    await fs.mkdir(path.join(contentBranchesPath, 'main'), { recursive: true })
+    await fs.mkdir(path.join(contentBranchesPath, '.canopy-meta'), { recursive: true })
+
+    const worker = makeWorker()
+    const removed = await (worker as unknown as TrashCleanupInternals).cleanupTrashedBranchDirs()
+
+    expect(removed).toBe(0)
+    await expect(fs.stat(path.join(contentBranchesPath, 'main'))).resolves.toBeTruthy()
+  })
+})
