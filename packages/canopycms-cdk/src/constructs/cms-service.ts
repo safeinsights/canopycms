@@ -11,6 +11,7 @@ import {
   aws_lambda as lambda,
   aws_autoscaling as autoscaling,
   aws_s3_assets as s3assets,
+  aws_logs as logs,
 } from 'aws-cdk-lib'
 import type { IBucket } from 'aws-cdk-lib/aws-s3'
 
@@ -84,6 +85,20 @@ export interface CanopyCmsServiceProps {
    * construct directly, so `canopycms-cdk`'s two constructs stay decoupled.
    */
   assetBucket?: IBucket
+
+  /**
+   * Retention for the EC2 worker's CloudWatch log group (default: three
+   * months). Worker-only: the Lambdas keep their auto-created log groups.
+   */
+  workerLogRetention?: logs.RetentionDays
+
+  /**
+   * Name for the worker's CloudWatch log group (default:
+   * `/canopycms/<stackName>/worker`). Override to follow an org naming
+   * convention, or when instantiating this construct twice in one stack (the
+   * default name would collide).
+   */
+  workerLogGroupName?: string
 }
 
 /**
@@ -95,8 +110,11 @@ export interface CanopyCmsServiceProps {
  * - Lambda function (Docker image, EFS mount, private subnet, no internet)
  * - Lambda Function URL (for CloudFront origin)
  * - EC2 Worker (t4g.nano spot in ASG, public subnet, EFS mount, systemd)
+ * - Dedicated CloudWatch log group for the worker's stdout/stderr, shipped
+ *   via the amazon-cloudwatch-agent (journald is not agent-readable)
  * - Security groups (least-privilege)
- * - IAM roles (Lambda: EFS only; EC2: EFS + Secrets Manager)
+ * - IAM roles (Lambda: EFS only; EC2: EFS + Secrets Manager + CloudWatch
+ *   Logs write, scoped to its own log group)
  */
 export class CanopyCmsService extends Construct {
   /** Lambda Function URL — use as CloudFront origin */
@@ -113,6 +131,9 @@ export class CanopyCmsService extends Construct {
 
   /** The EC2 worker Auto Scaling Group */
   public readonly workerAsg: autoscaling.AutoScalingGroup
+
+  /** The EC2 worker's CloudWatch log group (worker stdout/stderr) */
+  public readonly workerLogGroup: logs.LogGroup
 
   constructor(scope: Construct, id: string, props: CanopyCmsServiceProps) {
     super(scope, id)
@@ -334,6 +355,18 @@ export class CanopyCmsService extends Construct {
       iam.ManagedPolicy.fromAwsManagedPolicyName('AmazonSSMManagedInstanceCore'),
     )
 
+    // Dedicated CloudWatch log group for the worker's stdout/stderr (shipped by
+    // the CloudWatch agent in user-data below - the agent cannot read journald,
+    // so the systemd unit is switched to file output further down).
+    this.workerLogGroup = new logs.LogGroup(this, 'WorkerLogs', {
+      logGroupName: props.workerLogGroupName ?? `/canopycms/${Stack.of(this).stackName}/worker`,
+      retention: props.workerLogRetention ?? logs.RetentionDays.THREE_MONTHS,
+      removalPolicy: RemovalPolicy.DESTROY,
+    })
+    // CreateLogStream + PutLogEvents scoped to this group only (least privilege;
+    // the group is pre-created by CFN so the agent never needs CreateLogGroup).
+    this.workerLogGroup.grantWrite(workerRole)
+
     // Worker S3 Asset — upload bundled worker code to CDK assets bucket
     // The worker is bundled with esbuild into a single JS file (npm run build:worker)
     const workerAsset = new s3assets.Asset(this, 'WorkerCode', {
@@ -412,8 +445,16 @@ export class CanopyCmsService extends Construct {
       'Restart=always',
       'RestartSec=5',
       'TimeoutStartSec=300',
-      'StandardOutput=journal',
-      'StandardError=journal',
+      '# File output, not journal: the CloudWatch agent cannot read journald,',
+      '# so it tails this file instead (see the agent config below).',
+      '# CAUTION: /var/log/canopy-worker must exist BEFORE first start. systemd',
+      '# opens append: targets before it creates LogsDirectory= dirs',
+      '# (systemd#27591), so without the pre-created dir the exec fails with',
+      '# 209/STDOUT and Restart=always crash-loops forever. User-data runs',
+      '# mkdir before systemctl start; LogsDirectory= is kept for ownership.',
+      'LogsDirectory=canopy-worker',
+      'StandardOutput=append:/var/log/canopy-worker/worker.log',
+      'StandardError=append:/var/log/canopy-worker/worker.log',
       'EnvironmentFile=/opt/canopy-worker/.env',
       '',
       '[Install]',
@@ -429,10 +470,63 @@ export class CanopyCmsService extends Construct {
       'mkdir -p /mnt/efs/workspace',
       'chown ec2-user:ec2-user /mnt/efs/workspace',
       '',
+      '# Pre-create the worker log dir (crash-loop guard, MUST precede the',
+      '# first systemctl start): systemd opens StandardOutput=append: files',
+      '# BEFORE it creates LogsDirectory= dirs (systemd#27591), so on a fresh',
+      '# instance the unit would fail exec with 209/STDOUT and crash-loop',
+      '# forever without this. The unit keeps LogsDirectory= for ownership',
+      '# management on subsequent starts.',
+      'mkdir -p /var/log/canopy-worker',
+      'chown ec2-user:ec2-user /var/log/canopy-worker',
+      '',
       '# Start worker',
       'systemctl daemon-reload',
       'systemctl enable canopy-worker',
       'systemctl start canopy-worker',
+      '',
+      '# ---- CloudWatch log shipping ----',
+      '# Placed AFTER worker start: with set -euo pipefail, a yum/agent failure',
+      '# here must not prevent the worker from running (shipping is best-effort).',
+      'yum install -y amazon-cloudwatch-agent logrotate',
+      '',
+      '# Bound on-disk growth; copytruncate keeps the fd the CW agent tails valid',
+      '# (tiny copy->truncate loss window is acceptable for diagnostic logs).',
+      `cat > /etc/logrotate.d/canopy-worker << 'ROTEOF'`,
+      '/var/log/canopy-worker/worker.log {',
+      '    size 10M',
+      '    rotate 5',
+      '    compress',
+      '    copytruncate',
+      '    missingok',
+      '    notifempty',
+      '}',
+      'ROTEOF',
+      '# The config above only fires when logrotate actually runs; AL2023',
+      '# presets may leave logrotate.timer disabled, and without it the size',
+      '# cap never triggers and worker.log grows until the nano disk fills.',
+      '# --now is idempotent if the timer is already enabled/running.',
+      'systemctl enable --now logrotate.timer',
+      '',
+      '# No retention_in_days here: CDK owns retention on the pre-created group.',
+      `cat > /opt/aws/amazon-cloudwatch-agent/etc/canopy-worker-logs.json << 'CWEOF'`,
+      '{',
+      '  "logs": {',
+      '    "logs_collected": {',
+      '      "files": {',
+      '        "collect_list": [',
+      '          {',
+      '            "file_path": "/var/log/canopy-worker/worker.log",',
+      `            "log_group_name": "${this.workerLogGroup.logGroupName}",`,
+      '            "log_stream_name": "{instance_id}"',
+      '          }',
+      '        ]',
+      '      }',
+      '    }',
+      '  }',
+      '}',
+      'CWEOF',
+      '# fetch-config -s starts AND systemctl-enables the agent (reboot-persistent).',
+      '/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -s -c file:/opt/aws/amazon-cloudwatch-agent/etc/canopy-worker-logs.json',
     )
 
     // Auto Scaling Group
