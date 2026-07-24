@@ -152,6 +152,7 @@ import { Stack, StackProps } from 'aws-cdk-lib'
 import { Construct } from 'constructs'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
 import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager'
+import { Platform } from 'aws-cdk-lib/aws-ecr-assets'
 import { CanopyCmsService, CanopyCmsDistribution } from 'canopycms-cdk'
 
 export class CmsStack extends Stack {
