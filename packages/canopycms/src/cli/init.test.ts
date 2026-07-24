@@ -410,6 +410,19 @@ describe('canopycms init-deploy aws', () => {
     expect(dockerfile).toContain('mkdir -p public')
   })
 
+  it('Dockerfile.cms synthesizes a git repo for dev-mode build reads and never bakes prod mode into the build', async () => {
+    await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
+
+    const dockerfile = await fs.readFile(path.join(tmpDir, 'Dockerfile.cms'), 'utf-8')
+    // Dev-mode build-time content reads require a git repo; .dockerignore
+    // excludes .git, so the builder must create one from the copied files.
+    expect(dockerfile).toContain('git init -q -b main')
+    expect(dockerfile).toContain('image build snapshot')
+    // Prod-mode build reads would need an EFS remote.git inside the builder;
+    // validated to fail in the deploy-test harness. Prod is runtime-only.
+    expect(dockerfile).not.toContain('ENV CANOPY_MODE=prod')
+  })
+
   it('creates .dockerignore that excludes host node_modules but keeps vendor/', async () => {
     await initDeployAws({ cloud: 'aws', projectDir: tmpDir, force: false, nonInteractive: true })
 

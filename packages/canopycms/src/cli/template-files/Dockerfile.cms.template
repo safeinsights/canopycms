@@ -8,6 +8,16 @@ COPY . .
 # Guard against adopter apps with no public/ directory: Next's standalone
 # output still expects one, and the runner stage below copies it.
 RUN mkdir -p public
+# Build-time content reads (generateStaticParams / prerendering) run in dev
+# mode -- never set CANOPY_MODE=prod for `next build`: prod-mode build reads
+# would try to open a branch workspace (EFS remote.git) that cannot exist in
+# the image builder. Dev-mode reads require the project to be a git
+# repository, and .git is excluded from the build context by .dockerignore --
+# so synthesize a single-commit repo from the copied files.
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* \
+    && git init -q -b main \
+    && git add -A \
+    && git -c user.email=build@canopycms.local -c user.name="Image Build" commit -qm "image build snapshot"
 ENV CANOPY_BUILD=cms
 # Next.js inlines NEXT_PUBLIC_* values into the client bundle at `next build`
 # time, and the generated Clerk edit page needs the publishable key. The
