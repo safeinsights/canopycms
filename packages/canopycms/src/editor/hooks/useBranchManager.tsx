@@ -9,6 +9,13 @@ import type { OperatingMode } from '../../operating-mode'
 import type { CommentThread } from '../../comment-store'
 import type { BranchListItem } from '../../api/branch'
 import { useApiClient } from '../context'
+// Imported directly from '../../paths/branch' rather than the '../../paths'
+// barrel: that barrel re-exports server-only helpers (resolveBranchPath,
+// ensureBranchRoot) whose module pulls in node:fs/promises and node:path at
+// the top level. sanitizeBranchName itself is pure/dependency-free, but
+// going through the barrel would drag those Node built-ins into this
+// client-side hook's bundle.
+import { sanitizeBranchName } from '../../paths/branch'
 
 /**
  * Helper function to show confirmation modal for branch submit action.
@@ -158,7 +165,13 @@ export function useBranchManager(options: UseBranchManagerOptions): UseBranchMan
   const [branchName, setBranchName] = useState<string>(options.initialBranch)
   const [branches, setBranches] = useState<BranchListItem[]>([])
 
-  const currentBranch = branches.find((b) => b.name === branchName)
+  // Exact match first; fall back to comparing sanitized forms so a legacy
+  // deep-link carrying the raw, unsanitized name (e.g. "?branch=feature%2Fx"
+  // from before a branch was created, or from an old bookmark) still
+  // resolves to the branch the server actually persisted (e.g. "feature-x").
+  const currentBranch =
+    branches.find((b) => b.name === branchName) ??
+    branches.find((b) => b.name === sanitizeBranchName(branchName))
   const branchStatus = currentBranch?.status ?? 'editing'
 
   // Compute branch summaries with comment counts
