@@ -22,8 +22,13 @@ export default defineConfig({
   // All tests share the same workspace and server - must run sequentially
   workers: 1,
 
-  // Reporters: html for detailed UI, json for machine-readable timing, list for per-test durations in terminal
-  reporter: [['html'], ['json', { outputFile: 'test-results/results.json' }], ['list']],
+  // Reporters. CI uses blob so the 3-way sharded jobs (see ci.yml) can be
+  // merged into one HTML report by the e2e-report job; list keeps per-test
+  // lines in the job log. Locally: html for detailed UI, json for
+  // machine-readable timing, list for per-test durations in terminal.
+  reporter: process.env.CI
+    ? [['blob'], ['list']]
+    : [['html'], ['json', { outputFile: 'test-results/results.json' }], ['list']],
 
   // Shared settings for all the projects below
   use: {
@@ -50,11 +55,25 @@ export default defineConfig({
     },
   ],
 
-  // Run your local dev server before starting the tests
+  // Server under test. CI (or E2E_PROD_SERVER=1 locally) runs a production
+  // build + `next start` — noticeably faster and more prod-like than the dev
+  // server's on-demand compilation. Local default stays `next dev` so
+  // iterating on e2e doesn't pay a full build each run (and can reuse a
+  // dev server you already have running).
+  // CANOPY_E2E=1 marks the server process for the test-only
+  // /api/e2e-test/rebase route, which a production-mode server would
+  // otherwise refuse (see apps/test-app/app/api/e2e-test/rebase/route.ts).
   webServer: {
-    command: 'pnpm --filter canopycms-test-app dev',
+    command:
+      process.env.CI || process.env.E2E_PROD_SERVER
+        ? 'pnpm --filter canopycms-test-app build && pnpm --filter canopycms-test-app start'
+        : 'pnpm --filter canopycms-test-app dev',
     url: 'http://localhost:5174',
     reuseExistingServer: !process.env.CI,
-    timeout: 120 * 1000,
+    // Generous: the CI path pays a full `next build` before the server binds.
+    timeout: 300 * 1000,
+    env: {
+      CANOPY_E2E: '1',
+    },
   },
 })
